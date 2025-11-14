@@ -173,10 +173,17 @@ Start your investigation by exploring the data structure and searching literatur
         ]
 
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
+        logger.info(f"Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
 
+        logger.info(f"Claude CLI return code: {result.returncode}")
+        logger.info(f"Claude CLI stdout length: {len(result.stdout)}")
+        logger.info(f"Claude CLI stderr length: {len(result.stderr)}")
+
         if result.returncode != 0:
-            raise RuntimeError(f"Claude CLI failed: {result.stderr}")
+            logger.error(f"Claude CLI stdout: {result.stdout[:500]}")
+            logger.error(f"Claude CLI stderr: {result.stderr[:500]}")
+            raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}")
 
         # Parse JSON output
         response_data = json.loads(result.stdout)
@@ -243,7 +250,8 @@ Think step by step about what will provide the most insight."""
                 f.write(f"Prompt: {iteration_prompt}\n\n")
                 f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
-            # Update iteration counter
+            # Reload knowledge graph to preserve Claude's changes, then increment
+            kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
             kg.increment_iteration()
             kg.save(job_dir / "knowledge_graph.json")
 

@@ -193,11 +193,6 @@ def jobs_page():
         ]
         table.update()
 
-    def on_row_click(event):
-        """Handle row click."""
-        job_id = event.args["row"]["job_id"]
-        ui.navigate.to(f"/job/{job_id}")
-
     # Page header
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Jobs").classes("text-h4")
@@ -233,14 +228,23 @@ def jobs_page():
             {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
             {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
             {"name": "cost", "label": "Cost", "field": "cost", "align": "right"},
-            {"name": "created", "label": "Created", "field": "created", "align": "left"}
+            {"name": "created", "label": "Created", "field": "created", "align": "left"},
+            {"name": "actions", "label": "Actions", "field": "actions", "align": "center"}
         ],
         rows=[],
         row_key="job_id",
         pagination=10
     ).classes("w-full")
 
-    table.on("rowClick", on_row_click)
+    # Add action buttons using slot template
+    table.add_slot('body-cell-actions', r'''
+        <q-td :props="props">
+            <q-btn flat dense color="primary" label="View"
+                   @click="$parent.$emit('view-job', props.row.job_id)" />
+        </q-td>
+    ''')
+
+    table.on('view-job', lambda e: ui.navigate.to(f"/job/{e.args}"))
 
     # Initial load
     refresh_jobs()

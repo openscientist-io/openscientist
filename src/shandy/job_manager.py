@@ -425,6 +425,24 @@ class JobManager:
             with open(config_path) as f:
                 config = json.load(f)
 
+            # For running jobs, get real-time progress from knowledge_graph.json
+            iterations_completed = config.get("iterations_completed", 0)
+            findings_count = config.get("findings_count", 0)
+            cost_usd = config.get("final_cost_usd")
+
+            if config["status"] == "running":
+                kg_path = self.jobs_dir / job_id / "knowledge_graph.json"
+                if kg_path.exists():
+                    try:
+                        with open(kg_path) as f:
+                            kg = json.load(f)
+                        iterations_completed = kg.get("iteration", 0)
+                        findings_count = len(kg.get("findings", []))
+                        # For running jobs, try to estimate cost from cborg if available
+                        # For now, we'll leave cost as None until completion
+                    except Exception as e:
+                        logger.warning(f"Failed to load KG for running job {job_id}: {e}")
+
             return JobInfo(
                 job_id=config["job_id"],
                 research_question=config["research_question"],
@@ -434,9 +452,9 @@ class JobManager:
                 completed_at=config.get("completed_at"),
                 failed_at=config.get("failed_at"),
                 max_iterations=config["max_iterations"],
-                iterations_completed=config.get("iterations_completed", 0),
-                findings_count=config.get("findings_count", 0),
-                cost_usd=config.get("final_cost_usd"),
+                iterations_completed=iterations_completed,
+                findings_count=findings_count,
+                cost_usd=cost_usd,
                 error=config.get("error"),
                 use_skills=config.get("use_skills", True)
             )
