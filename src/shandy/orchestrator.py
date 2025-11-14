@@ -110,7 +110,11 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
     job_id = config["job_id"]
     max_iterations = config["max_iterations"]
-    data_file = config["data_files"][0]  # Use first data file
+    data_file = Path(config["data_files"][0])  # Use first data file
+
+    # Ensure data_file is absolute
+    if not data_file.is_absolute():
+        data_file = data_file.absolute()
 
     logger.info(f"Starting discovery for job {job_id}")
 
@@ -125,7 +129,7 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
                 "args": [
                     "-m", "shandy.mcp_server",
                     "--job-dir", str(job_dir.absolute()),
-                    "--data-file", str(data_file)
+                    "--data-file", str(data_file.absolute())
                 ]
             }
         }
@@ -159,7 +163,12 @@ Data summary:
 - Columns: {kg.data['data_summary'].get('columns', [])}
 - Samples: {kg.data['data_summary'].get('n_samples', 'Unknown')}
 
-Start your investigation by exploring the data structure and searching literature.
+IMPORTANT: You have access to the following MCP tools (use these, NOT bash or other built-in tools):
+- execute_code: Run Python analysis on the data (data is available as 'data' DataFrame)
+- search_pubmed: Search scientific literature for relevant papers
+- update_knowledge_graph: Record confirmed findings with evidence
+
+Start your investigation by using execute_code to explore the data structure and search_pubmed to search literature.
 """
 
         logger.info(f"Starting discovery loop with Claude CLI headless mode")
@@ -217,11 +226,10 @@ Start your investigation by exploring the data structure and searching literatur
 
 ---
 
-Continue your investigation. Choose your next action:
-- Explore data
-- Search literature
-- Test a hypothesis
-- Record a finding
+Continue your investigation using the MCP tools:
+- execute_code: Analyze data, run statistical tests, create visualizations
+- search_pubmed: Search for relevant papers
+- update_knowledge_graph: Record confirmed findings with statistical evidence
 
 Think step by step about what will provide the most insight."""
 
@@ -319,6 +327,8 @@ Format as professional scientific markdown."""
         config["final_cost_usd"] = final_cost
         config["iterations_completed"] = kg.data["iteration"]
         config["findings_count"] = len(kg.data["findings"])
+        # Update max_iterations to actual iterations when job stops early
+        config["max_iterations"] = kg.data["iteration"]
 
         with open(job_dir / "config.json", "w") as f:
             json.dump(config, f, indent=2)
