@@ -115,11 +115,22 @@ def index_page():
             use_skills = ui.checkbox("Use Skills", value=True)
 
         # Budget info
-        budget_info = get_budget_info()
-        with ui.card().classes("w-full bg-blue-50"):
-            ui.label("Budget Information").classes("text-subtitle2 font-bold")
-            ui.label(f"Available: ${budget_info['remaining_budget_usd']:.2f}")
-            ui.label(f"Total Limit: ${budget_info['total_budget_usd']:.2f}")
+        try:
+            budget_info = get_budget_info()
+            with ui.card().classes("w-full bg-blue-50"):
+                ui.label("Budget Information").classes("text-subtitle2 font-bold")
+
+                # Show remaining budget (may be None if no CBORG limit set)
+                if budget_info['budget_remaining'] is not None:
+                    ui.label(f"Remaining: ${budget_info['budget_remaining']:.2f}")
+                else:
+                    ui.label(f"Current Spend: ${budget_info['current_spend']:.2f}")
+
+                ui.label(f"Per-Job Limit: ${budget_info['app_max_job_cost']:.2f}")
+        except Exception as e:
+            with ui.card().classes("w-full bg-yellow-50"):
+                ui.label("Budget Information Unavailable").classes("text-subtitle2 font-bold")
+                ui.label("Check ANTHROPIC_AUTH_TOKEN in .env").classes("text-sm text-gray-600")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")

@@ -123,9 +123,11 @@ class JobManager:
 
         # Check budget
         budget_info = get_budget_info()
-        if budget_info["remaining_budget_usd"] < 1.0:
+
+        # Check if we have budget remaining (if CBORG limit is set)
+        if budget_info["budget_remaining"] is not None and budget_info["budget_remaining"] < 1.0:
             raise BudgetExceededError(
-                f"Insufficient budget: ${budget_info['remaining_budget_usd']:.2f} remaining"
+                f"Insufficient budget: ${budget_info['budget_remaining']:.2f} remaining"
             )
 
         # Create job directory and files
