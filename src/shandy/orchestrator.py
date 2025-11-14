@@ -311,11 +311,12 @@ Format as professional scientific markdown."""
         else:
             logger.error(f"Report generation failed: {result.stderr}")
 
-        # Track final cost
+        # Track final cost (calculate actual cost even if budget was exceeded)
         try:
-            final_cost = track_job_cost(job_id, start_spend, max_iterations, str(job_dir))
-        except BudgetExceededError as e:
-            logger.warning(str(e))
+            current_spend = get_cborg_spend()
+            final_cost = current_spend - start_spend
+        except Exception as e:
+            logger.warning(f"Could not calculate final cost: {e}")
             final_cost = None
 
         # Load final knowledge graph
