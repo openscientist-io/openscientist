@@ -4,6 +4,7 @@ Knowledge graph management for SHANDY.
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
 
+import fcntl
 import json
 from datetime import datetime
 from pathlib import Path
@@ -63,10 +64,26 @@ class KnowledgeGraph:
         return kg
 
     def save(self, file_path: Path) -> None:
-        """Save knowledge graph to JSON file."""
+        """Save knowledge graph to JSON file with file locking."""
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, 'w') as f:
-            json.dump(self.data, f, indent=2)
+
+        # Create file if it doesn't exist
+        if not file_path.exists():
+            with open(file_path, 'w') as f:
+                json.dump(self.data, f, indent=2)
+            return
+
+        # Open for read-write and acquire exclusive lock
+        with open(file_path, 'r+') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                # Write the data
+                f.seek(0)
+                f.truncate()
+                json.dump(self.data, f, indent=2)
+            finally:
+                # Release lock
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
     def set_data_summary(self, summary: Dict[str, Any]) -> None:
         """Set data summary (files, samples, features, etc.)."""

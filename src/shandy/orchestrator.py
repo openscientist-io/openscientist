@@ -4,12 +4,11 @@ Orchestrator for SHANDY autonomous discovery.
 Spawns Claude Code CLI to run autonomous discovery loop.
 """
 
+import fcntl
 import json
 import logging
 import os
 import subprocess
-import tempfile
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -19,6 +18,34 @@ from .knowledge_graph import KnowledgeGraph
 from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
 
 logger = logging.getLogger(__name__)
+
+
+def increment_kg_iteration(kg_path: Path) -> None:
+    """
+    Safely increment the knowledge graph iteration counter with file locking.
+
+    This ensures mutual exclusion with MCP server writes to prevent race conditions.
+
+    Args:
+        kg_path: Path to knowledge_graph.json
+    """
+    with open(kg_path, 'r+') as f:
+        # Acquire exclusive lock
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            # Read current state
+            kg_data = json.load(f)
+
+            # Increment iteration
+            kg_data['iteration'] += 1
+
+            # Write back atomically
+            f.seek(0)
+            f.truncate()
+            json.dump(kg_data, f, indent=2)
+        finally:
+            # Release lock
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def create_job(job_id: str, research_question: str, data_files: list,
@@ -215,26 +242,9 @@ Start your investigation by using execute_code to explore the data structure and
             f.write(f"Prompt: {initial_prompt}\n\n")
             f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
-        # Increment iteration counter directly in JSON file to avoid overwriting MCP changes
-        # Read-modify-write with retry to handle concurrent writes from MCP server
+        # Increment iteration counter with file locking to prevent race conditions
         kg_path = job_dir / "knowledge_graph.json"
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                time.sleep(0.1 * (attempt + 1))  # Exponential backoff
-                with open(kg_path, 'r') as f:
-                    kg_data = json.load(f)
-                kg_data['iteration'] += 1
-                # Atomic write using temp file
-                fd, temp_path = tempfile.mkstemp(dir=job_dir, suffix='.json')
-                with os.fdopen(fd, 'w') as f:
-                    json.dump(kg_data, f, indent=2)
-                os.replace(temp_path, kg_path)  # Atomic on POSIX
-                break
-            except (json.JSONDecodeError, IOError) as e:
-                if attempt == max_retries - 1:
-                    logger.error(f"Failed to increment iteration after {max_retries} attempts: {e}")
-                    raise
+        increment_kg_iteration(kg_path)
 
         # Iterations 2-N: Resume session
         for iteration in range(2, max_iterations + 1):
@@ -284,26 +294,8 @@ Think step by step about what will provide the most insight."""
                 f.write(f"Prompt: {iteration_prompt}\n\n")
                 f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
-            # Increment iteration counter directly in JSON file to avoid overwriting MCP changes
-            # Read-modify-write with retry to handle concurrent writes from MCP server
-            kg_path = job_dir / "knowledge_graph.json"
-            max_retries = 5
-            for attempt in range(max_retries):
-                try:
-                    time.sleep(0.1 * (attempt + 1))  # Exponential backoff
-                    with open(kg_path, 'r') as f:
-                        kg_data = json.load(f)
-                    kg_data['iteration'] += 1
-                    # Atomic write using temp file
-                    fd, temp_path = tempfile.mkstemp(dir=job_dir, suffix='.json')
-                    with os.fdopen(fd, 'w') as f:
-                        json.dump(kg_data, f, indent=2)
-                    os.replace(temp_path, kg_path)  # Atomic on POSIX
-                    break
-                except (json.JSONDecodeError, IOError) as e:
-                    if attempt == max_retries - 1:
-                        logger.error(f"Failed to increment iteration after {max_retries} attempts: {e}")
-                        raise
+            # Increment iteration counter with file locking to prevent race conditions
+            increment_kg_iteration(kg_path)
 
             # Track costs
             try:
