@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -215,13 +216,25 @@ Start your investigation by using execute_code to explore the data structure and
             f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
         # Increment iteration counter directly in JSON file to avoid overwriting MCP changes
-        time.sleep(0.5)  # Give MCP server time to flush writes
+        # Read-modify-write with retry to handle concurrent writes from MCP server
         kg_path = job_dir / "knowledge_graph.json"
-        with open(kg_path, 'r') as f:
-            kg_data = json.load(f)
-        kg_data['iteration'] += 1
-        with open(kg_path, 'w') as f:
-            json.dump(kg_data, f, indent=2)
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                with open(kg_path, 'r') as f:
+                    kg_data = json.load(f)
+                kg_data['iteration'] += 1
+                # Atomic write using temp file
+                fd, temp_path = tempfile.mkstemp(dir=job_dir, suffix='.json')
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(kg_data, f, indent=2)
+                os.replace(temp_path, kg_path)  # Atomic on POSIX
+                break
+            except (json.JSONDecodeError, IOError) as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed to increment iteration after {max_retries} attempts: {e}")
+                    raise
 
         # Iterations 2-N: Resume session
         for iteration in range(2, max_iterations + 1):
@@ -244,12 +257,13 @@ Think step by step about what will provide the most insight."""
 
             logger.info(f"Iteration {iteration}/{max_iterations}: Continuing session")
 
-            # Resume session
+            # Resume session (must pass --mcp-config again for tools to remain available)
             cmd = [
                 claude_cli,
                 '-p', iteration_prompt,
                 '--resume', session_id,
                 '--output-format', 'json',
+                '--mcp-config', str(mcp_config_path.absolute()),
                 '--allowedTools', 'mcp__shandy-tools__execute_code',
                 '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                 '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
@@ -271,14 +285,25 @@ Think step by step about what will provide the most insight."""
                 f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
             # Increment iteration counter directly in JSON file to avoid overwriting MCP changes
-            import time
-            time.sleep(0.5)  # Give MCP server time to flush writes
+            # Read-modify-write with retry to handle concurrent writes from MCP server
             kg_path = job_dir / "knowledge_graph.json"
-            with open(kg_path, 'r') as f:
-                kg_data = json.load(f)
-            kg_data['iteration'] += 1
-            with open(kg_path, 'w') as f:
-                json.dump(kg_data, f, indent=2)
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    time.sleep(0.1 * (attempt + 1))  # Exponential backoff
+                    with open(kg_path, 'r') as f:
+                        kg_data = json.load(f)
+                    kg_data['iteration'] += 1
+                    # Atomic write using temp file
+                    fd, temp_path = tempfile.mkstemp(dir=job_dir, suffix='.json')
+                    with os.fdopen(fd, 'w') as f:
+                        json.dump(kg_data, f, indent=2)
+                    os.replace(temp_path, kg_path)  # Atomic on POSIX
+                    break
+                except (json.JSONDecodeError, IOError) as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to increment iteration after {max_retries} attempts: {e}")
+                        raise
 
             # Track costs
             try:
