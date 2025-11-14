@@ -31,14 +31,6 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
 def index_page():
     """Homepage with job submission form."""
 
-    # Store uploaded files
-    uploaded_files = []
-
-    def handle_upload(e):
-        """Handle file upload."""
-        uploaded_files.append(e)
-        ui.notify(f"Uploaded: {e.name}", type="info")
-
     def submit_job():
         """Handle job submission."""
         # Validate inputs
@@ -46,7 +38,8 @@ def index_page():
             ui.notify("Please enter a research question", type="negative")
             return
 
-        if not uploaded_files:
+        # Check if files were uploaded using app.storage
+        if 'uploaded_files' not in app.storage.user or not app.storage.user['uploaded_files']:
             ui.notify("Please upload at least one data file", type="negative")
             return
 
@@ -56,11 +49,11 @@ def index_page():
 
         # Save uploaded files to temp location
         data_files = []
-        for uploaded_file in uploaded_files:
+        for uploaded_file in app.storage.user['uploaded_files']:
             # Create temp file
-            temp_file = Path(tempfile.mkdtemp()) / uploaded_file.name
+            temp_file = Path(tempfile.mkdtemp()) / uploaded_file['name']
             with open(temp_file, "wb") as f:
-                f.write(uploaded_file.content.read())
+                f.write(uploaded_file['content'])
             data_files.append(temp_file)
 
         # Create job
@@ -78,7 +71,7 @@ def index_page():
 
             # Clear form
             research_question.value = ""
-            uploaded_files.clear()
+            app.storage.user['uploaded_files'] = []
             upload.reset()
 
             # Navigate to jobs page
@@ -87,6 +80,23 @@ def index_page():
         except Exception as e:
             ui.notify(f"Error creating job: {e}", type="negative")
             logger.error(f"Error creating job: {e}", exc_info=True)
+
+    def handle_upload(e):
+        """Handle file upload."""
+        if 'uploaded_files' not in app.storage.user:
+            app.storage.user['uploaded_files'] = []
+
+        try:
+            # Read file content
+            content = e.content.read()
+            app.storage.user['uploaded_files'].append({
+                'name': e.name,
+                'content': content
+            })
+            ui.notify(f"Uploaded: {e.name}", type="positive")
+        except Exception as ex:
+            logger.error(f"Upload failed: {ex}", exc_info=True)
+            ui.notify(f"Upload failed: {str(ex)}", type="negative")
 
     # Page header
     with ui.header().classes("items-center justify-between"):
