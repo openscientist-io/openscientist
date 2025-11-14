@@ -1,10 +1,11 @@
 # Known Issues
 
-## MCP Tools Not Being Used (Critical)
+## MCP Tools Not Being Used (RESOLVED)
 
-**Status:** Under investigation
+**Status:** ✅ RESOLVED - Using FastMCP SDK
 **Priority:** High
 **Date:** 2025-11-14
+**Resolution Date:** 2025-11-14
 
 ### Problem
 
@@ -187,14 +188,37 @@ To analyze data:
 - Bash: Quick data analysis
 - Edit: Update knowledge graph directly
 
-### Next Steps
+### Resolution
 
-- [ ] **Decision needed:** Choose Option A, B, or C
-- [ ] If A: Install FastMCP, rewrite server.py, test
-- [ ] If B: Create helper scripts, update CLAUDE.md, remove MCP code
-- [ ] If C: Determine which operations warrant MCP vs built-in tools
-- [ ] Test chosen approach with a small job
-- [ ] Document the decision and rationale
+**Chose Option A: Rewrite using FastMCP SDK**
+
+#### Implementation Complete
+
+1. ✅ Added `mcp[cli]>=1.0.0` dependency to pyproject.toml
+2. ✅ Rewrote `src/shandy/mcp_server/server.py` using FastMCP decorators
+3. ✅ Removed all manual JSON-RPC handling (180+ lines of code deleted)
+4. ✅ Rebuilt Docker container with MCP SDK
+5. ✅ Tested connection: `claude mcp list` shows "✓ Connected"
+6. ✅ Verified tools visible: `mcp__shandy-tools__execute_code` detected by Claude
+
+#### Test Results
+
+```bash
+$ claude mcp list
+shandy-tools: python -m shandy.mcp_server ... - ✓ Connected
+
+$ claude -p "Use execute_code tool"
+> I need permission to use the `execute_code` tool...
+> Would you like to grant permission for `mcp__shandy-tools__execute_code`?
+```
+
+Tools are now properly exposed and Claude can use them!
+
+#### Next Steps
+
+- [x] Server connects successfully
+- [ ] Test with actual job to verify findings/hypotheses/literature get populated
+- [ ] If issues remain, check orchestrator's --mcp-config usage in headless mode
 
 ### Related Files
 
