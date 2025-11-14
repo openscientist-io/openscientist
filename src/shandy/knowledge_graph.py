@@ -1,0 +1,256 @@
+"""
+Knowledge graph management for SHANDY.
+
+Stores agent's state including hypotheses, findings, literature, and analysis history.
+"""
+
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+
+class KnowledgeGraph:
+    """
+    JSON-based knowledge graph for storing agent state.
+
+    Structure:
+        - config: Job configuration
+        - data_summary: Overview of uploaded data
+        - iteration: Current iteration number
+        - hypotheses: List of proposed and tested hypotheses
+        - findings: Confirmed discoveries
+        - literature: Retrieved papers from PubMed
+        - analysis_log: History of all executed analyses
+    """
+
+    def __init__(self, job_id: str, research_question: str, max_iterations: int,
+                 use_skills: bool = True):
+        """
+        Initialize a new knowledge graph.
+
+        Args:
+            job_id: Unique job identifier
+            research_question: User's research question
+            max_iterations: Maximum number of iterations
+            use_skills: Whether skills are enabled for this job
+        """
+        self.data = {
+            "config": {
+                "job_id": job_id,
+                "research_question": research_question,
+                "max_iterations": max_iterations,
+                "use_skills": use_skills,
+                "started_at": datetime.now().isoformat()
+            },
+            "data_summary": {},
+            "iteration": 0,
+            "hypotheses": [],
+            "findings": [],
+            "literature": [],
+            "analysis_log": []
+        }
+
+    @classmethod
+    def load(cls, file_path: Path) -> "KnowledgeGraph":
+        """Load knowledge graph from JSON file."""
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+
+        # Create instance and set data
+        kg = cls.__new__(cls)
+        kg.data = data
+        return kg
+
+    def save(self, file_path: Path) -> None:
+        """Save knowledge graph to JSON file."""
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, 'w') as f:
+            json.dump(self.data, f, indent=2)
+
+    def set_data_summary(self, summary: Dict[str, Any]) -> None:
+        """Set data summary (files, samples, features, etc.)."""
+        self.data["data_summary"] = summary
+
+    def add_hypothesis(self, statement: str, proposed_by: str = "agent") -> str:
+        """
+        Add a new hypothesis.
+
+        Args:
+            statement: Hypothesis statement
+            proposed_by: Who proposed it (agent, user, skill)
+
+        Returns:
+            hypothesis_id: Unique ID for this hypothesis
+        """
+        hypothesis_id = f"H{len(self.data['hypotheses']) + 1:03d}"
+
+        hypothesis = {
+            "id": hypothesis_id,
+            "iteration_proposed": self.data["iteration"],
+            "statement": statement,
+            "status": "pending",  # pending, testing, supported, rejected
+            "proposed_by": proposed_by,
+            "tested_at_iteration": None,
+            "test_code": None,
+            "result": None,
+            "spawned_hypotheses": []
+        }
+
+        self.data["hypotheses"].append(hypothesis)
+        return hypothesis_id
+
+    def update_hypothesis(self, hypothesis_id: str, updates: Dict[str, Any]) -> None:
+        """Update a hypothesis with test results."""
+        for hyp in self.data["hypotheses"]:
+            if hyp["id"] == hypothesis_id:
+                hyp.update(updates)
+                return
+        raise ValueError(f"Hypothesis {hypothesis_id} not found")
+
+    def add_finding(self, title: str, evidence: str,
+                   supporting_hypotheses: Optional[List[str]] = None,
+                   literature_support: Optional[List[str]] = None,
+                   plots: Optional[List[str]] = None) -> str:
+        """
+        Add a confirmed finding.
+
+        Args:
+            title: Finding title
+            evidence: Statistical evidence (p-values, effect sizes, etc.)
+            supporting_hypotheses: List of hypothesis IDs
+            literature_support: List of literature IDs
+            plots: List of plot file paths
+
+        Returns:
+            finding_id: Unique ID for this finding
+        """
+        finding_id = f"F{len(self.data['findings']) + 1:03d}"
+
+        finding = {
+            "id": finding_id,
+            "iteration_discovered": self.data["iteration"],
+            "title": title,
+            "evidence": evidence,
+            "supporting_hypotheses": supporting_hypotheses or [],
+            "literature_support": literature_support or [],
+            "plots": plots or [],
+            "biological_interpretation": ""
+        }
+
+        self.data["findings"].append(finding)
+        return finding_id
+
+    def add_literature(self, pmid: str, title: str, abstract: str,
+                      relevance_to: Optional[List[str]] = None,
+                      search_query: Optional[str] = None) -> str:
+        """
+        Add literature reference.
+
+        Args:
+            pmid: PubMed ID
+            title: Paper title
+            abstract: Paper abstract
+            relevance_to: List of finding/hypothesis IDs this relates to
+            search_query: Query that retrieved this paper
+
+        Returns:
+            literature_id: Unique ID for this reference
+        """
+        literature_id = f"L{len(self.data['literature']) + 1:03d}"
+
+        literature = {
+            "id": literature_id,
+            "pmid": pmid,
+            "title": title,
+            "abstract": abstract,
+            "relevance_to": relevance_to or [],
+            "retrieved_at_iteration": self.data["iteration"],
+            "search_query": search_query
+        }
+
+        self.data["literature"].append(literature)
+        return literature_id
+
+    def log_analysis(self, action: str, code: Optional[str] = None,
+                    output: Optional[str] = None, **kwargs) -> None:
+        """
+        Log an analysis action.
+
+        Args:
+            action: Type of action (execute_code, search_pubmed, use_skill)
+            code: Python code executed (if applicable)
+            output: Output from execution
+            **kwargs: Additional metadata
+        """
+        log_entry = {
+            "iteration": self.data["iteration"],
+            "action": action,
+            "timestamp": datetime.now().isoformat(),
+            **kwargs
+        }
+
+        if code:
+            log_entry["code"] = code
+        if output:
+            log_entry["output"] = output
+
+        self.data["analysis_log"].append(log_entry)
+
+    def increment_iteration(self) -> None:
+        """Increment the iteration counter."""
+        self.data["iteration"] += 1
+
+    def get_summary(self) -> str:
+        """
+        Get a text summary of current state for prompts.
+
+        Returns:
+            Formatted summary of KG state
+        """
+        summary_parts = [
+            f"# Knowledge Graph Summary (Iteration {self.data['iteration']})",
+            "",
+            f"## Research Question",
+            self.data['config']['research_question'],
+            "",
+            f"## Data",
+            f"- Files: {self.data['data_summary'].get('files', [])}",
+            f"- Samples: {self.data['data_summary'].get('n_samples', 'Unknown')}",
+            f"- Features: {self.data['data_summary'].get('n_features', 'Unknown')}",
+            "",
+            f"## Progress",
+            f"- Hypotheses tested: {len([h for h in self.data['hypotheses'] if h['status'] != 'pending'])}",
+            f"- Findings confirmed: {len(self.data['findings'])}",
+            f"- Literature reviewed: {len(self.data['literature'])}",
+            ""
+        ]
+
+        # Recent findings
+        if self.data['findings']:
+            summary_parts.append("## Recent Findings")
+            for finding in self.data['findings'][-3:]:
+                summary_parts.append(f"- **{finding['title']}**: {finding['evidence']}")
+            summary_parts.append("")
+
+        # Active hypotheses
+        pending = [h for h in self.data['hypotheses'] if h['status'] == 'pending']
+        if pending:
+            summary_parts.append("## Pending Hypotheses")
+            for hyp in pending[-3:]:
+                summary_parts.append(f"- {hyp['id']}: {hyp['statement']}")
+            summary_parts.append("")
+
+        # Rejected hypotheses (learn from failures)
+        rejected = [h for h in self.data['hypotheses'] if h['status'] == 'rejected']
+        if rejected:
+            summary_parts.append("## Rejected Hypotheses (avoid repeating)")
+            for hyp in rejected[-3:]:
+                summary_parts.append(f"- {hyp['id']}: {hyp['statement']} - {hyp.get('result', {}).get('conclusion', 'No conclusion')}")
+            summary_parts.append("")
+
+        return "\n".join(summary_parts)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return the raw data dictionary."""
+        return self.data

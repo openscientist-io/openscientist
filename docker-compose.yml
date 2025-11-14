@@ -1,0 +1,25 @@
+# Docker Compose for SHANDY
+version: '3.8'
+
+services:
+  shandy:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+      - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
+    volumes:
+      # Persist jobs directory
+      - ./jobs:/app/jobs
+      # Persist data directory (for uploaded files)
+      - ./data:/app/data
+      # Mount .env file for secrets
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

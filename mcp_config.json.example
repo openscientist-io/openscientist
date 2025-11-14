@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "shandy-tools": {
+      "command": "python",
+      "args": [
+        "-m",
+        "shandy.mcp_server",
+        "--job-dir",
+        "/absolute/path/to/job/directory",
+        "--data-file",
+        "/absolute/path/to/data.csv"
+      ],
+      "description": "SHANDY discovery tools (execute_code, search_pubmed, update_knowledge_graph)"
+    }
+  }
+}

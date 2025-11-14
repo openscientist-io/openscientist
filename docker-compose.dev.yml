@@ -1,0 +1,23 @@
+# Docker Compose for SHANDY development
+version: '3.8'
+
+services:
+  shandy:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+      - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
+    volumes:
+      # Mount source code for hot reloading
+      - ./src:/app/src
+      - ./.claude:/app/.claude
+      - ./CLAUDE.md:/app/CLAUDE.md
+      # Persist jobs and data
+      - ./jobs:/app/jobs
+      - ./data:/app/data
+      # Mount .env file
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    command: ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]
