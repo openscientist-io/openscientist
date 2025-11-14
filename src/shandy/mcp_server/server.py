@@ -59,7 +59,9 @@ class ShandyMCPServer:
         request_id = request.get("id")
 
         try:
-            if method == "tools/list":
+            if method == "initialize":
+                result = self.initialize(params)
+            elif method == "tools/list":
                 result = self.list_tools()
             elif method == "tools/call":
                 tool_name = params.get("name")
@@ -84,6 +86,19 @@ class ShandyMCPServer:
                 "id": request_id,
                 "error": {"code": -32603, "message": str(e)}
             }
+
+    def initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle MCP initialize request."""
+        return {
+            "protocolVersion": "0.1.0",
+            "capabilities": {
+                "tools": {}
+            },
+            "serverInfo": {
+                "name": "shandy-tools",
+                "version": "0.1.0"
+            }
+        }
 
     def list_tools(self) -> Dict[str, Any]:
         """List available tools."""
