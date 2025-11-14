@@ -1,17 +1,16 @@
 # Dockerfile for SHANDY
 FROM python:3.11-slim
 
-# Install system dependencies
+# Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI
-# Note: This assumes Claude Code CLI is available via curl
-# Update this URL when official installation method is available
-RUN curl -fsSL https://download.anthropic.com/claude-code/install.sh | bash || \
-    echo "Claude Code CLI not available yet - will need manual installation"
+# Install Claude Code CLI via npm
+RUN npm install -g @anthropic-ai/claude-code
 
 # Set working directory
 WORKDIR /app

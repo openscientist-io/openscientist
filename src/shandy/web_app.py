@@ -27,9 +27,17 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     logger.info("Web app initialized")
 
 
+# Global dict to store uploaded files per session
+_uploaded_files = {}
+
 @ui.page("/")
 def index_page():
     """Homepage with job submission form."""
+
+    # Use client ID as key for this session's uploads
+    session_id = str(id(index_page))  # Simple session identifier
+    if session_id not in _uploaded_files:
+        _uploaded_files[session_id] = []
 
     def submit_job():
         """Handle job submission."""
@@ -38,8 +46,8 @@ def index_page():
             ui.notify("Please enter a research question", type="negative")
             return
 
-        # Check if files were uploaded using app.storage
-        if 'uploaded_files' not in app.storage.user or not app.storage.user['uploaded_files']:
+        # Check if files were uploaded
+        if not _uploaded_files.get(session_id):
             ui.notify("Please upload at least one data file", type="negative")
             return
 
@@ -49,7 +57,7 @@ def index_page():
 
         # Save uploaded files to temp location
         data_files = []
-        for uploaded_file in app.storage.user['uploaded_files']:
+        for uploaded_file in _uploaded_files[session_id]:
             # Create temp file
             temp_file = Path(tempfile.mkdtemp()) / uploaded_file['name']
             with open(temp_file, "wb") as f:
@@ -71,7 +79,7 @@ def index_page():
 
             # Clear form
             research_question.value = ""
-            app.storage.user['uploaded_files'] = []
+            _uploaded_files[session_id] = []
             upload.reset()
 
             # Navigate to jobs page
@@ -81,19 +89,20 @@ def index_page():
             ui.notify(f"Error creating job: {e}", type="negative")
             logger.error(f"Error creating job: {e}", exc_info=True)
 
-    def handle_upload(e):
+    async def handle_upload(e):
         """Handle file upload."""
-        if 'uploaded_files' not in app.storage.user:
-            app.storage.user['uploaded_files'] = []
-
         try:
-            # Read file content
-            content = e.content.read()
-            app.storage.user['uploaded_files'].append({
-                'name': e.name,
+            # e.file is the uploaded file object
+            # e.file.read() is async and returns bytes
+            content = await e.file.read()
+            name = e.file.name
+
+            _uploaded_files[session_id].append({
+                'name': name,
                 'content': content
             })
-            ui.notify(f"Uploaded: {e.name}", type="positive")
+            ui.notify(f"Uploaded: {name}", type="positive")
+            logger.info(f"Successfully uploaded {name} ({len(content)} bytes)")
         except Exception as ex:
             logger.error(f"Upload failed: {ex}", exc_info=True)
             ui.notify(f"Upload failed: {str(ex)}", type="negative")
