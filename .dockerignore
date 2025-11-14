@@ -30,6 +30,7 @@ data/
 notes/
 *.md
 !CLAUDE.md
+!README.md
 
 # Environment
 .env

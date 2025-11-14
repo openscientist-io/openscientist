@@ -16,13 +16,17 @@ RUN curl -fsSL https://download.anthropic.com/claude-code/install.sh | bash || \
 # Set working directory
 WORKDIR /app
 
-# Copy pyproject.toml and install dependencies
-COPY pyproject.toml .
+# Copy package metadata files first
+COPY pyproject.toml README.md ./
+
+# Copy source code (needed for editable install)
+COPY src/ src/
+
+# Install dependencies
 RUN pip install --no-cache-dir uv && \
     uv pip install --system -e .
 
-# Copy application code
-COPY src/ src/
+# Copy additional application files
 COPY .claude/ .claude/
 COPY CLAUDE.md .
 
