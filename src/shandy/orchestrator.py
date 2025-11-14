@@ -178,7 +178,10 @@ Start your investigation by using execute_code to explore the data structure and
             claude_cli,
             '-p', initial_prompt,
             '--output-format', 'json',
-            '--mcp-config', str(mcp_config_path.absolute())
+            '--mcp-config', str(mcp_config_path.absolute()),
+            '--allowedTools', 'mcp__shandy-tools__execute_code',
+            '--allowedTools', 'mcp__shandy-tools__search_pubmed',
+            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
         ]
 
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
@@ -240,7 +243,10 @@ Think step by step about what will provide the most insight."""
                 claude_cli,
                 '-p', iteration_prompt,
                 '--resume', session_id,
-                '--output-format', 'json'
+                '--output-format', 'json',
+                '--allowedTools', 'mcp__shandy-tools__execute_code',
+                '--allowedTools', 'mcp__shandy-tools__search_pubmed',
+                '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
             ]
 
             result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))

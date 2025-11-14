@@ -190,7 +190,7 @@ To analyze data:
 
 ### Resolution
 
-**Chose Option A: Rewrite using FastMCP SDK**
+**Chose Option A: Rewrite using FastMCP SDK + Permission Handling**
 
 #### Implementation Complete
 
@@ -200,25 +200,45 @@ To analyze data:
 4. ✅ Rebuilt Docker container with MCP SDK
 5. ✅ Tested connection: `claude mcp list` shows "✓ Connected"
 6. ✅ Verified tools visible: `mcp__shandy-tools__execute_code` detected by Claude
+7. ✅ Added `--allowedTools` flags to orchestrator for headless mode
+8. ✅ Tested end-to-end: Job completed successfully with MCP tools working
+
+#### Permission Fix
+
+**Problem**: In headless mode, Claude Code CLI requires explicit permission for MCP tools. Tried `--dangerously-skip-permissions` but it's blocked when running as root (Docker default).
+
+**Solution**: Used `--allowedTools` flag to explicitly allow MCP tools:
+```python
+cmd = [
+    claude_cli,
+    '-p', initial_prompt,
+    '--output-format', 'json',
+    '--mcp-config', str(mcp_config_path.absolute()),
+    '--allowedTools', 'mcp__shandy-tools__execute_code',
+    '--allowedTools', 'mcp__shandy-tools__search_pubmed',
+    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+]
+```
 
 #### Test Results
 
-```bash
-$ claude mcp list
-shandy-tools: python -m shandy.mcp_server ... - ✓ Connected
+**Test job_50d7a44c (2 iterations):**
+- ✅ NO permission denials (`"permission_denials": []`)
+- ✅ 23 tool-calling turns
+- ✅ execute_code: Multiple successful executions
+- ✅ search_pubmed: Literature populated
+- ✅ update_knowledge_graph: Findings F001, F002, F003 recorded
+- ✅ Final report generated
+- ✅ Cost tracked: $1.51 USD
+- ✅ Status: completed
 
-$ claude -p "Use execute_code tool"
-> I need permission to use the `execute_code` tool...
-> Would you like to grant permission for `mcp__shandy-tools__execute_code`?
-```
-
-Tools are now properly exposed and Claude can use them!
+**Tools are fully functional!**
 
 #### Next Steps
 
 - [x] Server connects successfully
-- [ ] Test with actual job to verify findings/hypotheses/literature get populated
-- [ ] If issues remain, check orchestrator's --mcp-config usage in headless mode
+- [x] Test with actual job to verify findings/hypotheses/literature get populated
+- [x] MCP tools working in headless mode without permission denials
 
 ### Related Files
 
