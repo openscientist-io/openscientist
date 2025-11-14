@@ -31,6 +31,14 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
 def index_page():
     """Homepage with job submission form."""
 
+    # Store uploaded files
+    uploaded_files = []
+
+    def handle_upload(e):
+        """Handle file upload."""
+        uploaded_files.append(e)
+        ui.notify(f"Uploaded: {e.name}", type="info")
+
     def submit_job():
         """Handle job submission."""
         # Validate inputs
@@ -38,7 +46,7 @@ def index_page():
             ui.notify("Please enter a research question", type="negative")
             return
 
-        if not upload.value:
+        if not uploaded_files:
             ui.notify("Please upload at least one data file", type="negative")
             return
 
@@ -48,7 +56,7 @@ def index_page():
 
         # Save uploaded files to temp location
         data_files = []
-        for uploaded_file in upload.value:
+        for uploaded_file in uploaded_files:
             # Create temp file
             temp_file = Path(tempfile.mkdtemp()) / uploaded_file.name
             with open(temp_file, "wb") as f:
@@ -61,7 +69,7 @@ def index_page():
                 job_id=job_id,
                 research_question=research_question.value,
                 data_files=data_files,
-                max_iterations=max_iterations.value,
+                max_iterations=int(max_iterations.value),
                 use_skills=use_skills.value,
                 auto_start=True
             )
@@ -70,6 +78,7 @@ def index_page():
 
             # Clear form
             research_question.value = ""
+            uploaded_files.clear()
             upload.reset()
 
             # Navigate to jobs page
@@ -99,7 +108,8 @@ def index_page():
         upload = ui.upload(
             label="Upload Data Files (CSV)",
             multiple=True,
-            auto_upload=True
+            auto_upload=True,
+            on_upload=handle_upload
         ).classes("w-full")
 
         # Configuration
