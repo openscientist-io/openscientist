@@ -33,6 +33,9 @@ dependencies = [
     "anthropic>=0.34.0",
     "requests>=2.31.0",
 
+    # MCP server
+    "mcp[cli]>=1.0.0",
+
     # Environment & config
     "python-dotenv>=1.0.0",
 
