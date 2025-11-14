@@ -335,7 +335,10 @@ def job_detail_page(job_id: str):
                         with ui.card().classes("w-full"):
                             ui.label(f"Finding {i}: {finding['title']}").classes("text-subtitle1 font-bold")
                             ui.label(finding["evidence"]).classes("mt-2")
-                            ui.label(finding["interpretation"]).classes("mt-2 text-gray-600")
+                            # Show biological interpretation if available
+                            interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                            if interpretation:
+                                ui.label(interpretation).classes("mt-2 text-gray-600")
                 else:
                     ui.label("No findings yet").classes("text-gray-500")
             else:
