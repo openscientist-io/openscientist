@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -213,9 +214,14 @@ Start your investigation by using execute_code to explore the data structure and
             f.write(f"Prompt: {initial_prompt}\n\n")
             f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
-        # Update knowledge graph iteration counter
-        kg.increment_iteration()
-        kg.save(job_dir / "knowledge_graph.json")
+        # Increment iteration counter directly in JSON file to avoid overwriting MCP changes
+        time.sleep(0.5)  # Give MCP server time to flush writes
+        kg_path = job_dir / "knowledge_graph.json"
+        with open(kg_path, 'r') as f:
+            kg_data = json.load(f)
+        kg_data['iteration'] += 1
+        with open(kg_path, 'w') as f:
+            json.dump(kg_data, f, indent=2)
 
         # Iterations 2-N: Resume session
         for iteration in range(2, max_iterations + 1):
@@ -264,10 +270,15 @@ Think step by step about what will provide the most insight."""
                 f.write(f"Prompt: {iteration_prompt}\n\n")
                 f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
-            # Reload knowledge graph to preserve Claude's changes, then increment
-            kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
-            kg.increment_iteration()
-            kg.save(job_dir / "knowledge_graph.json")
+            # Increment iteration counter directly in JSON file to avoid overwriting MCP changes
+            import time
+            time.sleep(0.5)  # Give MCP server time to flush writes
+            kg_path = job_dir / "knowledge_graph.json"
+            with open(kg_path, 'r') as f:
+                kg_data = json.load(f)
+            kg_data['iteration'] += 1
+            with open(kg_path, 'w') as f:
+                json.dump(kg_data, f, indent=2)
 
             # Track costs
             try:
