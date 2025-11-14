@@ -400,7 +400,10 @@ def job_detail_page(job_id: str):
                 ui.markdown(report_content).classes("w-full")
 
                 # Download button
-                ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md")
+                ui.button(
+                    "Download Report",
+                    on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md")
+                ).classes("mt-4")
             else:
                 if job_info.status == JobStatus.COMPLETED:
                     ui.label("Report generation failed").classes("text-red-500")
