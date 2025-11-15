@@ -382,7 +382,7 @@ def job_detail_page(job_id: str):
             plots_dir = job_dir / "plots"
 
             if plots_dir.exists():
-                plot_files = sorted(plots_dir.glob("plot_*.png"))
+                plot_files = sorted(plots_dir.glob("*.png"))
 
                 if plot_files:
                     ui.label(f"Generated {len(plot_files)} plot(s) showing Claude's analysis").classes("text-subtitle2 mb-4")
@@ -399,15 +399,21 @@ def job_detail_page(job_id: str):
                                     metadata = json.load(f)
 
                             with ui.card().classes("p-2"):
-                                # Plot header with iteration info
+                                # Plot header - make filename human-readable
+                                # Convert "amino_acid_analysis.png" -> "Amino Acid Analysis"
+                                plot_title = plot_file.stem.replace('_', ' ').title()
+
                                 if metadata and metadata.get('iteration') is not None:
-                                    ui.label(f"Iteration {metadata['iteration']}: {plot_file.name}").classes("text-sm font-bold mb-2")
+                                    ui.label(f"Iteration {metadata['iteration']}: {plot_title}").classes("text-sm font-bold mb-2")
                                 else:
-                                    ui.label(plot_file.name).classes("text-sm font-bold mb-2")
+                                    ui.label(plot_title).classes("text-sm font-bold mb-2")
 
                                 # Claude's reasoning/description
                                 if metadata and metadata.get('description'):
                                     ui.label(f"🤔 {metadata['description']}").classes("text-sm text-blue-700 mb-2 italic")
+                                else:
+                                    # If no metadata, show filename as description
+                                    ui.label(f"📊 {plot_title}").classes("text-sm text-gray-600 mb-2 italic")
 
                                 # Display image
                                 ui.image(str(plot_file)).classes("w-full")
