@@ -247,11 +247,7 @@ Start your investigation by using execute_code to explore the data structure and
         # Parse JSON output
         response_data = json.loads(result.stdout)
         session_id = response_data.get('session_id')
-
-        if not session_id:
-            raise RuntimeError("No session_id in Claude response")
-
-        logger.info(f"Session started: {session_id}")
+        logger.info(f"Iteration 1 completed successfully (session: {session_id})")
 
         # Log iteration
         log_file = job_dir / "claude_iterations.log"
@@ -264,7 +260,13 @@ Start your investigation by using execute_code to explore the data structure and
         kg_path = job_dir / "knowledge_graph.json"
         increment_kg_iteration(kg_path)
 
-        # Iterations 2-N: Resume session
+        # Iterations 2-N: Resume session within batches, reset every 5 iterations
+        # Note: We use --resume for short-term memory but reset periodically to:
+        # 1. Prevent unbounded context growth over 10+ iterations
+        # 2. Reduce cost while maintaining continuity within batches
+        # 3. Agent gets reasoning context within a batch (5 iterations)
+        RESET_INTERVAL = 5  # Start fresh session every N iterations
+
         for iteration in range(2, max_iterations + 1):
             # Reload knowledge graph to see latest state
             kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
@@ -283,20 +285,32 @@ Continue your investigation using the MCP tools:
 
 Think step by step about what will provide the most insight."""
 
-            logger.info(f"Iteration {iteration}/{max_iterations}: Continuing session")
+            # Decide whether to resume or start fresh
+            should_reset = (iteration % RESET_INTERVAL == 1)
 
-            # Resume session (must pass --mcp-config again for tools to remain available)
-            # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
-            cmd = [
-                claude_cli,
-                '-p',
-                '--resume', session_id,
-                '--output-format', 'json',
-                '--mcp-config', str(mcp_config_path.absolute()),
-                '--allowedTools', 'mcp__shandy-tools__execute_code',
-                '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
-            ]
+            if should_reset:
+                logger.info(f"Iteration {iteration}/{max_iterations}: Starting fresh session (context reset)")
+                cmd = [
+                    claude_cli,
+                    '-p',
+                    '--output-format', 'json',
+                    '--mcp-config', str(mcp_config_path.absolute()),
+                    '--allowedTools', 'mcp__shandy-tools__execute_code',
+                    '--allowedTools', 'mcp__shandy-tools__search_pubmed',
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+                ]
+            else:
+                logger.info(f"Iteration {iteration}/{max_iterations}: Resuming session {session_id}")
+                cmd = [
+                    claude_cli,
+                    '-p',
+                    '--resume', session_id,
+                    '--output-format', 'json',
+                    '--mcp-config', str(mcp_config_path.absolute()),
+                    '--allowedTools', 'mcp__shandy-tools__execute_code',
+                    '--allowedTools', 'mcp__shandy-tools__search_pubmed',
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+                ]
 
             logger.info(f"Prompt length: {len(iteration_prompt)} characters")
             result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
@@ -309,6 +323,13 @@ Think step by step about what will provide the most insight."""
 
             # Parse response
             response_data = json.loads(result.stdout)
+
+            # Update session_id if we started a fresh session
+            if should_reset:
+                new_session_id = response_data.get('session_id')
+                if new_session_id:
+                    session_id = new_session_id
+                    logger.info(f"New session started: {session_id}")
 
             # Log iteration
             with open(log_file, "a") as f:
