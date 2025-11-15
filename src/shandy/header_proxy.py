@@ -19,8 +19,8 @@ class HeaderStripProxy(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(content_length)
 
-        # Get target URL from environment
-        target_url = os.getenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
+        # Get target URL from environment (use PROXY_TARGET_URL, fallback to ANTHROPIC_BASE_URL)
+        target_url = os.getenv('PROXY_TARGET_URL') or os.getenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
         full_url = f"{target_url}{self.path}"
 
         # Copy headers, excluding anthropic-beta
@@ -70,9 +70,10 @@ class HeaderStripProxy(http.server.BaseHTTPRequestHandler):
 
 def start_proxy(port=8765):
     """Start the proxy server."""
+    target = os.getenv('PROXY_TARGET_URL') or os.getenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
     with socketserver.TCPServer(("localhost", port), HeaderStripProxy) as httpd:
         logger.info(f"Header-stripping proxy listening on localhost:{port}")
-        logger.info(f"Forwarding to: {os.getenv('ANTHROPIC_BASE_URL')}")
+        logger.info(f"Forwarding to: {target}")
         httpd.serve_forever()
 
 

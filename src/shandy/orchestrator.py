@@ -160,8 +160,17 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
     logger.info(f"Starting discovery for job {job_id}")
 
+    # Configure proxy target before starting it
+    original_base_url = os.getenv('ANTHROPIC_BASE_URL', 'https://openrouter.ai/api/v1')
+    os.environ['PROXY_TARGET_URL'] = original_base_url
+
     # Start header-stripping proxy
     start_header_proxy()
+
+    # Configure Claude CLI to use the proxy
+    os.environ['ANTHROPIC_BASE_URL'] = 'http://localhost:8765/api/v1'
+    logger.info(f"Routing Claude CLI through proxy: http://localhost:8765/api/v1")
+    logger.info(f"Proxy will forward to: {original_base_url}")
 
     # Track initial spend
     start_spend = get_cborg_spend()
