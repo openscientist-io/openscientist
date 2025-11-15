@@ -140,9 +140,9 @@ def index_page():
             max_iterations = ui.number(
                 label="Max Iterations",
                 value=10,
-                min=5,
+                min=2,
                 max=100,
-                step=5
+                step=1
             ).classes("flex-1")
 
             use_skills = ui.checkbox("Use Skills", value=True)
@@ -253,9 +253,6 @@ def jobs_page():
     # Initial load
     refresh_jobs()
 
-    # Auto-refresh every 5 seconds
-    ui.timer(5.0, refresh_jobs)
-
 
 @ui.page("/job/{job_id}")
 def job_detail_page(job_id: str):
@@ -355,39 +352,54 @@ def job_detail_page(job_id: str):
                         ui.label("Knowledge graph not found").classes("text-gray-500")
 
             refresh_findings()
-            ui.timer(5.0, refresh_findings)
 
         # Hypotheses panel
         with ui.tab_panel(hypotheses_tab):
-            if kg_path.exists():
-                with open(kg_path) as f:
-                    kg = json.load(f)
+            hypotheses_container = ui.column().classes("w-full")
 
-                if kg["hypotheses"]:
-                    for i, hyp in enumerate(kg["hypotheses"], 1):
-                        with ui.card().classes("w-full"):
-                            ui.label(f"H{i}: {hyp['hypothesis']}").classes("text-subtitle1 font-bold")
-                            ui.label(f"Status: {hyp['status']}").classes("mt-2")
-                            if hyp["status"] == "tested":
-                                ui.label(f"Result: {hyp.get('result', 'N/A')}").classes("mt-2")
-                else:
-                    ui.label("No hypotheses yet").classes("text-gray-500")
+            def refresh_hypotheses():
+                hypotheses_container.clear()
+                with hypotheses_container:
+                    if kg_path.exists():
+                        import json
+                        with open(kg_path) as f:
+                            kg = json.load(f)
+
+                        if kg["hypotheses"]:
+                            for i, hyp in enumerate(kg["hypotheses"], 1):
+                                with ui.card().classes("w-full"):
+                                    ui.label(f"H{i}: {hyp['hypothesis']}").classes("text-subtitle1 font-bold")
+                                    ui.label(f"Status: {hyp['status']}").classes("mt-2")
+                                    if hyp["status"] == "tested":
+                                        ui.label(f"Result: {hyp.get('result', 'N/A')}").classes("mt-2")
+                        else:
+                            ui.label("No hypotheses yet").classes("text-gray-500")
+
+            refresh_hypotheses()
 
         # Literature panel
         with ui.tab_panel(literature_tab):
-            if kg_path.exists():
-                with open(kg_path) as f:
-                    kg = json.load(f)
+            literature_container = ui.column().classes("w-full")
 
-                if kg["literature"]:
-                    for i, lit in enumerate(kg["literature"], 1):
-                        with ui.card().classes("w-full"):
-                            ui.label(lit["title"]).classes("text-subtitle1 font-bold")
-                            ui.label(f"PMID: {lit.get('pmid', 'N/A')}").classes("text-sm text-gray-600")
-                            if "summary" in lit:
-                                ui.label(lit["summary"]).classes("mt-2")
-                else:
-                    ui.label("No literature yet").classes("text-gray-500")
+            def refresh_literature():
+                literature_container.clear()
+                with literature_container:
+                    if kg_path.exists():
+                        import json
+                        with open(kg_path) as f:
+                            kg = json.load(f)
+
+                        if kg["literature"]:
+                            for i, lit in enumerate(kg["literature"], 1):
+                                with ui.card().classes("w-full"):
+                                    ui.label(lit["title"]).classes("text-subtitle1 font-bold")
+                                    ui.label(f"PMID: {lit.get('pmid', 'N/A')}").classes("text-sm text-gray-600")
+                                    if "summary" in lit:
+                                        ui.label(lit["summary"]).classes("mt-2")
+                        else:
+                            ui.label("No literature yet").classes("text-gray-500")
+
+            refresh_literature()
 
         # Plots panel
         with ui.tab_panel(plots_tab):
@@ -453,22 +465,76 @@ def job_detail_page(job_id: str):
                         ui.label("No plots directory found").classes("text-gray-500")
 
             refresh_plots()
-            ui.timer(5.0, refresh_plots)
 
-        # Analysis log panel
+        # Analysis log panel - Narrative view
         with ui.tab_panel(log_tab):
-            if kg_path.exists():
-                with open(kg_path) as f:
-                    kg = json.load(f)
+            log_container = ui.column().classes("w-full")
 
-                if kg["analysis_log"]:
-                    with ui.scroll_area().classes("w-full h-96"):
+            def refresh_analysis_log():
+                log_container.clear()
+                with log_container:
+                    if kg_path.exists():
+                        import json
+                        from collections import defaultdict
+
+                        with open(kg_path) as f:
+                            kg = json.load(f)
+
+                        # Group entries by iteration
+                        by_iteration = defaultdict(list)
                         for entry in kg["analysis_log"]:
-                            with ui.card().classes("w-full mb-2"):
-                                ui.label(f"Iteration {entry['iteration']}").classes("text-sm font-bold")
-                                ui.label(entry["action"]).classes("text-sm")
-                else:
-                    ui.label("No analysis log yet").classes("text-gray-500")
+                            by_iteration[entry["iteration"]].append(entry)
+
+                        if by_iteration:
+                            with ui.scroll_area().classes("w-full h-96"):
+                                # Display in reverse order (newest first)
+                                for iteration in sorted(by_iteration.keys(), reverse=True):
+                                    entries = by_iteration[iteration]
+
+                                    with ui.expansion(f"Iteration {iteration}", icon="science").classes("w-full mb-4"):
+                                        # Count actions
+                                        code_executions = [e for e in entries if e["action"] == "execute_code"]
+                                        literature_searches = [e for e in entries if e["action"] == "search_pubmed"]
+                                        findings_recorded = [e for e in entries if e["action"] == "update_knowledge_graph"]
+
+                                        # Summary
+                                        ui.label(f"**What I did in this iteration:**").classes("mb-2")
+                                        actions_summary = []
+                                        if code_executions:
+                                            actions_summary.append(f"Ran {len(code_executions)} analyses")
+                                        if literature_searches:
+                                            actions_summary.append(f"Searched {len(literature_searches)} literature queries")
+                                        if findings_recorded:
+                                            actions_summary.append(f"Recorded {len(findings_recorded)} findings")
+                                        ui.label(" • ".join(actions_summary)).classes("text-gray-700 mb-4")
+
+                                        # Find plots from this iteration
+                                        plots_dir = job_dir / "plots"
+                                        iteration_plots = []
+                                        if plots_dir.exists():
+                                            for plot_file in plots_dir.glob("*.png"):
+                                                metadata_file = plot_file.with_suffix('.json')
+                                                if metadata_file.exists():
+                                                    with open(metadata_file) as mf:
+                                                        metadata = json.load(mf)
+                                                    if metadata.get("iteration") == iteration:
+                                                        iteration_plots.append((plot_file, metadata))
+
+                                        # Show plots if any
+                                        if iteration_plots:
+                                            ui.label(f"**Plots Generated ({len(iteration_plots)}):**").classes("mt-4 mb-2")
+                                            for plot_file, metadata in iteration_plots:
+                                                plot_title = plot_file.stem.replace('_', ' ').title()
+                                                description = metadata.get('description', plot_title)
+
+                                                with ui.expansion(f"{plot_title}", icon="insert_chart").classes("w-full mb-2").props("dense"):
+                                                    ui.label(f"🤔 {description}").classes("text-sm text-blue-700 mb-2 italic")
+                                                    plot_url = f"/{plot_file}"
+                                                    ui.image(plot_url).classes("w-full max-w-2xl")
+                        else:
+                            ui.label("No analysis log yet").classes("text-gray-500")
+
+            refresh_analysis_log()
 
         # Final report panel
         with ui.tab_panel(report_tab):

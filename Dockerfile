@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI via npm
+# Install Claude Code CLI via npm (beta header issue fixed via proxy)
 RUN npm install -g @anthropic-ai/claude-code
 
 # Set working directory

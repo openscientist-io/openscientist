@@ -9,6 +9,8 @@ import json
 import logging
 import os
 import subprocess
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -18,6 +20,17 @@ from .knowledge_graph import KnowledgeGraph
 from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
 
 logger = logging.getLogger(__name__)
+
+
+def start_header_proxy():
+    """Start HTTP proxy to strip anthropic-beta headers."""
+    from .header_proxy import start_proxy
+
+    # Start proxy in background thread
+    proxy_thread = threading.Thread(target=lambda: start_proxy(port=8765), daemon=True)
+    proxy_thread.start()
+    time.sleep(1)  # Give proxy time to start
+    logger.info("Started header-stripping proxy on localhost:8765")
 
 
 def increment_kg_iteration(kg_path: Path) -> None:
@@ -146,6 +159,9 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
         data_file = data_file.absolute()
 
     logger.info(f"Starting discovery for job {job_id}")
+
+    # Start header-stripping proxy
+    start_header_proxy()
 
     # Track initial spend
     start_spend = get_cborg_spend()
@@ -286,7 +302,9 @@ Think step by step about what will provide the most insight."""
             result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
 
             if result.returncode != 0:
-                logger.error(f"Iteration {iteration} failed: {result.stderr}")
+                logger.error(f"Iteration {iteration} failed (rc={result.returncode})")
+                logger.error(f"  stderr: {result.stderr}")
+                logger.error(f"  stdout: {result.stdout[:1000]}")
                 break
 
             # Parse response
@@ -315,12 +333,28 @@ Think step by step about what will provide the most insight."""
         logger.info("Generating final report...")
         kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
 
+        # Build concise summary instead of full JSON dump
+        findings_summary = "\n\n".join([
+            f"**Finding {i+1}: {f['title']}**\n"
+            f"Evidence: {f['evidence']}\n"
+            f"Interpretation: {f.get('biological_interpretation', 'N/A')}"
+            for i, f in enumerate(kg.data['findings'])
+        ])
+
+        literature_summary = f"Reviewed {len(kg.data['literature'])} papers from PubMed"
+
         report_prompt = f"""You have completed autonomous discovery. Generate a final report summarizing your findings.
 
 Research Question: {config['research_question']}
 
-Knowledge Graph:
-{json.dumps(kg.data, indent=2)}
+## Iterations Completed: {kg.data['iteration']}
+
+## Findings ({len(kg.data['findings'])}):
+{findings_summary}
+
+## Literature: {literature_summary}
+
+## Analysis Log: {len(kg.data['analysis_log'])} actions performed across {kg.data['iteration']} iterations
 
 Please create a comprehensive markdown report with:
 1. Executive Summary (2-3 paragraphs)
@@ -340,6 +374,7 @@ Format as professional scientific markdown."""
         ]
 
         logger.info(f"Report prompt length: {len(report_prompt)} characters")
+        # No special environment needed - fresh session doesn't send beta header
         result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
 
         if result.returncode == 0:
@@ -349,7 +384,9 @@ Format as professional scientific markdown."""
                 f.write(report_content)
             logger.info("Final report generated")
         else:
-            logger.error(f"Report generation failed: {result.stderr}")
+            logger.error(f"Report generation failed (rc={result.returncode})")
+            logger.error(f"  stderr: {result.stderr}")
+            logger.error(f"  stdout: {result.stdout[:1000]}")
 
         # Track final cost (calculate actual cost even if budget was exceeded)
         try:
