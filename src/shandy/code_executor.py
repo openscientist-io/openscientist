@@ -187,14 +187,19 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
     original_savefig = namespace['plt'].savefig
 
     def savefig_hook(filename, *args, **kwargs):
-        """Hook to intercept plt.savefig() and save metadata."""
-        # Call original savefig
-        result = original_savefig(filename, *args, **kwargs)
-
-        # Save metadata alongside the plot
+        """Hook to intercept plt.savefig() and save to plots_dir with metadata."""
         import json
         from pathlib import Path
+
+        # Redirect relative paths to plots_dir
         plot_path = Path(filename)
+        if not plot_path.is_absolute():
+            plot_path = plots_dir / plot_path.name
+
+        # Call original savefig with redirected path
+        result = original_savefig(str(plot_path), *args, **kwargs)
+
+        # Save metadata alongside the plot
         metadata_path = plot_path.with_suffix('.json')
 
         metadata = {
