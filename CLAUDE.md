@@ -18,7 +18,10 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 **execute_code** - Run Python code to analyze data
 - Available libraries: pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx
 - Data available as `data` variable (pandas DataFrame)
-- Plots are automatically saved
+- Plots are automatically saved with metadata
+- **IMPORTANT**: Use the `description` parameter to explain what you're investigating
+- Example: `execute_code(code='...', description='Testing whether carnosine levels correlate with oxidative stress markers')`
+- This description will be shown alongside your plots to explain your scientific reasoning
 - Use this for: statistical tests, visualizations, exploratory analysis
 
 **search_pubmed** - Search scientific literature

@@ -183,6 +183,34 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
     # Replace plt.show() with our hook
     namespace['plt'].show = save_plot_hook
 
+    # Also intercept plt.savefig() to save metadata for custom-named plots
+    original_savefig = namespace['plt'].savefig
+
+    def savefig_hook(filename, *args, **kwargs):
+        """Hook to intercept plt.savefig() and save metadata."""
+        # Call original savefig
+        result = original_savefig(filename, *args, **kwargs)
+
+        # Save metadata alongside the plot
+        import json
+        from pathlib import Path
+        plot_path = Path(filename)
+        metadata_path = plot_path.with_suffix('.json')
+
+        metadata = {
+            "filename": plot_path.name,
+            "iteration": iteration,
+            "description": description if description else f"Analysis: {plot_path.stem.replace('_', ' ').title()}",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+
+        return result
+
+    namespace['plt'].savefig = savefig_hook
+
     start_time = time.time()
 
     try:
