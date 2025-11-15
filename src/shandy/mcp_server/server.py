@@ -46,6 +46,9 @@ def execute_code(code: str, description: str = "") -> str:
     """
     global DATA, JOB_DIR, KG
 
+    # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
+    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+
     # Create plots directory
     plots_dir = JOB_DIR / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +84,9 @@ def search_pubmed(query: str, max_results: int = 10) -> str:
         Formatted list of papers with titles, abstracts, and PMIDs
     """
     global JOB_DIR, KG
+
+    # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
+    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
 
     # Search PubMed
     papers = search_pm(query, max_results=max_results)
@@ -125,6 +131,9 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
         Confirmation message with finding ID
     """
     global JOB_DIR, KG
+
+    # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
+    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
 
     # Add finding
     finding_id = KG.add_finding(title=title, evidence=evidence)
