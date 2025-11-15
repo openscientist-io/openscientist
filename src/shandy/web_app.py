@@ -402,7 +402,7 @@ def job_detail_page(job_id: str):
                         plot_files = sorted(plots_dir.glob("*.png"))
 
                         if plot_files:
-                            ui.label(f"Generated {len(plot_files)} plot(s) showing Claude's analysis").classes("text-subtitle2 mb-4")
+                            ui.label(f"Generated {len(plot_files)} plot(s) showing what I'm thinking").classes("text-subtitle2 mb-4")
 
                             # Display plots in a grid
                             with ui.grid(columns=2).classes("w-full gap-4"):
