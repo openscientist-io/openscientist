@@ -45,7 +45,7 @@ class KnowledgeGraph:
                 "started_at": datetime.now().isoformat()
             },
             "data_summary": {},
-            "iteration": 0,
+            "iteration": 1,
             "hypotheses": [],
             "findings": [],
             "literature": [],

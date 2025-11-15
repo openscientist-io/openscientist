@@ -116,7 +116,7 @@ def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str,
     ]
 
     # Guidance based on progress
-    if iteration == 0:
+    if iteration == 1:
         prompt_parts.extend([
             "This is your **first iteration**. Start by:",
             "1. Understanding the data structure and available variables",
