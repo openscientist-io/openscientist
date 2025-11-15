@@ -320,30 +320,38 @@ def job_detail_page(job_id: str):
         log_tab = ui.tab("Analysis Log")
         report_tab = ui.tab("Final Report")
 
+    job_dir = job_manager.jobs_dir / job_id
+    kg_path = job_dir / "knowledge_graph.json"
+
     with ui.tab_panels(tabs, value=findings_tab).classes("w-full"):
         # Findings panel
         with ui.tab_panel(findings_tab):
-            job_dir = job_manager.jobs_dir / job_id
-            kg_path = job_dir / "knowledge_graph.json"
+            findings_container = ui.column().classes("w-full")
 
-            if kg_path.exists():
-                import json
-                with open(kg_path) as f:
-                    kg = json.load(f)
+            def refresh_findings():
+                findings_container.clear()
+                with findings_container:
+                    if kg_path.exists():
+                        import json
+                        with open(kg_path) as f:
+                            kg = json.load(f)
 
-                if kg["findings"]:
-                    for i, finding in enumerate(kg["findings"], 1):
-                        with ui.card().classes("w-full"):
-                            ui.label(f"Finding {i}: {finding['title']}").classes("text-subtitle1 font-bold")
-                            ui.label(finding["evidence"]).classes("mt-2")
-                            # Show biological interpretation if available
-                            interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
-                            if interpretation:
-                                ui.label(interpretation).classes("mt-2 text-gray-600")
-                else:
-                    ui.label("No findings yet").classes("text-gray-500")
-            else:
-                ui.label("Knowledge graph not found").classes("text-gray-500")
+                        if kg["findings"]:
+                            for i, finding in enumerate(kg["findings"], 1):
+                                with ui.card().classes("w-full"):
+                                    ui.label(f"Finding {i}: {finding['title']}").classes("text-subtitle1 font-bold")
+                                    ui.label(finding["evidence"]).classes("mt-2")
+                                    # Show biological interpretation if available
+                                    interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                    if interpretation:
+                                        ui.label(interpretation).classes("mt-2 text-gray-600")
+                        else:
+                            ui.label("No findings yet").classes("text-gray-500")
+                    else:
+                        ui.label("Knowledge graph not found").classes("text-gray-500")
+
+            refresh_findings()
+            ui.timer(5.0, refresh_findings)
 
         # Hypotheses panel
         with ui.tab_panel(hypotheses_tab):
@@ -379,59 +387,67 @@ def job_detail_page(job_id: str):
 
         # Plots panel
         with ui.tab_panel(plots_tab):
-            plots_dir = job_dir / "plots"
+            plots_container = ui.column().classes("w-full")
 
-            if plots_dir.exists():
-                plot_files = sorted(plots_dir.glob("*.png"))
+            def refresh_plots():
+                plots_container.clear()
+                with plots_container:
+                    plots_dir = job_dir / "plots"
 
-                if plot_files:
-                    ui.label(f"Generated {len(plot_files)} plot(s) showing Claude's analysis").classes("text-subtitle2 mb-4")
+                    if plots_dir.exists():
+                        plot_files = sorted(plots_dir.glob("*.png"))
 
-                    # Display plots in a grid
-                    with ui.grid(columns=2).classes("w-full gap-4"):
-                        for plot_file in plot_files:
-                            # Load metadata if available
-                            metadata_file = plot_file.with_suffix('.json')
-                            metadata = None
-                            if metadata_file.exists():
-                                import json
-                                with open(metadata_file) as f:
-                                    metadata = json.load(f)
+                        if plot_files:
+                            ui.label(f"Generated {len(plot_files)} plot(s) showing Claude's analysis").classes("text-subtitle2 mb-4")
 
-                            with ui.card().classes("p-2"):
-                                # Plot header - make filename human-readable
-                                # Convert "amino_acid_analysis.png" -> "Amino Acid Analysis"
-                                plot_title = plot_file.stem.replace('_', ' ').title()
+                            # Display plots in a grid
+                            with ui.grid(columns=2).classes("w-full gap-4"):
+                                for plot_file in plot_files:
+                                    # Load metadata if available
+                                    metadata_file = plot_file.with_suffix('.json')
+                                    metadata = None
+                                    if metadata_file.exists():
+                                        import json
+                                        with open(metadata_file) as f:
+                                            metadata = json.load(f)
 
-                                if metadata and metadata.get('iteration') is not None:
-                                    ui.label(f"Iteration {metadata['iteration']}: {plot_title}").classes("text-sm font-bold mb-2")
-                                else:
-                                    ui.label(plot_title).classes("text-sm font-bold mb-2")
+                                    with ui.card().classes("p-2"):
+                                        # Plot header - make filename human-readable
+                                        # Convert "amino_acid_analysis.png" -> "Amino Acid Analysis"
+                                        plot_title = plot_file.stem.replace('_', ' ').title()
 
-                                # Claude's reasoning/description
-                                if metadata and metadata.get('description'):
-                                    ui.label(f"🤔 {metadata['description']}").classes("text-sm text-blue-700 mb-2 italic")
-                                else:
-                                    # If no metadata, show filename as description
-                                    ui.label(f"📊 {plot_title}").classes("text-sm text-gray-600 mb-2 italic")
+                                        if metadata and metadata.get('iteration') is not None:
+                                            ui.label(f"Iteration {metadata['iteration']}: {plot_title}").classes("text-sm font-bold mb-2")
+                                        else:
+                                            ui.label(plot_title).classes("text-sm font-bold mb-2")
 
-                                # Display image
-                                ui.image(str(plot_file)).classes("w-full")
+                                        # Claude's reasoning/description
+                                        if metadata and metadata.get('description'):
+                                            ui.label(f"🤔 {metadata['description']}").classes("text-sm text-blue-700 mb-2 italic")
+                                        else:
+                                            # If no metadata, show filename as description
+                                            ui.label(f"📊 {plot_title}").classes("text-sm text-gray-600 mb-2 italic")
 
-                                # Timestamp
-                                if metadata and metadata.get('timestamp'):
-                                    ui.label(f"Created: {metadata['timestamp']}").classes("text-xs text-gray-500 mt-2")
+                                        # Display image
+                                        ui.image(str(plot_file)).classes("w-full")
 
-                                # Download button
-                                ui.button(
-                                    "Download",
-                                    on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
-                                    icon="download"
-                                ).props("size=sm flat")
-                else:
-                    ui.label("No plots generated yet").classes("text-gray-500")
-            else:
-                ui.label("No plots directory found").classes("text-gray-500")
+                                        # Timestamp
+                                        if metadata and metadata.get('timestamp'):
+                                            ui.label(f"Created: {metadata['timestamp']}").classes("text-xs text-gray-500 mt-2")
+
+                                        # Download button
+                                        ui.button(
+                                            "Download",
+                                            on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                                            icon="download"
+                                        ).props("size=sm flat")
+                        else:
+                            ui.label("No plots generated yet").classes("text-gray-500")
+                    else:
+                        ui.label("No plots directory found").classes("text-gray-500")
+
+            refresh_plots()
+            ui.timer(5.0, refresh_plots)
 
         # Analysis log panel
         with ui.tab_panel(log_tab):
