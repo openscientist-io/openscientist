@@ -23,13 +23,23 @@ class HeaderStripProxy(http.server.BaseHTTPRequestHandler):
         target_url = os.getenv('PROXY_TARGET_URL') or os.getenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
         full_url = f"{target_url}{self.path}"
 
-        # Copy headers, excluding anthropic-beta
+        # Parse target to get correct Host header
+        from urllib.parse import urlparse
+        parsed = urlparse(target_url)
+        target_host = parsed.netloc
+
+        # Copy headers, excluding anthropic-beta and replacing Host
         headers = {}
         for key, value in self.headers.items():
-            if key.lower() != 'anthropic-beta':
+            if key.lower() == 'anthropic-beta':
+                continue  # Skip beta header
+            elif key.lower() == 'host':
+                headers['Host'] = target_host  # Replace with target host
+            else:
                 headers[key] = value
 
         logger.debug(f"Proxying POST to {full_url}")
+        logger.debug(f"Target host: {target_host}")
         logger.debug(f"Stripped headers: {[k for k in self.headers.keys() if k.lower() == 'anthropic-beta']}")
 
         try:
