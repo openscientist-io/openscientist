@@ -141,7 +141,21 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
 
     # Track plots
     plots_dir.mkdir(parents=True, exist_ok=True)
-    plot_counter = [0]  # Use list to allow modification in nested function
+
+    # Find highest existing plot number to avoid overwriting
+    existing_plots = list(plots_dir.glob("plot_*.png"))
+    if existing_plots:
+        plot_numbers = []
+        for p in existing_plots:
+            try:
+                # Extract number from plot_N.png filename
+                num = int(p.stem.split('_')[1])
+                plot_numbers.append(num)
+            except (IndexError, ValueError):
+                pass
+        plot_counter = [max(plot_numbers)] if plot_numbers else [0]
+    else:
+        plot_counter = [0]
 
     def save_plot_hook():
         """Hook to intercept plt.show() and save plots instead."""

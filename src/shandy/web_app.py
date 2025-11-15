@@ -316,6 +316,7 @@ def job_detail_page(job_id: str):
         findings_tab = ui.tab("Findings")
         hypotheses_tab = ui.tab("Hypotheses")
         literature_tab = ui.tab("Literature")
+        plots_tab = ui.tab("Plots")
         log_tab = ui.tab("Analysis Log")
         report_tab = ui.tab("Final Report")
 
@@ -375,6 +376,37 @@ def job_detail_page(job_id: str):
                                 ui.label(lit["summary"]).classes("mt-2")
                 else:
                     ui.label("No literature yet").classes("text-gray-500")
+
+        # Plots panel
+        with ui.tab_panel(plots_tab):
+            plots_dir = job_dir / "plots"
+
+            if plots_dir.exists():
+                plot_files = sorted(plots_dir.glob("plot_*.png"))
+
+                if plot_files:
+                    ui.label(f"Generated {len(plot_files)} plot(s) showing Claude's analysis").classes("text-subtitle2 mb-4")
+
+                    # Display plots in a grid
+                    with ui.grid(columns=2).classes("w-full gap-4"):
+                        for plot_file in plot_files:
+                            with ui.card().classes("p-2"):
+                                # Plot title (filename)
+                                ui.label(plot_file.name).classes("text-sm font-bold mb-2")
+
+                                # Display image
+                                ui.image(str(plot_file)).classes("w-full")
+
+                                # Download button
+                                ui.button(
+                                    "Download",
+                                    on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                                    icon="download"
+                                ).props("size=sm flat")
+                else:
+                    ui.label("No plots generated yet").classes("text-gray-500")
+            else:
+                ui.label("No plots directory found").classes("text-gray-500")
 
         # Analysis log panel
         with ui.tab_panel(log_tab):
