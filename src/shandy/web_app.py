@@ -390,12 +390,31 @@ def job_detail_page(job_id: str):
                     # Display plots in a grid
                     with ui.grid(columns=2).classes("w-full gap-4"):
                         for plot_file in plot_files:
+                            # Load metadata if available
+                            metadata_file = plot_file.with_suffix('.json')
+                            metadata = None
+                            if metadata_file.exists():
+                                import json
+                                with open(metadata_file) as f:
+                                    metadata = json.load(f)
+
                             with ui.card().classes("p-2"):
-                                # Plot title (filename)
-                                ui.label(plot_file.name).classes("text-sm font-bold mb-2")
+                                # Plot header with iteration info
+                                if metadata and metadata.get('iteration') is not None:
+                                    ui.label(f"Iteration {metadata['iteration']}: {plot_file.name}").classes("text-sm font-bold mb-2")
+                                else:
+                                    ui.label(plot_file.name).classes("text-sm font-bold mb-2")
+
+                                # Claude's reasoning/description
+                                if metadata and metadata.get('description'):
+                                    ui.label(f"🤔 {metadata['description']}").classes("text-sm text-blue-700 mb-2 italic")
 
                                 # Display image
                                 ui.image(str(plot_file)).classes("w-full")
+
+                                # Timestamp
+                                if metadata and metadata.get('timestamp'):
+                                    ui.label(f"Created: {metadata['timestamp']}").classes("text-xs text-gray-500 mt-2")
 
                                 # Download button
                                 ui.button(

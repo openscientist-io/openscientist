@@ -30,7 +30,7 @@ mcp = FastMCP("shandy-tools")
 
 
 @mcp.tool()
-def execute_code(code: str) -> str:
+def execute_code(code: str, description: str = "") -> str:
     """
     Execute Python code to analyze data.
 
@@ -39,6 +39,7 @@ def execute_code(code: str) -> str:
 
     Args:
         code: Python code to execute
+        description: Optional description of what you're investigating (e.g., "Testing hypothesis about gene upregulation in condition X")
 
     Returns:
         Formatted execution result with output, plots, and any errors
@@ -50,7 +51,7 @@ def execute_code(code: str) -> str:
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute code
-    result = exec_code(code, DATA, plots_dir, timeout=60)
+    result = exec_code(code, DATA, plots_dir, timeout=60, description=description, iteration=KG.data["iteration"])
 
     # Log to knowledge graph
     KG.log_analysis(

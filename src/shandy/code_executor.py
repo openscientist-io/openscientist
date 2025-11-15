@@ -70,7 +70,7 @@ def validate_imports(code: str, allowed_imports: List[str]) -> None:
 
 
 def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
-                timeout: int = 60) -> Dict[str, Any]:
+                timeout: int = 60, description: str = "", iteration: int = 0) -> Dict[str, Any]:
     """
     Execute Python code in sandboxed environment.
 
@@ -86,6 +86,8 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
         data: DataFrame available as `data` variable
         plots_dir: Directory to save generated plots
         timeout: Max execution time in seconds (default: 60)
+        description: Optional description of what's being investigated
+        iteration: Current iteration number
 
     Returns:
         Dictionary with execution results:
@@ -163,6 +165,19 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
         plot_path = plots_dir / f"plot_{plot_counter[0]}.png"
         plt.savefig(plot_path, bbox_inches='tight', dpi=150)
         plt.close()
+
+        # Save plot metadata (description + iteration)
+        metadata_path = plots_dir / f"plot_{plot_counter[0]}.json"
+        import json
+        metadata = {
+            "plot_number": plot_counter[0],
+            "iteration": iteration,
+            "description": description,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+
         return str(plot_path)
 
     # Replace plt.show() with our hook
