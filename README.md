@@ -163,6 +163,37 @@ docker-compose logs -f
 docker-compose exec shandy python -m shandy.job_manager list
 ```
 
+## Troubleshooting
+
+### Code changes not appearing in web UI
+
+If you've updated the code but don't see changes in the web interface:
+
+```bash
+# Rebuild Docker image and restart
+make rebuild
+```
+
+This rebuilds the Docker image with your latest code changes and restarts the container.
+
+### Form fields showing old default values
+
+If the web UI shows old default values (e.g., 50 iterations instead of 10), this is browser caching. Solutions:
+
+- **Hard refresh**: Cmd+Shift+R (Mac) or Ctrl+Shift+R (Windows/Linux)
+- **Clear cache**: Clear browser cache for localhost:8080
+- **Incognito mode**: Open the UI in a private/incognito window
+
+The actual job will still use the correct defaults from the code - this only affects what's displayed in the form.
+
+### Missing tabs or features
+
+If tabs like "Plots" are missing from the job detail page, the Docker container needs to be rebuilt:
+
+```bash
+make rebuild
+```
+
 ## Documentation
 
 - [Design Document](notes/shandy-autonomous-loop-design.md)
