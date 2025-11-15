@@ -24,6 +24,10 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     """Initialize the web application."""
     global job_manager
     job_manager = JobManager(jobs_dir=jobs_dir, max_concurrent=max_concurrent)
+
+    # Add static file serving for job plots
+    app.add_static_files('/jobs', str(jobs_dir))
+
     logger.info("Web app initialized")
 
 
@@ -428,8 +432,10 @@ def job_detail_page(job_id: str):
                                             # If no metadata, show filename as description
                                             ui.label(f"📊 {plot_title}").classes("text-sm text-gray-600 mb-2 italic")
 
-                                        # Display image
-                                        ui.image(str(plot_file)).classes("w-full")
+                                        # Display image - convert file path to URL path
+                                        # jobs/job_123/plots/plot.png -> /jobs/job_123/plots/plot.png
+                                        plot_url = f"/{plot_file}"
+                                        ui.image(plot_url).classes("w-full")
 
                                         # Timestamp
                                         if metadata and metadata.get('timestamp'):
