@@ -203,9 +203,10 @@ Start your investigation by using execute_code to explore the data structure and
         logger.info(f"Starting discovery loop with Claude CLI headless mode")
 
         # Iteration 1: Start session
+        # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
         cmd = [
             claude_cli,
-            '-p', initial_prompt,
+            '-p',
             '--output-format', 'json',
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
@@ -215,7 +216,8 @@ Start your investigation by using execute_code to explore the data structure and
 
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
         logger.info(f"Running command: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+        logger.info(f"Prompt length: {len(initial_prompt)} characters")
+        result = subprocess.run(cmd, input=initial_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
 
         logger.info(f"Claude CLI return code: {result.returncode}")
         logger.info(f"Claude CLI stdout length: {len(result.stdout)}")
@@ -268,9 +270,10 @@ Think step by step about what will provide the most insight."""
             logger.info(f"Iteration {iteration}/{max_iterations}: Continuing session")
 
             # Resume session (must pass --mcp-config again for tools to remain available)
+            # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
             cmd = [
                 claude_cli,
-                '-p', iteration_prompt,
+                '-p',
                 '--resume', session_id,
                 '--output-format', 'json',
                 '--mcp-config', str(mcp_config_path.absolute()),
@@ -279,7 +282,8 @@ Think step by step about what will provide the most insight."""
                 '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+            logger.info(f"Prompt length: {len(iteration_prompt)} characters")
+            result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
 
             if result.returncode != 0:
                 logger.error(f"Iteration {iteration} failed: {result.stderr}")
@@ -328,13 +332,15 @@ Please create a comprehensive markdown report with:
 Format as professional scientific markdown."""
 
         # Generate report (single call, no session needed)
+        # Note: Pass prompt via stdin to avoid ARG_MAX limits with large knowledge graphs
         cmd = [
             claude_cli,
-            '-p', report_prompt,
+            '-p',
             '--output-format', 'text'
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+        logger.info(f"Report prompt length: {len(report_prompt)} characters")
+        result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
 
         if result.returncode == 0:
             report_content = result.stdout
