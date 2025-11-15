@@ -22,17 +22,6 @@ from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
 logger = logging.getLogger(__name__)
 
 
-def start_header_proxy():
-    """Start HTTP proxy to strip anthropic-beta headers."""
-    from .header_proxy import start_proxy
-
-    # Start proxy in background thread
-    proxy_thread = threading.Thread(target=lambda: start_proxy(port=8765), daemon=True)
-    proxy_thread.start()
-    time.sleep(1)  # Give proxy time to start
-    logger.info("Started header-stripping proxy on localhost:8765")
-
-
 def increment_kg_iteration(kg_path: Path) -> None:
     """
     Safely increment the knowledge graph iteration counter with file locking.
@@ -160,17 +149,7 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
     logger.info(f"Starting discovery for job {job_id}")
 
-    # Configure proxy target before starting it
-    original_base_url = os.getenv('ANTHROPIC_BASE_URL', 'https://openrouter.ai/api/v1')
-    os.environ['PROXY_TARGET_URL'] = original_base_url
-
-    # Start header-stripping proxy
-    start_header_proxy()
-
-    # Configure Claude CLI to use the proxy
-    os.environ['ANTHROPIC_BASE_URL'] = 'http://localhost:8765/api/v1'
-    logger.info(f"Routing Claude CLI through proxy: http://localhost:8765/api/v1")
-    logger.info(f"Proxy will forward to: {original_base_url}")
+    # No proxy needed - using Claude Code v2.0.37 which doesn't send beta header
 
     # Track initial spend
     start_spend = get_cborg_spend()
