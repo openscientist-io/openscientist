@@ -40,7 +40,7 @@ class JobInfo:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     failed_at: Optional[str] = None
-    max_iterations: int = 50
+    max_iterations: int = 10
     iterations_completed: int = 0
     findings_count: int = 0
     cost_usd: Optional[float] = None
@@ -95,7 +95,7 @@ class JobManager:
         job_id: str,
         research_question: str,
         data_files: List[Path],
-        max_iterations: int = 50,
+        max_iterations: int = 10,
         use_skills: bool = True,
         auto_start: bool = True
     ) -> JobInfo:

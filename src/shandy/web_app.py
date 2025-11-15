@@ -135,7 +135,7 @@ def index_page():
         with ui.row().classes("w-full"):
             max_iterations = ui.number(
                 label="Max Iterations",
-                value=50,
+                value=10,
                 min=5,
                 max=100,
                 step=5
