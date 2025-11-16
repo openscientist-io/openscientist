@@ -50,7 +50,8 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 
 ```bash
 # Clone the repository
-cd ad-swarm
+git clone <repository-url>
+cd shandy
 
 # Create .env file with your CBORG API token
 echo "ANTHROPIC_AUTH_TOKEN=your-token-here" > .env
@@ -88,7 +89,7 @@ Open your browser to `http://localhost:8080`
 ## Project Structure
 
 ```
-ad-swarm/
+shandy/
 ├── src/shandy/            # Core Python package
 │   ├── orchestrator.py    # Discovery loop orchestrator
 │   ├── job_manager.py     # Job lifecycle management
@@ -106,7 +107,8 @@ ad-swarm/
 ├── jobs/                  # Job results (created at runtime)
 ├── notes/                 # Design documents
 ├── Dockerfile             # Docker image definition
-└── docker-compose.yml     # Container orchestration
+├── docker-compose.yml     # Container orchestration
+└── Makefile               # Build and deployment commands
 ```
 
 ## Configuration
@@ -231,7 +233,7 @@ make rebuild
 
 ## Documentation
 
-- [Design Document](notes/shandy-autonomous-loop-design.md)
+- [Design Document](notes/design-autonomous-loop.md)
 - [Skills Documentation](.claude/skills/)
 
 ## License
