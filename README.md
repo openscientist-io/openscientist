@@ -106,8 +106,7 @@ ad-swarm/
 ├── jobs/                  # Job results (created at runtime)
 ├── notes/                 # Design documents
 ├── Dockerfile             # Docker image definition
-├── docker-compose.yml     # Container orchestration
-└── DEPLOYMENT.md          # Deployment guide
+└── docker-compose.yml     # Container orchestration
 ```
 
 ## Configuration
@@ -163,6 +162,42 @@ docker-compose logs -f
 docker-compose exec shandy python -m shandy.job_manager list
 ```
 
+## Deployment
+
+### Production Deployment
+
+The Makefile includes a generic `deploy` target that works with any server:
+
+```bash
+# Deploy with default settings (gassh)
+make deploy
+
+# Deploy to custom server
+make deploy DEPLOY_HOST=myserver DEPLOY_DIR=~/myapp
+```
+
+The deploy target:
+1. Pulls latest code on the remote server
+2. Checks that .env exists (warns if missing)
+3. Builds and restarts Docker containers
+
+**Prerequisites on production server:**
+1. Clone the repository to the deployment directory
+2. Create `.env` from `.env.example` and configure:
+   - `ANTHROPIC_AUTH_TOKEN` - Your API token
+   - `APP_PASSWORD_HASH` - BCrypt hash for login password
+   - Other settings from `.env.example`
+3. Stop any existing application on the target port
+
+**Custom docker-compose files:**
+
+For production deployments with different port mappings or configurations:
+
+1. Create `docker-compose.production.yml` (gitignored by default)
+2. Use it with: `COMPOSE_FILE=docker-compose.production.yml make start`
+
+Server-specific deployment details are kept private (not in git).
+
 ## Troubleshooting
 
 ### Code changes not appearing in web UI
@@ -197,7 +232,6 @@ make rebuild
 ## Documentation
 
 - [Design Document](notes/shandy-autonomous-loop-design.md)
-- [Deployment Guide](DEPLOYMENT.md)
 - [Skills Documentation](.claude/skills/)
 
 ## License

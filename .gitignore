@@ -38,6 +38,10 @@ env/
 # Environment variables
 .env
 
+# Deployment-specific configs (keep private)
+docker-compose.*.yml
+DEPLOY_*.md
+
 # Logs
 logs/*.log
 
