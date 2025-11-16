@@ -38,6 +38,8 @@ EXPOSE 8080
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV ANTHROPIC_AUTH_TOKEN=""
+ENV DISABLE_AUTH="false"
+ENV APP_PASSWORD_HASH=""
 
 # Run web app
 CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]

@@ -13,6 +13,8 @@ services:
       - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL}
       - DISABLE_NON_ESSENTIAL_MODEL_CALLS=${DISABLE_NON_ESSENTIAL_MODEL_CALLS}
       - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
+      - DISABLE_AUTH=${DISABLE_AUTH:-false}
+      - APP_PASSWORD_HASH=${APP_PASSWORD_HASH}
     volumes:
       # Persist jobs directory
       - ./jobs:/app/jobs

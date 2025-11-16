@@ -245,8 +245,10 @@ Start your investigation by using execute_code to explore the data structure and
             f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
         # Increment iteration counter with file locking to prevent race conditions
+        # Only increment if there are more iterations to come
         kg_path = job_dir / "knowledge_graph.json"
-        increment_kg_iteration(kg_path)
+        if max_iterations > 1:
+            increment_kg_iteration(kg_path)
 
         # Iterations 2-N: Resume session within batches, reset every 5 iterations
         # Note: We use --resume for short-term memory but reset periodically to:
@@ -326,7 +328,9 @@ Think step by step about what will provide the most insight."""
                 f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
 
             # Increment iteration counter with file locking to prevent race conditions
-            increment_kg_iteration(kg_path)
+            # Only increment if this is not the last iteration
+            if iteration < max_iterations:
+                increment_kg_iteration(kg_path)
 
             # Track costs
             try:

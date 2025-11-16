@@ -4,17 +4,32 @@ NiceGUI web interface for SHANDY.
 Provides web UI for job submission, monitoring, and results viewing.
 """
 
+import bcrypt
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Optional
 
 from nicegui import app, ui
+from dotenv import load_dotenv
 
 from .job_manager import JobManager, JobStatus
 from .cost_tracker import get_budget_info
 
+# Load environment variables
+load_dotenv()
+
 logger = logging.getLogger(__name__)
+
+# Authentication settings
+DISABLE_AUTH = os.getenv("DISABLE_AUTH", "false").lower() == "true"
+PASSWORD_HASH = os.getenv("APP_PASSWORD_HASH", "").encode()
+STORAGE_SECRET = os.getenv("STORAGE_SECRET", "change-this-to-a-random-secret-string-in-production")
+
+if DISABLE_AUTH:
+    logger.warning("Authentication is DISABLED! Anyone can access this app.")
+    logger.warning("Set DISABLE_AUTH=false in .env to re-enable authentication.")
 
 # Global job manager
 job_manager: Optional[JobManager] = None
@@ -31,12 +46,47 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     logger.info("Web app initialized")
 
 
+def check_password(password: str) -> bool:
+    """Check if password matches the hash"""
+    if not PASSWORD_HASH:
+        return True  # No password set, allow access
+    try:
+        return bcrypt.checkpw(password.encode(), PASSWORD_HASH)
+    except Exception as e:
+        logger.error(f"Password check failed: {e}")
+        return False
+
+
 # Global dict to store uploaded files per session
 _uploaded_files = {}
+
+
+@ui.page("/login")
+def login_page():
+    """Login page"""
+    def try_login():
+        if check_password(password_input.value):
+            app.storage.user["authenticated"] = True
+            ui.navigate.to("/")
+        else:
+            ui.notify("Invalid password", color="negative")
+            password_input.value = ""
+
+    with ui.column().classes("absolute-center items-center"):
+        ui.markdown("# SHANDY")
+        ui.markdown("_Scientific Hypothesis Agent for Novel Discovery_")
+        password_input = ui.input("Password", password=True, password_toggle_button=True).classes("w-64").on("keydown.enter", try_login)
+        ui.button("Login", on_click=try_login).classes("w-64")
+
 
 @ui.page("/")
 def index_page():
     """Homepage with job submission form."""
+
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
 
     # Use client ID as key for this session's uploads
     session_id = str(id(index_page))  # Simple session identifier
@@ -178,6 +228,11 @@ def index_page():
 def jobs_page():
     """Jobs list page."""
 
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
+
     def refresh_jobs():
         """Refresh jobs table."""
         jobs = job_manager.list_jobs(limit=50)
@@ -258,6 +313,11 @@ def jobs_page():
 def job_detail_page(job_id: str):
     """Job detail page."""
 
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
+
     job_info = job_manager.get_job(job_id)
 
     if job_info is None:
@@ -315,7 +375,6 @@ def job_detail_page(job_id: str):
     # Tabs for different views
     with ui.tabs().classes("w-full") as tabs:
         findings_tab = ui.tab("Findings")
-        hypotheses_tab = ui.tab("Hypotheses")
         literature_tab = ui.tab("Literature")
         plots_tab = ui.tab("Plots")
         log_tab = ui.tab("Analysis Log")
@@ -352,30 +411,6 @@ def job_detail_page(job_id: str):
                         ui.label("Knowledge graph not found").classes("text-gray-500")
 
             refresh_findings()
-
-        # Hypotheses panel
-        with ui.tab_panel(hypotheses_tab):
-            hypotheses_container = ui.column().classes("w-full")
-
-            def refresh_hypotheses():
-                hypotheses_container.clear()
-                with hypotheses_container:
-                    if kg_path.exists():
-                        import json
-                        with open(kg_path) as f:
-                            kg = json.load(f)
-
-                        if kg["hypotheses"]:
-                            for i, hyp in enumerate(kg["hypotheses"], 1):
-                                with ui.card().classes("w-full"):
-                                    ui.label(f"H{i}: {hyp['hypothesis']}").classes("text-subtitle1 font-bold")
-                                    ui.label(f"Status: {hyp['status']}").classes("mt-2")
-                                    if hyp["status"] == "tested":
-                                        ui.label(f"Result: {hyp.get('result', 'N/A')}").classes("mt-2")
-                        else:
-                            ui.label("No hypotheses yet").classes("text-gray-500")
-
-            refresh_hypotheses()
 
         # Literature panel
         with ui.tab_panel(literature_tab):
@@ -597,6 +632,11 @@ def job_detail_page(job_id: str):
 def docs_page():
     """Documentation page."""
 
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
+
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Documentation").classes("text-h4")
         ui.button("Back", on_click=lambda: ui.navigate.to("/"))
@@ -696,7 +736,8 @@ def main(host: str = "0.0.0.0", port: int = 8080, jobs_dir: Path = Path("jobs"))
         port=port,
         title="SHANDY",
         reload=False,
-        show=False  # Don't auto-open browser in Docker
+        show=False,  # Don't auto-open browser in Docker
+        storage_secret=STORAGE_SECRET  # Required for app.storage.user
     )
 
 
