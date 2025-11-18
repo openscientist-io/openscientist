@@ -6,15 +6,7 @@ services:
     build: .
     ports:
       - "8080:8080"
-    environment:
-      - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL}
-      - ANTHROPIC_SMALL_FAST_MODEL=${ANTHROPIC_SMALL_FAST_MODEL}
-      - DISABLE_NON_ESSENTIAL_MODEL_CALLS=${DISABLE_NON_ESSENTIAL_MODEL_CALLS}
-      - CLAUDE_CLI_PATH=${CLAUDE_CLI_PATH:-claude}
-      - DISABLE_AUTH=${DISABLE_AUTH:-false}
-      - APP_PASSWORD_HASH=${APP_PASSWORD_HASH}
+    # Config loaded from mounted .env file via load_dotenv() in app code
     volumes:
       # Persist jobs directory
       - ./jobs:/app/jobs

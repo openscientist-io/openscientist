@@ -17,8 +17,8 @@ from dotenv import load_dotenv
 from .job_manager import JobManager, JobStatus
 from .cost_tracker import get_budget_info
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from mounted .env file
+load_dotenv("/app/.env", override=True)
 
 logger = logging.getLogger(__name__)
 
