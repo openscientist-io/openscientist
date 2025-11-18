@@ -27,49 +27,49 @@ help:
 
 start:
 	@echo "Starting SHANDY..."
-	docker-compose -f $(COMPOSE_FILE) up -d
+	docker compose -f $(COMPOSE_FILE) up -d
 	@echo "SHANDY started at http://localhost:8080"
 
 stop:
 	@echo "Stopping SHANDY..."
-	docker-compose -f $(COMPOSE_FILE) down
+	docker compose -f $(COMPOSE_FILE) down
 	@echo "SHANDY stopped"
 
 restart: stop start
 
 build:
 	@echo "Building SHANDY Docker image..."
-	docker-compose -f $(COMPOSE_FILE) build
+	docker compose -f $(COMPOSE_FILE) build
 
 rebuild: build
 	@echo "Restarting with new build..."
-	docker-compose -f $(COMPOSE_FILE) down
-	docker-compose -f $(COMPOSE_FILE) up -d
+	docker compose -f $(COMPOSE_FILE) down
+	docker compose -f $(COMPOSE_FILE) up -d
 	@echo "SHANDY rebuilt and started at http://localhost:8080"
 
 logs:
 	@echo "Tailing SHANDY logs (Ctrl+C to exit)..."
-	docker-compose -f $(COMPOSE_FILE) logs -f
+	docker compose -f $(COMPOSE_FILE) logs -f
 
 shell:
 	@echo "Opening shell in SHANDY container..."
-	docker-compose -f $(COMPOSE_FILE) exec shandy /bin/bash
+	docker compose -f $(COMPOSE_FILE) exec shandy /bin/bash
 
 clean:
 	@echo "Removing containers and volumes..."
-	docker-compose -f $(COMPOSE_FILE) down -v
+	docker compose -f $(COMPOSE_FILE) down -v
 	@echo "Cleaned up"
 
 clean-jobs:
 	@echo "Cleaning up old job directories..."
 	@read -p "Delete jobs older than how many days? [7]: " days; \
 	days=$${days:-7}; \
-	docker-compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager cleanup --days $$days
+	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager cleanup --days $$days
 	@echo "Job cleanup complete"
 
 test:
 	@echo "Running tests in container..."
-	docker-compose -f $(COMPOSE_FILE) exec shandy pytest
+	docker compose -f $(COMPOSE_FILE) exec shandy pytest
 
 # Development helpers
 dev-install:
@@ -91,7 +91,7 @@ format:
 # Show job status
 status:
 	@echo "Job status:"
-	docker-compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager summary
+	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager summary
 
 # Deploy to production server
 deploy:
