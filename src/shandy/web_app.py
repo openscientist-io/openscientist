@@ -178,8 +178,9 @@ def index_page():
         ).classes("w-full")
 
         # File upload
+        # Allowed extensions: .csv, .tsv, .pdb, .cif, .ent, .mmcif
         upload = ui.upload(
-            label="Upload Data Files (CSV)",
+            label="Upload Data Files (CSV, PDB, mmCIF)",
             multiple=True,
             auto_upload=True,
             on_upload=handle_upload
