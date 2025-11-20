@@ -49,7 +49,11 @@ This makes it an excellent test case for iterative autonomous exploration of str
 python -m shandy.web_app
 
 # Upload: 3ts8.pdb (experimental) and alphafold_P04637.pdb (prediction)
-# Research question: "Compare this experimental p53 structure with AlphaFold prediction and explain any discrepancies"
-# Set iterations: 10-20
-# Enable skills: structural_biology
+# Research question: "Compare experimental p53 structure with AlphaFold prediction and explain structural discrepancies"
+# Set iterations: 10
+# Enable skills: Yes
 ```
+
+### Exact Research Question
+
+**"Compare experimental p53 structure with AlphaFold prediction and explain structural discrepancies"**
