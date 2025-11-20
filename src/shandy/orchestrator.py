@@ -15,9 +15,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 import pandas as pd
+from dotenv import load_dotenv
 
 from .knowledge_graph import KnowledgeGraph
 from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
+
+# Load environment variables (important for Claude CLI subprocess)
+if not load_dotenv("/app/.env", override=True):
+    load_dotenv(".env", override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +246,7 @@ Start your investigation by using execute_code to explore the data structure and
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
         logger.info(f"Running command: {' '.join(cmd)}")
         logger.info(f"Prompt length: {len(initial_prompt)} characters")
-        result = subprocess.run(cmd, input=initial_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
+        result = subprocess.run(cmd, input=initial_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
         logger.info(f"Claude CLI return code: {result.returncode}")
         logger.info(f"Claude CLI stdout length: {len(result.stdout)}")
@@ -323,7 +328,7 @@ Think step by step about what will provide the most insight."""
                 ]
 
             logger.info(f"Prompt length: {len(iteration_prompt)} characters")
-            result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
+            result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
             if result.returncode != 0:
                 logger.error(f"Iteration {iteration} failed (rc={result.returncode})")
@@ -407,8 +412,7 @@ Format as professional scientific markdown."""
         ]
 
         logger.info(f"Report prompt length: {len(report_prompt)} characters")
-        # No special environment needed - fresh session doesn't send beta header
-        result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
+        result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
         if result.returncode == 0:
             report_content = result.stdout
