@@ -39,7 +39,7 @@ restart: stop start
 
 build:
 	@echo "Building SHANDY Docker image..."
-	docker compose -f $(COMPOSE_FILE) build
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build --no-cache
 
 rebuild: build
 	@echo "Restarting with new build..."

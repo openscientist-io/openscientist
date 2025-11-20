@@ -3,6 +3,7 @@ version: '3.8'
 
 services:
   shandy:
+    platform: linux/amd64
     build: .
     ports:
       - "8080:8080"
@@ -14,6 +15,7 @@ services:
       - ./data:/app/data
       # Mount .env file for secrets
       - ./.env:/app/.env:ro
+      # NOTE: Phenix is installed inside the Docker image at /opt/phenix-1.21.2-5419
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]

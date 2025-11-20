@@ -54,6 +54,10 @@ jobs/*/
 # Docker
 *.pid
 
+# Phenix installer (large binary, downloaded separately)
+Phenix-*.sh
+phenix-installer-*.tar.gz
+
 # OS
 .DS_Store
 Thumbs.db

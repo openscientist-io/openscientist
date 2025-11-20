@@ -74,10 +74,12 @@ def create_job(job_id: str, research_question: str, data_files: list,
     (job_dir / "data").mkdir(exist_ok=True)
     (job_dir / "plots").mkdir(exist_ok=True)
 
-    # Copy data files to job directory
+    # Copy data files to job directory, preserving original names/extensions
     data_paths = []
-    for i, data_file in enumerate(data_files):
-        dest = job_dir / "data" / f"data_{i}.csv"
+    for data_file in data_files:
+        # Preserve original filename
+        original_name = Path(data_file).name
+        dest = job_dir / "data" / original_name
         # In real implementation, handle file upload properly
         # For now, assume data_file is already a path
         import shutil
@@ -92,16 +94,34 @@ def create_job(job_id: str, research_question: str, data_files: list,
         use_skills=use_skills
     )
 
-    # Add data summary
-    # For now, just use first data file
-    data = pd.read_csv(data_paths[0])
-    kg.set_data_summary({
-        "files": [str(p.name) for p in data_paths],
-        "n_samples": len(data),
-        "n_features": len(data.columns),
-        "columns": list(data.columns),
-        "groups": data.iloc[:, 1].unique().tolist() if len(data.columns) > 1 else []
-    })
+    # Add data summary (handle different file types)
+    first_file = data_paths[0]
+    file_ext = first_file.suffix.lower()
+
+    if file_ext in ['.csv', '.tsv']:
+        # CSV/TSV data - read with pandas
+        data = pd.read_csv(first_file, sep=',' if file_ext == '.csv' else '\t')
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": "tabular",
+            "n_samples": len(data),
+            "n_features": len(data.columns),
+            "columns": list(data.columns),
+            "groups": data.iloc[:, 1].unique().tolist() if len(data.columns) > 1 else []
+        })
+    elif file_ext in ['.pdb', '.cif', '.ent', '.mmcif']:
+        # Structure files - just list them
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": "protein_structure",
+            "file_formats": [p.suffix for p in data_paths]
+        })
+    else:
+        # Unknown file type - just list files
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": "unknown"
+        })
 
     kg.save(job_dir / "knowledge_graph.json")
 
