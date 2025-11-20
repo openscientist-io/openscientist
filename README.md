@@ -236,10 +236,6 @@ make rebuild
 - [Design Document](notes/design-autonomous-loop.md)
 - [Skills Documentation](.claude/skills/)
 
-## License
-
-BSD-3-Clause
-
 ## Author
 
 Justin Reese <justinreese@lbl.gov>

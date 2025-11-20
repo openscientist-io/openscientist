@@ -7,7 +7,6 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "BSD-3-Clause"}
 
 dependencies = [
     # Web framework
