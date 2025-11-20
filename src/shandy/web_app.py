@@ -17,8 +17,10 @@ from dotenv import load_dotenv
 from .job_manager import JobManager, JobStatus
 from .cost_tracker import get_budget_info
 
-# Load environment variables from mounted .env file
-load_dotenv("/app/.env", override=True)
+# Load environment variables from .env file
+# Try Docker path first, fall back to local path
+if not load_dotenv("/app/.env", override=True):
+    load_dotenv(".env", override=True)
 
 logger = logging.getLogger(__name__)
 
