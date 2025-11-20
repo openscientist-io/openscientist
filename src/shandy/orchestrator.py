@@ -24,6 +24,11 @@ from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
 if not load_dotenv("/app/.env", override=True):
     load_dotenv(".env", override=True)
 
+# Claude CLI uses ANTHROPIC_API_KEY, but SHANDY uses ANTHROPIC_AUTH_TOKEN
+# Set ANTHROPIC_API_KEY from ANTHROPIC_AUTH_TOKEN if not already set
+if not os.getenv("ANTHROPIC_API_KEY") and os.getenv("ANTHROPIC_AUTH_TOKEN"):
+    os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_AUTH_TOKEN")
+
 logger = logging.getLogger(__name__)
 
 
