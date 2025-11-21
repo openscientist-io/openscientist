@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 from .knowledge_graph import KnowledgeGraph
 from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
+from .file_loader import load_data_file, get_file_info
 
 # Load environment variables (important for Claude CLI subprocess)
 if not load_dotenv("/app/.env", override=True):
@@ -113,11 +114,13 @@ def create_job(job_id: str, research_question: str, data_files: list,
 
     # Add data summary (handle different file types)
     first_file = data_paths[0]
-    file_ext = first_file.suffix.lower()
 
-    if file_ext in ['.csv', '.tsv']:
-        # CSV/TSV data - read with pandas
-        data = pd.read_csv(first_file, sep=',' if file_ext == '.csv' else '\t')
+    # Use file loader to detect file type and load data
+    file_info = get_file_info(first_file)
+    data = load_data_file(first_file)  # May be None for non-tabular files
+
+    if data is not None:
+        # Tabular data successfully loaded
         kg.set_data_summary({
             "files": [str(p.name) for p in data_paths],
             "file_type": "tabular",
@@ -126,18 +129,18 @@ def create_job(job_id: str, research_question: str, data_files: list,
             "columns": list(data.columns),
             "groups": data.iloc[:, 1].unique().tolist() if len(data.columns) > 1 else []
         })
-    elif file_ext in ['.pdb', '.cif', '.ent', '.mmcif']:
-        # Structure files - just list them
+    elif file_info["file_type"] == "structure":
+        # Structure files
         kg.set_data_summary({
             "files": [str(p.name) for p in data_paths],
             "file_type": "protein_structure",
             "file_formats": [p.suffix for p in data_paths]
         })
     else:
-        # Unknown file type - just list files
+        # Other file types (sequence, unknown)
         kg.set_data_summary({
             "files": [str(p.name) for p in data_paths],
-            "file_type": "unknown"
+            "file_type": file_info["file_type"]
         })
 
     kg.save(job_dir / "knowledge_graph.json")
@@ -233,12 +236,13 @@ Data summary:
 - Columns: {kg.data['data_summary'].get('columns', [])}
 - Samples: {kg.data['data_summary'].get('n_samples', 'Unknown')}
 
-IMPORTANT: You have access to the following MCP tools (use these, NOT bash or other built-in tools):
-- execute_code: Run Python analysis on the data (data is available as 'data' DataFrame)
-- search_pubmed: Search scientific literature for relevant papers
-- update_knowledge_graph: Record confirmed findings with evidence
+You have access to MCP tools for analysis, literature search, and recording findings.
+Examples include (there may be others - explore what's available):
+- execute_code: Analyze data, run statistical tests, create visualizations
+- search_pubmed: Search for relevant papers
+- update_knowledge_graph: Record confirmed findings with statistical evidence
 
-Start your investigation by using execute_code to explore the data structure and search_pubmed to search literature.
+Start your investigation by using these tools to analyze the data.
 """
 
         logger.info(f"Starting discovery loop with Claude CLI headless mode")
@@ -308,12 +312,9 @@ Start your investigation by using execute_code to explore the data structure and
 
 ---
 
-Continue your investigation using the MCP tools:
-- execute_code: Analyze data, run statistical tests, create visualizations
-- search_pubmed: Search for relevant papers
-- update_knowledge_graph: Record confirmed findings with statistical evidence
-
-Think step by step about what will provide the most insight."""
+Continue your investigation using the available MCP tools.
+Examples: execute_code, search_pubmed, update_knowledge_graph (explore for others).
+Think step by step about what will provide the most insight, then actively use the tools to execute your investigation."""
 
             # Decide whether to resume or start fresh
             should_reset = (iteration % RESET_INTERVAL == 1)

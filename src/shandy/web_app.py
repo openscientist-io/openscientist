@@ -83,7 +83,20 @@ def login_page():
 
 @ui.page("/")
 def index_page():
-    """Homepage with job submission form."""
+    """Homepage - redirects to jobs list."""
+
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
+
+    # Redirect to jobs page
+    ui.navigate.to("/jobs")
+
+
+@ui.page("/new")
+def new_job_page():
+    """Job submission form."""
 
     # Check authentication (skip if disabled)
     if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
@@ -138,8 +151,8 @@ def index_page():
             _uploaded_files[session_id] = []
             upload.reset()
 
-            # Navigate to jobs page
-            ui.navigate.to("/jobs")
+            # Redirect to job detail page
+            ui.navigate.to(f"/job/{job_id}")
 
         except Exception as e:
             ui.notify(f"Error creating job: {e}", type="negative")
@@ -180,9 +193,9 @@ def index_page():
         ).classes("w-full")
 
         # File upload
-        # Allowed extensions: .csv, .tsv, .pdb, .cif, .ent, .mmcif
+        # Supported: Tabular (CSV, TSV, Excel, Parquet, JSON), Structures (PDB, mmCIF), Sequences (FASTA), Images (PNG, JPG)
         upload = ui.upload(
-            label="Upload Data Files (CSV, PDB, mmCIF)",
+            label="Upload Data Files (Tabular, Structures, Sequences, Images)",
             multiple=True,
             auto_upload=True,
             on_upload=handle_upload
@@ -223,8 +236,8 @@ def index_page():
 
     # Quick links
     with ui.row().classes("w-full max-w-2xl mx-auto mt-4"):
-        ui.button("View Jobs", on_click=lambda: ui.navigate.to("/jobs")).classes("flex-1")
-        ui.button("Documentation", on_click=lambda: ui.navigate.to("/docs")).classes("flex-1")
+        ui.button("View Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="list").classes("flex-1")
+        ui.button("Documentation", on_click=lambda: ui.navigate.to("/docs"), icon="help").classes("flex-1")
 
 
 @ui.page("/jobs")
@@ -259,7 +272,7 @@ def jobs_page():
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Jobs").classes("text-h4")
         with ui.row():
-            ui.button("New Job", on_click=lambda: ui.navigate.to("/"))
+            ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
             ui.button("Refresh", on_click=refresh_jobs, icon="refresh")
 
     # Summary cards
@@ -525,26 +538,57 @@ def job_detail_page(job_id: str):
 
                         if by_iteration:
                             with ui.scroll_area().classes("w-full h-96"):
-                                # Display in reverse order (newest first)
-                                for iteration in sorted(by_iteration.keys(), reverse=True):
+                                # Display in ascending order (oldest first)
+                                for iteration in sorted(by_iteration.keys()):
                                     entries = by_iteration[iteration]
 
-                                    with ui.expansion(f"Iteration {iteration}", icon="science").classes("w-full mb-4"):
-                                        # Count actions
-                                        code_executions = [e for e in entries if e["action"] == "execute_code"]
-                                        literature_searches = [e for e in entries if e["action"] == "search_pubmed"]
-                                        findings_recorded = [e for e in entries if e["action"] == "update_knowledge_graph"]
+                                    # Generate detailed summary
+                                    code_executions = [e for e in entries if e["action"] == "execute_code"]
+                                    literature_searches = [e for e in entries if e["action"] == "search_pubmed"]
+                                    findings_recorded = [e for e in entries if e["action"] == "update_knowledge_graph"]
 
-                                        # Summary
-                                        ui.label(f"**What I did in this iteration:**").classes("mb-2")
-                                        actions_summary = []
-                                        if code_executions:
-                                            actions_summary.append(f"Ran {len(code_executions)} analyses")
-                                        if literature_searches:
-                                            actions_summary.append(f"Searched {len(literature_searches)} literature queries")
-                                        if findings_recorded:
-                                            actions_summary.append(f"Recorded {len(findings_recorded)} findings")
-                                        ui.label(" • ".join(actions_summary)).classes("text-gray-700 mb-4")
+                                    summary_parts = []
+
+                                    # Describe analyses
+                                    if code_executions:
+                                        for ce in code_executions[:2]:  # Show first 2
+                                            desc = ce.get("description", "")
+                                            if desc:
+                                                summary_parts.append(desc)
+                                            else:
+                                                # Try to infer from code
+                                                code = ce.get("code", "")
+                                                if "correlation" in code.lower():
+                                                    summary_parts.append("correlation analysis")
+                                                elif "t.test" in code or "ttest" in code.lower():
+                                                    summary_parts.append("t-test")
+                                                elif "pca" in code.lower():
+                                                    summary_parts.append("PCA analysis")
+                                                elif "plot" in code.lower() or "plt." in code:
+                                                    summary_parts.append("visualization")
+                                                else:
+                                                    summary_parts.append("analysis")
+                                        if len(code_executions) > 2:
+                                            summary_parts.append(f"+ {len(code_executions) - 2} more analyses")
+
+                                    # Describe literature searches
+                                    if literature_searches:
+                                        for ls in literature_searches[:1]:  # Show first query
+                                            query = ls.get("query", "")
+                                            if query:
+                                                summary_parts.append(f'searched "{query[:50]}{"..." if len(query) > 50 else ""}"')
+                                        if len(literature_searches) > 1:
+                                            summary_parts.append(f"+ {len(literature_searches) - 1} more searches")
+
+                                    # Mention findings
+                                    if findings_recorded:
+                                        summary_parts.append(f"recorded {len(findings_recorded)} finding{'s' if len(findings_recorded) > 1 else ''}")
+
+                                    summary_text = ", ".join(summary_parts) if summary_parts else "No actions recorded"
+
+                                    with ui.expansion(f"Iteration {iteration}: {summary_text}", icon="science").classes("w-full mb-4"):
+                                        # Detailed breakdown inside expansion
+                                        ui.label(f"**Actions in this iteration:**").classes("mb-2")
 
                                         # Find plots from this iteration
                                         plots_dir = job_dir / "plots"
@@ -579,17 +623,18 @@ def job_detail_page(job_id: str):
             report_path = job_dir / "final_report.md"
 
             if report_path.exists():
-                with open(report_path) as f:
-                    report_content = f.read()
+                # Download button at top
+                with ui.row().classes("w-full justify-end mb-4"):
+                    ui.button(
+                        "Download Report",
+                        on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md"),
+                        icon="download"
+                    ).props("color=primary")
 
                 # Display markdown
+                with open(report_path) as f:
+                    report_content = f.read()
                 ui.markdown(report_content).classes("w-full")
-
-                # Download button
-                ui.button(
-                    "Download Report",
-                    on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md")
-                ).classes("mt-4")
             else:
                 if job_info.status == JobStatus.COMPLETED:
                     ui.label("Report generation failed").classes("text-red-500")
@@ -642,7 +687,7 @@ def docs_page():
 
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Documentation").classes("text-h4")
-        ui.button("Back", on_click=lambda: ui.navigate.to("/"))
+        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="arrow_back")
 
     with ui.card().classes("w-full max-w-4xl mx-auto mt-8"):
         ui.markdown("""
