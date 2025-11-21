@@ -14,19 +14,21 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
 # Import tool implementations
 from ..code_executor import execute_code as exec_code, format_execution_result
+from ..file_loader import load_data_file, get_file_info
 from ..knowledge_graph import KnowledgeGraph
 from ..literature import search_pubmed as search_pm
 from ..phenix_setup import check_phenix_available
 
 # Global state (initialized by main())
-DATA: pd.DataFrame = None
+DATA: Optional[pd.DataFrame] = None  # None for non-tabular files
+DATA_FILES: List[Dict[str, Any]] = []  # Metadata for all data files
 JOB_DIR: Path = None
 KG: KnowledgeGraph = None
 
@@ -39,7 +41,13 @@ def execute_code(code: str, description: str = "") -> str:
     """
     Execute Python code to analyze data.
 
-    The code has access to a 'data' variable containing the loaded DataFrame.
+    The code has access to:
+    - 'data' variable: DataFrame with tabular data (if available, otherwise None)
+    - 'data_files' variable: List of file metadata dicts with paths, types, etc.
+
+    For structure files (PDB, CIF) or other non-tabular data, use the file paths
+    from data_files to load and analyze them directly.
+
     Plots are automatically saved to the job's plots directory.
 
     Args:
@@ -49,7 +57,7 @@ def execute_code(code: str, description: str = "") -> str:
     Returns:
         Formatted execution result with output, plots, and any errors
     """
-    global DATA, JOB_DIR, KG
+    global DATA, DATA_FILES, JOB_DIR, KG
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
     KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
@@ -58,8 +66,9 @@ def execute_code(code: str, description: str = "") -> str:
     plots_dir = JOB_DIR / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    # Execute code
-    result = exec_code(code, DATA, plots_dir, timeout=60, description=description, iteration=KG.data["iteration"])
+    # Execute code (DATA may be None for non-tabular files)
+    result = exec_code(code, DATA, plots_dir, timeout=60, description=description,
+                      iteration=KG.data["iteration"], data_files=DATA_FILES)
 
     # Log to knowledge graph
     KG.log_analysis(
@@ -160,15 +169,41 @@ def main():
 
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
-    parser.add_argument("--data-file", required=True, help="Data CSV file")
+    parser.add_argument("--data-file", required=True, help="Primary data file")
 
     args = parser.parse_args()
 
     # Initialize global state
-    global DATA, JOB_DIR, KG
+    global DATA, DATA_FILES, JOB_DIR, KG
 
     JOB_DIR = Path(args.job_dir)
-    DATA = pd.read_csv(args.data_file)
+
+    # Load primary data file using new loader
+    primary_file = Path(args.data_file)
+    DATA = load_data_file(primary_file)  # May be None for non-tabular files
+
+    # Get metadata for primary file
+    primary_info = get_file_info(primary_file)
+    DATA_FILES = [primary_info]
+
+    # Scan job data directory for additional files
+    data_dir = JOB_DIR / "data"
+    if data_dir.exists():
+        for file_path in data_dir.iterdir():
+            if file_path.is_file() and file_path != primary_file:
+                try:
+                    file_info = get_file_info(file_path)
+                    DATA_FILES.append(file_info)
+                except Exception as e:
+                    print(f"Warning: Could not process {file_path}: {e}", file=sys.stderr)
+
+    # Log what was loaded
+    if DATA is not None:
+        print(f"✅ Loaded tabular data from {primary_file.name}: {DATA.shape[0]} rows × {DATA.shape[1]} columns", file=sys.stderr)
+    else:
+        print(f"ℹ️  Non-tabular file: {primary_file.name} ({primary_info['file_type']})", file=sys.stderr)
+
+    print(f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}", file=sys.stderr)
 
     # Load or create knowledge graph
     kg_path = JOB_DIR / "knowledge_graph.json"
