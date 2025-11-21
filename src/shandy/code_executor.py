@@ -69,8 +69,9 @@ def validate_imports(code: str, allowed_imports: List[str]) -> None:
                     )
 
 
-def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
-                timeout: int = 60, description: str = "", iteration: int = 0) -> Dict[str, Any]:
+def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
+                timeout: int = 60, description: str = "", iteration: int = 0,
+                data_files: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """
     Execute Python code in sandboxed environment.
 
@@ -83,11 +84,12 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
 
     Args:
         code: Python code to execute
-        data: DataFrame available as `data` variable
+        data: DataFrame available as `data` variable (None for non-tabular files)
         plots_dir: Directory to save generated plots
         timeout: Max execution time in seconds (default: 60)
         description: Optional description of what's being investigated
         iteration: Current iteration number
+        data_files: List of file metadata dicts (paths, types, etc.)
 
     Returns:
         Dictionary with execution results:
@@ -130,6 +132,7 @@ def execute_code(code: str, data: pd.DataFrame, plots_dir: Path,
     # Prepare namespace with allowed libraries
     namespace = {
         'data': data,
+        'data_files': data_files or [],
         'pd': pd,
         'np': np,
         'plt': plt,
