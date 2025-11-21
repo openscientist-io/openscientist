@@ -252,7 +252,10 @@ Start your investigation by using execute_code to explore the data structure and
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+            '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
+            '--allowedTools', 'mcp__shandy-tools__compare_structures',
+            '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
         ]
 
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
@@ -324,7 +327,10 @@ Think step by step about what will provide the most insight."""
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
+                    '--allowedTools', 'mcp__shandy-tools__compare_structures',
+                    '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
                 ]
             else:
                 logger.info(f"Iteration {iteration}/{max_iterations}: Resuming session {session_id}")
@@ -336,7 +342,10 @@ Think step by step about what will provide the most insight."""
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
+                    '--allowedTools', 'mcp__shandy-tools__compare_structures',
+                    '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
                 ]
 
             logger.info(f"Prompt length: {len(iteration_prompt)} characters")

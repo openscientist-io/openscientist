@@ -13,10 +13,13 @@ RUN apt-get update && apt-get install -y \
 RUN npm install -g @anthropic-ai/claude-code@2.0.37
 
 # Install Phenix for structural biology
-COPY Phenix-1.21.2-5419-Linux-x86_64.sh /tmp/
-RUN chmod +x /tmp/Phenix-1.21.2-5419-Linux-x86_64.sh && \
-    /tmp/Phenix-1.21.2-5419-Linux-x86_64.sh --prefix=/opt && \
-    rm /tmp/Phenix-1.21.2-5419-Linux-x86_64.sh
+COPY phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz /tmp/
+RUN cd /tmp && \
+    tar xzf phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz && \
+    cd phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6 && \
+    ./install --prefix=/opt && \
+    cd / && \
+    rm -rf /tmp/phenix-installer-*
 
 # Set working directory
 WORKDIR /app
