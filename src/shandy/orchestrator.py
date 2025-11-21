@@ -15,9 +15,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 import pandas as pd
+from dotenv import load_dotenv
 
 from .knowledge_graph import KnowledgeGraph
 from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
+
+# Load environment variables (important for Claude CLI subprocess)
+if not load_dotenv("/app/.env", override=True):
+    load_dotenv(".env", override=True)
+
+# Claude CLI uses ANTHROPIC_API_KEY, but SHANDY uses ANTHROPIC_AUTH_TOKEN
+# Set ANTHROPIC_API_KEY from ANTHROPIC_AUTH_TOKEN if not already set
+if not os.getenv("ANTHROPIC_API_KEY") and os.getenv("ANTHROPIC_AUTH_TOKEN"):
+    os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_AUTH_TOKEN")
+
+# CRITICAL: Disable Vertex AI - SHANDY uses CBORG API via ANTHROPIC_BASE_URL
+# If CLAUDE_CODE_USE_VERTEX=1 is set, Claude CLI ignores ANTHROPIC_BASE_URL
+# and tries to use Vertex AI instead, causing 404 errors
+os.environ.pop('CLAUDE_CODE_USE_VERTEX', None)
+os.environ.pop('ANTHROPIC_VERTEX_PROJECT_ID', None)
+os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +91,12 @@ def create_job(job_id: str, research_question: str, data_files: list,
     (job_dir / "data").mkdir(exist_ok=True)
     (job_dir / "plots").mkdir(exist_ok=True)
 
-    # Copy data files to job directory
+    # Copy data files to job directory, preserving original names/extensions
     data_paths = []
-    for i, data_file in enumerate(data_files):
-        dest = job_dir / "data" / f"data_{i}.csv"
+    for data_file in data_files:
+        # Preserve original filename
+        original_name = Path(data_file).name
+        dest = job_dir / "data" / original_name
         # In real implementation, handle file upload properly
         # For now, assume data_file is already a path
         import shutil
@@ -92,16 +111,34 @@ def create_job(job_id: str, research_question: str, data_files: list,
         use_skills=use_skills
     )
 
-    # Add data summary
-    # For now, just use first data file
-    data = pd.read_csv(data_paths[0])
-    kg.set_data_summary({
-        "files": [str(p.name) for p in data_paths],
-        "n_samples": len(data),
-        "n_features": len(data.columns),
-        "columns": list(data.columns),
-        "groups": data.iloc[:, 1].unique().tolist() if len(data.columns) > 1 else []
-    })
+    # Add data summary (handle different file types)
+    first_file = data_paths[0]
+    file_ext = first_file.suffix.lower()
+
+    if file_ext in ['.csv', '.tsv']:
+        # CSV/TSV data - read with pandas
+        data = pd.read_csv(first_file, sep=',' if file_ext == '.csv' else '\t')
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": "tabular",
+            "n_samples": len(data),
+            "n_features": len(data.columns),
+            "columns": list(data.columns),
+            "groups": data.iloc[:, 1].unique().tolist() if len(data.columns) > 1 else []
+        })
+    elif file_ext in ['.pdb', '.cif', '.ent', '.mmcif']:
+        # Structure files - just list them
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": "protein_structure",
+            "file_formats": [p.suffix for p in data_paths]
+        })
+    else:
+        # Unknown file type - just list files
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": "unknown"
+        })
 
     kg.save(job_dir / "knowledge_graph.json")
 
@@ -215,13 +252,16 @@ Start your investigation by using execute_code to explore the data structure and
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+            '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
+            '--allowedTools', 'mcp__shandy-tools__compare_structures',
+            '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
         ]
 
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
         logger.info(f"Running command: {' '.join(cmd)}")
         logger.info(f"Prompt length: {len(initial_prompt)} characters")
-        result = subprocess.run(cmd, input=initial_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
+        result = subprocess.run(cmd, input=initial_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
         logger.info(f"Claude CLI return code: {result.returncode}")
         logger.info(f"Claude CLI stdout length: {len(result.stdout)}")
@@ -287,7 +327,10 @@ Think step by step about what will provide the most insight."""
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
+                    '--allowedTools', 'mcp__shandy-tools__compare_structures',
+                    '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
                 ]
             else:
                 logger.info(f"Iteration {iteration}/{max_iterations}: Resuming session {session_id}")
@@ -299,11 +342,14 @@ Think step by step about what will provide the most insight."""
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph'
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
+                    '--allowedTools', 'mcp__shandy-tools__compare_structures',
+                    '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
                 ]
 
             logger.info(f"Prompt length: {len(iteration_prompt)} characters")
-            result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
+            result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
             if result.returncode != 0:
                 logger.error(f"Iteration {iteration} failed (rc={result.returncode})")
@@ -387,8 +433,7 @@ Format as professional scientific markdown."""
         ]
 
         logger.info(f"Report prompt length: {len(report_prompt)} characters")
-        # No special environment needed - fresh session doesn't send beta header
-        result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()))
+        result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
         if result.returncode == 0:
             report_content = result.stdout

@@ -3,17 +3,26 @@ version: '3.8'
 
 services:
   shandy:
+    platform: linux/amd64
     build: .
     ports:
       - "8080:8080"
-    # Config loaded from mounted .env file via load_dotenv() in app code
+    # Pass environment variables explicitly
+    environment:
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL}
+      ANTHROPIC_SMALL_FAST_MODEL: ${ANTHROPIC_SMALL_FAST_MODEL}
+      DISABLE_AUTH: ${DISABLE_AUTH}
+      APP_PASSWORD_HASH: "$$2b$$12$$H77l168RKZRcRlElvBqr.O7UZxarzIZU9LUfPDsHvb/DmeekUUKZa"
+      PHENIX_PATH: /opt/phenix-1.21.2-5419
+      STORAGE_SECRET: ${STORAGE_SECRET}
     volumes:
       # Persist jobs directory
       - ./jobs:/app/jobs
       # Persist data directory (for uploaded files)
       - ./data:/app/data
-      # Mount .env file for secrets
-      - ./.env:/app/.env:ro
+      # NOTE: Phenix is installed inside the Docker image at /opt/phenix-1.21.2-5419
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]

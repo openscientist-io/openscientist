@@ -5,9 +5,13 @@ Provides tools for autonomous discovery:
 - execute_code: Run Python analysis on data
 - search_pubmed: Search scientific literature
 - update_knowledge_graph: Record findings
+- run_phenix_tool: Execute Phenix structural biology tools (if available)
+- compare_structures: Compare experimental and predicted structures
+- parse_alphafold_confidence: Extract AlphaFold confidence metrics
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -19,6 +23,7 @@ from mcp.server.fastmcp import FastMCP
 from ..code_executor import execute_code as exec_code, format_execution_result
 from ..knowledge_graph import KnowledgeGraph
 from ..literature import search_pubmed as search_pm
+from ..phenix_setup import check_phenix_available
 
 # Global state (initialized by main())
 DATA: pd.DataFrame = None
@@ -171,6 +176,14 @@ def main():
         KG = KnowledgeGraph.load(kg_path)
     else:
         raise FileNotFoundError(f"Knowledge graph not found at {kg_path}")
+
+    # Register Phenix tools if available
+    if check_phenix_available():
+        from . import phenix_tools
+        phenix_tools.register_phenix_tools(mcp, JOB_DIR, KG)
+        print("✅ Phenix tools registered", file=sys.stderr)
+    else:
+        print("⚠️  Phenix tools not available (PHENIX_PATH not set)", file=sys.stderr)
 
     # Run the FastMCP server
     mcp.run()

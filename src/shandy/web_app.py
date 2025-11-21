@@ -17,8 +17,10 @@ from dotenv import load_dotenv
 from .job_manager import JobManager, JobStatus
 from .cost_tracker import get_budget_info
 
-# Load environment variables from mounted .env file
-load_dotenv("/app/.env", override=True)
+# Load environment variables from .env file
+# Try Docker path first, fall back to local path
+if not load_dotenv("/app/.env", override=True):
+    load_dotenv(".env", override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +180,9 @@ def index_page():
         ).classes("w-full")
 
         # File upload
+        # Allowed extensions: .csv, .tsv, .pdb, .cif, .ent, .mmcif
         upload = ui.upload(
-            label="Upload Data Files (CSV)",
+            label="Upload Data Files (CSV, PDB, mmCIF)",
             multiple=True,
             auto_upload=True,
             on_upload=handle_upload
