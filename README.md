@@ -31,9 +31,18 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
   - `execute_code`: Run Python analysis
   - `search_pubmed`: Search literature
   - `update_knowledge_graph`: Record findings
+  - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
 - **Knowledge Graph**: JSON-based state tracking for hypotheses, findings, literature
 - **Job Manager**: Multi-job support with queueing and lifecycle management
 - **Web Interface**: NiceGUI-based UI for job submission and monitoring
+
+### Structural Biology Support (Optional)
+
+SHANDY supports **Phenix integration** for protein structure analysis:
+- Structure comparison and superposition
+- Validation metrics (clash score, backbone geometry)
+- AlphaFold confidence analysis
+- **See `docs/PHENIX_SETUP.md` for installation instructions**
 
 ## Quick Start
 

@@ -12,6 +12,15 @@ RUN apt-get update && apt-get install -y \
 # Install Claude Code CLI via npm (pinned to v2.0.37 - last version before beta header)
 RUN npm install -g @anthropic-ai/claude-code@2.0.37
 
+# Install Phenix for structural biology
+COPY phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz /tmp/
+RUN cd /tmp && \
+    tar xzf phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz && \
+    cd phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6 && \
+    ./install --prefix=/opt && \
+    cd / && \
+    rm -rf /tmp/phenix-installer-*
+
 # Set working directory
 WORKDIR /app
 
@@ -40,6 +49,7 @@ ENV PYTHONUNBUFFERED=1
 ENV ANTHROPIC_AUTH_TOKEN=""
 ENV DISABLE_AUTH="false"
 ENV APP_PASSWORD_HASH=""
+ENV PHENIX_PATH="/opt/phenix-1.21.2-5419"
 
 # Run web app
 CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]
