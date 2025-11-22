@@ -39,12 +39,20 @@ Phenix is pre-installed in the Docker image. You just need to provide the instal
    # Get: phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz
    ```
 
-2. **Place installer in project root**:
+2. **Place installer in `data/` directory**:
    ```bash
-   # Place the .tar.gz file in the shandy/ directory
-   ls -lh phenix-installer-*.tar.gz
+   # Create data directory if needed
+   mkdir -p data
+
+   # Move the .tar.gz file to data/ directory
+   mv phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz data/
+
+   # Verify placement
+   ls -lh data/phenix-installer-*.tar.gz
    # Should show ~3GB file
    ```
+
+   **Why `data/`?** Keeps project root clean and follows convention that `data/` contains large binary files (gitignored but accessible to Docker build).
 
 3. **Build Docker image**:
    ```bash
@@ -61,7 +69,7 @@ Phenix is pre-installed in the Docker image. You just need to provide the instal
 # 1. Transfer installer to server (one-time)
 rsync -avz --progress \
   phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz \
-  gassh:~/shandy/
+  gassh:~/shandy/data/
 
 # 2. Deploy normally
 make deploy
@@ -197,9 +205,13 @@ docker exec shandy-shandy-1 env | grep PHENIX_PATH
 
 ### Docker build fails: "No such file"
 
-**Error**: `COPY phenix-installer-*.tar.gz /tmp/`
+**Error**: `COPY data/phenix-installer-*.tar.gz /tmp/`
 
-**Solution**: Download installer and place in project root before building
+**Solution**: Download installer and place in `data/` directory before building:
+```bash
+mkdir -p data
+mv phenix-installer-*.tar.gz data/
+```
 
 ### glibc version incompatibility (rare)
 
