@@ -120,14 +120,17 @@ class JobManager:
         if self.get_job(job_id) is not None:
             raise ValueError(f"Job {job_id} already exists")
 
-        # Check budget
-        budget_info = get_budget_info()
+        # Check budget limits
+        try:
+            provider = get_provider()
+            budget_check = provider.check_budget_limits()
 
-        # Check if we have budget remaining (if CBORG limit is set)
-        if budget_info["budget_remaining"] is not None and budget_info["budget_remaining"] < 1.0:
-            raise BudgetExceededError(
-                f"Insufficient budget: ${budget_info['budget_remaining']:.2f} remaining"
-            )
+            if not budget_check["can_proceed"]:
+                errors = budget_check.get("errors", [])
+                error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
+                raise ValueError(f"Cannot create job: {error_msg}")
+        except Exception as e:
+            logger.warning(f"Budget check failed: {e}")
 
         # Create job directory and files
         logger.info(f"Creating job {job_id}")
@@ -257,9 +260,16 @@ class JobManager:
         # Update status
         self._update_job_status(job_id, JobStatus.CANCELLED)
 
+        # Remove from running jobs if present
+        with self._lock:
+            self._running_jobs.pop(job_id, None)
+
         # Note: We can't actually kill the thread cleanly in Python
         # The orchestrator will check status and stop at next iteration
         logger.info(f"Job {job_id} cancelled (will stop at next iteration)")
+
+        # Start next queued job if any
+        self._start_next_queued_job()
 
     def get_job(self, job_id: str) -> Optional[JobInfo]:
         """
