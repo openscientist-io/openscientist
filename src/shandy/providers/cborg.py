@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class CborgProvider(BaseProvider):
-    """CBORG API provider (current implementation)."""
+    """
+    CBORG API provider (current implementation).
+
+    KNOWN ISSUES:
+    - Newer versions of Claude CLI may send headers that CBORG doesn't recognize,
+      causing HTTP 400 errors. If you encounter authentication or request errors,
+      check your Claude CLI version and consider using an older version if needed.
+    """
 
     @property
     def name(self) -> str:

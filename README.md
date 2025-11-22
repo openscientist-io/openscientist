@@ -305,6 +305,24 @@ If tabs like "Plots" are missing from the job detail page, the Docker container 
 make rebuild
 ```
 
+### CBORG HTTP 400 errors with newer Claude versions
+
+**Symptom**: Jobs fail with HTTP 400 errors when using CBORG provider.
+
+**Cause**: Newer versions of the Claude CLI may send headers that CBORG doesn't recognize or support, causing the CBORG API to reject requests with HTTP 400 errors.
+
+**Solution**: Consider using an older version of the Claude CLI if you encounter this issue:
+
+```bash
+# Check current Claude CLI version
+claude --version
+
+# If needed, install a specific older version
+npm install -g @anthropic-ai/claude-code@<version>
+```
+
+**Alternative**: Switch to Vertex AI provider (see `docs/VERTEX_SETUP.md`), which may have better compatibility with newer Claude CLI versions.
+
 ## Documentation
 
 - [Design Document](notes/design-autonomous-loop.md)
