@@ -96,17 +96,17 @@ You have access to structured workflow skills in `.claude/skills/`:
 
 ## Iteration Guidance
 
-**Early iterations (1-5):**
+**Early phase (first ~30% of iterations):**
 - Focus on broad exploration
 - Identify major patterns and group differences
 - Build intuition about the data
 
-**Middle iterations (6-N-10):**
+**Middle phase (middle ~40% of iterations):**
 - Test mechanistic hypotheses
 - Follow up on interesting findings
 - Connect findings into coherent story
 
-**Late iterations (N-10 to N):**
+**Late phase (final ~30% of iterations):**
 - Consolidate findings
 - Test remaining high-priority hypotheses
 - Prepare for synthesis
