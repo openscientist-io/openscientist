@@ -129,18 +129,20 @@ class VertexProvider(BaseProvider):
         # Format: billing_export.gcp_billing_export_v1_{billing_account_with_underscores}
         billing_table = f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
 
-        # Query for total spend (all time for Vertex AI)
+        # Query for total spend (all time for Vertex AI in this project only)
         total_query = f"""
         SELECT SUM(cost) as total_cost
         FROM `{billing_table}`
         WHERE service.description = 'Vertex AI'
+          AND project.id = '{project_id}'
         """
 
-        # Query for recent spend
+        # Query for recent spend (filter by project AND time window)
         recent_query = f"""
         SELECT SUM(cost) as recent_cost
         FROM `{billing_table}`
         WHERE service.description = 'Vertex AI'
+          AND project.id = '{project_id}'
           AND usage_start_time >= TIMESTAMP('{recent_start.isoformat()}')
         """
 
