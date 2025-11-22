@@ -15,7 +15,7 @@ from nicegui import app, ui
 from dotenv import load_dotenv
 
 from .job_manager import JobManager, JobStatus
-from .cost_tracker import get_budget_info
+from .providers import get_provider
 
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
@@ -213,23 +213,28 @@ def new_job_page():
 
             use_skills = ui.checkbox("Use Skills", value=True)
 
-        # Budget info
+        # Budget info (project-level)
         try:
-            budget_info = get_budget_info()
+            provider = get_provider()
+            cost_info = provider.get_cost_info(lookback_hours=24)
+            budget_check = provider.check_budget_limits()
+
             with ui.card().classes("w-full bg-blue-50"):
                 ui.label("Budget Information").classes("text-subtitle2 font-bold")
 
-                # Show remaining budget (may be None if no CBORG limit set)
-                if budget_info['budget_remaining'] is not None:
-                    ui.label(f"Remaining: ${budget_info['budget_remaining']:.2f}")
-                else:
-                    ui.label(f"Current Spend: ${budget_info['current_spend']:.2f}")
+                ui.label(f"Total Spend: ${cost_info.total_spend_usd:.2f}").classes("text-sm")
+                ui.label(f"Last 24h: ${cost_info.recent_spend_usd:.2f}").classes("text-sm")
 
-                ui.label(f"Per-Job Limit: ${budget_info['app_max_job_cost']:.2f}")
+                if cost_info.budget_remaining_usd is not None:
+                    ui.label(f"Remaining: ${cost_info.budget_remaining_usd:.2f}").classes("text-sm")
+
+                # Show warnings/errors
+                if not budget_check["can_proceed"]:
+                    ui.label("⚠️ Budget limit exceeded").classes("text-sm text-negative font-bold")
         except Exception as e:
             with ui.card().classes("w-full bg-yellow-50"):
                 ui.label("Budget Information Unavailable").classes("text-subtitle2 font-bold")
-                ui.label("Check ANTHROPIC_AUTH_TOKEN in .env").classes("text-sm text-gray-600")
+                ui.label("Check provider configuration in .env").classes("text-sm text-gray-600")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")
@@ -261,7 +266,6 @@ def jobs_page():
                 "status": job.status.value,
                 "iterations": f"{job.iterations_completed}/{job.max_iterations}",
                 "findings": job.findings_count,
-                "cost": f"${job.cost_usd:.2f}" if job.cost_usd else "N/A",
                 "created": job.created_at[:19]  # Remove milliseconds
             }
             for job in jobs
@@ -290,9 +294,48 @@ def jobs_page():
             ui.label("Completed").classes("text-subtitle2")
             ui.label(str(summary["status_counts"].get("completed", 0))).classes("text-h4 text-green-600")
 
-        with ui.card():
-            ui.label("Total Cost").classes("text-subtitle2")
-            ui.label(f"${summary['total_cost_usd']:.2f}").classes("text-h4")
+    # Cost dashboard (project-level)
+    if summary.get("cost_info"):
+        cost_info = summary["cost_info"]
+        budget_check = summary.get("budget_check", {})
+
+        with ui.card().classes("w-full p-4"):
+            ui.label("Project Costs").classes("text-h6 mb-2")
+
+            with ui.row().classes("w-full gap-4"):
+                # Total spend
+                with ui.column().classes("items-start"):
+                    ui.label(f"${cost_info.total_spend_usd:.2f}").classes("text-h4 text-primary")
+                    ui.label("Total Spend").classes("text-caption text-grey")
+
+                # Last 24h
+                with ui.column().classes("items-start"):
+                    ui.label(f"${cost_info.recent_spend_usd:.2f}").classes("text-h5")
+                    ui.label(f"Last {cost_info.recent_period_hours}h").classes("text-caption text-grey")
+
+                # Budget remaining (if available)
+                if cost_info.budget_remaining_usd is not None:
+                    with ui.column().classes("items-start"):
+                        remaining_color = "text-positive" if cost_info.budget_remaining_usd > 10 else "text-warning"
+                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(f"text-h5 {remaining_color}")
+                        ui.label("Budget Remaining").classes("text-caption text-grey")
+
+                # Provider info
+                with ui.column().classes("items-start ml-auto"):
+                    ui.label(f"Provider: {cost_info.provider_name}").classes("text-caption")
+                    if cost_info.data_lag_note:
+                        ui.label(cost_info.data_lag_note).classes("text-caption text-grey-6")
+
+            # Budget warnings/errors
+            if budget_check and budget_check.get("errors"):
+                for error in budget_check["errors"]:
+                    ui.label(f"⚠️ {error}").classes("text-caption text-negative font-bold")
+            elif budget_check and budget_check.get("warnings"):
+                for warning in budget_check["warnings"]:
+                    ui.label(f"⚠️ {warning}").classes("text-caption text-warning")
+    else:
+        with ui.card().classes("w-full bg-yellow-50 p-4"):
+            ui.label("Cost tracking unavailable").classes("text-caption text-warning")
 
     # Jobs table
     table = ui.table(
@@ -302,7 +345,6 @@ def jobs_page():
             {"name": "status", "label": "Status", "field": "status", "align": "center"},
             {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
             {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
-            {"name": "cost", "label": "Cost", "field": "cost", "align": "right"},
             {"name": "created", "label": "Created", "field": "created", "align": "left"},
             {"name": "actions", "label": "Actions", "field": "actions", "align": "center"}
         ],
@@ -371,11 +413,6 @@ def job_detail_page(job_id: str):
         with ui.card().classes("flex-1"):
             ui.label("Findings").classes("text-subtitle2")
             ui.label(str(job_info.findings_count)).classes("text-h5")
-
-        with ui.card().classes("flex-1"):
-            ui.label("Cost").classes("text-subtitle2")
-            cost_str = f"${job_info.cost_usd:.2f}" if job_info.cost_usd else "N/A"
-            ui.label(cost_str).classes("text-h5")
 
     # Research question
     with ui.card().classes("w-full"):
@@ -708,9 +745,9 @@ SHANDY is an autonomous AI scientist that analyzes scientific data to discover m
 ## Features
 
 - **Autonomous**: Runs without human intervention
-- **Domain-Agnostic**: Works for metabolomics, genomics, and more
+- **Domain-Agnostic**: Works for metabolomics, genomics, structural biology, and more
 - **Skills-Based**: Uses structured workflows for scientific rigor
-- **Cost-Tracked**: Budget monitoring via CBORG API
+- **Cost-Tracked**: Budget monitoring with provider-specific tracking
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
 
 ## Skills
@@ -752,7 +789,7 @@ sample2,treatment,150,180,...
 
 ## Budget
 
-SHANDY uses the CBORG API to track costs. Check your budget before starting large jobs.
+SHANDY tracks project-level costs through your configured model provider (CBORG, Vertex AI, or Bedrock). Check your budget before starting large jobs.
 
 ## Support
 
