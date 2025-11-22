@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
 RUN npm install -g @anthropic-ai/claude-code@2.0.37
 
 # Install Phenix for structural biology
-COPY phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz /tmp/
+COPY data/phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz /tmp/
 RUN cd /tmp && \
     tar xzf phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz && \
     cd phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6 && \
