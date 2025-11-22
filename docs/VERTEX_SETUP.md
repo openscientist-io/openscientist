@@ -4,9 +4,17 @@ This guide explains how to configure SHANDY to use Google Cloud Vertex AI instea
 
 ## Overview
 
-Vertex AI provides access to Claude models through Google Cloud. SHANDY integrates with Vertex AI for model calls and uses BigQuery billing export for cost tracking.
+Vertex AI provides access to Claude models through Google Cloud. SHANDY integrates with Vertex AI for model calls and optionally uses BigQuery billing export for cost tracking.
 
-**Cost Tracking Note**: GCP billing data has a 1-6 hour lag. The web UI displays an estimated data freshness timestamp.
+### What is BigQuery Billing Export?
+
+**Purpose**: BigQuery billing export is used for **cost tracking** in SHANDY. Unlike CBORG (which provides real-time cost APIs), Vertex AI doesn't have a direct cost API. Instead, GCP exports billing data to BigQuery tables, which SHANDY queries to show your spending.
+
+**Is it required?** **NO** - BigQuery billing export is **completely optional**:
+- ✅ **Without it**: SHANDY works perfectly fine. Jobs will run normally using Vertex AI. You just won't see cost information in the web UI.
+- ✅ **With it**: You get cost tracking in the web UI (total spend, last 24h spend, budget warnings)
+
+**Data lag**: GCP billing data has a 1-6 hour lag. The web UI displays an estimated data freshness timestamp when billing export is configured.
 
 ## Prerequisites
 
@@ -17,20 +25,31 @@ Vertex AI provides access to Claude models through Google Cloud. SHANDY integrat
 
 ## Step 1: Enable Required APIs
 
+**IMPORTANT**: Use your personal account (not a service account) to enable APIs and manage billing:
+
 ```bash
+# Check which account is active
+gcloud auth list
+
+# If using a service account, switch to your personal account
+gcloud config set account YOUR_EMAIL@example.com
+
 # Set your project ID
 export PROJECT_ID=your-project-id
 gcloud config set project $PROJECT_ID
 
-# Enable Vertex AI API
+# Enable Vertex AI API (REQUIRED - for model access)
 gcloud services enable aiplatform.googleapis.com
 
-# Enable BigQuery API (for billing export)
-gcloud services enable bigquery.googleapis.com
-
-# Enable Cloud Billing API
+# Enable Cloud Billing API (REQUIRED - to list billing accounts)
+# This allows SHANDY to query your billing account ID
 gcloud services enable cloudbilling.googleapis.com
+
+# Enable BigQuery API (OPTIONAL - only if you want cost tracking)
+gcloud services enable bigquery.googleapis.com
 ```
+
+**Why switch accounts?** Service accounts typically don't have permissions to enable APIs or list billing accounts. Use your personal account for setup, then the service account will be used at runtime.
 
 ## Step 2: Create Service Account
 
@@ -63,9 +82,11 @@ gcloud iam service-accounts keys create ~/shandy-vertex-key.json \
 
 **Security Note**: Store the service account key securely. Do not commit it to git.
 
-## Step 3: Enable BigQuery Billing Export
+## Step 3: Enable BigQuery Billing Export (OPTIONAL)
 
-Cost tracking in SHANDY requires BigQuery billing export:
+**This step is optional.** If you skip this, SHANDY will work fine but won't display cost information in the web UI.
+
+Cost tracking in SHANDY uses BigQuery billing export:
 
 ### 3.1 Enable Billing Export in Console
 
@@ -80,10 +101,29 @@ Cost tracking in SHANDY requires BigQuery billing export:
 ### 3.2 Find Your Billing Account ID
 
 ```bash
+# Make sure you're using your personal account (not service account)
+gcloud auth list
+# If needed, switch to personal account:
+# gcloud config set account YOUR_EMAIL@example.com
+
 # List billing accounts
 gcloud billing accounts list
 
 # Note the ACCOUNT_ID (format: XXXXXX-YYYYYY-ZZZZZZ)
+```
+
+**Troubleshooting**: If you get "API not enabled" error:
+```bash
+# Enable the Cloud Billing API (must be done with personal account)
+gcloud services enable cloudbilling.googleapis.com --project=YOUR_PROJECT_ID
+
+# Then try again:
+gcloud billing accounts list
+```
+
+Add the billing account ID to your `.env`:
+```bash
+GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
 ```
 
 ### 3.3 Verify Billing Export Table
@@ -226,14 +266,17 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
     --role="roles/aiplatform.user"
 ```
 
-### "Billing data unavailable"
+### "Billing data unavailable" or cost tracking warnings
 
-**Cause**: BigQuery billing export not set up or data not yet populated.
+**Symptom**: Logs show "Failed to fetch cost info from Vertex AI" or web UI doesn't display cost information.
 
-**Solution**:
-1. Verify billing export is enabled in Cloud Console
-2. Wait 1-24 hours for initial data to populate
-3. Check table exists:
+**Is this a problem?** **NO** - This is completely normal if you haven't set up BigQuery billing export (Step 3). SHANDY will work fine; you just won't see cost tracking in the web UI.
+
+**If you want cost tracking:**
+1. Verify billing export is enabled in Cloud Console (see Step 3.1)
+2. Wait 1-24 hours for initial data to populate after enabling
+3. Ensure `GCP_BILLING_ACCOUNT_ID` is set in your `.env`
+4. Check table exists:
    ```bash
    bq ls --project_id=$PROJECT_ID billing_export
    ```
