@@ -19,10 +19,12 @@ class CostInfo:
     provider_name: str
 
     # Total project spending (all time)
-    total_spend_usd: float
+    # None = unknown/unavailable (e.g., permissions error)
+    total_spend_usd: Optional[float]
 
     # Recent spending (configurable time window)
-    recent_spend_usd: float
+    # None = unknown/unavailable (e.g., permissions error)
+    recent_spend_usd: Optional[float]
     recent_period_hours: int  # e.g., 24 for "last 24h"
 
     # Budget tracking (optional - provider-specific)
@@ -119,31 +121,38 @@ class BaseProvider(ABC):
         warnings = []
         errors = []
 
-        # Check total spend limit
-        max_total = float(os.getenv("MAX_PROJECT_SPEND_TOTAL_USD", "inf"))
-        if cost_info.total_spend_usd >= max_total:
-            errors.append(
-                f"Total spend ${cost_info.total_spend_usd:.2f} "
-                f"exceeds limit ${max_total:.2f}"
-            )
-
-        # Check 24h spend limit
-        max_recent = float(os.getenv(f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
-                                      os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf")))
-        if cost_info.recent_spend_usd >= max_recent:
-            errors.append(
-                f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
-                f"exceeds limit ${max_recent:.2f}"
-            )
-
-        # Check warning threshold
-        warn_recent = float(os.getenv(f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
-                                       os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf")))
-        if cost_info.recent_spend_usd >= warn_recent and cost_info.recent_spend_usd < max_recent:
+        # If cost data is unavailable, warn but allow job to proceed
+        if cost_info.total_spend_usd is None or cost_info.recent_spend_usd is None:
             warnings.append(
-                f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
-                f"approaching limit (warning threshold: ${warn_recent:.2f})"
+                f"Cost data unavailable for budget check. "
+                f"Reason: {cost_info.data_lag_note or 'Unknown'}"
             )
+        else:
+            # Check total spend limit
+            max_total = float(os.getenv("MAX_PROJECT_SPEND_TOTAL_USD", "inf"))
+            if cost_info.total_spend_usd >= max_total:
+                errors.append(
+                    f"Total spend ${cost_info.total_spend_usd:.2f} "
+                    f"exceeds limit ${max_total:.2f}"
+                )
+
+            # Check 24h spend limit
+            max_recent = float(os.getenv(f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
+                                          os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf")))
+            if cost_info.recent_spend_usd >= max_recent:
+                errors.append(
+                    f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
+                    f"exceeds limit ${max_recent:.2f}"
+                )
+
+            # Check warning threshold
+            warn_recent = float(os.getenv(f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
+                                           os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf")))
+            if cost_info.recent_spend_usd >= warn_recent and cost_info.recent_spend_usd < max_recent:
+                warnings.append(
+                    f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
+                    f"approaching limit (warning threshold: ${warn_recent:.2f})"
+                )
 
         # Provider-specific budget (e.g., CBORG max_budget)
         if cost_info.budget_remaining_usd is not None:

@@ -222,8 +222,12 @@ def new_job_page():
             with ui.card().classes("w-full bg-blue-50"):
                 ui.label("Budget Information").classes("text-subtitle2 font-bold")
 
-                ui.label(f"Total Spend: ${cost_info.total_spend_usd:.2f}").classes("text-sm")
-                ui.label(f"Last 24h: ${cost_info.recent_spend_usd:.2f}").classes("text-sm")
+                # Display costs or "N/A" if unavailable
+                total_spend_str = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
+                recent_spend_str = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
+
+                ui.label(f"Total Spend: {total_spend_str}").classes("text-sm")
+                ui.label(f"Last 24h: {recent_spend_str}").classes("text-sm")
 
                 if cost_info.budget_remaining_usd is not None:
                     ui.label(f"Remaining: ${cost_info.budget_remaining_usd:.2f}").classes("text-sm")
@@ -305,12 +309,14 @@ def jobs_page():
             with ui.row().classes("w-full gap-4"):
                 # Total spend
                 with ui.column().classes("items-start"):
-                    ui.label(f"${cost_info.total_spend_usd:.2f}").classes("text-h4 text-primary")
+                    total_spend_display = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
+                    ui.label(total_spend_display).classes("text-h4 text-primary")
                     ui.label("Total Spend").classes("text-caption text-grey")
 
                 # Last 24h
                 with ui.column().classes("items-start"):
-                    ui.label(f"${cost_info.recent_spend_usd:.2f}").classes("text-h5")
+                    recent_spend_display = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
+                    ui.label(recent_spend_display).classes("text-h5")
                     ui.label(f"Last {cost_info.recent_period_hours}h").classes("text-caption text-grey")
 
                 # Budget remaining (if available)
