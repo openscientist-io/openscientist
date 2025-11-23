@@ -15,7 +15,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 
 from .orchestrator import create_job, run_discovery
-from .cost_tracker import get_budget_info, BudgetExceededError
+from .providers import get_provider
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,6 @@ class JobInfo:
     max_iterations: int = 10
     iterations_completed: int = 0
     findings_count: int = 0
-    cost_usd: Optional[float] = None
     error: Optional[str] = None
     use_skills: bool = True
 
@@ -121,14 +120,17 @@ class JobManager:
         if self.get_job(job_id) is not None:
             raise ValueError(f"Job {job_id} already exists")
 
-        # Check budget
-        budget_info = get_budget_info()
+        # Check budget limits
+        try:
+            provider = get_provider()
+            budget_check = provider.check_budget_limits()
 
-        # Check if we have budget remaining (if CBORG limit is set)
-        if budget_info["budget_remaining"] is not None and budget_info["budget_remaining"] < 1.0:
-            raise BudgetExceededError(
-                f"Insufficient budget: ${budget_info['budget_remaining']:.2f} remaining"
-            )
+            if not budget_check["can_proceed"]:
+                errors = budget_check.get("errors", [])
+                error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
+                raise ValueError(f"Cannot create job: {error_msg}")
+        except Exception as e:
+            logger.warning(f"Budget check failed: {e}")
 
         # Create job directory and files
         logger.info(f"Creating job {job_id}")
@@ -258,9 +260,16 @@ class JobManager:
         # Update status
         self._update_job_status(job_id, JobStatus.CANCELLED)
 
+        # Remove from running jobs if present
+        with self._lock:
+            self._running_jobs.pop(job_id, None)
+
         # Note: We can't actually kill the thread cleanly in Python
         # The orchestrator will check status and stop at next iteration
         logger.info(f"Job {job_id} cancelled (will stop at next iteration)")
+
+        # Start next queued job if any
+        self._start_next_queued_job()
 
     def get_job(self, job_id: str) -> Optional[JobInfo]:
         """
@@ -392,14 +401,21 @@ class JobManager:
         for status in JobStatus:
             status_counts[status.value] = sum(1 for j in jobs if j.status == status)
 
-        total_cost = sum(j.cost_usd for j in jobs if j.cost_usd is not None)
-        budget_info = get_budget_info()
+        # Get project-level cost info from provider
+        try:
+            provider = get_provider()
+            cost_info = provider.get_cost_info(lookback_hours=24)
+            budget_check = provider.check_budget_limits()
+        except Exception as e:
+            logger.warning(f"Could not fetch cost info: {e}")
+            cost_info = None
+            budget_check = None
 
         return {
             "total_jobs": len(jobs),
             "status_counts": status_counts,
-            "total_cost_usd": total_cost,
-            "budget_info": budget_info
+            "cost_info": cost_info,
+            "budget_check": budget_check
         }
 
     def _list_job_ids(self) -> List[str]:
@@ -428,7 +444,6 @@ class JobManager:
             # For running jobs, get real-time progress from knowledge_graph.json
             iterations_completed = config.get("iterations_completed", 0)
             findings_count = config.get("findings_count", 0)
-            cost_usd = config.get("final_cost_usd")
 
             if config["status"] == "running":
                 kg_path = self.jobs_dir / job_id / "knowledge_graph.json"
@@ -454,7 +469,6 @@ class JobManager:
                 max_iterations=config["max_iterations"],
                 iterations_completed=iterations_completed,
                 findings_count=findings_count,
-                cost_usd=cost_usd,
                 error=config.get("error"),
                 use_skills=config.get("use_skills", True)
             )
@@ -537,14 +551,13 @@ def main():
         status = JobStatus(args.status) if args.status else None
         jobs = manager.list_jobs(status=status, limit=args.limit)
 
-        print(f"{'Job ID':<20} {'Status':<12} {'Iterations':<12} {'Findings':<10} {'Cost':<10} {'Created At'}")
-        print("-" * 90)
+        print(f"{'Job ID':<20} {'Status':<12} {'Iterations':<12} {'Findings':<10} {'Created At'}")
+        print("-" * 80)
 
         for job in jobs:
-            cost_str = f"${job.cost_usd:.2f}" if job.cost_usd else "N/A"
             print(f"{job.job_id:<20} {job.status.value:<12} "
                   f"{job.iterations_completed}/{job.max_iterations:<6} "
-                  f"{job.findings_count:<10} {cost_str:<10} {job.created_at}")
+                  f"{job.findings_count:<10} {job.created_at}")
 
     elif args.command == "get":
         job = manager.get_job(args.job_id)

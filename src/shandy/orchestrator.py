@@ -18,24 +18,12 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from .knowledge_graph import KnowledgeGraph
-from .cost_tracker import get_cborg_spend, track_job_cost, BudgetExceededError
+from .providers import get_provider
 from .file_loader import load_data_file, get_file_info
 
 # Load environment variables (important for Claude CLI subprocess)
 if not load_dotenv("/app/.env", override=True):
     load_dotenv(".env", override=True)
-
-# Claude CLI uses ANTHROPIC_API_KEY, but SHANDY uses ANTHROPIC_AUTH_TOKEN
-# Set ANTHROPIC_API_KEY from ANTHROPIC_AUTH_TOKEN if not already set
-if not os.getenv("ANTHROPIC_API_KEY") and os.getenv("ANTHROPIC_AUTH_TOKEN"):
-    os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_AUTH_TOKEN")
-
-# CRITICAL: Disable Vertex AI - SHANDY uses CBORG API via ANTHROPIC_BASE_URL
-# If CLAUDE_CODE_USE_VERTEX=1 is set, Claude CLI ignores ANTHROPIC_BASE_URL
-# and tries to use Vertex AI instead, causing 404 errors
-os.environ.pop('CLAUDE_CODE_USE_VERTEX', None)
-os.environ.pop('ANTHROPIC_VERTEX_PROJECT_ID', None)
-os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
 
 logger = logging.getLogger(__name__)
 
@@ -189,10 +177,9 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
     logger.info(f"Starting discovery for job {job_id}")
 
-    # No proxy needed - using Claude Code v2.0.37 which doesn't send beta header
-
-    # Track initial spend
-    start_spend = get_cborg_spend()
+    # Initialize provider and configure environment
+    provider = get_provider()
+    provider.setup_environment()
 
     # Create job-specific MCP config
     mcp_config = {
@@ -379,13 +366,7 @@ Think step by step about what will provide the most insight, then actively use t
             if iteration < max_iterations:
                 increment_kg_iteration(kg_path)
 
-            # Track costs
-            try:
-                current_cost = track_job_cost(job_id, start_spend, iteration, str(job_dir))
-                logger.info(f"Current cost: ${current_cost:.2f}")
-            except BudgetExceededError as e:
-                logger.warning(f"Budget exceeded at iteration {iteration}: {e}")
-                break
+            # Cost tracking removed - now handled at project level, not per-job
 
         logger.info(f"Discovery loop completed")
 
@@ -447,21 +428,12 @@ Format as professional scientific markdown."""
             logger.error(f"  stderr: {result.stderr}")
             logger.error(f"  stdout: {result.stdout[:1000]}")
 
-        # Track final cost (calculate actual cost even if budget was exceeded)
-        try:
-            current_spend = get_cborg_spend()
-            final_cost = current_spend - start_spend
-        except Exception as e:
-            logger.warning(f"Could not calculate final cost: {e}")
-            final_cost = None
-
         # Load final knowledge graph
         kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
 
         # Update job status
         config["status"] = "completed"
         config["completed_at"] = datetime.now().isoformat()
-        config["final_cost_usd"] = final_cost
         config["iterations_completed"] = kg.data["iteration"]
         config["findings_count"] = len(kg.data["findings"])
         # Update max_iterations to actual iterations when job stops early
@@ -474,8 +446,7 @@ Format as professional scientific markdown."""
             "job_id": job_id,
             "status": "completed",
             "iterations": kg.data["iteration"],
-            "findings": len(kg.data["findings"]),
-            "cost_usd": final_cost
+            "findings": len(kg.data["findings"])
         }
 
     except Exception as e:
@@ -513,8 +484,6 @@ def main():
     print(f"Job ID: {result['job_id']}")
     print(f"Iterations: {result['iterations']}")
     print(f"Findings: {result['findings']}")
-    if result.get('cost_usd'):
-        print(f"Cost: ${result['cost_usd']:.2f}")
 
 
 if __name__ == "__main__":

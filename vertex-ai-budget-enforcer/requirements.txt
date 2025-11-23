@@ -1,0 +1,2 @@
+flask>=2.3.0
+google-cloud-iam>=2.12.0

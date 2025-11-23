@@ -48,6 +48,9 @@ dependencies = [
 
     # Type hints
     "typing-extensions>=4.8.0",
+
+    # Cloud providers (for Vertex AI cost tracking)
+    "google-cloud-bigquery>=3.11.0",
 ]
 
 [project.optional-dependencies]
