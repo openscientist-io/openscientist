@@ -419,10 +419,19 @@ Format as professional scientific markdown."""
 
         if result.returncode == 0:
             report_content = result.stdout
-            # Save report
-            with open(job_dir / "final_report.md", "w") as f:
+            # Save Markdown report
+            markdown_path = job_dir / "final_report.md"
+            with open(markdown_path, "w") as f:
                 f.write(report_content)
-            logger.info("Final report generated")
+            logger.info("Final report (Markdown) generated")
+
+            # Generate PDF version
+            try:
+                from .pdf_generator import markdown_to_pdf
+                pdf_path = markdown_to_pdf(markdown_path, add_footer=True)
+                logger.info(f"Final report (PDF) generated: {pdf_path}")
+            except Exception as e:
+                logger.warning(f"PDF generation failed (Markdown still available): {e}")
         else:
             logger.error(f"Report generation failed (rc={result.returncode})")
             logger.error(f"  stderr: {result.stderr}")
