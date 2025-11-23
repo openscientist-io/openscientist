@@ -165,9 +165,9 @@ class VertexProvider(BaseProvider):
                 "Ensure BigQuery billing export is enabled in GCP Console. "
                 "See docs/VERTEX_SETUP.md for setup instructions."
             )
-            # Return zeros if billing data unavailable
-            total_spend = 0.0
-            recent_spend = 0.0
+            # Return None if billing data unavailable (permissions, export not enabled, etc.)
+            total_spend = None
+            recent_spend = None
             data_lag_note = "Billing data unavailable (ensure BigQuery export is enabled)"
 
         return CostInfo(
