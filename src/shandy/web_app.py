@@ -664,15 +664,30 @@ def job_detail_page(job_id: str):
         # Final report panel
         with ui.tab_panel(report_tab):
             report_path = job_dir / "final_report.md"
+            pdf_path = job_dir / "final_report.pdf"
 
             if report_path.exists():
-                # Download button at top
-                with ui.row().classes("w-full justify-end mb-4"):
+                # Download buttons at top
+                with ui.row().classes("w-full justify-end mb-4 gap-2"):
+                    # Markdown download
                     ui.button(
-                        "Download Report",
+                        "Download Markdown",
                         on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md"),
                         icon="download"
-                    ).props("color=primary")
+                    ).props("color=secondary outline")
+
+                    # PDF download (if available)
+                    if pdf_path.exists():
+                        ui.button(
+                            "Download PDF",
+                            on_click=lambda: ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf"),
+                            icon="picture_as_pdf"
+                        ).props("color=primary")
+                    else:
+                        ui.button(
+                            "PDF Unavailable",
+                            icon="picture_as_pdf"
+                        ).props("color=grey outline disabled")
 
                 # Display markdown
                 with open(report_path) as f:
