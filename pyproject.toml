@@ -51,6 +51,10 @@ dependencies = [
 
     # Cloud providers (for Vertex AI cost tracking)
     "google-cloud-bigquery>=3.11.0",
+
+    # PDF generation (lightweight, pure Python)
+    "fpdf2>=2.7.0",
+    "markdown>=3.5.0",
 ]
 
 [project.optional-dependencies]
