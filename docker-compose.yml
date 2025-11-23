@@ -1,5 +1,4 @@
 # Docker Compose for SHANDY
-version: '3.8'
 
 services:
   shandy:
@@ -37,7 +36,7 @@ services:
 
       # App settings
       DISABLE_AUTH: ${DISABLE_AUTH}
-      APP_PASSWORD_HASH: "$$2b$$12$$H77l168RKZRcRlElvBqr.O7UZxarzIZU9LUfPDsHvb/DmeekUUKZa"
+      APP_PASSWORD_HASH: "$$2b$$12$$$$H77l168RKZRcRlElvBqr.O7UZxarzIZU9LUfPDsHvb/DmeekUUKZa"
       PHENIX_PATH: /opt/phenix-1.21.2-5419
       STORAGE_SECRET: ${STORAGE_SECRET}
     volumes:
