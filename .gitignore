@@ -56,7 +56,7 @@ jobs/*/
 
 # Phenix installer (large binary, downloaded separately)
 Phenix-*.sh
-phenix-installer-*.tar.gz
+data/phenix-installer-*.tar.gz
 
 # OS
 .DS_Store

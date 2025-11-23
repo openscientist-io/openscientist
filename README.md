@@ -18,7 +18,8 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 - **Autonomous Discovery**: Runs iterative hypothesis-testing loop using Claude Code CLI headless mode
 - **Domain-Agnostic**: Works with metabolomics, genomics, transcriptomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
-- **Cost-Tracked**: Integrates with CBORG API for budget monitoring
+- **Multi-Provider Support**: Works with CBORG, Google Vertex AI, or AWS Bedrock for model access
+- **Cost Tracking**: Project-level budget monitoring with provider-specific cost APIs
 - **Sandboxed Execution**: Safe Python code execution for data analysis
 
 ### Skills System
@@ -51,7 +52,10 @@ SHANDY supports **Phenix integration** for protein structure analysis:
 - Python 3.10+
 - Docker (for containerized deployment)
 - `uv` package manager
-- CBORG API key (or other Anthropic API access)
+- One of the following for model access:
+  - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
+  - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
+  - **AWS Bedrock**: *(Coming soon)*
 
 ### Installation
 
@@ -106,7 +110,11 @@ shandy/
 │   ├── knowledge_graph.py # JSON-based state storage
 │   ├── code_executor.py   # Sandboxed Python execution
 │   ├── literature.py      # PubMed search
-│   ├── cost_tracker.py    # CBORG API integration
+│   ├── providers/         # Model provider integrations
+│   │   ├── base.py        # Base provider interface
+│   │   ├── cborg.py       # CBORG provider
+│   │   ├── vertex.py      # Google Vertex AI provider
+│   │   └── bedrock.py     # AWS Bedrock provider (stub)
 │   └── mcp_server/        # MCP tools server
 ├── .claude/               # Claude Code configuration
 │   ├── skills/            # Discovery skills
@@ -122,16 +130,73 @@ shandy/
 
 ## Configuration
 
-### Environment Variables
+### Model Providers
 
-Create a `.env` file with:
+SHANDY supports multiple model providers. Choose one and configure it in your `.env` file:
+
+#### Option 1: CBORG (Lawrence Berkeley National Lab)
 
 ```bash
-# CBORG API credentials (required)
-ANTHROPIC_AUTH_TOKEN=your-token-here
+# Provider selection
+CLAUDE_PROVIDER=cborg
 
+# CBORG credentials
+ANTHROPIC_AUTH_TOKEN=your-cborg-token
+ANTHROPIC_BASE_URL=https://api.cborg.lbl.gov
+```
+
+**Cost Tracking**: Real-time via CBORG API (`/key/info`, `/user/daily/activity`)
+
+#### Option 2: Google Vertex AI
+
+```bash
+# Provider selection
+CLAUDE_PROVIDER=vertex
+
+# Vertex AI configuration
+ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+CLOUD_ML_REGION=us-east5
+VERTEX_REGION_CLAUDE_4_5_SONNET=us-east5
+VERTEX_REGION_CLAUDE_4_5_HAIKU=us-east5
+
+# BigQuery billing export (for cost tracking)
+GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
+```
+
+**Cost Tracking**: Via GCP BigQuery billing export (1-6 hour lag)
+**Setup Guide**: See `docs/VERTEX_SETUP.md` for detailed instructions
+
+#### Option 3: AWS Bedrock
+
+*(Coming soon)*
+
+### Budget Controls
+
+Set application-level budget limits (optional):
+
+```bash
+# Maximum total spend across all jobs
+MAX_PROJECT_SPEND_TOTAL_USD=1000
+
+# Maximum spend in last 24 hours
+MAX_PROJECT_SPEND_24H_USD=50
+```
+
+Budget limits are checked before job creation. The web UI displays:
+- Total project spend
+- Recent spend (last 24h)
+- Budget remaining (if provider supports it)
+
+### Other Settings
+
+```bash
 # Claude Code CLI path (optional, default: claude)
 CLAUDE_CLI_PATH=claude
+
+# Web app authentication (optional)
+APP_PASSWORD_HASH=<bcrypt-hash>
+DISABLE_AUTH=false
 ```
 
 ### Job Manager Settings
@@ -239,6 +304,24 @@ If tabs like "Plots" are missing from the job detail page, the Docker container 
 ```bash
 make rebuild
 ```
+
+### CBORG HTTP 400 errors with newer Claude versions
+
+**Symptom**: Jobs fail with HTTP 400 errors when using CBORG provider.
+
+**Cause**: Newer versions of the Claude CLI may send headers that CBORG doesn't recognize or support, causing the CBORG API to reject requests with HTTP 400 errors.
+
+**Solution**: Consider using an older version of the Claude CLI if you encounter this issue:
+
+```bash
+# Check current Claude CLI version
+claude --version
+
+# If needed, install a specific older version
+npm install -g @anthropic-ai/claude-code@<version>
+```
+
+**Alternative**: Switch to Vertex AI provider (see `docs/VERTEX_SETUP.md`), which may have better compatibility with newer Claude CLI versions.
 
 ## Documentation
 
