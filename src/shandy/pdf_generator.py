@@ -21,10 +21,13 @@ class ReportPDF(FPDF):
 
     def __init__(self):
         super().__init__()
-        # Use DejaVu font for Unicode support (built into fpdf2)
-        self.add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
-        self.add_font('DejaVu', 'B', 'DejaVuSans-Bold.ttf', uni=True)
-        self.add_font('DejaVu', 'I', 'DejaVuSans-Oblique.ttf', uni=True)
+        # Use DejaVu font for Unicode support (system-installed fonts)
+        # Debian/Ubuntu installs fonts to /usr/share/fonts/truetype/dejavu/
+        dejavu_path = '/usr/share/fonts/truetype/dejavu'
+        self.add_font('DejaVu', '', f'{dejavu_path}/DejaVuSans.ttf', uni=True)
+        self.add_font('DejaVu', 'B', f'{dejavu_path}/DejaVuSans-Bold.ttf', uni=True)
+        # Note: fonts-dejavu-core doesn't include italic variant, so we use regular for italic
+        self.add_font('DejaVu', 'I', f'{dejavu_path}/DejaVuSans.ttf', uni=True)
         self.add_page()
         self.set_auto_page_break(auto=True, margin=15)
 
