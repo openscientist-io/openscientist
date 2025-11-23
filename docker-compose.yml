@@ -6,7 +6,7 @@ services:
     platform: linux/amd64
     build: .
     ports:
-      - "${PORT:-8080}:${PORT:-8080}"
+      - "${PORT:-8080}:8080"
     # Pass environment variables explicitly
     environment:
       # Port configuration
@@ -50,7 +50,7 @@ services:
       # NOTE: Phenix is installed inside the Docker image at /opt/phenix-1.21.2-5419
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "sh", "-c", "curl -f http://localhost:$${PORT:-8080}"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
       interval: 30s
       timeout: 10s
       retries: 3
