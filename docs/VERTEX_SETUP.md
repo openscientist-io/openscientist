@@ -312,15 +312,340 @@ bq query --project_id=$PROJECT_ID \
    GROUP BY service.description"
 ```
 
+## Budget Protection: Quotas and Safety Nets
+
+SHANDY uses a **two-layer protection system** to prevent runaway costs on Vertex AI:
+
+1. **Layer 1: GCP Quotas** (instant enforcement, hard limits)
+2. **Layer 2: Pub/Sub Budget Safety Net** (monthly backstop, auto-disables service account)
+
+### Layer 1: Setting GCP Quotas
+
+GCP quotas provide **instant, hard limits** on API usage. These prevent runaway costs even if application-level budget tracking fails.
+
+#### Current Pricing (as of 2025)
+
+- **Claude Sonnet 4.5**: $3/M input tokens, $15/M output tokens
+- **Claude Haiku 4.5**: $0.80/M input tokens, $4/M output tokens
+
+#### Recommended Quota Configuration
+
+Set quotas via the [GCP Quotas Console](https://console.cloud.google.com/iam-admin/quotas):
+
+**Filter for:**
+```
+Service: Vertex AI API
+base_model: anthropic-claude
+```
+
+**Quotas to set (both Global and Regional):**
+
+For **Claude Sonnet 4.5** (`anthropic-claude-sonnet-4-5`):
+- Global online prediction input tokens per minute: **1,000,000**
+- Global online prediction output tokens per minute: **100,000**
+- Global online prediction requests per minute: **1,000**
+- Regional (us-east5) - set to same values as global
+- **Max cost: $270/hour = $6,480/day**
+
+For **Claude Haiku 4.5** (`anthropic-claude-haiku-4-5`):
+- Global online prediction input tokens per minute: **3,000,000**
+- Global online prediction output tokens per minute: **300,000**
+- Global online prediction requests per minute: **3,000**
+- Regional (us-east5) - set to same values as global
+- **Max cost: $216/hour = $5,184/day**
+
+**Regional request caps** (us-east5):
+- Online prediction requests per minute per region: **4,000**
+- Long running online prediction requests per minute per region: **4,000**
+
+**Total maximum spend: $11,664/day** (if both models maxed out 24/7)
+
+#### Why Set Both Global and Regional?
+
+- **Global quotas**: Apply across all regions combined, prevent bypassing limits by switching regions
+- **Regional quotas**: Apply only to specific region (e.g., us-east5)
+- **Both must match**: The more restrictive quota wins, so set them to the same values
+
+#### How to Adjust Quotas
+
+1. Go to: https://console.cloud.google.com/iam-admin/quotas
+2. Filter for: `Service: Vertex AI API`, `base_model: anthropic-claude`
+3. For each quota:
+   - Check the box next to the quota
+   - Click "EDIT QUOTAS"
+   - Enter new value
+   - Add justification: "Budget safety net"
+   - Click "SUBMIT REQUEST"
+4. Changes take effect immediately (no approval needed for decreases)
+
+### Layer 2: Pub/Sub Budget Safety Net
+
+The budget safety net **automatically disables your Vertex AI service account key** when monthly spending hits a threshold, stopping all API calls.
+
+#### Architecture
+
+```
+Monthly spending hits $5k → Budget alert → Pub/Sub topic → Cloud Run service → Disables service account key → API stops
+```
+
+**Components:**
+1. GCP Billing Budget ($5,000/month for Vertex AI)
+2. Pub/Sub topic (`budget-alerts`)
+3. Cloud Run service (`budget-enforcer`) - Python app that disables keys
+4. Service account key that gets disabled
+
+#### Implementation Steps
+
+**1. Enable Required APIs:**
+```bash
+gcloud services enable run.googleapis.com pubsub.googleapis.com \
+  iam.googleapis.com cloudbuild.googleapis.com \
+  artifactregistry.googleapis.com billingbudgets.googleapis.com \
+  --project=YOUR_PROJECT_ID
+```
+
+**2. Create Pub/Sub Topic:**
+```bash
+gcloud pubsub topics create budget-alerts --project=YOUR_PROJECT_ID
+```
+
+**3. Create Budget Enforcer Service:**
+
+Create `budget-enforcer/main.py`:
+```python
+"""
+Cloud Run service to disable service account keys when budget is exceeded.
+"""
+import base64
+import json
+import os
+from google.cloud import iam_admin_v1
+from flask import Flask, request
+
+app = Flask(__name__)
+
+SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
+
+@app.route("/", methods=["POST"])
+def handle_budget_alert():
+    envelope = request.get_json()
+    if not envelope or "message" not in envelope:
+        return "Invalid Pub/Sub message", 400
+
+    pubsub_message = envelope["message"]
+    if "data" in pubsub_message:
+        data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
+        budget_notification = json.loads(data)
+
+        cost_amount = budget_notification.get("costAmount", 0)
+        budget_amount = budget_notification.get("budgetAmount", 0)
+
+        print(f"Budget notification: cost=${cost_amount}, budget=${budget_amount}")
+
+        if cost_amount >= budget_amount:
+            print(f"BUDGET EXCEEDED! Disabling service account keys...")
+            disable_service_account_keys()
+            return f"Budget exceeded. Service account keys disabled.", 200
+
+    return "Budget alert received but threshold not met", 200
+
+def disable_service_account_keys():
+    client = iam_admin_v1.IAMClient()
+    request = iam_admin_v1.ListServiceAccountKeysRequest(
+        name=f"projects/{PROJECT_ID}/serviceAccounts/{SERVICE_ACCOUNT_EMAIL}"
+    )
+    keys = client.list_service_account_keys(request=request)
+
+    for key in keys.keys:
+        if key.key_type == iam_admin_v1.ServiceAccountKeyType.USER_MANAGED:
+            disable_request = iam_admin_v1.DisableServiceAccountKeyRequest(
+                name=key.name
+            )
+            client.disable_service_account_key(request=disable_request)
+            print(f"Disabled key: {key.name}")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+```
+
+Create `budget-enforcer/requirements.txt`:
+```
+flask>=2.3.0
+google-cloud-iam>=2.12.0
+```
+
+Create `budget-enforcer/Dockerfile`:
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY main.py .
+CMD exec python main.py
+```
+
+**4. Deploy Cloud Run Service:**
+```bash
+cd budget-enforcer
+gcloud run deploy budget-enforcer \
+  --source . \
+  --platform managed \
+  --region us-east5 \
+  --allow-unauthenticated \
+  --set-env-vars SERVICE_ACCOUNT_EMAIL=shandy-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com,GCP_PROJECT_ID=YOUR_PROJECT_ID \
+  --project=YOUR_PROJECT_ID
+```
+
+Note the service URL from the output (e.g., `https://budget-enforcer-123456.us-east5.run.app`)
+
+**5. Grant IAM Permissions:**
+```bash
+export PROJECT_NUMBER=$(gcloud projects describe YOUR_PROJECT_ID --format="value(projectNumber)")
+export CLOUD_RUN_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+
+gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+  --member="serviceAccount:${CLOUD_RUN_SA}" \
+  --role="roles/iam.serviceAccountKeyAdmin"
+```
+
+**6. Create Pub/Sub Push Subscription:**
+```bash
+export SERVICE_URL=https://budget-enforcer-123456.us-east5.run.app  # From step 4
+
+gcloud pubsub subscriptions create budget-alerts-sub \
+  --topic budget-alerts \
+  --push-endpoint=$SERVICE_URL \
+  --project=YOUR_PROJECT_ID
+```
+
+**7. Create Billing Budget (via Console UI):**
+
+Go to: https://console.cloud.google.com/billing/budgets
+
+1. Click "CREATE BUDGET"
+2. **Scope**:
+   - Projects: Select your project
+   - Services: Select "Vertex AI API" only
+3. **Amount**:
+   - Budget type: Specified amount
+   - Target amount: **$5,000** (monthly)
+   - Include credits: No
+4. **Actions**:
+   - Threshold rules: 100%
+   - Email notification options:
+     - ☐ "Email alerts to billing admins and users" - **Uncheck** to avoid notifying billing account admins
+     - ☑ "Email alerts to project owners" - **Check** to notify only project owners
+   - **CRITICAL**: Check "Connect a Pub/Sub topic"
+   - Select: `budget-alerts`
+5. Click "FINISH"
+
+**Note about email notifications:**
+- "Billing admins and users" sends to people with billing account roles (may include external Google contacts)
+- "Project owners" sends only to people with `roles/owner` on your project
+- **The Pub/Sub topic is what actually disables the key** - emails are just FYI notifications
+- You can uncheck both email options if you don't want any emails (key will still be disabled automatically)
+
+**Note:** Creating budgets via CLI requires Billing Account Admin permissions, which may not be available.
+
+#### Verifying the Budget
+
+```bash
+# List budgets for your billing account
+gcloud billing budgets list --billing-account=XXXXXX-YYYYYY-ZZZZZZ
+
+# Look for budget with:
+# - displayName: Contains your project name
+# - amount: units: '5000'
+# - pubsubTopic: projects/YOUR_PROJECT_ID/topics/budget-alerts
+```
+
+#### How It Works
+
+1. Your app makes Vertex AI API calls using the service account key
+2. When monthly Vertex AI spending reaches **$5,000**:
+   - GCP Billing Budget detects threshold crossed
+   - Sends notification to Pub/Sub topic `budget-alerts`
+   - Pub/Sub pushes message to Cloud Run service
+   - Cloud Run service calls IAM API to disable service account key
+3. Your app's next API call fails with authentication error
+4. No more spending possible until you manually re-enable the key
+
+#### Important Limitations
+
+- **Monthly cumulative, not daily**: Budget tracks total spending for the month, not daily rate
+  - Example: Spend $5k in first 3 days → triggers on day 3, not day 1
+- **1-6 hour billing lag**: GCP billing data updates with delay
+  - If you spend $10k in 10 minutes, alert may not fire for hours
+  - **This is why quotas (Layer 1) are the primary protection**
+- **Manual recovery required**: Key must be re-enabled manually (see below)
+
+#### Re-enabling Service Account Key
+
+When the safety net triggers, you must manually re-enable the key:
+
+**Via gcloud CLI:**
+```bash
+# 1. List keys to find the disabled one
+gcloud iam service-accounts keys list \
+  --iam-account=shandy-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
+
+# Output shows KEY_ID and status
+
+# 2. Re-enable the key (replace KEY_ID with actual ID from above)
+gcloud iam service-accounts keys enable KEY_ID \
+  --iam-account=shandy-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
+```
+
+**Via Console UI:**
+1. Go to: https://console.cloud.google.com/iam-admin/serviceaccounts
+2. Click on your service account
+3. Go to **Keys** tab
+4. Find the disabled key → Click **Enable**
+
+Once re-enabled, your app can immediately resume making API calls.
+
+#### Monitoring
+
+Check Cloud Run logs to see when budget enforcer runs:
+```bash
+gcloud logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=budget-enforcer" \
+  --limit=50 \
+  --project=YOUR_PROJECT_ID
+```
+
+### Summary: Two-Layer Protection
+
+| Layer | Type | Limit | Enforcement | Use Case |
+|-------|------|-------|-------------|----------|
+| **Quotas** | Token/request rate limits | $11,664/day max | Instant | Primary protection against runaway jobs |
+| **Pub/Sub Budget** | Monthly spending cap | $5,000/month | 1-6 hour lag | Backstop for sustained overspending |
+
+**Example scenarios:**
+
+- **Single-day spike**: Job burns through 10M tokens in 1 hour
+  - ✅ Quotas stop it at 1M tokens/min
+  - ❌ Budget won't trigger (only at $180 for the month)
+
+- **Multi-week sustained overspending**: Bug causes $300/day spending for 2 weeks
+  - ✅ Quotas allow it (under daily max)
+  - ✅ Budget triggers after ~17 days ($5,100 total)
+
+**Best practice**: Rely on quotas for instant protection, use budget as final backstop.
+
 ## Cost Optimization
 
 - **Use Haiku for simple tasks**: Set `ANTHROPIC_SMALL_FAST_MODEL` appropriately
 - **Set budget limits**: Use `MAX_PROJECT_SPEND_*` variables to prevent overruns
 - **Monitor in GCP Console**: [Billing Reports](https://console.cloud.google.com/billing) shows real-time trends
 - **Clean up old jobs**: Run `python -m shandy.job_manager cleanup --days 7`
+- **Review quotas regularly**: Adjust based on actual usage patterns
 
 ## Additional Resources
 
+- [VERTEX_BUDGET_SAFETY.md](VERTEX_BUDGET_SAFETY.md) - Automatic budget safety net for production deployments
 - [Vertex AI Documentation](https://cloud.google.com/vertex-ai/docs)
 - [Anthropic on Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude)
 - [BigQuery Billing Export](https://cloud.google.com/billing/docs/how-to/export-data-bigquery)
@@ -331,5 +656,5 @@ bq query --project_id=$PROJECT_ID \
 1. **Least Privilege**: Service account has only required roles
 2. **Key Rotation**: Rotate service account keys regularly
 3. **Key Storage**: Never commit `.json` keys to git (already in `.gitignore`)
-4. **Budget Alerts**: Set up GCP budget alerts in addition to SHANDY limits
+4. **Budget Alerts**: Set up GCP budget alerts in addition to SHANDY limits. For production deployments, consider implementing the automatic safety net described in [VERTEX_BUDGET_SAFETY.md](VERTEX_BUDGET_SAFETY.md) to automatically disable service account keys when budget is exceeded
 5. **Audit Logs**: Enable Cloud Audit Logs for Vertex AI API calls
