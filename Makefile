@@ -1,4 +1,4 @@
-.PHONY: start stop restart build rebuild logs shell clean clean-jobs test help deploy
+.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -10,17 +10,19 @@ help:
 	@echo "SHANDY - Makefile commands"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  make start       - Start the Docker container"
-	@echo "  make stop        - Stop the Docker container"
-	@echo "  make restart     - Restart the Docker container (without rebuilding)"
-	@echo "  make build       - Build the Docker image"
-	@echo "  make rebuild     - Rebuild image and restart (use after code changes)"
-	@echo "  make logs        - Tail container logs"
-	@echo "  make shell       - Open a shell in the running container"
-	@echo "  make clean       - Remove container and volumes"
-	@echo "  make clean-jobs  - Clean up old job directories"
-	@echo "  make test        - Run tests in container"
-	@echo "  make deploy      - Deploy to production server (default: gassh)"
+	@echo "  make start            - Start the Docker container"
+	@echo "  make stop             - Stop the Docker container"
+	@echo "  make restart          - Restart the Docker container (without rebuilding)"
+	@echo "  make build            - Build the Docker image (with cache)"
+	@echo "  make build-no-cache   - Build the Docker image (without cache, for dependency updates)"
+	@echo "  make rebuild          - Rebuild image and restart (use after code changes, with cache)"
+	@echo "  make rebuild-no-cache - Rebuild image and restart (without cache)"
+	@echo "  make logs             - Tail container logs"
+	@echo "  make shell            - Open a shell in the running container"
+	@echo "  make clean            - Remove container and volumes"
+	@echo "  make clean-jobs       - Clean up old job directories"
+	@echo "  make test             - Run tests in container"
+	@echo "  make deploy           - Deploy to production server (default: gassh, with cache)"
 	@echo ""
 	@echo "Jobs are stored in: ./jobs/"
 	@echo "Web interface at: http://localhost:8080"
@@ -38,11 +40,21 @@ stop:
 restart: stop start
 
 build:
-	@echo "Building SHANDY Docker image..."
+	@echo "Building SHANDY Docker image (with cache)..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build
+
+build-no-cache:
+	@echo "Building SHANDY Docker image (without cache)..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build --no-cache
 
 rebuild: build
 	@echo "Restarting with new build..."
+	docker compose -f $(COMPOSE_FILE) down
+	docker compose -f $(COMPOSE_FILE) up -d
+	@echo "SHANDY rebuilt and started at http://localhost:8080"
+
+rebuild-no-cache: build-no-cache
+	@echo "Restarting with new build (no cache)..."
 	docker compose -f $(COMPOSE_FILE) down
 	docker compose -f $(COMPOSE_FILE) up -d
 	@echo "SHANDY rebuilt and started at http://localhost:8080"
