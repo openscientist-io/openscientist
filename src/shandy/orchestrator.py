@@ -261,9 +261,14 @@ Start your investigation by using these tools to analyze the data.
         logger.info(f"Claude CLI stdout length: {len(result.stdout)}")
         logger.info(f"Claude CLI stderr length: {len(result.stderr)}")
 
+        # Log stderr to diagnose MCP server issues (always log, not just on failure)
+        if result.stderr:
+            # Log first 2000 chars to capture MCP server startup messages
+            logger.info(f"Claude CLI stderr (first 2000 chars):\n{result.stderr[:2000]}")
+
         if result.returncode != 0:
             logger.error(f"Claude CLI stdout: {result.stdout[:500]}")
-            logger.error(f"Claude CLI stderr: {result.stderr[:500]}")
+            logger.error(f"Claude CLI stderr (full): {result.stderr}")
             raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}")
 
         # Parse JSON output
@@ -342,9 +347,13 @@ Think step by step about what will provide the most insight, then actively use t
             logger.info(f"Prompt length: {len(iteration_prompt)} characters")
             result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
+            # Log stderr to diagnose MCP server issues (even on success)
+            if result.stderr:
+                logger.info(f"Iteration {iteration} Claude CLI stderr (first 2000 chars):\n{result.stderr[:2000]}")
+
             if result.returncode != 0:
                 logger.error(f"Iteration {iteration} failed (rc={result.returncode})")
-                logger.error(f"  stderr: {result.stderr}")
+                logger.error(f"  stderr (full): {result.stderr}")
                 logger.error(f"  stdout: {result.stdout[:1000]}")
                 break
 
