@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 # Import tool implementations
 from ..code_executor import execute_code as exec_code, format_execution_result
-from ..file_loader import load_data_file, get_file_info
+from ..file_loader import load_data_file, get_file_info, FileTooBigError
 from ..knowledge_graph import KnowledgeGraph
 from ..literature import search_pubmed as search_pm
 from ..phenix_setup import check_phenix_available
@@ -29,6 +29,7 @@ from ..phenix_setup import check_phenix_available
 # Global state (initialized by main())
 DATA: Optional[pd.DataFrame] = None  # None for non-tabular files
 DATA_FILES: List[Dict[str, Any]] = []  # Metadata for all data files
+DATA_LOAD_ERROR: Optional[str] = None  # Error message if data failed to load
 JOB_DIR: Path = None
 KG: KnowledgeGraph = None
 
@@ -57,7 +58,11 @@ def execute_code(code: str, description: str = "") -> str:
     Returns:
         Formatted execution result with output, plots, and any errors
     """
-    global DATA, DATA_FILES, JOB_DIR, KG
+    global DATA, DATA_FILES, DATA_LOAD_ERROR, JOB_DIR, KG
+
+    # Check if data failed to load during startup
+    if DATA_LOAD_ERROR is not None:
+        return f"❌ ERROR: Cannot execute code - data file failed to load.\n\n{DATA_LOAD_ERROR}"
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
     KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
@@ -166,6 +171,7 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
 def main():
     """Main entry point for MCP server."""
     import argparse
+    import time
 
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
@@ -174,17 +180,46 @@ def main():
     args = parser.parse_args()
 
     # Initialize global state
-    global DATA, DATA_FILES, JOB_DIR, KG
+    global DATA, DATA_FILES, DATA_LOAD_ERROR, JOB_DIR, KG
 
     JOB_DIR = Path(args.job_dir)
+    DATA_LOAD_ERROR = None  # Will be set if loading fails
 
     # Load primary data file using new loader
     primary_file = Path(args.data_file)
-    DATA = load_data_file(primary_file)  # May be None for non-tabular files
 
-    # Get metadata for primary file
-    primary_info = get_file_info(primary_file)
-    DATA_FILES = [primary_info]
+    # Get metadata first (fast operation)
+    try:
+        primary_info = get_file_info(primary_file)
+        DATA_FILES = [primary_info]
+    except Exception as e:
+        print(f"❌ ERROR: Could not read file info for {primary_file}: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Log file size to help diagnose loading issues
+    file_size_mb = primary_info['size'] / (1024 * 1024)
+    print(f"📂 Loading data file: {primary_file.name} ({file_size_mb:.1f} MB)", file=sys.stderr)
+
+    # Load data with error handling
+    # IMPORTANT: Don't exit on load failure - let the server start so the agent
+    # can see and communicate the error to the user
+    start_time = time.time()
+    try:
+        DATA = load_data_file(primary_file)  # May be None for non-tabular files
+        load_time = time.time() - start_time
+
+        if load_time > 10:
+            print(f"⏱️  Large file loaded in {load_time:.1f}s", file=sys.stderr)
+
+    except FileTooBigError as e:
+        DATA_LOAD_ERROR = f"Unable to load data file: file exceeds size limit ({file_size_mb:.1f} MB). Please contact the administrator."
+        DATA = None
+        print(f"❌ ERROR: File too large - {file_size_mb:.1f} MB exceeds 100 MB limit", file=sys.stderr)
+        print(f"   {type(e).__name__}: {e}", file=sys.stderr)
+    except Exception as e:
+        DATA_LOAD_ERROR = f"Unable to load data file '{primary_file.name}'. Please contact the administrator."
+        DATA = None
+        print(f"❌ ERROR: Failed to load {primary_file.name}: {type(e).__name__}: {e}", file=sys.stderr)
 
     # Scan job data directory for additional files
     data_dir = JOB_DIR / "data"
