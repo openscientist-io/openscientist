@@ -100,36 +100,20 @@ def create_job(job_id: str, research_question: str, data_files: list,
         use_skills=use_skills
     )
 
-    # Add data summary (handle different file types)
+    # Add data summary - metadata only, no data loading!
+    # This keeps job creation fast (no 30-40s wait for large files)
+    # Data will be loaded on-demand by MCP server when first needed
     first_file = data_paths[0]
 
-    # Use file loader to detect file type and load data
+    # Get file type (fast - just checks extension and file size)
     file_info = get_file_info(first_file)
-    data = load_data_file(first_file)  # May be None for non-tabular files
 
-    if data is not None:
-        # Tabular data successfully loaded
-        kg.set_data_summary({
-            "files": [str(p.name) for p in data_paths],
-            "file_type": "tabular",
-            "n_samples": len(data),
-            "n_features": len(data.columns),
-            "columns": list(data.columns),
-            "groups": data.iloc[:, 1].unique().tolist() if len(data.columns) > 1 else []
-        })
-    elif file_info["file_type"] == "structure":
-        # Structure files
-        kg.set_data_summary({
-            "files": [str(p.name) for p in data_paths],
-            "file_type": "protein_structure",
-            "file_formats": [p.suffix for p in data_paths]
-        })
-    else:
-        # Other file types (sequence, unknown)
-        kg.set_data_summary({
-            "files": [str(p.name) for p in data_paths],
-            "file_type": file_info["file_type"]
-        })
+    # Set minimal data summary (agent will discover details when analyzing)
+    kg.set_data_summary({
+        "files": [str(p.name) for p in data_paths],
+        "file_type": file_info["file_type"],
+        "file_size_mb": file_info["size"] / (1024 * 1024)
+    })
 
     kg.save(job_dir / "knowledge_graph.json")
 
