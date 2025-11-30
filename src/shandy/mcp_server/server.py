@@ -27,14 +27,65 @@ from ..literature import search_pubmed as search_pm
 from ..phenix_setup import check_phenix_available
 
 # Global state (initialized by main())
-DATA: Optional[pd.DataFrame] = None  # None for non-tabular files
+DATA: Optional[pd.DataFrame] = None  # None for non-tabular files or not yet loaded
 DATA_FILES: List[Dict[str, Any]] = []  # Metadata for all data files
 DATA_LOAD_ERROR: Optional[str] = None  # Error message if data failed to load
+DATA_FILE_PATH: Optional[Path] = None  # Path to primary data file (for lazy loading)
+DATA_LOADED: bool = False  # Track whether we've attempted to load data
 JOB_DIR: Path = None
 KG: KnowledgeGraph = None
 
 # Create FastMCP server
 mcp = FastMCP("shandy-tools")
+
+
+def ensure_data_loaded() -> Optional[str]:
+    """
+    Ensure data is loaded before executing code.
+
+    Returns error message if loading failed, None if successful.
+    """
+    global DATA, DATA_LOADED, DATA_LOAD_ERROR, DATA_FILE_PATH
+
+    # Already attempted to load?
+    if DATA_LOADED:
+        return DATA_LOAD_ERROR
+
+    # Mark as loaded (even if it fails, don't retry every time)
+    DATA_LOADED = True
+
+    # No file path? Server not initialized properly
+    if DATA_FILE_PATH is None:
+        DATA_LOAD_ERROR = "MCP server not initialized with data file path"
+        return DATA_LOAD_ERROR
+
+    # Load data now
+    file_size_mb = DATA_FILE_PATH.stat().st_size / (1024 * 1024)
+    print(f"⏳ Loading data file on first use: {DATA_FILE_PATH.name} ({file_size_mb:.1f} MB)", file=sys.stderr)
+
+    import time
+    start_time = time.time()
+
+    try:
+        DATA = load_data_file(DATA_FILE_PATH)
+        load_time = time.time() - start_time
+
+        if DATA is not None:
+            print(f"✅ Loaded tabular data: {DATA.shape[0]} rows × {DATA.shape[1]} columns in {load_time:.1f}s", file=sys.stderr)
+        else:
+            print(f"ℹ️  Non-tabular file loaded in {load_time:.1f}s", file=sys.stderr)
+
+        return None  # Success
+
+    except FileTooBigError as e:
+        DATA_LOAD_ERROR = f"Unable to load data file: file exceeds size limit ({file_size_mb:.1f} MB). Please contact the administrator."
+        print(f"❌ {DATA_LOAD_ERROR}", file=sys.stderr)
+        return DATA_LOAD_ERROR
+
+    except Exception as e:
+        DATA_LOAD_ERROR = f"Unable to load data file '{DATA_FILE_PATH.name}': {type(e).__name__}: {e}"
+        print(f"❌ {DATA_LOAD_ERROR}", file=sys.stderr)
+        return DATA_LOAD_ERROR
 
 
 @mcp.tool()
@@ -58,11 +109,12 @@ def execute_code(code: str, description: str = "") -> str:
     Returns:
         Formatted execution result with output, plots, and any errors
     """
-    global DATA, DATA_FILES, DATA_LOAD_ERROR, JOB_DIR, KG
+    global DATA, DATA_FILES, JOB_DIR, KG
 
-    # Check if data failed to load during startup
-    if DATA_LOAD_ERROR is not None:
-        return f"❌ ERROR: Cannot execute code - data file failed to load.\n\n{DATA_LOAD_ERROR}"
+    # Lazy load data on first execute_code call
+    load_error = ensure_data_loaded()
+    if load_error is not None:
+        return f"❌ ERROR: Cannot execute code - data file failed to load.\n\n{load_error}"
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
     KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
@@ -171,7 +223,6 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
 def main():
     """Main entry point for MCP server."""
     import argparse
-    import time
 
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
@@ -180,15 +231,15 @@ def main():
     args = parser.parse_args()
 
     # Initialize global state
-    global DATA, DATA_FILES, DATA_LOAD_ERROR, JOB_DIR, KG
+    global DATA_FILES, DATA_FILE_PATH, JOB_DIR, KG
 
     JOB_DIR = Path(args.job_dir)
-    DATA_LOAD_ERROR = None  # Will be set if loading fails
 
-    # Load primary data file using new loader
+    # Save primary data file path for lazy loading
     primary_file = Path(args.data_file)
+    DATA_FILE_PATH = primary_file
 
-    # Get metadata first (fast operation)
+    # Get metadata only (fast operation - no actual data loading)
     try:
         primary_info = get_file_info(primary_file)
         DATA_FILES = [primary_info]
@@ -196,32 +247,11 @@ def main():
         print(f"❌ ERROR: Could not read file info for {primary_file}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Log file size to help diagnose loading issues
+    # Log file info (but don't load data yet)
     file_size_mb = primary_info['size'] / (1024 * 1024)
-    print(f"📂 Loading data file: {primary_file.name} ({file_size_mb:.1f} MB)", file=sys.stderr)
+    print(f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use", file=sys.stderr)
 
-    # Load data with error handling
-    # IMPORTANT: Don't exit on load failure - let the server start so the agent
-    # can see and communicate the error to the user
-    start_time = time.time()
-    try:
-        DATA = load_data_file(primary_file)  # May be None for non-tabular files
-        load_time = time.time() - start_time
-
-        if load_time > 10:
-            print(f"⏱️  Large file loaded in {load_time:.1f}s", file=sys.stderr)
-
-    except FileTooBigError as e:
-        DATA_LOAD_ERROR = f"Unable to load data file: file exceeds size limit ({file_size_mb:.1f} MB). Please contact the administrator."
-        DATA = None
-        print(f"❌ ERROR: File too large - {file_size_mb:.1f} MB exceeds 100 MB limit", file=sys.stderr)
-        print(f"   {type(e).__name__}: {e}", file=sys.stderr)
-    except Exception as e:
-        DATA_LOAD_ERROR = f"Unable to load data file '{primary_file.name}'. Please contact the administrator."
-        DATA = None
-        print(f"❌ ERROR: Failed to load {primary_file.name}: {type(e).__name__}: {e}", file=sys.stderr)
-
-    # Scan job data directory for additional files
+    # Scan job data directory for additional files (metadata only)
     data_dir = JOB_DIR / "data"
     if data_dir.exists():
         for file_path in data_dir.iterdir():
@@ -231,12 +261,6 @@ def main():
                     DATA_FILES.append(file_info)
                 except Exception as e:
                     print(f"Warning: Could not process {file_path}: {e}", file=sys.stderr)
-
-    # Log what was loaded
-    if DATA is not None:
-        print(f"✅ Loaded tabular data from {primary_file.name}: {DATA.shape[0]} rows × {DATA.shape[1]} columns", file=sys.stderr)
-    else:
-        print(f"ℹ️  Non-tabular file: {primary_file.name} ({primary_info['file_type']})", file=sys.stderr)
 
     print(f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}", file=sys.stderr)
 
