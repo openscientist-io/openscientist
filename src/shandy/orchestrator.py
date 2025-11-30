@@ -182,6 +182,8 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     provider.setup_environment()
 
     # Create job-specific MCP config
+    # Note: Add generous timeout for MCP server startup to handle large data files
+    # Large Excel files (>30MB) can take 30-40 seconds to load into pandas
     mcp_config = {
         "mcpServers": {
             "shandy-tools": {
@@ -190,7 +192,8 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
                     "-m", "shandy.mcp_server",
                     "--job-dir", str(job_dir.absolute()),
                     "--data-file", str(data_file.absolute())
-                ]
+                ],
+                "timeout": 120  # 2 minute timeout for server startup (handles large file loading)
             }
         }
     }
