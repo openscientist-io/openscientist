@@ -54,10 +54,11 @@ def ensure_data_loaded() -> Optional[str]:
     # Mark as loaded (even if it fails, don't retry every time)
     DATA_LOADED = True
 
-    # No file path? Server not initialized properly
+    # No file path means no data was provided (valid case)
     if DATA_FILE_PATH is None:
-        DATA_LOAD_ERROR = "MCP server not initialized with data file path"
-        return DATA_LOAD_ERROR
+        DATA_LOAD_ERROR = None  # Not an error, just no data
+        DATA = None
+        return None  # Success - no data to load
 
     # Load data now
     file_size_mb = DATA_FILE_PATH.stat().st_size / (1024 * 1024)
@@ -226,7 +227,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
-    parser.add_argument("--data-file", required=True, help="Primary data file")
+    parser.add_argument("--data-file", required=False, default=None, help="Primary data file (optional)")
 
     args = parser.parse_args()
 
@@ -235,21 +236,27 @@ def main():
 
     JOB_DIR = Path(args.job_dir)
 
-    # Save primary data file path for lazy loading
-    primary_file = Path(args.data_file)
-    DATA_FILE_PATH = primary_file
+    # Save primary data file path for lazy loading (if provided)
+    if args.data_file:
+        primary_file = Path(args.data_file)
+        DATA_FILE_PATH = primary_file
 
-    # Get metadata only (fast operation - no actual data loading)
-    try:
-        primary_info = get_file_info(primary_file)
-        DATA_FILES = [primary_info]
-    except Exception as e:
-        print(f"❌ ERROR: Could not read file info for {primary_file}: {e}", file=sys.stderr)
-        sys.exit(1)
+        # Get metadata only (fast operation - no actual data loading)
+        try:
+            primary_info = get_file_info(primary_file)
+            DATA_FILES = [primary_info]
+        except Exception as e:
+            print(f"❌ ERROR: Could not read file info for {primary_file}: {e}", file=sys.stderr)
+            sys.exit(1)
 
-    # Log file info (but don't load data yet)
-    file_size_mb = primary_info['size'] / (1024 * 1024)
-    print(f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use", file=sys.stderr)
+        # Log file info (but don't load data yet)
+        file_size_mb = primary_info['size'] / (1024 * 1024)
+        print(f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use", file=sys.stderr)
+    else:
+        # No primary data file
+        DATA_FILE_PATH = None
+        DATA_FILES = []
+        print(f"ℹ️  No data file provided - server running in no-data mode", file=sys.stderr)
 
     # Scan job data directory for additional files (metadata only)
     data_dir = JOB_DIR / "data"
