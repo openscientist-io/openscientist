@@ -1,4 +1,5 @@
 notes/
+.worktrees/
 
 # Python
 __pycache__/
