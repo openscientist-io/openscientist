@@ -115,23 +115,21 @@ def new_job_page():
             ui.notify("Please enter a research question", type="negative")
             return
 
-        # Check if files were uploaded
-        if not _uploaded_files.get(session_id):
-            ui.notify("Please upload at least one data file", type="negative")
-            return
+        # Files are optional - no validation needed
 
         # Generate job ID
         import uuid
         job_id = f"job_{uuid.uuid4().hex[:8]}"
 
-        # Save uploaded files to temp location
+        # Save uploaded files to temp location (if any)
         data_files = []
-        for uploaded_file in _uploaded_files[session_id]:
-            # Create temp file
-            temp_file = Path(tempfile.mkdtemp()) / uploaded_file['name']
-            with open(temp_file, "wb") as f:
-                f.write(uploaded_file['content'])
-            data_files.append(temp_file)
+        if _uploaded_files.get(session_id):
+            for uploaded_file in _uploaded_files[session_id]:
+                # Create temp file
+                temp_file = Path(tempfile.mkdtemp()) / uploaded_file['name']
+                with open(temp_file, "wb") as f:
+                    f.write(uploaded_file['content'])
+                data_files.append(temp_file)
 
         # Create job
         try:
@@ -195,7 +193,7 @@ def new_job_page():
         # File upload
         # Supported: Tabular (CSV, TSV, Excel, Parquet, JSON), Structures (PDB, mmCIF), Sequences (FASTA), Images (PNG, JPG)
         upload = ui.upload(
-            label="Upload Data Files (Tabular, Structures, Sequences, Images)",
+            label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
             multiple=True,
             auto_upload=True,
             on_upload=handle_upload

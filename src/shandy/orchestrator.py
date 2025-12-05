@@ -80,17 +80,18 @@ def create_job(job_id: str, research_question: str, data_files: list,
     (job_dir / "data").mkdir(exist_ok=True)
     (job_dir / "plots").mkdir(exist_ok=True)
 
-    # Copy data files to job directory, preserving original names/extensions
+    # Copy data files to job directory, preserving original names/extensions (if any)
     data_paths = []
-    for data_file in data_files:
-        # Preserve original filename
-        original_name = Path(data_file).name
-        dest = job_dir / "data" / original_name
-        # In real implementation, handle file upload properly
-        # For now, assume data_file is already a path
-        import shutil
-        shutil.copy(data_file, dest)
-        data_paths.append(dest)
+    if data_files:
+        for data_file in data_files:
+            # Preserve original filename
+            original_name = Path(data_file).name
+            dest = job_dir / "data" / original_name
+            # In real implementation, handle file upload properly
+            # For now, assume data_file is already a path
+            import shutil
+            shutil.copy(data_file, dest)
+            data_paths.append(dest)
 
     # Initialize knowledge graph
     kg = KnowledgeGraph(
@@ -103,17 +104,25 @@ def create_job(job_id: str, research_question: str, data_files: list,
     # Add data summary - metadata only, no data loading!
     # This keeps job creation fast (no 30-40s wait for large files)
     # Data will be loaded on-demand by MCP server when first needed
-    first_file = data_paths[0]
+    if data_paths:
+        first_file = data_paths[0]
 
-    # Get file type (fast - just checks extension and file size)
-    file_info = get_file_info(first_file)
+        # Get file type (fast - just checks extension and file size)
+        file_info = get_file_info(first_file)
 
-    # Set minimal data summary (agent will discover details when analyzing)
-    kg.set_data_summary({
-        "files": [str(p.name) for p in data_paths],
-        "file_type": file_info["file_type"],
-        "file_size_mb": file_info["size"] / (1024 * 1024)
-    })
+        # Set minimal data summary (agent will discover details when analyzing)
+        kg.set_data_summary({
+            "files": [str(p.name) for p in data_paths],
+            "file_type": file_info["file_type"],
+            "file_size_mb": file_info["size"] / (1024 * 1024)
+        })
+    else:
+        # No data files provided
+        kg.set_data_summary({
+            "files": [],
+            "file_type": "none",
+            "file_size_mb": 0
+        })
 
     kg.save(job_dir / "knowledge_graph.json")
 
@@ -153,10 +162,10 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
     job_id = config["job_id"]
     max_iterations = config["max_iterations"]
-    data_file = Path(config["data_files"][0])  # Use first data file
+    data_file = Path(config["data_files"][0]) if config["data_files"] else None
 
-    # Ensure data_file is absolute
-    if not data_file.is_absolute():
+    # Ensure data_file is absolute (if present)
+    if data_file and not data_file.is_absolute():
         data_file = data_file.absolute()
 
     logger.info(f"Starting discovery for job {job_id}")
@@ -168,15 +177,18 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     # Create job-specific MCP config
     # Note: Add generous timeout for MCP server startup to handle large data files
     # Large Excel files (>30MB) can take 30-40 seconds to load into pandas
+    mcp_args = [
+        "-m", "shandy.mcp_server",
+        "--job-dir", str(job_dir.absolute()),
+    ]
+    if data_file:
+        mcp_args.extend(["--data-file", str(data_file.absolute())])
+
     mcp_config = {
         "mcpServers": {
             "shandy-tools": {
                 "command": "python",
-                "args": [
-                    "-m", "shandy.mcp_server",
-                    "--job-dir", str(job_dir.absolute()),
-                    "--data-file", str(data_file.absolute())
-                ],
+                "args": mcp_args,
                 "timeout": 120  # 2 minute timeout for server startup (handles large file loading)
             }
         }
@@ -199,16 +211,23 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
         # Prepare initial prompt
         kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+
+        # Build data context based on whether files were provided
+        if config['data_files']:
+            data_context = f"""Data summary:
+- Files: {config['data_files']}
+- Columns: {kg.data['data_summary'].get('columns', [])}
+- Samples: {kg.data['data_summary'].get('n_samples', 'Unknown')}"""
+        else:
+            data_context = "No data files provided. You may use literature search and computational methods."
+
         initial_prompt = f"""Begin autonomous discovery for this research question:
 
 {config['research_question']}
 
 You will run for a maximum of {max_iterations} iterations.
 
-Data summary:
-- Files: {config['data_files']}
-- Columns: {kg.data['data_summary'].get('columns', [])}
-- Samples: {kg.data['data_summary'].get('n_samples', 'Unknown')}
+{data_context}
 
 You have access to MCP tools for analysis, literature search, and recording findings.
 Examples include (there may be others - explore what's available):
