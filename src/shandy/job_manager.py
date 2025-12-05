@@ -104,7 +104,7 @@ class JobManager:
         Args:
             job_id: Unique job identifier
             research_question: Research question
-            data_files: List of data file paths
+            data_files: List of data file paths (can be empty for literature-only jobs)
             max_iterations: Maximum iterations
             use_skills: Whether to use skills
             auto_start: Whether to start job immediately
