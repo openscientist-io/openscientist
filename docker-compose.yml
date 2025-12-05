@@ -45,6 +45,8 @@ services:
       - ./jobs:/app/jobs
       # Persist data directory (for uploaded files)
       - ./data:/app/data
+      # Mount .env file for environment variables
+      - ./.env:/app/.env:ro
       # Mount Google Cloud credentials for Vertex AI (if using Vertex provider)
       - ~/vertexai-project-covid-19-277821-b9a24f9376ca.json:/app/gcp-credentials.json:ro
       # NOTE: Phenix is installed inside the Docker image at /opt/phenix-1.21.2-5419
