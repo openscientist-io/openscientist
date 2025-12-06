@@ -25,6 +25,13 @@ from .file_loader import load_data_file, get_file_info
 if not load_dotenv("/app/.env", override=True):
     load_dotenv(".env", override=True)
 
+# CRITICAL: Disable Vertex AI - SHANDY uses CBORG API via ANTHROPIC_BASE_URL
+# If CLAUDE_CODE_USE_VERTEX=1 is set, Claude CLI ignores ANTHROPIC_BASE_URL
+# and tries to use Vertex AI instead, causing 404 errors
+os.environ.pop('CLAUDE_CODE_USE_VERTEX', None)
+os.environ.pop('ANTHROPIC_VERTEX_PROJECT_ID', None)
+os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
+
 logger = logging.getLogger(__name__)
 
 
