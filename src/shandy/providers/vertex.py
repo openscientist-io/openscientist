@@ -70,22 +70,8 @@ class VertexProvider(BaseProvider):
         return warnings
 
     def setup_environment(self) -> None:
-        """Set up Vertex AI environment for Claude CLI."""
-        # Enable Vertex AI mode
-        os.environ["CLAUDE_CODE_USE_VERTEX"] = "1"
-
-        # Clear CBORG settings if present
-        os.environ.pop("ANTHROPIC_BASE_URL", None)
-        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
-
-        # Set defaults if not present
-        if not os.getenv("ANTHROPIC_MODEL"):
-            os.environ["ANTHROPIC_MODEL"] = "claude-sonnet-4-5@20250929"
-
-        if not os.getenv("ANTHROPIC_SMALL_FAST_MODEL"):
-            os.environ["ANTHROPIC_SMALL_FAST_MODEL"] = "claude-haiku-4-5@20251001"
-
-        logger.info("Vertex AI provider environment configured")
+        """Vertex AI environment should be configured via .env and docker-compose.yml."""
+        logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """

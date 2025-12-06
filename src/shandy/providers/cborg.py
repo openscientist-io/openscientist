@@ -52,18 +52,8 @@ class CborgProvider(BaseProvider):
         return warnings
 
     def setup_environment(self) -> None:
-        """Set up CBORG environment for Claude CLI."""
-        # Disable Vertex AI if accidentally set
-        os.environ.pop('CLAUDE_CODE_USE_VERTEX', None)
-        os.environ.pop('ANTHROPIC_VERTEX_PROJECT_ID', None)
-        os.environ.pop('GOOGLE_APPLICATION_CREDENTIALS', None)
-
-        # Set ANTHROPIC_API_KEY from ANTHROPIC_AUTH_TOKEN
-        # (Claude CLI uses ANTHROPIC_API_KEY, SHANDY uses ANTHROPIC_AUTH_TOKEN)
-        if not os.getenv("ANTHROPIC_API_KEY") and os.getenv("ANTHROPIC_AUTH_TOKEN"):
-            os.environ["ANTHROPIC_API_KEY"] = os.getenv("ANTHROPIC_AUTH_TOKEN")
-
-        logger.info("CBORG provider environment configured")
+        """CBORG environment should be configured via .env and docker-compose.yml."""
+        logger.info("CBORG provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """
