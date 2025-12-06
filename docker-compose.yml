@@ -20,6 +20,7 @@ services:
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
 
       # Vertex AI settings (if using Vertex provider)
+      CLAUDE_CODE_USE_VERTEX: ${CLAUDE_CODE_USE_VERTEX}
       ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID}
       GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-credentials.json
       CLOUD_ML_REGION: ${CLOUD_ML_REGION}
