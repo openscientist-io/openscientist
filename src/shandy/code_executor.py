@@ -71,7 +71,8 @@ def validate_imports(code: str, allowed_imports: List[str]) -> None:
 
 def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
                 timeout: int = 60, description: str = "", iteration: int = 0,
-                data_files: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                data_files: Optional[List[Dict[str, Any]]] = None,
+                save_code_with_plots: bool = True) -> Dict[str, Any]:
     """
     Execute Python code in sandboxed environment.
 
@@ -169,14 +170,15 @@ def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
         plt.savefig(plot_path, bbox_inches='tight', dpi=150)
         plt.close()
 
-        # Save plot metadata (description + iteration)
+        # Save plot metadata (description, iteration, and code)
         metadata_path = plots_dir / f"plot_{plot_counter[0]}.json"
         import json
         metadata = {
             "plot_number": plot_counter[0],
             "iteration": iteration,
             "description": description,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "code": code if save_code_with_plots else None
         }
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -209,7 +211,8 @@ def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
             "filename": plot_path.name,
             "iteration": iteration,
             "description": description if description else f"Analysis: {plot_path.stem.replace('_', ' ').title()}",
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "code": code if save_code_with_plots else None
         }
 
         with open(metadata_path, 'w') as f:
