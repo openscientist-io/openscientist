@@ -49,7 +49,8 @@ class KnowledgeGraph:
             "hypotheses": [],
             "findings": [],
             "literature": [],
-            "analysis_log": []
+            "analysis_log": [],
+            "iteration_summaries": []  # Agent-generated summaries per iteration
         }
 
     @classmethod
@@ -213,6 +214,41 @@ class KnowledgeGraph:
             log_entry["output"] = output
 
         self.data["analysis_log"].append(log_entry)
+
+    def add_iteration_summary(self, iteration: int, summary: str) -> None:
+        """
+        Store agent-generated summary for an iteration.
+
+        Args:
+            iteration: Iteration number
+            summary: Plain-language summary of what was accomplished
+        """
+        # Ensure iteration_summaries exists (for backwards compatibility)
+        if "iteration_summaries" not in self.data:
+            self.data["iteration_summaries"] = []
+
+        # Check if summary for this iteration already exists
+        for existing in self.data["iteration_summaries"]:
+            if existing["iteration"] == iteration:
+                existing["summary"] = summary
+                existing["timestamp"] = datetime.now().isoformat()
+                return
+
+        # Add new summary
+        self.data["iteration_summaries"].append({
+            "iteration": iteration,
+            "summary": summary,
+            "timestamp": datetime.now().isoformat()
+        })
+
+    def get_iteration_summary(self, iteration: int) -> Optional[str]:
+        """Get the summary for a specific iteration, or None if not found."""
+        if "iteration_summaries" not in self.data:
+            return None
+        for entry in self.data["iteration_summaries"]:
+            if entry["iteration"] == iteration:
+                return entry["summary"]
+        return None
 
     def increment_iteration(self) -> None:
         """Increment the iteration counter."""

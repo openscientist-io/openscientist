@@ -373,7 +373,9 @@ def jobs_page():
 
 @ui.page("/job/{job_id}")
 def job_detail_page(job_id: str):
-    """Job detail page."""
+    """Job detail page with simplified 3-tab UI: Summary, Timeline, Report."""
+    import json
+    from collections import defaultdict
 
     # Check authentication (skip if disabled)
     if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
@@ -387,17 +389,24 @@ def job_detail_page(job_id: str):
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
         return
 
+    job_dir = job_manager.jobs_dir / job_id
+    kg_path = job_dir / "knowledge_graph.json"
+
+    # Load knowledge graph data
+    kg_data = None
+    if kg_path.exists():
+        with open(kg_path) as f:
+            kg_data = json.load(f)
+
     # Page header
     with ui.header().classes("items-center justify-between"):
         ui.label(f"SHANDY - {job_id}").classes("text-h4")
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
 
-    # Job info cards
+    # Job info cards (compact header)
     with ui.row().classes("w-full gap-4 p-4"):
         with ui.card().classes("flex-1"):
             ui.label("Status").classes("text-subtitle2")
-
-            # Status badge
             status_colors = {
                 JobStatus.CREATED: "gray",
                 JobStatus.QUEUED: "blue",
@@ -412,11 +421,16 @@ def job_detail_page(job_id: str):
         with ui.card().classes("flex-1"):
             ui.label("Progress").classes("text-subtitle2")
             ui.label(f"{job_info.iterations_completed} / {job_info.max_iterations}").classes("text-h5")
-            ui.linear_progress(job_info.iterations_completed / job_info.max_iterations)
+            ui.linear_progress(job_info.iterations_completed / job_info.max_iterations if job_info.max_iterations > 0 else 0)
 
         with ui.card().classes("flex-1"):
             ui.label("Findings").classes("text-subtitle2")
             ui.label(str(job_info.findings_count)).classes("text-h5")
+
+        with ui.card().classes("flex-1"):
+            ui.label("Papers Reviewed").classes("text-subtitle2")
+            lit_count = len(kg_data.get("literature", [])) if kg_data else 0
+            ui.label(str(lit_count)).classes("text-h5")
 
     # Research question
     with ui.card().classes("w-full"):
@@ -429,237 +443,169 @@ def job_detail_page(job_id: str):
             ui.label("Error").classes("text-subtitle2 font-bold text-red-800")
             ui.label(job_info.error).classes("text-red-600")
 
-    # Tabs for different views
+    # NEW: 3-tab structure
     with ui.tabs().classes("w-full") as tabs:
-        findings_tab = ui.tab("Findings")
-        literature_tab = ui.tab("Literature")
-        plots_tab = ui.tab("Plots")
-        log_tab = ui.tab("Analysis Log")
-        report_tab = ui.tab("Final Report")
+        summary_tab = ui.tab("Summary")
+        timeline_tab = ui.tab("Timeline")
+        report_tab = ui.tab("Report")
 
-    job_dir = job_manager.jobs_dir / job_id
-    kg_path = job_dir / "knowledge_graph.json"
+    # Store reference to tabs for cross-linking
+    tabs_ref = tabs
+    timeline_tab_ref = timeline_tab
 
-    with ui.tab_panels(tabs, value=findings_tab).classes("w-full"):
-        # Findings panel
-        with ui.tab_panel(findings_tab):
-            findings_container = ui.column().classes("w-full")
+    with ui.tab_panels(tabs, value=summary_tab).classes("w-full"):
+        # ===== SUMMARY TAB =====
+        with ui.tab_panel(summary_tab):
+            if kg_data:
+                findings = kg_data.get("findings", [])
 
-            def refresh_findings():
-                findings_container.clear()
-                with findings_container:
-                    if kg_path.exists():
-                        import json
-                        with open(kg_path) as f:
-                            kg = json.load(f)
+                if findings:
+                    ui.label("Key Findings").classes("text-h6 mb-2")
 
-                        if kg["findings"]:
-                            for i, finding in enumerate(kg["findings"], 1):
-                                with ui.card().classes("w-full"):
-                                    ui.label(f"Finding {i}: {finding['title']}").classes("text-subtitle1 font-bold")
-                                    ui.label(finding["evidence"]).classes("mt-2")
-                                    # Show biological interpretation if available
+                    for i, finding in enumerate(findings, 1):
+                        iteration_discovered = finding.get("iteration_discovered", "?")
+                        with ui.card().classes("w-full mb-2 cursor-pointer hover:bg-gray-50") as finding_card:
+                            with ui.row().classes("w-full items-start"):
+                                with ui.column().classes("flex-1"):
+                                    ui.label(f"{i}. {finding['title']}").classes("text-subtitle1 font-bold")
+                                    ui.label(finding["evidence"]).classes("text-sm mt-1")
                                     interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
                                     if interpretation:
-                                        ui.label(interpretation).classes("mt-2 text-gray-600")
-                        else:
-                            ui.label("No findings yet").classes("text-gray-500")
-                    else:
-                        ui.label("Knowledge graph not found").classes("text-gray-500")
+                                        ui.label(interpretation).classes("text-sm text-gray-600 mt-1")
 
-            refresh_findings()
+                                # Link to iteration
+                                with ui.column().classes("items-end"):
+                                    iter_badge = ui.badge(f"Iter {iteration_discovered}", color="blue").classes("cursor-pointer")
+                                    iter_badge.on("click", lambda e, it=iteration_discovered: jump_to_iteration(it))
+                else:
+                    ui.label("No findings yet. Check the Timeline tab to see the agent's progress.").classes("text-gray-500")
 
-        # Literature panel
-        with ui.tab_panel(literature_tab):
-            literature_container = ui.column().classes("w-full")
+                # Quick stats
+                ui.label("Investigation Summary").classes("text-h6 mt-4 mb-2")
+                with ui.row().classes("gap-4"):
+                    with ui.card().classes("p-3"):
+                        ui.label(f"{kg_data.get('iteration', 0)}").classes("text-h5")
+                        ui.label("Iterations").classes("text-caption")
+                    with ui.card().classes("p-3"):
+                        ui.label(f"{len(kg_data.get('findings', []))}").classes("text-h5")
+                        ui.label("Findings").classes("text-caption")
+                    with ui.card().classes("p-3"):
+                        ui.label(f"{len(kg_data.get('literature', []))}").classes("text-h5")
+                        ui.label("Papers").classes("text-caption")
+                    with ui.card().classes("p-3"):
+                        ui.label(f"{len(kg_data.get('analysis_log', []))}").classes("text-h5")
+                        ui.label("Analyses").classes("text-caption")
+            else:
+                ui.label("No data available yet").classes("text-gray-500")
 
-            def refresh_literature():
-                literature_container.clear()
-                with literature_container:
-                    if kg_path.exists():
-                        import json
-                        with open(kg_path) as f:
-                            kg = json.load(f)
+        # ===== TIMELINE TAB =====
+        with ui.tab_panel(timeline_tab):
+            timeline_container = ui.column().classes("w-full")
 
-                        if kg["literature"]:
-                            for i, lit in enumerate(kg["literature"], 1):
-                                with ui.card().classes("w-full"):
-                                    ui.label(lit["title"]).classes("text-subtitle1 font-bold")
-                                    ui.label(f"PMID: {lit.get('pmid', 'N/A')}").classes("text-sm text-gray-600")
-                                    if "summary" in lit:
-                                        ui.label(lit["summary"]).classes("mt-2")
-                        else:
-                            ui.label("No literature yet").classes("text-gray-500")
+            def build_timeline():
+                timeline_container.clear()
+                with timeline_container:
+                    if not kg_data:
+                        ui.label("No timeline data available").classes("text-gray-500")
+                        return
 
-            refresh_literature()
+                    # Group analysis log by iteration
+                    by_iteration = defaultdict(list)
+                    for entry in kg_data.get("analysis_log", []):
+                        by_iteration[entry["iteration"]].append(entry)
 
-        # Plots panel
-        with ui.tab_panel(plots_tab):
-            plots_container = ui.column().classes("w-full")
+                    # Get iteration summaries (agent-generated)
+                    iteration_summaries = {
+                        s["iteration"]: s["summary"]
+                        for s in kg_data.get("iteration_summaries", [])
+                    }
 
-            def refresh_plots():
-                plots_container.clear()
-                with plots_container:
-                    plots_dir = job_dir / "plots"
+                    # Get findings by iteration for highlighting
+                    findings_by_iteration = defaultdict(list)
+                    for finding in kg_data.get("findings", []):
+                        findings_by_iteration[finding.get("iteration_discovered", 0)].append(finding)
 
-                    if plots_dir.exists():
-                        plot_files = sorted(plots_dir.glob("*.png"))
+                    if not by_iteration:
+                        ui.label("No iterations recorded yet").classes("text-gray-500")
+                        return
 
-                        if plot_files:
-                            ui.label(f"Generated {len(plot_files)} plot(s) showing what I'm thinking").classes("text-subtitle2 mb-4")
+                    ui.label("Investigation Timeline").classes("text-h6 mb-2")
 
-                            # Display plots in a grid
-                            with ui.grid(columns=2).classes("w-full gap-4"):
-                                for plot_file in plot_files:
-                                    # Load metadata if available
-                                    metadata_file = plot_file.with_suffix('.json')
-                                    metadata = None
-                                    if metadata_file.exists():
-                                        import json
-                                        with open(metadata_file) as f:
-                                            metadata = json.load(f)
+                    with ui.scroll_area().classes("w-full"):
+                        for iteration in sorted(by_iteration.keys()):
+                            entries = by_iteration[iteration]
 
-                                    with ui.card().classes("p-2"):
-                                        # Plot header - make filename human-readable
-                                        # Convert "amino_acid_analysis.png" -> "Amino Acid Analysis"
-                                        plot_title = plot_file.stem.replace('_', ' ').title()
+                            # Get agent-generated summary or fall back to synthesized
+                            agent_summary = iteration_summaries.get(iteration)
+                            if agent_summary:
+                                summary_text = agent_summary
+                            else:
+                                # Fallback: synthesize from log entries
+                                summary_text = _synthesize_iteration_summary(entries)
 
-                                        if metadata and metadata.get('iteration') is not None:
-                                            ui.label(f"Iteration {metadata['iteration']}: {plot_title}").classes("text-sm font-bold mb-2")
-                                        else:
-                                            ui.label(plot_title).classes("text-sm font-bold mb-2")
+                            # Check if this iteration had findings
+                            has_findings = len(findings_by_iteration.get(iteration, [])) > 0
+                            card_class = "w-full mb-2 border-l-4 border-green-500" if has_findings else "w-full mb-2"
 
-                                        # Claude's reasoning/description
-                                        if metadata and metadata.get('description'):
-                                            ui.label(f"🤔 {metadata['description']}").classes("text-sm text-blue-700 mb-2 italic")
-                                        else:
-                                            # If no metadata, show filename as description
-                                            ui.label(f"📊 {plot_title}").classes("text-sm text-gray-600 mb-2 italic")
+                            with ui.expansion(
+                                f"Iteration {iteration}: {summary_text}",
+                                icon="check_circle" if has_findings else "science"
+                            ).classes(card_class).props(f'id="iteration-{iteration}"') as expansion:
 
-                                        # Display image - convert file path to URL path
-                                        # jobs/job_123/plots/plot.png -> /jobs/job_123/plots/plot.png
-                                        plot_url = f"/{plot_file}"
-                                        ui.image(plot_url).classes("w-full")
+                                # Show findings from this iteration
+                                iter_findings = findings_by_iteration.get(iteration, [])
+                                if iter_findings:
+                                    ui.label("Findings Recorded:").classes("font-bold mt-2 mb-1")
+                                    for finding in iter_findings:
+                                        with ui.card().classes("w-full bg-green-50 mb-2"):
+                                            ui.label(finding["title"]).classes("font-bold")
+                                            ui.label(finding["evidence"]).classes("text-sm")
 
-                                        # Timestamp
-                                        if metadata and metadata.get('timestamp'):
-                                            ui.label(f"Created: {metadata['timestamp']}").classes("text-xs text-gray-500 mt-2")
+                                # Show plots from this iteration
+                                plots_dir = job_dir / "plots"
+                                iteration_plots = []
+                                if plots_dir.exists():
+                                    for plot_file in plots_dir.glob("*.png"):
+                                        metadata_file = plot_file.with_suffix('.json')
+                                        if metadata_file.exists():
+                                            with open(metadata_file) as mf:
+                                                metadata = json.load(mf)
+                                            if metadata.get("iteration") == iteration:
+                                                iteration_plots.append((plot_file, metadata))
 
-                                        # Download button
-                                        ui.button(
-                                            "Download",
-                                            on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
-                                            icon="download"
-                                        ).props("size=sm flat")
-                        else:
-                            ui.label("No plots generated yet").classes("text-gray-500")
-                    else:
-                        ui.label("No plots directory found").classes("text-gray-500")
+                                if iteration_plots:
+                                    ui.label(f"Plots ({len(iteration_plots)}):").classes("font-bold mt-2 mb-1")
+                                    with ui.grid(columns=2).classes("w-full gap-2"):
+                                        for plot_file, metadata in iteration_plots:
+                                            plot_title = plot_file.stem.replace('_', ' ').title()
+                                            description = metadata.get('description', plot_title)
+                                            with ui.card().classes("p-2"):
+                                                ui.label(plot_title).classes("text-sm font-bold")
+                                                if description:
+                                                    ui.label(description).classes("text-xs text-blue-700 italic")
+                                                plot_url = f"/{plot_file}"
+                                                ui.image(plot_url).classes("w-full")
 
-            refresh_plots()
+                                # Show literature searched in this iteration
+                                lit_this_iter = [
+                                    lit for lit in kg_data.get("literature", [])
+                                    if lit.get("retrieved_at_iteration") == iteration
+                                ]
+                                if lit_this_iter:
+                                    ui.label(f"Literature Searched ({len(lit_this_iter)}):").classes("font-bold mt-2 mb-1")
+                                    for lit in lit_this_iter[:3]:  # Show first 3
+                                        ui.label(f"- {lit['title'][:80]}...").classes("text-sm text-gray-600")
+                                    if len(lit_this_iter) > 3:
+                                        ui.label(f"  + {len(lit_this_iter) - 3} more papers").classes("text-sm text-gray-500")
 
-        # Analysis log panel - Narrative view
-        with ui.tab_panel(log_tab):
-            log_container = ui.column().classes("w-full")
+                                # Show code executions count
+                                code_execs = [e for e in entries if e["action"] == "execute_code"]
+                                if code_execs:
+                                    ui.label(f"Analyses Run: {len(code_execs)}").classes("text-sm text-gray-600 mt-2")
 
-            def refresh_analysis_log():
-                log_container.clear()
-                with log_container:
-                    if kg_path.exists():
-                        import json
-                        from collections import defaultdict
+            build_timeline()
 
-                        with open(kg_path) as f:
-                            kg = json.load(f)
-
-                        # Group entries by iteration
-                        by_iteration = defaultdict(list)
-                        for entry in kg["analysis_log"]:
-                            by_iteration[entry["iteration"]].append(entry)
-
-                        if by_iteration:
-                            with ui.scroll_area().classes("w-full h-96"):
-                                # Display in ascending order (oldest first)
-                                for iteration in sorted(by_iteration.keys()):
-                                    entries = by_iteration[iteration]
-
-                                    # Generate detailed summary
-                                    code_executions = [e for e in entries if e["action"] == "execute_code"]
-                                    literature_searches = [e for e in entries if e["action"] == "search_pubmed"]
-                                    findings_recorded = [e for e in entries if e["action"] == "update_knowledge_graph"]
-
-                                    summary_parts = []
-
-                                    # Describe analyses
-                                    if code_executions:
-                                        for ce in code_executions[:2]:  # Show first 2
-                                            desc = ce.get("description", "")
-                                            if desc:
-                                                summary_parts.append(desc)
-                                            else:
-                                                # Try to infer from code
-                                                code = ce.get("code", "")
-                                                if "correlation" in code.lower():
-                                                    summary_parts.append("correlation analysis")
-                                                elif "t.test" in code or "ttest" in code.lower():
-                                                    summary_parts.append("t-test")
-                                                elif "pca" in code.lower():
-                                                    summary_parts.append("PCA analysis")
-                                                elif "plot" in code.lower() or "plt." in code:
-                                                    summary_parts.append("visualization")
-                                                else:
-                                                    summary_parts.append("analysis")
-                                        if len(code_executions) > 2:
-                                            summary_parts.append(f"+ {len(code_executions) - 2} more analyses")
-
-                                    # Describe literature searches
-                                    if literature_searches:
-                                        for ls in literature_searches[:1]:  # Show first query
-                                            query = ls.get("query", "")
-                                            if query:
-                                                summary_parts.append(f'searched "{query[:50]}{"..." if len(query) > 50 else ""}"')
-                                        if len(literature_searches) > 1:
-                                            summary_parts.append(f"+ {len(literature_searches) - 1} more searches")
-
-                                    # Mention findings
-                                    if findings_recorded:
-                                        summary_parts.append(f"recorded {len(findings_recorded)} finding{'s' if len(findings_recorded) > 1 else ''}")
-
-                                    summary_text = ", ".join(summary_parts) if summary_parts else "No actions recorded"
-
-                                    with ui.expansion(f"Iteration {iteration}: {summary_text}", icon="science").classes("w-full mb-4"):
-                                        # Detailed breakdown inside expansion
-                                        ui.label(f"**Actions in this iteration:**").classes("mb-2")
-
-                                        # Find plots from this iteration
-                                        plots_dir = job_dir / "plots"
-                                        iteration_plots = []
-                                        if plots_dir.exists():
-                                            for plot_file in plots_dir.glob("*.png"):
-                                                metadata_file = plot_file.with_suffix('.json')
-                                                if metadata_file.exists():
-                                                    with open(metadata_file) as mf:
-                                                        metadata = json.load(mf)
-                                                    if metadata.get("iteration") == iteration:
-                                                        iteration_plots.append((plot_file, metadata))
-
-                                        # Show plots if any
-                                        if iteration_plots:
-                                            ui.label(f"**Plots Generated ({len(iteration_plots)}):**").classes("mt-4 mb-2")
-                                            for plot_file, metadata in iteration_plots:
-                                                plot_title = plot_file.stem.replace('_', ' ').title()
-                                                description = metadata.get('description', plot_title)
-
-                                                with ui.expansion(f"{plot_title}", icon="insert_chart").classes("w-full mb-2").props("dense"):
-                                                    ui.label(f"🤔 {description}").classes("text-sm text-blue-700 mb-2 italic")
-                                                    plot_url = f"/{plot_file}"
-                                                    ui.image(plot_url).classes("w-full max-w-2xl")
-                        else:
-                            ui.label("No analysis log yet").classes("text-gray-500")
-
-            refresh_analysis_log()
-
-        # Final report panel
+        # ===== REPORT TAB =====
         with ui.tab_panel(report_tab):
             report_path = job_dir / "final_report.md"
             pdf_path = job_dir / "final_report.pdf"
@@ -667,14 +613,12 @@ def job_detail_page(job_id: str):
             if report_path.exists():
                 # Download buttons at top
                 with ui.row().classes("w-full justify-end mb-4 gap-2"):
-                    # Markdown download
                     ui.button(
                         "Download Markdown",
                         on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md"),
                         icon="download"
                     ).props("color=secondary outline")
 
-                    # PDF download (if available)
                     if pdf_path.exists():
                         ui.button(
                             "Download PDF",
@@ -696,6 +640,18 @@ def job_detail_page(job_id: str):
                     ui.label("Report generation failed").classes("text-red-500")
                 else:
                     ui.label("Report not yet available (job not complete)").classes("text-gray-500")
+
+    # Helper function to jump to iteration in timeline
+    def jump_to_iteration(iteration: int):
+        """Switch to Timeline tab and scroll to specific iteration."""
+        tabs_ref.set_value(timeline_tab_ref)
+        # Use JavaScript to scroll to the iteration element
+        ui.run_javascript(f'''
+            setTimeout(() => {{
+                const el = document.querySelector('[id="iteration-{iteration}"]');
+                if (el) el.scrollIntoView({{ behavior: "smooth", block: "center" }});
+            }}, 100);
+        ''')
 
     # Action buttons
     with ui.row().classes("mt-4"):
@@ -730,6 +686,52 @@ def job_detail_page(job_id: str):
             ui.navigate.to("/jobs")
         except Exception as e:
             ui.notify(f"Error deleting job: {e}", type="negative")
+
+
+def _synthesize_iteration_summary(entries: list) -> str:
+    """
+    Synthesize a summary from analysis log entries when no agent summary is available.
+
+    This is the fallback for older jobs that don't have agent-generated summaries.
+    """
+    code_executions = [e for e in entries if e["action"] == "execute_code"]
+    literature_searches = [e for e in entries if e["action"] == "search_pubmed"]
+    findings_recorded = [e for e in entries if e["action"] == "update_knowledge_graph"]
+
+    summary_parts = []
+
+    # Describe analyses
+    if code_executions:
+        for ce in code_executions[:2]:
+            desc = ce.get("description", "")
+            if desc:
+                summary_parts.append(desc)
+            else:
+                code = ce.get("code", "")
+                if "correlation" in code.lower():
+                    summary_parts.append("correlation analysis")
+                elif "t.test" in code or "ttest" in code.lower():
+                    summary_parts.append("t-test")
+                elif "pca" in code.lower():
+                    summary_parts.append("PCA analysis")
+                elif "plot" in code.lower() or "plt." in code:
+                    summary_parts.append("visualization")
+                else:
+                    summary_parts.append("data analysis")
+        if len(code_executions) > 2:
+            summary_parts.append(f"+ {len(code_executions) - 2} more")
+
+    # Describe literature searches
+    if literature_searches:
+        query = literature_searches[0].get("query", "")
+        if query:
+            summary_parts.append(f'searched "{query[:40]}..."')
+
+    # Mention findings
+    if findings_recorded:
+        summary_parts.append(f"recorded {len(findings_recorded)} finding{'s' if len(findings_recorded) > 1 else ''}")
+
+    return ", ".join(summary_parts) if summary_parts else "Processing..."
 
 
 @ui.page("/docs")

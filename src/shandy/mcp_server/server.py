@@ -221,6 +221,37 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
     return f"✅ Finding recorded as {finding_id}: {title}"
 
 
+@mcp.tool()
+def save_iteration_summary(summary: str) -> str:
+    """
+    Save a plain-language summary of what was accomplished in this iteration.
+
+    Call this at the end of each iteration to record what you investigated
+    and what you learned. This helps users understand your reasoning process.
+
+    Args:
+        summary: A 1-2 sentence plain-language summary of the iteration.
+                 Focus on what you investigated and what you found/learned.
+                 Example: "Investigated correlation between metabolite X and Y.
+                          Found a strong positive correlation (r=0.82) suggesting
+                          they are part of the same metabolic pathway."
+
+    Returns:
+        Confirmation message
+    """
+    global JOB_DIR, KG
+
+    # Reload knowledge graph to get latest state
+    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+
+    # Save the summary for current iteration
+    current_iteration = KG.data["iteration"]
+    KG.add_iteration_summary(current_iteration, summary)
+    KG.save(JOB_DIR / "knowledge_graph.json")
+
+    return f"✅ Summary saved for iteration {current_iteration}"
+
+
 def main():
     """Main entry point for MCP server."""
     import argparse
