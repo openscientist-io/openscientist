@@ -6,6 +6,7 @@ Handles multiple file formats with validation and magic number detection.
 
 import io
 import logging
+import os
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
 
@@ -20,8 +21,18 @@ except (ImportError, OSError):
 
 logger = logging.getLogger(__name__)
 
-# File size limits (in bytes)
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+# File size limits (in bytes) - configurable via environment variable
+# Default: 500MB
+_default_max_file_size_mb = 500
+_env_max_file_size = os.getenv("MAX_FILE_SIZE_MB")
+if _env_max_file_size:
+    try:
+        MAX_FILE_SIZE = int(_env_max_file_size) * 1024 * 1024
+    except ValueError:
+        logger.warning(f"Invalid MAX_FILE_SIZE_MB value '{_env_max_file_size}', using default {_default_max_file_size_mb}MB")
+        MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
+else:
+    MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
 
 # Supported file extensions
 TABULAR_EXTENSIONS = {
