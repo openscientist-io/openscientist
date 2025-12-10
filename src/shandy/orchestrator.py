@@ -234,6 +234,11 @@ Examples include (there may be others - explore what's available):
 - execute_code: Analyze data, run statistical tests, create visualizations
 - search_pubmed: Search for relevant papers
 - update_knowledge_graph: Record confirmed findings with statistical evidence
+- save_iteration_summary: Record a summary of what you investigated and learned
+
+IMPORTANT: At the end of each iteration, call save_iteration_summary with a 1-2 sentence
+plain-language summary of what you investigated and what you learned. This helps users
+understand your investigation progress.
 
 Start your investigation by using these tools to analyze the data.
 """
@@ -250,6 +255,7 @@ Start your investigation by using these tools to analyze the data.
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
             '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+            '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
             '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
             '--allowedTools', 'mcp__shandy-tools__compare_structures',
             '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -311,8 +317,10 @@ Start your investigation by using these tools to analyze the data.
 ---
 
 Continue your investigation using the available MCP tools.
-Examples: execute_code, search_pubmed, update_knowledge_graph (explore for others).
-Think step by step about what will provide the most insight, then actively use the tools to execute your investigation."""
+Examples: execute_code, search_pubmed, update_knowledge_graph, save_iteration_summary.
+Think step by step about what will provide the most insight, then actively use the tools to execute your investigation.
+
+Remember: At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
 
             # Decide whether to resume or start fresh
             should_reset = (iteration % RESET_INTERVAL == 1)
@@ -327,6 +335,7 @@ Think step by step about what will provide the most insight, then actively use t
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
                     '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -342,6 +351,7 @@ Think step by step about what will provide the most insight, then actively use t
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
                     '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
