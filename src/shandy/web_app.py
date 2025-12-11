@@ -133,13 +133,17 @@ def new_job_page():
 
         # Create job
         try:
+            # Determine investigation mode
+            mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
+
             job_info = job_manager.create_job(
                 job_id=job_id,
                 research_question=research_question.value,
                 data_files=data_files,
                 max_iterations=int(max_iterations.value),
                 use_skills=True,
-                auto_start=True
+                auto_start=True,
+                investigation_mode=mode
             )
 
             ui.notify(f"Job {job_id} created and started!", type="positive")
@@ -207,6 +211,13 @@ def new_job_page():
             max=100,
             step=1
         ).classes("w-full")
+
+        # Advanced options (collapsed by default)
+        with ui.expansion("Advanced Options (Experimental)", icon="science").classes("w-full mt-4"):
+            with ui.card().classes("w-full"):
+                coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
+                ui.label("Requires your active participation. After each iteration, I will pause to receive your feedback.").classes("text-sm text-gray-700 mt-1")
+                ui.label("Requires you to stay near your computer. Auto-continues after 15 min if you don't respond.").classes("text-xs text-orange-700")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")
@@ -521,6 +532,41 @@ def job_detail_page(job_id: str):
                                                 ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
+
+                # Feedback panel (shown when awaiting feedback in coinvestigate mode)
+                if job_info.status == JobStatus.AWAITING_FEEDBACK:
+                    current_iteration = kg_data.get("iteration", 1) if kg_data else 1
+
+                    with ui.card().classes("w-full mt-4 bg-yellow-50 border-2 border-yellow-400"):
+                        ui.label(f"Iteration {current_iteration} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
+                        ui.label("Provide guidance for the next iteration, or continue without feedback.").classes("text-sm text-gray-700 mb-2")
+
+                        feedback_input = ui.textarea(
+                            label="Your Feedback (optional)",
+                            placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X..."
+                        ).classes("w-full")
+
+                        with ui.row().classes("w-full gap-2 mt-2"):
+                            def submit_feedback():
+                                from .knowledge_graph import KnowledgeGraph
+                                kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+                                if feedback_input.value.strip():
+                                    kg.add_feedback(feedback_input.value.strip(), current_iteration)
+                                    kg.save(job_dir / "knowledge_graph.json")
+                                # Set status back to running to signal continue
+                                with open(job_dir / "config.json") as f:
+                                    cfg = json.load(f)
+                                cfg["status"] = "running"
+                                with open(job_dir / "config.json", "w") as f:
+                                    json.dump(cfg, f, indent=2)
+                                ui.notify("Continuing to next iteration", type="positive")
+                                ui.navigate.to(f"/job/{job_id}")
+
+                            ui.button("Submit & Continue", on_click=submit_feedback, icon="send").props("color=primary")
+                            ui.button("Continue Without Feedback", on_click=submit_feedback, icon="arrow_forward").props("color=secondary outline")
+
+                        ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+
             else:
                 ui.label("Knowledge graph not found").classes("text-gray-500")
 
@@ -708,7 +754,7 @@ SHANDY accepts various file types:
 - **Sequences**: FASTA
 - **Images**: PNG, JPG
 
-Data files are optional - you can also run literature-only investigations.
+And many others. Data files are optional - you can also run literature-only investigations.
 
 ## Understanding Results
 
