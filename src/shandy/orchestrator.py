@@ -415,7 +415,8 @@ Start your investigation by using these tools to analyze the data.
 The scientist has provided the following guidance after reviewing your previous iteration:
 > {pending_feedback}
 
-Please incorporate this feedback into your investigation approach.
+Continue your investigation, taking this guidance into account. Use your judgment to balance
+the scientist's suggestions with your own analysis of what will be most productive.
 
 ---
 """
