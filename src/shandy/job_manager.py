@@ -89,7 +89,31 @@ class JobManager:
         self._running_jobs: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
 
+        # Clean up any stale running/queued jobs from previous restart
+        self._cleanup_stale_jobs()
+
         logger.info(f"JobManager initialized: {self.jobs_dir}, max_concurrent={max_concurrent}")
+
+    def _cleanup_stale_jobs(self) -> None:
+        """
+        Mark any running/queued/awaiting_feedback jobs as cancelled on startup.
+
+        This handles the case where the server restarts while jobs are in progress.
+        Since the orchestrator process died, these jobs will never complete.
+        """
+        stale_count = 0
+        for job_id in self._list_job_ids():
+            job_info = self._load_job_info(job_id)
+            if job_info is None:
+                continue
+
+            if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
+                logger.warning(f"Marking stale job {job_id} as cancelled (was {job_info.status.value})")
+                self._update_job_status(job_id, JobStatus.CANCELLED)
+                stale_count += 1
+
+        if stale_count > 0:
+            logger.info(f"Cleaned up {stale_count} stale job(s) from previous run")
 
     def create_job(
         self,

@@ -329,6 +329,9 @@ def job_detail_page(job_id: str):
     job_dir = job_manager.jobs_dir / job_id
     kg_path = job_dir / "knowledge_graph.json"
 
+    # Track current status for polling
+    current_status = {"value": job_info.status}
+
     # Load knowledge graph data
     kg_data = None
     if kg_path.exists():
@@ -346,9 +349,9 @@ def job_detail_page(job_id: str):
             ui.label("Error").classes("text-subtitle2 font-bold text-red-800")
             ui.label(job_info.error).classes("text-red-600")
 
-    # 2-Tab Structure: Timeline (primary), Report
+    # 2-Tab Structure: Research Log (primary), Report
     with ui.tabs().classes("w-full") as tabs:
-        timeline_tab = ui.tab("Timeline")
+        timeline_tab = ui.tab("Research Log")
         report_tab = ui.tab("Report")
 
     with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
@@ -533,39 +536,81 @@ def job_detail_page(job_id: str):
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
 
-                # Feedback panel (shown when awaiting feedback in coinvestigate mode)
-                if job_info.status == JobStatus.AWAITING_FEEDBACK:
-                    current_iteration = kg_data.get("iteration", 1) if kg_data else 1
+                # Dynamic feedback panel container (updates via polling)
+                feedback_container = ui.column().classes("w-full")
 
-                    with ui.card().classes("w-full mt-4 bg-yellow-50 border-2 border-yellow-400"):
-                        ui.label(f"Iteration {current_iteration} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
-                        ui.label("Provide guidance for the next iteration, or continue without feedback.").classes("text-sm text-gray-700 mb-2")
+                def build_feedback_panel():
+                    """Build or rebuild the feedback panel based on current status."""
+                    feedback_container.clear()
 
-                        feedback_input = ui.textarea(
-                            label="Your Feedback (optional)",
-                            placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X..."
-                        ).classes("w-full")
+                    # Re-check job status
+                    latest_job = job_manager.get_job(job_id)
+                    if latest_job is None:
+                        return
 
-                        with ui.row().classes("w-full gap-2 mt-2"):
-                            def submit_feedback():
-                                from .knowledge_graph import KnowledgeGraph
-                                kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
-                                if feedback_input.value.strip():
-                                    kg.add_feedback(feedback_input.value.strip(), current_iteration)
-                                    kg.save(job_dir / "knowledge_graph.json")
-                                # Set status back to running to signal continue
-                                with open(job_dir / "config.json") as f:
-                                    cfg = json.load(f)
-                                cfg["status"] = "running"
-                                with open(job_dir / "config.json", "w") as f:
-                                    json.dump(cfg, f, indent=2)
-                                ui.notify("Continuing to next iteration", type="positive")
-                                ui.navigate.to(f"/job/{job_id}")
+                    if latest_job.status == JobStatus.AWAITING_FEEDBACK:
+                        # Reload KG to get current iteration
+                        current_iter = 1
+                        if kg_path.exists():
+                            with open(kg_path) as f:
+                                latest_kg = json.load(f)
+                            current_iter = latest_kg.get("iteration", 1)
 
-                            ui.button("Submit & Continue", on_click=submit_feedback, icon="send").props("color=primary")
-                            ui.button("Continue Without Feedback", on_click=submit_feedback, icon="arrow_forward").props("color=secondary outline")
+                        with feedback_container:
+                            with ui.card().classes("w-full mt-4 bg-yellow-50 border-2 border-yellow-400"):
+                                ui.label(f"Iteration {current_iter} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
+                                ui.label("Provide guidance for the next iteration, or continue without feedback.").classes("text-sm text-gray-700 mb-2")
 
-                        ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+                                feedback_input = ui.textarea(
+                                    label="Your Feedback (optional)",
+                                    placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X..."
+                                ).classes("w-full")
+
+                                with ui.row().classes("w-full gap-2 mt-2"):
+                                    def submit_feedback(fi=feedback_input, ci=current_iter):
+                                        from .knowledge_graph import KnowledgeGraph
+                                        kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+                                        if fi.value.strip():
+                                            kg.add_feedback(fi.value.strip(), ci)
+                                            kg.save(job_dir / "knowledge_graph.json")
+                                        # Set status back to running to signal continue
+                                        with open(job_dir / "config.json") as f:
+                                            cfg = json.load(f)
+                                        cfg["status"] = "running"
+                                        with open(job_dir / "config.json", "w") as f:
+                                            json.dump(cfg, f, indent=2)
+                                        ui.notify("Continuing to next iteration", type="positive")
+                                        ui.navigate.to(f"/job/{job_id}")
+
+                                    ui.button("Submit & Continue", on_click=submit_feedback, icon="send").props("color=primary")
+                                    ui.button("Continue Without Feedback", on_click=submit_feedback, icon="arrow_forward").props("color=secondary outline")
+
+                                ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+
+                # Build initial feedback panel
+                build_feedback_panel()
+
+                # Poll for status changes while job is active
+                def check_status():
+                    latest_job = job_manager.get_job(job_id)
+                    if latest_job is None:
+                        status_timer.deactivate()
+                        return
+
+                    # If status changed, rebuild the feedback panel
+                    if latest_job.status != current_status["value"]:
+                        current_status["value"] = latest_job.status
+                        build_feedback_panel()
+
+                        # If job completed/failed/cancelled, stop polling
+                        if latest_job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
+                            status_timer.deactivate()
+                            # Refresh page to show final state
+                            ui.navigate.to(f"/job/{job_id}")
+
+                # Only poll if job is still active
+                if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
+                    status_timer = ui.timer(5.0, check_status)  # Poll every 5 seconds
 
             else:
                 ui.label("Knowledge graph not found").classes("text-gray-500")
