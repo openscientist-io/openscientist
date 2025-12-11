@@ -56,9 +56,14 @@ class KnowledgeGraph:
 
     @classmethod
     def load(cls, file_path: Path) -> "KnowledgeGraph":
-        """Load knowledge graph from JSON file."""
+        """Load knowledge graph from JSON file with shared lock."""
         with open(file_path, 'r') as f:
-            data = json.load(f)
+            # Acquire shared lock - blocks while exclusive lock is held
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                data = json.load(f)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         # Create instance and set data
         kg = cls.__new__(cls)
