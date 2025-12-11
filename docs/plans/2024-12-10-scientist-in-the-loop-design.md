@@ -20,13 +20,13 @@ After brainstorming, we decided on a **two-mode approach** that gives scientists
 - Fastest option for hands-off investigations
 - Current behavior, no changes needed
 
-### Mode 2: Co-investigate
+### Mode 2: Coinvestigate
 - Job pauses after each iteration for scientist review
 - Scientist can provide feedback or just continue
 - Auto-continues after 15-minute timeout if no response
 - For engaged, interactive investigations
 
-## Co-investigate Mode Details
+## Coinvestigate Mode Details
 
 ### User Experience
 
@@ -83,7 +83,7 @@ Add new status to `JobStatus` enum:
 
 ### Orchestrator Changes
 
-1. After each iteration completes (for co-investigate jobs):
+1. After each iteration completes (for coinvestigate jobs):
    - Set status to `awaiting_feedback`
    - Record `awaiting_feedback_since` timestamp
    - Wait in a polling loop checking for:
@@ -138,7 +138,7 @@ Please incorporate this feedback into your investigation approach.
   - Countdown timer display
   - Three buttons: "Submit & Continue", "Continue", "I need more time"
 
-- For all co-investigate jobs:
+- For all coinvestigate jobs:
   - Show feedback history inline in Timeline (which iterations had feedback)
   - Indicate when feedback was injected
 
@@ -146,12 +146,12 @@ Please incorporate this feedback into your investigation approach.
 
 ### Phase 1: Core Infrastructure
 - [ ] Add `AWAITING_FEEDBACK` to JobStatus enum
-- [ ] Add `investigation_mode` to job config (autonomous/co-investigate)
+- [ ] Add `investigation_mode` to job config (autonomous/coinvestigate)
 - [ ] Update job_manager to exclude awaiting_feedback from running count
 - [ ] Add feedback fields to knowledge graph schema
 
 ### Phase 2: Orchestrator
-- [ ] Add feedback waiting loop after each iteration (co-investigate only)
+- [ ] Add feedback waiting loop after each iteration (coinvestigate only)
 - [ ] Implement timeout logic with timestamp checking
 - [ ] Add feedback injection to iteration prompts
 - [ ] Handle continue/submit signals from web UI
@@ -164,7 +164,7 @@ Please incorporate this feedback into your investigation approach.
 
 ### Phase 4: Testing
 - [ ] Test autonomous mode (should be unchanged)
-- [ ] Test co-investigate mode end-to-end
+- [ ] Test coinvestigate mode end-to-end
 - [ ] Test timeout auto-continue
 - [ ] Test queue not blocked during awaiting_feedback
 

@@ -50,7 +50,8 @@ class KnowledgeGraph:
             "findings": [],
             "literature": [],
             "analysis_log": [],
-            "iteration_summaries": []  # Agent-generated summaries per iteration
+            "iteration_summaries": [],  # Agent-generated summaries per iteration
+            "feedback_history": []  # Scientist feedback: [{after_iteration, text, submitted_at}]
         }
 
     @classmethod
@@ -260,6 +261,48 @@ class KnowledgeGraph:
     def increment_iteration(self) -> None:
         """Increment the iteration counter."""
         self.data["iteration"] += 1
+
+    def add_feedback(self, text: str, after_iteration: int) -> None:
+        """
+        Add scientist feedback to history.
+
+        Feedback is given after an iteration completes and will be injected
+        into the next iteration (N+1).
+
+        Args:
+            text: Feedback text from scientist
+            after_iteration: The iteration that just completed
+        """
+        # Ensure field exists (backwards compatibility)
+        if "feedback_history" not in self.data:
+            self.data["feedback_history"] = []
+
+        self.data["feedback_history"].append({
+            "after_iteration": after_iteration,
+            "text": text,
+            "submitted_at": datetime.now().isoformat()
+        })
+
+    def get_feedback_for_iteration(self, iteration: int) -> Optional[str]:
+        """
+        Get feedback that should be injected into this iteration.
+
+        Looks for feedback given after the previous iteration (N-1).
+
+        Args:
+            iteration: Current iteration number
+
+        Returns:
+            Feedback text or None
+        """
+        feedback_list = self.data.get("feedback_history", [])
+        previous_iteration = iteration - 1
+
+        # Find feedback given after the previous iteration
+        matching = [f for f in feedback_list if f.get("after_iteration") == previous_iteration]
+        if matching:
+            return matching[-1]["text"]  # Use most recent if multiple
+        return None
 
     def get_summary(self) -> str:
         """
