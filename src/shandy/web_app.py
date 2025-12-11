@@ -432,18 +432,20 @@ def job_detail_page(job_id: str):
                             elif code_count > 0 or search_count > 0:
                                 border_class = "border-l-4 border-blue-300"  # Did work
 
+                            # Build stats suffix for title
+                            stats_parts = []
+                            if code_count:
+                                stats_parts.append(f"{code_count} analyses")
+                            if search_count:
+                                stats_parts.append(f"{search_count} searches")
+                            if finding_count:
+                                stats_parts.append(f"{finding_count} findings")
+                            stats_suffix = f" [{', '.join(stats_parts)}]" if stats_parts else ""
+
                             with ui.expansion(
-                                f"Iteration {iteration}: {summary_text}",
+                                f"Iteration {iteration}: {summary_text}{stats_suffix}",
                                 icon="science"
                             ).classes(f"w-full mb-2 {border_class}"):
-                                # Quick stats
-                                with ui.row().classes("gap-4 mb-2"):
-                                    if code_count:
-                                        ui.badge(f"{code_count} analyses", color="blue")
-                                    if search_count:
-                                        ui.badge(f"{search_count} searches", color="purple")
-                                    if finding_count:
-                                        ui.badge(f"{finding_count} findings", color="green")
 
                                 # Show plots from this iteration
                                 plots_dir = job_dir / "plots"
