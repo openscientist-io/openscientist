@@ -525,7 +525,7 @@ def job_detail_page(job_id: str):
                                     if f.get("iteration_discovered") == iteration
                                 ]
                                 if iteration_findings:
-                                    ui.label("Discoveries").classes("font-bold mt-2 mb-1")
+                                    ui.label("Findings").classes("font-bold mt-2 mb-1")
                                     for finding in iteration_findings:
                                         with ui.card().classes("w-full mb-2 bg-green-50"):
                                             ui.label(finding['title']).classes("font-bold text-green-800")
