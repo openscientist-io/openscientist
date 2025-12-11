@@ -138,7 +138,7 @@ def new_job_page():
                 research_question=research_question.value,
                 data_files=data_files,
                 max_iterations=int(max_iterations.value),
-                use_skills=use_skills.value,
+                use_skills=True,
                 auto_start=True
             )
 
@@ -200,43 +200,13 @@ def new_job_page():
         ).classes("w-full")
 
         # Configuration
-        with ui.row().classes("w-full"):
-            max_iterations = ui.number(
-                label="Max Iterations",
-                value=10,
-                min=2,
-                max=100,
-                step=1
-            ).classes("flex-1")
-
-            use_skills = ui.checkbox("Use Skills", value=True)
-
-        # Budget info (project-level)
-        try:
-            provider = get_provider()
-            cost_info = provider.get_cost_info(lookback_hours=24)
-            budget_check = provider.check_budget_limits()
-
-            with ui.card().classes("w-full bg-blue-50"):
-                ui.label("Budget Information").classes("text-subtitle2 font-bold")
-
-                # Display costs or "N/A" if unavailable
-                total_spend_str = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
-                recent_spend_str = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
-
-                ui.label(f"Total Spend: {total_spend_str}").classes("text-sm")
-                ui.label(f"Last 24h: {recent_spend_str}").classes("text-sm")
-
-                if cost_info.budget_remaining_usd is not None:
-                    ui.label(f"Remaining: ${cost_info.budget_remaining_usd:.2f}").classes("text-sm")
-
-                # Show warnings/errors
-                if not budget_check["can_proceed"]:
-                    ui.label("⚠️ Budget limit exceeded").classes("text-sm text-negative font-bold")
-        except Exception as e:
-            with ui.card().classes("w-full bg-yellow-50"):
-                ui.label("Budget Information Unavailable").classes("text-subtitle2 font-bold")
-                ui.label("Check provider configuration in .env").classes("text-sm text-gray-600")
+        max_iterations = ui.number(
+            label="Max Iterations",
+            value=10,
+            min=2,
+            max=100,
+            step=1
+        ).classes("w-full")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")
@@ -280,6 +250,7 @@ def jobs_page():
         with ui.row():
             ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
             ui.button("Refresh", on_click=refresh_jobs, icon="refresh")
+            ui.button("Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments").props("flat")
 
     # Summary cards
     summary = job_manager.get_job_summary()
@@ -295,51 +266,6 @@ def jobs_page():
         with ui.card():
             ui.label("Completed").classes("text-subtitle2")
             ui.label(str(summary["status_counts"].get("completed", 0))).classes("text-h4 text-green-600")
-
-    # Cost dashboard (project-level)
-    if summary.get("cost_info"):
-        cost_info = summary["cost_info"]
-        budget_check = summary.get("budget_check", {})
-
-        with ui.card().classes("w-full p-4"):
-            ui.label("Project Costs").classes("text-h6 mb-2")
-
-            with ui.row().classes("w-full gap-4"):
-                # Total spend
-                with ui.column().classes("items-start"):
-                    total_spend_display = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
-                    ui.label(total_spend_display).classes("text-h4 text-primary")
-                    ui.label("Total Spend").classes("text-caption text-grey")
-
-                # Last 24h
-                with ui.column().classes("items-start"):
-                    recent_spend_display = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
-                    ui.label(recent_spend_display).classes("text-h5")
-                    ui.label(f"Last {cost_info.recent_period_hours}h").classes("text-caption text-grey")
-
-                # Budget remaining (if available)
-                if cost_info.budget_remaining_usd is not None:
-                    with ui.column().classes("items-start"):
-                        remaining_color = "text-positive" if cost_info.budget_remaining_usd > 10 else "text-warning"
-                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(f"text-h5 {remaining_color}")
-                        ui.label("Budget Remaining").classes("text-caption text-grey")
-
-                # Provider info
-                with ui.column().classes("items-start ml-auto"):
-                    ui.label(f"Provider: {cost_info.provider_name}").classes("text-caption")
-                    if cost_info.data_lag_note:
-                        ui.label(cost_info.data_lag_note).classes("text-caption text-grey-6")
-
-            # Budget warnings/errors
-            if budget_check and budget_check.get("errors"):
-                for error in budget_check["errors"]:
-                    ui.label(f"⚠️ {error}").classes("text-caption text-negative font-bold")
-            elif budget_check and budget_check.get("warnings"):
-                for warning in budget_check["warnings"]:
-                    ui.label(f"⚠️ {warning}").classes("text-caption text-warning")
-    else:
-        with ui.card().classes("w-full bg-yellow-50 p-4"):
-            ui.label("Cost tracking unavailable").classes("text-caption text-warning")
 
     # Jobs table
     table = ui.table(
@@ -409,16 +335,15 @@ def job_detail_page(job_id: str):
             ui.label("Error").classes("text-subtitle2 font-bold text-red-800")
             ui.label(job_info.error).classes("text-red-600")
 
-    # 3-Tab Structure: Summary, Timeline, Report
+    # 2-Tab Structure: Timeline (primary), Report
     with ui.tabs().classes("w-full") as tabs:
-        summary_tab = ui.tab("Summary")
         timeline_tab = ui.tab("Timeline")
         report_tab = ui.tab("Report")
 
-    with ui.tab_panels(tabs, value=summary_tab).classes("w-full"):
-        # ===== SUMMARY TAB =====
-        with ui.tab_panel(summary_tab):
-            # Status cards row
+    with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
+        # ===== TIMELINE TAB (Primary View) =====
+        with ui.tab_panel(timeline_tab):
+            # Status cards row (moved from Summary)
             status_colors = {
                 JobStatus.CREATED: "gray",
                 JobStatus.QUEUED: "blue",
@@ -454,38 +379,8 @@ def job_detail_page(job_id: str):
                 ui.label("Research Question").classes("text-subtitle2 font-bold")
                 ui.label(job_info.research_question).classes("text-lg")
 
-            # Key Findings section
-            with ui.card().classes("w-full"):
-                ui.label("Key Discoveries").classes("text-h6 font-bold mb-2")
-
-                if kg_data and kg_data.get("findings"):
-                    findings = kg_data["findings"]
-                    # Show first 5 findings directly
-                    for i, finding in enumerate(findings[:5], 1):
-                        with ui.card().classes("w-full mb-2 bg-green-50"):
-                            ui.label(f"{i}. {finding['title']}").classes("font-bold")
-                            ui.label(finding["evidence"]).classes("text-sm text-gray-700")
-                            interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
-                            if interpretation:
-                                ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
-                            # Show which iteration this was discovered
-                            iteration_discovered = finding.get("iteration_discovered")
-                            if iteration_discovered:
-                                ui.label(f"Discovered in iteration {iteration_discovered}").classes("text-xs text-gray-400 mt-1")
-
-                    # If more than 5 findings, show expandable section
-                    if len(findings) > 5:
-                        with ui.expansion(f"+ {len(findings) - 5} more findings").classes("w-full"):
-                            for i, finding in enumerate(findings[5:], 6):
-                                with ui.card().classes("w-full mb-2 bg-green-50"):
-                                    ui.label(f"{i}. {finding['title']}").classes("font-bold")
-                                    ui.label(finding["evidence"]).classes("text-sm text-gray-700")
-                else:
-                    ui.label("No findings yet - investigation in progress...").classes("text-gray-500 italic")
-
-        # ===== TIMELINE TAB =====
-        with ui.tab_panel(timeline_tab):
-            ui.label("Investigation Timeline").classes("text-h6 font-bold mb-4")
+            # Investigation Timeline
+            ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
 
             if kg_data:
                 # Get iteration summaries (agent-generated)
@@ -610,13 +505,20 @@ def job_detail_page(job_id: str):
                                             else:
                                                 ui.label(f'"{query}"').classes("text-sm text-gray-600")
 
-                                # Show findings recorded
-                                if finding_count > 0:
-                                    ui.label("Findings recorded:").classes("font-bold mt-2 mb-1")
-                                    # Find findings from this iteration
-                                    for finding in kg_data.get("findings", []):
-                                        if finding.get("iteration_discovered") == iteration:
-                                            ui.label(f"• {finding['title']}").classes("text-sm text-green-700 ml-2")
+                                # Show findings recorded (full details, in context)
+                                iteration_findings = [
+                                    f for f in kg_data.get("findings", [])
+                                    if f.get("iteration_discovered") == iteration
+                                ]
+                                if iteration_findings:
+                                    ui.label("Discoveries").classes("font-bold mt-2 mb-1")
+                                    for finding in iteration_findings:
+                                        with ui.card().classes("w-full mb-2 bg-green-50"):
+                                            ui.label(finding['title']).classes("font-bold text-green-800")
+                                            ui.label(finding["evidence"]).classes("text-sm text-gray-700")
+                                            interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                            if interpretation:
+                                                ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
             else:
@@ -693,6 +595,73 @@ def job_detail_page(job_id: str):
             ui.notify(f"Error deleting job: {e}", type="negative")
 
 
+@ui.page("/billing")
+def billing_page():
+    """Billing and cost tracking page."""
+
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
+
+    with ui.header().classes("items-center justify-between"):
+        ui.label("SHANDY - Billing").classes("text-h4")
+        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="arrow_back")
+
+    with ui.card().classes("w-full max-w-4xl mx-auto mt-8"):
+        ui.label("Project Costs").classes("text-h5 mb-4")
+
+        try:
+            provider = get_provider()
+            cost_info = provider.get_cost_info(lookback_hours=24)
+            budget_check = provider.check_budget_limits()
+
+            with ui.row().classes("w-full gap-8 mb-4"):
+                # Total spend
+                with ui.card().classes("flex-1"):
+                    total_spend_display = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
+                    ui.label(total_spend_display).classes("text-h3 text-primary")
+                    ui.label("Total Spend").classes("text-subtitle2 text-grey")
+
+                # Last 24h
+                with ui.card().classes("flex-1"):
+                    recent_spend_display = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
+                    ui.label(recent_spend_display).classes("text-h3")
+                    ui.label(f"Last {cost_info.recent_period_hours} Hours").classes("text-subtitle2 text-grey")
+
+                # Budget remaining (if available)
+                if cost_info.budget_remaining_usd is not None:
+                    with ui.card().classes("flex-1"):
+                        remaining_color = "text-positive" if cost_info.budget_remaining_usd > 10 else "text-warning"
+                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(f"text-h3 {remaining_color}")
+                        ui.label("Budget Remaining").classes("text-subtitle2 text-grey")
+
+            # Provider info
+            with ui.card().classes("w-full bg-gray-50"):
+                ui.label("Provider Information").classes("text-subtitle2 font-bold mb-2")
+                ui.label(f"Provider: {cost_info.provider_name}").classes("text-sm")
+                if cost_info.data_lag_note:
+                    ui.label(cost_info.data_lag_note).classes("text-sm text-grey-6")
+
+            # Budget warnings/errors
+            if budget_check and budget_check.get("errors"):
+                with ui.card().classes("w-full bg-red-50 mt-4"):
+                    ui.label("Budget Alerts").classes("text-subtitle2 font-bold text-red-800")
+                    for error in budget_check["errors"]:
+                        ui.label(f"⚠️ {error}").classes("text-sm text-red-600")
+            elif budget_check and budget_check.get("warnings"):
+                with ui.card().classes("w-full bg-yellow-50 mt-4"):
+                    ui.label("Budget Warnings").classes("text-subtitle2 font-bold text-yellow-800")
+                    for warning in budget_check["warnings"]:
+                        ui.label(f"⚠️ {warning}").classes("text-sm text-yellow-600")
+
+        except Exception as e:
+            with ui.card().classes("w-full bg-yellow-50"):
+                ui.label("Cost Tracking Unavailable").classes("text-subtitle2 font-bold")
+                ui.label("Check provider configuration in .env").classes("text-sm text-gray-600")
+                ui.label(f"Error: {e}").classes("text-xs text-gray-400 mt-2")
+
+
 @ui.page("/docs")
 def docs_page():
     """Documentation page."""
@@ -718,58 +687,58 @@ SHANDY is an autonomous AI scientist that analyzes scientific data to discover m
 
 ## How It Works
 
-1. **Submit a Job**: Upload your data files (CSV) and provide a research question
-2. **Autonomous Discovery**: SHANDY runs for N iterations, testing hypotheses and searching literature
-3. **Results**: Get findings, mechanistic models, and a final report
+1. **Submit a Job**: Provide a research question and optionally upload data files
+2. **Autonomous Discovery**: SHANDY runs for N iterations, analyzing data and searching literature
+3. **View Results**: Track progress in the Timeline view, see key findings in Summary, and download the final Report
 
 ## Features
 
 - **Autonomous**: Runs without human intervention
 - **Domain-Agnostic**: Works for metabolomics, genomics, structural biology, and more
-- **Skills-Based**: Uses structured workflows for scientific rigor
-- **Cost-Tracked**: Budget monitoring with provider-specific tracking
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
+- **Progressive Disclosure**: See high-level summaries first, drill into details on demand
+- **Downloadable Visualizations**: Export plots and the final report as PDF
 
-## Skills
+## Supported Data Formats
 
-SHANDY uses two types of skills:
+SHANDY accepts various file types:
 
-### Workflow Skills
-- Hypothesis generation
-- Result interpretation
-- Prioritization
-- Stopping criteria
+- **Tabular**: CSV, TSV, Excel (.xlsx), Parquet, JSON
+- **Structures**: PDB, mmCIF (for structural biology)
+- **Sequences**: FASTA
+- **Images**: PNG, JPG
 
-### Domain Skills
-- Metabolomics
-- Genomics/Transcriptomics
-- Data Science/Statistics
+Data files are optional - you can also run literature-only investigations.
+
+## Understanding Results
+
+### Summary Tab
+Shows key discoveries at a glance - the most important findings with statistical evidence.
+
+### Timeline Tab
+Chronological view of the investigation. Each iteration shows:
+- What the agent investigated (plain-language summary)
+- Visualizations generated (expandable)
+- Literature searched (expandable with paper links)
+- Findings recorded
+
+### Report Tab
+The final scientific report with:
+- Executive summary
+- Detailed findings with evidence
+- Mechanistic interpretation
+- Suggested follow-up experiments
+
+Download as Markdown or PDF.
 
 ## Tips for Success
 
 1. **Clear Research Question**: Be specific about what you want to discover
-2. **Clean Data**: Ensure CSV files are properly formatted
-3. **Appropriate Iterations**: 30-50 iterations for most analyses
-4. **Enable Skills**: Skills provide structure and prevent common mistakes
-
-## Data Format
-
-CSV files should have:
-- First row: Column headers
-- First column: Sample IDs
-- Second column (optional): Group labels
-- Remaining columns: Features (metabolites, genes, etc.)
-
-Example:
-```csv
-sample_id,group,metabolite1,metabolite2,...
-sample1,control,100,200,...
-sample2,treatment,150,180,...
-```
-
-## Budget
-
-SHANDY tracks project-level costs through your configured model provider (CBORG, Vertex AI, or Bedrock). Check your budget before starting large jobs.
+2. **Clean Data**: Ensure files are properly formatted. Provide a detailed explanation of the 
+data file in your query if possible, including how it is formatted, any relevant details 
+about the file (e.g. what the column headers signify), and how the file relates to the research question.
+3. **Appropriate Iterations**: 10 is sufficient for many analyses. More iterations may help with more
+complicated questions.
 
 ## Support
 
