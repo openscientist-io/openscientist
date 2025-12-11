@@ -597,16 +597,10 @@ def job_detail_page(job_id: str):
                         status_timer.deactivate()
                         return
 
-                    # If status changed, rebuild the feedback panel
+                    # If status changed, refresh the entire page to update timeline, stats, etc.
                     if latest_job.status != current_status["value"]:
-                        current_status["value"] = latest_job.status
-                        build_feedback_panel()
-
-                        # If job completed/failed/cancelled, stop polling
-                        if latest_job.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
-                            status_timer.deactivate()
-                            # Refresh page to show final state
-                            ui.navigate.to(f"/job/{job_id}")
+                        status_timer.deactivate()
+                        ui.navigate.to(f"/job/{job_id}")
 
                 # Only poll if job is still active
                 if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
