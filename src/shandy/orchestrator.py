@@ -28,6 +28,92 @@ if not load_dotenv("/app/.env", override=True):
 logger = logging.getLogger(__name__)
 
 
+FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
+
+
+def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_TIMEOUT_SECONDS) -> Optional[str]:
+    """
+    Wait for scientist feedback or timeout (coinvestigate mode).
+
+    Polls the knowledge graph for new feedback entries. Returns when:
+    - Feedback is submitted (returns feedback text)
+    - Timeout expires (returns None)
+    - Job is cancelled (returns None)
+
+    Args:
+        job_dir: Path to job directory
+        timeout_seconds: How long to wait before auto-continuing
+
+    Returns:
+        Feedback text if submitted, None if timeout or cancelled
+    """
+    import time
+
+    config_path = job_dir / "config.json"
+    kg_path = job_dir / "knowledge_graph.json"
+
+    start_time = time.time()
+    last_feedback_count = 0
+
+    # Get initial feedback count
+    kg = KnowledgeGraph.load(kg_path)
+    current_iteration = kg.data["iteration"]
+    last_feedback_count = len(kg.data.get("feedback_history", []))
+
+    logger.info(f"Waiting for scientist feedback (timeout: {timeout_seconds}s)")
+
+    while True:
+        elapsed = time.time() - start_time
+
+        # Check timeout
+        if elapsed >= timeout_seconds:
+            logger.info(f"Feedback timeout after {elapsed:.0f}s - auto-continuing")
+            return None
+
+        # Check if job was cancelled
+        with open(config_path) as f:
+            config = json.load(f)
+        if config.get("status") == "cancelled":
+            logger.info("Job cancelled while waiting for feedback")
+            return None
+
+        # Check for new feedback
+        kg = KnowledgeGraph.load(kg_path)
+        feedback_history = kg.data.get("feedback_history", [])
+
+        if len(feedback_history) > last_feedback_count:
+            # New feedback added - check if it's for current iteration
+            latest = feedback_history[-1]
+            if latest.get("after_iteration") == current_iteration:
+                logger.info(f"Received feedback: {latest['text'][:100]}...")
+                return latest["text"]
+
+        # Check for continue signal (status changed back to running)
+        with open(config_path) as f:
+            config = json.load(f)
+        if config.get("status") == "running":
+            logger.info("Continue signal received (no feedback)")
+            return None
+
+        # Sleep before next poll
+        time.sleep(2)
+
+
+def update_job_status(job_dir: Path, status: str) -> None:
+    """Update job status in config.json."""
+    config_path = job_dir / "config.json"
+    with open(config_path) as f:
+        config = json.load(f)
+    config["status"] = status
+    # Track when we started awaiting feedback (for countdown timer)
+    if status == "awaiting_feedback":
+        config["awaiting_feedback_since"] = datetime.now().isoformat()
+    elif "awaiting_feedback_since" in config:
+        del config["awaiting_feedback_since"]
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+
 def increment_kg_iteration(kg_path: Path) -> None:
     """
     Safely increment the knowledge graph iteration counter with file locking.
@@ -58,7 +144,8 @@ def increment_kg_iteration(kg_path: Path) -> None:
 
 def create_job(job_id: str, research_question: str, data_files: list,
                max_iterations: int, use_skills: bool = True,
-               jobs_dir: Path = Path("jobs")) -> Path:
+               jobs_dir: Path = Path("jobs"),
+               investigation_mode: str = "autonomous") -> Path:
     """
     Create a new discovery job.
 
@@ -69,6 +156,7 @@ def create_job(job_id: str, research_question: str, data_files: list,
         max_iterations: Maximum number of iterations
         use_skills: Whether to use skills
         jobs_dir: Base directory for jobs
+        investigation_mode: "autonomous" (default) or "coinvestigate"
 
     Returns:
         Path to job directory
@@ -133,6 +221,7 @@ def create_job(job_id: str, research_question: str, data_files: list,
         "data_files": [str(p) for p in data_paths],
         "max_iterations": max_iterations,
         "use_skills": use_skills,
+        "investigation_mode": investigation_mode,
         "created_at": datetime.now().isoformat(),
         "status": "created"
     }
@@ -162,7 +251,10 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
     job_id = config["job_id"]
     max_iterations = config["max_iterations"]
+    investigation_mode = config.get("investigation_mode", "autonomous")
     data_file = Path(config["data_files"][0]) if config["data_files"] else None
+
+    logger.info(f"Investigation mode: {investigation_mode}")
 
     # Ensure data_file is absolute (if present)
     if data_file and not data_file.is_absolute():
@@ -234,6 +326,11 @@ Examples include (there may be others - explore what's available):
 - execute_code: Analyze data, run statistical tests, create visualizations
 - search_pubmed: Search for relevant papers
 - update_knowledge_graph: Record confirmed findings with statistical evidence
+- save_iteration_summary: Record a summary of what you investigated and learned
+
+IMPORTANT: At the end of each iteration, call save_iteration_summary with a 1-2 sentence
+plain-language summary of what you investigated and what you learned. This helps users
+understand your investigation progress.
 
 Start your investigation by using these tools to analyze the data.
 """
@@ -250,6 +347,7 @@ Start your investigation by using these tools to analyze the data.
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
             '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+            '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
             '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
             '--allowedTools', 'mcp__shandy-tools__compare_structures',
             '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -292,6 +390,13 @@ Start your investigation by using these tools to analyze the data.
         if max_iterations > 1:
             increment_kg_iteration(kg_path)
 
+        # Coinvestigate mode: wait for feedback after first iteration
+        pending_feedback = None
+        if investigation_mode == "coinvestigate" and max_iterations > 1:
+            update_job_status(job_dir, "awaiting_feedback")
+            pending_feedback = wait_for_feedback_or_timeout(job_dir)
+            update_job_status(job_dir, "running")
+
         # Iterations 2-N: Resume session within batches, reset every 5 iterations
         # Note: We use --resume for short-term memory but reset periodically to:
         # 1. Prevent unbounded context growth over 10+ iterations
@@ -303,16 +408,37 @@ Start your investigation by using these tools to analyze the data.
             # Reload knowledge graph to see latest state
             kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
 
+            # Check for feedback from previous iteration (from KG if not already captured)
+            if pending_feedback is None:
+                pending_feedback = kg.get_feedback_for_iteration(iteration)
+
+            # Build feedback section if we have feedback
+            feedback_section = ""
+            if pending_feedback:
+                feedback_section = f"""
+## Scientist Feedback
+The scientist has provided the following guidance after reviewing your previous iteration:
+> {pending_feedback}
+
+Continue your investigation, taking this guidance into account. Use your judgment to balance
+the scientist's suggestions with your own analysis of what will be most productive.
+
+---
+"""
+                pending_feedback = None  # Clear after using
+
             # Build iteration prompt
             iteration_prompt = f"""# Iteration {iteration}/{max_iterations}
-
+{feedback_section}
 {kg.get_summary()}
 
 ---
 
 Continue your investigation using the available MCP tools.
-Examples: execute_code, search_pubmed, update_knowledge_graph (explore for others).
-Think step by step about what will provide the most insight, then actively use the tools to execute your investigation."""
+Examples: execute_code, search_pubmed, update_knowledge_graph, save_iteration_summary.
+Think step by step about what will provide the most insight, then actively use the tools to execute your investigation.
+
+Remember: At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
 
             # Decide whether to resume or start fresh
             should_reset = (iteration % RESET_INTERVAL == 1)
@@ -327,6 +453,7 @@ Think step by step about what will provide the most insight, then actively use t
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
                     '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -342,6 +469,7 @@ Think step by step about what will provide the most insight, then actively use t
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
                     '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -381,7 +509,11 @@ Think step by step about what will provide the most insight, then actively use t
             if iteration < max_iterations:
                 increment_kg_iteration(kg_path)
 
-            # Cost tracking removed - now handled at project level, not per-job
+            # Coinvestigate mode: wait for feedback after each iteration (except last)
+            if investigation_mode == "coinvestigate" and iteration < max_iterations:
+                update_job_status(job_dir, "awaiting_feedback")
+                pending_feedback = wait_for_feedback_or_timeout(job_dir)
+                update_job_status(job_dir, "running")
 
         logger.info(f"Discovery loop completed")
 

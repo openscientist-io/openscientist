@@ -49,14 +49,21 @@ class KnowledgeGraph:
             "hypotheses": [],
             "findings": [],
             "literature": [],
-            "analysis_log": []
+            "analysis_log": [],
+            "iteration_summaries": [],  # Agent-generated summaries per iteration
+            "feedback_history": []  # Scientist feedback: [{after_iteration, text, submitted_at}]
         }
 
     @classmethod
     def load(cls, file_path: Path) -> "KnowledgeGraph":
-        """Load knowledge graph from JSON file."""
+        """Load knowledge graph from JSON file with shared lock."""
         with open(file_path, 'r') as f:
-            data = json.load(f)
+            # Acquire shared lock - blocks while exclusive lock is held
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+            try:
+                data = json.load(f)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         # Create instance and set data
         kg = cls.__new__(cls)
@@ -214,9 +221,93 @@ class KnowledgeGraph:
 
         self.data["analysis_log"].append(log_entry)
 
+    def add_iteration_summary(self, iteration: int, summary: str) -> None:
+        """
+        Store agent-generated summary for an iteration.
+
+        Args:
+            iteration: Iteration number
+            summary: Plain-language summary of what was accomplished
+        """
+        # Ensure iteration_summaries exists (backwards compatibility)
+        if "iteration_summaries" not in self.data:
+            self.data["iteration_summaries"] = []
+
+        # Check if this iteration already has a summary
+        for existing in self.data["iteration_summaries"]:
+            if existing["iteration"] == iteration:
+                existing["summary"] = summary
+                existing["updated_at"] = datetime.now().isoformat()
+                return
+
+        # Add new summary
+        self.data["iteration_summaries"].append({
+            "iteration": iteration,
+            "summary": summary,
+            "created_at": datetime.now().isoformat()
+        })
+
+    def get_iteration_summary(self, iteration: int) -> Optional[str]:
+        """
+        Get the summary for a specific iteration.
+
+        Args:
+            iteration: Iteration number
+
+        Returns:
+            Summary string or None if not found
+        """
+        summaries = self.data.get("iteration_summaries", [])
+        for entry in summaries:
+            if entry["iteration"] == iteration:
+                return entry["summary"]
+        return None
+
     def increment_iteration(self) -> None:
         """Increment the iteration counter."""
         self.data["iteration"] += 1
+
+    def add_feedback(self, text: str, after_iteration: int) -> None:
+        """
+        Add scientist feedback to history.
+
+        Feedback is given after an iteration completes and will be injected
+        into the next iteration (N+1).
+
+        Args:
+            text: Feedback text from scientist
+            after_iteration: The iteration that just completed
+        """
+        # Ensure field exists (backwards compatibility)
+        if "feedback_history" not in self.data:
+            self.data["feedback_history"] = []
+
+        self.data["feedback_history"].append({
+            "after_iteration": after_iteration,
+            "text": text,
+            "submitted_at": datetime.now().isoformat()
+        })
+
+    def get_feedback_for_iteration(self, iteration: int) -> Optional[str]:
+        """
+        Get feedback that should be injected into this iteration.
+
+        Looks for feedback given after the previous iteration (N-1).
+
+        Args:
+            iteration: Current iteration number
+
+        Returns:
+            Feedback text or None
+        """
+        feedback_list = self.data.get("feedback_history", [])
+        previous_iteration = iteration - 1
+
+        # Find feedback given after the previous iteration
+        matching = [f for f in feedback_list if f.get("after_iteration") == previous_iteration]
+        if matching:
+            return matching[-1]["text"]  # Use most recent if multiple
+        return None
 
     def get_summary(self) -> str:
         """

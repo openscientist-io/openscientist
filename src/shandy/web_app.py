@@ -133,13 +133,17 @@ def new_job_page():
 
         # Create job
         try:
+            # Determine investigation mode
+            mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
+
             job_info = job_manager.create_job(
                 job_id=job_id,
                 research_question=research_question.value,
                 data_files=data_files,
                 max_iterations=int(max_iterations.value),
-                use_skills=use_skills.value,
-                auto_start=True
+                use_skills=True,
+                auto_start=True,
+                investigation_mode=mode
             )
 
             ui.notify(f"Job {job_id} created and started!", type="positive")
@@ -200,43 +204,20 @@ def new_job_page():
         ).classes("w-full")
 
         # Configuration
-        with ui.row().classes("w-full"):
-            max_iterations = ui.number(
-                label="Max Iterations",
-                value=10,
-                min=2,
-                max=100,
-                step=1
-            ).classes("flex-1")
+        max_iterations = ui.number(
+            label="Max Iterations",
+            value=10,
+            min=2,
+            max=100,
+            step=1
+        ).classes("w-full")
 
-            use_skills = ui.checkbox("Use Skills", value=True)
-
-        # Budget info (project-level)
-        try:
-            provider = get_provider()
-            cost_info = provider.get_cost_info(lookback_hours=24)
-            budget_check = provider.check_budget_limits()
-
-            with ui.card().classes("w-full bg-blue-50"):
-                ui.label("Budget Information").classes("text-subtitle2 font-bold")
-
-                # Display costs or "N/A" if unavailable
-                total_spend_str = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
-                recent_spend_str = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
-
-                ui.label(f"Total Spend: {total_spend_str}").classes("text-sm")
-                ui.label(f"Last 24h: {recent_spend_str}").classes("text-sm")
-
-                if cost_info.budget_remaining_usd is not None:
-                    ui.label(f"Remaining: ${cost_info.budget_remaining_usd:.2f}").classes("text-sm")
-
-                # Show warnings/errors
-                if not budget_check["can_proceed"]:
-                    ui.label("⚠️ Budget limit exceeded").classes("text-sm text-negative font-bold")
-        except Exception as e:
-            with ui.card().classes("w-full bg-yellow-50"):
-                ui.label("Budget Information Unavailable").classes("text-subtitle2 font-bold")
-                ui.label("Check provider configuration in .env").classes("text-sm text-gray-600")
+        # Advanced options (collapsed by default)
+        with ui.expansion("Advanced Options (Experimental)", icon="science").classes("w-full mt-4"):
+            with ui.card().classes("w-full"):
+                coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
+                ui.label("Requires your active participation. After each iteration, I will pause to receive your feedback.").classes("text-sm text-gray-700 mt-1")
+                ui.label("Requires you to stay near your computer. Auto-continues after 15 min if you don't respond.").classes("text-xs text-orange-700")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")
@@ -280,6 +261,7 @@ def jobs_page():
         with ui.row():
             ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
             ui.button("Refresh", on_click=refresh_jobs, icon="refresh")
+            ui.button("Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments").props("flat")
 
     # Summary cards
     summary = job_manager.get_job_summary()
@@ -295,51 +277,6 @@ def jobs_page():
         with ui.card():
             ui.label("Completed").classes("text-subtitle2")
             ui.label(str(summary["status_counts"].get("completed", 0))).classes("text-h4 text-green-600")
-
-    # Cost dashboard (project-level)
-    if summary.get("cost_info"):
-        cost_info = summary["cost_info"]
-        budget_check = summary.get("budget_check", {})
-
-        with ui.card().classes("w-full p-4"):
-            ui.label("Project Costs").classes("text-h6 mb-2")
-
-            with ui.row().classes("w-full gap-4"):
-                # Total spend
-                with ui.column().classes("items-start"):
-                    total_spend_display = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
-                    ui.label(total_spend_display).classes("text-h4 text-primary")
-                    ui.label("Total Spend").classes("text-caption text-grey")
-
-                # Last 24h
-                with ui.column().classes("items-start"):
-                    recent_spend_display = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
-                    ui.label(recent_spend_display).classes("text-h5")
-                    ui.label(f"Last {cost_info.recent_period_hours}h").classes("text-caption text-grey")
-
-                # Budget remaining (if available)
-                if cost_info.budget_remaining_usd is not None:
-                    with ui.column().classes("items-start"):
-                        remaining_color = "text-positive" if cost_info.budget_remaining_usd > 10 else "text-warning"
-                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(f"text-h5 {remaining_color}")
-                        ui.label("Budget Remaining").classes("text-caption text-grey")
-
-                # Provider info
-                with ui.column().classes("items-start ml-auto"):
-                    ui.label(f"Provider: {cost_info.provider_name}").classes("text-caption")
-                    if cost_info.data_lag_note:
-                        ui.label(cost_info.data_lag_note).classes("text-caption text-grey-6")
-
-            # Budget warnings/errors
-            if budget_check and budget_check.get("errors"):
-                for error in budget_check["errors"]:
-                    ui.label(f"⚠️ {error}").classes("text-caption text-negative font-bold")
-            elif budget_check and budget_check.get("warnings"):
-                for warning in budget_check["warnings"]:
-                    ui.label(f"⚠️ {warning}").classes("text-caption text-warning")
-    else:
-        with ui.card().classes("w-full bg-yellow-50 p-4"):
-            ui.label("Cost tracking unavailable").classes("text-caption text-warning")
 
     # Jobs table
     table = ui.table(
@@ -373,7 +310,9 @@ def jobs_page():
 
 @ui.page("/job/{job_id}")
 def job_detail_page(job_id: str):
-    """Job detail page."""
+    """Job detail page with progressive disclosure UI."""
+    import json
+    from collections import defaultdict
 
     # Check authentication (skip if disabled)
     if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
@@ -387,17 +326,38 @@ def job_detail_page(job_id: str):
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
         return
 
+    job_dir = job_manager.jobs_dir / job_id
+    kg_path = job_dir / "knowledge_graph.json"
+
+    # Track current status for polling
+    current_status = {"value": job_info.status}
+
+    # Load knowledge graph data
+    kg_data = None
+    if kg_path.exists():
+        with open(kg_path) as f:
+            kg_data = json.load(f)
+
     # Page header
     with ui.header().classes("items-center justify-between"):
         ui.label(f"SHANDY - {job_id}").classes("text-h4")
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
 
-    # Job info cards
-    with ui.row().classes("w-full gap-4 p-4"):
-        with ui.card().classes("flex-1"):
-            ui.label("Status").classes("text-subtitle2")
+    # Error message if failed (show prominently at top)
+    if job_info.status == JobStatus.FAILED and job_info.error:
+        with ui.card().classes("w-full bg-red-50 m-4"):
+            ui.label("Error").classes("text-subtitle2 font-bold text-red-800")
+            ui.label(job_info.error).classes("text-red-600")
 
-            # Status badge
+    # 2-Tab Structure: Research Log (primary), Report
+    with ui.tabs().classes("w-full") as tabs:
+        timeline_tab = ui.tab("Research Log")
+        report_tab = ui.tab("Report")
+
+    with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
+        # ===== TIMELINE TAB (Primary View) =====
+        with ui.tab_panel(timeline_tab):
+            # Status cards row (moved from Summary)
             status_colors = {
                 JobStatus.CREATED: "gray",
                 JobStatus.QUEUED: "blue",
@@ -406,260 +366,288 @@ def job_detail_page(job_id: str):
                 JobStatus.FAILED: "red",
                 JobStatus.CANCELLED: "gray"
             }
-            color = status_colors.get(job_info.status, "gray")
-            ui.badge(job_info.status.value, color=color).classes("text-h6")
 
-        with ui.card().classes("flex-1"):
-            ui.label("Progress").classes("text-subtitle2")
-            ui.label(f"{job_info.iterations_completed} / {job_info.max_iterations}").classes("text-h5")
-            ui.linear_progress(job_info.iterations_completed / job_info.max_iterations)
+            with ui.row().classes("w-full gap-4 mb-4"):
+                with ui.card().classes("flex-1"):
+                    ui.label("Status").classes("text-subtitle2")
+                    color = status_colors.get(job_info.status, "gray")
+                    ui.badge(job_info.status.value, color=color).classes("text-h6")
 
-        with ui.card().classes("flex-1"):
-            ui.label("Findings").classes("text-subtitle2")
-            ui.label(str(job_info.findings_count)).classes("text-h5")
+                with ui.card().classes("flex-1"):
+                    ui.label("Progress").classes("text-subtitle2")
+                    progress = job_info.iterations_completed / max(job_info.max_iterations, 1)
+                    ui.label(f"{job_info.iterations_completed} / {job_info.max_iterations}").classes("text-h5")
+                    ui.linear_progress(progress)
 
-    # Research question
-    with ui.card().classes("w-full"):
-        ui.label("Research Question").classes("text-subtitle2 font-bold")
-        ui.label(job_info.research_question)
+                with ui.card().classes("flex-1"):
+                    ui.label("Findings").classes("text-subtitle2")
+                    ui.label(str(job_info.findings_count)).classes("text-h5 text-green-600")
 
-    # Error message if failed
-    if job_info.status == JobStatus.FAILED and job_info.error:
-        with ui.card().classes("w-full bg-red-50"):
-            ui.label("Error").classes("text-subtitle2 font-bold text-red-800")
-            ui.label(job_info.error).classes("text-red-600")
+                with ui.card().classes("flex-1"):
+                    ui.label("Papers Reviewed").classes("text-subtitle2")
+                    lit_count = len(kg_data.get("literature", [])) if kg_data else 0
+                    ui.label(str(lit_count)).classes("text-h5 text-blue-600")
 
-    # Tabs for different views
-    with ui.tabs().classes("w-full") as tabs:
-        findings_tab = ui.tab("Findings")
-        literature_tab = ui.tab("Literature")
-        plots_tab = ui.tab("Plots")
-        log_tab = ui.tab("Analysis Log")
-        report_tab = ui.tab("Final Report")
+            # Research question
+            with ui.card().classes("w-full mb-4"):
+                ui.label("Research Question").classes("text-subtitle2 font-bold")
+                ui.label(job_info.research_question).classes("text-lg")
 
-    job_dir = job_manager.jobs_dir / job_id
-    kg_path = job_dir / "knowledge_graph.json"
+            # Investigation Timeline
+            ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
 
-    with ui.tab_panels(tabs, value=findings_tab).classes("w-full"):
-        # Findings panel
-        with ui.tab_panel(findings_tab):
-            findings_container = ui.column().classes("w-full")
+            if kg_data:
+                # Get iteration summaries (agent-generated)
+                iteration_summaries = {
+                    s["iteration"]: s["summary"]
+                    for s in kg_data.get("iteration_summaries", [])
+                }
 
-            def refresh_findings():
-                findings_container.clear()
-                with findings_container:
-                    if kg_path.exists():
-                        import json
-                        with open(kg_path) as f:
-                            kg = json.load(f)
+                # Group analysis log by iteration
+                by_iteration = defaultdict(list)
+                for entry in kg_data.get("analysis_log", []):
+                    by_iteration[entry["iteration"]].append(entry)
 
-                        if kg["findings"]:
-                            for i, finding in enumerate(kg["findings"], 1):
-                                with ui.card().classes("w-full"):
-                                    ui.label(f"Finding {i}: {finding['title']}").classes("text-subtitle1 font-bold")
-                                    ui.label(finding["evidence"]).classes("mt-2")
-                                    # Show biological interpretation if available
-                                    interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
-                                    if interpretation:
-                                        ui.label(interpretation).classes("mt-2 text-gray-600")
-                        else:
-                            ui.label("No findings yet").classes("text-gray-500")
-                    else:
-                        ui.label("Knowledge graph not found").classes("text-gray-500")
+                # Get max iteration
+                max_iter = kg_data.get("iteration", 1)
 
-            refresh_findings()
+                if by_iteration or iteration_summaries:
+                    with ui.scroll_area().classes("w-full h-[600px]"):
+                        # Display in chronological order (oldest first)
+                        # Don't show the current in-progress iteration if awaiting feedback
+                        display_max = max_iter - 1 if job_info.status == JobStatus.AWAITING_FEEDBACK else max_iter
+                        for iteration in range(1, display_max + 1):
+                            entries = by_iteration.get(iteration, [])
 
-        # Literature panel
-        with ui.tab_panel(literature_tab):
-            literature_container = ui.column().classes("w-full")
+                            # Get agent summary (or show placeholder if none)
+                            summary_text = iteration_summaries.get(iteration, "No summary available")
 
-            def refresh_literature():
-                literature_container.clear()
-                with literature_container:
-                    if kg_path.exists():
-                        import json
-                        with open(kg_path) as f:
-                            kg = json.load(f)
+                            # Count actions for this iteration
+                            code_count = len([e for e in entries if e["action"] == "execute_code"])
+                            search_count = len([e for e in entries if e["action"] == "search_pubmed"])
+                            finding_count = len([e for e in entries if e["action"] == "update_knowledge_graph"])
 
-                        if kg["literature"]:
-                            for i, lit in enumerate(kg["literature"], 1):
-                                with ui.card().classes("w-full"):
-                                    ui.label(lit["title"]).classes("text-subtitle1 font-bold")
-                                    ui.label(f"PMID: {lit.get('pmid', 'N/A')}").classes("text-sm text-gray-600")
-                                    if "summary" in lit:
-                                        ui.label(lit["summary"]).classes("mt-2")
-                        else:
-                            ui.label("No literature yet").classes("text-gray-500")
+                            # Determine color based on outcome
+                            border_class = "border-l-4 border-gray-300"
+                            if finding_count > 0:
+                                border_class = "border-l-4 border-green-500"  # Found something!
+                            elif code_count > 0 or search_count > 0:
+                                border_class = "border-l-4 border-blue-300"  # Did work
 
-            refresh_literature()
+                            # Truncate summary for header (keep full summary inside)
+                            header_summary = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
 
-        # Plots panel
-        with ui.tab_panel(plots_tab):
-            plots_container = ui.column().classes("w-full")
+                            with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
+                                # Custom header with badges using slot
+                                with expansion.add_slot("header"):
+                                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                                        ui.label(f"Iteration {iteration}: {header_summary}").classes("font-medium")
+                                        if code_count:
+                                            ui.badge(f"{code_count} analyses", color="blue").props("outline")
+                                        if search_count:
+                                            ui.badge(f"{search_count} searches", color="purple").props("outline")
+                                        if finding_count:
+                                            ui.badge(f"{finding_count} findings", color="green")
 
-            def refresh_plots():
-                plots_container.clear()
-                with plots_container:
-                    plots_dir = job_dir / "plots"
+                                # Show plots from this iteration
+                                plots_dir = job_dir / "plots"
+                                if plots_dir.exists():
+                                    iteration_plots = []
+                                    for plot_file in sorted(plots_dir.glob("*.png")):
+                                        metadata_file = plot_file.with_suffix('.json')
+                                        if metadata_file.exists():
+                                            with open(metadata_file) as mf:
+                                                metadata = json.load(mf)
+                                            if metadata.get("iteration") == iteration:
+                                                iteration_plots.append((plot_file, metadata))
 
-                    if plots_dir.exists():
-                        plot_files = sorted(plots_dir.glob("*.png"))
+                                    if iteration_plots:
+                                        with ui.expansion(f"Visualizations ({len(iteration_plots)})", icon="insert_chart").classes("w-full mt-2"):
+                                            with ui.grid(columns=2).classes("w-full gap-2"):
+                                                for plot_file, metadata in iteration_plots:
+                                                    plot_title = plot_file.stem.replace('_', ' ').title()
+                                                    description = metadata.get('description', '')
 
-                        if plot_files:
-                            ui.label(f"Generated {len(plot_files)} plot(s) showing what I'm thinking").classes("text-subtitle2 mb-4")
+                                                    with ui.card().classes("p-2"):
+                                                        ui.label(plot_title).classes("text-sm font-bold")
+                                                        if description:
+                                                            ui.label(description).classes("text-xs text-blue-700 italic")
+                                                        plot_url = f"/{plot_file}"
+                                                        ui.image(plot_url).classes("w-full")
 
-                            # Display plots in a grid
-                            with ui.grid(columns=2).classes("w-full gap-4"):
-                                for plot_file in plot_files:
-                                    # Load metadata if available
-                                    metadata_file = plot_file.with_suffix('.json')
-                                    metadata = None
-                                    if metadata_file.exists():
-                                        import json
-                                        with open(metadata_file) as f:
-                                            metadata = json.load(f)
+                                                        # Download and code buttons
+                                                        with ui.row().classes("w-full gap-2 mt-2"):
+                                                            ui.button(
+                                                                "Download",
+                                                                on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                                                                icon="download"
+                                                            ).props("size=sm flat dense")
 
-                                    with ui.card().classes("p-2"):
-                                        # Plot header - make filename human-readable
-                                        # Convert "amino_acid_analysis.png" -> "Amino Acid Analysis"
-                                        plot_title = plot_file.stem.replace('_', ' ').title()
+                                                            # Show code that generated this plot (progressive disclosure)
+                                                            plot_code = metadata.get('code')
+                                                            if plot_code:
+                                                                with ui.expansion("View code", icon="code").classes("flex-1"):
+                                                                    ui.code(plot_code, language="python").classes("text-xs")
 
-                                        if metadata and metadata.get('iteration') is not None:
-                                            ui.label(f"Iteration {metadata['iteration']}: {plot_title}").classes("text-sm font-bold mb-2")
-                                        else:
-                                            ui.label(plot_title).classes("text-sm font-bold mb-2")
+                                # Show literature searched (progressively disclosed)
+                                literature_entries = [e for e in entries if e["action"] == "search_pubmed"]
+                                if literature_entries:
+                                    # Count total papers for this iteration
+                                    total_papers = sum(e.get("results_count", 0) for e in literature_entries)
+                                    with ui.expansion(f"Literature searched ({total_papers} papers)", icon="article").classes("w-full mt-2"):
+                                        for entry in literature_entries:
+                                            query = entry.get("query", "")
 
-                                        # Claude's reasoning/description
-                                        if metadata and metadata.get('description'):
-                                            ui.label(f"🤔 {metadata['description']}").classes("text-sm text-blue-700 mb-2 italic")
-                                        else:
-                                            # If no metadata, show filename as description
-                                            ui.label(f"📊 {plot_title}").classes("text-sm text-gray-600 mb-2 italic")
+                                            # Find papers from this iteration matching this query
+                                            matching_papers = [
+                                                lit for lit in kg_data.get("literature", [])
+                                                if lit.get("search_query") == query
+                                                and lit.get("retrieved_at_iteration") == iteration
+                                            ]
 
-                                        # Display image - convert file path to URL path
-                                        # jobs/job_123/plots/plot.png -> /jobs/job_123/plots/plot.png
-                                        plot_url = f"/{plot_file}"
-                                        ui.image(plot_url).classes("w-full")
-
-                                        # Timestamp
-                                        if metadata and metadata.get('timestamp'):
-                                            ui.label(f"Created: {metadata['timestamp']}").classes("text-xs text-gray-500 mt-2")
-
-                                        # Download button
-                                        ui.button(
-                                            "Download",
-                                            on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
-                                            icon="download"
-                                        ).props("size=sm flat")
-                        else:
-                            ui.label("No plots generated yet").classes("text-gray-500")
-                    else:
-                        ui.label("No plots directory found").classes("text-gray-500")
-
-            refresh_plots()
-
-        # Analysis log panel - Narrative view
-        with ui.tab_panel(log_tab):
-            log_container = ui.column().classes("w-full")
-
-            def refresh_analysis_log():
-                log_container.clear()
-                with log_container:
-                    if kg_path.exists():
-                        import json
-                        from collections import defaultdict
-
-                        with open(kg_path) as f:
-                            kg = json.load(f)
-
-                        # Group entries by iteration
-                        by_iteration = defaultdict(list)
-                        for entry in kg["analysis_log"]:
-                            by_iteration[entry["iteration"]].append(entry)
-
-                        if by_iteration:
-                            with ui.scroll_area().classes("w-full h-96"):
-                                # Display in ascending order (oldest first)
-                                for iteration in sorted(by_iteration.keys()):
-                                    entries = by_iteration[iteration]
-
-                                    # Generate detailed summary
-                                    code_executions = [e for e in entries if e["action"] == "execute_code"]
-                                    literature_searches = [e for e in entries if e["action"] == "search_pubmed"]
-                                    findings_recorded = [e for e in entries if e["action"] == "update_knowledge_graph"]
-
-                                    summary_parts = []
-
-                                    # Describe analyses
-                                    if code_executions:
-                                        for ce in code_executions[:2]:  # Show first 2
-                                            desc = ce.get("description", "")
-                                            if desc:
-                                                summary_parts.append(desc)
+                                            if matching_papers:
+                                                with ui.expansion(f'"{query}" ({len(matching_papers)} papers)').classes("w-full"):
+                                                    for paper in matching_papers:
+                                                        with ui.card().classes("w-full mb-1 p-2"):
+                                                            ui.label(paper.get("title", "Untitled")).classes("text-sm font-bold")
+                                                            pmid = paper.get("pmid", "")
+                                                            if pmid:
+                                                                ui.link(
+                                                                    f"PMID: {pmid}",
+                                                                    f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                                                    new_tab=True
+                                                                ).classes("text-xs text-blue-600")
+                                                            abstract = paper.get("abstract", "")
+                                                            if abstract:
+                                                                ui.label(abstract[:200] + "..." if len(abstract) > 200 else abstract).classes("text-xs text-gray-600 mt-1")
                                             else:
-                                                # Try to infer from code
-                                                code = ce.get("code", "")
-                                                if "correlation" in code.lower():
-                                                    summary_parts.append("correlation analysis")
-                                                elif "t.test" in code or "ttest" in code.lower():
-                                                    summary_parts.append("t-test")
-                                                elif "pca" in code.lower():
-                                                    summary_parts.append("PCA analysis")
-                                                elif "plot" in code.lower() or "plt." in code:
-                                                    summary_parts.append("visualization")
-                                                else:
-                                                    summary_parts.append("analysis")
-                                        if len(code_executions) > 2:
-                                            summary_parts.append(f"+ {len(code_executions) - 2} more analyses")
+                                                ui.label(f'"{query}"').classes("text-sm text-gray-600")
 
-                                    # Describe literature searches
-                                    if literature_searches:
-                                        for ls in literature_searches[:1]:  # Show first query
-                                            query = ls.get("query", "")
-                                            if query:
-                                                summary_parts.append(f'searched "{query[:50]}{"..." if len(query) > 50 else ""}"')
-                                        if len(literature_searches) > 1:
-                                            summary_parts.append(f"+ {len(literature_searches) - 1} more searches")
+                                # Show findings recorded (full details, in context)
+                                iteration_findings = [
+                                    f for f in kg_data.get("findings", [])
+                                    if f.get("iteration_discovered") == iteration
+                                ]
+                                if iteration_findings:
+                                    ui.label("Findings").classes("font-bold mt-2 mb-1")
+                                    for finding in iteration_findings:
+                                        with ui.card().classes("w-full mb-2 bg-green-50"):
+                                            ui.label(finding['title']).classes("font-bold text-green-800")
+                                            ui.label(finding["evidence"]).classes("text-sm text-gray-700")
+                                            interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                            if interpretation:
+                                                ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
+                else:
+                    ui.label("No investigation activity yet").classes("text-gray-500")
 
-                                    # Mention findings
-                                    if findings_recorded:
-                                        summary_parts.append(f"recorded {len(findings_recorded)} finding{'s' if len(findings_recorded) > 1 else ''}")
+                # Dynamic feedback panel container (updates via polling)
+                feedback_container = ui.column().classes("w-full")
 
-                                    summary_text = ", ".join(summary_parts) if summary_parts else "No actions recorded"
+                def build_feedback_panel():
+                    """Build or rebuild the feedback panel based on current status."""
+                    feedback_container.clear()
 
-                                    with ui.expansion(f"Iteration {iteration}: {summary_text}", icon="science").classes("w-full mb-4"):
-                                        # Detailed breakdown inside expansion
-                                        ui.label(f"**Actions in this iteration:**").classes("mb-2")
+                    # Re-check job status
+                    latest_job = job_manager.get_job(job_id)
+                    if latest_job is None:
+                        return
 
-                                        # Find plots from this iteration
-                                        plots_dir = job_dir / "plots"
-                                        iteration_plots = []
-                                        if plots_dir.exists():
-                                            for plot_file in plots_dir.glob("*.png"):
-                                                metadata_file = plot_file.with_suffix('.json')
-                                                if metadata_file.exists():
-                                                    with open(metadata_file) as mf:
-                                                        metadata = json.load(mf)
-                                                    if metadata.get("iteration") == iteration:
-                                                        iteration_plots.append((plot_file, metadata))
+                    if latest_job.status == JobStatus.AWAITING_FEEDBACK:
+                        # Reload KG to get current iteration (which is the NEXT iteration to run)
+                        next_iter = 1
+                        awaiting_since = None
+                        if kg_path.exists():
+                            with open(kg_path) as f:
+                                latest_kg = json.load(f)
+                            next_iter = latest_kg.get("iteration", 1)
+                        # The completed iteration is the previous one
+                        completed_iter = next_iter - 1 if next_iter > 1 else 1
 
-                                        # Show plots if any
-                                        if iteration_plots:
-                                            ui.label(f"**Plots Generated ({len(iteration_plots)}):**").classes("mt-4 mb-2")
-                                            for plot_file, metadata in iteration_plots:
-                                                plot_title = plot_file.stem.replace('_', ' ').title()
-                                                description = metadata.get('description', plot_title)
+                        # Get awaiting_feedback_since from config
+                        config_path = job_dir / "config.json"
+                        if config_path.exists():
+                            with open(config_path) as f:
+                                cfg = json.load(f)
+                            awaiting_since = cfg.get("awaiting_feedback_since")
 
-                                                with ui.expansion(f"{plot_title}", icon="insert_chart").classes("w-full mb-2").props("dense"):
-                                                    ui.label(f"🤔 {description}").classes("text-sm text-blue-700 mb-2 italic")
-                                                    plot_url = f"/{plot_file}"
-                                                    ui.image(plot_url).classes("w-full max-w-2xl")
-                        else:
-                            ui.label("No analysis log yet").classes("text-gray-500")
+                        with feedback_container:
+                            with ui.card().classes("w-full mt-2 bg-yellow-50 border-2 border-yellow-400"):
+                                ui.label(f"Iteration {completed_iter} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
+                                ui.label("Provide guidance for the next iteration, or continue without feedback.").classes("text-sm text-gray-700 mb-2")
 
-            refresh_analysis_log()
+                                feedback_input = ui.textarea(
+                                    label="Your Feedback (optional)",
+                                    placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X..."
+                                ).classes("w-full")
 
-        # Final report panel
+                                with ui.row().classes("w-full gap-2 mt-2"):
+                                    def submit_feedback(fi=feedback_input, ci=completed_iter):
+                                        from .knowledge_graph import KnowledgeGraph
+                                        kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+                                        if fi.value.strip():
+                                            kg.add_feedback(fi.value.strip(), ci)
+                                            kg.save(job_dir / "knowledge_graph.json")
+                                        # Set status back to running to signal continue
+                                        with open(job_dir / "config.json") as f:
+                                            cfg = json.load(f)
+                                        cfg["status"] = "running"
+                                        with open(job_dir / "config.json", "w") as f:
+                                            json.dump(cfg, f, indent=2)
+                                        ui.notify("Continuing to next iteration", type="positive")
+                                        ui.navigate.to(f"/job/{job_id}")
+
+                                    ui.button("Submit & Continue", on_click=submit_feedback, icon="send").props("color=primary")
+                                    ui.button("Continue Without Feedback", on_click=submit_feedback, icon="arrow_forward").props("color=secondary outline")
+
+                                # Countdown timer
+                                if awaiting_since:
+                                    from datetime import datetime
+                                    try:
+                                        started = datetime.fromisoformat(awaiting_since)
+                                        timeout_minutes = 15
+                                        countdown_label = ui.label("").classes("text-xs text-gray-500 mt-2")
+
+                                        def update_countdown():
+                                            now = datetime.now()
+                                            elapsed = (now - started).total_seconds()
+                                            remaining = (timeout_minutes * 60) - elapsed
+                                            if remaining <= 0:
+                                                countdown_label.text = "Auto-continuing now..."
+                                            else:
+                                                mins = int(remaining // 60)
+                                                secs = int(remaining % 60)
+                                                countdown_label.text = f"Auto-continues in {mins}:{secs:02d} if no response."
+
+                                        update_countdown()
+                                        ui.timer(1.0, update_countdown)
+                                    except Exception:
+                                        ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+                                else:
+                                    ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+
+                # Build initial feedback panel
+                build_feedback_panel()
+
+                # Poll for status changes while job is active
+                def check_status():
+                    latest_job = job_manager.get_job(job_id)
+                    if latest_job is None:
+                        status_timer.deactivate()
+                        return
+
+                    # If status changed, refresh the entire page to update timeline, stats, etc.
+                    if latest_job.status != current_status["value"]:
+                        status_timer.deactivate()
+                        ui.navigate.to(f"/job/{job_id}")
+
+                # Only poll if job is still active
+                if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
+                    status_timer = ui.timer(5.0, check_status)  # Poll every 5 seconds
+
+            else:
+                ui.label("Knowledge graph not found").classes("text-gray-500")
+
+        # ===== REPORT TAB =====
         with ui.tab_panel(report_tab):
             report_path = job_dir / "final_report.md"
             pdf_path = job_dir / "final_report.pdf"
@@ -667,14 +655,12 @@ def job_detail_page(job_id: str):
             if report_path.exists():
                 # Download buttons at top
                 with ui.row().classes("w-full justify-end mb-4 gap-2"):
-                    # Markdown download
                     ui.button(
                         "Download Markdown",
                         on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md"),
                         icon="download"
                     ).props("color=secondary outline")
 
-                    # PDF download (if available)
                     if pdf_path.exists():
                         ui.button(
                             "Download PDF",
@@ -695,10 +681,10 @@ def job_detail_page(job_id: str):
                 if job_info.status == JobStatus.COMPLETED:
                     ui.label("Report generation failed").classes("text-red-500")
                 else:
-                    ui.label("Report not yet available (job not complete)").classes("text-gray-500")
+                    ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
     # Action buttons
-    with ui.row().classes("mt-4"):
+    with ui.row().classes("mt-4 p-4"):
         if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED]:
             ui.button(
                 "Cancel Job",
@@ -732,6 +718,73 @@ def job_detail_page(job_id: str):
             ui.notify(f"Error deleting job: {e}", type="negative")
 
 
+@ui.page("/billing")
+def billing_page():
+    """Billing and cost tracking page."""
+
+    # Check authentication (skip if disabled)
+    if not DISABLE_AUTH and not app.storage.user.get("authenticated", False):
+        ui.navigate.to("/login")
+        return
+
+    with ui.header().classes("items-center justify-between"):
+        ui.label("SHANDY - Billing").classes("text-h4")
+        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="arrow_back")
+
+    with ui.card().classes("w-full max-w-4xl mx-auto mt-8"):
+        ui.label("Project Costs").classes("text-h5 mb-4")
+
+        try:
+            provider = get_provider()
+            cost_info = provider.get_cost_info(lookback_hours=24)
+            budget_check = provider.check_budget_limits()
+
+            with ui.row().classes("w-full gap-8 mb-4"):
+                # Total spend
+                with ui.card().classes("flex-1"):
+                    total_spend_display = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
+                    ui.label(total_spend_display).classes("text-h3 text-primary")
+                    ui.label("Total Spend").classes("text-subtitle2 text-grey")
+
+                # Last 24h
+                with ui.card().classes("flex-1"):
+                    recent_spend_display = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
+                    ui.label(recent_spend_display).classes("text-h3")
+                    ui.label(f"Last {cost_info.recent_period_hours} Hours").classes("text-subtitle2 text-grey")
+
+                # Budget remaining (if available)
+                if cost_info.budget_remaining_usd is not None:
+                    with ui.card().classes("flex-1"):
+                        remaining_color = "text-positive" if cost_info.budget_remaining_usd > 10 else "text-warning"
+                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(f"text-h3 {remaining_color}")
+                        ui.label("Budget Remaining").classes("text-subtitle2 text-grey")
+
+            # Provider info
+            with ui.card().classes("w-full bg-gray-50"):
+                ui.label("Provider Information").classes("text-subtitle2 font-bold mb-2")
+                ui.label(f"Provider: {cost_info.provider_name}").classes("text-sm")
+                if cost_info.data_lag_note:
+                    ui.label(cost_info.data_lag_note).classes("text-sm text-grey-6")
+
+            # Budget warnings/errors
+            if budget_check and budget_check.get("errors"):
+                with ui.card().classes("w-full bg-red-50 mt-4"):
+                    ui.label("Budget Alerts").classes("text-subtitle2 font-bold text-red-800")
+                    for error in budget_check["errors"]:
+                        ui.label(f"⚠️ {error}").classes("text-sm text-red-600")
+            elif budget_check and budget_check.get("warnings"):
+                with ui.card().classes("w-full bg-yellow-50 mt-4"):
+                    ui.label("Budget Warnings").classes("text-subtitle2 font-bold text-yellow-800")
+                    for warning in budget_check["warnings"]:
+                        ui.label(f"⚠️ {warning}").classes("text-sm text-yellow-600")
+
+        except Exception as e:
+            with ui.card().classes("w-full bg-yellow-50"):
+                ui.label("Cost Tracking Unavailable").classes("text-subtitle2 font-bold")
+                ui.label("Check provider configuration in .env").classes("text-sm text-gray-600")
+                ui.label(f"Error: {e}").classes("text-xs text-gray-400 mt-2")
+
+
 @ui.page("/docs")
 def docs_page():
     """Documentation page."""
@@ -757,58 +810,58 @@ SHANDY is an autonomous AI scientist that analyzes scientific data to discover m
 
 ## How It Works
 
-1. **Submit a Job**: Upload your data files (CSV) and provide a research question
-2. **Autonomous Discovery**: SHANDY runs for N iterations, testing hypotheses and searching literature
-3. **Results**: Get findings, mechanistic models, and a final report
+1. **Submit a Job**: Provide a research question and optionally upload data files
+2. **Autonomous Discovery**: SHANDY runs for N iterations, analyzing data and searching literature
+3. **View Results**: Track progress in the Timeline view, see key findings in Summary, and download the final Report
 
 ## Features
 
 - **Autonomous**: Runs without human intervention
 - **Domain-Agnostic**: Works for metabolomics, genomics, structural biology, and more
-- **Skills-Based**: Uses structured workflows for scientific rigor
-- **Cost-Tracked**: Budget monitoring with provider-specific tracking
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
+- **Progressive Disclosure**: See high-level summaries first, drill into details on demand
+- **Downloadable Visualizations**: Export plots and the final report as PDF
 
-## Skills
+## Supported Data Formats
 
-SHANDY uses two types of skills:
+SHANDY accepts various file types:
 
-### Workflow Skills
-- Hypothesis generation
-- Result interpretation
-- Prioritization
-- Stopping criteria
+- **Tabular**: CSV, TSV, Excel (.xlsx), Parquet, JSON
+- **Structures**: PDB, mmCIF (for structural biology)
+- **Sequences**: FASTA
+- **Images**: PNG, JPG
 
-### Domain Skills
-- Metabolomics
-- Genomics/Transcriptomics
-- Data Science/Statistics
+And many others. Data files are optional - you can also run literature-only investigations.
+
+## Understanding Results
+
+### Summary Tab
+Shows key discoveries at a glance - the most important findings with statistical evidence.
+
+### Timeline Tab
+Chronological view of the investigation. Each iteration shows:
+- What the agent investigated (plain-language summary)
+- Visualizations generated (expandable)
+- Literature searched (expandable with paper links)
+- Findings recorded
+
+### Report Tab
+The final scientific report with:
+- Executive summary
+- Detailed findings with evidence
+- Mechanistic interpretation
+- Suggested follow-up experiments
+
+Download as Markdown or PDF.
 
 ## Tips for Success
 
 1. **Clear Research Question**: Be specific about what you want to discover
-2. **Clean Data**: Ensure CSV files are properly formatted
-3. **Appropriate Iterations**: 30-50 iterations for most analyses
-4. **Enable Skills**: Skills provide structure and prevent common mistakes
-
-## Data Format
-
-CSV files should have:
-- First row: Column headers
-- First column: Sample IDs
-- Second column (optional): Group labels
-- Remaining columns: Features (metabolites, genes, etc.)
-
-Example:
-```csv
-sample_id,group,metabolite1,metabolite2,...
-sample1,control,100,200,...
-sample2,treatment,150,180,...
-```
-
-## Budget
-
-SHANDY tracks project-level costs through your configured model provider (CBORG, Vertex AI, or Bedrock). Check your budget before starting large jobs.
+2. **Clean Data**: Ensure files are properly formatted. Provide a detailed explanation of the 
+data file in your query if possible, including how it is formatted, any relevant details 
+about the file (e.g. what the column headers signify), and how the file relates to the research question.
+3. **Appropriate Iterations**: 10 is sufficient for many analyses. More iterations may help with more
+complicated questions.
 
 ## Support
 

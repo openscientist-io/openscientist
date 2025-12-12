@@ -25,6 +25,7 @@ class JobStatus(str, Enum):
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
+    AWAITING_FEEDBACK = "awaiting_feedback"  # Paused for scientist input (co-investigate mode)
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -45,6 +46,7 @@ class JobInfo:
     findings_count: int = 0
     error: Optional[str] = None
     use_skills: bool = True
+    investigation_mode: str = "autonomous"  # "autonomous" or "coinvestigate"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -87,7 +89,31 @@ class JobManager:
         self._running_jobs: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
 
+        # Clean up any stale running/queued jobs from previous restart
+        self._cleanup_stale_jobs()
+
         logger.info(f"JobManager initialized: {self.jobs_dir}, max_concurrent={max_concurrent}")
+
+    def _cleanup_stale_jobs(self) -> None:
+        """
+        Mark any running/queued/awaiting_feedback jobs as cancelled on startup.
+
+        This handles the case where the server restarts while jobs are in progress.
+        Since the orchestrator process died, these jobs will never complete.
+        """
+        stale_count = 0
+        for job_id in self._list_job_ids():
+            job_info = self._load_job_info(job_id)
+            if job_info is None:
+                continue
+
+            if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
+                logger.warning(f"Marking stale job {job_id} as cancelled (was {job_info.status.value})")
+                self._update_job_status(job_id, JobStatus.CANCELLED)
+                stale_count += 1
+
+        if stale_count > 0:
+            logger.info(f"Cleaned up {stale_count} stale job(s) from previous run")
 
     def create_job(
         self,
@@ -96,7 +122,8 @@ class JobManager:
         data_files: List[Path],
         max_iterations: int = 10,
         use_skills: bool = True,
-        auto_start: bool = True
+        auto_start: bool = True,
+        investigation_mode: str = "autonomous"
     ) -> JobInfo:
         """
         Create a new discovery job.
@@ -108,6 +135,7 @@ class JobManager:
             max_iterations: Maximum iterations
             use_skills: Whether to use skills
             auto_start: Whether to start job immediately
+            investigation_mode: "autonomous" (default) or "coinvestigate"
 
         Returns:
             JobInfo object
@@ -140,7 +168,8 @@ class JobManager:
             data_files=data_files,
             max_iterations=max_iterations,
             use_skills=use_skills,
-            jobs_dir=self.jobs_dir
+            jobs_dir=self.jobs_dir,
+            investigation_mode=investigation_mode
         )
 
         # Load job info
@@ -172,8 +201,8 @@ class JobManager:
             if job_id in self._running_jobs:
                 raise ValueError(f"Job {job_id} is already running")
 
-            # Check concurrent limit
-            if len(self._running_jobs) >= self.max_concurrent:
+            # Check concurrent limit (awaiting_feedback jobs don't count)
+            if self._get_active_job_count() >= self.max_concurrent:
                 # Queue the job
                 self._update_job_status(job_id, JobStatus.QUEUED)
                 logger.info(f"Job {job_id} queued (max concurrent reached)")
@@ -223,7 +252,7 @@ class JobManager:
     def _start_next_queued_job(self) -> None:
         """Start the next queued job if slots available."""
         with self._lock:
-            if len(self._running_jobs) >= self.max_concurrent:
+            if self._get_active_job_count() >= self.max_concurrent:
                 return
 
             # Find next queued job
@@ -388,6 +417,46 @@ class JobManager:
         """Get list of currently running jobs."""
         return self.list_jobs(status=JobStatus.RUNNING)
 
+    def _get_active_job_count(self) -> int:
+        """
+        Get count of actively running jobs (excluding awaiting_feedback).
+
+        Jobs in AWAITING_FEEDBACK status don't count against the concurrent limit
+        so scientists can take unlimited time without blocking the queue.
+        """
+        count = 0
+        for job_id in self._running_jobs:
+            job_info = self.get_job(job_id)
+            if job_info and job_info.status != JobStatus.AWAITING_FEEDBACK:
+                count += 1
+        return count
+
+    def get_coinvestigate_count(self) -> int:
+        """
+        Get count of jobs in coinvestigate mode (running or awaiting feedback).
+
+        Used to limit concurrent coinvestigations to prevent resource exhaustion.
+        """
+        count = 0
+        for job_id in self._list_job_ids():
+            job_info = self.get_job(job_id)
+            if job_info and job_info.investigation_mode == "coinvestigate":
+                if job_info.status in [JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK, JobStatus.QUEUED]:
+                    count += 1
+        return count
+
+    def can_start_coinvestigate(self, max_coinvestigate: int = 15) -> bool:
+        """
+        Check if a new coinvestigate job can be started.
+
+        Args:
+            max_coinvestigate: Maximum concurrent coinvestigate jobs (default 15)
+
+        Returns:
+            True if under the limit, False otherwise
+        """
+        return self.get_coinvestigate_count() < max_coinvestigate
+
     def get_job_summary(self) -> Dict[str, Any]:
         """
         Get summary of all jobs.
@@ -445,16 +514,16 @@ class JobManager:
             iterations_completed = config.get("iterations_completed", 0)
             findings_count = config.get("findings_count", 0)
 
-            if config["status"] == "running":
+            if config["status"] in ("running", "awaiting_feedback"):
                 kg_path = self.jobs_dir / job_id / "knowledge_graph.json"
                 if kg_path.exists():
                     try:
                         with open(kg_path) as f:
                             kg = json.load(f)
-                        iterations_completed = kg.get("iteration", 0)
+                        # KG iteration is the NEXT iteration to run, so completed = iteration - 1
+                        kg_iteration = kg.get("iteration", 1)
+                        iterations_completed = kg_iteration - 1 if kg_iteration > 1 else 0
                         findings_count = len(kg.get("findings", []))
-                        # For running jobs, try to estimate cost from cborg if available
-                        # For now, we'll leave cost as None until completion
                     except Exception as e:
                         logger.warning(f"Failed to load KG for running job {job_id}: {e}")
 
@@ -470,7 +539,8 @@ class JobManager:
                 iterations_completed=iterations_completed,
                 findings_count=findings_count,
                 error=config.get("error"),
-                use_skills=config.get("use_skills", True)
+                use_skills=config.get("use_skills", True),
+                investigation_mode=config.get("investigation_mode", "autonomous")
             )
 
         except Exception as e:

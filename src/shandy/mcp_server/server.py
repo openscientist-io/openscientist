@@ -128,10 +128,10 @@ def execute_code(code: str, description: str = "") -> str:
     result = exec_code(code, DATA, plots_dir, timeout=60, description=description,
                       iteration=KG.data["iteration"], data_files=DATA_FILES)
 
-    # Log to knowledge graph
+    # Log to knowledge graph (code is stored in plot metadata files, not here)
     KG.log_analysis(
         action="execute_code",
-        code=code,
+        description=description,
         output=result.get("output", ""),
         success=result["success"],
         execution_time=result["execution_time"],
@@ -219,6 +219,45 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
     KG.save(JOB_DIR / "knowledge_graph.json")
 
     return f"✅ Finding recorded as {finding_id}: {title}"
+
+
+@mcp.tool()
+def save_iteration_summary(summary: str) -> str:
+    """
+    Save a plain-language summary of what was accomplished this iteration.
+
+    Call this at the end of each iteration with a 1-2 sentence summary
+    of what you investigated and learned. This helps users understand
+    your investigation progress, and what you accomplished during this
+    iteration.
+
+    Args:
+        summary: Plain-language summary (1-2 sentences) of what you investigated
+                 and what you learned. Do NOT include "Iteration X:" prefix -
+                 the system adds that automatically.
+
+                 Good example: "Analyzed correlation between gene expression
+                 and treatment groups. Found significant upregulation of
+                 stress response genes in treated samples."
+
+                 Bad example: "Iteration 3: Analyzed correlation..." (don't do this)
+
+    Returns:
+        Confirmation message
+    """
+    global JOB_DIR, KG
+
+    # Reload knowledge graph to get latest state
+    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+
+    # Get current iteration
+    current_iteration = KG.data["iteration"]
+
+    # Save the summary
+    KG.add_iteration_summary(current_iteration, summary)
+    KG.save(JOB_DIR / "knowledge_graph.json")
+
+    return f"✅ Summary saved for iteration {current_iteration}"
 
 
 def main():
