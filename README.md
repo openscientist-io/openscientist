@@ -92,12 +92,11 @@ Open your browser to `http://localhost:8080`
 
 ## Usage
 
-1. Upload your data files (CSV format)
+1. Upload your data files (optional - supports CSV, TSV, Excel, Parquet, JSON, PDB, mmCIF, FASTA, images, and many other file types)
 2. Enter your research question
-3. Set maximum iterations (e.g., 50)
-4. Choose whether to use skills (structured workflows)
-5. Click "Start Analysis"
-6. Monitor progress and view results
+3. Set maximum iterations (e.g., 10)
+4. Click "Start Discovery"
+5. Monitor progress and view results
 
 ## Project Structure
 
