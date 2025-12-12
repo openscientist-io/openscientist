@@ -414,7 +414,9 @@ def job_detail_page(job_id: str):
                 if by_iteration or iteration_summaries:
                     with ui.scroll_area().classes("w-full h-[600px]"):
                         # Display in chronological order (oldest first)
-                        for iteration in range(1, max_iter + 1):
+                        # Don't show the current in-progress iteration if awaiting feedback
+                        display_max = max_iter - 1 if job_info.status == JobStatus.AWAITING_FEEDBACK else max_iter
+                        for iteration in range(1, display_max + 1):
                             entries = by_iteration.get(iteration, [])
 
                             # Get agent summary (or show placeholder if none)
@@ -432,20 +434,20 @@ def job_detail_page(job_id: str):
                             elif code_count > 0 or search_count > 0:
                                 border_class = "border-l-4 border-blue-300"  # Did work
 
-                            # Build stats suffix for title
-                            stats_parts = []
-                            if code_count:
-                                stats_parts.append(f"{code_count} analyses")
-                            if search_count:
-                                stats_parts.append(f"{search_count} searches")
-                            if finding_count:
-                                stats_parts.append(f"{finding_count} findings")
-                            stats_suffix = f" [{', '.join(stats_parts)}]" if stats_parts else ""
+                            # Truncate summary for header (keep full summary inside)
+                            header_summary = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
 
-                            with ui.expansion(
-                                f"Iteration {iteration}: {summary_text}{stats_suffix}",
-                                icon="science"
-                            ).classes(f"w-full mb-2 {border_class}"):
+                            with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
+                                # Custom header with badges using slot
+                                with expansion.add_slot("header"):
+                                    with ui.row().classes("items-center gap-2 flex-wrap"):
+                                        ui.label(f"Iteration {iteration}: {header_summary}").classes("font-medium")
+                                        if code_count:
+                                            ui.badge(f"{code_count} analyses", color="blue").props("outline")
+                                        if search_count:
+                                            ui.badge(f"{search_count} searches", color="purple").props("outline")
+                                        if finding_count:
+                                            ui.badge(f"{finding_count} findings", color="green")
 
                                 # Show plots from this iteration
                                 plots_dir = job_dir / "plots"
@@ -551,16 +553,26 @@ def job_detail_page(job_id: str):
                         return
 
                     if latest_job.status == JobStatus.AWAITING_FEEDBACK:
-                        # Reload KG to get current iteration
-                        current_iter = 1
+                        # Reload KG to get current iteration (which is the NEXT iteration to run)
+                        next_iter = 1
+                        awaiting_since = None
                         if kg_path.exists():
                             with open(kg_path) as f:
                                 latest_kg = json.load(f)
-                            current_iter = latest_kg.get("iteration", 1)
+                            next_iter = latest_kg.get("iteration", 1)
+                        # The completed iteration is the previous one
+                        completed_iter = next_iter - 1 if next_iter > 1 else 1
+
+                        # Get awaiting_feedback_since from config
+                        config_path = job_dir / "config.json"
+                        if config_path.exists():
+                            with open(config_path) as f:
+                                cfg = json.load(f)
+                            awaiting_since = cfg.get("awaiting_feedback_since")
 
                         with feedback_container:
-                            with ui.card().classes("w-full mt-4 bg-yellow-50 border-2 border-yellow-400"):
-                                ui.label(f"Iteration {current_iter} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
+                            with ui.card().classes("w-full mt-2 bg-yellow-50 border-2 border-yellow-400"):
+                                ui.label(f"Iteration {completed_iter} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
                                 ui.label("Provide guidance for the next iteration, or continue without feedback.").classes("text-sm text-gray-700 mb-2")
 
                                 feedback_input = ui.textarea(
@@ -569,7 +581,7 @@ def job_detail_page(job_id: str):
                                 ).classes("w-full")
 
                                 with ui.row().classes("w-full gap-2 mt-2"):
-                                    def submit_feedback(fi=feedback_input, ci=current_iter):
+                                    def submit_feedback(fi=feedback_input, ci=completed_iter):
                                         from .knowledge_graph import KnowledgeGraph
                                         kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
                                         if fi.value.strip():
@@ -587,7 +599,31 @@ def job_detail_page(job_id: str):
                                     ui.button("Submit & Continue", on_click=submit_feedback, icon="send").props("color=primary")
                                     ui.button("Continue Without Feedback", on_click=submit_feedback, icon="arrow_forward").props("color=secondary outline")
 
-                                ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+                                # Countdown timer
+                                if awaiting_since:
+                                    from datetime import datetime
+                                    try:
+                                        started = datetime.fromisoformat(awaiting_since)
+                                        timeout_minutes = 15
+                                        countdown_label = ui.label("").classes("text-xs text-gray-500 mt-2")
+
+                                        def update_countdown():
+                                            now = datetime.now()
+                                            elapsed = (now - started).total_seconds()
+                                            remaining = (timeout_minutes * 60) - elapsed
+                                            if remaining <= 0:
+                                                countdown_label.text = "Auto-continuing now..."
+                                            else:
+                                                mins = int(remaining // 60)
+                                                secs = int(remaining % 60)
+                                                countdown_label.text = f"Auto-continues in {mins}:{secs:02d} if no response."
+
+                                        update_countdown()
+                                        ui.timer(1.0, update_countdown)
+                                    except Exception:
+                                        ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+                                else:
+                                    ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
 
                 # Build initial feedback panel
                 build_feedback_panel()

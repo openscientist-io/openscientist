@@ -514,16 +514,16 @@ class JobManager:
             iterations_completed = config.get("iterations_completed", 0)
             findings_count = config.get("findings_count", 0)
 
-            if config["status"] == "running":
+            if config["status"] in ("running", "awaiting_feedback"):
                 kg_path = self.jobs_dir / job_id / "knowledge_graph.json"
                 if kg_path.exists():
                     try:
                         with open(kg_path) as f:
                             kg = json.load(f)
-                        iterations_completed = kg.get("iteration", 0)
+                        # KG iteration is the NEXT iteration to run, so completed = iteration - 1
+                        kg_iteration = kg.get("iteration", 1)
+                        iterations_completed = kg_iteration - 1 if kg_iteration > 1 else 0
                         findings_count = len(kg.get("findings", []))
-                        # For running jobs, try to estimate cost from cborg if available
-                        # For now, we'll leave cost as None until completion
                     except Exception as e:
                         logger.warning(f"Failed to load KG for running job {job_id}: {e}")
 
