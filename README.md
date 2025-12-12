@@ -121,7 +121,6 @@ shandy/
 │   │   └── domain/        # Domain-specific skills
 │   └── CLAUDE.md          # System prompt
 ├── jobs/                  # Job results (created at runtime)
-├── notes/                 # Design documents
 ├── Dockerfile             # Docker image definition
 ├── docker-compose.yml     # Container orchestration
 └── Makefile               # Build and deployment commands
