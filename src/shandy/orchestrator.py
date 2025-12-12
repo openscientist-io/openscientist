@@ -105,6 +105,11 @@ def update_job_status(job_dir: Path, status: str) -> None:
     with open(config_path) as f:
         config = json.load(f)
     config["status"] = status
+    # Track when we started awaiting feedback (for countdown timer)
+    if status == "awaiting_feedback":
+        config["awaiting_feedback_since"] = datetime.now().isoformat()
+    elif "awaiting_feedback_since" in config:
+        del config["awaiting_feedback_since"]
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
