@@ -436,11 +436,16 @@ def job_detail_page(job_id: str):
     # Track current status for polling
     current_status = {"value": job_info.status}
 
-    # Load knowledge state data
+    # Load knowledge state data (with error handling for concurrent writes)
     ks_data = None
+    ks_load_error = None
     if ks_path.exists():
-        with open(ks_path) as f:
-            ks_data = json.load(f)
+        try:
+            with open(ks_path) as f:
+                ks_data = json.load(f)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse knowledge_state.json for {job_id}: {e}")
+            ks_load_error = "Knowledge state is being updated. Please refresh the page."
 
     # Page header
     with ui.header().classes("items-center justify-between"):
@@ -452,6 +457,12 @@ def job_detail_page(job_id: str):
         with ui.card().classes("w-full bg-red-50 m-4"):
             ui.label("Error").classes("text-subtitle2 font-bold text-red-800")
             ui.label(job_info.error).classes("text-red-600")
+
+    # Warning if knowledge state couldn't be loaded (e.g., concurrent write)
+    if ks_load_error:
+        with ui.card().classes("w-full bg-yellow-50 m-4"):
+            ui.label("Loading...").classes("text-subtitle2 font-bold text-yellow-800")
+            ui.label(ks_load_error).classes("text-yellow-600")
 
     # 2-Tab Structure: Research Log (primary), Report
     with ui.tabs().classes("w-full") as tabs:

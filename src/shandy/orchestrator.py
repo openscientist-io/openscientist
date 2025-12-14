@@ -204,7 +204,7 @@ def create_job(job_id: str, research_question: str, data_files: list,
 
     # Create subdirectories
     (job_dir / "data").mkdir(exist_ok=True)
-    (job_dir / "plots").mkdir(exist_ok=True)
+    (job_dir / "provenance").mkdir(exist_ok=True)
 
     # Copy data files to job directory, preserving original names/extensions (if any)
     data_paths = []
