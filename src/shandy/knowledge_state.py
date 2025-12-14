@@ -66,9 +66,9 @@ class KnowledgeState:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         # Create instance and set data
-        ks =cls.__new__(cls)
+        ks = cls.__new__(cls)
         ks.data = data
-        return kg
+        return ks
 
     def save(self, file_path: Path) -> None:
         """Save knowledge graph to JSON file with file locking."""

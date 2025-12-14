@@ -709,20 +709,20 @@ def job_detail_page(job_id: str):
                                             else:
                                                 ui.label(f'"{query}"').classes("text-sm text-gray-600")
 
-                                # Show findings recorded (full details, in context)
+                                # Show findings recorded (collapsible, like other sections)
                                 iteration_findings = [
                                     f for f in ks_data.get("findings", [])
                                     if f.get("iteration_discovered") == iteration
                                 ]
                                 if iteration_findings:
-                                    ui.label("Findings").classes("font-bold mt-2 mb-1")
-                                    for finding in iteration_findings:
-                                        with ui.card().classes("w-full mb-2 bg-green-50"):
-                                            ui.label(finding['title']).classes("font-bold text-green-800")
-                                            ui.label(finding["evidence"]).classes("text-sm text-gray-700")
-                                            interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
-                                            if interpretation:
-                                                ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
+                                    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full mt-2"):
+                                        for finding in iteration_findings:
+                                            with ui.card().classes("w-full mb-2 bg-green-50"):
+                                                ui.label(finding['title']).classes("font-bold text-green-800")
+                                                ui.label(finding["evidence"]).classes("text-sm text-gray-700")
+                                                interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                                if interpretation:
+                                                    ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
 
