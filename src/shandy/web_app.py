@@ -5,17 +5,121 @@ Provides web UI for job submission, monitoring, and results viewing.
 """
 
 import bcrypt
+import json
 import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 from nicegui import app, ui
 from dotenv import load_dotenv
 
 from .job_manager import JobManager, JobStatus
 from .providers import get_provider
+
+
+def get_action_description(tool_use: Dict[str, Any]) -> str:
+    """
+    Get description for a tool use action with fallback logic.
+
+    Args:
+        tool_use: Tool use object from transcript
+
+    Returns:
+        Description string
+    """
+    inp = tool_use.get("input", {})
+
+    # 1. Explicit description
+    if inp.get("description"):
+        return inp["description"]
+
+    # 2. Tool-specific fallback from key inputs
+    name = tool_use.get("name", "")
+    if "search_pubmed" in name:
+        return f"Search: {inp.get('query', '')}"
+    if "update_knowledge_graph" in name:
+        return f"Finding: {inp.get('title', '')}"
+    if "save_iteration_summary" in name:
+        return f"Summary: {inp.get('summary', '')[:50]}..."
+    if "execute_code" in name:
+        return "Code execution"
+
+    # 3. Just the tool name
+    return name.split("__")[-1] if "__" in name else name
+
+
+def parse_transcript_actions(transcript: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Parse a transcript to extract actions with their reasoning and results.
+
+    Args:
+        transcript: List of transcript entries from iterN_transcript.json
+
+    Returns:
+        List of action dicts with: tool_name, description, input, result, success
+    """
+    actions = []
+    tool_results = {}
+
+    # First pass: collect all tool results by tool_use_id
+    for entry in transcript:
+        if entry.get("type") == "user":
+            content = entry.get("message", {}).get("content", [])
+            for item in content:
+                if item.get("type") == "tool_result":
+                    tool_use_id = item.get("tool_use_id")
+                    result_content = item.get("content", "")
+                    # Parse JSON string if it looks like one
+                    if isinstance(result_content, str) and result_content.startswith("{"):
+                        try:
+                            result_content = json.loads(result_content)
+                        except json.JSONDecodeError:
+                            pass
+                    tool_results[tool_use_id] = result_content
+
+    # Second pass: collect tool uses and match with results
+    for entry in transcript:
+        if entry.get("type") == "assistant":
+            content = entry.get("message", {}).get("content", [])
+            for item in content:
+                if item.get("type") == "tool_use":
+                    tool_use_id = item.get("id")
+                    tool_name = item.get("name", "")
+                    inp = item.get("input", {})
+
+                    # Skip non-shandy tools (like Read, Bash, etc.)
+                    if "shandy" not in tool_name.lower():
+                        continue
+
+                    # Get the result
+                    result = tool_results.get(tool_use_id, {})
+                    result_text = ""
+                    success = True
+
+                    if isinstance(result, dict):
+                        result_text = result.get("result", str(result))
+                    elif isinstance(result, str):
+                        result_text = result
+                    elif isinstance(result, list):
+                        # Handle list of content items
+                        result_text = str(result)
+
+                    # Determine success from result text
+                    if "failed" in result_text.lower() or "error" in result_text.lower():
+                        success = False
+
+                    actions.append({
+                        "tool_name": tool_name,
+                        "short_name": tool_name.split("__")[-1] if "__" in tool_name else tool_name,
+                        "description": get_action_description(item),
+                        "input": inp,
+                        "result": result_text,
+                        "success": success,
+                    })
+
+    return actions
 
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
@@ -332,11 +436,11 @@ def job_detail_page(job_id: str):
     # Track current status for polling
     current_status = {"value": job_info.status}
 
-    # Load knowledge graph data
-    kg_data = None
+    # Load knowledge state data
+    ks_data = None
     if ks_path.exists():
         with open(ks_path) as f:
-            kg_data = json.load(f)
+            ks_data = json.load(f)
 
     # Page header
     with ui.header().classes("items-center justify-between"):
@@ -385,7 +489,7 @@ def job_detail_page(job_id: str):
 
                 with ui.card().classes("flex-1"):
                     ui.label("Papers Reviewed").classes("text-subtitle2")
-                    lit_count = len(kg_data.get("literature", [])) if kg_data else 0
+                    lit_count = len(ks_data.get("literature", [])) if ks_data else 0
                     ui.label(str(lit_count)).classes("text-h5 text-blue-600")
 
             # Research question
@@ -396,20 +500,23 @@ def job_detail_page(job_id: str):
             # Investigation Timeline
             ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
 
-            if kg_data:
-                # Get iteration summaries (agent-generated)
+            if ks_data:
+                # Get iteration summaries (agent-generated) - includes strapline and full summary
                 iteration_summaries = {
-                    s["iteration"]: s["summary"]
-                    for s in kg_data.get("iteration_summaries", [])
+                    s["iteration"]: {
+                        "summary": s.get("summary", ""),
+                        "strapline": s.get("strapline", "")
+                    }
+                    for s in ks_data.get("iteration_summaries", [])
                 }
 
                 # Group analysis log by iteration
                 by_iteration = defaultdict(list)
-                for entry in kg_data.get("analysis_log", []):
+                for entry in ks_data.get("analysis_log", []):
                     by_iteration[entry["iteration"]].append(entry)
 
                 # Get max iteration
-                max_iter = kg_data.get("iteration", 1)
+                max_iter = ks_data.get("iteration", 1)
 
                 if by_iteration or iteration_summaries:
                     with ui.scroll_area().classes("w-full h-[600px]"):
@@ -419,13 +526,37 @@ def job_detail_page(job_id: str):
                         for iteration in range(1, display_max + 1):
                             entries = by_iteration.get(iteration, [])
 
-                            # Get agent summary (or show placeholder if none)
-                            summary_text = iteration_summaries.get(iteration, "No summary available")
+                            # Get agent summary - prefer strapline for header, full summary inside
+                            iter_summary = iteration_summaries.get(iteration, {})
+                            if isinstance(iter_summary, str):
+                                # Backwards compat: old format was just the summary string
+                                strapline = ""
+                                summary_text = iter_summary
+                            else:
+                                strapline = iter_summary.get("strapline", "")
+                                summary_text = iter_summary.get("summary", "")
 
-                            # Count actions for this iteration
-                            code_count = len([e for e in entries if e["action"] == "execute_code"])
-                            search_count = len([e for e in entries if e["action"] == "search_pubmed"])
-                            finding_count = len([e for e in entries if e["action"] == "update_knowledge_graph"])
+                            # Load transcript for this iteration (if exists)
+                            provenance_dir = job_dir / "provenance"
+                            transcript_path = provenance_dir / f"iter{iteration}_transcript.json"
+                            transcript_actions = []
+                            if transcript_path.exists():
+                                try:
+                                    with open(transcript_path) as tf:
+                                        transcript = json.load(tf)
+                                    transcript_actions = parse_transcript_actions(transcript)
+                                except Exception as e:
+                                    logger.warning(f"Failed to load transcript for iter {iteration}: {e}")
+
+                            # Count actions for this iteration (prefer transcript, fallback to analysis_log)
+                            if transcript_actions:
+                                code_count = len([a for a in transcript_actions if "execute_code" in a["tool_name"]])
+                                search_count = len([a for a in transcript_actions if "search_pubmed" in a["tool_name"]])
+                                finding_count = len([a for a in transcript_actions if "update_knowledge_graph" in a["tool_name"]])
+                            else:
+                                code_count = len([e for e in entries if e["action"] == "execute_code"])
+                                search_count = len([e for e in entries if e["action"] == "search_pubmed"])
+                                finding_count = len([e for e in entries if e["action"] == "update_knowledge_graph"])
 
                             # Determine color based on outcome
                             border_class = "border-l-4 border-gray-300"
@@ -434,14 +565,19 @@ def job_detail_page(job_id: str):
                             elif code_count > 0 or search_count > 0:
                                 border_class = "border-l-4 border-blue-300"  # Did work
 
-                            # Truncate summary for header (keep full summary inside)
-                            header_summary = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
+                            # Use strapline for header if available, otherwise truncated summary
+                            if strapline:
+                                header_text = strapline
+                            elif summary_text:
+                                header_text = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
+                            else:
+                                header_text = "Investigation in progress..."
 
                             with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
                                 # Custom header with badges using slot
                                 with expansion.add_slot("header"):
                                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                                        ui.label(f"Iteration {iteration}: {header_summary}").classes("font-medium")
+                                        ui.label(f"Iteration {iteration}: {header_text}").classes("font-medium")
                                         if code_count:
                                             ui.badge(f"{code_count} analyses", color="blue").props("outline")
                                         if search_count:
@@ -449,11 +585,61 @@ def job_detail_page(job_id: str):
                                         if finding_count:
                                             ui.badge(f"{finding_count} findings", color="green")
 
+                                # Show full summary if available (collapsed by default)
+                                if summary_text:
+                                    with ui.expansion("Summary", icon="summarize").classes("w-full mt-2"):
+                                        ui.label(summary_text).classes("text-sm text-gray-700")
+
+                                # Show actions from transcript (if available)
+                                if transcript_actions:
+                                    with ui.expansion(f"Actions ({len(transcript_actions)})", icon="build").classes("w-full mt-2"):
+                                        for action in transcript_actions:
+                                            success = action.get("success", True)
+                                            status_icon = "✅" if success else "❌"
+                                            desc = action.get("description", action.get("short_name", "Unknown"))
+                                            tool_name = action.get("short_name", "")
+
+                                            # Color card based on tool type
+                                            if "execute_code" in action.get("tool_name", ""):
+                                                card_class = "w-full mb-2 border-l-4 border-blue-300"
+                                            elif "search_pubmed" in action.get("tool_name", ""):
+                                                card_class = "w-full mb-2 border-l-4 border-purple-300"
+                                            elif "update_knowledge_graph" in action.get("tool_name", ""):
+                                                card_class = "w-full mb-2 border-l-4 border-green-300"
+                                            else:
+                                                card_class = "w-full mb-2 border-l-4 border-gray-300"
+
+                                            with ui.card().classes(card_class):
+                                                # Action header with description
+                                                with ui.row().classes("items-center gap-2"):
+                                                    ui.label(f"{status_icon} {desc}").classes("font-medium text-sm")
+                                                    ui.badge(tool_name, color="gray").props("outline").classes("text-xs")
+
+                                                # Show code for execute_code actions
+                                                inp = action.get("input", {})
+                                                if "execute_code" in action.get("tool_name", "") and inp.get("code"):
+                                                    with ui.expansion("Code", icon="code").classes("w-full mt-1"):
+                                                        ui.code(inp["code"], language="python").classes("text-xs")
+
+                                                # Show query for search actions
+                                                if "search_pubmed" in action.get("tool_name", "") and inp.get("query"):
+                                                    ui.label(f"Query: \"{inp['query']}\"").classes("text-xs text-gray-600 mt-1")
+
+                                                # Show result (truncated)
+                                                result_text = action.get("result", "")
+                                                if result_text and len(str(result_text)) > 0:
+                                                    result_str = str(result_text)
+                                                    if len(result_str) > 200:
+                                                        with ui.expansion("Result", icon="output").classes("w-full mt-1"):
+                                                            ui.code(result_str[:2000] + ("..." if len(result_str) > 2000 else ""), language="text").classes("text-xs")
+                                                    elif not success:
+                                                        ui.label(result_str).classes("text-xs text-red-600 mt-1")
+
                                 # Show plots from this iteration
-                                plots_dir = job_dir / "plots"
-                                if plots_dir.exists():
+                                provenance_dir = job_dir / "provenance"
+                                if provenance_dir.exists():
                                     iteration_plots = []
-                                    for plot_file in sorted(plots_dir.glob("*.png")):
+                                    for plot_file in sorted(provenance_dir.glob("*.png")):
                                         metadata_file = plot_file.with_suffix('.json')
                                         if metadata_file.exists():
                                             with open(metadata_file) as mf:
@@ -500,7 +686,7 @@ def job_detail_page(job_id: str):
 
                                             # Find papers from this iteration matching this query
                                             matching_papers = [
-                                                lit for lit in kg_data.get("literature", [])
+                                                lit for lit in ks_data.get("literature", [])
                                                 if lit.get("search_query") == query
                                                 and lit.get("retrieved_at_iteration") == iteration
                                             ]
@@ -525,7 +711,7 @@ def job_detail_page(job_id: str):
 
                                 # Show findings recorded (full details, in context)
                                 iteration_findings = [
-                                    f for f in kg_data.get("findings", [])
+                                    f for f in ks_data.get("findings", [])
                                     if f.get("iteration_discovered") == iteration
                                 ]
                                 if iteration_findings:
