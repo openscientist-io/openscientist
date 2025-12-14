@@ -542,15 +542,14 @@ def job_detail_page(job_id: str):
                             is_in_progress = (iteration == max_iter and job_info.status == JobStatus.RUNNING)
 
                             # Get agent summary - prefer strapline for header, full summary inside
-                            # Only use strapline/summary for COMPLETED iterations (not in-progress)
                             iter_summary = iteration_summaries.get(iteration, {})
                             if isinstance(iter_summary, str):
                                 # Backwards compat: old format was just the summary string
-                                strapline = "" if is_in_progress else ""
-                                summary_text = "" if is_in_progress else iter_summary
+                                strapline = ""
+                                summary_text = iter_summary
                             else:
-                                strapline = "" if is_in_progress else iter_summary.get("strapline", "")
-                                summary_text = "" if is_in_progress else iter_summary.get("summary", "")
+                                strapline = iter_summary.get("strapline", "")
+                                summary_text = iter_summary.get("summary", "")
 
                             # Load transcript for this iteration (if exists)
                             provenance_dir = job_dir / "provenance"
@@ -582,12 +581,14 @@ def job_detail_page(job_id: str):
                                 border_class = "border-l-4 border-blue-300"  # Did work
 
                             # Use strapline for header if available, otherwise truncated summary
-                            if is_in_progress:
-                                header_text = "🔄 Investigation in progress..."
-                            elif strapline:
-                                header_text = strapline
+                            # Add "[in progress]" suffix for iterations still being worked on
+                            if strapline:
+                                header_text = f"{strapline} [in progress]" if is_in_progress else strapline
                             elif summary_text:
-                                header_text = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
+                                truncated = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
+                                header_text = f"{truncated} [in progress]" if is_in_progress else truncated
+                            elif is_in_progress:
+                                header_text = "Investigation in progress..."
                             else:
                                 header_text = "Completed"
 
