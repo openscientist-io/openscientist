@@ -601,6 +601,21 @@ def job_detail_page(job_id: str):
                                     with ui.expansion("Summary", icon="summarize").classes("w-full mt-2"):
                                         ui.label(summary_text).classes("text-sm text-gray-700")
 
+                                # Show findings recorded (right after summary for visibility)
+                                iteration_findings = [
+                                    f for f in ks_data.get("findings", [])
+                                    if f.get("iteration_discovered") == iteration
+                                ]
+                                if iteration_findings:
+                                    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full mt-2"):
+                                        for finding in iteration_findings:
+                                            with ui.card().classes("w-full mb-2 bg-green-50"):
+                                                ui.label(finding['title']).classes("font-bold text-green-800")
+                                                ui.label(finding["evidence"]).classes("text-sm text-gray-700")
+                                                interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                                if interpretation:
+                                                    ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
+
                                 # Show actions from transcript (if available)
                                 if transcript_actions:
                                     with ui.expansion(f"Actions ({len(transcript_actions)})", icon="build").classes("w-full mt-2"):
@@ -719,21 +734,6 @@ def job_detail_page(job_id: str):
                                                                 ui.label(abstract[:200] + "..." if len(abstract) > 200 else abstract).classes("text-xs text-gray-600 mt-1")
                                             else:
                                                 ui.label(f'"{query}"').classes("text-sm text-gray-600")
-
-                                # Show findings recorded (collapsible, like other sections)
-                                iteration_findings = [
-                                    f for f in ks_data.get("findings", [])
-                                    if f.get("iteration_discovered") == iteration
-                                ]
-                                if iteration_findings:
-                                    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full mt-2"):
-                                        for finding in iteration_findings:
-                                            with ui.card().classes("w-full mb-2 bg-green-50"):
-                                                ui.label(finding['title']).classes("font-bold text-green-800")
-                                                ui.label(finding["evidence"]).classes("text-sm text-gray-700")
-                                                interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
-                                                if interpretation:
-                                                    ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
 
