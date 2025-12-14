@@ -510,22 +510,22 @@ class JobManager:
             with open(config_path) as f:
                 config = json.load(f)
 
-            # For running jobs, get real-time progress from knowledge_graph.json
+            # For running jobs, get real-time progress from knowledge_state.json
             iterations_completed = config.get("iterations_completed", 0)
             findings_count = config.get("findings_count", 0)
 
             if config["status"] in ("running", "awaiting_feedback"):
-                kg_path = self.jobs_dir / job_id / "knowledge_graph.json"
-                if kg_path.exists():
+                ks_path = self.jobs_dir / job_id / "knowledge_state.json"
+                if ks_path.exists():
                     try:
-                        with open(kg_path) as f:
-                            kg = json.load(f)
-                        # KG iteration is the NEXT iteration to run, so completed = iteration - 1
-                        kg_iteration = kg.get("iteration", 1)
-                        iterations_completed = kg_iteration - 1 if kg_iteration > 1 else 0
-                        findings_count = len(kg.get("findings", []))
+                        with open(ks_path) as f:
+                            ks =json.load(f)
+                        # KS iteration is the NEXT iteration to run, so completed = iteration - 1
+                        ks_iteration = ks.get("iteration", 1)
+                        iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
+                        findings_count = len(ks.get("findings", []))
                     except Exception as e:
-                        logger.warning(f"Failed to load KG for running job {job_id}: {e}")
+                        logger.warning(f"Failed to load KS for running job {job_id}: {e}")
 
             return JobInfo(
                 job_id=config["job_id"],

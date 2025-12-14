@@ -327,15 +327,15 @@ def job_detail_page(job_id: str):
         return
 
     job_dir = job_manager.jobs_dir / job_id
-    kg_path = job_dir / "knowledge_graph.json"
+    ks_path = job_dir / "knowledge_state.json"
 
     # Track current status for polling
     current_status = {"value": job_info.status}
 
     # Load knowledge graph data
     kg_data = None
-    if kg_path.exists():
-        with open(kg_path) as f:
+    if ks_path.exists():
+        with open(ks_path) as f:
             kg_data = json.load(f)
 
     # Page header
@@ -553,13 +553,13 @@ def job_detail_page(job_id: str):
                         return
 
                     if latest_job.status == JobStatus.AWAITING_FEEDBACK:
-                        # Reload KG to get current iteration (which is the NEXT iteration to run)
+                        # Reload KS to get current iteration (which is the NEXT iteration to run)
                         next_iter = 1
                         awaiting_since = None
-                        if kg_path.exists():
-                            with open(kg_path) as f:
-                                latest_kg = json.load(f)
-                            next_iter = latest_kg.get("iteration", 1)
+                        if ks_path.exists():
+                            with open(ks_path) as f:
+                                latest_ks =json.load(f)
+                            next_iter = latest_ks.get("iteration", 1)
                         # The completed iteration is the previous one
                         completed_iter = next_iter - 1 if next_iter > 1 else 1
 
@@ -582,11 +582,11 @@ def job_detail_page(job_id: str):
 
                                 with ui.row().classes("w-full gap-2 mt-2"):
                                     def submit_feedback(fi=feedback_input, ci=completed_iter):
-                                        from .knowledge_graph import KnowledgeGraph
-                                        kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+                                        from .knowledge_state import KnowledgeState
+                                        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
                                         if fi.value.strip():
-                                            kg.add_feedback(fi.value.strip(), ci)
-                                            kg.save(job_dir / "knowledge_graph.json")
+                                            ks.add_feedback(fi.value.strip(), ci)
+                                            ks.save(job_dir / "knowledge_state.json")
                                         # Set status back to running to signal continue
                                         with open(job_dir / "config.json") as f:
                                             cfg = json.load(f)

@@ -448,6 +448,65 @@ If something breaks:
 
 **Rationale:** Code is already complex. Adding fallback conditionals everywhere makes it worse. Clean migration + thorough testing is safer long-term.
 
+## RESOLVED: --verbose Flag and Image Data
+
+### Problem Statement
+
+When using `--verbose --output-format json`, Claude CLI returns base64-encoded image data in tool_result content. This causes:
+1. Very large JSON outputs (MBs for images)
+2. Sometimes malformed JSON that fails to parse (seen error: "Unterminated string starting at: line 1 column 13683")
+
+### Why We Need --verbose
+
+**Without `--verbose`:** `--output-format json` only returns the final result dict - a summary of what happened.
+
+**With `--verbose`:** We get the full transcript array containing:
+- `assistant` messages → the agent's **reasoning** between actions
+- `tool_use` → what tools were called with what inputs (including `description`)
+- `tool_result` → what the tools returned
+- `result` → final summary
+
+The whole point of this refactor is to show scientists the agent's reasoning for provenance. That reasoning is in the `assistant` messages and `tool_use.input.description` fields - which we only get with `--verbose`.
+
+Without it, we'd only know "the job completed" but not "why the agent did what it did."
+
+### Solution Implemented
+
+**Use `--output-format stream-json` with per-line sanitization:**
+
+1. Changed from `--output-format json` to `--output-format stream-json`
+2. Parse line by line (each line is a complete JSON object)
+3. Strip `"data"` fields >1000 chars BEFORE parsing each line
+4. Collect into transcript array
+
+```python
+def parse_stream_json(stdout: str) -> list:
+    """Parse stream-json output (one JSON object per line)."""
+    import re
+    transcript = []
+    for line in stdout.strip().split('\n'):
+        if not line:
+            continue
+        # Strip "data" fields with long content (images, file contents)
+        sanitized_line = re.sub(
+            r'"data":\s*"[^"]{1000,}"',
+            '"data": "[CONTENT REMOVED]"',
+            line
+        )
+        try:
+            obj = json.loads(sanitized_line)
+            transcript.append(obj)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Skipping unparseable JSON line...")
+    return transcript
+```
+
+**Benefits:**
+- One corrupted line doesn't break everything
+- Sanitization happens BEFORE parsing (avoids parse errors)
+- Transcript files are small (20KB vs 70KB+ with base64)
+- Large images (1.7MB+) now work without crashing
+
 ## Implementation Order
 
 ### Phase 1: Backend Changes
@@ -471,3 +530,59 @@ If something breaks:
 12. Test with new job (end-to-end)
 13. Click through every migrated job in UI
 14. Fix any issues found
+
+## Implementation Status
+
+### Phase 1: Backend Changes - ✅ COMPLETE
+
+1. ✅ Add `--verbose` flag to orchestrator Claude CLI calls
+   - Changed from `--output-format json` to `--output-format stream-json`
+   - Added `parse_stream_json()` function for line-by-line parsing
+   - Strips ALL large `data` fields (>1000 chars) during parsing - includes images, file contents, etc.
+
+2. ✅ Add `description` param to MCP tools (server.py)
+   - Added to `search_pubmed()` and `update_knowledge_graph()`
+
+3. ✅ Add `strapline` param to `save_iteration_summary`
+   - Updated server.py and knowledge_state.py
+   - Stored in iteration_summaries[].strapline
+
+4. ✅ Update orchestrator to save raw transcript to `provenance/`
+   - Creates `provenance/` directory
+   - Saves `iterN_transcript.json` for each iteration
+
+5. ✅ Update code_executor to save plots to `provenance/`
+   - Changed plots directory from `plots/` to `provenance/`
+
+6. ✅ Rename `knowledge_graph` to `knowledge_state` throughout codebase
+   - Renamed file: `knowledge_graph.py` → `knowledge_state.py`
+   - Renamed class: `KnowledgeGraph` → `KnowledgeState`
+   - Renamed JSON file: `knowledge_graph.json` → `knowledge_state.json`
+   - Renamed variables: `kg` → `ks`, `kg_path` → `ks_path`, `KG` → `KS`
+
+### Phase 2: Migration - ✅ COMPLETE
+
+- Created `scripts/migrate_jobs.py` script
+- Migrated 93 existing jobs:
+  - Renamed `knowledge_graph.json` → `knowledge_state.json`
+  - Renamed `plots/` → `provenance/`
+  - Added missing `iteration_summaries` and `feedback_history` fields
+  - Added missing `strapline` fields to iteration summaries
+- Backup created at `jobs_backup_20251214_121304/`
+
+### Phase 3: UI Changes - PENDING
+
+Next steps for Phase 3:
+- Update web_app.py to read transcripts from `provenance/iterN_transcript.json`
+- Parse transcript to display: reasoning → action → result
+- Display strapline in iteration headers
+- Implement `get_description()` fallback logic for tool descriptions
+
+### Phase 4: Testing - IN PROGRESS
+
+Initial testing passed:
+- ✅ All 93 jobs migrated successfully
+- ✅ App rebuilt and running without errors
+- ✅ Jobs list page loads correctly
+- ✅ Individual job pages load correctly
+- ⏳ Pending: Click through more jobs and test new job creation

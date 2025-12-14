@@ -93,7 +93,7 @@ def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str,
     Build the discovery iteration prompt.
 
     Args:
-        knowledge_graph_summary: Formatted KG summary from KnowledgeGraph.get_summary()
+        knowledge_graph_summary: Formatted KS summary from KnowledgeState.get_summary()
         data_summary: Dict with data info (files, samples, features, groups)
         iteration: Current iteration number
         max_iterations: Maximum iterations allowed

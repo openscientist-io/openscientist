@@ -1,5 +1,5 @@
 """
-Knowledge graph management for SHANDY.
+Knowledge state management for SHANDY.
 
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
-class KnowledgeGraph:
+class KnowledgeState:
     """
-    JSON-based knowledge graph for storing agent state.
+    JSON-based knowledge state for storing agent state.
 
     Structure:
         - config: Job configuration
@@ -55,7 +55,7 @@ class KnowledgeGraph:
         }
 
     @classmethod
-    def load(cls, file_path: Path) -> "KnowledgeGraph":
+    def load(cls, file_path: Path) -> "KnowledgeState":
         """Load knowledge graph from JSON file with shared lock."""
         with open(file_path, 'r') as f:
             # Acquire shared lock - blocks while exclusive lock is held
@@ -66,8 +66,8 @@ class KnowledgeGraph:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         # Create instance and set data
-        kg = cls.__new__(cls)
-        kg.data = data
+        ks =cls.__new__(cls)
+        ks.data = data
         return kg
 
     def save(self, file_path: Path) -> None:
@@ -317,7 +317,7 @@ class KnowledgeGraph:
         Get a text summary of current state for prompts.
 
         Returns:
-            Formatted summary of KG state
+            Formatted summary of KS state
         """
         summary_parts = [
             f"# Knowledge Graph Summary (Iteration {self.data['iteration']})",
