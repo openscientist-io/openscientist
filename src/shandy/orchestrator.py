@@ -114,32 +114,42 @@ def update_job_status(job_dir: Path, status: str) -> None:
         json.dump(config, f, indent=2)
 
 
-def sanitize_transcript(transcript: list) -> list:
+def parse_stream_json(stdout: str) -> list:
     """
-    Remove large binary data (images) from transcript before saving.
+    Parse stream-json output (one JSON object per line).
 
-    Replaces base64 image data with a placeholder to keep transcript files small.
+    Strips large data fields (images, file contents) from each line BEFORE
+    parsing to avoid JSON parse errors and keep transcripts small.
+
+    Args:
+        stdout: Raw stdout from Claude CLI with --output-format stream-json
+
+    Returns:
+        List of parsed JSON objects (the transcript)
     """
-    import copy
-    sanitized = copy.deepcopy(transcript)
+    import re
 
-    for item in sanitized:
-        # Check user messages (which contain tool_result)
-        if item.get('type') == 'user':
-            message = item.get('message', {})
-            for content in message.get('content', []):
-                if content.get('type') == 'tool_result':
-                    # tool_result content can be a list
-                    result_content = content.get('content', [])
-                    if isinstance(result_content, list):
-                        for rc in result_content:
-                            if rc.get('type') == 'image':
-                                source = rc.get('source', {})
-                                if source.get('type') == 'base64':
-                                    # Replace base64 data with placeholder
-                                    source['data'] = '[IMAGE DATA REMOVED - see original file]'
+    transcript = []
+    for line in stdout.strip().split('\n'):
+        if not line:
+            continue
 
-    return sanitized
+        # Strip "data" fields with long content (images, file contents)
+        # These are raw file bytes we don't need in the transcript.
+        # Pattern: "data": "..." where string is >1000 chars
+        sanitized_line = re.sub(
+            r'"data":\s*"[^"]{1000,}"',
+            '"data": "[CONTENT REMOVED]"',
+            line
+        )
+
+        try:
+            obj = json.loads(sanitized_line)
+            transcript.append(obj)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Skipping unparseable JSON line (error at pos {e.pos}): {line[:100]}...")
+
+    return transcript
 
 
 def increment_kg_iteration(kg_path: Path) -> None:
@@ -371,7 +381,7 @@ Start your investigation by using these tools to analyze the data.
             claude_cli,
             '-p',
             '--verbose',
-            '--output-format', 'json',
+            '--output-format', 'stream-json',
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
@@ -401,8 +411,9 @@ Start your investigation by using these tools to analyze the data.
             logger.error(f"Claude CLI stderr (full): {result.stderr}")
             raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}")
 
-        # Parse JSON output - now an array with --verbose flag
-        transcript = json.loads(result.stdout)
+        # Parse stream-json output (one JSON object per line)
+        # This sanitizes base64 image data during parsing to avoid corruption issues
+        transcript = parse_stream_json(result.stdout)
 
         # Find the result item to get session_id
         result_item = next((item for item in transcript if item.get('type') == 'result'), None)
@@ -410,12 +421,12 @@ Start your investigation by using these tools to analyze the data.
         logger.info(f"Iteration 1 completed successfully (session: {session_id})")
 
         # Save full transcript to provenance/ for scientific reproducibility
-        # Sanitize to remove large binary data (images)
+        # (base64 image data already stripped during parsing)
         provenance_dir = job_dir / "provenance"
         provenance_dir.mkdir(parents=True, exist_ok=True)
         transcript_file = provenance_dir / "iter1_transcript.json"
         with open(transcript_file, "w") as f:
-            json.dump(sanitize_transcript(transcript), f, indent=2)
+            json.dump(transcript, f, indent=2)
         logger.info(f"Saved transcript to {transcript_file}")
 
         # Log iteration (human-readable summary)
@@ -490,7 +501,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     claude_cli,
                     '-p',
                     '--verbose',
-                    '--output-format', 'json',
+                    '--output-format', 'stream-json',
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
@@ -507,7 +518,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '-p',
                     '--resume', session_id,
                     '--verbose',
-                    '--output-format', 'json',
+                    '--output-format', 'stream-json',
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
@@ -531,8 +542,9 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 logger.error(f"  stdout: {result.stdout[:1000]}")
                 break
 
-            # Parse response - now an array with --verbose flag
-            transcript = json.loads(result.stdout)
+            # Parse stream-json output (one JSON object per line)
+            # This sanitizes base64 image data during parsing to avoid corruption issues
+            transcript = parse_stream_json(result.stdout)
 
             # Find the result item to get session_id
             result_item = next((item for item in transcript if item.get('type') == 'result'), None)
@@ -545,10 +557,10 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     logger.info(f"New session started: {session_id}")
 
             # Save full transcript to provenance/ for scientific reproducibility
-            # Sanitize to remove large binary data (images)
+            # (base64 image data already stripped during parsing)
             transcript_file = provenance_dir / f"iter{iteration}_transcript.json"
             with open(transcript_file, "w") as f:
-                json.dump(sanitize_transcript(transcript), f, indent=2)
+                json.dump(transcript, f, indent=2)
             logger.info(f"Saved transcript to {transcript_file}")
 
             # Log iteration (human-readable summary)
