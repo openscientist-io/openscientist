@@ -39,7 +39,7 @@ def get_action_description(tool_use: Dict[str, Any]) -> str:
     name = tool_use.get("name", "")
     if "search_pubmed" in name:
         return f"Search: {inp.get('query', '')}"
-    if "update_knowledge_graph" in name:
+    if "update_knowledge_state" in name:
         return f"Finding: {inp.get('title', '')}"
     if "save_iteration_summary" in name:
         return f"Summary: {inp.get('summary', '')[:50]}..."
@@ -567,11 +567,11 @@ def job_detail_page(job_id: str):
                             if transcript_actions:
                                 code_count = len([a for a in transcript_actions if "execute_code" in a["tool_name"]])
                                 search_count = len([a for a in transcript_actions if "search_pubmed" in a["tool_name"]])
-                                finding_count = len([a for a in transcript_actions if "update_knowledge_graph" in a["tool_name"]])
+                                finding_count = len([a for a in transcript_actions if "update_knowledge_state" in a["tool_name"]])
                             else:
                                 code_count = len([e for e in entries if e["action"] == "execute_code"])
                                 search_count = len([e for e in entries if e["action"] == "search_pubmed"])
-                                finding_count = len([e for e in entries if e["action"] == "update_knowledge_graph"])
+                                finding_count = len([e for e in entries if e["action"] == "update_knowledge_state"])
 
                             # Determine color based on outcome
                             border_class = "border-l-4 border-gray-300"
@@ -638,7 +638,7 @@ def job_detail_page(job_id: str):
                                                 card_class = "w-full mb-2 border-l-4 border-blue-300"
                                             elif "search_pubmed" in action.get("tool_name", ""):
                                                 card_class = "w-full mb-2 border-l-4 border-purple-300"
-                                            elif "update_knowledge_graph" in action.get("tool_name", ""):
+                                            elif "update_knowledge_state" in action.get("tool_name", ""):
                                                 card_class = "w-full mb-2 border-l-4 border-green-300"
                                             else:
                                                 card_class = "w-full mb-2 border-l-4 border-gray-300"
@@ -695,19 +695,18 @@ def job_detail_page(job_id: str):
                                                         plot_url = f"/{plot_file}"
                                                         ui.image(plot_url).classes("w-full")
 
-                                                        # Download and code buttons
-                                                        with ui.row().classes("w-full gap-2 mt-2"):
-                                                            ui.button(
-                                                                "Download",
-                                                                on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
-                                                                icon="download"
-                                                            ).props("size=sm flat dense")
+                                                        # Download button and code expansion (stacked vertically)
+                                                        ui.button(
+                                                            "Download",
+                                                            on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                                                            icon="download"
+                                                        ).props("size=sm flat dense").classes("mt-2")
 
-                                                            # Show code that generated this plot (progressive disclosure)
-                                                            plot_code = metadata.get('code')
-                                                            if plot_code:
-                                                                with ui.expansion("View code", icon="code").classes("flex-1"):
-                                                                    ui.code(plot_code, language="python").classes("text-xs")
+                                                        # Show code that generated this plot (progressive disclosure)
+                                                        plot_code = metadata.get('code')
+                                                        if plot_code:
+                                                            with ui.expansion("View code", icon="code").classes("w-full mt-1"):
+                                                                ui.code(plot_code, language="python").classes("text-xs")
 
                                 # Show literature searched (progressively disclosed)
                                 literature_entries = [e for e in entries if e["action"] == "search_pubmed"]

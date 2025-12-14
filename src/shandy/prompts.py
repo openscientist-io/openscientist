@@ -26,7 +26,7 @@ You have access to tools:
 - `execute_code`: Run Python code to analyze data (pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx)
 - `search_pubmed`: Search scientific literature for relevant papers
 - `use_skill`: Invoke a structured workflow skill for guidance
-- `update_knowledge_graph`: Record a confirmed finding
+- `update_knowledge_state`: Record a confirmed finding
 
 You have access to skills that provide structured workflows:
 - hypothesis-generation: How to formulate testable hypotheses
@@ -63,7 +63,7 @@ Think step by step. Be rigorous. Be creative."""
 You have access to tools:
 - `execute_code`: Run Python code to analyze data (pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx)
 - `search_pubmed`: Search scientific literature for relevant papers
-- `update_knowledge_graph`: Record a confirmed finding
+- `update_knowledge_state`: Record a confirmed finding
 
 **Your Approach:**
 

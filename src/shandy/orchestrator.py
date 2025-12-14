@@ -363,7 +363,7 @@ You have access to MCP tools for analysis, literature search, and recording find
 Examples include (there may be others - explore what's available):
 - execute_code: Analyze data, run statistical tests, create visualizations
 - search_pubmed: Search for relevant papers
-- update_knowledge_graph: Record confirmed findings with statistical evidence
+- update_knowledge_state: Record confirmed findings with statistical evidence
 - save_iteration_summary: Record a summary of what you investigated and learned
 
 IMPORTANT: At the end of each iteration, call save_iteration_summary with a 1-2 sentence
@@ -385,7 +385,7 @@ Start your investigation by using these tools to analyze the data.
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+            '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
             '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
             '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
             '--allowedTools', 'mcp__shandy-tools__compare_structures',
@@ -487,7 +487,7 @@ the scientist's suggestions with your own analysis of what will be most producti
 ---
 
 Continue your investigation using the available MCP tools.
-Examples: execute_code, search_pubmed, update_knowledge_graph, save_iteration_summary.
+Examples: execute_code, search_pubmed, update_knowledge_state, save_iteration_summary.
 Think step by step about what will provide the most insight, then actively use the tools to execute your investigation.
 
 Remember: At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
@@ -505,7 +505,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
                     '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
@@ -522,7 +522,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
                     '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',

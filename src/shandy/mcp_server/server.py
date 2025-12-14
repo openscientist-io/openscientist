@@ -4,7 +4,7 @@ MCP server implementation for SHANDY tools using FastMCP.
 Provides tools for autonomous discovery:
 - execute_code: Run Python analysis on data
 - search_pubmed: Search scientific literature
-- update_knowledge_graph: Record findings
+- update_knowledge_state: Record findings
 - run_phenix_tool: Execute Phenix structural biology tools (if available)
 - compare_structures: Compare experimental and predicted structures
 - parse_alphafold_confidence: Extract AlphaFold confidence metrics
@@ -191,7 +191,7 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
 
 
 @mcp.tool()
-def update_knowledge_graph(title: str, evidence: str, interpretation: str = "", description: str = "") -> str:
+def update_knowledge_state(title: str, evidence: str, interpretation: str = "", description: str = "") -> str:
     """
     Record a confirmed finding to the knowledge graph.
 
@@ -219,7 +219,7 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "", 
                 finding["biological_interpretation"] = interpretation
 
     # Log the action
-    KS.log_analysis(action="update_knowledge_graph", finding_id=finding_id, title=title, description=description)
+    KS.log_analysis(action="update_knowledge_state", finding_id=finding_id, title=title, description=description)
     KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Finding recorded as {finding_id}: {title}"
