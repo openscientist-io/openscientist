@@ -268,54 +268,6 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
     return f"✅ Summary saved for iteration {current_iteration}"
 
 
-@mcp.tool()
-def complete_investigation(final_summary: str, reason: str) -> str:
-    """
-    Signal that the investigation is complete and no more iterations are needed.
-
-    Use this tool when you have:
-    1. Answered the research question with a coherent mechanistic model
-    2. Tested all high-priority hypotheses
-    3. Recorded all major findings
-    4. Hit diminishing returns (no productive new directions)
-
-    Do NOT use this tool if:
-    - Major hypotheses remain untested
-    - Findings are contradictory and need resolution
-    - You haven't built a coherent model yet
-
-    Args:
-        final_summary: A comprehensive summary of what was discovered and the
-                      mechanistic model explaining the findings. This will be
-                      shown to users as the investigation conclusion.
-        reason: Why you're stopping early (e.g., "Research question fully answered
-               with coherent mechanistic model" or "Diminishing returns after
-               testing all major hypotheses")
-
-    Returns:
-        Confirmation that early completion was signaled
-    """
-    global JOB_DIR, KS
-
-    # Reload knowledge graph to get latest state
-    KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
-
-    # Mark investigation as complete
-    KS.data["investigation_complete"] = True
-    KS.data["completion_reason"] = reason
-    KS.data["final_summary"] = final_summary
-
-    # Log the action
-    KS.log_analysis(
-        action="complete_investigation",
-        reason=reason,
-        description="Agent signaled early completion of investigation"
-    )
-    KS.save(JOB_DIR / "knowledge_state.json")
-
-    return f"✅ Investigation marked as complete. Reason: {reason}"
-
-
 def main():
     """Main entry point for MCP server."""
     import argparse

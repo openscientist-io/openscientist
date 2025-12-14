@@ -18,7 +18,7 @@ Agents currently don't plan how to use their iteration budget. Observed issues:
 1. **Iteration 1 is planning-only**: Agent understands data, searches literature, creates trajectory plan
 2. **Plan is saved to knowledge_state**: Persisted and shown in subsequent iteration prompts
 3. **Subsequent iterations execute the plan**: Agent follows the plan, adapting as needed
-4. **Early completion**: Agent uses `complete_investigation` when done
+4. **Early completion**: Agent can signal when investigation is complete (see Ideas section)
 
 ### Trajectory Plan Structure
 
@@ -76,7 +76,7 @@ Research question: "Analyze this image and describe what you see"
 }
 ```
 
-Agent completes in iteration 2 and calls `complete_investigation`.
+Agent completes in iteration 2 and signals early completion.
 
 ### Example: Complex Task (8 iterations)
 
@@ -154,10 +154,36 @@ In iterations 2+, show the plan:
    - e.g., "exploration: 1-2 iterations, hypothesis_testing: 3-5 iterations"
    - Or keep it loose and let agent manage?
 
+## Ideas (Not Yet Implemented)
+
+### `complete_investigation` Tool
+
+A tool that allows the agent to signal early completion:
+
+```python
+@mcp.tool()
+def complete_investigation(final_summary: str, reason: str) -> str:
+    """
+    Signal that the investigation is complete and no more iterations are needed.
+
+    Use when:
+    - Research question is answered with coherent mechanistic model
+    - All high-priority hypotheses tested
+    - Hit diminishing returns
+
+    Sets knowledge_state fields:
+    - investigation_complete: True
+    - completion_reason: reason
+    - final_summary: final_summary
+    """
+```
+
+The orchestrator would check for `investigation_complete` flag after each iteration and stop early if set.
+
 ## Current State
 
-- [x] `complete_investigation` tool added (commit 2b0cdf8)
 - [ ] `save_trajectory_plan` tool
 - [ ] Iteration 1 prompt modification
 - [ ] Show plan in subsequent prompts
-- [ ] Orchestrator early completion handling
+- [ ] Early completion mechanism (idea documented above)
+- [ ] Orchestrator updates
