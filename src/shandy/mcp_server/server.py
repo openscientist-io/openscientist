@@ -120,12 +120,12 @@ def execute_code(code: str, description: str = "") -> str:
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
     KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
 
-    # Create plots directory
-    plots_dir = JOB_DIR / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
+    # Create provenance directory for plots and artifacts
+    provenance_dir = JOB_DIR / "provenance"
+    provenance_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute code (DATA may be None for non-tabular files)
-    result = exec_code(code, DATA, plots_dir, timeout=60, description=description,
+    result = exec_code(code, DATA, provenance_dir, timeout=60, description=description,
                       iteration=KG.data["iteration"], data_files=DATA_FILES)
 
     # Log to knowledge graph (code is stored in plot metadata files, not here)
