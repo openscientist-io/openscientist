@@ -537,15 +537,20 @@ def job_detail_page(job_id: str):
                         for iteration in range(1, display_max + 1):
                             entries = by_iteration.get(iteration, [])
 
+                            # Check if this iteration is still in progress
+                            # max_iter is the CURRENT iteration being worked on
+                            is_in_progress = (iteration == max_iter and job_info.status == JobStatus.RUNNING)
+
                             # Get agent summary - prefer strapline for header, full summary inside
+                            # Only use strapline/summary for COMPLETED iterations (not in-progress)
                             iter_summary = iteration_summaries.get(iteration, {})
                             if isinstance(iter_summary, str):
                                 # Backwards compat: old format was just the summary string
-                                strapline = ""
-                                summary_text = iter_summary
+                                strapline = "" if is_in_progress else ""
+                                summary_text = "" if is_in_progress else iter_summary
                             else:
-                                strapline = iter_summary.get("strapline", "")
-                                summary_text = iter_summary.get("summary", "")
+                                strapline = "" if is_in_progress else iter_summary.get("strapline", "")
+                                summary_text = "" if is_in_progress else iter_summary.get("summary", "")
 
                             # Load transcript for this iteration (if exists)
                             provenance_dir = job_dir / "provenance"
@@ -577,12 +582,14 @@ def job_detail_page(job_id: str):
                                 border_class = "border-l-4 border-blue-300"  # Did work
 
                             # Use strapline for header if available, otherwise truncated summary
-                            if strapline:
+                            if is_in_progress:
+                                header_text = "🔄 Investigation in progress..."
+                            elif strapline:
                                 header_text = strapline
                             elif summary_text:
                                 header_text = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
                             else:
-                                header_text = "Investigation in progress..."
+                                header_text = "Completed"
 
                             with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
                                 # Custom header with badges using slot
