@@ -733,7 +733,8 @@ def job_detail_page(job_id: str):
                                                             if abstract:
                                                                 ui.label(abstract[:200] + "..." if len(abstract) > 200 else abstract).classes("text-xs text-gray-600 mt-1")
                                             else:
-                                                ui.label(f'"{query}"').classes("text-sm text-gray-600")
+                                                # Show query with 0 results indicator (no expansion needed)
+                                                ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
 
