@@ -221,13 +221,14 @@ class KnowledgeGraph:
 
         self.data["analysis_log"].append(log_entry)
 
-    def add_iteration_summary(self, iteration: int, summary: str) -> None:
+    def add_iteration_summary(self, iteration: int, summary: str, strapline: str = "") -> None:
         """
         Store agent-generated summary for an iteration.
 
         Args:
             iteration: Iteration number
             summary: Plain-language summary of what was accomplished
+            strapline: Short, punchy title for this iteration (5-10 words)
         """
         # Ensure iteration_summaries exists (backwards compatibility)
         if "iteration_summaries" not in self.data:
@@ -237,6 +238,7 @@ class KnowledgeGraph:
         for existing in self.data["iteration_summaries"]:
             if existing["iteration"] == iteration:
                 existing["summary"] = summary
+                existing["strapline"] = strapline
                 existing["updated_at"] = datetime.now().isoformat()
                 return
 
@@ -244,6 +246,7 @@ class KnowledgeGraph:
         self.data["iteration_summaries"].append({
             "iteration": iteration,
             "summary": summary,
+            "strapline": strapline,
             "created_at": datetime.now().isoformat()
         })
 

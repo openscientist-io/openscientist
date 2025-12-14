@@ -226,7 +226,7 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "", 
 
 
 @mcp.tool()
-def save_iteration_summary(summary: str) -> str:
+def save_iteration_summary(summary: str, strapline: str = "") -> str:
     """
     Save a plain-language summary of what was accomplished this iteration.
 
@@ -246,6 +246,10 @@ def save_iteration_summary(summary: str) -> str:
 
                  Bad example: "Iteration 3: Analyzed correlation..." (don't do this)
 
+        strapline: Short, punchy title for this iteration (5-10 words).
+                   Example: "Investigating APOE4 metabolite correlations"
+                   Example: "Synthesizing findings into final report"
+
     Returns:
         Confirmation message
     """
@@ -257,8 +261,8 @@ def save_iteration_summary(summary: str) -> str:
     # Get current iteration
     current_iteration = KG.data["iteration"]
 
-    # Save the summary
-    KG.add_iteration_summary(current_iteration, summary)
+    # Save the summary with strapline
+    KG.add_iteration_summary(current_iteration, summary, strapline=strapline)
     KG.save(JOB_DIR / "knowledge_graph.json")
 
     return f"✅ Summary saved for iteration {current_iteration}"
