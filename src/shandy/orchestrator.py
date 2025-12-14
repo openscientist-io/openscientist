@@ -342,6 +342,7 @@ Start your investigation by using these tools to analyze the data.
         cmd = [
             claude_cli,
             '-p',
+            '--verbose',
             '--output-format', 'json',
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
@@ -372,17 +373,28 @@ Start your investigation by using these tools to analyze the data.
             logger.error(f"Claude CLI stderr (full): {result.stderr}")
             raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}")
 
-        # Parse JSON output
-        response_data = json.loads(result.stdout)
-        session_id = response_data.get('session_id')
+        # Parse JSON output - now an array with --verbose flag
+        transcript = json.loads(result.stdout)
+
+        # Find the result item to get session_id
+        result_item = next((item for item in transcript if item.get('type') == 'result'), None)
+        session_id = result_item.get('session_id') if result_item else None
         logger.info(f"Iteration 1 completed successfully (session: {session_id})")
 
-        # Log iteration
+        # Save full transcript to provenance/ for scientific reproducibility
+        provenance_dir = job_dir / "provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True)
+        transcript_file = provenance_dir / "iter1_transcript.json"
+        with open(transcript_file, "w") as f:
+            json.dump(transcript, f, indent=2)
+        logger.info(f"Saved transcript to {transcript_file}")
+
+        # Log iteration (human-readable summary)
         log_file = job_dir / "claude_iterations.log"
         with open(log_file, "w") as f:
             f.write(f"=== Iteration 1 ===\n")
             f.write(f"Prompt: {initial_prompt}\n\n")
-            f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
+            f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
 
         # Increment iteration counter with file locking to prevent race conditions
         # Only increment if there are more iterations to come
@@ -448,6 +460,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 cmd = [
                     claude_cli,
                     '-p',
+                    '--verbose',
                     '--output-format', 'json',
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
@@ -464,6 +477,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     claude_cli,
                     '-p',
                     '--resume', session_id,
+                    '--verbose',
                     '--output-format', 'json',
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
@@ -488,21 +502,30 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 logger.error(f"  stdout: {result.stdout[:1000]}")
                 break
 
-            # Parse response
-            response_data = json.loads(result.stdout)
+            # Parse response - now an array with --verbose flag
+            transcript = json.loads(result.stdout)
+
+            # Find the result item to get session_id
+            result_item = next((item for item in transcript if item.get('type') == 'result'), None)
 
             # Update session_id if we started a fresh session
             if should_reset:
-                new_session_id = response_data.get('session_id')
+                new_session_id = result_item.get('session_id') if result_item else None
                 if new_session_id:
                     session_id = new_session_id
                     logger.info(f"New session started: {session_id}")
 
-            # Log iteration
+            # Save full transcript to provenance/ for scientific reproducibility
+            transcript_file = provenance_dir / f"iter{iteration}_transcript.json"
+            with open(transcript_file, "w") as f:
+                json.dump(transcript, f, indent=2)
+            logger.info(f"Saved transcript to {transcript_file}")
+
+            # Log iteration (human-readable summary)
             with open(log_file, "a") as f:
                 f.write(f"=== Iteration {iteration} ===\n")
                 f.write(f"Prompt: {iteration_prompt}\n\n")
-                f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
+                f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
 
             # Increment iteration counter with file locking to prevent race conditions
             # Only increment if this is not the last iteration
