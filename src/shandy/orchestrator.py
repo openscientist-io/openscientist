@@ -114,6 +114,34 @@ def update_job_status(job_dir: Path, status: str) -> None:
         json.dump(config, f, indent=2)
 
 
+def sanitize_transcript(transcript: list) -> list:
+    """
+    Remove large binary data (images) from transcript before saving.
+
+    Replaces base64 image data with a placeholder to keep transcript files small.
+    """
+    import copy
+    sanitized = copy.deepcopy(transcript)
+
+    for item in sanitized:
+        # Check user messages (which contain tool_result)
+        if item.get('type') == 'user':
+            message = item.get('message', {})
+            for content in message.get('content', []):
+                if content.get('type') == 'tool_result':
+                    # tool_result content can be a list
+                    result_content = content.get('content', [])
+                    if isinstance(result_content, list):
+                        for rc in result_content:
+                            if rc.get('type') == 'image':
+                                source = rc.get('source', {})
+                                if source.get('type') == 'base64':
+                                    # Replace base64 data with placeholder
+                                    source['data'] = '[IMAGE DATA REMOVED - see original file]'
+
+    return sanitized
+
+
 def increment_kg_iteration(kg_path: Path) -> None:
     """
     Safely increment the knowledge graph iteration counter with file locking.
@@ -382,11 +410,12 @@ Start your investigation by using these tools to analyze the data.
         logger.info(f"Iteration 1 completed successfully (session: {session_id})")
 
         # Save full transcript to provenance/ for scientific reproducibility
+        # Sanitize to remove large binary data (images)
         provenance_dir = job_dir / "provenance"
         provenance_dir.mkdir(parents=True, exist_ok=True)
         transcript_file = provenance_dir / "iter1_transcript.json"
         with open(transcript_file, "w") as f:
-            json.dump(transcript, f, indent=2)
+            json.dump(sanitize_transcript(transcript), f, indent=2)
         logger.info(f"Saved transcript to {transcript_file}")
 
         # Log iteration (human-readable summary)
@@ -516,9 +545,10 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     logger.info(f"New session started: {session_id}")
 
             # Save full transcript to provenance/ for scientific reproducibility
+            # Sanitize to remove large binary data (images)
             transcript_file = provenance_dir / f"iter{iteration}_transcript.json"
             with open(transcript_file, "w") as f:
-                json.dump(transcript, f, indent=2)
+                json.dump(sanitize_transcript(transcript), f, indent=2)
             logger.info(f"Saved transcript to {transcript_file}")
 
             # Log iteration (human-readable summary)
