@@ -144,13 +144,14 @@ def execute_code(code: str, description: str = "") -> str:
 
 
 @mcp.tool()
-def search_pubmed(query: str, max_results: int = 10) -> str:
+def search_pubmed(query: str, max_results: int = 10, description: str = "") -> str:
     """
     Search PubMed for scientific papers.
 
     Args:
         query: Search query (e.g., 'hypothermia neuroprotection metabolomics')
         max_results: Maximum number of results to return (default: 10)
+        description: Why you're searching (e.g., "Looking for prior work on carnosine and oxidative stress")
 
     Returns:
         Formatted list of papers with titles, abstracts, and PMIDs
@@ -172,7 +173,7 @@ def search_pubmed(query: str, max_results: int = 10) -> str:
             search_query=query,
         )
 
-    KG.log_analysis(action="search_pubmed", query=query, results_count=len(papers))
+    KG.log_analysis(action="search_pubmed", query=query, results_count=len(papers), description=description)
     KG.save(JOB_DIR / "knowledge_graph.json")
 
     # Format results
@@ -190,7 +191,7 @@ def search_pubmed(query: str, max_results: int = 10) -> str:
 
 
 @mcp.tool()
-def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") -> str:
+def update_knowledge_graph(title: str, evidence: str, interpretation: str = "", description: str = "") -> str:
     """
     Record a confirmed finding to the knowledge graph.
 
@@ -198,6 +199,7 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
         title: Finding title (concise description)
         evidence: Statistical evidence (p-values, effect sizes, etc.)
         interpretation: Biological/mechanistic interpretation (optional)
+        description: Why you're recording this finding (e.g., "This correlation confirms our hypothesis")
 
     Returns:
         Confirmation message with finding ID
@@ -216,6 +218,8 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
             if finding["id"] == finding_id:
                 finding["biological_interpretation"] = interpretation
 
+    # Log the action
+    KG.log_analysis(action="update_knowledge_graph", finding_id=finding_id, title=title, description=description)
     KG.save(JOB_DIR / "knowledge_graph.json")
 
     return f"✅ Finding recorded as {finding_id}: {title}"
