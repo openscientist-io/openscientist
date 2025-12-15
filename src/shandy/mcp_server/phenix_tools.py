@@ -8,14 +8,14 @@ from typing import Optional
 from ..phenix_setup import setup_phenix_env
 
 
-def register_phenix_tools(mcp, job_dir: Path, kg):
+def register_phenix_tools(mcp, job_dir: Path, ks):
     """
     Register Phenix MCP tools with the server.
 
     Args:
         mcp: FastMCP server instance
         job_dir: Job directory path
-        kg: Knowledge graph instance
+        ks: Knowledge state instance
     """
 
     @mcp.tool()
@@ -84,14 +84,14 @@ def register_phenix_tools(mcp, job_dir: Path, kg):
             output = "".join(output_parts)
 
             # Log to knowledge graph
-            kg.log_analysis(
+            ks.log_analysis(
                 action="run_phenix_tool",
                 tool_name=tool_name,
                 input_files=input_files,
                 description=description,
                 success=(result.returncode == 0),
             )
-            kg.save(job_dir / "knowledge_graph.json")
+            ks.save(job_dir / "knowledge_state.json")
 
             return output
 
@@ -229,13 +229,13 @@ def register_phenix_tools(mcp, job_dir: Path, kg):
                     output += "\n(Use execute_code to visualize PAE matrix)"
 
             # Log to knowledge graph
-            kg.log_analysis(
+            ks.log_analysis(
                 action="parse_alphafold_confidence",
                 file=alphafold_pdb,
                 avg_plddt=avg_plddt,
                 low_conf_regions=low_conf_regions,
             )
-            kg.save(job_dir / "knowledge_graph.json")
+            ks.save(job_dir / "knowledge_state.json")
 
             return output
 

@@ -17,7 +17,7 @@ from typing import Dict, Any, Optional
 import pandas as pd
 from dotenv import load_dotenv
 
-from .knowledge_graph import KnowledgeGraph
+from .knowledge_state import KnowledgeState
 from .providers import get_provider
 from .file_loader import load_data_file, get_file_info
 
@@ -50,15 +50,15 @@ def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_
     import time
 
     config_path = job_dir / "config.json"
-    kg_path = job_dir / "knowledge_graph.json"
+    ks_path = job_dir / "knowledge_state.json"
 
     start_time = time.time()
     last_feedback_count = 0
 
     # Get initial feedback count
-    kg = KnowledgeGraph.load(kg_path)
-    current_iteration = kg.data["iteration"]
-    last_feedback_count = len(kg.data.get("feedback_history", []))
+    ks =KnowledgeState.load(ks_path)
+    current_iteration = ks.data["iteration"]
+    last_feedback_count = len(ks.data.get("feedback_history", []))
 
     logger.info(f"Waiting for scientist feedback (timeout: {timeout_seconds}s)")
 
@@ -78,8 +78,8 @@ def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_
             return None
 
         # Check for new feedback
-        kg = KnowledgeGraph.load(kg_path)
-        feedback_history = kg.data.get("feedback_history", [])
+        ks =KnowledgeState.load(ks_path)
+        feedback_history = ks.data.get("feedback_history", [])
 
         if len(feedback_history) > last_feedback_count:
             # New feedback added - check if it's for current iteration
@@ -114,16 +114,54 @@ def update_job_status(job_dir: Path, status: str) -> None:
         json.dump(config, f, indent=2)
 
 
-def increment_kg_iteration(kg_path: Path) -> None:
+def parse_stream_json(stdout: str) -> list:
+    """
+    Parse stream-json output (one JSON object per line).
+
+    Strips large data fields (images, file contents) from each line BEFORE
+    parsing to avoid JSON parse errors and keep transcripts small.
+
+    Args:
+        stdout: Raw stdout from Claude CLI with --output-format stream-json
+
+    Returns:
+        List of parsed JSON objects (the transcript)
+    """
+    import re
+
+    transcript = []
+    for line in stdout.strip().split('\n'):
+        if not line:
+            continue
+
+        # Strip "data" fields with long content (images, file contents)
+        # These are raw file bytes we don't need in the transcript.
+        # Pattern: "data": "..." where string is >1000 chars
+        sanitized_line = re.sub(
+            r'"data":\s*"[^"]{1000,}"',
+            '"data": "[CONTENT REMOVED]"',
+            line
+        )
+
+        try:
+            obj = json.loads(sanitized_line)
+            transcript.append(obj)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Skipping unparseable JSON line (error at pos {e.pos}): {line[:100]}...")
+
+    return transcript
+
+
+def increment_ks_iteration(ks_path: Path) -> None:
     """
     Safely increment the knowledge graph iteration counter with file locking.
 
     This ensures mutual exclusion with MCP server writes to prevent race conditions.
 
     Args:
-        kg_path: Path to knowledge_graph.json
+        ks_path: Path to knowledge_state.json
     """
-    with open(kg_path, 'r+') as f:
+    with open(ks_path, 'r+') as f:
         # Acquire exclusive lock
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
@@ -166,7 +204,7 @@ def create_job(job_id: str, research_question: str, data_files: list,
 
     # Create subdirectories
     (job_dir / "data").mkdir(exist_ok=True)
-    (job_dir / "plots").mkdir(exist_ok=True)
+    (job_dir / "provenance").mkdir(exist_ok=True)
 
     # Copy data files to job directory, preserving original names/extensions (if any)
     data_paths = []
@@ -182,7 +220,7 @@ def create_job(job_id: str, research_question: str, data_files: list,
             data_paths.append(dest)
 
     # Initialize knowledge graph
-    kg = KnowledgeGraph(
+    ks =KnowledgeState(
         job_id=job_id,
         research_question=research_question,
         max_iterations=max_iterations,
@@ -199,20 +237,20 @@ def create_job(job_id: str, research_question: str, data_files: list,
         file_info = get_file_info(first_file)
 
         # Set minimal data summary (agent will discover details when analyzing)
-        kg.set_data_summary({
+        ks.set_data_summary({
             "files": [str(p.name) for p in data_paths],
             "file_type": file_info["file_type"],
             "file_size_mb": file_info["size"] / (1024 * 1024)
         })
     else:
         # No data files provided
-        kg.set_data_summary({
+        ks.set_data_summary({
             "files": [],
             "file_type": "none",
             "file_size_mb": 0
         })
 
-    kg.save(job_dir / "knowledge_graph.json")
+    ks.save(job_dir / "knowledge_state.json")
 
     # Save job config
     config = {
@@ -302,14 +340,14 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
         claude_cli = os.getenv("CLAUDE_CLI_PATH", "claude")
 
         # Prepare initial prompt
-        kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
 
         # Build data context based on whether files were provided
         if config['data_files']:
             data_context = f"""Data summary:
 - Files: {config['data_files']}
-- Columns: {kg.data['data_summary'].get('columns', [])}
-- Samples: {kg.data['data_summary'].get('n_samples', 'Unknown')}"""
+- Columns: {ks.data['data_summary'].get('columns', [])}
+- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}"""
         else:
             data_context = "No data files provided. You may use literature search and computational methods."
 
@@ -325,7 +363,7 @@ You have access to MCP tools for analysis, literature search, and recording find
 Examples include (there may be others - explore what's available):
 - execute_code: Analyze data, run statistical tests, create visualizations
 - search_pubmed: Search for relevant papers
-- update_knowledge_graph: Record confirmed findings with statistical evidence
+- update_knowledge_state: Record confirmed findings with statistical evidence
 - save_iteration_summary: Record a summary of what you investigated and learned
 
 IMPORTANT: At the end of each iteration, call save_iteration_summary with a 1-2 sentence
@@ -342,11 +380,12 @@ Start your investigation by using these tools to analyze the data.
         cmd = [
             claude_cli,
             '-p',
-            '--output-format', 'json',
+            '--verbose',
+            '--output-format', 'stream-json',
             '--mcp-config', str(mcp_config_path.absolute()),
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-            '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+            '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
             '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
             '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
             '--allowedTools', 'mcp__shandy-tools__compare_structures',
@@ -372,23 +411,36 @@ Start your investigation by using these tools to analyze the data.
             logger.error(f"Claude CLI stderr (full): {result.stderr}")
             raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}")
 
-        # Parse JSON output
-        response_data = json.loads(result.stdout)
-        session_id = response_data.get('session_id')
+        # Parse stream-json output (one JSON object per line)
+        # This sanitizes base64 image data during parsing to avoid corruption issues
+        transcript = parse_stream_json(result.stdout)
+
+        # Find the result item to get session_id
+        result_item = next((item for item in transcript if item.get('type') == 'result'), None)
+        session_id = result_item.get('session_id') if result_item else None
         logger.info(f"Iteration 1 completed successfully (session: {session_id})")
 
-        # Log iteration
+        # Save full transcript to provenance/ for scientific reproducibility
+        # (base64 image data already stripped during parsing)
+        provenance_dir = job_dir / "provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True)
+        transcript_file = provenance_dir / "iter1_transcript.json"
+        with open(transcript_file, "w") as f:
+            json.dump(transcript, f, indent=2)
+        logger.info(f"Saved transcript to {transcript_file}")
+
+        # Log iteration (human-readable summary)
         log_file = job_dir / "claude_iterations.log"
         with open(log_file, "w") as f:
             f.write(f"=== Iteration 1 ===\n")
             f.write(f"Prompt: {initial_prompt}\n\n")
-            f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
+            f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
 
         # Increment iteration counter with file locking to prevent race conditions
         # Only increment if there are more iterations to come
-        kg_path = job_dir / "knowledge_graph.json"
+        ks_path = job_dir / "knowledge_state.json"
         if max_iterations > 1:
-            increment_kg_iteration(kg_path)
+            increment_ks_iteration(ks_path)
 
         # Coinvestigate mode: wait for feedback after first iteration
         pending_feedback = None
@@ -406,11 +458,11 @@ Start your investigation by using these tools to analyze the data.
 
         for iteration in range(2, max_iterations + 1):
             # Reload knowledge graph to see latest state
-            kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+            ks =KnowledgeState.load(job_dir / "knowledge_state.json")
 
-            # Check for feedback from previous iteration (from KG if not already captured)
+            # Check for feedback from previous iteration (from KS if not already captured)
             if pending_feedback is None:
-                pending_feedback = kg.get_feedback_for_iteration(iteration)
+                pending_feedback = ks.get_feedback_for_iteration(iteration)
 
             # Build feedback section if we have feedback
             feedback_section = ""
@@ -430,12 +482,12 @@ the scientist's suggestions with your own analysis of what will be most producti
             # Build iteration prompt
             iteration_prompt = f"""# Iteration {iteration}/{max_iterations}
 {feedback_section}
-{kg.get_summary()}
+{ks.get_summary()}
 
 ---
 
 Continue your investigation using the available MCP tools.
-Examples: execute_code, search_pubmed, update_knowledge_graph, save_iteration_summary.
+Examples: execute_code, search_pubmed, update_knowledge_state, save_iteration_summary.
 Think step by step about what will provide the most insight, then actively use the tools to execute your investigation.
 
 Remember: At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
@@ -448,11 +500,12 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 cmd = [
                     claude_cli,
                     '-p',
-                    '--output-format', 'json',
+                    '--verbose',
+                    '--output-format', 'stream-json',
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
                     '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
@@ -464,11 +517,12 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     claude_cli,
                     '-p',
                     '--resume', session_id,
-                    '--output-format', 'json',
+                    '--verbose',
+                    '--output-format', 'stream-json',
                     '--mcp-config', str(mcp_config_path.absolute()),
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_graph',
+                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
                     '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
@@ -488,26 +542,37 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 logger.error(f"  stdout: {result.stdout[:1000]}")
                 break
 
-            # Parse response
-            response_data = json.loads(result.stdout)
+            # Parse stream-json output (one JSON object per line)
+            # This sanitizes base64 image data during parsing to avoid corruption issues
+            transcript = parse_stream_json(result.stdout)
+
+            # Find the result item to get session_id
+            result_item = next((item for item in transcript if item.get('type') == 'result'), None)
 
             # Update session_id if we started a fresh session
             if should_reset:
-                new_session_id = response_data.get('session_id')
+                new_session_id = result_item.get('session_id') if result_item else None
                 if new_session_id:
                     session_id = new_session_id
                     logger.info(f"New session started: {session_id}")
 
-            # Log iteration
+            # Save full transcript to provenance/ for scientific reproducibility
+            # (base64 image data already stripped during parsing)
+            transcript_file = provenance_dir / f"iter{iteration}_transcript.json"
+            with open(transcript_file, "w") as f:
+                json.dump(transcript, f, indent=2)
+            logger.info(f"Saved transcript to {transcript_file}")
+
+            # Log iteration (human-readable summary)
             with open(log_file, "a") as f:
                 f.write(f"=== Iteration {iteration} ===\n")
                 f.write(f"Prompt: {iteration_prompt}\n\n")
-                f.write(f"Response: {json.dumps(response_data, indent=2)}\n\n")
+                f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
 
             # Increment iteration counter with file locking to prevent race conditions
             # Only increment if this is not the last iteration
             if iteration < max_iterations:
-                increment_kg_iteration(kg_path)
+                increment_ks_iteration(ks_path)
 
             # Coinvestigate mode: wait for feedback after each iteration (except last)
             if investigation_mode == "coinvestigate" and iteration < max_iterations:
@@ -519,30 +584,30 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
 
         # Generate final report using Claude
         logger.info("Generating final report...")
-        kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
 
         # Build concise summary instead of full JSON dump
         findings_summary = "\n\n".join([
             f"**Finding {i+1}: {f['title']}**\n"
             f"Evidence: {f['evidence']}\n"
             f"Interpretation: {f.get('biological_interpretation', 'N/A')}"
-            for i, f in enumerate(kg.data['findings'])
+            for i, f in enumerate(ks.data['findings'])
         ])
 
-        literature_summary = f"Reviewed {len(kg.data['literature'])} papers from PubMed"
+        literature_summary = f"Reviewed {len(ks.data['literature'])} papers from PubMed"
 
         report_prompt = f"""You have completed autonomous discovery. Generate a final report summarizing your findings.
 
 Research Question: {config['research_question']}
 
-## Iterations Completed: {kg.data['iteration']}
+## Iterations Completed: {ks.data['iteration']}
 
-## Findings ({len(kg.data['findings'])}):
+## Findings ({len(ks.data['findings'])}):
 {findings_summary}
 
 ## Literature: {literature_summary}
 
-## Analysis Log: {len(kg.data['analysis_log'])} actions performed across {kg.data['iteration']} iterations
+## Analysis Log: {len(ks.data['analysis_log'])} actions performed across {ks.data['iteration']} iterations
 
 Please create a comprehensive markdown report with:
 1. Executive Summary (2-3 paragraphs)
@@ -585,15 +650,15 @@ Format as professional scientific markdown."""
             logger.error(f"  stdout: {result.stdout[:1000]}")
 
         # Load final knowledge graph
-        kg = KnowledgeGraph.load(job_dir / "knowledge_graph.json")
+        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
 
         # Update job status
         config["status"] = "completed"
         config["completed_at"] = datetime.now().isoformat()
-        config["iterations_completed"] = kg.data["iteration"]
-        config["findings_count"] = len(kg.data["findings"])
+        config["iterations_completed"] = ks.data["iteration"]
+        config["findings_count"] = len(ks.data["findings"])
         # Update max_iterations to actual iterations when job stops early
-        config["max_iterations"] = kg.data["iteration"]
+        config["max_iterations"] = ks.data["iteration"]
 
         with open(job_dir / "config.json", "w") as f:
             json.dump(config, f, indent=2)
@@ -601,8 +666,8 @@ Format as professional scientific markdown."""
         return {
             "job_id": job_id,
             "status": "completed",
-            "iterations": kg.data["iteration"],
-            "findings": len(kg.data["findings"])
+            "iterations": ks.data["iteration"],
+            "findings": len(ks.data["findings"])
         }
 
     except Exception as e:

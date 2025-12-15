@@ -26,7 +26,7 @@ You have access to tools:
 - `execute_code`: Run Python code to analyze data (pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx)
 - `search_pubmed`: Search scientific literature for relevant papers
 - `use_skill`: Invoke a structured workflow skill for guidance
-- `update_knowledge_graph`: Record a confirmed finding
+- `update_knowledge_state`: Record a confirmed finding
 
 You have access to skills that provide structured workflows:
 - hypothesis-generation: How to formulate testable hypotheses
@@ -63,7 +63,7 @@ Think step by step. Be rigorous. Be creative."""
 You have access to tools:
 - `execute_code`: Run Python code to analyze data (pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx)
 - `search_pubmed`: Search scientific literature for relevant papers
-- `update_knowledge_graph`: Record a confirmed finding
+- `update_knowledge_state`: Record a confirmed finding
 
 **Your Approach:**
 
@@ -93,7 +93,7 @@ def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str,
     Build the discovery iteration prompt.
 
     Args:
-        knowledge_graph_summary: Formatted KG summary from KnowledgeGraph.get_summary()
+        knowledge_graph_summary: Formatted KS summary from KnowledgeState.get_summary()
         data_summary: Dict with data info (files, samples, features, groups)
         iteration: Current iteration number
         max_iterations: Maximum iterations allowed
@@ -183,7 +183,11 @@ def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str,
     prompt_parts.extend([
         "---",
         "",
-        "Proceed with your chosen action. Think carefully about what will provide the most insight."
+        "Proceed with your chosen action. Think carefully about what will provide the most insight.",
+        "",
+        "**Before ending this iteration:** Call `save_iteration_summary` as your FINAL action",
+        "to record what you accomplished. The summary should reflect what you actually did,",
+        "not what you plan to do next."
     ])
 
     return "\n".join(prompt_parts)

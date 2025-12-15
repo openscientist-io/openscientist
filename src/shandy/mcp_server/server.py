@@ -4,7 +4,7 @@ MCP server implementation for SHANDY tools using FastMCP.
 Provides tools for autonomous discovery:
 - execute_code: Run Python analysis on data
 - search_pubmed: Search scientific literature
-- update_knowledge_graph: Record findings
+- update_knowledge_state: Record findings
 - run_phenix_tool: Execute Phenix structural biology tools (if available)
 - compare_structures: Compare experimental and predicted structures
 - parse_alphafold_confidence: Extract AlphaFold confidence metrics
@@ -22,7 +22,7 @@ from mcp.server.fastmcp import FastMCP
 # Import tool implementations
 from ..code_executor import execute_code as exec_code, format_execution_result
 from ..file_loader import load_data_file, get_file_info, FileTooBigError
-from ..knowledge_graph import KnowledgeGraph
+from ..knowledge_state import KnowledgeState
 from ..literature import search_pubmed as search_pm
 from ..phenix_setup import check_phenix_available
 
@@ -33,7 +33,7 @@ DATA_LOAD_ERROR: Optional[str] = None  # Error message if data failed to load
 DATA_FILE_PATH: Optional[Path] = None  # Path to primary data file (for lazy loading)
 DATA_LOADED: bool = False  # Track whether we've attempted to load data
 JOB_DIR: Path = None
-KG: KnowledgeGraph = None
+KS: KnowledgeState = None
 
 # Create FastMCP server
 mcp = FastMCP("shandy-tools")
@@ -110,7 +110,7 @@ def execute_code(code: str, description: str = "") -> str:
     Returns:
         Formatted execution result with output, plots, and any errors
     """
-    global DATA, DATA_FILES, JOB_DIR, KG
+    global DATA, DATA_FILES, JOB_DIR, KS
 
     # Lazy load data on first execute_code call
     load_error = ensure_data_loaded()
@@ -118,18 +118,18 @@ def execute_code(code: str, description: str = "") -> str:
         return f"❌ ERROR: Cannot execute code - data file failed to load.\n\n{load_error}"
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
-    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+    KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
 
-    # Create plots directory
-    plots_dir = JOB_DIR / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
+    # Create provenance directory for plots and artifacts
+    provenance_dir = JOB_DIR / "provenance"
+    provenance_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute code (DATA may be None for non-tabular files)
-    result = exec_code(code, DATA, plots_dir, timeout=60, description=description,
-                      iteration=KG.data["iteration"], data_files=DATA_FILES)
+    result = exec_code(code, DATA, provenance_dir, timeout=60, description=description,
+                      iteration=KS.data["iteration"], data_files=DATA_FILES)
 
     # Log to knowledge graph (code is stored in plot metadata files, not here)
-    KG.log_analysis(
+    KS.log_analysis(
         action="execute_code",
         description=description,
         output=result.get("output", ""),
@@ -137,43 +137,44 @@ def execute_code(code: str, description: str = "") -> str:
         execution_time=result["execution_time"],
         plots=result.get("plots", []),
     )
-    KG.save(JOB_DIR / "knowledge_graph.json")
+    KS.save(JOB_DIR / "knowledge_state.json")
 
     # Format result for Claude
     return format_execution_result(result)
 
 
 @mcp.tool()
-def search_pubmed(query: str, max_results: int = 10) -> str:
+def search_pubmed(query: str, max_results: int = 10, description: str = "") -> str:
     """
     Search PubMed for scientific papers.
 
     Args:
         query: Search query (e.g., 'hypothermia neuroprotection metabolomics')
         max_results: Maximum number of results to return (default: 10)
+        description: Why you're searching (e.g., "Looking for prior work on carnosine and oxidative stress")
 
     Returns:
         Formatted list of papers with titles, abstracts, and PMIDs
     """
-    global JOB_DIR, KG
+    global JOB_DIR, KS
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
-    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+    KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
 
     # Search PubMed
     papers = search_pm(query, max_results=max_results)
 
     # Log to knowledge graph
     for paper in papers:
-        KG.add_literature(
+        KS.add_literature(
             pmid=paper["pmid"],
             title=paper["title"],
             abstract=paper["abstract"],
             search_query=query,
         )
 
-    KG.log_analysis(action="search_pubmed", query=query, results_count=len(papers))
-    KG.save(JOB_DIR / "knowledge_graph.json")
+    KS.log_analysis(action="search_pubmed", query=query, results_count=len(papers), description=description)
+    KS.save(JOB_DIR / "knowledge_state.json")
 
     # Format results
     if not papers:
@@ -190,7 +191,7 @@ def search_pubmed(query: str, max_results: int = 10) -> str:
 
 
 @mcp.tool()
-def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") -> str:
+def update_knowledge_state(title: str, evidence: str, interpretation: str = "", description: str = "") -> str:
     """
     Record a confirmed finding to the knowledge graph.
 
@@ -198,38 +199,41 @@ def update_knowledge_graph(title: str, evidence: str, interpretation: str = "") 
         title: Finding title (concise description)
         evidence: Statistical evidence (p-values, effect sizes, etc.)
         interpretation: Biological/mechanistic interpretation (optional)
+        description: Why you're recording this finding (e.g., "This correlation confirms our hypothesis")
 
     Returns:
         Confirmation message with finding ID
     """
-    global JOB_DIR, KG
+    global JOB_DIR, KS
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
-    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+    KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
 
     # Add finding
-    finding_id = KG.add_finding(title=title, evidence=evidence)
+    finding_id = KS.add_finding(title=title, evidence=evidence)
 
     # Update interpretation if provided
     if interpretation:
-        for finding in KG.data["findings"]:
+        for finding in KS.data["findings"]:
             if finding["id"] == finding_id:
                 finding["biological_interpretation"] = interpretation
 
-    KG.save(JOB_DIR / "knowledge_graph.json")
+    # Log the action
+    KS.log_analysis(action="update_knowledge_state", finding_id=finding_id, title=title, description=description)
+    KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Finding recorded as {finding_id}: {title}"
 
 
 @mcp.tool()
-def save_iteration_summary(summary: str) -> str:
+def save_iteration_summary(summary: str, strapline: str = "") -> str:
     """
     Save a plain-language summary of what was accomplished this iteration.
 
-    Call this at the end of each iteration with a 1-2 sentence summary
-    of what you investigated and learned. This helps users understand
-    your investigation progress, and what you accomplished during this
-    iteration.
+    IMPORTANT: Call this as your FINAL action before the iteration ends.
+    Do NOT call this until you have completed all investigation work for
+    this iteration. The summary should reflect what you actually did and
+    discovered, not what you plan to do.
 
     Args:
         summary: Plain-language summary (1-2 sentences) of what you investigated
@@ -241,21 +245,27 @@ def save_iteration_summary(summary: str) -> str:
                  stress response genes in treated samples."
 
                  Bad example: "Iteration 3: Analyzed correlation..." (don't do this)
+                 Bad example: "Planning to investigate X..." (summarize what you DID, not what you plan)
+
+        strapline: Short, punchy title summarizing this iteration (5-10 words).
+                   Should reflect what was accomplished.
+                   Example: "Found stress gene upregulation in treatment"
+                   Example: "Ruled out oxidative stress hypothesis"
 
     Returns:
         Confirmation message
     """
-    global JOB_DIR, KG
+    global JOB_DIR, KS
 
     # Reload knowledge graph to get latest state
-    KG = KnowledgeGraph.load(JOB_DIR / "knowledge_graph.json")
+    KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
 
     # Get current iteration
-    current_iteration = KG.data["iteration"]
+    current_iteration = KS.data["iteration"]
 
-    # Save the summary
-    KG.add_iteration_summary(current_iteration, summary)
-    KG.save(JOB_DIR / "knowledge_graph.json")
+    # Save the summary with strapline
+    KS.add_iteration_summary(current_iteration, summary, strapline=strapline)
+    KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Summary saved for iteration {current_iteration}"
 
@@ -271,7 +281,7 @@ def main():
     args = parser.parse_args()
 
     # Initialize global state
-    global DATA_FILES, DATA_FILE_PATH, JOB_DIR, KG
+    global DATA_FILES, DATA_FILE_PATH, JOB_DIR, KS
 
     JOB_DIR = Path(args.job_dir)
 
@@ -311,16 +321,16 @@ def main():
     print(f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}", file=sys.stderr)
 
     # Load or create knowledge graph
-    kg_path = JOB_DIR / "knowledge_graph.json"
-    if kg_path.exists():
-        KG = KnowledgeGraph.load(kg_path)
+    ks_path = JOB_DIR / "knowledge_state.json"
+    if ks_path.exists():
+        KS = KnowledgeState.load(ks_path)
     else:
-        raise FileNotFoundError(f"Knowledge graph not found at {kg_path}")
+        raise FileNotFoundError(f"Knowledge graph not found at {ks_path}")
 
     # Register Phenix tools if available
     if check_phenix_available():
         from . import phenix_tools
-        phenix_tools.register_phenix_tools(mcp, JOB_DIR, KG)
+        phenix_tools.register_phenix_tools(mcp, JOB_DIR, KS)
         print("✅ Phenix tools registered", file=sys.stderr)
     else:
         print("⚠️  Phenix tools not available (PHENIX_PATH not set)", file=sys.stderr)
