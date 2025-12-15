@@ -183,7 +183,11 @@ def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str,
     prompt_parts.extend([
         "---",
         "",
-        "Proceed with your chosen action. Think carefully about what will provide the most insight."
+        "Proceed with your chosen action. Think carefully about what will provide the most insight.",
+        "",
+        "**Before ending this iteration:** Call `save_iteration_summary` as your FINAL action",
+        "to record what you accomplished. The summary should reflect what you actually did,",
+        "not what you plan to do next."
     ])
 
     return "\n".join(prompt_parts)

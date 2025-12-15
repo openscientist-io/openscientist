@@ -230,10 +230,10 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
     """
     Save a plain-language summary of what was accomplished this iteration.
 
-    Call this at the end of each iteration with a 1-2 sentence summary
-    of what you investigated and learned. This helps users understand
-    your investigation progress, and what you accomplished during this
-    iteration.
+    IMPORTANT: Call this as your FINAL action before the iteration ends.
+    Do NOT call this until you have completed all investigation work for
+    this iteration. The summary should reflect what you actually did and
+    discovered, not what you plan to do.
 
     Args:
         summary: Plain-language summary (1-2 sentences) of what you investigated
@@ -245,10 +245,12 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
                  stress response genes in treated samples."
 
                  Bad example: "Iteration 3: Analyzed correlation..." (don't do this)
+                 Bad example: "Planning to investigate X..." (summarize what you DID, not what you plan)
 
-        strapline: Short, punchy title for this iteration (5-10 words).
-                   Example: "Investigating APOE4 metabolite correlations"
-                   Example: "Synthesizing findings into final report"
+        strapline: Short, punchy title summarizing this iteration (5-10 words).
+                   Should reflect what was accomplished.
+                   Example: "Found stress gene upregulation in treatment"
+                   Example: "Ruled out oxidative stress hypothesis"
 
     Returns:
         Confirmation message
