@@ -604,9 +604,9 @@ def job_detail_page(job_id: str):
                                         if finding_count:
                                             ui.badge(f"{finding_count} findings", color="green")
 
-                                # Show full summary if available (collapsed by default)
+                                # Show full summary if available (open by default)
                                 if summary_text:
-                                    with ui.expansion("Summary", icon="summarize").classes("w-full mt-2"):
+                                    with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
                                         ui.label(summary_text).classes("text-sm text-gray-700")
 
                                 # Show findings recorded (right after summary for visibility)
