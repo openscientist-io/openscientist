@@ -6,7 +6,7 @@
 
 ## Overview
 
-Create a separate repository (`shandy-openskills`) for community-contributed domain skills that can be shared across SHANDY and other AI tools using Claude Code's native skill discovery.
+Create a separate repository (`open-science-skills`) for community-contributed domain skills that can be shared across SHANDY and other AI tools using Claude Code's native skill discovery.
 
 ## Goals
 
@@ -17,13 +17,13 @@ Create a separate repository (`shandy-openskills`) for community-contributed dom
 
 ## Design
 
-### Repository: `shandy-openskills`
+### Repository: `open-science-skills`
 
 A separate Git repository containing domain-specific skills for scientific discovery.
 
 **Structure:**
 ```
-shandy-openskills/
+open-science-skills/
 ├── metabolomics/
 │   └── SKILL.md
 ├── genomics/
