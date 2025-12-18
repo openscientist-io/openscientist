@@ -95,7 +95,7 @@ shandy/.claude/skills/
 │   └── stopping-criteria/
 ```
 
-These are not part of `shandy-openskills`.
+These are not part of `open-science-skills`.
 
 ### Contribution Model
 
