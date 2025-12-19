@@ -323,7 +323,7 @@ npm install -g @anthropic-ai/claude-code@<version>
 
 ## Documentation
 
-- [Design Document](notes/design-autonomous-loop.md)
+- [Design Document](docs/DESIGN.md)
 - [Skills Documentation](.claude/skills/)
 
 ## Author
