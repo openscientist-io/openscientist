@@ -15,25 +15,24 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 ## Features
 
 ### Core Capabilities
-- **Autonomous Discovery**: Runs iterative hypothesis-testing loop using Claude Code CLI headless mode
-- **Domain-Agnostic**: Works with metabolomics, genomics, transcriptomics, and other scientific data
+- **Autonomous Discovery**: Runs iterative hypothesis-testing loop using an agentic coding assistant
+- **Domain-Agnostic**: Works with genomics, transcriptomics, proteomics, metabolomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
-- **Multi-Provider Support**: Works with CBORG, Google Vertex AI, or AWS Bedrock for model access
+- **Multi-Provider Support**: Works with Google Vertex AI, CBORG, or AWS Bedrock for model access
 - **Cost Tracking**: Project-level budget monitoring with provider-specific cost APIs
 - **Sandboxed Execution**: Safe Python code execution for data analysis
 
 ### Skills System
 - **Workflow Skills**: Hypothesis generation, result interpretation, prioritization, stopping criteria
-- **Domain Skills**: Metabolomics, genomics/transcriptomics, data science/statistics
-- **Toggleable**: Users can enable/disable skills per job
+- **Domain Skills**: Metabolomics, genomics/transcriptomics, structural biology, data science/statistics
 
 ### Architecture
-- **MCP Tools**: Provides tools to Claude via Model Context Protocol
+- **MCP Tools**: Provides tools via Model Context Protocol
   - `execute_code`: Run Python analysis
   - `search_pubmed`: Search literature
-  - `update_knowledge_graph`: Record findings
+  - `update_knowledge_state`: Record findings
   - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
-- **Knowledge Graph**: JSON-based state tracking for hypotheses, findings, literature
+- **Knowledge State**: JSON-based state tracking for findings and literature
 - **Job Manager**: Multi-job support with queueing and lifecycle management
 - **Web Interface**: NiceGUI-based UI for job submission and monitoring
 
@@ -66,11 +65,13 @@ SHANDY supports **Phenix integration** for protein structure analysis:
 git clone <repository-url>
 cd shandy
 
-# Create .env file with your CBORG API token
-echo "ANTHROPIC_AUTH_TOKEN=your-token-here" > .env
+# Create .env file (copy from example and configure)
+cp .env.example .env
+# Edit .env with your provider credentials
 
-# Start with Docker Compose
-docker-compose up -d
+# Build and start
+make build
+make start
 ```
 
 #### Option 2: Local Development
@@ -80,10 +81,10 @@ docker-compose up -d
 uv pip install -e .
 
 # Install Claude Code CLI (if not already installed)
-# See https://docs.claude.com/en/docs/claude-code
+# See https://docs.anthropic.com/en/docs/claude-code
 
 # Run the web app
-python -m shandy.web_app
+make start
 ```
 
 ### Access the UI
@@ -106,7 +107,7 @@ shandy/
 │   ├── orchestrator.py    # Discovery loop orchestrator
 │   ├── job_manager.py     # Job lifecycle management
 │   ├── web_app.py         # NiceGUI web interface
-│   ├── knowledge_graph.py # JSON-based state storage
+│   ├── knowledge_state.py # JSON-based state storage
 │   ├── code_executor.py   # Sandboxed Python execution
 │   ├── literature.py      # PubMed search
 │   ├── providers/         # Model provider integrations
@@ -211,29 +212,31 @@ In `src/shandy/web_app.py`:
 # Install dependencies
 uv pip install -e .
 
-# Run web app with hot reload
-python -m shandy.web_app
+# Start the web app
+make start
 
-# Run job manager CLI
-python -m shandy.job_manager list
-python -m shandy.job_manager get <job_id>
-python -m shandy.job_manager cleanup --days 7
+# View logs
+make logs
 
-# Run orchestrator directly
-python -m shandy.orchestrator --job-dir jobs/job_xxx
+# Run tests
+make test
 ```
 
 ### Docker Development
 
 ```bash
-# Use development compose file (mounts source for hot reload)
-docker-compose -f docker-compose.dev.yml up
+# Build and start
+make build
+make start
 
 # View logs
-docker-compose logs -f
+make logs
 
-# Execute commands in container
-docker-compose exec shandy python -m shandy.job_manager list
+# Open shell in container
+make shell
+
+# Rebuild after code changes
+make rebuild
 ```
 
 ## Deployment
