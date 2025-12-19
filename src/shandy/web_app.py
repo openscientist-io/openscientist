@@ -551,27 +551,12 @@ def job_detail_page(job_id: str):
                                 strapline = iter_summary.get("strapline", "")
                                 summary_text = iter_summary.get("summary", "")
 
-                            # Load transcript for this iteration (if exists)
+                            # Get counts from analysis_log (lightweight, already loaded)
+                            # Transcript is loaded lazily when expansion is opened
                             provenance_dir = job_dir / "provenance"
-                            transcript_path = provenance_dir / f"iter{iteration}_transcript.json"
-                            transcript_actions = []
-                            if transcript_path.exists():
-                                try:
-                                    with open(transcript_path) as tf:
-                                        transcript = json.load(tf)
-                                    transcript_actions = parse_transcript_actions(transcript)
-                                except Exception as e:
-                                    logger.warning(f"Failed to load transcript for iter {iteration}: {e}")
-
-                            # Count actions for this iteration (prefer transcript, fallback to analysis_log)
-                            if transcript_actions:
-                                code_count = len([a for a in transcript_actions if "execute_code" in a["tool_name"]])
-                                search_count = len([a for a in transcript_actions if "search_pubmed" in a["tool_name"]])
-                                finding_count = len([a for a in transcript_actions if "update_knowledge_state" in a["tool_name"]])
-                            else:
-                                code_count = len([e for e in entries if e["action"] == "execute_code"])
-                                search_count = len([e for e in entries if e["action"] == "search_pubmed"])
-                                finding_count = len([e for e in entries if e["action"] == "update_knowledge_state"])
+                            code_count = len([e for e in entries if e["action"] == "execute_code"])
+                            search_count = len([e for e in entries if e["action"] == "search_pubmed"])
+                            finding_count = len([e for e in entries if e["action"] == "update_knowledge_state"])
 
                             # Determine color based on outcome
                             border_class = "border-l-4 border-gray-300"
@@ -604,144 +589,172 @@ def job_detail_page(job_id: str):
                                         if finding_count:
                                             ui.badge(f"{finding_count} findings", color="green")
 
-                                # Show full summary if available (open by default)
-                                if summary_text:
-                                    with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
-                                        ui.label(summary_text).classes("text-sm text-gray-700")
+                                # Container for lazy-loaded content
+                                content_container = ui.column().classes("w-full")
+                                content_loaded = {"value": False}  # Track if content has been loaded
 
-                                # Show findings recorded (right after summary for visibility)
-                                iteration_findings = [
-                                    f for f in ks_data.get("findings", [])
-                                    if f.get("iteration_discovered") == iteration
-                                ]
-                                if iteration_findings:
-                                    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full mt-2"):
-                                        for finding in iteration_findings:
-                                            with ui.card().classes("w-full mb-2 bg-green-50"):
-                                                ui.label(finding['title']).classes("font-bold text-green-800")
-                                                ui.label(finding["evidence"]).classes("text-sm text-gray-700")
-                                                interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
-                                                if interpretation:
-                                                    ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
+                                def load_iteration_content(
+                                    container,
+                                    loaded_flag,
+                                    iter_num=iteration,
+                                    iter_summary_text=summary_text,
+                                    iter_entries=entries,
+                                    iter_ks_data=ks_data,
+                                    iter_job_dir=job_dir,
+                                    iter_provenance_dir=provenance_dir
+                                ):
+                                    """Lazy load iteration content when expansion is opened."""
+                                    if loaded_flag["value"]:
+                                        return  # Already loaded
+                                    loaded_flag["value"] = True
+                                    container.clear()
 
-                                # Show actions from transcript (if available)
-                                if transcript_actions:
-                                    with ui.expansion(f"Actions ({len(transcript_actions)})", icon="build").classes("w-full mt-2"):
-                                        for action in transcript_actions:
-                                            success = action.get("success", True)
-                                            status_icon = "✅" if success else "❌"
-                                            desc = action.get("description", action.get("short_name", "Unknown"))
-                                            tool_name = action.get("short_name", "")
+                                    with container:
+                                        # Show full summary if available
+                                        if iter_summary_text:
+                                            with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
+                                                ui.label(iter_summary_text).classes("text-sm text-gray-700")
 
-                                            # Color card based on tool type
-                                            if "execute_code" in action.get("tool_name", ""):
-                                                card_class = "w-full mb-2 border-l-4 border-blue-300"
-                                            elif "search_pubmed" in action.get("tool_name", ""):
-                                                card_class = "w-full mb-2 border-l-4 border-purple-300"
-                                            elif "update_knowledge_state" in action.get("tool_name", ""):
-                                                card_class = "w-full mb-2 border-l-4 border-green-300"
-                                            else:
-                                                card_class = "w-full mb-2 border-l-4 border-gray-300"
+                                        # Show findings recorded
+                                        iteration_findings = [
+                                            f for f in iter_ks_data.get("findings", [])
+                                            if f.get("iteration_discovered") == iter_num
+                                        ]
+                                        if iteration_findings:
+                                            with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full mt-2"):
+                                                for finding in iteration_findings:
+                                                    with ui.card().classes("w-full mb-2 bg-green-50"):
+                                                        ui.label(finding['title']).classes("font-bold text-green-800")
+                                                        ui.label(finding["evidence"]).classes("text-sm text-gray-700")
+                                                        interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                                        if interpretation:
+                                                            ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
 
-                                            with ui.card().classes(card_class):
-                                                # Action header with description
-                                                with ui.row().classes("items-center gap-2"):
-                                                    ui.label(f"{status_icon} {desc}").classes("font-medium text-sm")
-                                                    ui.badge(tool_name, color="gray").props("outline").classes("text-xs")
+                                        # Load transcript lazily (this is the heavy part)
+                                        transcript_path = iter_provenance_dir / f"iter{iter_num}_transcript.json"
+                                        transcript_actions = []
+                                        if transcript_path.exists():
+                                            try:
+                                                with open(transcript_path) as tf:
+                                                    transcript = json.load(tf)
+                                                transcript_actions = parse_transcript_actions(transcript)
+                                            except Exception as e:
+                                                logger.warning(f"Failed to load transcript for iter {iter_num}: {e}")
 
-                                                # Show code for execute_code actions
-                                                inp = action.get("input", {})
-                                                if "execute_code" in action.get("tool_name", "") and inp.get("code"):
-                                                    with ui.expansion("Code", icon="code").classes("w-full mt-1"):
-                                                        ui.code(inp["code"], language="python").classes("text-xs")
+                                        # Show actions from transcript
+                                        if transcript_actions:
+                                            with ui.expansion(f"Actions ({len(transcript_actions)})", icon="build").classes("w-full mt-2"):
+                                                for action in transcript_actions:
+                                                    success = action.get("success", True)
+                                                    status_icon = "✅" if success else "❌"
+                                                    desc = action.get("description", action.get("short_name", "Unknown"))
+                                                    tool_name = action.get("short_name", "")
 
-                                                # Show query for search actions
-                                                if "search_pubmed" in action.get("tool_name", "") and inp.get("query"):
-                                                    ui.label(f"Query: \"{inp['query']}\"").classes("text-xs text-gray-600 mt-1")
+                                                    if "execute_code" in action.get("tool_name", ""):
+                                                        card_class = "w-full mb-2 border-l-4 border-blue-300"
+                                                    elif "search_pubmed" in action.get("tool_name", ""):
+                                                        card_class = "w-full mb-2 border-l-4 border-purple-300"
+                                                    elif "update_knowledge_state" in action.get("tool_name", ""):
+                                                        card_class = "w-full mb-2 border-l-4 border-green-300"
+                                                    else:
+                                                        card_class = "w-full mb-2 border-l-4 border-gray-300"
 
-                                                # Show result (truncated)
-                                                result_text = action.get("result", "")
-                                                if result_text and len(str(result_text)) > 0:
-                                                    result_str = str(result_text)
-                                                    if len(result_str) > 200:
-                                                        with ui.expansion("Result", icon="output").classes("w-full mt-1"):
-                                                            ui.code(result_str[:2000] + ("..." if len(result_str) > 2000 else ""), language="text").classes("text-xs")
-                                                    elif not success:
-                                                        ui.label(result_str).classes("text-xs text-red-600 mt-1")
+                                                    with ui.card().classes(card_class):
+                                                        with ui.row().classes("items-center gap-2"):
+                                                            ui.label(f"{status_icon} {desc}").classes("font-medium text-sm")
+                                                            ui.badge(tool_name, color="gray").props("outline").classes("text-xs")
 
-                                # Show plots from this iteration
-                                provenance_dir = job_dir / "provenance"
-                                if provenance_dir.exists():
-                                    iteration_plots = []
-                                    for plot_file in sorted(provenance_dir.glob("*.png")):
-                                        metadata_file = plot_file.with_suffix('.json')
-                                        if metadata_file.exists():
-                                            with open(metadata_file) as mf:
-                                                metadata = json.load(mf)
-                                            if metadata.get("iteration") == iteration:
-                                                iteration_plots.append((plot_file, metadata))
+                                                        inp = action.get("input", {})
+                                                        if "execute_code" in action.get("tool_name", "") and inp.get("code"):
+                                                            with ui.expansion("Code", icon="code").classes("w-full mt-1"):
+                                                                ui.code(inp["code"], language="python").classes("text-xs")
 
-                                    if iteration_plots:
-                                        with ui.expansion(f"Visualizations ({len(iteration_plots)})", icon="insert_chart").classes("w-full mt-2"):
-                                            with ui.grid(columns=2).classes("w-full gap-2"):
-                                                for plot_file, metadata in iteration_plots:
-                                                    plot_title = plot_file.stem.replace('_', ' ').title()
-                                                    description = metadata.get('description', '')
+                                                        if "search_pubmed" in action.get("tool_name", "") and inp.get("query"):
+                                                            ui.label(f"Query: \"{inp['query']}\"").classes("text-xs text-gray-600 mt-1")
 
-                                                    with ui.card().classes("p-2"):
-                                                        ui.label(plot_title).classes("text-sm font-bold")
-                                                        if description:
-                                                            ui.label(description).classes("text-xs text-blue-700 italic")
-                                                        plot_url = f"/{plot_file}"
-                                                        ui.image(plot_url).classes("w-full")
+                                                        result_text = action.get("result", "")
+                                                        if result_text and len(str(result_text)) > 0:
+                                                            result_str = str(result_text)
+                                                            if len(result_str) > 200:
+                                                                with ui.expansion("Result", icon="output").classes("w-full mt-1"):
+                                                                    ui.code(result_str[:2000] + ("..." if len(result_str) > 2000 else ""), language="text").classes("text-xs")
+                                                            elif not success:
+                                                                ui.label(result_str).classes("text-xs text-red-600 mt-1")
 
-                                                        # Download button and code expansion (stacked vertically)
-                                                        ui.button(
-                                                            "Download",
-                                                            on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
-                                                            icon="download"
-                                                        ).props("size=sm flat dense").classes("mt-2")
+                                        # Show plots from this iteration
+                                        if iter_provenance_dir.exists():
+                                            iteration_plots = []
+                                            for plot_file in sorted(iter_provenance_dir.glob("*.png")):
+                                                metadata_file = plot_file.with_suffix('.json')
+                                                if metadata_file.exists():
+                                                    with open(metadata_file) as mf:
+                                                        metadata = json.load(mf)
+                                                    if metadata.get("iteration") == iter_num:
+                                                        iteration_plots.append((plot_file, metadata))
 
-                                                        # Show code that generated this plot (progressive disclosure)
-                                                        plot_code = metadata.get('code')
-                                                        if plot_code:
-                                                            with ui.expansion("View code", icon="code").classes("w-full mt-1"):
-                                                                ui.code(plot_code, language="python").classes("text-xs")
+                                            if iteration_plots:
+                                                with ui.expansion(f"Visualizations ({len(iteration_plots)})", icon="insert_chart").classes("w-full mt-2"):
+                                                    with ui.grid(columns=2).classes("w-full gap-2"):
+                                                        for plot_file, metadata in iteration_plots:
+                                                            plot_title = plot_file.stem.replace('_', ' ').title()
+                                                            description = metadata.get('description', '')
 
-                                # Show literature searched (progressively disclosed)
-                                literature_entries = [e for e in entries if e["action"] == "search_pubmed"]
-                                if literature_entries:
-                                    # Count total papers for this iteration
-                                    total_papers = sum(e.get("results_count", 0) for e in literature_entries)
-                                    with ui.expansion(f"Literature searched ({total_papers} papers)", icon="article").classes("w-full mt-2"):
-                                        for entry in literature_entries:
-                                            query = entry.get("query", "")
+                                                            with ui.card().classes("p-2"):
+                                                                ui.label(plot_title).classes("text-sm font-bold")
+                                                                if description:
+                                                                    ui.label(description).classes("text-xs text-blue-700 italic")
+                                                                plot_url = f"/{plot_file}"
+                                                                ui.image(plot_url).classes("w-full")
 
-                                            # Find papers from this iteration matching this query
-                                            matching_papers = [
-                                                lit for lit in ks_data.get("literature", [])
-                                                if lit.get("search_query") == query
-                                                and lit.get("retrieved_at_iteration") == iteration
-                                            ]
+                                                                ui.button(
+                                                                    "Download",
+                                                                    on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                                                                    icon="download"
+                                                                ).props("size=sm flat dense").classes("mt-2")
 
-                                            if matching_papers:
-                                                with ui.expansion(f'"{query}" ({len(matching_papers)} papers)').classes("w-full"):
-                                                    for paper in matching_papers:
-                                                        with ui.card().classes("w-full mb-1 p-2"):
-                                                            ui.label(paper.get("title", "Untitled")).classes("text-sm font-bold")
-                                                            pmid = paper.get("pmid", "")
-                                                            if pmid:
-                                                                ui.link(
-                                                                    f"PMID: {pmid}",
-                                                                    f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                                                                    new_tab=True
-                                                                ).classes("text-xs text-blue-600")
-                                                            abstract = paper.get("abstract", "")
-                                                            if abstract:
-                                                                ui.label(abstract[:200] + "..." if len(abstract) > 200 else abstract).classes("text-xs text-gray-600 mt-1")
-                                            else:
-                                                # Show query with 0 results indicator (no expansion needed)
-                                                ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
+                                                                plot_code = metadata.get('code')
+                                                                if plot_code:
+                                                                    with ui.expansion("View code", icon="code").classes("w-full mt-1"):
+                                                                        ui.code(plot_code, language="python").classes("text-xs")
+
+                                        # Show literature searched
+                                        literature_entries = [e for e in iter_entries if e["action"] == "search_pubmed"]
+                                        if literature_entries:
+                                            total_papers = sum(e.get("results_count", 0) for e in literature_entries)
+                                            with ui.expansion(f"Literature searched ({total_papers} papers)", icon="article").classes("w-full mt-2"):
+                                                for entry in literature_entries:
+                                                    query = entry.get("query", "")
+                                                    matching_papers = [
+                                                        lit for lit in iter_ks_data.get("literature", [])
+                                                        if lit.get("search_query") == query
+                                                        and lit.get("retrieved_at_iteration") == iter_num
+                                                    ]
+                                                    if matching_papers:
+                                                        with ui.expansion(f'"{query}" ({len(matching_papers)} papers)').classes("w-full"):
+                                                            for paper in matching_papers:
+                                                                with ui.card().classes("w-full mb-1 p-2"):
+                                                                    ui.label(paper.get("title", "Untitled")).classes("text-sm font-bold")
+                                                                    pmid = paper.get("pmid", "")
+                                                                    if pmid:
+                                                                        ui.link(
+                                                                            f"PMID: {pmid}",
+                                                                            f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                                                                            new_tab=True
+                                                                        ).classes("text-xs text-blue-600")
+                                                                    abstract = paper.get("abstract", "")
+                                                                    if abstract:
+                                                                        ui.label(abstract[:200] + "..." if len(abstract) > 200 else abstract).classes("text-xs text-gray-600 mt-1")
+                                                    else:
+                                                        ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
+
+                                # Show loading placeholder initially
+                                with content_container:
+                                    ui.label("Click to load details...").classes("text-sm text-gray-400 italic")
+
+                                # Trigger lazy load when expansion is opened
+                                expansion.on_value_change(
+                                    lambda e, cc=content_container, lf=content_loaded: load_iteration_content(cc, lf) if e.value else None
+                                )
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
 
