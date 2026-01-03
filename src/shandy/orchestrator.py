@@ -387,6 +387,7 @@ Start your investigation by using these tools to analyze the data.
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
             '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
             '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
+            '--allowedTools', 'mcp__shandy-tools__read_document',
             '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
             '--allowedTools', 'mcp__shandy-tools__compare_structures',
             '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -507,6 +508,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
                     '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
+                    '--allowedTools', 'mcp__shandy-tools__read_document',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
                     '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -524,6 +526,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
                     '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
+                    '--allowedTools', 'mcp__shandy-tools__read_document',
                     '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
                     '--allowedTools', 'mcp__shandy-tools__compare_structures',
                     '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
@@ -629,6 +632,9 @@ Format as professional scientific markdown."""
         logger.info(f"Report prompt length: {len(report_prompt)} characters")
         result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
 
+        report_generated = False
+        report_error = None
+
         if result.returncode == 0:
             report_content = result.stdout
             # Save Markdown report
@@ -636,6 +642,7 @@ Format as professional scientific markdown."""
             with open(markdown_path, "w") as f:
                 f.write(report_content)
             logger.info("Final report (Markdown) generated")
+            report_generated = True
 
             # Generate PDF version
             try:
@@ -645,15 +652,21 @@ Format as professional scientific markdown."""
             except Exception as e:
                 logger.warning(f"PDF generation failed (Markdown still available): {e}")
         else:
+            report_error = result.stdout[:1000] if result.stdout else result.stderr[:1000] if result.stderr else "Unknown error"
             logger.error(f"Report generation failed (rc={result.returncode})")
             logger.error(f"  stderr: {result.stderr}")
             logger.error(f"  stdout: {result.stdout[:1000]}")
 
         # Load final knowledge graph
-        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
+        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
-        # Update job status
-        config["status"] = "completed"
+        # Update job status - mark as failed if report generation failed
+        if report_generated:
+            config["status"] = "completed"
+        else:
+            config["status"] = "failed"
+            config["error"] = f"Report generation failed: {report_error}"
+
         config["completed_at"] = datetime.now().isoformat()
         config["iterations_completed"] = ks.data["iteration"]
         config["findings_count"] = len(ks.data["findings"])
@@ -665,7 +678,7 @@ Format as professional scientific markdown."""
 
         return {
             "job_id": job_id,
-            "status": "completed",
+            "status": config["status"],
             "iterations": ks.data["iteration"],
             "findings": len(ks.data["findings"])
         }

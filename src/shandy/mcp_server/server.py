@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 # Import tool implementations
 from ..code_executor import execute_code as exec_code, format_execution_result
+from ..document_reader import read_document as read_doc, is_binary_document
 from ..file_loader import load_data_file, get_file_info, FileTooBigError
 from ..knowledge_state import KnowledgeState
 from ..literature import search_pubmed as search_pm
@@ -268,6 +269,58 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
     KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Summary saved for iteration {current_iteration}"
+
+
+@mcp.tool()
+def read_document(file_path: str) -> str:
+    """
+    Read and extract text from a document file (PDF, DOCX, XLSX).
+
+    Use this tool to read binary document formats that cannot be read directly
+    with Claude's Read tool. The Read tool returns garbled binary content for
+    PDFs and other binary formats, which corrupts your context.
+
+    IMPORTANT: Use this tool for:
+    - PDF files (.pdf)
+    - Word documents (.docx)
+    - Excel files (.xlsx) - for a text overview; use execute_code with pandas for data analysis
+
+    You can still use Claude's Read tool directly for text-based files:
+    - CSV, TSV, TXT, JSON, Markdown, etc.
+
+    Args:
+        file_path: Path to the document file (can be relative to job data directory)
+
+    Returns:
+        Extracted text content from the document
+    """
+    global JOB_DIR
+
+    path = Path(file_path)
+
+    # If path is not absolute, try to resolve relative to job data directory
+    if not path.is_absolute():
+        # Try job data directory first
+        job_data_path = JOB_DIR / "data" / path.name
+        if job_data_path.exists():
+            path = job_data_path
+        else:
+            # Try as-is (might be relative to cwd)
+            path = Path(file_path)
+
+    if not path.exists():
+        # List available files to help the user
+        data_dir = JOB_DIR / "data"
+        if data_dir.exists():
+            available = [f.name for f in data_dir.iterdir() if f.is_file()]
+            return (
+                f"Error: File not found: {file_path}\n\n"
+                f"Available files in data directory:\n"
+                + "\n".join(f"  - {name}" for name in available)
+            )
+        return f"Error: File not found: {file_path}"
+
+    return read_doc(path)
 
 
 def main():

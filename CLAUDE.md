@@ -33,6 +33,33 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - Save important discoveries to the knowledge graph
 - Include: title, evidence (statistics), plots, interpretation
 
+**read_document** - Read PDF, DOCX, and XLSX files
+- Extracts text from binary document formats
+- Use this for PDFs, Word documents, and Excel files
+- Returns clean text content suitable for analysis
+
+### Reading Data Files
+
+**IMPORTANT:** Use the correct tool for each file type:
+
+| File Type | Tool to Use |
+|-----------|-------------|
+| PDF (.pdf) | `read_document` MCP tool |
+| Word (.docx) | `read_document` MCP tool |
+| Excel (.xlsx) | `read_document` for overview, `execute_code` with pandas for data analysis |
+| CSV, TSV, TXT, JSON | Claude's built-in `Read` tool is fine |
+
+**WARNING:** Do NOT use Claude's `Read` tool on PDF, DOCX, or other binary files.
+The Read tool returns garbled binary content for these formats, which will corrupt
+your context and may cause "Prompt is too long" errors.
+
+For binary documents, you have two options:
+1. **`read_document` MCP tool** - Quick and simple, returns extracted text
+2. **`execute_code` with Python libraries** - For more control (e.g., extracting specific pages, tables, or images)
+   - PDFs: `import fitz` (PyMuPDF)
+   - Word: `from docx import Document`
+   - Excel: `import pandas as pd; pd.read_excel(...)`
+
 ### Skills Available
 
 You have access to structured workflow skills in `.claude/skills/`:

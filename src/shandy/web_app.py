@@ -898,7 +898,7 @@ def job_detail_page(job_id: str):
                     report_content = f.read()
                 ui.markdown(report_content).classes("w-full")
             else:
-                if job_info.status == JobStatus.COMPLETED:
+                if job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                     ui.label("Report generation failed").classes("text-red-500")
                 else:
                     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
