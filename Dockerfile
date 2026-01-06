@@ -1,6 +1,10 @@
 # Dockerfile for SHANDY
 FROM python:3.11-slim
 
+# Build args for version tracking
+ARG SHANDY_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
 # Install system dependencies including Node.js and fonts
 RUN apt-get update && apt-get install -y \
     curl \
@@ -51,6 +55,8 @@ ENV ANTHROPIC_AUTH_TOKEN=""
 ENV DISABLE_AUTH="false"
 ENV APP_PASSWORD_HASH=""
 ENV PHENIX_PATH="/opt/phenix-1.21.2-5419"
+ENV SHANDY_COMMIT=${SHANDY_COMMIT}
+ENV SHANDY_BUILD_TIME=${BUILD_TIME}
 
 # Run web app
 CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]

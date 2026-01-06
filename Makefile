@@ -41,11 +41,15 @@ restart: stop start
 
 build:
 	@echo "Building SHANDY Docker image (with cache)..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
+		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 build-no-cache:
 	@echo "Building SHANDY Docker image (without cache)..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build --no-cache
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build --no-cache \
+		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 rebuild: build
 	@echo "Restarting with new build..."

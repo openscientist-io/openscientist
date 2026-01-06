@@ -31,6 +31,75 @@ logger = logging.getLogger(__name__)
 FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
 
 
+def get_version_metadata() -> Dict[str, str]:
+    """
+    Get SHANDY version metadata for reproducibility.
+
+    Returns:
+        Dict with shandy_commit, shandy_build_time, and docker_container_id
+    """
+    metadata = {}
+
+    # Try environment variables first (set during Docker build)
+    shandy_commit = os.environ.get('SHANDY_COMMIT')
+    if shandy_commit and shandy_commit != 'unknown':
+        metadata['shandy_commit'] = shandy_commit[:12]
+
+    shandy_build_time = os.environ.get('SHANDY_BUILD_TIME')
+    if shandy_build_time and shandy_build_time != 'unknown':
+        metadata['shandy_build_time'] = shandy_build_time
+
+    # Fallback to git if not in Docker
+    if 'shandy_commit' not in metadata:
+        try:
+            result = subprocess.run(
+                ['git', 'rev-parse', 'HEAD'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                metadata['shandy_commit'] = result.stdout.strip()[:12]
+        except Exception:
+            pass
+
+    # Get docker container ID (if running in Docker)
+    try:
+        if Path('/.dockerenv').exists():
+            # Read hostname which is the container ID in Docker
+            with open('/etc/hostname', 'r') as f:
+                container_id = f.read().strip()
+                if container_id:
+                    metadata['docker_container_id'] = container_id[:12]
+    except Exception:
+        pass
+
+    return metadata
+
+
+def extract_claude_info_from_transcript(transcript: list) -> Dict[str, str]:
+    """
+    Extract Claude model and version info from stream-json transcript.
+
+    The init message contains model and claude_code_version fields.
+
+    Args:
+        transcript: List of parsed JSON objects from stream-json output
+
+    Returns:
+        Dict with claude_model and claude_code_version
+    """
+    info = {}
+
+    for msg in transcript:
+        if msg.get('type') == 'system' and msg.get('subtype') == 'init':
+            if 'model' in msg:
+                info['claude_model'] = msg['model']
+            if 'claude_code_version' in msg:
+                info['claude_code_version'] = msg['claude_code_version']
+            break
+
+    return info
+
+
 def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_TIMEOUT_SECONDS) -> Optional[str]:
     """
     Wait for scientist feedback or timeout (coinvestigate mode).
@@ -420,6 +489,16 @@ Start your investigation by using these tools to analyze the data.
         result_item = next((item for item in transcript if item.get('type') == 'result'), None)
         session_id = result_item.get('session_id') if result_item else None
         logger.info(f"Iteration 1 completed successfully (session: {session_id})")
+
+        # Extract and save version metadata for reproducibility
+        version_info = get_version_metadata()
+        claude_info = extract_claude_info_from_transcript(transcript)
+        version_info.update(claude_info)
+        if version_info:
+            ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+            ks.set_version_info(version_info)
+            ks.save(job_dir / "knowledge_state.json")
+            logger.info(f"Saved version info: {version_info}")
 
         # Save full transcript to provenance/ for scientific reproducibility
         # (base64 image data already stripped during parsing)

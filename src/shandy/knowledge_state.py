@@ -362,6 +362,16 @@ class KnowledgeState:
 
         return "\n".join(summary_parts)
 
+    def set_version_info(self, version_info: Dict[str, str]) -> None:
+        """
+        Set version/environment metadata in config.
+
+        Args:
+            version_info: Dict with keys like 'claude_model', 'claude_code_version',
+                         'shandy_commit', 'docker_image_id'
+        """
+        self.data["config"]["version_info"] = version_info
+
     def to_dict(self) -> Dict[str, Any]:
         """Return the raw data dictionary."""
         return self.data
