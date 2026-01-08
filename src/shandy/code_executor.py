@@ -116,6 +116,9 @@ def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
 
         # Domain-specific
         'networkx',      # Network/graph analysis (for pathways)
+
+        # Single-cell genomics
+        'scanpy', 'anndata', 'h5py',
     ]
 
     # Validate imports

@@ -16,7 +16,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 ### Tools Available via MCP
 
 **execute_code** - Run Python code to analyze data
-- Available libraries: pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx
+- Available libraries: pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx, scanpy, anndata, h5py
 - Data available as `data` variable (pandas DataFrame)
 - Plots are automatically saved with metadata
 - **IMPORTANT**: Use the `description` parameter to explain what you're investigating
@@ -70,6 +70,8 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 | Word (.docx) | `read_document` MCP tool |
 | Excel (.xlsx) | `read_document` for overview, `execute_code` with pandas for data analysis |
 | CSV, TSV, TXT, JSON | Claude's built-in `Read` tool is fine |
+| AnnData (.h5ad) | `execute_code` with scanpy: `import scanpy as sc; adata = sc.read_h5ad('path/to/file.h5ad')` |
+| HDF5 (.h5, .hdf5) | `execute_code` with h5py: `import h5py; f = h5py.File('path/to/file.h5', 'r')` |
 
 **WARNING:** Do NOT use Claude's `Read` tool on PDF, DOCX, or other binary files.
 The Read tool returns garbled binary content for these formats, which will corrupt
@@ -81,6 +83,8 @@ For binary documents, you have two options:
    - PDFs: `import fitz` (PyMuPDF)
    - Word: `from docx import Document`
    - Excel: `import pandas as pd; pd.read_excel(...)`
+   - AnnData/h5ad: `import scanpy as sc; adata = sc.read_h5ad(...)`
+   - HDF5: `import h5py; f = h5py.File(...)`
 
 ### Skills Available
 

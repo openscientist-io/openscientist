@@ -35,6 +35,11 @@ dependencies = [
     # Domain-specific
     "networkx>=3.0",
 
+    # Single-cell genomics
+    "scanpy>=1.10.0",
+    "anndata>=0.10.0",
+    "h5py>=3.10.0",
+
     # API clients
     "anthropic>=0.34.0",
     "requests>=2.31.0",
