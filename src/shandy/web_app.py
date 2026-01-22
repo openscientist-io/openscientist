@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from .job_manager import JobManager, JobStatus
 from .providers import get_provider
+from .file_loader import MAX_FILE_SIZE
 
 
 def get_action_description(tool_use: Dict[str, Any]) -> str:
@@ -282,6 +283,12 @@ def new_job_page():
             logger.error(f"Upload failed: {ex}", exc_info=True)
             ui.notify(f"Upload failed: {str(ex)}", type="negative")
 
+    def handle_rejected(e):
+        """Handle rejected file upload (e.g., file too large)."""
+        max_size_mb = MAX_FILE_SIZE / (1024 * 1024)
+        ui.notify(f"File rejected: exceeds {max_size_mb:.0f} MB limit", type="negative")
+        logger.warning(f"File upload rejected: {e}")
+
     # Page header
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY").classes("text-h4")
@@ -304,7 +311,9 @@ def new_job_page():
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
             multiple=True,
             auto_upload=True,
-            on_upload=handle_upload
+            on_upload=handle_upload,
+            on_rejected=handle_rejected,
+            max_file_size=MAX_FILE_SIZE,
         ).classes("w-full")
 
         # Configuration
