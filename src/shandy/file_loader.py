@@ -22,8 +22,8 @@ except (ImportError, OSError):
 logger = logging.getLogger(__name__)
 
 # File size limits (in bytes) - configurable via environment variable
-# Default: 500MB
-_default_max_file_size_mb = 500
+# Default: 1GB
+_default_max_file_size_mb = 1000
 _env_max_file_size = os.getenv("MAX_FILE_SIZE_MB")
 if _env_max_file_size:
     try:
