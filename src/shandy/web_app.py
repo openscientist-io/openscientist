@@ -343,7 +343,7 @@ def jobs_page():
 
     def refresh_jobs():
         """Refresh jobs table."""
-        jobs = job_manager.list_jobs(limit=50)
+        jobs = job_manager.list_jobs()
 
         # Update table
         table.rows = [
