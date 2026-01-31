@@ -100,6 +100,7 @@ You have access to structured workflow skills in `.claude/skills/`:
 - `metabolomics/*`: Metabolomics-specific analyses
 - `genomics/*`: Genomics-specific analyses
 - `data-science/*`: General scientific computing
+- `berkeley-data-lakehouse/*`: Query Berkeley Lab scientific data repositories (KBase, BERDL, JGI)
 
 ## Your Approach
 

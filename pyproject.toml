@@ -62,6 +62,9 @@ dependencies = [
     # PDF generation (lightweight, pure Python)
     "fpdf2>=2.7.0",
     "markdown>=3.5.0",
+
+    # Berkeley Lab Data Lakehouse
+    "linkml-store[dremio]>=0.2.0",
 ]
 
 [project.optional-dependencies]

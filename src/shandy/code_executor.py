@@ -113,6 +113,10 @@ def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
         # Standard library (safe modules)
         'math', 'statistics', 'collections', 'itertools',
         'functools', 'operator', 'datetime', 'time', 're', 'json',
+        'os',            # Environment variables (for API tokens)
+
+        # HTTP/API access
+        'requests',      # HTTP requests (for KBase, external APIs)
 
         # Domain-specific
         'networkx',      # Network/graph analysis (for pathways)

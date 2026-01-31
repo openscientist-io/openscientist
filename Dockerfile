@@ -9,6 +9,7 @@ ARG BUILD_TIME=unknown
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    jq \
     fonts-dejavu-core \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \

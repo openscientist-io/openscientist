@@ -452,6 +452,7 @@ Start your investigation by using these tools to analyze the data.
             '--verbose',
             '--output-format', 'stream-json',
             '--mcp-config', str(mcp_config_path.absolute()),
+            '--allowedTools', 'Skill',  # Enable skill invocation for domain-specific workflows
             '--allowedTools', 'mcp__shandy-tools__execute_code',
             '--allowedTools', 'mcp__shandy-tools__search_pubmed',
             '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
@@ -583,6 +584,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '--verbose',
                     '--output-format', 'stream-json',
                     '--mcp-config', str(mcp_config_path.absolute()),
+                    '--allowedTools', 'Skill',  # Enable skill invocation for domain-specific workflows
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
@@ -601,6 +603,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     '--verbose',
                     '--output-format', 'stream-json',
                     '--mcp-config', str(mcp_config_path.absolute()),
+                    '--allowedTools', 'Skill',  # Enable skill invocation for domain-specific workflows
                     '--allowedTools', 'mcp__shandy-tools__execute_code',
                     '--allowedTools', 'mcp__shandy-tools__search_pubmed',
                     '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
