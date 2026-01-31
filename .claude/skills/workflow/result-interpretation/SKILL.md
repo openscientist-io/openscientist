@@ -169,6 +169,36 @@ Action: Generate alternative - test for enzymatic bottleneck instead
 - Wrong! They're scientifically valuable
 - They constrain hypotheses and guide investigation
 
+## Guarding Against False Discoveries
+
+### Multiple Testing Correction
+
+When testing many hypotheses (e.g., thousands of genes), raw p-values are misleading.
+
+**Rule:** If you ran more than ~20 statistical tests, apply FDR correction before claiming significance.
+
+```python
+from statsmodels.stats.multitest import multipletests
+
+# Collect all p-values from your tests
+p_values = [p1, p2, p3, ...]
+
+# Apply Benjamini-Hochberg FDR correction
+rejected, p_adjusted, _, _ = multipletests(p_values, method='fdr_bh')
+
+# Use p_adjusted < 0.05, not raw p-values
+```
+
+**Report:** "Of 5,000 genes tested, 127 were significant after FDR correction (adjusted p < 0.05)"
+
+### Skeptical Checkpoints
+
+Before recording any finding, ask:
+
+- **What would a skeptical reviewer say?** Identify the weakest part of your evidence.
+- **Did I look for reasons this could fail?** Consider trying to disprove your finding before confirming it.
+- **Did I verify data integrity?** Do positive/negative controls behave as expected? Are quality metrics reasonable?
+
 ## Decision Tree: What to Do Next
 
 ```
