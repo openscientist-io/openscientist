@@ -71,3 +71,4 @@ htmlcov/
 
 # uv
 uv.lock
+.ini
