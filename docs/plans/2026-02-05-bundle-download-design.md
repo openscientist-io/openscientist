@@ -12,7 +12,7 @@ Add a "Download Bundle" button that creates a `.tgz` archive containing the comp
 ├── final_report.pdf          # Main report
 ├── final_report.md           # Markdown source
 ├── config.json               # Job metadata
-├── knowledge_graph.json      # Full knowledge state
+├── knowledge_state.json      # Full knowledge state
 ├── data/
 │   └── *.csv                 # Original uploaded data files
 └── plots/
