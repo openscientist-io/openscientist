@@ -1,5 +1,5 @@
 """
-Provider abstraction for model access (CBORG, Vertex AI, Bedrock).
+Provider abstraction for model access (Anthropic, CBORG, Vertex AI, Bedrock).
 
 Providers handle:
 - Environment configuration for Claude CLI
@@ -27,7 +27,10 @@ def get_provider() -> BaseProvider:
     """
     provider_name = os.getenv("CLAUDE_PROVIDER", "cborg").lower()
 
-    if provider_name == "cborg":
+    if provider_name == "anthropic":
+        from .anthropic import AnthropicProvider
+        return AnthropicProvider()
+    elif provider_name == "cborg":
         from .cborg import CborgProvider
         return CborgProvider()
     elif provider_name == "vertex":
@@ -39,7 +42,7 @@ def get_provider() -> BaseProvider:
     else:
         raise ValueError(
             f"Unknown provider '{provider_name}'. "
-            f"Valid options: cborg, vertex, bedrock"
+            f"Valid options: anthropic, cborg, vertex, bedrock"
         )
 
 
