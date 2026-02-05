@@ -155,6 +155,7 @@ def create_bundle(job_dir: Path) -> bytes:
         ro_crate_bytes = json.dumps(ro_crate, indent=2).encode("utf-8")
         ro_crate_info = tarfile.TarInfo(name=f"{bundle_name}/ro-crate-metadata.json")
         ro_crate_info.size = len(ro_crate_bytes)
+        ro_crate_info.mtime = int(datetime.now().timestamp())
         tar.addfile(ro_crate_info, io.BytesIO(ro_crate_bytes))
 
         # Add report files
