@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from .job_manager import JobManager, JobStatus
 from .providers import get_provider
+from .bundle_generator import create_bundle
 
 
 def get_action_description(tool_use: Dict[str, Any]) -> str:
@@ -892,6 +893,14 @@ def job_detail_page(job_id: str):
                             "PDF Unavailable",
                             icon="picture_as_pdf"
                         ).props("color=grey outline disabled")
+
+                    ui.button(
+                        "Download Bundle",
+                        on_click=lambda jd=job_dir, jid=job_id: ui.download(
+                            create_bundle(jd), filename=f"{jid}_bundle.tgz"
+                        ),
+                        icon="folder_zip"
+                    ).props("color=secondary")
 
                 # Display markdown
                 with open(report_path) as f:
