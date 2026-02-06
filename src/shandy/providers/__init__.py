@@ -30,6 +30,7 @@ def get_provider() -> BaseProvider:
 
     if provider_name == "anthropic":
         from .anthropic import AnthropicProvider
+
         return AnthropicProvider()
     elif provider_name == "cborg":
         from .cborg import CborgProvider
@@ -45,8 +46,7 @@ def get_provider() -> BaseProvider:
         return BedrockProvider()
     else:
         raise ValueError(
-            f"Unknown provider '{provider_name}'. "
-            f"Valid options: anthropic, cborg, vertex, bedrock"
+            f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock"
         )
 
 

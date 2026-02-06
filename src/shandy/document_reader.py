@@ -106,7 +106,7 @@ def extract_text_from_docx(file_path: Path) -> Tuple[str, dict]:
     """
     from docx import Document
 
-    doc = Document(file_path)
+    doc = Document(str(file_path))
     metadata = {
         "format": "docx",
         "paragraphs": len(doc.paragraphs),

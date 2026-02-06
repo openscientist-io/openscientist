@@ -94,7 +94,7 @@ class CborgProvider(BaseProvider):
 
             activity_response = requests.get(
                 "https://api.cborg.lbl.gov/user/daily/activity",
-                params={
+                params={  # type: ignore[arg-type]
                     "start_date": start_time.isoformat(),
                     "end_date": end_time.isoformat(),
                     "page": 1,

@@ -132,8 +132,7 @@ class BaseProvider(ABC):
             max_total = float(os.getenv("MAX_PROJECT_SPEND_TOTAL_USD", "inf"))
             if cost_info.total_spend_usd >= max_total:
                 errors.append(
-                    f"Total spend ${cost_info.total_spend_usd:.2f} "
-                    f"exceeds limit ${max_total:.2f}"
+                    f"Total spend ${cost_info.total_spend_usd:.2f} exceeds limit ${max_total:.2f}"
                 )
 
             # Check 24h spend limit
@@ -169,7 +168,7 @@ class BaseProvider(ABC):
         if cost_info.budget_remaining_usd is not None:
             if cost_info.budget_remaining_usd <= 0:
                 errors.append(
-                    f"{self.name} budget exhausted " f"(${cost_info.budget_limit_usd:.2f} limit)"
+                    f"{self.name} budget exhausted (${cost_info.budget_limit_usd:.2f} limit)"
                 )
             elif cost_info.budget_remaining_usd < 10:
                 warnings.append(

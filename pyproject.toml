@@ -68,15 +68,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
-    "ruff>=0.1.0",
-    "mypy>=1.5.0",
-    "types-requests>=2.31.0",
-    "types-openpyxl>=3.1.0",
-    "pandas-stubs>=2.0.0",
-]
 
 [build-system]
 requires = ["hatchling"]
@@ -126,7 +117,11 @@ python_functions = "test_*"
 
 [dependency-groups]
 dev = [
-    "pandas-stubs>=2.3.3.260113",
-    "types-openpyxl>=3.1.5.20250919",
-    "types-requests>=2.32.4.20260107",
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "types-requests>=2.31.0",
+    "types-openpyxl>=3.1.0",
+    "pandas-stubs>=2.0.0",
 ]

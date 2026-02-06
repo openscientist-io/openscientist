@@ -194,7 +194,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
                     region_start = res
                     in_region = True
                 elif plddt >= 70 and in_region:
-                    low_conf_regions.append(f"{region_start}-{residues[residues.index(res)-1]}")
+                    low_conf_regions.append(f"{region_start}-{residues[residues.index(res) - 1]}")
                     in_region = False
 
             if in_region:  # Close last region

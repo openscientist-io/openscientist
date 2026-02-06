@@ -780,7 +780,7 @@ def job_detail_page(job_id: str):
                                                             "tool_name", ""
                                                         ) and inp.get("query"):
                                                             ui.label(
-                                                                f"Query: \"{inp['query']}\""
+                                                                f'Query: "{inp["query"]}"'
                                                             ).classes("text-xs text-gray-600 mt-1")
 
                                                         result_text = action.get("result", "")

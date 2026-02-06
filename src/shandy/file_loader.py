@@ -302,7 +302,7 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
 
     if any(dangerous in mime_type for dangerous in dangerous_mimes):
         raise ValueError(
-            f"Executable file detected (MIME: {mime_type}). " f"Only data files are allowed."
+            f"Executable file detected (MIME: {mime_type}). Only data files are allowed."
         )
 
     # Warn if extension doesn't match content

@@ -41,7 +41,7 @@ def search_pubmed(
     if email:
         search_params["email"] = email
 
-    search_response = requests.get(f"{base_url}/esearch.fcgi", params=search_params)
+    search_response = requests.get(f"{base_url}/esearch.fcgi", params=search_params)  # type: ignore[arg-type]
     search_response.raise_for_status()
 
     search_data = search_response.json()
@@ -205,8 +205,7 @@ def format_literature_for_prompt(papers: List[Dict[str, Any]], max_papers: int =
     lines = ["## Relevant Literature\n"]
     for paper in papers[:max_papers]:
         lines.append(
-            f"- **PMID {paper['pmid']}** ({paper.get('year', 'N/A')}): "
-            f"{paper['title'][:100]}..."
+            f"- **PMID {paper['pmid']}** ({paper.get('year', 'N/A')}): {paper['title'][:100]}..."
         )
 
     return "\n".join(lines)

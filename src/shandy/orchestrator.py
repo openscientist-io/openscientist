@@ -418,9 +418,9 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
         if config["data_files"]:
             ds: Any = ks.data["data_summary"]
             data_context = f"""Data summary:
-- Files: {config['data_files']}
-- Columns: {ds.get('columns', [])}
-- Samples: {ds.get('n_samples', 'Unknown')}"""
+- Files: {config["data_files"]}
+- Columns: {ds.get("columns", [])}
+- Samples: {ds.get("n_samples", "Unknown")}"""
         else:
             data_context = (
                 "No data files provided. You may use literature search and computational methods."
@@ -428,7 +428,7 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
         initial_prompt = f"""Begin autonomous discovery for this research question:
 
-{config['research_question']}
+{config["research_question"]}
 
 You will run for a maximum of {max_iterations} iterations.
 
@@ -641,7 +641,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     claude_cli,
                     "-p",
                     "--resume",
-                    session_id,
+                    str(session_id),
                     "--verbose",
                     "--output-format",
                     "stream-json",
@@ -737,7 +737,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
         findings_list: Any = ks.data["findings"]
         findings_summary: str = "\n\n".join(
             [
-                f"**Finding {i+1}: {f['title']}**\n"
+                f"**Finding {i + 1}: {f['title']}**\n"
                 f"Evidence: {f['evidence']}\n"
                 f"Interpretation: {f.get('biological_interpretation', 'N/A')}"
                 for i, f in enumerate(findings_list)
@@ -750,16 +750,16 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
         n_analysis = len(ks.data["analysis_log"])  # type: ignore[arg-type]
         report_prompt = f"""You have completed autonomous discovery. Generate a final report summarizing your findings.
 
-Research Question: {config['research_question']}
+Research Question: {config["research_question"]}
 
-## Iterations Completed: {ks.data['iteration']}
+## Iterations Completed: {ks.data["iteration"]}
 
 ## Findings ({n_findings}):
 {findings_summary}
 
 ## Literature: {literature_summary}
 
-## Analysis Log: {n_analysis} actions performed across {ks.data['iteration']} iterations
+## Analysis Log: {n_analysis} actions performed across {ks.data["iteration"]} iterations
 
 Please create a comprehensive markdown report with:
 1. Executive Summary (2-3 paragraphs)
