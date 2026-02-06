@@ -70,7 +70,6 @@ htmlcov/
 .pytest_cache/
 
 # uv
-uv.lock
 .ini
 .mypy_cache/
 .ruff_cache/
