@@ -29,10 +29,12 @@ def get_provider() -> BaseProvider:
     provider_name = os.getenv("CLAUDE_PROVIDER", "cborg").lower()
 
     if provider_name == "anthropic":
-        from shandy.providers.cborg import AnthropicProvider
+        from shandy.providers.anthropic import AnthropicProvider
+
         return AnthropicProvider()
     elif provider_name == "cborg":
         from shandy.providers.cborg import CborgProvider
+
         return CborgProvider()
     elif provider_name == "vertex":
         from shandy.providers.vertex import VertexProvider
@@ -44,8 +46,7 @@ def get_provider() -> BaseProvider:
         return BedrockProvider()
     else:
         raise ValueError(
-            f"Unknown provider '{provider_name}'. "
-            f"Valid options: anthropic, cborg, vertex, bedrock"
+            f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock"
         )
 
 
