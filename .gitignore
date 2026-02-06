@@ -70,5 +70,4 @@ htmlcov/
 .pytest_cache/
 
 # uv
-uv.lock
 .ini

@@ -119,7 +119,7 @@ python_functions = "test_*"
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
-    "ruff==0.14.5",
+    "ruff>=0.1.0",
     "mypy>=1.5.0",
     "types-requests>=2.31.0",
     "types-openpyxl>=3.1.0",
