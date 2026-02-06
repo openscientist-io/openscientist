@@ -533,10 +533,9 @@ def job_detail_page(job_id: str):
                                 # NOTE: Must capture load_iteration_content with default arg, otherwise
                                 # all callbacks will use the last iteration's function (closure bug)
                                 expansion.on_value_change(
-                                    lambda e,
-                                    cc=content_container,
-                                    lf=content_loaded,
-                                    fn=load_iteration_content: (fn(cc, lf) if e.value else None)
+                                    lambda e, cc=content_container, lf=content_loaded, fn=load_iteration_content: (
+                                        fn(cc, lf) if e.value else None
+                                    )
                                 )
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
