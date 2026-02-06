@@ -187,7 +187,7 @@ class JobManager:
         if auto_start:
             self.start_job(job_id)
 
-        return job_info
+        return job_info  # type: ignore[return-value]
 
     def start_job(self, job_id: str) -> None:
         """

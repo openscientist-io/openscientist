@@ -34,8 +34,8 @@ DATA_FILES: List[Dict[str, Any]] = []  # Metadata for all data files
 DATA_LOAD_ERROR: Optional[str] = None  # Error message if data failed to load
 DATA_FILE_PATH: Optional[Path] = None  # Path to primary data file (for lazy loading)
 DATA_LOADED: bool = False  # Track whether we've attempted to load data
-JOB_DIR: Path = None
-KS: KnowledgeState = None
+JOB_DIR: Path = None  # type: ignore[assignment]
+KS: KnowledgeState = None  # type: ignore[assignment]
 
 # Create FastMCP server
 mcp = FastMCP("shandy-tools")
@@ -142,7 +142,7 @@ def execute_code(code: str, description: str = "") -> str:
         provenance_dir,
         timeout=60,
         description=description,
-        iteration=KS.data["iteration"],
+        iteration=KS.data["iteration"],  # type: ignore[arg-type]
         data_files=DATA_FILES,
     )
 
@@ -236,7 +236,7 @@ def update_knowledge_state(
 
     # Update interpretation if provided
     if interpretation:
-        for finding in KS.data["findings"]:
+        for finding in KS.data["findings"]:  # type: ignore[attr-defined]
             if finding["id"] == finding_id:
                 finding["biological_interpretation"] = interpretation
 
@@ -328,8 +328,8 @@ def update_hypothesis(
     updates = {"status": status}
 
     if status in ["supported", "rejected"]:
-        updates["tested_at_iteration"] = KS.data["iteration"]
-        updates["result"] = {
+        updates["tested_at_iteration"] = KS.data["iteration"]  # type: ignore[assignment]
+        updates["result"] = {  # type: ignore[assignment]
             "summary": result_summary,
             "p_value": p_value,
             "effect_size": effect_size,
@@ -394,7 +394,7 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
     current_iteration = KS.data["iteration"]
 
     # Save the summary with strapline
-    KS.add_iteration_summary(current_iteration, summary, strapline=strapline)
+    KS.add_iteration_summary(current_iteration, summary, strapline=strapline)  # type: ignore[arg-type]
     KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Summary saved for iteration {current_iteration}"

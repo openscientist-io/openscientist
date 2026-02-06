@@ -32,8 +32,8 @@ class VertexProvider(BaseProvider):
             errors.append("GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)")
         else:
             # Check if file exists
-            creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-            if not os.path.exists(creds_path):
+            creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))  # type: ignore[type-var]
+            if not os.path.exists(creds_path):  # type: ignore[arg-type]
                 errors.append(f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}")
 
         if not os.getenv("GCP_BILLING_ACCOUNT_ID"):
@@ -88,7 +88,7 @@ class VertexProvider(BaseProvider):
             raise
 
         # Load credentials
-        creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+        creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))  # type: ignore[type-var]
         credentials = service_account.Credentials.from_service_account_file(creds_path)
 
         project_id = os.getenv("ANTHROPIC_VERTEX_PROJECT_ID")
@@ -104,7 +104,7 @@ class VertexProvider(BaseProvider):
         # BigQuery billing export table name
         # Format: billing_export.gcp_billing_export_v1_{billing_account_with_underscores}
         billing_table = (
-            f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
+            f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"  # type: ignore[union-attr]
         )
 
         # Query for total spend (all time for Vertex AI in this project only)

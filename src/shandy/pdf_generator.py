@@ -180,7 +180,7 @@ def markdown_to_pdf(
 
         # Parse markdown line by line
         in_code_block = False
-        code_buffer = []
+        code_buffer: list[str] = []
         in_list = False
         list_counter = 0
 

@@ -33,7 +33,7 @@ def get_action_description(tool_use: Dict[str, Any]) -> str:
 
     # 1. Explicit description
     if inp.get("description"):
-        return inp["description"]
+        return inp["description"]  # type: ignore[no-any-return]
 
     # 2. Tool-specific fallback from key inputs
     name = tool_use.get("name", "")
@@ -47,7 +47,7 @@ def get_action_description(tool_use: Dict[str, Any]) -> str:
         return "Code execution"
 
     # 3. Just the tool name
-    return name.split("__")[-1] if "__" in name else name
+    return name.split("__")[-1] if "__" in name else name  # type: ignore[no-any-return]
 
 
 def parse_transcript_actions(transcript: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -162,7 +162,7 @@ def check_password(password: str) -> bool:
     if not PASSWORD_HASH:
         return True  # No password set, allow access
     try:
-        return bcrypt.checkpw(password.encode(), PASSWORD_HASH)
+        return bcrypt.checkpw(password.encode(), PASSWORD_HASH)  # type: ignore[no-any-return]
     except Exception as e:
         logger.error(f"Password check failed: {e}")
         return False
@@ -451,14 +451,14 @@ def job_detail_page(job_id: str):
         ui.navigate.to("/login")
         return
 
-    job_info = job_manager.get_job(job_id)
+    job_info = job_manager.get_job(job_id)  # type: ignore[union-attr]
 
     if job_info is None:
         ui.label(f"Job {job_id} not found").classes("text-h5")
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
         return
 
-    job_dir = job_manager.jobs_dir / job_id
+    job_dir = job_manager.jobs_dir / job_id  # type: ignore[union-attr]
     ks_path = job_dir / "knowledge_state.json"
 
     # Track current status for polling

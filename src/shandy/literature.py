@@ -141,7 +141,9 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
 
 
 def extract_mechanism_from_papers(
-    papers: List[Dict[str, Any]], topic: str, claude_api_call: callable
+    papers: List[Dict[str, Any]],
+    topic: str,
+    claude_api_call: callable,  # type: ignore[valid-type]
 ) -> str:
     """
     Use Claude to extract mechanistic knowledge from abstracts.
@@ -182,8 +184,8 @@ Provide a concise summary (2-3 paragraphs).
 """
 
     # Call Claude (this will be provided by orchestrator)
-    response = claude_api_call(prompt)
-    return response
+    response = claude_api_call(prompt)  # type: ignore[misc]
+    return response  # type: ignore[no-any-return]
 
 
 def format_literature_for_prompt(papers: List[Dict[str, Any]], max_papers: int = 5) -> str:

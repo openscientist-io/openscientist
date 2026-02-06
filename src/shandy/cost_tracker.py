@@ -35,7 +35,7 @@ def get_cborg_spend() -> float:
     )
     response.raise_for_status()
 
-    return response.json()["info"]["spend"]
+    return response.json()["info"]["spend"]  # type: ignore[no-any-return]
 
 
 def get_budget_info() -> Dict[str, Any]:

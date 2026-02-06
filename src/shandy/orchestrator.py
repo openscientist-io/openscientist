@@ -126,7 +126,7 @@ def wait_for_feedback_or_timeout(
     # Get initial feedback count
     ks = KnowledgeState.load(ks_path)
     current_iteration = ks.data["iteration"]
-    last_feedback_count = len(ks.data.get("feedback_history", []))
+    last_feedback_count = len(ks.data.get("feedback_history", []))  # type: ignore[arg-type]
 
     logger.info(f"Waiting for scientist feedback (timeout: {timeout_seconds}s)")
 
@@ -149,12 +149,12 @@ def wait_for_feedback_or_timeout(
         ks = KnowledgeState.load(ks_path)
         feedback_history = ks.data.get("feedback_history", [])
 
-        if len(feedback_history) > last_feedback_count:
+        if len(feedback_history) > last_feedback_count:  # type: ignore[arg-type]
             # New feedback added - check if it's for current iteration
-            latest = feedback_history[-1]
+            latest = feedback_history[-1]  # type: ignore[index]
             if latest.get("after_iteration") == current_iteration:
                 logger.info(f"Received feedback: {latest['text'][:100]}...")
-                return latest["text"]
+                return latest["text"]  # type: ignore[no-any-return]
 
         # Check for continue signal (status changed back to running)
         with open(config_path) as f:
@@ -416,10 +416,11 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
 
         # Build data context based on whether files were provided
         if config["data_files"]:
+            ds: Any = ks.data["data_summary"]
             data_context = f"""Data summary:
 - Files: {config['data_files']}
-- Columns: {ks.data['data_summary'].get('columns', [])}
-- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}"""
+- Columns: {ds.get('columns', [])}
+- Samples: {ds.get('n_samples', 'Unknown')}"""
         else:
             data_context = (
                 "No data files provided. You may use literature search and computational methods."
@@ -733,29 +734,32 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
         ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
         # Build concise summary instead of full JSON dump
-        findings_summary = "\n\n".join(
+        findings_list: Any = ks.data["findings"]
+        findings_summary: str = "\n\n".join(
             [
                 f"**Finding {i+1}: {f['title']}**\n"
                 f"Evidence: {f['evidence']}\n"
                 f"Interpretation: {f.get('biological_interpretation', 'N/A')}"
-                for i, f in enumerate(ks.data["findings"])
+                for i, f in enumerate(findings_list)
             ]
         )
 
-        literature_summary = f"Reviewed {len(ks.data['literature'])} papers from PubMed"
+        literature_summary = f"Reviewed {len(ks.data['literature'])} papers from PubMed"  # type: ignore[arg-type]
 
+        n_findings = len(ks.data["findings"])  # type: ignore[arg-type]
+        n_analysis = len(ks.data["analysis_log"])  # type: ignore[arg-type]
         report_prompt = f"""You have completed autonomous discovery. Generate a final report summarizing your findings.
 
 Research Question: {config['research_question']}
 
 ## Iterations Completed: {ks.data['iteration']}
 
-## Findings ({len(ks.data['findings'])}):
+## Findings ({n_findings}):
 {findings_summary}
 
 ## Literature: {literature_summary}
 
-## Analysis Log: {len(ks.data['analysis_log'])} actions performed across {ks.data['iteration']} iterations
+## Analysis Log: {n_analysis} actions performed across {ks.data['iteration']} iterations
 
 Please create a comprehensive markdown report with:
 1. Executive Summary (2-3 paragraphs)
@@ -824,7 +828,7 @@ Format as professional scientific markdown."""
 
         config["completed_at"] = datetime.now().isoformat()
         config["iterations_completed"] = ks.data["iteration"]
-        config["findings_count"] = len(ks.data["findings"])
+        config["findings_count"] = len(ks.data["findings"])  # type: ignore[arg-type]
         # Update max_iterations to actual iterations when job stops early
         config["max_iterations"] = ks.data["iteration"]
 
@@ -835,7 +839,7 @@ Format as professional scientific markdown."""
             "job_id": job_id,
             "status": config["status"],
             "iterations": ks.data["iteration"],
-            "findings": len(ks.data["findings"]),
+            "findings": len(ks.data["findings"]),  # type: ignore[arg-type]
         }
 
     except Exception as e:

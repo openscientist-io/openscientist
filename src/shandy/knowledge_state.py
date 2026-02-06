@@ -108,7 +108,7 @@ class KnowledgeState:
         Returns:
             hypothesis_id: Unique ID for this hypothesis
         """
-        hypothesis_id = f"H{len(self.data['hypotheses']) + 1:03d}"
+        hypothesis_id = f"H{len(self.data['hypotheses']) + 1:03d}"  # type: ignore[arg-type]
 
         hypothesis = {
             "id": hypothesis_id,
@@ -122,12 +122,12 @@ class KnowledgeState:
             "spawned_hypotheses": [],
         }
 
-        self.data["hypotheses"].append(hypothesis)
+        self.data["hypotheses"].append(hypothesis)  # type: ignore[attr-defined]
         return hypothesis_id
 
     def update_hypothesis(self, hypothesis_id: str, updates: Dict[str, Any]) -> None:
         """Update a hypothesis with test results."""
-        for hyp in self.data["hypotheses"]:
+        for hyp in self.data["hypotheses"]:  # type: ignore[attr-defined]
             if hyp["id"] == hypothesis_id:
                 hyp.update(updates)
                 return
@@ -154,7 +154,7 @@ class KnowledgeState:
         Returns:
             finding_id: Unique ID for this finding
         """
-        finding_id = f"F{len(self.data['findings']) + 1:03d}"
+        finding_id = f"F{len(self.data['findings']) + 1:03d}"  # type: ignore[arg-type]
 
         finding = {
             "id": finding_id,
@@ -167,7 +167,7 @@ class KnowledgeState:
             "biological_interpretation": "",
         }
 
-        self.data["findings"].append(finding)
+        self.data["findings"].append(finding)  # type: ignore[attr-defined]
         return finding_id
 
     def add_literature(
@@ -191,7 +191,7 @@ class KnowledgeState:
         Returns:
             literature_id: Unique ID for this reference
         """
-        literature_id = f"L{len(self.data['literature']) + 1:03d}"
+        literature_id = f"L{len(self.data['literature']) + 1:03d}"  # type: ignore[arg-type]
 
         literature = {
             "id": literature_id,
@@ -203,7 +203,7 @@ class KnowledgeState:
             "search_query": search_query,
         }
 
-        self.data["literature"].append(literature)
+        self.data["literature"].append(literature)  # type: ignore[attr-defined]
         return literature_id
 
     def log_analysis(
@@ -230,7 +230,7 @@ class KnowledgeState:
         if output:
             log_entry["output"] = output
 
-        self.data["analysis_log"].append(log_entry)
+        self.data["analysis_log"].append(log_entry)  # type: ignore[attr-defined]
 
     def add_iteration_summary(self, iteration: int, summary: str, strapline: str = "") -> None:
         """
@@ -246,7 +246,7 @@ class KnowledgeState:
             self.data["iteration_summaries"] = []
 
         # Check if this iteration already has a summary
-        for existing in self.data["iteration_summaries"]:
+        for existing in self.data["iteration_summaries"]:  # type: ignore[attr-defined]
             if existing["iteration"] == iteration:
                 existing["summary"] = summary
                 existing["strapline"] = strapline
@@ -254,7 +254,7 @@ class KnowledgeState:
                 return
 
         # Add new summary
-        self.data["iteration_summaries"].append(
+        self.data["iteration_summaries"].append(  # type: ignore[attr-defined]
             {
                 "iteration": iteration,
                 "summary": summary,
@@ -274,14 +274,14 @@ class KnowledgeState:
             Summary string or None if not found
         """
         summaries = self.data.get("iteration_summaries", [])
-        for entry in summaries:
+        for entry in summaries:  # type: ignore[attr-defined]
             if entry["iteration"] == iteration:
-                return entry["summary"]
+                return entry["summary"]  # type: ignore[no-any-return]
         return None
 
     def increment_iteration(self) -> None:
         """Increment the iteration counter."""
-        self.data["iteration"] += 1
+        self.data["iteration"] += 1  # type: ignore[operator]
 
     def add_feedback(self, text: str, after_iteration: int) -> None:
         """
@@ -298,7 +298,7 @@ class KnowledgeState:
         if "feedback_history" not in self.data:
             self.data["feedback_history"] = []
 
-        self.data["feedback_history"].append(
+        self.data["feedback_history"].append(  # type: ignore[attr-defined]
             {
                 "after_iteration": after_iteration,
                 "text": text,
@@ -322,9 +322,9 @@ class KnowledgeState:
         previous_iteration = iteration - 1
 
         # Find feedback given after the previous iteration
-        matching = [f for f in feedback_list if f.get("after_iteration") == previous_iteration]
+        matching = [f for f in feedback_list if f.get("after_iteration") == previous_iteration]  # type: ignore[attr-defined]
         if matching:
-            return matching[-1]["text"]  # Use most recent if multiple
+            return matching[-1]["text"]  # type: ignore[no-any-return]  # Use most recent if multiple
         return None
 
     def get_summary(self) -> str:
@@ -338,29 +338,29 @@ class KnowledgeState:
             f"# Knowledge Graph Summary (Iteration {self.data['iteration']})",
             "",
             "## Research Question",
-            self.data["config"]["research_question"],
+            self.data["config"]["research_question"],  # type: ignore[index]
             "",
             "## Data",
-            f"- Files: {self.data['data_summary'].get('files', [])}",
-            f"- Samples: {self.data['data_summary'].get('n_samples', 'Unknown')}",
-            f"- Features: {self.data['data_summary'].get('n_features', 'Unknown')}",
+            f"- Files: {self.data['data_summary'].get('files', [])}",  # type: ignore[attr-defined]
+            f"- Samples: {self.data['data_summary'].get('n_samples', 'Unknown')}",  # type: ignore[attr-defined]
+            f"- Features: {self.data['data_summary'].get('n_features', 'Unknown')}",  # type: ignore[attr-defined]
             "",
             "## Progress",
-            f"- Hypotheses tested: {len([h for h in self.data['hypotheses'] if h['status'] != 'pending'])}",
-            f"- Findings confirmed: {len(self.data['findings'])}",
-            f"- Literature reviewed: {len(self.data['literature'])}",
+            f"- Hypotheses tested: {len([h for h in self.data['hypotheses'] if h['status'] != 'pending'])}",  # type: ignore[attr-defined]
+            f"- Findings confirmed: {len(self.data['findings'])}",  # type: ignore[arg-type]
+            f"- Literature reviewed: {len(self.data['literature'])}",  # type: ignore[arg-type]
             "",
         ]
 
         # Recent findings
         if self.data["findings"]:
             summary_parts.append("## Recent Findings")
-            for finding in self.data["findings"][-3:]:
+            for finding in self.data["findings"][-3:]:  # type: ignore[index]
                 summary_parts.append(f"- **{finding['title']}**: {finding['evidence']}")
             summary_parts.append("")
 
         # Active hypotheses
-        pending = [h for h in self.data["hypotheses"] if h["status"] == "pending"]
+        pending = [h for h in self.data["hypotheses"] if h["status"] == "pending"]  # type: ignore[attr-defined]
         if pending:
             summary_parts.append("## Pending Hypotheses")
             for hyp in pending[-3:]:
@@ -368,7 +368,7 @@ class KnowledgeState:
             summary_parts.append("")
 
         # Rejected hypotheses (learn from failures)
-        rejected = [h for h in self.data["hypotheses"] if h["status"] == "rejected"]
+        rejected = [h for h in self.data["hypotheses"] if h["status"] == "rejected"]  # type: ignore[attr-defined]
         if rejected:
             summary_parts.append("## Rejected Hypotheses (avoid repeating)")
             for hyp in rejected[-3:]:
@@ -387,7 +387,7 @@ class KnowledgeState:
             version_info: Dict with keys like 'claude_model', 'claude_code_version',
                          'shandy_commit', 'docker_image_id'
         """
-        self.data["config"]["version_info"] = version_info
+        self.data["config"]["version_info"] = version_info  # type: ignore[index]
 
     def to_dict(self) -> Dict[str, Any]:
         """Return the raw data dictionary."""

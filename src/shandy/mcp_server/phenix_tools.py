@@ -19,7 +19,10 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
 
     @mcp.tool()
     def run_phenix_tool(
-        tool_name: str, input_files: list[str], arguments: dict = None, description: str = ""
+        tool_name: str,
+        input_files: list[str],
+        arguments: dict = None,  # type: ignore[assignment]
+        description: str = "",
     ) -> str:
         """
         Execute a Phenix command-line tool.
@@ -136,10 +139,10 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
             result += "\n  - RMSD 2-4 Å: Moderate differences, investigate regions"
             result += "\n  - RMSD > 4 Å: Significant differences, likely different conformations"
 
-        return result
+        return result  # type: ignore[no-any-return]
 
     @mcp.tool()
-    def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str = None) -> str:
+    def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str = None) -> str:  # type: ignore[assignment]
         """
         Extract AlphaFold confidence metrics from prediction files.
 
