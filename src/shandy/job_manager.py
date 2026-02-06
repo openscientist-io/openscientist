@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class JobStatus(str, Enum):
     """Job status enum."""
+
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
@@ -34,6 +35,7 @@ class JobStatus(str, Enum):
 @dataclass
 class JobInfo:
     """Job information."""
+
     job_id: str
     research_question: str
     status: JobStatus
@@ -107,8 +109,14 @@ class JobManager:
             if job_info is None:
                 continue
 
-            if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
-                logger.warning(f"Marking stale job {job_id} as cancelled (was {job_info.status.value})")
+            if job_info.status in [
+                JobStatus.RUNNING,
+                JobStatus.QUEUED,
+                JobStatus.AWAITING_FEEDBACK,
+            ]:
+                logger.warning(
+                    f"Marking stale job {job_id} as cancelled (was {job_info.status.value})"
+                )
                 self._update_job_status(job_id, JobStatus.CANCELLED)
                 stale_count += 1
 
@@ -123,7 +131,7 @@ class JobManager:
         max_iterations: int = 10,
         use_skills: bool = True,
         auto_start: bool = True,
-        investigation_mode: str = "autonomous"
+        investigation_mode: str = "autonomous",
     ) -> JobInfo:
         """
         Create a new discovery job.
@@ -169,7 +177,7 @@ class JobManager:
             max_iterations=max_iterations,
             use_skills=use_skills,
             jobs_dir=self.jobs_dir,
-            investigation_mode=investigation_mode
+            investigation_mode=investigation_mode,
         )
 
         # Load job info
@@ -210,11 +218,7 @@ class JobManager:
 
             # Start the job
             logger.info(f"Starting job {job_id}")
-            thread = threading.Thread(
-                target=self._run_job,
-                args=(job_id,),
-                daemon=True
-            )
+            thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
             self._running_jobs[job_id] = thread
             thread.start()
 
@@ -260,11 +264,7 @@ class JobManager:
                 job_info = self.get_job(job_id)
                 if job_info and job_info.status == JobStatus.QUEUED:
                     logger.info(f"Starting queued job {job_id}")
-                    thread = threading.Thread(
-                        target=self._run_job,
-                        args=(job_id,),
-                        daemon=True
-                    )
+                    thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
                     self._running_jobs[job_id] = thread
                     thread.start()
                     break
@@ -313,9 +313,7 @@ class JobManager:
         return self._load_job_info(job_id)
 
     def list_jobs(
-        self,
-        status: Optional[JobStatus] = None,
-        limit: Optional[int] = None
+        self, status: Optional[JobStatus] = None, limit: Optional[int] = None
     ) -> List[JobInfo]:
         """
         List jobs.
@@ -441,7 +439,11 @@ class JobManager:
         for job_id in self._list_job_ids():
             job_info = self.get_job(job_id)
             if job_info and job_info.investigation_mode == "coinvestigate":
-                if job_info.status in [JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK, JobStatus.QUEUED]:
+                if job_info.status in [
+                    JobStatus.RUNNING,
+                    JobStatus.AWAITING_FEEDBACK,
+                    JobStatus.QUEUED,
+                ]:
                     count += 1
         return count
 
@@ -484,7 +486,7 @@ class JobManager:
             "total_jobs": len(jobs),
             "status_counts": status_counts,
             "cost_info": cost_info,
-            "budget_check": budget_check
+            "budget_check": budget_check,
         }
 
     def _list_job_ids(self) -> List[str]:
@@ -519,7 +521,7 @@ class JobManager:
                 if ks_path.exists():
                     try:
                         with open(ks_path) as f:
-                            ks =json.load(f)
+                            ks = json.load(f)
                         # KS iteration is the NEXT iteration to run, so completed = iteration - 1
                         ks_iteration = ks.get("iteration", 1)
                         iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
@@ -540,7 +542,7 @@ class JobManager:
                 findings_count=findings_count,
                 error=config.get("error"),
                 use_skills=config.get("use_skills", True),
-                investigation_mode=config.get("investigation_mode", "autonomous")
+                investigation_mode=config.get("investigation_mode", "autonomous"),
             )
 
         except Exception as e:
@@ -600,7 +602,9 @@ def main():
     # Cleanup
     cleanup_parser = subparsers.add_parser("cleanup", help="Clean up old jobs")
     cleanup_parser.add_argument("--days", type=int, default=7, help="Delete jobs older than N days")
-    cleanup_parser.add_argument("--delete-completed", action="store_true", help="Delete completed jobs too")
+    cleanup_parser.add_argument(
+        "--delete-completed", action="store_true", help="Delete completed jobs too"
+    )
 
     # Summary
     subparsers.add_parser("summary", help="Get job summary")
@@ -609,8 +613,7 @@ def main():
 
     # Set up logging
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Create job manager
@@ -625,9 +628,11 @@ def main():
         print("-" * 80)
 
         for job in jobs:
-            print(f"{job.job_id:<20} {job.status.value:<12} "
-                  f"{job.iterations_completed}/{job.max_iterations:<6} "
-                  f"{job.findings_count:<10} {job.created_at}")
+            print(
+                f"{job.job_id:<20} {job.status.value:<12} "
+                f"{job.iterations_completed}/{job.max_iterations:<6} "
+                f"{job.findings_count:<10} {job.created_at}"
+            )
 
     elif args.command == "get":
         job = manager.get_job(args.job_id)
@@ -641,10 +646,7 @@ def main():
         print(f"Deleted job {args.job_id}")
 
     elif args.command == "cleanup":
-        deleted = manager.cleanup_old_jobs(
-            days=args.days,
-            keep_completed=not args.delete_completed
-        )
+        deleted = manager.cleanup_old_jobs(days=args.days, keep_completed=not args.delete_completed)
         print(f"Deleted {deleted} jobs")
 
     elif args.command == "summary":

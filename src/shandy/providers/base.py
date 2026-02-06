@@ -48,15 +48,15 @@ class BaseProvider(ABC):
         errors = self._validate_required_config()
         if errors:
             raise ValueError(
-                f"{self.name} provider configuration errors:\n" +
-                "\n".join(f"  - {err}" for err in errors)
+                f"{self.name} provider configuration errors:\n"
+                + "\n".join(f"  - {err}" for err in errors)
             )
 
         warnings = self._validate_optional_config()
         if warnings:
             logger.warning(
-                f"{self.name} provider configuration warnings:\n" +
-                "\n".join(f"  - {warn}" for warn in warnings)
+                f"{self.name} provider configuration warnings:\n"
+                + "\n".join(f"  - {warn}" for warn in warnings)
             )
 
     @abstractmethod
@@ -115,7 +115,7 @@ class BaseProvider(ABC):
             return {
                 "can_proceed": True,
                 "warnings": [f"Could not check budget limits: {e}"],
-                "errors": []
+                "errors": [],
             }
 
         warnings = []
@@ -137,8 +137,12 @@ class BaseProvider(ABC):
                 )
 
             # Check 24h spend limit
-            max_recent = float(os.getenv(f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
-                                          os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf")))
+            max_recent = float(
+                os.getenv(
+                    f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
+                    os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf"),
+                )
+            )
             if cost_info.recent_spend_usd >= max_recent:
                 errors.append(
                     f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
@@ -146,9 +150,16 @@ class BaseProvider(ABC):
                 )
 
             # Check warning threshold
-            warn_recent = float(os.getenv(f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
-                                           os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf")))
-            if cost_info.recent_spend_usd >= warn_recent and cost_info.recent_spend_usd < max_recent:
+            warn_recent = float(
+                os.getenv(
+                    f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
+                    os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf"),
+                )
+            )
+            if (
+                cost_info.recent_spend_usd >= warn_recent
+                and cost_info.recent_spend_usd < max_recent
+            ):
                 warnings.append(
                     f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
                     f"approaching limit (warning threshold: ${warn_recent:.2f})"
@@ -158,19 +169,14 @@ class BaseProvider(ABC):
         if cost_info.budget_remaining_usd is not None:
             if cost_info.budget_remaining_usd <= 0:
                 errors.append(
-                    f"{self.name} budget exhausted "
-                    f"(${cost_info.budget_limit_usd:.2f} limit)"
+                    f"{self.name} budget exhausted " f"(${cost_info.budget_limit_usd:.2f} limit)"
                 )
             elif cost_info.budget_remaining_usd < 10:
                 warnings.append(
                     f"{self.name} budget low: ${cost_info.budget_remaining_usd:.2f} remaining"
                 )
 
-        return {
-            "can_proceed": len(errors) == 0,
-            "warnings": warnings,
-            "errors": errors
-        }
+        return {"can_proceed": len(errors) == 0, "warnings": warnings, "errors": errors}
 
     @property
     @abstractmethod

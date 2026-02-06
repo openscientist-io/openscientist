@@ -23,7 +23,7 @@ class BedrockProvider(BaseProvider):
         """Bedrock validation - not implemented."""
         return [
             "AWS Bedrock provider is not yet implemented.",
-            "Please use 'cborg' or 'vertex' as CLAUDE_PROVIDER."
+            "Please use 'cborg' or 'vertex' as CLAUDE_PROVIDER.",
         ]
 
     def setup_environment(self) -> None:

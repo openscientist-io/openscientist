@@ -86,9 +86,13 @@ You have maximum freedom to design your own analytical strategy. Think creativel
 Think step by step. Be rigorous. Be creative."""
 
 
-def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str, Any],
-                          iteration: int, max_iterations: int,
-                          skills_available: Optional[str] = None) -> str:
+def build_discovery_prompt(
+    knowledge_graph_summary: str,
+    data_summary: Dict[str, Any],
+    iteration: int,
+    max_iterations: int,
+    skills_available: Optional[str] = None,
+) -> str:
     """
     Build the discovery iteration prompt.
 
@@ -112,83 +116,97 @@ def build_discovery_prompt(knowledge_graph_summary: str, data_summary: Dict[str,
         "## Your Task",
         "",
         f"You are on iteration {iteration} of {max_iterations}.",
-        ""
+        "",
     ]
 
     # Guidance based on progress
     if iteration == 1:
-        prompt_parts.extend([
-            "This is your **first iteration**. Start by:",
-            "1. Understanding the data structure and available variables",
-            "2. Searching literature to understand the research domain",
-            "3. Identifying 2-3 high-priority hypotheses to investigate",
-            ""
-        ])
+        prompt_parts.extend(
+            [
+                "This is your **first iteration**. Start by:",
+                "1. Understanding the data structure and available variables",
+                "2. Searching literature to understand the research domain",
+                "3. Identifying 2-3 high-priority hypotheses to investigate",
+                "",
+            ]
+        )
     elif iteration < 5:
-        prompt_parts.extend([
-            "You're in the **early exploration phase**. Focus on:",
-            "1. Identifying major patterns and group differences",
-            "2. Testing broad hypotheses",
-            "3. Building intuition about the data",
-            ""
-        ])
+        prompt_parts.extend(
+            [
+                "You're in the **early exploration phase**. Focus on:",
+                "1. Identifying major patterns and group differences",
+                "2. Testing broad hypotheses",
+                "3. Building intuition about the data",
+                "",
+            ]
+        )
     elif iteration < max_iterations - 10:
-        prompt_parts.extend([
-            "You're in the **deep investigation phase**. Focus on:",
-            "1. Following up on interesting findings",
-            "2. Testing mechanistic hypotheses",
-            "3. Connecting findings into a coherent story",
-            ""
-        ])
+        prompt_parts.extend(
+            [
+                "You're in the **deep investigation phase**. Focus on:",
+                "1. Following up on interesting findings",
+                "2. Testing mechanistic hypotheses",
+                "3. Connecting findings into a coherent story",
+                "",
+            ]
+        )
     else:
-        prompt_parts.extend([
-            "You're **approaching the iteration limit**. Focus on:",
-            "1. Consolidating findings",
-            "2. Testing remaining high-priority hypotheses",
-            "3. Preparing for synthesis",
-            ""
-        ])
+        prompt_parts.extend(
+            [
+                "You're **approaching the iteration limit**. Focus on:",
+                "1. Consolidating findings",
+                "2. Testing remaining high-priority hypotheses",
+                "3. Preparing for synthesis",
+                "",
+            ]
+        )
 
-    prompt_parts.extend([
-        "## What to Do Next",
-        "",
-        "Choose ONE of these actions:",
-        "",
-        "**Option A: Explore Data**",
-        "- Write Python code to examine data structure, distributions, correlations",
-        "- Useful early in investigation or when stuck",
-        "",
-        "**Option B: Search Literature**",
-        "- Query PubMed for papers related to your research question or a specific pattern",
-        "- Use this proactively to generate mechanistic hypotheses",
-        "",
-        "**Option C: Test Hypothesis**",
-        "- Write Python code to test a specific hypothesis",
-        "- Include appropriate statistical tests, effect size calculations, visualizations",
-        "",
-        "**Option D: Record Finding**",
-        "- If you've confirmed a finding, record it to the knowledge graph",
-        "- Include: title, evidence (stats), supporting hypotheses, plots",
-        ""
-    ])
+    prompt_parts.extend(
+        [
+            "## What to Do Next",
+            "",
+            "Choose ONE of these actions:",
+            "",
+            "**Option A: Explore Data**",
+            "- Write Python code to examine data structure, distributions, correlations",
+            "- Useful early in investigation or when stuck",
+            "",
+            "**Option B: Search Literature**",
+            "- Query PubMed for papers related to your research question or a specific pattern",
+            "- Use this proactively to generate mechanistic hypotheses",
+            "",
+            "**Option C: Test Hypothesis**",
+            "- Write Python code to test a specific hypothesis",
+            "- Include appropriate statistical tests, effect size calculations, visualizations",
+            "",
+            "**Option D: Record Finding**",
+            "- If you've confirmed a finding, record it to the knowledge graph",
+            "- Include: title, evidence (stats), supporting hypotheses, plots",
+            "",
+        ]
+    )
 
     if skills_available:
-        prompt_parts.extend([
-            "**Option E: Use Skill**",
-            "- Invoke a skill workflow for structured guidance",
-            f"{skills_available}",
-            ""
-        ])
+        prompt_parts.extend(
+            [
+                "**Option E: Use Skill**",
+                "- Invoke a skill workflow for structured guidance",
+                f"{skills_available}",
+                "",
+            ]
+        )
 
-    prompt_parts.extend([
-        "---",
-        "",
-        "Proceed with your chosen action. Think carefully about what will provide the most insight.",
-        "",
-        "**Before ending this iteration:** Call `save_iteration_summary` as your FINAL action",
-        "to record what you accomplished. The summary should reflect what you actually did,",
-        "not what you plan to do next."
-    ])
+    prompt_parts.extend(
+        [
+            "---",
+            "",
+            "Proceed with your chosen action. Think carefully about what will provide the most insight.",
+            "",
+            "**Before ending this iteration:** Call `save_iteration_summary` as your FINAL action",
+            "to record what you accomplished. The summary should reflect what you actually did,",
+            "not what you plan to do next.",
+        ]
+    )
 
     return "\n".join(prompt_parts)
 

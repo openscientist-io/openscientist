@@ -62,7 +62,11 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
         # Execute with timeout
         try:
             result = subprocess.run(
-                cmd, env=phenix_env, capture_output=True, text=True, timeout=300  # 5 min timeout
+                cmd,
+                env=phenix_env,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min timeout
             )
 
             # Format output
@@ -76,9 +80,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
                 output_parts.append(f"\n⚠️  Errors/Warnings:\n{result.stderr}")
 
             if result.returncode != 0:
-                output_parts.append(
-                    f"\n❌ Tool exited with code {result.returncode}"
-                )
+                output_parts.append(f"\n❌ Tool exited with code {result.returncode}")
 
             output = "".join(output_parts)
 
@@ -102,9 +104,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
             return f"❌ Error running {tool_name}: {str(e)}"
 
     @mcp.tool()
-    def compare_structures(
-        experimental_pdb: str, predicted_pdb: str, description: str = ""
-    ) -> str:
+    def compare_structures(experimental_pdb: str, predicted_pdb: str, description: str = "") -> str:
         """
         Compare experimental and predicted protein structures.
 

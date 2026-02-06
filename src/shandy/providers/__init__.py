@@ -30,17 +30,19 @@ def get_provider() -> BaseProvider:
 
     if provider_name == "cborg":
         from .cborg import CborgProvider
+
         return CborgProvider()
     elif provider_name == "vertex":
         from .vertex import VertexProvider
+
         return VertexProvider()
     elif provider_name == "bedrock":
         from .bedrock import BedrockProvider
+
         return BedrockProvider()
     else:
         raise ValueError(
-            f"Unknown provider '{provider_name}'. "
-            f"Valid options: cborg, vertex, bedrock"
+            f"Unknown provider '{provider_name}'. " f"Valid options: cborg, vertex, bedrock"
         )
 
 

@@ -64,9 +64,13 @@ def ensure_data_loaded() -> Optional[str]:
 
     # Load data now
     file_size_mb = DATA_FILE_PATH.stat().st_size / (1024 * 1024)
-    print(f"⏳ Loading data file on first use: {DATA_FILE_PATH.name} ({file_size_mb:.1f} MB)", file=sys.stderr)
+    print(
+        f"⏳ Loading data file on first use: {DATA_FILE_PATH.name} ({file_size_mb:.1f} MB)",
+        file=sys.stderr,
+    )
 
     import time
+
     start_time = time.time()
 
     try:
@@ -74,7 +78,10 @@ def ensure_data_loaded() -> Optional[str]:
         load_time = time.time() - start_time
 
         if DATA is not None:
-            print(f"✅ Loaded tabular data: {DATA.shape[0]} rows × {DATA.shape[1]} columns in {load_time:.1f}s", file=sys.stderr)
+            print(
+                f"✅ Loaded tabular data: {DATA.shape[0]} rows × {DATA.shape[1]} columns in {load_time:.1f}s",
+                file=sys.stderr,
+            )
         else:
             print(f"ℹ️  Non-tabular file loaded in {load_time:.1f}s", file=sys.stderr)
 
@@ -86,7 +93,9 @@ def ensure_data_loaded() -> Optional[str]:
         return DATA_LOAD_ERROR
 
     except Exception as e:
-        DATA_LOAD_ERROR = f"Unable to load data file '{DATA_FILE_PATH.name}': {type(e).__name__}: {e}"
+        DATA_LOAD_ERROR = (
+            f"Unable to load data file '{DATA_FILE_PATH.name}': {type(e).__name__}: {e}"
+        )
         print(f"❌ {DATA_LOAD_ERROR}", file=sys.stderr)
         return DATA_LOAD_ERROR
 
@@ -127,8 +136,15 @@ def execute_code(code: str, description: str = "") -> str:
     provenance_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute code (DATA may be None for non-tabular files)
-    result = exec_code(code, DATA, provenance_dir, timeout=60, description=description,
-                      iteration=KS.data["iteration"], data_files=DATA_FILES)
+    result = exec_code(
+        code,
+        DATA,
+        provenance_dir,
+        timeout=60,
+        description=description,
+        iteration=KS.data["iteration"],
+        data_files=DATA_FILES,
+    )
 
     # Log to knowledge graph (code is stored in plot metadata files, not here)
     KS.log_analysis(
@@ -175,7 +191,9 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
             search_query=query,
         )
 
-    KS.log_analysis(action="search_pubmed", query=query, results_count=len(papers), description=description)
+    KS.log_analysis(
+        action="search_pubmed", query=query, results_count=len(papers), description=description
+    )
     KS.save(JOB_DIR / "knowledge_state.json")
 
     # Format results
@@ -193,7 +211,9 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
 
 
 @mcp.tool()
-def update_knowledge_state(title: str, evidence: str, interpretation: str = "", description: str = "") -> str:
+def update_knowledge_state(
+    title: str, evidence: str, interpretation: str = "", description: str = ""
+) -> str:
     """
     Record a confirmed finding to the knowledge graph.
 
@@ -221,7 +241,9 @@ def update_knowledge_state(title: str, evidence: str, interpretation: str = "", 
                 finding["biological_interpretation"] = interpretation
 
     # Log the action
-    KS.log_analysis(action="update_knowledge_state", finding_id=finding_id, title=title, description=description)
+    KS.log_analysis(
+        action="update_knowledge_state", finding_id=finding_id, title=title, description=description
+    )
     KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Finding recorded as {finding_id}: {title}"
@@ -271,7 +293,7 @@ def update_hypothesis(
     result_summary: str = "",
     p_value: str = "",
     effect_size: str = "",
-    conclusion: str = ""
+    conclusion: str = "",
 ) -> str:
     """
     Update a hypothesis with test results.
@@ -311,7 +333,7 @@ def update_hypothesis(
             "summary": result_summary,
             "p_value": p_value,
             "effect_size": effect_size,
-            "conclusion": conclusion
+            "conclusion": conclusion,
         }
 
     # Update hypothesis
@@ -325,7 +347,7 @@ def update_hypothesis(
         action="update_hypothesis",
         hypothesis_id=hypothesis_id,
         status=status,
-        result_summary=result_summary
+        result_summary=result_summary,
     )
     KS.save(JOB_DIR / "knowledge_state.json")
 
@@ -436,7 +458,9 @@ def main():
 
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
-    parser.add_argument("--data-file", required=False, default=None, help="Primary data file (optional)")
+    parser.add_argument(
+        "--data-file", required=False, default=None, help="Primary data file (optional)"
+    )
 
     args = parser.parse_args()
 
@@ -459,8 +483,11 @@ def main():
             sys.exit(1)
 
         # Log file info (but don't load data yet)
-        file_size_mb = primary_info['size'] / (1024 * 1024)
-        print(f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use", file=sys.stderr)
+        file_size_mb = primary_info["size"] / (1024 * 1024)
+        print(
+            f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use",
+            file=sys.stderr,
+        )
     else:
         # No primary data file
         DATA_FILE_PATH = None
@@ -478,7 +505,10 @@ def main():
                 except Exception as e:
                     print(f"Warning: Could not process {file_path}: {e}", file=sys.stderr)
 
-    print(f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}", file=sys.stderr)
+    print(
+        f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}",
+        file=sys.stderr,
+    )
 
     # Load or create knowledge graph
     ks_path = JOB_DIR / "knowledge_state.json"
@@ -490,6 +520,7 @@ def main():
     # Register Phenix tools if available
     if check_phenix_available():
         from . import phenix_tools
+
         phenix_tools.register_phenix_tools(mcp, JOB_DIR, KS)
         print("✅ Phenix tools registered", file=sys.stderr)
     else:

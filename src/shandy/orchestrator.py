@@ -40,34 +40,33 @@ def get_version_metadata() -> Dict[str, str]:
     metadata = {}
 
     # Try environment variables first (set during Docker build)
-    shandy_commit = os.environ.get('SHANDY_COMMIT')
-    if shandy_commit and shandy_commit != 'unknown':
-        metadata['shandy_commit'] = shandy_commit[:12]
+    shandy_commit = os.environ.get("SHANDY_COMMIT")
+    if shandy_commit and shandy_commit != "unknown":
+        metadata["shandy_commit"] = shandy_commit[:12]
 
-    shandy_build_time = os.environ.get('SHANDY_BUILD_TIME')
-    if shandy_build_time and shandy_build_time != 'unknown':
-        metadata['shandy_build_time'] = shandy_build_time
+    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")
+    if shandy_build_time and shandy_build_time != "unknown":
+        metadata["shandy_build_time"] = shandy_build_time
 
     # Fallback to git if not in Docker
-    if 'shandy_commit' not in metadata:
+    if "shandy_commit" not in metadata:
         try:
             result = subprocess.run(
-                ['git', 'rev-parse', 'HEAD'],
-                capture_output=True, text=True, timeout=5
+                ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
-                metadata['shandy_commit'] = result.stdout.strip()[:12]
+                metadata["shandy_commit"] = result.stdout.strip()[:12]
         except Exception:
             pass
 
     # Get docker container ID (if running in Docker)
     try:
-        if Path('/.dockerenv').exists():
+        if Path("/.dockerenv").exists():
             # Read hostname which is the container ID in Docker
-            with open('/etc/hostname', 'r') as f:
+            with open("/etc/hostname", "r") as f:
                 container_id = f.read().strip()
                 if container_id:
-                    metadata['docker_container_id'] = container_id[:12]
+                    metadata["docker_container_id"] = container_id[:12]
     except Exception:
         pass
 
@@ -89,17 +88,19 @@ def extract_claude_info_from_transcript(transcript: list) -> Dict[str, str]:
     info = {}
 
     for msg in transcript:
-        if msg.get('type') == 'system' and msg.get('subtype') == 'init':
-            if 'model' in msg:
-                info['claude_model'] = msg['model']
-            if 'claude_code_version' in msg:
-                info['claude_code_version'] = msg['claude_code_version']
+        if msg.get("type") == "system" and msg.get("subtype") == "init":
+            if "model" in msg:
+                info["claude_model"] = msg["model"]
+            if "claude_code_version" in msg:
+                info["claude_code_version"] = msg["claude_code_version"]
             break
 
     return info
 
 
-def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_TIMEOUT_SECONDS) -> Optional[str]:
+def wait_for_feedback_or_timeout(
+    job_dir: Path, timeout_seconds: int = FEEDBACK_TIMEOUT_SECONDS
+) -> Optional[str]:
     """
     Wait for scientist feedback or timeout (coinvestigate mode).
 
@@ -123,7 +124,7 @@ def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_
     last_feedback_count = 0
 
     # Get initial feedback count
-    ks =KnowledgeState.load(ks_path)
+    ks = KnowledgeState.load(ks_path)
     current_iteration = ks.data["iteration"]
     last_feedback_count = len(ks.data.get("feedback_history", []))
 
@@ -145,7 +146,7 @@ def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_
             return None
 
         # Check for new feedback
-        ks =KnowledgeState.load(ks_path)
+        ks = KnowledgeState.load(ks_path)
         feedback_history = ks.data.get("feedback_history", [])
 
         if len(feedback_history) > last_feedback_count:
@@ -197,24 +198,22 @@ def parse_stream_json(stdout: str) -> list:
     import re
 
     transcript = []
-    for line in stdout.strip().split('\n'):
+    for line in stdout.strip().split("\n"):
         if not line:
             continue
 
         # Strip "data" fields with long content (images, file contents)
         # These are raw file bytes we don't need in the transcript.
         # Pattern: "data": "..." where string is >1000 chars
-        sanitized_line = re.sub(
-            r'"data":\s*"[^"]{1000,}"',
-            '"data": "[CONTENT REMOVED]"',
-            line
-        )
+        sanitized_line = re.sub(r'"data":\s*"[^"]{1000,}"', '"data": "[CONTENT REMOVED]"', line)
 
         try:
             obj = json.loads(sanitized_line)
             transcript.append(obj)
         except json.JSONDecodeError as e:
-            logger.warning(f"Skipping unparseable JSON line (error at pos {e.pos}): {line[:100]}...")
+            logger.warning(
+                f"Skipping unparseable JSON line (error at pos {e.pos}): {line[:100]}..."
+            )
 
     return transcript
 
@@ -228,7 +227,7 @@ def increment_ks_iteration(ks_path: Path) -> None:
     Args:
         ks_path: Path to knowledge_state.json
     """
-    with open(ks_path, 'r+') as f:
+    with open(ks_path, "r+") as f:
         # Acquire exclusive lock
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
@@ -236,7 +235,7 @@ def increment_ks_iteration(ks_path: Path) -> None:
             kg_data = json.load(f)
 
             # Increment iteration
-            kg_data['iteration'] += 1
+            kg_data["iteration"] += 1
 
             # Write back atomically
             f.seek(0)
@@ -247,10 +246,15 @@ def increment_ks_iteration(ks_path: Path) -> None:
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
-def create_job(job_id: str, research_question: str, data_files: list,
-               max_iterations: int, use_skills: bool = True,
-               jobs_dir: Path = Path("jobs"),
-               investigation_mode: str = "autonomous") -> Path:
+def create_job(
+    job_id: str,
+    research_question: str,
+    data_files: list,
+    max_iterations: int,
+    use_skills: bool = True,
+    jobs_dir: Path = Path("jobs"),
+    investigation_mode: str = "autonomous",
+) -> Path:
     """
     Create a new discovery job.
 
@@ -283,15 +287,16 @@ def create_job(job_id: str, research_question: str, data_files: list,
             # In real implementation, handle file upload properly
             # For now, assume data_file is already a path
             import shutil
+
             shutil.copy(data_file, dest)
             data_paths.append(dest)
 
     # Initialize knowledge graph
-    ks =KnowledgeState(
+    ks = KnowledgeState(
         job_id=job_id,
         research_question=research_question,
         max_iterations=max_iterations,
-        use_skills=use_skills
+        use_skills=use_skills,
     )
 
     # Add data summary - metadata only, no data loading!
@@ -304,18 +309,16 @@ def create_job(job_id: str, research_question: str, data_files: list,
         file_info = get_file_info(first_file)
 
         # Set minimal data summary (agent will discover details when analyzing)
-        ks.set_data_summary({
-            "files": [str(p.name) for p in data_paths],
-            "file_type": file_info["file_type"],
-            "file_size_mb": file_info["size"] / (1024 * 1024)
-        })
+        ks.set_data_summary(
+            {
+                "files": [str(p.name) for p in data_paths],
+                "file_type": file_info["file_type"],
+                "file_size_mb": file_info["size"] / (1024 * 1024),
+            }
+        )
     else:
         # No data files provided
-        ks.set_data_summary({
-            "files": [],
-            "file_type": "none",
-            "file_size_mb": 0
-        })
+        ks.set_data_summary({"files": [], "file_type": "none", "file_size_mb": 0})
 
     ks.save(job_dir / "knowledge_state.json")
 
@@ -328,7 +331,7 @@ def create_job(job_id: str, research_question: str, data_files: list,
         "use_skills": use_skills,
         "investigation_mode": investigation_mode,
         "created_at": datetime.now().isoformat(),
-        "status": "created"
+        "status": "created",
     }
 
     with open(job_dir / "config.json", "w") as f:
@@ -375,8 +378,10 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     # Note: Add generous timeout for MCP server startup to handle large data files
     # Large Excel files (>30MB) can take 30-40 seconds to load into pandas
     mcp_args = [
-        "-m", "shandy.mcp_server",
-        "--job-dir", str(job_dir.absolute()),
+        "-m",
+        "shandy.mcp_server",
+        "--job-dir",
+        str(job_dir.absolute()),
     ]
     if data_file:
         mcp_args.extend(["--data-file", str(data_file.absolute())])
@@ -386,7 +391,7 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
             "shandy-tools": {
                 "command": "python",
                 "args": mcp_args,
-                "timeout": 120  # 2 minute timeout for server startup (handles large file loading)
+                "timeout": 120,  # 2 minute timeout for server startup (handles large file loading)
             }
         }
     }
@@ -407,16 +412,18 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
         claude_cli = os.getenv("CLAUDE_CLI_PATH", "claude")
 
         # Prepare initial prompt
-        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
+        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
         # Build data context based on whether files were provided
-        if config['data_files']:
+        if config["data_files"]:
             data_context = f"""Data summary:
 - Files: {config['data_files']}
 - Columns: {ks.data['data_summary'].get('columns', [])}
 - Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}"""
         else:
-            data_context = "No data files provided. You may use literature search and computational methods."
+            data_context = (
+                "No data files provided. You may use literature search and computational methods."
+            )
 
         initial_prompt = f"""Begin autonomous discovery for this research question:
 
@@ -446,25 +453,43 @@ Start your investigation by using these tools to analyze the data.
         # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
         cmd = [
             claude_cli,
-            '-p',
-            '--verbose',
-            '--output-format', 'stream-json',
-            '--mcp-config', str(mcp_config_path.absolute()),
-            '--allowedTools', 'Skill',  # Enable skill invocation for domain-specific workflows
-            '--allowedTools', 'mcp__shandy-tools__execute_code',
-            '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-            '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
-            '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
-            '--allowedTools', 'mcp__shandy-tools__read_document',
-            '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
-            '--allowedTools', 'mcp__shandy-tools__compare_structures',
-            '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
+            "-p",
+            "--verbose",
+            "--output-format",
+            "stream-json",
+            "--mcp-config",
+            str(mcp_config_path.absolute()),
+            "--allowedTools",
+            "Skill",  # Enable skill invocation for domain-specific workflows
+            "--allowedTools",
+            "mcp__shandy-tools__execute_code",
+            "--allowedTools",
+            "mcp__shandy-tools__search_pubmed",
+            "--allowedTools",
+            "mcp__shandy-tools__update_knowledge_state",
+            "--allowedTools",
+            "mcp__shandy-tools__save_iteration_summary",
+            "--allowedTools",
+            "mcp__shandy-tools__read_document",
+            "--allowedTools",
+            "mcp__shandy-tools__run_phenix_tool",
+            "--allowedTools",
+            "mcp__shandy-tools__compare_structures",
+            "--allowedTools",
+            "mcp__shandy-tools__parse_alphafold_confidence",
         ]
 
         logger.info(f"Iteration 1/{max_iterations}: Starting session")
         logger.info(f"Running command: {' '.join(cmd)}")
         logger.info(f"Prompt length: {len(initial_prompt)} characters")
-        result = subprocess.run(cmd, input=initial_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
+        result = subprocess.run(
+            cmd,
+            input=initial_prompt,
+            capture_output=True,
+            text=True,
+            cwd=str(Path.cwd()),
+            env=os.environ.copy(),
+        )
 
         logger.info(f"Claude CLI return code: {result.returncode}")
         logger.info(f"Claude CLI stdout length: {len(result.stdout)}")
@@ -478,15 +503,17 @@ Start your investigation by using these tools to analyze the data.
         if result.returncode != 0:
             logger.error(f"Claude CLI stdout: {result.stdout[:500]}")
             logger.error(f"Claude CLI stderr (full): {result.stderr}")
-            raise RuntimeError(f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}")
+            raise RuntimeError(
+                f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}"
+            )
 
         # Parse stream-json output (one JSON object per line)
         # This sanitizes base64 image data during parsing to avoid corruption issues
         transcript = parse_stream_json(result.stdout)
 
         # Find the result item to get session_id
-        result_item = next((item for item in transcript if item.get('type') == 'result'), None)
-        session_id = result_item.get('session_id') if result_item else None
+        result_item = next((item for item in transcript if item.get("type") == "result"), None)
+        session_id = result_item.get("session_id") if result_item else None
         logger.info(f"Iteration 1 completed successfully (session: {session_id})")
 
         # Extract and save version metadata for reproducibility
@@ -537,7 +564,7 @@ Start your investigation by using these tools to analyze the data.
 
         for iteration in range(2, max_iterations + 1):
             # Reload knowledge graph to see latest state
-            ks =KnowledgeState.load(job_dir / "knowledge_state.json")
+            ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
             # Check for feedback from previous iteration (from KS if not already captured)
             if pending_feedback is None:
@@ -572,52 +599,88 @@ Think step by step about what will provide the most insight, then actively use t
 Remember: At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
 
             # Decide whether to resume or start fresh
-            should_reset = (iteration % RESET_INTERVAL == 1)
+            should_reset = iteration % RESET_INTERVAL == 1
 
             if should_reset:
-                logger.info(f"Iteration {iteration}/{max_iterations}: Starting fresh session (context reset)")
+                logger.info(
+                    f"Iteration {iteration}/{max_iterations}: Starting fresh session (context reset)"
+                )
                 cmd = [
                     claude_cli,
-                    '-p',
-                    '--verbose',
-                    '--output-format', 'stream-json',
-                    '--mcp-config', str(mcp_config_path.absolute()),
-                    '--allowedTools', 'Skill',  # Enable skill invocation for domain-specific workflows
-                    '--allowedTools', 'mcp__shandy-tools__execute_code',
-                    '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
-                    '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
-                    '--allowedTools', 'mcp__shandy-tools__read_document',
-                    '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
-                    '--allowedTools', 'mcp__shandy-tools__compare_structures',
-                    '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
+                    "-p",
+                    "--verbose",
+                    "--output-format",
+                    "stream-json",
+                    "--mcp-config",
+                    str(mcp_config_path.absolute()),
+                    "--allowedTools",
+                    "Skill",  # Enable skill invocation for domain-specific workflows
+                    "--allowedTools",
+                    "mcp__shandy-tools__execute_code",
+                    "--allowedTools",
+                    "mcp__shandy-tools__search_pubmed",
+                    "--allowedTools",
+                    "mcp__shandy-tools__update_knowledge_state",
+                    "--allowedTools",
+                    "mcp__shandy-tools__save_iteration_summary",
+                    "--allowedTools",
+                    "mcp__shandy-tools__read_document",
+                    "--allowedTools",
+                    "mcp__shandy-tools__run_phenix_tool",
+                    "--allowedTools",
+                    "mcp__shandy-tools__compare_structures",
+                    "--allowedTools",
+                    "mcp__shandy-tools__parse_alphafold_confidence",
                 ]
             else:
-                logger.info(f"Iteration {iteration}/{max_iterations}: Resuming session {session_id}")
+                logger.info(
+                    f"Iteration {iteration}/{max_iterations}: Resuming session {session_id}"
+                )
                 cmd = [
                     claude_cli,
-                    '-p',
-                    '--resume', session_id,
-                    '--verbose',
-                    '--output-format', 'stream-json',
-                    '--mcp-config', str(mcp_config_path.absolute()),
-                    '--allowedTools', 'Skill',  # Enable skill invocation for domain-specific workflows
-                    '--allowedTools', 'mcp__shandy-tools__execute_code',
-                    '--allowedTools', 'mcp__shandy-tools__search_pubmed',
-                    '--allowedTools', 'mcp__shandy-tools__update_knowledge_state',
-                    '--allowedTools', 'mcp__shandy-tools__save_iteration_summary',
-                    '--allowedTools', 'mcp__shandy-tools__read_document',
-                    '--allowedTools', 'mcp__shandy-tools__run_phenix_tool',
-                    '--allowedTools', 'mcp__shandy-tools__compare_structures',
-                    '--allowedTools', 'mcp__shandy-tools__parse_alphafold_confidence'
+                    "-p",
+                    "--resume",
+                    session_id,
+                    "--verbose",
+                    "--output-format",
+                    "stream-json",
+                    "--mcp-config",
+                    str(mcp_config_path.absolute()),
+                    "--allowedTools",
+                    "Skill",  # Enable skill invocation for domain-specific workflows
+                    "--allowedTools",
+                    "mcp__shandy-tools__execute_code",
+                    "--allowedTools",
+                    "mcp__shandy-tools__search_pubmed",
+                    "--allowedTools",
+                    "mcp__shandy-tools__update_knowledge_state",
+                    "--allowedTools",
+                    "mcp__shandy-tools__save_iteration_summary",
+                    "--allowedTools",
+                    "mcp__shandy-tools__read_document",
+                    "--allowedTools",
+                    "mcp__shandy-tools__run_phenix_tool",
+                    "--allowedTools",
+                    "mcp__shandy-tools__compare_structures",
+                    "--allowedTools",
+                    "mcp__shandy-tools__parse_alphafold_confidence",
                 ]
 
             logger.info(f"Prompt length: {len(iteration_prompt)} characters")
-            result = subprocess.run(cmd, input=iteration_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
+            result = subprocess.run(
+                cmd,
+                input=iteration_prompt,
+                capture_output=True,
+                text=True,
+                cwd=str(Path.cwd()),
+                env=os.environ.copy(),
+            )
 
             # Log stderr to diagnose MCP server issues (even on success)
             if result.stderr:
-                logger.info(f"Iteration {iteration} Claude CLI stderr (first 2000 chars):\n{result.stderr[:2000]}")
+                logger.info(
+                    f"Iteration {iteration} Claude CLI stderr (first 2000 chars):\n{result.stderr[:2000]}"
+                )
 
             if result.returncode != 0:
                 logger.error(f"Iteration {iteration} failed (rc={result.returncode})")
@@ -630,11 +693,11 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
             transcript = parse_stream_json(result.stdout)
 
             # Find the result item to get session_id
-            result_item = next((item for item in transcript if item.get('type') == 'result'), None)
+            result_item = next((item for item in transcript if item.get("type") == "result"), None)
 
             # Update session_id if we started a fresh session
             if should_reset:
-                new_session_id = result_item.get('session_id') if result_item else None
+                new_session_id = result_item.get("session_id") if result_item else None
                 if new_session_id:
                     session_id = new_session_id
                     logger.info(f"New session started: {session_id}")
@@ -667,15 +730,17 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
 
         # Generate final report using Claude
         logger.info("Generating final report...")
-        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
+        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
         # Build concise summary instead of full JSON dump
-        findings_summary = "\n\n".join([
-            f"**Finding {i+1}: {f['title']}**\n"
-            f"Evidence: {f['evidence']}\n"
-            f"Interpretation: {f.get('biological_interpretation', 'N/A')}"
-            for i, f in enumerate(ks.data['findings'])
-        ])
+        findings_summary = "\n\n".join(
+            [
+                f"**Finding {i+1}: {f['title']}**\n"
+                f"Evidence: {f['evidence']}\n"
+                f"Interpretation: {f.get('biological_interpretation', 'N/A')}"
+                for i, f in enumerate(ks.data["findings"])
+            ]
+        )
 
         literature_summary = f"Reviewed {len(ks.data['literature'])} papers from PubMed"
 
@@ -703,14 +768,17 @@ Format as professional scientific markdown."""
 
         # Generate report (single call, no session needed)
         # Note: Pass prompt via stdin to avoid ARG_MAX limits with large knowledge graphs
-        cmd = [
-            claude_cli,
-            '-p',
-            '--output-format', 'text'
-        ]
+        cmd = [claude_cli, "-p", "--output-format", "text"]
 
         logger.info(f"Report prompt length: {len(report_prompt)} characters")
-        result = subprocess.run(cmd, input=report_prompt, capture_output=True, text=True, cwd=str(Path.cwd()), env=os.environ.copy())
+        result = subprocess.run(
+            cmd,
+            input=report_prompt,
+            capture_output=True,
+            text=True,
+            cwd=str(Path.cwd()),
+            env=os.environ.copy(),
+        )
 
         report_generated = False
         report_error = None
@@ -727,12 +795,19 @@ Format as professional scientific markdown."""
             # Generate PDF version
             try:
                 from .pdf_generator import markdown_to_pdf
+
                 pdf_path = markdown_to_pdf(markdown_path, add_footer=True)
                 logger.info(f"Final report (PDF) generated: {pdf_path}")
             except Exception as e:
                 logger.warning(f"PDF generation failed (Markdown still available): {e}")
         else:
-            report_error = result.stdout[:1000] if result.stdout else result.stderr[:1000] if result.stderr else "Unknown error"
+            report_error = (
+                result.stdout[:1000]
+                if result.stdout
+                else result.stderr[:1000]
+                if result.stderr
+                else "Unknown error"
+            )
             logger.error(f"Report generation failed (rc={result.returncode})")
             logger.error(f"  stderr: {result.stderr}")
             logger.error(f"  stdout: {result.stdout[:1000]}")
@@ -760,7 +835,7 @@ Format as professional scientific markdown."""
             "job_id": job_id,
             "status": config["status"],
             "iterations": ks.data["iteration"],
-            "findings": len(ks.data["findings"])
+            "findings": len(ks.data["findings"]),
         }
 
     except Exception as e:
@@ -787,8 +862,7 @@ def main():
 
     # Set up logging
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Run discovery

@@ -14,6 +14,7 @@ import pandas as pd
 # Try to import python-magic, but make it optional
 try:
     import magic
+
     HAS_MAGIC = True
 except (ImportError, OSError):
     HAS_MAGIC = False
@@ -28,44 +29,71 @@ if _env_max_file_size:
     try:
         MAX_FILE_SIZE = int(_env_max_file_size) * 1024 * 1024
     except ValueError:
-        logger.warning(f"Invalid MAX_FILE_SIZE_MB value '{_env_max_file_size}', using default {_default_max_file_size_mb}MB")
+        logger.warning(
+            f"Invalid MAX_FILE_SIZE_MB value '{_env_max_file_size}', using default {_default_max_file_size_mb}MB"
+        )
         MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
 else:
     MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
 
 # Supported file extensions
 TABULAR_EXTENSIONS = {
-    '.csv', '.tsv', '.txt',
-    '.xlsx', '.xls',
-    '.parquet', '.pq',
-    '.json', '.jsonl',
-    '.feather',
+    ".csv",
+    ".tsv",
+    ".txt",
+    ".xlsx",
+    ".xls",
+    ".parquet",
+    ".pq",
+    ".json",
+    ".jsonl",
+    ".feather",
 }
 
 STRUCTURE_EXTENSIONS = {
-    '.pdb', '.cif', '.ent', '.mmcif',
-    '.pdbqt', '.mol2', '.sdf',
+    ".pdb",
+    ".cif",
+    ".ent",
+    ".mmcif",
+    ".pdbqt",
+    ".mol2",
+    ".sdf",
 }
 
 SEQUENCE_EXTENSIONS = {
-    '.fasta', '.fa', '.fna', '.faa',
-    '.fastq', '.fq',
-    '.gb', '.gbk', '.genbank',
+    ".fasta",
+    ".fa",
+    ".fna",
+    ".faa",
+    ".fastq",
+    ".fq",
+    ".gb",
+    ".gbk",
+    ".genbank",
 }
 
 IMAGE_EXTENSIONS = {
-    '.png', '.jpg', '.jpeg', '.gif', '.bmp',
-    '.tiff', '.tif', '.svg', '.webp',
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".svg",
+    ".webp",
 }
 
 
 class FileTooBigError(Exception):
     """Raised when file exceeds size limit."""
+
     pass
 
 
 class UnsupportedFileTypeError(Exception):
     """Raised when file type is not supported."""
+
     pass
 
 
@@ -154,32 +182,32 @@ def load_tabular_file(file_path: Path) -> pd.DataFrame:
 
     try:
         # CSV and TSV - use auto-detection for delimiter
-        if extension in ['.csv', '.txt']:
-            return pd.read_csv(file_path, sep=None, engine='python')
-        elif extension == '.tsv':
-            return pd.read_csv(file_path, sep='\t')
+        if extension in [".csv", ".txt"]:
+            return pd.read_csv(file_path, sep=None, engine="python")
+        elif extension == ".tsv":
+            return pd.read_csv(file_path, sep="\t")
 
         # Excel
-        elif extension in ['.xlsx', '.xls']:
+        elif extension in [".xlsx", ".xls"]:
             return pd.read_excel(file_path)
 
         # Parquet
-        elif extension in ['.parquet', '.pq']:
+        elif extension in [".parquet", ".pq"]:
             return pd.read_parquet(file_path)
 
         # JSON
-        elif extension == '.json':
+        elif extension == ".json":
             # Try reading as records first (common for data), fallback to lines
             try:
-                return pd.read_json(file_path, orient='records')
+                return pd.read_json(file_path, orient="records")
             except ValueError:
                 return pd.read_json(file_path, lines=False)
 
-        elif extension == '.jsonl':
+        elif extension == ".jsonl":
             return pd.read_json(file_path, lines=True)
 
         # Feather
-        elif extension == '.feather':
+        elif extension == ".feather":
             return pd.read_feather(file_path)
 
         else:
@@ -266,27 +294,26 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
 
     # Check for executable content
     dangerous_mimes = [
-        'application/x-executable',
-        'application/x-sharedlib',
-        'application/x-mach-binary',
-        'application/x-dosexec',
+        "application/x-executable",
+        "application/x-sharedlib",
+        "application/x-mach-binary",
+        "application/x-dosexec",
     ]
 
     if any(dangerous in mime_type for dangerous in dangerous_mimes):
         raise ValueError(
-            f"Executable file detected (MIME: {mime_type}). "
-            f"Only data files are allowed."
+            f"Executable file detected (MIME: {mime_type}). " f"Only data files are allowed."
         )
 
     # Warn if extension doesn't match content
     expected_mimes = {
-        '.csv': ['text/plain', 'text/csv', 'application/csv'],
-        '.tsv': ['text/plain', 'text/tab-separated-values'],
-        '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-        '.xls': ['application/vnd.ms-excel'],
-        '.json': ['application/json', 'text/plain'],
-        '.pdb': ['text/plain', 'chemical/x-pdb'],
-        '.cif': ['text/plain', 'chemical/x-cif'],
+        ".csv": ["text/plain", "text/csv", "application/csv"],
+        ".tsv": ["text/plain", "text/tab-separated-values"],
+        ".xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        ".xls": ["application/vnd.ms-excel"],
+        ".json": ["application/json", "text/plain"],
+        ".pdb": ["text/plain", "chemical/x-pdb"],
+        ".cif": ["text/plain", "chemical/x-cif"],
     }
 
     if extension in expected_mimes:

@@ -10,7 +10,9 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
-def search_pubmed(query: str, max_results: int = 10, email: Optional[str] = None) -> List[Dict[str, Any]]:
+def search_pubmed(
+    query: str, max_results: int = 10, email: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Search PubMed and return relevant papers.
 
@@ -35,12 +37,7 @@ def search_pubmed(query: str, max_results: int = 10, email: Optional[str] = None
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
     # Step 1: Search for PMIDs
-    search_params = {
-        "db": "pubmed",
-        "term": query,
-        "retmax": max_results,
-        "retmode": "json"
-    }
+    search_params = {"db": "pubmed", "term": query, "retmax": max_results, "retmode": "json"}
     if email:
         search_params["email"] = email
 
@@ -57,11 +54,7 @@ def search_pubmed(query: str, max_results: int = 10, email: Optional[str] = None
     # Be nice to NCBI servers - rate limit
     time.sleep(0.34)  # Max 3 requests per second
 
-    fetch_params = {
-        "db": "pubmed",
-        "id": ",".join(pmids),
-        "retmode": "xml"
-    }
+    fetch_params = {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"}
     if email:
         fetch_params["email"] = email
 
@@ -89,6 +82,7 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
     """
     try:
         import xml.etree.ElementTree as ET  # noqa: N817
+
         root = ET.fromstring(xml_text)
 
         papers = []
@@ -117,13 +111,15 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
                 year_elem = article.find(".//PubDate/Year")
                 year = year_elem.text if year_elem is not None else "Unknown year"
 
-                papers.append({
-                    "pmid": pmid,
-                    "title": title,
-                    "abstract": abstract,
-                    "authors": authors,
-                    "year": year
-                })
+                papers.append(
+                    {
+                        "pmid": pmid,
+                        "title": title,
+                        "abstract": abstract,
+                        "authors": authors,
+                        "year": year,
+                    }
+                )
             except Exception:
                 # Skip malformed articles
                 continue
@@ -132,17 +128,21 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
 
     except Exception as e:
         # Fallback: return minimal info
-        return [{
-            "pmid": pmid,
-            "title": "Error parsing paper",
-            "abstract": f"Could not parse XML: {str(e)}",
-            "authors": "",
-            "year": ""
-        } for pmid in pmids]
+        return [
+            {
+                "pmid": pmid,
+                "title": "Error parsing paper",
+                "abstract": f"Could not parse XML: {str(e)}",
+                "authors": "",
+                "year": "",
+            }
+            for pmid in pmids
+        ]
 
 
-def extract_mechanism_from_papers(papers: List[Dict[str, Any]], topic: str,
-                                  claude_api_call: callable) -> str:
+def extract_mechanism_from_papers(
+    papers: List[Dict[str, Any]], topic: str, claude_api_call: callable
+) -> str:
     """
     Use Claude to extract mechanistic knowledge from abstracts.
 

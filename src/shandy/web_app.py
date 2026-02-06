@@ -110,16 +110,21 @@ def parse_transcript_actions(transcript: List[Dict[str, Any]]) -> List[Dict[str,
                     if "failed" in result_text.lower() or "error" in result_text.lower():
                         success = False
 
-                    actions.append({
-                        "tool_name": tool_name,
-                        "short_name": tool_name.split("__")[-1] if "__" in tool_name else tool_name,
-                        "description": get_action_description(item),
-                        "input": inp,
-                        "result": result_text,
-                        "success": success,
-                    })
+                    actions.append(
+                        {
+                            "tool_name": tool_name,
+                            "short_name": tool_name.split("__")[-1]
+                            if "__" in tool_name
+                            else tool_name,
+                            "description": get_action_description(item),
+                            "input": inp,
+                            "result": result_text,
+                            "success": success,
+                        }
+                    )
 
     return actions
+
 
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
@@ -147,7 +152,7 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     job_manager = JobManager(jobs_dir=jobs_dir, max_concurrent=max_concurrent)
 
     # Add static file serving for job plots
-    app.add_static_files('/jobs', str(jobs_dir))
+    app.add_static_files("/jobs", str(jobs_dir))
 
     logger.info("Web app initialized")
 
@@ -170,6 +175,7 @@ _uploaded_files = {}
 @ui.page("/login")
 def login_page():
     """Login page"""
+
     def try_login():
         if check_password(password_input.value):
             app.storage.user["authenticated"] = True
@@ -181,7 +187,11 @@ def login_page():
     with ui.column().classes("absolute-center items-center"):
         ui.markdown("# SHANDY")
         ui.markdown("_Scientific Hypothesis Agent for Novel Discovery_")
-        password_input = ui.input("Password", password=True, password_toggle_button=True).classes("w-64").on("keydown.enter", try_login)
+        password_input = (
+            ui.input("Password", password=True, password_toggle_button=True)
+            .classes("w-64")
+            .on("keydown.enter", try_login)
+        )
         ui.button("Login", on_click=try_login).classes("w-64")
 
 
@@ -223,6 +233,7 @@ def new_job_page():
 
         # Generate job ID
         import uuid
+
         job_id = f"job_{uuid.uuid4().hex[:8]}"
 
         # Save uploaded files to temp location (if any)
@@ -230,9 +241,9 @@ def new_job_page():
         if _uploaded_files.get(session_id):
             for uploaded_file in _uploaded_files[session_id]:
                 # Create temp file
-                temp_file = Path(tempfile.mkdtemp()) / uploaded_file['name']
+                temp_file = Path(tempfile.mkdtemp()) / uploaded_file["name"]
                 with open(temp_file, "wb") as f:
-                    f.write(uploaded_file['content'])
+                    f.write(uploaded_file["content"])
                 data_files.append(temp_file)
 
         # Create job
@@ -247,7 +258,7 @@ def new_job_page():
                 max_iterations=int(max_iterations.value),
                 use_skills=True,
                 auto_start=True,
-                investigation_mode=mode
+                investigation_mode=mode,
             )
 
             ui.notify(f"Job {job_id} created and started!", type="positive")
@@ -272,10 +283,7 @@ def new_job_page():
             content = await e.file.read()
             name = e.file.name
 
-            _uploaded_files[session_id].append({
-                'name': name,
-                'content': content
-            })
+            _uploaded_files[session_id].append({"name": name, "content": content})
             ui.notify(f"Uploaded: {name}", type="positive")
             logger.info(f"Successfully uploaded {name} ({len(content)} bytes)")
         except Exception as ex:
@@ -295,7 +303,7 @@ def new_job_page():
         research_question = ui.textarea(
             label="Research Question",
             placeholder="e.g., What metabolic pathways are affected by hypothermia?",
-            validation={"Too short": lambda value: len(value) >= 10}
+            validation={"Too short": lambda value: len(value) >= 10},
         ).classes("w-full")
 
         # File upload
@@ -304,32 +312,36 @@ def new_job_page():
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
             multiple=True,
             auto_upload=True,
-            on_upload=handle_upload
+            on_upload=handle_upload,
         ).classes("w-full")
 
         # Configuration
         max_iterations = ui.number(
-            label="Max Iterations",
-            value=10,
-            min=2,
-            max=100,
-            step=1
+            label="Max Iterations", value=10, min=2, max=100, step=1
         ).classes("w-full")
 
         # Advanced options (collapsed by default)
         with ui.expansion("Advanced Options (Experimental)", icon="science").classes("w-full mt-4"):
             with ui.card().classes("w-full"):
                 coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
-                ui.label("Requires your active participation. After each iteration, I will pause to receive your feedback.").classes("text-sm text-gray-700 mt-1")
-                ui.label("Requires you to stay near your computer. Auto-continues after 15 min if you don't respond.").classes("text-xs text-orange-700")
+                ui.label(
+                    "Requires your active participation. After each iteration, I will pause to receive your feedback."
+                ).classes("text-sm text-gray-700 mt-1")
+                ui.label(
+                    "Requires you to stay near your computer. Auto-continues after 15 min if you don't respond."
+                ).classes("text-xs text-orange-700")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")
 
     # Quick links
     with ui.row().classes("w-full max-w-2xl mx-auto mt-4"):
-        ui.button("View Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="list").classes("flex-1")
-        ui.button("Documentation", on_click=lambda: ui.navigate.to("/docs"), icon="help").classes("flex-1")
+        ui.button("View Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="list").classes(
+            "flex-1"
+        )
+        ui.button("Documentation", on_click=lambda: ui.navigate.to("/docs"), icon="help").classes(
+            "flex-1"
+        )
 
 
 @ui.page("/jobs")
@@ -349,11 +361,13 @@ def jobs_page():
         table.rows = [
             {
                 "job_id": job.job_id,
-                "question": job.research_question[:50] + "..." if len(job.research_question) > 50 else job.research_question,
+                "question": job.research_question[:50] + "..."
+                if len(job.research_question) > 50
+                else job.research_question,
                 "status": job.status.value,
                 "iterations": f"{job.iterations_completed}/{job.max_iterations}",
                 "findings": job.findings_count,
-                "created": job.created_at[:19]  # Remove milliseconds
+                "created": job.created_at[:19],  # Remove milliseconds
             }
             for job in jobs
         ]
@@ -365,7 +379,9 @@ def jobs_page():
         with ui.row():
             ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
             ui.button("Refresh", on_click=refresh_jobs, icon="refresh")
-            ui.button("Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments").props("flat")
+            ui.button(
+                "Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments"
+            ).props("flat")
 
     # Summary cards
     summary = job_manager.get_job_summary()
@@ -376,37 +392,49 @@ def jobs_page():
 
         with ui.card():
             ui.label("Running").classes("text-subtitle2")
-            ui.label(str(summary["status_counts"].get("running", 0))).classes("text-h4 text-blue-600")
+            ui.label(str(summary["status_counts"].get("running", 0))).classes(
+                "text-h4 text-blue-600"
+            )
 
         with ui.card():
             ui.label("Completed").classes("text-subtitle2")
-            ui.label(str(summary["status_counts"].get("completed", 0))).classes("text-h4 text-green-600")
+            ui.label(str(summary["status_counts"].get("completed", 0))).classes(
+                "text-h4 text-green-600"
+            )
 
     # Jobs table
     table = ui.table(
         columns=[
             {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
-            {"name": "question", "label": "Research Question", "field": "question", "align": "left"},
+            {
+                "name": "question",
+                "label": "Research Question",
+                "field": "question",
+                "align": "left",
+            },
             {"name": "status", "label": "Status", "field": "status", "align": "center"},
             {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
             {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
             {"name": "created", "label": "Created", "field": "created", "align": "left"},
-            {"name": "actions", "label": "Actions", "field": "actions", "align": "center"}
+            {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
         ],
         rows=[],
         row_key="job_id",
-        pagination=10
+        pagination=10,
     ).classes("w-full")
 
     # Add action buttons using slot template
-    table.add_slot('body-cell-actions', r'''
+    table.add_slot(
+        "body-cell-actions",
+        r"""
         <q-td :props="props">
             <q-btn flat dense color="primary" label="View"
                    @click="$parent.$emit('view-job', props.row.job_id)" />
         </q-td>
-    ''')
+    """,
+    )
 
-    table.on('view-job', lambda e: ui.navigate.to(f"/job/{e.args}"))
+    table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
 
     # Initial load
     refresh_jobs()
@@ -479,7 +507,7 @@ def job_detail_page(job_id: str):
                 JobStatus.RUNNING: "yellow",
                 JobStatus.COMPLETED: "green",
                 JobStatus.FAILED: "red",
-                JobStatus.CANCELLED: "gray"
+                JobStatus.CANCELLED: "gray",
             }
 
             with ui.row().classes("w-full gap-4 mb-4"):
@@ -491,7 +519,9 @@ def job_detail_page(job_id: str):
                 with ui.card().classes("flex-1"):
                     ui.label("Progress").classes("text-subtitle2")
                     progress = job_info.iterations_completed / max(job_info.max_iterations, 1)
-                    ui.label(f"{job_info.iterations_completed} / {job_info.max_iterations}").classes("text-h5")
+                    ui.label(
+                        f"{job_info.iterations_completed} / {job_info.max_iterations}"
+                    ).classes("text-h5")
                     ui.linear_progress(progress)
 
                 with ui.card().classes("flex-1"):
@@ -516,7 +546,7 @@ def job_detail_page(job_id: str):
                 iteration_summaries = {
                     s["iteration"]: {
                         "summary": s.get("summary", ""),
-                        "strapline": s.get("strapline", "")
+                        "strapline": s.get("strapline", ""),
                     }
                     for s in ks_data.get("iteration_summaries", [])
                 }
@@ -533,13 +563,19 @@ def job_detail_page(job_id: str):
                     with ui.scroll_area().classes("w-full h-[600px]"):
                         # Display in chronological order (oldest first)
                         # Don't show the current in-progress iteration if awaiting feedback
-                        display_max = max_iter - 1 if job_info.status == JobStatus.AWAITING_FEEDBACK else max_iter
+                        display_max = (
+                            max_iter - 1
+                            if job_info.status == JobStatus.AWAITING_FEEDBACK
+                            else max_iter
+                        )
                         for iteration in range(1, display_max + 1):
                             entries = by_iteration.get(iteration, [])
 
                             # Check if this iteration is still in progress
                             # max_iter is the CURRENT iteration being worked on
-                            is_in_progress = (iteration == max_iter and job_info.status == JobStatus.RUNNING)
+                            is_in_progress = (
+                                iteration == max_iter and job_info.status == JobStatus.RUNNING
+                            )
 
                             # Get agent summary - prefer strapline for header, full summary inside
                             iter_summary = iteration_summaries.get(iteration, {})
@@ -555,8 +591,12 @@ def job_detail_page(job_id: str):
                             # Transcript is loaded lazily when expansion is opened
                             provenance_dir = job_dir / "provenance"
                             code_count = len([e for e in entries if e["action"] == "execute_code"])
-                            search_count = len([e for e in entries if e["action"] == "search_pubmed"])
-                            finding_count = len([e for e in entries if e["action"] == "update_knowledge_state"])
+                            search_count = len(
+                                [e for e in entries if e["action"] == "search_pubmed"]
+                            )
+                            finding_count = len(
+                                [e for e in entries if e["action"] == "update_knowledge_state"]
+                            )
 
                             # Determine color based on outcome
                             border_class = "border-l-4 border-gray-300"
@@ -568,30 +608,48 @@ def job_detail_page(job_id: str):
                             # Use strapline for header if available, otherwise truncated summary
                             # Add "[in progress]" suffix for iterations still being worked on
                             if strapline:
-                                header_text = f"{strapline} [in progress]" if is_in_progress else strapline
+                                header_text = (
+                                    f"{strapline} [in progress]" if is_in_progress else strapline
+                                )
                             elif summary_text:
-                                truncated = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
-                                header_text = f"{truncated} [in progress]" if is_in_progress else truncated
+                                truncated = (
+                                    summary_text[:80] + "..."
+                                    if len(summary_text) > 80
+                                    else summary_text
+                                )
+                                header_text = (
+                                    f"{truncated} [in progress]" if is_in_progress else truncated
+                                )
                             elif is_in_progress:
                                 header_text = "Investigation in progress..."
                             else:
                                 header_text = "Completed"
 
-                            with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
+                            with ui.expansion(icon="science").classes(
+                                f"w-full mb-2 {border_class}"
+                            ) as expansion:
                                 # Custom header with badges using slot
                                 with expansion.add_slot("header"):
                                     with ui.row().classes("items-center gap-2 flex-wrap"):
-                                        ui.label(f"Iteration {iteration}: {header_text}").classes("font-medium")
+                                        ui.label(f"Iteration {iteration}: {header_text}").classes(
+                                            "font-medium"
+                                        )
                                         if code_count:
-                                            ui.badge(f"{code_count} analyses", color="blue").props("outline")
+                                            ui.badge(f"{code_count} analyses", color="blue").props(
+                                                "outline"
+                                            )
                                         if search_count:
-                                            ui.badge(f"{search_count} searches", color="purple").props("outline")
+                                            ui.badge(
+                                                f"{search_count} searches", color="purple"
+                                            ).props("outline")
                                         if finding_count:
                                             ui.badge(f"{finding_count} findings", color="green")
 
                                 # Container for lazy-loaded content
                                 content_container = ui.column().classes("w-full")
-                                content_loaded = {"value": False}  # Track if content has been loaded
+                                content_loaded = {
+                                    "value": False
+                                }  # Track if content has been loaded
 
                                 def load_iteration_content(
                                     container,
@@ -601,7 +659,7 @@ def job_detail_page(job_id: str):
                                     iter_entries=entries,
                                     iter_ks_data=ks_data,
                                     iter_job_dir=job_dir,
-                                    iter_provenance_dir=provenance_dir
+                                    iter_provenance_dir=provenance_dir,
                                 ):
                                     """Lazy load iteration content when expansion is opened."""
                                     if loaded_flag["value"]:
@@ -612,150 +670,283 @@ def job_detail_page(job_id: str):
                                     with container:
                                         # Show full summary if available
                                         if iter_summary_text:
-                                            with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
-                                                ui.label(iter_summary_text).classes("text-sm text-gray-700")
+                                            with ui.expansion(
+                                                "Summary", icon="summarize", value=True
+                                            ).classes("w-full mt-2"):
+                                                ui.label(iter_summary_text).classes(
+                                                    "text-sm text-gray-700"
+                                                )
 
                                         # Show findings recorded
                                         iteration_findings = [
-                                            f for f in iter_ks_data.get("findings", [])
+                                            f
+                                            for f in iter_ks_data.get("findings", [])
                                             if f.get("iteration_discovered") == iter_num
                                         ]
                                         if iteration_findings:
-                                            with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full mt-2"):
+                                            with ui.expansion(
+                                                f"Findings ({len(iteration_findings)})",
+                                                icon="lightbulb",
+                                            ).classes("w-full mt-2"):
                                                 for finding in iteration_findings:
-                                                    with ui.card().classes("w-full mb-2 bg-green-50"):
-                                                        ui.label(finding['title']).classes("font-bold text-green-800")
-                                                        ui.label(finding["evidence"]).classes("text-sm text-gray-700")
-                                                        interpretation = finding.get("biological_interpretation") or finding.get("interpretation", "")
+                                                    with ui.card().classes(
+                                                        "w-full mb-2 bg-green-50"
+                                                    ):
+                                                        ui.label(finding["title"]).classes(
+                                                            "font-bold text-green-800"
+                                                        )
+                                                        ui.label(finding["evidence"]).classes(
+                                                            "text-sm text-gray-700"
+                                                        )
+                                                        interpretation = finding.get(
+                                                            "biological_interpretation"
+                                                        ) or finding.get("interpretation", "")
                                                         if interpretation:
-                                                            ui.label(interpretation).classes("text-sm text-gray-600 italic mt-1")
+                                                            ui.label(interpretation).classes(
+                                                                "text-sm text-gray-600 italic mt-1"
+                                                            )
 
                                         # Load transcript lazily (this is the heavy part)
-                                        transcript_path = iter_provenance_dir / f"iter{iter_num}_transcript.json"
+                                        transcript_path = (
+                                            iter_provenance_dir / f"iter{iter_num}_transcript.json"
+                                        )
                                         transcript_actions = []
                                         if transcript_path.exists():
                                             try:
                                                 with open(transcript_path) as tf:
                                                     transcript = json.load(tf)
-                                                transcript_actions = parse_transcript_actions(transcript)
+                                                transcript_actions = parse_transcript_actions(
+                                                    transcript
+                                                )
                                             except Exception as e:
-                                                logger.warning(f"Failed to load transcript for iter {iter_num}: {e}")
+                                                logger.warning(
+                                                    f"Failed to load transcript for iter {iter_num}: {e}"
+                                                )
 
                                         # Show actions from transcript
                                         if transcript_actions:
-                                            with ui.expansion(f"Actions ({len(transcript_actions)})", icon="build").classes("w-full mt-2"):
+                                            with ui.expansion(
+                                                f"Actions ({len(transcript_actions)})", icon="build"
+                                            ).classes("w-full mt-2"):
                                                 for action in transcript_actions:
                                                     success = action.get("success", True)
                                                     status_icon = "✅" if success else "❌"
-                                                    desc = action.get("description", action.get("short_name", "Unknown"))
+                                                    desc = action.get(
+                                                        "description",
+                                                        action.get("short_name", "Unknown"),
+                                                    )
                                                     tool_name = action.get("short_name", "")
 
-                                                    if "execute_code" in action.get("tool_name", ""):
-                                                        card_class = "w-full mb-2 border-l-4 border-blue-300"
-                                                    elif "search_pubmed" in action.get("tool_name", ""):
+                                                    if "execute_code" in action.get(
+                                                        "tool_name", ""
+                                                    ):
+                                                        card_class = (
+                                                            "w-full mb-2 border-l-4 border-blue-300"
+                                                        )
+                                                    elif "search_pubmed" in action.get(
+                                                        "tool_name", ""
+                                                    ):
                                                         card_class = "w-full mb-2 border-l-4 border-purple-300"
-                                                    elif "update_knowledge_state" in action.get("tool_name", ""):
+                                                    elif "update_knowledge_state" in action.get(
+                                                        "tool_name", ""
+                                                    ):
                                                         card_class = "w-full mb-2 border-l-4 border-green-300"
                                                     else:
-                                                        card_class = "w-full mb-2 border-l-4 border-gray-300"
+                                                        card_class = (
+                                                            "w-full mb-2 border-l-4 border-gray-300"
+                                                        )
 
                                                     with ui.card().classes(card_class):
                                                         with ui.row().classes("items-center gap-2"):
-                                                            ui.label(f"{status_icon} {desc}").classes("font-medium text-sm")
-                                                            ui.badge(tool_name, color="gray").props("outline").classes("text-xs")
+                                                            ui.label(
+                                                                f"{status_icon} {desc}"
+                                                            ).classes("font-medium text-sm")
+                                                            ui.badge(tool_name, color="gray").props(
+                                                                "outline"
+                                                            ).classes("text-xs")
 
                                                         inp = action.get("input", {})
-                                                        if "execute_code" in action.get("tool_name", "") and inp.get("code"):
-                                                            with ui.expansion("Code", icon="code").classes("w-full mt-1"):
-                                                                ui.code(inp["code"], language="python").classes("text-xs")
+                                                        if "execute_code" in action.get(
+                                                            "tool_name", ""
+                                                        ) and inp.get("code"):
+                                                            with ui.expansion(
+                                                                "Code", icon="code"
+                                                            ).classes("w-full mt-1"):
+                                                                ui.code(
+                                                                    inp["code"], language="python"
+                                                                ).classes("text-xs")
 
-                                                        if "search_pubmed" in action.get("tool_name", "") and inp.get("query"):
-                                                            ui.label(f"Query: \"{inp['query']}\"").classes("text-xs text-gray-600 mt-1")
+                                                        if "search_pubmed" in action.get(
+                                                            "tool_name", ""
+                                                        ) and inp.get("query"):
+                                                            ui.label(
+                                                                f"Query: \"{inp['query']}\""
+                                                            ).classes("text-xs text-gray-600 mt-1")
 
                                                         result_text = action.get("result", "")
-                                                        if result_text and len(str(result_text)) > 0:
+                                                        if (
+                                                            result_text
+                                                            and len(str(result_text)) > 0
+                                                        ):
                                                             result_str = str(result_text)
                                                             if len(result_str) > 200:
-                                                                with ui.expansion("Result", icon="output").classes("w-full mt-1"):
-                                                                    ui.code(result_str[:2000] + ("..." if len(result_str) > 2000 else ""), language="text").classes("text-xs")
+                                                                with ui.expansion(
+                                                                    "Result", icon="output"
+                                                                ).classes("w-full mt-1"):
+                                                                    ui.code(
+                                                                        result_str[:2000]
+                                                                        + (
+                                                                            "..."
+                                                                            if len(result_str)
+                                                                            > 2000
+                                                                            else ""
+                                                                        ),
+                                                                        language="text",
+                                                                    ).classes("text-xs")
                                                             elif not success:
-                                                                ui.label(result_str).classes("text-xs text-red-600 mt-1")
+                                                                ui.label(result_str).classes(
+                                                                    "text-xs text-red-600 mt-1"
+                                                                )
 
                                         # Show plots from this iteration
                                         if iter_provenance_dir.exists():
                                             iteration_plots = []
-                                            for plot_file in sorted(iter_provenance_dir.glob("*.png")):
-                                                metadata_file = plot_file.with_suffix('.json')
+                                            for plot_file in sorted(
+                                                iter_provenance_dir.glob("*.png")
+                                            ):
+                                                metadata_file = plot_file.with_suffix(".json")
                                                 if metadata_file.exists():
                                                     with open(metadata_file) as mf:
                                                         metadata = json.load(mf)
                                                     if metadata.get("iteration") == iter_num:
-                                                        iteration_plots.append((plot_file, metadata))
+                                                        iteration_plots.append(
+                                                            (plot_file, metadata)
+                                                        )
 
                                             if iteration_plots:
-                                                with ui.expansion(f"Visualizations ({len(iteration_plots)})", icon="insert_chart").classes("w-full mt-2"):
+                                                with ui.expansion(
+                                                    f"Visualizations ({len(iteration_plots)})",
+                                                    icon="insert_chart",
+                                                ).classes("w-full mt-2"):
                                                     with ui.grid(columns=2).classes("w-full gap-2"):
                                                         for plot_file, metadata in iteration_plots:
-                                                            plot_title = plot_file.stem.replace('_', ' ').title()
-                                                            description = metadata.get('description', '')
+                                                            plot_title = plot_file.stem.replace(
+                                                                "_", " "
+                                                            ).title()
+                                                            description = metadata.get(
+                                                                "description", ""
+                                                            )
 
                                                             with ui.card().classes("p-2"):
-                                                                ui.label(plot_title).classes("text-sm font-bold")
+                                                                ui.label(plot_title).classes(
+                                                                    "text-sm font-bold"
+                                                                )
                                                                 if description:
-                                                                    ui.label(description).classes("text-xs text-blue-700 italic")
+                                                                    ui.label(description).classes(
+                                                                        "text-xs text-blue-700 italic"
+                                                                    )
                                                                 plot_url = f"/{plot_file}"
                                                                 ui.image(plot_url).classes("w-full")
 
                                                                 ui.button(
                                                                     "Download",
-                                                                    on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
-                                                                    icon="download"
-                                                                ).props("size=sm flat dense").classes("mt-2")
+                                                                    on_click=lambda p=plot_file: ui.download(
+                                                                        p.read_bytes(),
+                                                                        filename=p.name,
+                                                                    ),
+                                                                    icon="download",
+                                                                ).props(
+                                                                    "size=sm flat dense"
+                                                                ).classes("mt-2")
 
-                                                                plot_code = metadata.get('code')
+                                                                plot_code = metadata.get("code")
                                                                 if plot_code:
-                                                                    with ui.expansion("View code", icon="code").classes("w-full mt-1"):
-                                                                        ui.code(plot_code, language="python").classes("text-xs")
+                                                                    with ui.expansion(
+                                                                        "View code", icon="code"
+                                                                    ).classes("w-full mt-1"):
+                                                                        ui.code(
+                                                                            plot_code,
+                                                                            language="python",
+                                                                        ).classes("text-xs")
 
                                         # Show literature searched
-                                        literature_entries = [e for e in iter_entries if e["action"] == "search_pubmed"]
+                                        literature_entries = [
+                                            e
+                                            for e in iter_entries
+                                            if e["action"] == "search_pubmed"
+                                        ]
                                         if literature_entries:
-                                            total_papers = sum(e.get("results_count", 0) for e in literature_entries)
-                                            with ui.expansion(f"Literature searched ({total_papers} papers)", icon="article").classes("w-full mt-2"):
+                                            total_papers = sum(
+                                                e.get("results_count", 0)
+                                                for e in literature_entries
+                                            )
+                                            with ui.expansion(
+                                                f"Literature searched ({total_papers} papers)",
+                                                icon="article",
+                                            ).classes("w-full mt-2"):
                                                 for entry in literature_entries:
                                                     query = entry.get("query", "")
                                                     matching_papers = [
-                                                        lit for lit in iter_ks_data.get("literature", [])
+                                                        lit
+                                                        for lit in iter_ks_data.get(
+                                                            "literature", []
+                                                        )
                                                         if lit.get("search_query") == query
-                                                        and lit.get("retrieved_at_iteration") == iter_num
+                                                        and lit.get("retrieved_at_iteration")
+                                                        == iter_num
                                                     ]
                                                     if matching_papers:
-                                                        with ui.expansion(f'"{query}" ({len(matching_papers)} papers)').classes("w-full"):
+                                                        with ui.expansion(
+                                                            f'"{query}" ({len(matching_papers)} papers)'
+                                                        ).classes("w-full"):
                                                             for paper in matching_papers:
-                                                                with ui.card().classes("w-full mb-1 p-2"):
-                                                                    ui.label(paper.get("title", "Untitled")).classes("text-sm font-bold")
+                                                                with ui.card().classes(
+                                                                    "w-full mb-1 p-2"
+                                                                ):
+                                                                    ui.label(
+                                                                        paper.get(
+                                                                            "title", "Untitled"
+                                                                        )
+                                                                    ).classes("text-sm font-bold")
                                                                     pmid = paper.get("pmid", "")
                                                                     if pmid:
                                                                         ui.link(
                                                                             f"PMID: {pmid}",
                                                                             f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                                                                            new_tab=True
-                                                                        ).classes("text-xs text-blue-600")
-                                                                    abstract = paper.get("abstract", "")
+                                                                            new_tab=True,
+                                                                        ).classes(
+                                                                            "text-xs text-blue-600"
+                                                                        )
+                                                                    abstract = paper.get(
+                                                                        "abstract", ""
+                                                                    )
                                                                     if abstract:
-                                                                        ui.label(abstract[:200] + "..." if len(abstract) > 200 else abstract).classes("text-xs text-gray-600 mt-1")
+                                                                        ui.label(
+                                                                            abstract[:200] + "..."
+                                                                            if len(abstract) > 200
+                                                                            else abstract
+                                                                        ).classes(
+                                                                            "text-xs text-gray-600 mt-1"
+                                                                        )
                                                     else:
-                                                        ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
+                                                        ui.label(f'"{query}" (0 results)').classes(
+                                                            "text-sm text-gray-400 italic"
+                                                        )
 
                                 # Show loading placeholder initially
                                 with content_container:
-                                    ui.label("Click to load details...").classes("text-sm text-gray-400 italic")
+                                    ui.label("Click to load details...").classes(
+                                        "text-sm text-gray-400 italic"
+                                    )
 
                                 # Trigger lazy load when expansion is opened
                                 # NOTE: Must capture load_iteration_content with default arg, otherwise
                                 # all callbacks will use the last iteration's function (closure bug)
                                 expansion.on_value_change(
-                                    lambda e, cc=content_container, lf=content_loaded, fn=load_iteration_content: fn(cc, lf) if e.value else None
+                                    lambda e,
+                                    cc=content_container,
+                                    lf=content_loaded,
+                                    fn=load_iteration_content: fn(cc, lf) if e.value else None
                                 )
                 else:
                     ui.label("No investigation activity yet").classes("text-gray-500")
@@ -778,7 +969,7 @@ def job_detail_page(job_id: str):
                         awaiting_since = None
                         if ks_path.exists():
                             with open(ks_path) as f:
-                                latest_ks =json.load(f)
+                                latest_ks = json.load(f)
                             next_iter = latest_ks.get("iteration", 1)
                         # The completed iteration is the previous one
                         completed_iter = next_iter - 1 if next_iter > 1 else 1
@@ -791,19 +982,27 @@ def job_detail_page(job_id: str):
                             awaiting_since = cfg.get("awaiting_feedback_since")
 
                         with feedback_container:
-                            with ui.card().classes("w-full mt-2 bg-yellow-50 border-2 border-yellow-400"):
-                                ui.label(f"Iteration {completed_iter} Complete - Awaiting Your Input").classes("text-h6 font-bold text-yellow-800")
-                                ui.label("Provide guidance for the next iteration, or continue without feedback.").classes("text-sm text-gray-700 mb-2")
+                            with ui.card().classes(
+                                "w-full mt-2 bg-yellow-50 border-2 border-yellow-400"
+                            ):
+                                ui.label(
+                                    f"Iteration {completed_iter} Complete - Awaiting Your Input"
+                                ).classes("text-h6 font-bold text-yellow-800")
+                                ui.label(
+                                    "Provide guidance for the next iteration, or continue without feedback."
+                                ).classes("text-sm text-gray-700 mb-2")
 
                                 feedback_input = ui.textarea(
                                     label="Your Feedback (optional)",
-                                    placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X..."
+                                    placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
                                 ).classes("w-full")
 
                                 with ui.row().classes("w-full gap-2 mt-2"):
+
                                     def submit_feedback(fi=feedback_input, ci=completed_iter):
                                         from .knowledge_state import KnowledgeState
-                                        ks =KnowledgeState.load(job_dir / "knowledge_state.json")
+
+                                        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
                                         if fi.value.strip():
                                             ks.add_feedback(fi.value.strip(), ci)
                                             ks.save(job_dir / "knowledge_state.json")
@@ -816,16 +1015,25 @@ def job_detail_page(job_id: str):
                                         ui.notify("Continuing to next iteration", type="positive")
                                         ui.navigate.to(f"/job/{job_id}")
 
-                                    ui.button("Submit & Continue", on_click=submit_feedback, icon="send").props("color=primary")
-                                    ui.button("Continue Without Feedback", on_click=submit_feedback, icon="arrow_forward").props("color=secondary outline")
+                                    ui.button(
+                                        "Submit & Continue", on_click=submit_feedback, icon="send"
+                                    ).props("color=primary")
+                                    ui.button(
+                                        "Continue Without Feedback",
+                                        on_click=submit_feedback,
+                                        icon="arrow_forward",
+                                    ).props("color=secondary outline")
 
                                 # Countdown timer
                                 if awaiting_since:
                                     from datetime import datetime
+
                                     try:
                                         started = datetime.fromisoformat(awaiting_since)
                                         timeout_minutes = 15
-                                        countdown_label = ui.label("").classes("text-xs text-gray-500 mt-2")
+                                        countdown_label = ui.label("").classes(
+                                            "text-xs text-gray-500 mt-2"
+                                        )
 
                                         def update_countdown():
                                             now = datetime.now()
@@ -841,9 +1049,13 @@ def job_detail_page(job_id: str):
                                         update_countdown()
                                         ui.timer(1.0, update_countdown)
                                     except Exception:
-                                        ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+                                        ui.label(
+                                            "Auto-continues after 15 minutes if no response."
+                                        ).classes("text-xs text-gray-500 mt-2")
                                 else:
-                                    ui.label("Auto-continues after 15 minutes if no response.").classes("text-xs text-gray-500 mt-2")
+                                    ui.label(
+                                        "Auto-continues after 15 minutes if no response."
+                                    ).classes("text-xs text-gray-500 mt-2")
 
                 # Build initial feedback panel
                 build_feedback_panel()
@@ -861,7 +1073,11 @@ def job_detail_page(job_id: str):
                         ui.navigate.to(f"/job/{job_id}")
 
                 # Only poll if job is still active
-                if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
+                if job_info.status in [
+                    JobStatus.RUNNING,
+                    JobStatus.QUEUED,
+                    JobStatus.AWAITING_FEEDBACK,
+                ]:
                     status_timer = ui.timer(5.0, check_status)  # Poll every 5 seconds
 
             else:
@@ -877,21 +1093,24 @@ def job_detail_page(job_id: str):
                 with ui.row().classes("w-full justify-end mb-4 gap-2"):
                     ui.button(
                         "Download Markdown",
-                        on_click=lambda: ui.download(report_path.read_bytes(), filename=f"{job_id}_report.md"),
-                        icon="download"
+                        on_click=lambda: ui.download(
+                            report_path.read_bytes(), filename=f"{job_id}_report.md"
+                        ),
+                        icon="download",
                     ).props("color=secondary outline")
 
                     if pdf_path.exists():
                         ui.button(
                             "Download PDF",
-                            on_click=lambda: ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf"),
-                            icon="picture_as_pdf"
+                            on_click=lambda: ui.download(
+                                pdf_path.read_bytes(), filename=f"{job_id}_report.pdf"
+                            ),
+                            icon="picture_as_pdf",
                         ).props("color=primary")
                     else:
-                        ui.button(
-                            "PDF Unavailable",
-                            icon="picture_as_pdf"
-                        ).props("color=grey outline disabled")
+                        ui.button("PDF Unavailable", icon="picture_as_pdf").props(
+                            "color=grey outline disabled"
+                        )
 
                 # Display markdown
                 with open(report_path) as f:
@@ -901,23 +1120,17 @@ def job_detail_page(job_id: str):
                 if job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                     ui.label("Report generation failed").classes("text-red-500")
                 else:
-                    ui.label("Report will be available when job completes").classes("text-gray-500 italic")
+                    ui.label("Report will be available when job completes").classes(
+                        "text-gray-500 italic"
+                    )
 
     # Action buttons
     with ui.row().classes("mt-4 p-4"):
         if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED]:
-            ui.button(
-                "Cancel Job",
-                on_click=lambda: cancel_job(job_id),
-                color="red"
-            )
+            ui.button("Cancel Job", on_click=lambda: cancel_job(job_id), color="red")
 
         if job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
-            ui.button(
-                "Delete Job",
-                on_click=lambda: delete_job(job_id),
-                color="red"
-            )
+            ui.button("Delete Job", on_click=lambda: delete_job(job_id), color="red")
 
     def cancel_job(jid):
         """Cancel the job."""
@@ -962,21 +1175,37 @@ def billing_page():
             with ui.row().classes("w-full gap-8 mb-4"):
                 # Total spend
                 with ui.card().classes("flex-1"):
-                    total_spend_display = f"${cost_info.total_spend_usd:.2f}" if cost_info.total_spend_usd is not None else "N/A"
+                    total_spend_display = (
+                        f"${cost_info.total_spend_usd:.2f}"
+                        if cost_info.total_spend_usd is not None
+                        else "N/A"
+                    )
                     ui.label(total_spend_display).classes("text-h3 text-primary")
                     ui.label("Total Spend").classes("text-subtitle2 text-grey")
 
                 # Last 24h
                 with ui.card().classes("flex-1"):
-                    recent_spend_display = f"${cost_info.recent_spend_usd:.2f}" if cost_info.recent_spend_usd is not None else "N/A"
+                    recent_spend_display = (
+                        f"${cost_info.recent_spend_usd:.2f}"
+                        if cost_info.recent_spend_usd is not None
+                        else "N/A"
+                    )
                     ui.label(recent_spend_display).classes("text-h3")
-                    ui.label(f"Last {cost_info.recent_period_hours} Hours").classes("text-subtitle2 text-grey")
+                    ui.label(f"Last {cost_info.recent_period_hours} Hours").classes(
+                        "text-subtitle2 text-grey"
+                    )
 
                 # Budget remaining (if available)
                 if cost_info.budget_remaining_usd is not None:
                     with ui.card().classes("flex-1"):
-                        remaining_color = "text-positive" if cost_info.budget_remaining_usd > 10 else "text-warning"
-                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(f"text-h3 {remaining_color}")
+                        remaining_color = (
+                            "text-positive"
+                            if cost_info.budget_remaining_usd > 10
+                            else "text-warning"
+                        )
+                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(
+                            f"text-h3 {remaining_color}"
+                        )
                         ui.label("Budget Remaining").classes("text-subtitle2 text-grey")
 
             # Provider info
@@ -1100,8 +1329,7 @@ def main(host: str = "0.0.0.0", port: int = 8080, jobs_dir: Path = Path("jobs"))
     """
     # Set up logging
     logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     # Initialize app
@@ -1114,7 +1342,7 @@ def main(host: str = "0.0.0.0", port: int = 8080, jobs_dir: Path = Path("jobs"))
         title="SHANDY",
         reload=False,
         show=False,  # Don't auto-open browser in Docker
-        storage_secret=STORAGE_SECRET  # Required for app.storage.user
+        storage_secret=STORAGE_SECRET,  # Required for app.storage.user
     )
 
 

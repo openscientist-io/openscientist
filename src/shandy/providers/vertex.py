@@ -29,16 +29,12 @@ class VertexProvider(BaseProvider):
             errors.append("ANTHROPIC_VERTEX_PROJECT_ID not set (GCP project ID)")
 
         if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-            errors.append(
-                "GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)"
-            )
+            errors.append("GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)")
         else:
             # Check if file exists
             creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
             if not os.path.exists(creds_path):
-                errors.append(
-                    f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}"
-                )
+                errors.append(f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}")
 
         if not os.getenv("GCP_BILLING_ACCOUNT_ID"):
             errors.append("GCP_BILLING_ACCOUNT_ID not set (needed for cost tracking)")
@@ -53,19 +49,13 @@ class VertexProvider(BaseProvider):
         warnings = []
 
         if not os.getenv("ANTHROPIC_MODEL"):
-            warnings.append(
-                "ANTHROPIC_MODEL not set (will use claude-sonnet-4-5@20250929)"
-            )
+            warnings.append("ANTHROPIC_MODEL not set (will use claude-sonnet-4-5@20250929)")
 
         if not os.getenv("VERTEX_REGION_CLAUDE_4_5_SONNET"):
-            warnings.append(
-                "VERTEX_REGION_CLAUDE_4_5_SONNET not set (may cause region issues)"
-            )
+            warnings.append("VERTEX_REGION_CLAUDE_4_5_SONNET not set (may cause region issues)")
 
         if not os.getenv("VERTEX_REGION_CLAUDE_4_5_HAIKU"):
-            warnings.append(
-                "VERTEX_REGION_CLAUDE_4_5_HAIKU not set (may cause region issues)"
-            )
+            warnings.append("VERTEX_REGION_CLAUDE_4_5_HAIKU not set (may cause region issues)")
 
         return warnings
 
@@ -113,7 +103,9 @@ class VertexProvider(BaseProvider):
 
         # BigQuery billing export table name
         # Format: billing_export.gcp_billing_export_v1_{billing_account_with_underscores}
-        billing_table = f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
+        billing_table = (
+            f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
+        )
 
         # Query for total spend (all time for Vertex AI in this project only)
         total_query = f"""
@@ -163,5 +155,5 @@ class VertexProvider(BaseProvider):
             recent_period_hours=lookback_hours,
             last_updated=now,
             data_lag_note=data_lag_note,
-            metadata={"project_id": project_id}
+            metadata={"project_id": project_id},
         )

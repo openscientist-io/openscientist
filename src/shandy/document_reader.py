@@ -13,20 +13,32 @@ logger = logging.getLogger(__name__)
 
 # File extensions that require special extraction
 BINARY_DOCUMENT_EXTENSIONS = {
-    '.pdf',
-    '.docx', '.doc',
-    '.xlsx', '.xls',
-    '.pptx', '.ppt',
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".pptx",
+    ".ppt",
 }
 
 # Extensions that can be read as text directly
 TEXT_EXTENSIONS = {
-    '.csv', '.tsv', '.txt',
-    '.json', '.jsonl',
-    '.md', '.markdown',
-    '.xml', '.html', '.htm',
-    '.yaml', '.yml',
-    '.py', '.r', '.sh',
+    ".csv",
+    ".tsv",
+    ".txt",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".markdown",
+    ".xml",
+    ".html",
+    ".htm",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".r",
+    ".sh",
 }
 
 
@@ -193,12 +205,12 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
     file_size_kb = file_path.stat().st_size / 1024
 
     try:
-        if suffix == '.pdf':
+        if suffix == ".pdf":
             text, metadata = extract_text_from_pdf(file_path)
             header = f"[PDF: {file_path.name} | {metadata['pages']} pages | {file_size_kb:.1f} KB]"
 
-        elif suffix in ('.docx', '.doc'):
-            if suffix == '.doc':
+        elif suffix in (".docx", ".doc"):
+            if suffix == ".doc":
                 return (
                     f"Error: Old .doc format not supported. "
                     f"Please convert {file_path.name} to .docx format."
@@ -206,8 +218,8 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
             text, metadata = extract_text_from_docx(file_path)
             header = f"[DOCX: {file_path.name} | {metadata['paragraphs']} paragraphs | {file_size_kb:.1f} KB]"
 
-        elif suffix in ('.xlsx', '.xls'):
-            if suffix == '.xls':
+        elif suffix in (".xlsx", ".xls"):
+            if suffix == ".xls":
                 return (
                     f"Error: Old .xls format not supported. "
                     f"Please convert {file_path.name} to .xlsx format, "
@@ -219,7 +231,7 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
         else:
             # Try to read as plain text
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 header = f"[TEXT: {file_path.name} | {file_size_kb:.1f} KB]"
             except UnicodeDecodeError:

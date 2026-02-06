@@ -12,6 +12,7 @@ import requests
 
 class BudgetExceededError(Exception):
     """Raised when a job exceeds its budget limit."""
+
     pass
 
 
@@ -30,8 +31,7 @@ def get_cborg_spend() -> float:
         raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
 
     response = requests.get(
-        "https://api.cborg.lbl.gov/key/info",
-        headers={"Authorization": f"Bearer {api_token}"}
+        "https://api.cborg.lbl.gov/key/info", headers={"Authorization": f"Bearer {api_token}"}
     )
     response.raise_for_status()
 
@@ -56,8 +56,7 @@ def get_budget_info() -> Dict[str, Any]:
         raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
 
     response = requests.get(
-        "https://api.cborg.lbl.gov/key/info",
-        headers={"Authorization": f"Bearer {api_token}"}
+        "https://api.cborg.lbl.gov/key/info", headers={"Authorization": f"Bearer {api_token}"}
     )
     response.raise_for_status()
 
@@ -75,7 +74,7 @@ def get_budget_info() -> Dict[str, Any]:
         "budget_remaining": cborg_budget - current_spend if cborg_budget else None,
         "app_max_job_cost": app_max_job,
         "app_max_total_budget": app_max_total,
-        "key_expires": info["expires"]
+        "key_expires": info["expires"],
     }
 
 
@@ -102,13 +101,10 @@ def check_budget_before_job(estimated_cost: float = 5.0) -> None:
 
     # Check application-level limit
     if budget_info["current_spend"] + estimated_cost > budget_info["app_max_total_budget"]:
-        raise ValueError(
-            f"Would exceed app budget limit of ${budget_info['app_max_total_budget']}"
-        )
+        raise ValueError(f"Would exceed app budget limit of ${budget_info['app_max_total_budget']}")
 
 
-def track_job_cost(job_id: str, start_spend: float, iteration: int,
-                   job_dir: str) -> float:
+def track_job_cost(job_id: str, start_spend: float, iteration: int, job_dir: str) -> float:
     """
     Update job metadata with current cost.
 

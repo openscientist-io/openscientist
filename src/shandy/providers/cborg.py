@@ -74,7 +74,7 @@ class CborgProvider(BaseProvider):
             info_response = requests.get(
                 "https://api.cborg.lbl.gov/key/info",
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=10
+                timeout=10,
             )
             info_response.raise_for_status()
             info = info_response.json()["info"]
@@ -98,19 +98,16 @@ class CborgProvider(BaseProvider):
                     "start_date": start_time.isoformat(),
                     "end_date": end_time.isoformat(),
                     "page": 1,
-                    "page_size": 1000
+                    "page_size": 1000,
                 },
                 headers={"x-litellm-api-key": token},
-                timeout=10
+                timeout=10,
             )
             activity_response.raise_for_status()
 
             # Sum up costs from activity records
             activity_data = activity_response.json().get("data", [])
-            recent_spend = sum(
-                record.get("spend", 0)
-                for record in activity_data
-            )
+            recent_spend = sum(record.get("spend", 0) for record in activity_data)
 
         except Exception as e:
             logger.warning(f"Failed to fetch CBORG activity data: {e}")
@@ -130,5 +127,5 @@ class CborgProvider(BaseProvider):
             budget_limit_usd=max_budget,
             budget_remaining_usd=budget_remaining,
             last_updated=datetime.now(timezone.utc),
-            key_expires=key_expires
+            key_expires=key_expires,
         )
