@@ -8,7 +8,8 @@ Providers handle:
 """
 
 import os
-from .base import BaseProvider, CostInfo
+
+from shandy.providers.base import BaseProvider, CostInfo
 
 
 def get_provider() -> BaseProvider:
@@ -28,18 +29,20 @@ def get_provider() -> BaseProvider:
     provider_name = os.getenv("CLAUDE_PROVIDER", "cborg").lower()
 
     if provider_name == "cborg":
-        from .cborg import CborgProvider
+        from shandy.providers.cborg import CborgProvider
+
         return CborgProvider()
     elif provider_name == "vertex":
-        from .vertex import VertexProvider
+        from shandy.providers.vertex import VertexProvider
+
         return VertexProvider()
     elif provider_name == "bedrock":
-        from .bedrock import BedrockProvider
+        from shandy.providers.bedrock import BedrockProvider
+
         return BedrockProvider()
     else:
         raise ValueError(
-            f"Unknown provider '{provider_name}'. "
-            f"Valid options: cborg, vertex, bedrock"
+            f"Unknown provider '{provider_name}'. Valid options: cborg, vertex, bedrock"
         )
 
 

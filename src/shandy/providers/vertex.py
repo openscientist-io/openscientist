@@ -9,7 +9,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import List
 
-from .base import BaseProvider, CostInfo
+from shandy.exceptions import ProviderError
+from shandy.providers.base import BaseProvider, CostInfo
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +29,14 @@ class VertexProvider(BaseProvider):
         if not os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"):
             errors.append("ANTHROPIC_VERTEX_PROJECT_ID not set (GCP project ID)")
 
-        if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-            errors.append(
-                "GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)"
-            )
+        creds_env = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if not creds_env:
+            errors.append("GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)")
         else:
             # Check if file exists
-            creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+            creds_path = os.path.expanduser(creds_env)
             if not os.path.exists(creds_path):
-                errors.append(
-                    f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}"
-                )
+                errors.append(f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}")
 
         if not os.getenv("GCP_BILLING_ACCOUNT_ID"):
             errors.append("GCP_BILLING_ACCOUNT_ID not set (needed for cost tracking)")
@@ -53,19 +51,13 @@ class VertexProvider(BaseProvider):
         warnings = []
 
         if not os.getenv("ANTHROPIC_MODEL"):
-            warnings.append(
-                "ANTHROPIC_MODEL not set (will use claude-sonnet-4-5@20250929)"
-            )
+            warnings.append("ANTHROPIC_MODEL not set (will use claude-sonnet-4-5@20250929)")
 
         if not os.getenv("VERTEX_REGION_CLAUDE_4_5_SONNET"):
-            warnings.append(
-                "VERTEX_REGION_CLAUDE_4_5_SONNET not set (may cause region issues)"
-            )
+            warnings.append("VERTEX_REGION_CLAUDE_4_5_SONNET not set (may cause region issues)")
 
         if not os.getenv("VERTEX_REGION_CLAUDE_4_5_HAIKU"):
-            warnings.append(
-                "VERTEX_REGION_CLAUDE_4_5_HAIKU not set (may cause region issues)"
-            )
+            warnings.append("VERTEX_REGION_CLAUDE_4_5_HAIKU not set (may cause region issues)")
 
         return warnings
 
@@ -98,11 +90,16 @@ class VertexProvider(BaseProvider):
             raise
 
         # Load credentials
-        creds_path = os.path.expanduser(os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+        creds_env = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        if not creds_env:
+            raise ProviderError("GOOGLE_APPLICATION_CREDENTIALS not set")
+        creds_path = os.path.expanduser(creds_env)
         credentials = service_account.Credentials.from_service_account_file(creds_path)
 
         project_id = os.getenv("ANTHROPIC_VERTEX_PROJECT_ID")
         billing_account = os.getenv("GCP_BILLING_ACCOUNT_ID")
+        if not billing_account:
+            raise ProviderError("GCP_BILLING_ACCOUNT_ID not set")
 
         # Initialize BigQuery client
         bq_client = bigquery.Client(credentials=credentials, project=project_id)
@@ -113,7 +110,9 @@ class VertexProvider(BaseProvider):
 
         # BigQuery billing export table name
         # Format: billing_export.gcp_billing_export_v1_{billing_account_with_underscores}
-        billing_table = f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
+        billing_table = (
+            f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
+        )
 
         # Query for total spend (all time for Vertex AI in this project only)
         total_query = f"""
@@ -145,8 +144,8 @@ class VertexProvider(BaseProvider):
             lag_time = now - timedelta(hours=3)
             data_lag_note = f"Data current as of ~{lag_time.strftime('%I:%M %p %Z')}"
 
-        except Exception as e:
-            logger.warning(f"Could not fetch Vertex AI billing data: {e}")
+        except Exception as e:  # noqa: BLE001 — google-cloud exceptions are dynamic
+            logger.warning("Could not fetch Vertex AI billing data: %s", e)
             logger.warning(
                 "Ensure BigQuery billing export is enabled in GCP Console. "
                 "See docs/VERTEX_SETUP.md for setup instructions."
@@ -163,5 +162,5 @@ class VertexProvider(BaseProvider):
             recent_period_hours=lookback_hours,
             last_updated=now,
             data_lag_note=data_lag_note,
-            metadata={"project_id": project_id}
+            metadata={"project_id": project_id},
         )

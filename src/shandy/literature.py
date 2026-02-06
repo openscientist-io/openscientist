@@ -5,11 +5,14 @@ Proactive literature integration to inform hypothesis generation.
 """
 
 import time
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import requests
 
 
-def search_pubmed(query: str, max_results: int = 10, email: Optional[str] = None) -> List[Dict[str, Any]]:
+def search_pubmed(
+    query: str, max_results: int = 10, email: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Search PubMed and return relevant papers.
 
@@ -34,16 +37,16 @@ def search_pubmed(query: str, max_results: int = 10, email: Optional[str] = None
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
     # Step 1: Search for PMIDs
-    search_params = {
+    search_params: Dict[str, str | int] = {
         "db": "pubmed",
         "term": query,
         "retmax": max_results,
-        "retmode": "json"
+        "retmode": "json",
     }
     if email:
         search_params["email"] = email
 
-    search_response = requests.get(f"{base_url}/esearch.fcgi", params=search_params)
+    search_response = requests.get(f"{base_url}/esearch.fcgi", params=search_params, timeout=10)
     search_response.raise_for_status()
 
     search_data = search_response.json()
@@ -56,15 +59,11 @@ def search_pubmed(query: str, max_results: int = 10, email: Optional[str] = None
     # Be nice to NCBI servers - rate limit
     time.sleep(0.34)  # Max 3 requests per second
 
-    fetch_params = {
-        "db": "pubmed",
-        "id": ",".join(pmids),
-        "retmode": "xml"
-    }
+    fetch_params = {"db": "pubmed", "id": ",".join(pmids), "retmode": "xml"}
     if email:
         fetch_params["email"] = email
 
-    fetch_response = requests.get(f"{base_url}/efetch.fcgi", params=fetch_params)
+    fetch_response = requests.get(f"{base_url}/efetch.fcgi", params=fetch_params, timeout=10)
     fetch_response.raise_for_status()
 
     # Parse XML response (simplified - in production use proper XML parser)
@@ -88,6 +87,7 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
     """
     try:
         import xml.etree.ElementTree as ET
+
         root = ET.fromstring(xml_text)
 
         papers = []
@@ -116,73 +116,33 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
                 year_elem = article.find(".//PubDate/Year")
                 year = year_elem.text if year_elem is not None else "Unknown year"
 
-                papers.append({
-                    "pmid": pmid,
-                    "title": title,
-                    "abstract": abstract,
-                    "authors": authors,
-                    "year": year
-                })
-            except Exception as e:
+                papers.append(
+                    {
+                        "pmid": pmid,
+                        "title": title,
+                        "abstract": abstract,
+                        "authors": authors,
+                        "year": year,
+                    }
+                )
+            except (AttributeError, KeyError, TypeError):
                 # Skip malformed articles
                 continue
 
         return papers
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — xml.etree can raise diverse C-level errors
         # Fallback: return minimal info
-        return [{
-            "pmid": pmid,
-            "title": "Error parsing paper",
-            "abstract": f"Could not parse XML: {str(e)}",
-            "authors": "",
-            "year": ""
-        } for pmid in pmids]
-
-
-def extract_mechanism_from_papers(papers: List[Dict[str, Any]], topic: str,
-                                  claude_api_call: callable) -> str:
-    """
-    Use Claude to extract mechanistic knowledge from abstracts.
-
-    Args:
-        papers: List of paper dicts from search_pubmed()
-        topic: Topic of interest (e.g., "CMP metabolism")
-        claude_api_call: Function to call Claude API
-
-    Returns:
-        Mechanistic insights extracted from literature
-    """
-    if not papers:
-        return "No papers found."
-
-    # Concatenate abstracts
-    context_parts = []
-    for p in papers:
-        context_parts.append(
-            f"PMID {p['pmid']} ({p['year']}): {p['title']}\n"
-            f"Authors: {p['authors']}\n"
-            f"Abstract: {p['abstract']}\n"
-        )
-    context = "\n\n".join(context_parts)
-
-    # Ask Claude to extract mechanisms
-    prompt = f"""Based on these papers, what is known about {topic}?
-
-{context}
-
-Extract:
-1. Key enzymes/pathways involving {topic}
-2. Known regulatory mechanisms
-3. Associations with phenotypes/diseases
-4. Gaps in current knowledge
-
-Provide a concise summary (2-3 paragraphs).
-"""
-
-    # Call Claude (this will be provided by orchestrator)
-    response = claude_api_call(prompt)
-    return response
+        return [
+            {
+                "pmid": pmid,
+                "title": "Error parsing paper",
+                "abstract": f"Could not parse XML: {str(e)}",
+                "authors": "",
+                "year": "",
+            }
+            for pmid in pmids
+        ]
 
 
 def format_literature_for_prompt(papers: List[Dict[str, Any]], max_papers: int = 5) -> str:
@@ -202,8 +162,7 @@ def format_literature_for_prompt(papers: List[Dict[str, Any]], max_papers: int =
     lines = ["## Relevant Literature\n"]
     for paper in papers[:max_papers]:
         lines.append(
-            f"- **PMID {paper['pmid']}** ({paper.get('year', 'N/A')}): "
-            f"{paper['title'][:100]}..."
+            f"- **PMID {paper['pmid']}** ({paper.get('year', 'N/A')}): {paper['title'][:100]}..."
         )
 
     return "\n".join(lines)

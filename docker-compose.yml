@@ -1,5 +1,4 @@
 # Docker Compose for SHANDY
-version: '3.8'
 
 services:
   shandy:
@@ -7,31 +6,27 @@ services:
     build: .
     ports:
       - "${PORT:-8080}:8080"
-    # Pass environment variables explicitly
     environment:
-      # Port configuration
       PORT: ${PORT:-8080}
 
       # Provider selection
       CLAUDE_PROVIDER: ${CLAUDE_PROVIDER:-cborg}
 
-      # CBORG settings (if using CBORG provider)
+      # CBORG settings
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
 
-      # Vertex AI settings (if using Vertex provider)
+      # Vertex AI settings
       CLAUDE_CODE_USE_VERTEX: ${CLAUDE_CODE_USE_VERTEX}
       ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-credentials.json
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcp-credentials.json}
       CLOUD_ML_REGION: ${CLOUD_ML_REGION}
       VERTEX_REGION_CLAUDE_4_5_SONNET: ${VERTEX_REGION_CLAUDE_4_5_SONNET}
       VERTEX_REGION_CLAUDE_4_5_HAIKU: ${VERTEX_REGION_CLAUDE_4_5_HAIKU}
       GCP_BILLING_ACCOUNT_ID: ${GCP_BILLING_ACCOUNT_ID}
 
-      # Model settings (used by all providers)
+      # Model settings
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL}
-      # Claude Code uses ANTHROPIC_DEFAULT_HAIKU_MODEL (new) but we also pass
-      # ANTHROPIC_SMALL_FAST_MODEL (deprecated) for backwards compatibility
       ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${ANTHROPIC_SMALL_FAST_MODEL}}
       ANTHROPIC_SMALL_FAST_MODEL: ${ANTHROPIC_SMALL_FAST_MODEL:-${ANTHROPIC_DEFAULT_HAIKU_MODEL}}
 
@@ -41,8 +36,8 @@ services:
 
       # App settings
       DISABLE_AUTH: ${DISABLE_AUTH}
-      APP_PASSWORD_HASH: "$$2b$$12$$H77l168RKZRcRlElvBqr.O7UZxarzIZU9LUfPDsHvb/DmeekUUKZa"
-      PHENIX_PATH: /opt/phenix-1.21.2-5419
+      APP_PASSWORD_HASH: ${APP_PASSWORD_HASH}
+      PHENIX_PATH: ${PHENIX_PATH:-}
       STORAGE_SECRET: ${STORAGE_SECRET}
 
       # Berkeley Lab Data Lakehouse
@@ -50,15 +45,11 @@ services:
       DREMIO_USER: ${DREMIO_USER}
       DREMIO_PASSWORD: ${DREMIO_PASSWORD}
     volumes:
-      # Persist jobs directory
       - ./jobs:/app/jobs
-      # Persist data directory (for uploaded files)
       - ./data:/app/data
-      # Mount .env file for environment variables
       - ./.env:/app/.env:ro
-      # Mount Google Cloud credentials for Vertex AI (if using Vertex provider)
-      - ~/vertexai-project-covid-19-277821-b9a24f9376ca.json:/app/gcp-credentials.json:ro
-      # NOTE: Phenix is installed inside the Docker image at /opt/phenix-1.21.2-5419
+      # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
+      - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]

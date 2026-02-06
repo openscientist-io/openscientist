@@ -72,3 +72,6 @@ htmlcov/
 # uv
 uv.lock
 .ini
+.mypy_cache/
+.ruff_cache/
+data/

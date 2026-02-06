@@ -1,4 +1,4 @@
-.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy
+.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy dev-start dev-stop dev-restart dev-rebuild lint format typecheck
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -9,7 +9,7 @@ COMPOSE_FILE ?= docker-compose.yml
 help:
 	@echo "SHANDY - Makefile commands"
 	@echo ""
-	@echo "Available targets:"
+	@echo "Production:"
 	@echo "  make start            - Start the Docker container"
 	@echo "  make stop             - Stop the Docker container"
 	@echo "  make restart          - Restart the Docker container (without rebuilding)"
@@ -23,6 +23,18 @@ help:
 	@echo "  make clean-jobs       - Clean up old job directories"
 	@echo "  make test             - Run tests in container"
 	@echo "  make deploy           - Deploy to production server (default: gassh, with cache)"
+	@echo ""
+	@echo "Development (with live code reload):"
+	@echo "  make dev-start        - Start in development mode (source mounted, auto-reload)"
+	@echo "  make dev-stop         - Stop development container"
+	@echo "  make dev-restart      - Restart development container"
+	@echo "  make dev-rebuild      - Rebuild and restart in development mode"
+	@echo ""
+	@echo "Local development:"
+	@echo "  make dev-test         - Run tests locally with coverage"
+	@echo "  make lint             - Lint src/ and tests/ with ruff"
+	@echo "  make format           - Format src/ and tests/ with ruff"
+	@echo "  make typecheck        - Type check with mypy"
 	@echo ""
 	@echo "Jobs are stored in: ./jobs/"
 	@echo "Web interface at: http://localhost:8080"
@@ -94,20 +106,52 @@ dev-install:
 
 dev-test:
 	@echo "Running tests locally..."
-	uv run pytest
+	uv run pytest --cov=src/shandy --cov-report=term-missing
 
 lint:
 	@echo "Linting code..."
-	uv run ruff check src/
+	uv run ruff check src/ tests/
 
 format:
 	@echo "Formatting code..."
-	uv run ruff format src/
+	uv run ruff format src/ tests/
+
+typecheck:
+	@echo "Type checking..."
+	uv run mypy src/shandy/ tests/
 
 # Show job status
 status:
 	@echo "Job status:"
 	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager summary
+
+# Development mode commands
+dev-start:
+	@echo "Starting SHANDY in development mode (with live reload)..."
+	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml up -d
+	@echo "SHANDY development mode started at http://localhost:8080"
+	@echo "Source code is mounted - changes will auto-reload!"
+
+dev-stop:
+	@echo "Stopping SHANDY development container..."
+	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml down
+	@echo "Development container stopped"
+
+dev-restart: dev-stop dev-start
+
+dev-rebuild:
+	@echo "Rebuilding SHANDY for development mode..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml build \
+		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	@echo "Restarting with new build..."
+	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml down
+	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml up -d
+	@echo "SHANDY rebuilt and started in development mode at http://localhost:8080"
+
+dev-logs:
+	@echo "Tailing SHANDY development logs (Ctrl+C to exit)..."
+	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml logs -f
 
 # Deploy to production server
 deploy:

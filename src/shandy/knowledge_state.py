@@ -25,8 +25,13 @@ class KnowledgeState:
         - analysis_log: History of all executed analyses
     """
 
-    def __init__(self, job_id: str, research_question: str, max_iterations: int,
-                 use_skills: bool = True):
+    def __init__(
+        self,
+        job_id: str,
+        research_question: str,
+        max_iterations: int,
+        use_skills: bool = True,
+    ):
         """
         Initialize a new knowledge graph.
 
@@ -36,13 +41,13 @@ class KnowledgeState:
             max_iterations: Maximum number of iterations
             use_skills: Whether skills are enabled for this job
         """
-        self.data = {
+        self.data: Dict[str, Any] = {
             "config": {
                 "job_id": job_id,
                 "research_question": research_question,
                 "max_iterations": max_iterations,
                 "use_skills": use_skills,
-                "started_at": datetime.now().isoformat()
+                "started_at": datetime.now().isoformat(),
             },
             "data_summary": {},
             "iteration": 1,
@@ -51,13 +56,13 @@ class KnowledgeState:
             "literature": [],
             "analysis_log": [],
             "iteration_summaries": [],  # Agent-generated summaries per iteration
-            "feedback_history": []  # Scientist feedback: [{after_iteration, text, submitted_at}]
+            "feedback_history": [],  # Scientist feedback: [{after_iteration, text, submitted_at}]
         }
 
     @classmethod
     def load(cls, file_path: Path) -> "KnowledgeState":
         """Load knowledge graph from JSON file with shared lock."""
-        with open(file_path, 'r') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             # Acquire shared lock - blocks while exclusive lock is held
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             try:
@@ -76,12 +81,12 @@ class KnowledgeState:
 
         # Create file if it doesn't exist
         if not file_path.exists():
-            with open(file_path, 'w') as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2)
             return
 
         # Open for read-write and acquire exclusive lock
-        with open(file_path, 'r+') as f:
+        with open(file_path, "r+", encoding="utf-8") as f:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 # Write the data
@@ -118,7 +123,7 @@ class KnowledgeState:
             "tested_at_iteration": None,
             "test_code": None,
             "result": None,
-            "spawned_hypotheses": []
+            "spawned_hypotheses": [],
         }
 
         self.data["hypotheses"].append(hypothesis)
@@ -132,10 +137,14 @@ class KnowledgeState:
                 return
         raise ValueError(f"Hypothesis {hypothesis_id} not found")
 
-    def add_finding(self, title: str, evidence: str,
-                   supporting_hypotheses: Optional[List[str]] = None,
-                   literature_support: Optional[List[str]] = None,
-                   plots: Optional[List[str]] = None) -> str:
+    def add_finding(
+        self,
+        title: str,
+        evidence: str,
+        supporting_hypotheses: Optional[List[str]] = None,
+        literature_support: Optional[List[str]] = None,
+        plots: Optional[List[str]] = None,
+    ) -> str:
         """
         Add a confirmed finding.
 
@@ -159,15 +168,20 @@ class KnowledgeState:
             "supporting_hypotheses": supporting_hypotheses or [],
             "literature_support": literature_support or [],
             "plots": plots or [],
-            "biological_interpretation": ""
+            "biological_interpretation": "",
         }
 
         self.data["findings"].append(finding)
         return finding_id
 
-    def add_literature(self, pmid: str, title: str, abstract: str,
-                      relevance_to: Optional[List[str]] = None,
-                      search_query: Optional[str] = None) -> str:
+    def add_literature(
+        self,
+        pmid: str,
+        title: str,
+        abstract: str,
+        relevance_to: Optional[List[str]] = None,
+        search_query: Optional[str] = None,
+    ) -> str:
         """
         Add literature reference.
 
@@ -190,14 +204,19 @@ class KnowledgeState:
             "abstract": abstract,
             "relevance_to": relevance_to or [],
             "retrieved_at_iteration": self.data["iteration"],
-            "search_query": search_query
+            "search_query": search_query,
         }
 
         self.data["literature"].append(literature)
         return literature_id
 
-    def log_analysis(self, action: str, code: Optional[str] = None,
-                    output: Optional[str] = None, **kwargs) -> None:
+    def log_analysis(
+        self,
+        action: str,
+        code: Optional[str] = None,
+        output: Optional[str] = None,
+        **kwargs,
+    ) -> None:
         """
         Log an analysis action.
 
@@ -211,7 +230,7 @@ class KnowledgeState:
             "iteration": self.data["iteration"],
             "action": action,
             "timestamp": datetime.now().isoformat(),
-            **kwargs
+            **kwargs,
         }
 
         if code:
@@ -243,12 +262,14 @@ class KnowledgeState:
                 return
 
         # Add new summary
-        self.data["iteration_summaries"].append({
-            "iteration": iteration,
-            "summary": summary,
-            "strapline": strapline,
-            "created_at": datetime.now().isoformat()
-        })
+        self.data["iteration_summaries"].append(
+            {
+                "iteration": iteration,
+                "summary": summary,
+                "strapline": strapline,
+                "created_at": datetime.now().isoformat(),
+            }
+        )
 
     def get_iteration_summary(self, iteration: int) -> Optional[str]:
         """
@@ -263,7 +284,7 @@ class KnowledgeState:
         summaries = self.data.get("iteration_summaries", [])
         for entry in summaries:
             if entry["iteration"] == iteration:
-                return entry["summary"]
+                return str(entry["summary"])
         return None
 
     def increment_iteration(self) -> None:
@@ -285,11 +306,13 @@ class KnowledgeState:
         if "feedback_history" not in self.data:
             self.data["feedback_history"] = []
 
-        self.data["feedback_history"].append({
-            "after_iteration": after_iteration,
-            "text": text,
-            "submitted_at": datetime.now().isoformat()
-        })
+        self.data["feedback_history"].append(
+            {
+                "after_iteration": after_iteration,
+                "text": text,
+                "submitted_at": datetime.now().isoformat(),
+            }
+        )
 
     def get_feedback_for_iteration(self, iteration: int) -> Optional[str]:
         """
@@ -309,7 +332,7 @@ class KnowledgeState:
         # Find feedback given after the previous iteration
         matching = [f for f in feedback_list if f.get("after_iteration") == previous_iteration]
         if matching:
-            return matching[-1]["text"]  # Use most recent if multiple
+            return str(matching[-1]["text"])  # Use most recent if multiple
         return None
 
     def get_summary(self) -> str:
@@ -322,30 +345,30 @@ class KnowledgeState:
         summary_parts = [
             f"# Knowledge Graph Summary (Iteration {self.data['iteration']})",
             "",
-            f"## Research Question",
-            self.data['config']['research_question'],
+            "## Research Question",
+            self.data["config"]["research_question"],
             "",
-            f"## Data",
+            "## Data",
             f"- Files: {self.data['data_summary'].get('files', [])}",
             f"- Samples: {self.data['data_summary'].get('n_samples', 'Unknown')}",
             f"- Features: {self.data['data_summary'].get('n_features', 'Unknown')}",
             "",
-            f"## Progress",
+            "## Progress",
             f"- Hypotheses tested: {len([h for h in self.data['hypotheses'] if h['status'] != 'pending'])}",
             f"- Findings confirmed: {len(self.data['findings'])}",
             f"- Literature reviewed: {len(self.data['literature'])}",
-            ""
+            "",
         ]
 
         # Recent findings
-        if self.data['findings']:
+        if self.data["findings"]:
             summary_parts.append("## Recent Findings")
-            for finding in self.data['findings'][-3:]:
+            for finding in self.data["findings"][-3:]:
                 summary_parts.append(f"- **{finding['title']}**: {finding['evidence']}")
             summary_parts.append("")
 
         # Active hypotheses
-        pending = [h for h in self.data['hypotheses'] if h['status'] == 'pending']
+        pending = [h for h in self.data["hypotheses"] if h["status"] == "pending"]
         if pending:
             summary_parts.append("## Pending Hypotheses")
             for hyp in pending[-3:]:
@@ -353,11 +376,13 @@ class KnowledgeState:
             summary_parts.append("")
 
         # Rejected hypotheses (learn from failures)
-        rejected = [h for h in self.data['hypotheses'] if h['status'] == 'rejected']
+        rejected = [h for h in self.data["hypotheses"] if h["status"] == "rejected"]
         if rejected:
             summary_parts.append("## Rejected Hypotheses (avoid repeating)")
             for hyp in rejected[-3:]:
-                summary_parts.append(f"- {hyp['id']}: {hyp['statement']} - {hyp.get('result', {}).get('conclusion', 'No conclusion')}")
+                summary_parts.append(
+                    f"- {hyp['id']}: {hyp['statement']} - {hyp.get('result', {}).get('conclusion', 'No conclusion')}"
+                )
             summary_parts.append("")
 
         return "\n".join(summary_parts)

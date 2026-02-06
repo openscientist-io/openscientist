@@ -4,17 +4,19 @@ File loading and type detection for SHANDY.
 Handles multiple file formats with validation and magic number detection.
 """
 
-import io
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Any, Dict, Optional
 
 import pandas as pd
+
+from shandy.exceptions import FileLoadError, FileTooBigError, UnsupportedFileTypeError
 
 # Try to import python-magic, but make it optional
 try:
     import magic
+
     HAS_MAGIC = True
 except (ImportError, OSError):
     HAS_MAGIC = False
@@ -29,45 +31,66 @@ if _env_max_file_size:
     try:
         MAX_FILE_SIZE = int(_env_max_file_size) * 1024 * 1024
     except ValueError:
-        logger.warning(f"Invalid MAX_FILE_SIZE_MB value '{_env_max_file_size}', using default {_default_max_file_size_mb}MB")
+        logger.warning(
+            "Invalid MAX_FILE_SIZE_MB value '%s', using default %sMB",
+            _env_max_file_size,
+            _default_max_file_size_mb,
+        )
         MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
 else:
     MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
 
 # Supported file extensions
 TABULAR_EXTENSIONS = {
-    '.csv', '.tsv', '.txt',
-    '.xlsx', '.xls',
-    '.parquet', '.pq',
-    '.json', '.jsonl',
-    '.feather',
+    ".csv",
+    ".tsv",
+    ".txt",
+    ".xlsx",
+    ".xls",
+    ".parquet",
+    ".pq",
+    ".json",
+    ".jsonl",
+    ".feather",
 }
 
 STRUCTURE_EXTENSIONS = {
-    '.pdb', '.cif', '.ent', '.mmcif',
-    '.pdbqt', '.mol2', '.sdf',
+    ".pdb",
+    ".cif",
+    ".ent",
+    ".mmcif",
+    ".pdbqt",
+    ".mol2",
+    ".sdf",
 }
 
 SEQUENCE_EXTENSIONS = {
-    '.fasta', '.fa', '.fna', '.faa',
-    '.fastq', '.fq',
-    '.gb', '.gbk', '.genbank',
+    ".fasta",
+    ".fa",
+    ".fna",
+    ".faa",
+    ".fastq",
+    ".fq",
+    ".gb",
+    ".gbk",
+    ".genbank",
 }
 
 IMAGE_EXTENSIONS = {
-    '.png', '.jpg', '.jpeg', '.gif', '.bmp',
-    '.tiff', '.tif', '.svg', '.webp',
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".svg",
+    ".webp",
 }
 
 
-class FileTooBigError(Exception):
-    """Raised when file exceeds size limit."""
-    pass
-
-
-class UnsupportedFileTypeError(Exception):
-    """Raised when file type is not supported."""
-    pass
+# Re-exported from shandy.exceptions for backward compatibility
+__all__ = ["FileTooBigError", "UnsupportedFileTypeError"]
 
 
 def get_file_info(file_path: Path) -> Dict[str, Any]:
@@ -106,8 +129,8 @@ def get_file_info(file_path: Path) -> Dict[str, Any]:
     if HAS_MAGIC:
         try:
             mime_type = magic.from_file(str(file_path), mime=True)
-        except Exception as e:
-            logger.warning(f"Could not detect MIME type for {file_path}: {e}")
+        except (ValueError, OSError) as e:
+            logger.warning("Could not detect MIME type for %s: %s", file_path, e)
             mime_type = "application/octet-stream"
     else:
         # Fall back to extension-based detection
@@ -155,32 +178,32 @@ def load_tabular_file(file_path: Path) -> pd.DataFrame:
 
     try:
         # CSV and TSV - use auto-detection for delimiter
-        if extension in ['.csv', '.txt']:
-            return pd.read_csv(file_path, sep=None, engine='python')
-        elif extension == '.tsv':
-            return pd.read_csv(file_path, sep='\t')
+        if extension in [".csv", ".txt"]:
+            return pd.read_csv(file_path, sep=None, engine="python")
+        elif extension == ".tsv":
+            return pd.read_csv(file_path, sep="\t")
 
         # Excel
-        elif extension in ['.xlsx', '.xls']:
+        elif extension in [".xlsx", ".xls"]:
             return pd.read_excel(file_path)
 
         # Parquet
-        elif extension in ['.parquet', '.pq']:
+        elif extension in [".parquet", ".pq"]:
             return pd.read_parquet(file_path)
 
         # JSON
-        elif extension == '.json':
+        elif extension == ".json":
             # Try reading as records first (common for data), fallback to lines
             try:
-                return pd.read_json(file_path, orient='records')
+                return pd.read_json(file_path, orient="records")
             except ValueError:
                 return pd.read_json(file_path, lines=False)
 
-        elif extension == '.jsonl':
+        elif extension == ".jsonl":
             return pd.read_json(file_path, lines=True)
 
         # Feather
-        elif extension == '.feather':
+        elif extension == ".feather":
             return pd.read_feather(file_path)
 
         else:
@@ -189,9 +212,9 @@ def load_tabular_file(file_path: Path) -> pd.DataFrame:
                 f"Supported: {', '.join(sorted(TABULAR_EXTENSIONS))}"
             )
 
-    except Exception as e:
-        logger.error(f"Failed to load {file_path}: {e}")
-        raise ValueError(f"Could not parse {file_path.name} as {extension}: {e}")
+    except (ValueError, OSError, pd.errors.ParserError, KeyError) as e:
+        logger.error("Failed to load %s: %s", file_path, e)
+        raise FileLoadError(f"Could not parse {file_path.name} as {extension}: {e}") from e
 
 
 def load_data_file(file_path: Path) -> Optional[pd.DataFrame]:
@@ -213,20 +236,23 @@ def load_data_file(file_path: Path) -> Optional[pd.DataFrame]:
     info = get_file_info(file_path)
 
     if info["file_type"] == "tabular":
-        logger.info(f"Loading tabular file: {file_path.name} ({info['extension']})")
+        logger.info("Loading tabular file: %s (%s)", file_path.name, info["extension"])
         return load_tabular_file(file_path)
 
     elif info["file_type"] in ["structure", "sequence"]:
         logger.info(
-            f"Non-tabular file detected: {file_path.name} ({info['file_type']}). "
-            f"Agent will access file directly."
+            "Non-tabular file detected: %s (%s). Agent will access file directly.",
+            file_path.name,
+            info["file_type"],
         )
         return None
 
     else:
         logger.warning(
-            f"Unknown file type: {file_path.name} ({info['extension']}, {info['mime_type']}). "
-            f"Agent will attempt to handle it."
+            "Unknown file type: %s (%s, %s). Agent will attempt to handle it.",
+            file_path.name,
+            info["extension"],
+            info["mime_type"],
         )
         return None
 
@@ -261,40 +287,46 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
     # Detect actual file type from content
     try:
         mime_type = magic.from_buffer(content, mime=True)
-    except Exception as e:
-        logger.warning(f"Could not detect MIME type from content: {e}")
+    except (ValueError, OSError) as e:
+        logger.warning("Could not detect MIME type from content: %s", e)
         mime_type = "application/octet-stream"
 
     # Check for executable content
     dangerous_mimes = [
-        'application/x-executable',
-        'application/x-sharedlib',
-        'application/x-mach-binary',
-        'application/x-dosexec',
+        "application/x-executable",
+        "application/x-sharedlib",
+        "application/x-mach-binary",
+        "application/x-dosexec",
     ]
 
     if any(dangerous in mime_type for dangerous in dangerous_mimes):
         raise ValueError(
-            f"Executable file detected (MIME: {mime_type}). "
-            f"Only data files are allowed."
+            f"Executable file detected (MIME: {mime_type}). Only data files are allowed."
         )
 
     # Warn if extension doesn't match content
     expected_mimes = {
-        '.csv': ['text/plain', 'text/csv', 'application/csv'],
-        '.tsv': ['text/plain', 'text/tab-separated-values'],
-        '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-        '.xls': ['application/vnd.ms-excel'],
-        '.json': ['application/json', 'text/plain'],
-        '.pdb': ['text/plain', 'chemical/x-pdb'],
-        '.cif': ['text/plain', 'chemical/x-cif'],
+        ".csv": ["text/plain", "text/csv", "application/csv"],
+        ".tsv": ["text/plain", "text/tab-separated-values"],
+        ".xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        ".xls": ["application/vnd.ms-excel"],
+        ".json": ["application/json", "text/plain"],
+        ".pdb": ["text/plain", "chemical/x-pdb"],
+        ".cif": ["text/plain", "chemical/x-cif"],
     }
 
     if extension in expected_mimes:
         if not any(exp in mime_type for exp in expected_mimes[extension]):
             logger.warning(
-                f"File extension {extension} doesn't match detected type {mime_type}. "
-                f"Proceeding anyway, but this may indicate file corruption."
+                "File extension %s doesn't match detected type %s. "
+                "Proceeding anyway, but this may indicate file corruption.",
+                extension,
+                mime_type,
             )
 
-    logger.info(f"File validation passed: {file_path.name} ({mime_type}, {len(content)} bytes)")
+    logger.info(
+        "File validation passed: %s (%s, %d bytes)",
+        file_path.name,
+        mime_type,
+        len(content),
+    )

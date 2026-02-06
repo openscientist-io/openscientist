@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from ..phenix_setup import setup_phenix_env
+from shandy.phenix_setup import setup_phenix_env
 
 
 def register_phenix_tools(mcp, job_dir: Path, ks):
@@ -20,7 +20,10 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
 
     @mcp.tool()
     def run_phenix_tool(
-        tool_name: str, input_files: list[str], arguments: dict = None, description: str = ""
+        tool_name: str,
+        input_files: list[str],
+        arguments: Optional[dict] = None,
+        description: str = "",
     ) -> str:
         """
         Execute a Phenix command-line tool.
@@ -63,7 +66,12 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
         # Execute with timeout
         try:
             result = subprocess.run(
-                cmd, env=phenix_env, capture_output=True, text=True, timeout=300  # 5 min timeout
+                cmd,
+                env=phenix_env,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5 min timeout
+                check=False,
             )
 
             # Format output
@@ -77,9 +85,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
                 output_parts.append(f"\n⚠️  Errors/Warnings:\n{result.stderr}")
 
             if result.returncode != 0:
-                output_parts.append(
-                    f"\n❌ Tool exited with code {result.returncode}"
-                )
+                output_parts.append(f"\n❌ Tool exited with code {result.returncode}")
 
             output = "".join(output_parts)
 
@@ -99,13 +105,11 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
             return f"❌ Error: {tool_name} timed out after 5 minutes"
         except FileNotFoundError:
             return f"❌ Error: Tool '{tool_name}' not found. Check PHENIX_PATH is correct."
-        except Exception as e:
+        except (OSError, subprocess.SubprocessError) as e:
             return f"❌ Error running {tool_name}: {str(e)}"
 
     @mcp.tool()
-    def compare_structures(
-        experimental_pdb: str, predicted_pdb: str, description: str = ""
-    ) -> str:
+    def compare_structures(experimental_pdb: str, predicted_pdb: str, description: str = "") -> str:
         """
         Compare experimental and predicted protein structures.
 
@@ -123,7 +127,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
         desc = description or "Comparing experimental and predicted structures"
 
         # Use run_phenix_tool to execute superpose_pdbs
-        result = run_phenix_tool(
+        result: str = run_phenix_tool(
             tool_name="phenix.superpose_pdbs",
             input_files=[experimental_pdb, predicted_pdb],
             description=desc,
@@ -140,7 +144,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
         return result
 
     @mcp.tool()
-    def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str = None) -> str:
+    def parse_alphafold_confidence(alphafold_pdb: str, pae_json: Optional[str] = None) -> str:
         """
         Extract AlphaFold confidence metrics from prediction files.
 
@@ -165,7 +169,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
             residues = []
             plddts = []
 
-            with open(pdb_path, "r") as f:
+            with open(pdb_path, "r", encoding="utf-8") as f:
                 for line in f:
                     # Look for CA atoms (one per residue)
                     if line.startswith("ATOM") and line[12:16].strip() == "CA":
@@ -192,22 +196,22 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
                     region_start = res
                     in_region = True
                 elif plddt >= 70 and in_region:
-                    low_conf_regions.append(f"{region_start}-{residues[residues.index(res)-1]}")
+                    low_conf_regions.append(f"{region_start}-{residues[residues.index(res) - 1]}")
                     in_region = False
 
             if in_region:  # Close last region
                 low_conf_regions.append(f"{region_start}-{residues[-1]}")
 
             # Format output
-            output = f"=== AlphaFold Confidence Analysis ===\n\n"
+            output = "=== AlphaFold Confidence Analysis ===\n\n"
             output += f"File: {alphafold_pdb}\n"
             output += f"Residues analyzed: {len(residues)}\n\n"
-            output += f"📊 pLDDT Statistics:\n"
+            output += "📊 pLDDT Statistics:\n"
             output += f"  - Average: {avg_plddt:.2f}\n"
             output += f"  - Range: {min_plddt:.2f} - {max_plddt:.2f}\n\n"
 
             if low_conf_regions:
-                output += f"⚠️  Low confidence regions (pLDDT < 70):\n"
+                output += "⚠️  Low confidence regions (pLDDT < 70):\n"
                 for region in low_conf_regions:
                     output += f"  - Residues {region}\n"
             else:
@@ -223,8 +227,8 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
             if pae_json:
                 pae_path = data_dir / pae_json
                 if pae_path.exists():
-                    with open(pae_path, "r") as f:
-                        pae_data = json.load(f)
+                    with open(pae_path, "r", encoding="utf-8") as f:
+                        json.load(f)  # Validate JSON but don't store
                     output += f"\n\n📈 PAE data loaded from {pae_json}"
                     output += "\n(Use execute_code to visualize PAE matrix)"
 
@@ -239,5 +243,5 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
 
             return output
 
-        except Exception as e:
+        except (OSError, KeyError, ValueError, IndexError) as e:
             return f"❌ Error parsing AlphaFold confidence: {str(e)}"

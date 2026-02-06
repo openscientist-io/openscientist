@@ -2,12 +2,13 @@
 Cloud Run service to disable service account keys when budget is exceeded.
 Triggered by Pub/Sub messages from GCP Billing Budget alerts.
 """
+
 import base64
 import json
 import os
-from google.cloud import iam_admin_v1
-from flask import Flask, request
 
+from flask import Flask, request
+from google.cloud import iam_admin_v1
 
 app = Flask(__name__)
 
@@ -43,9 +44,12 @@ def handle_budget_alert():
 
         if cost_amount >= budget_amount:
             # Budget exceeded - disable service account key
-            print(f"BUDGET EXCEEDED! Disabling service account keys...")
+            print("BUDGET EXCEEDED! Disabling service account keys...")
             disable_service_account_keys()
-            return f"Budget exceeded (${cost_amount} >= ${budget_amount}). Service account keys disabled.", 200
+            return (
+                f"Budget exceeded (${cost_amount} >= ${budget_amount}). Service account keys disabled.",
+                200,
+            )
 
     return "Budget alert received but threshold not met", 200
 
@@ -65,9 +69,7 @@ def disable_service_account_keys():
     for key in keys.keys:
         # Skip Google-managed keys (only disable user-managed keys)
         if key.key_type == iam_admin_v1.types.ListServiceAccountKeysRequest.KeyType.USER_MANAGED:
-            disable_request = iam_admin_v1.DisableServiceAccountKeyRequest(
-                name=key.name
-            )
+            disable_request = iam_admin_v1.DisableServiceAccountKeyRequest(name=key.name)
             client.disable_service_account_key(request=disable_request)
             print(f"Disabled key: {key.name}")
 

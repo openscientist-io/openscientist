@@ -10,8 +10,9 @@ import re
 from pathlib import Path
 from typing import Optional
 
-import markdown
 from fpdf import FPDF, XPos, YPos
+
+from shandy.exceptions import PDFGenerationError
 
 logger = logging.getLogger(__name__)
 
@@ -23,32 +24,39 @@ class ReportPDF(FPDF):
         super().__init__()
         # Use DejaVu font for Unicode support (system-installed fonts)
         # Debian/Ubuntu installs fonts to /usr/share/fonts/truetype/dejavu/
-        dejavu_path = '/usr/share/fonts/truetype/dejavu'
-        self.add_font('DejaVu', '', f'{dejavu_path}/DejaVuSans.ttf', uni=True)
-        self.add_font('DejaVu', 'B', f'{dejavu_path}/DejaVuSans-Bold.ttf', uni=True)
+        dejavu_path = "/usr/share/fonts/truetype/dejavu"
+        self.add_font("DejaVu", "", f"{dejavu_path}/DejaVuSans.ttf")
+        self.add_font("DejaVu", "B", f"{dejavu_path}/DejaVuSans-Bold.ttf")
         # Note: fonts-dejavu-core doesn't include italic variant, so we use regular for italic
-        self.add_font('DejaVu', 'I', f'{dejavu_path}/DejaVuSans.ttf', uni=True)
+        self.add_font("DejaVu", "I", f"{dejavu_path}/DejaVuSans.ttf")
         self.add_page()
         self.set_auto_page_break(auto=True, margin=15)
 
     def header(self):
         """Add header to each page (except first)."""
         if self.page_no() > 1:
-            self.set_font('DejaVu', 'I', 9)
+            self.set_font("DejaVu", "I", 9)
             self.set_text_color(128, 128, 128)
-            self.cell(0, 10, 'SHANDY Scientific Report', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            self.cell(
+                0,
+                10,
+                "SHANDY Scientific Report",
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+                align="R",
+            )
             self.ln(2)
 
     def footer(self):
         """Add footer with page number."""
         self.set_y(-15)
-        self.set_font('DejaVu', 'I', 8)
+        self.set_font("DejaVu", "I", 8)
         self.set_text_color(128, 128, 128)
-        self.cell(0, 10, f'Page {self.page_no()}', align='C')
+        self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
     def add_title(self, title: str):
         """Add report title."""
-        self.set_font('DejaVu', 'B', 24)
+        self.set_font("DejaVu", "B", 24)
         self.set_text_color(44, 62, 80)
         self.multi_cell(0, 10, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(5)
@@ -56,7 +64,7 @@ class ReportPDF(FPDF):
     def add_heading_1(self, text: str):
         """Add H1 heading."""
         self.ln(5)
-        self.set_font('DejaVu', 'B', 18)
+        self.set_font("DejaVu", "B", 18)
         self.set_text_color(52, 73, 94)
         self.multi_cell(0, 10, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(2)
@@ -64,7 +72,7 @@ class ReportPDF(FPDF):
     def add_heading_2(self, text: str):
         """Add H2 heading."""
         self.ln(4)
-        self.set_font('DejaVu', 'B', 14)
+        self.set_font("DejaVu", "B", 14)
         self.set_text_color(93, 109, 126)
         self.multi_cell(0, 8, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(2)
@@ -72,14 +80,14 @@ class ReportPDF(FPDF):
     def add_heading_3(self, text: str):
         """Add H3 heading."""
         self.ln(3)
-        self.set_font('DejaVu', 'B', 12)
+        self.set_font("DejaVu", "B", 12)
         self.set_text_color(93, 109, 126)
         self.multi_cell(0, 7, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(1)
 
     def add_paragraph(self, text: str):
         """Add body paragraph."""
-        self.set_font('DejaVu', '', 11)
+        self.set_font("DejaVu", "", 11)
         self.set_text_color(51, 51, 51)
         # Process bold and italic markdown
         text = self._process_inline_formatting(text)
@@ -90,30 +98,46 @@ class ReportPDF(FPDF):
         """Add code block."""
         self.ln(2)
         self.set_fill_color(245, 245, 245)
-        self.set_font('DejaVu', '', 9)
+        self.set_font("DejaVu", "", 9)
         self.set_text_color(51, 51, 51)
         self.multi_cell(0, 5, code, new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
         self.ln(2)
 
     def add_list_item(self, text: str, ordered: bool = False, indent: int = 0):
         """Add list item."""
-        self.set_font('DejaVu', '', 11)
+        self.set_font("DejaVu", "", 11)
         self.set_text_color(51, 51, 51)
-        bullet = '•' if not ordered else f"{indent + 1}."
+        bullet = "•" if not ordered else f"{indent + 1}."
         x_indent = 10 + (indent * 5)
         self.set_x(x_indent)
         text = self._process_inline_formatting(text)
-        self.multi_cell(0, 6, f"{bullet} {text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, markdown=True)
+        self.multi_cell(
+            0, 6, f"{bullet} {text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, markdown=True
+        )
 
     def add_shandy_footer(self):
         """Add SHANDY attribution footer."""
         self.ln(10)
         self.line(10, self.get_y(), 200, self.get_y())
         self.ln(3)
-        self.set_font('DejaVu', 'I', 9)
+        self.set_font("DejaVu", "I", 9)
         self.set_text_color(149, 165, 166)
-        self.cell(0, 5, 'Generated by SHANDY - Scientific Hypothesis Agent for Novel Discovery', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
-        self.cell(0, 5, 'https://github.com/justaddcoffee/shandy', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        self.cell(
+            0,
+            5,
+            "Generated by SHANDY - Scientific Hypothesis Agent for Novel Discovery",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+            align="C",
+        )
+        self.cell(
+            0,
+            5,
+            "https://github.com/justaddcoffee/shandy",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+            align="C",
+        )
 
     @staticmethod
     def _process_inline_formatting(text: str) -> str:
@@ -122,14 +146,12 @@ class ReportPDF(FPDF):
         # **bold** -> still **bold** (fpdf2 handles this)
         # *italic* -> still *italic* (fpdf2 handles this)
         # `code` -> code (remove backticks as fpdf2 doesn't handle inline code well)
-        text = re.sub(r'`([^`]+)`', r'\1', text)
+        text = re.sub(r"`([^`]+)`", r"\1", text)
         return text
 
 
 def markdown_to_pdf(
-    markdown_path: Path,
-    pdf_path: Optional[Path] = None,
-    add_footer: bool = True
+    markdown_path: Path, pdf_path: Optional[Path] = None, add_footer: bool = True
 ) -> Path:
     """
     Convert Markdown report to PDF with professional styling.
@@ -151,13 +173,13 @@ def markdown_to_pdf(
 
     # Default PDF path
     if pdf_path is None:
-        pdf_path = markdown_path.with_suffix('.pdf')
+        pdf_path = markdown_path.with_suffix(".pdf")
 
-    logger.info(f"Converting {markdown_path} to PDF...")
+    logger.info("Converting %s to PDF...", markdown_path)
 
     try:
         # Read Markdown content
-        with open(markdown_path, 'r', encoding='utf-8') as f:
+        with open(markdown_path, "r", encoding="utf-8") as f:
             markdown_content = f.read()
 
         # Create PDF
@@ -165,16 +187,16 @@ def markdown_to_pdf(
 
         # Parse markdown line by line
         in_code_block = False
-        code_buffer = []
+        code_buffer: list[str] = []
         in_list = False
         list_counter = 0
 
-        for line in markdown_content.split('\n'):
+        for line in markdown_content.split("\n"):
             # Code blocks
-            if line.strip().startswith('```'):
+            if line.strip().startswith("```"):
                 if in_code_block:
                     # End code block
-                    pdf.add_code_block('\n'.join(code_buffer))
+                    pdf.add_code_block("\n".join(code_buffer))
                     code_buffer = []
                     in_code_block = False
                 else:
@@ -187,33 +209,33 @@ def markdown_to_pdf(
                 continue
 
             # Headings
-            if line.startswith('# '):
+            if line.startswith("# "):
                 in_list = False
                 pdf.add_title(line[2:])
-            elif line.startswith('## '):
+            elif line.startswith("## "):
                 in_list = False
                 pdf.add_heading_1(line[3:])
-            elif line.startswith('### '):
+            elif line.startswith("### "):
                 in_list = False
                 pdf.add_heading_2(line[4:])
-            elif line.startswith('#### '):
+            elif line.startswith("#### "):
                 in_list = False
                 pdf.add_heading_3(line[5:])
 
             # Lists
-            elif line.strip().startswith('- ') or line.strip().startswith('* '):
+            elif line.strip().startswith("- ") or line.strip().startswith("* "):
                 in_list = True
                 pdf.add_list_item(line.strip()[2:], ordered=False)
-            elif re.match(r'^\d+\.\s', line.strip()):
+            elif re.match(r"^\d+\.\s", line.strip()):
                 if not in_list:
                     list_counter = 0
                 in_list = True
                 list_counter += 1
-                text = re.sub(r'^\d+\.\s', '', line.strip())
+                text = re.sub(r"^\d+\.\s", "", line.strip())
                 pdf.add_list_item(text, ordered=True, indent=list_counter - 1)
 
             # Horizontal rule
-            elif line.strip() in ['---', '***', '___']:
+            elif line.strip() in ["---", "***", "___"]:
                 in_list = False
                 pdf.ln(2)
                 pdf.line(10, pdf.get_y(), 200, pdf.get_y())
@@ -236,9 +258,9 @@ def markdown_to_pdf(
         # Save PDF
         pdf.output(str(pdf_path))
 
-        logger.info(f"PDF generated successfully: {pdf_path}")
+        logger.info("PDF generated successfully: %s", pdf_path)
         return pdf_path
 
-    except Exception as e:
-        logger.error(f"PDF generation failed: {e}", exc_info=True)
-        raise ValueError(f"Failed to generate PDF: {e}") from e
+    except (OSError, RuntimeError, UnicodeEncodeError) as e:
+        logger.error("PDF generation failed: %s", e, exc_info=True)
+        raise PDFGenerationError(f"Failed to generate PDF: {e}") from e

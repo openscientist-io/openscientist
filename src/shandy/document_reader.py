@@ -9,24 +9,40 @@ import logging
 from pathlib import Path
 from typing import Optional, Tuple
 
+import fitz  # type: ignore[import-untyped]  # PyMuPDF
+import openpyxl
+from docx import Document
+
 logger = logging.getLogger(__name__)
 
 # File extensions that require special extraction
 BINARY_DOCUMENT_EXTENSIONS = {
-    '.pdf',
-    '.docx', '.doc',
-    '.xlsx', '.xls',
-    '.pptx', '.ppt',
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".pptx",
+    ".ppt",
 }
 
 # Extensions that can be read as text directly
 TEXT_EXTENSIONS = {
-    '.csv', '.tsv', '.txt',
-    '.json', '.jsonl',
-    '.md', '.markdown',
-    '.xml', '.html', '.htm',
-    '.yaml', '.yml',
-    '.py', '.r', '.sh',
+    ".csv",
+    ".tsv",
+    ".txt",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".markdown",
+    ".xml",
+    ".html",
+    ".htm",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".r",
+    ".sh",
 }
 
 
@@ -51,14 +67,12 @@ def extract_text_from_pdf(file_path: Path, max_pages: Optional[int] = None) -> T
     Returns:
         Tuple of (extracted_text, metadata_dict)
     """
-    import fitz  # PyMuPDF
-
-    doc = fitz.open(file_path)
+    doc = fitz.open(str(file_path))
     metadata = {
         "format": "pdf",
         "pages": len(doc),
-        "title": doc.metadata.get("title", ""),
-        "author": doc.metadata.get("author", ""),
+        "title": doc.metadata.get("title") or "",
+        "author": doc.metadata.get("author") or "",
     }
 
     text_parts = []
@@ -92,9 +106,7 @@ def extract_text_from_docx(file_path: Path) -> Tuple[str, dict]:
     Returns:
         Tuple of (extracted_text, metadata_dict)
     """
-    from docx import Document
-
-    doc = Document(file_path)
+    doc = Document(str(file_path))
     metadata = {
         "format": "docx",
         "paragraphs": len(doc.paragraphs),
@@ -105,7 +117,7 @@ def extract_text_from_docx(file_path: Path) -> Tuple[str, dict]:
         if doc.core_properties:
             metadata["title"] = doc.core_properties.title or ""
             metadata["author"] = doc.core_properties.author or ""
-    except Exception:
+    except (AttributeError, KeyError):
         pass
 
     # Extract text from paragraphs
@@ -141,8 +153,6 @@ def extract_text_from_xlsx(file_path: Path, max_rows: int = 1000) -> Tuple[str, 
     Returns:
         Tuple of (extracted_text, metadata_dict)
     """
-    import openpyxl
-
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     metadata = {
         "format": "xlsx",
@@ -193,12 +203,12 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
     file_size_kb = file_path.stat().st_size / 1024
 
     try:
-        if suffix == '.pdf':
+        if suffix == ".pdf":
             text, metadata = extract_text_from_pdf(file_path)
             header = f"[PDF: {file_path.name} | {metadata['pages']} pages | {file_size_kb:.1f} KB]"
 
-        elif suffix in ('.docx', '.doc'):
-            if suffix == '.doc':
+        elif suffix in (".docx", ".doc"):
+            if suffix == ".doc":
                 return (
                     f"Error: Old .doc format not supported. "
                     f"Please convert {file_path.name} to .docx format."
@@ -206,8 +216,8 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
             text, metadata = extract_text_from_docx(file_path)
             header = f"[DOCX: {file_path.name} | {metadata['paragraphs']} paragraphs | {file_size_kb:.1f} KB]"
 
-        elif suffix in ('.xlsx', '.xls'):
-            if suffix == '.xls':
+        elif suffix in (".xlsx", ".xls"):
+            if suffix == ".xls":
                 return (
                     f"Error: Old .xls format not supported. "
                     f"Please convert {file_path.name} to .xlsx format, "
@@ -219,7 +229,7 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
         else:
             # Try to read as plain text
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, "r", encoding="utf-8") as f:
                     text = f.read()
                 header = f"[TEXT: {file_path.name} | {file_size_kb:.1f} KB]"
             except UnicodeDecodeError:
@@ -235,6 +245,6 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
 
         return f"{header}\n\n{text}"
 
-    except Exception as e:
-        logger.exception(f"Error reading document {file_path}")
+    except (OSError, ValueError, ImportError, RuntimeError) as e:
+        logger.exception("Error reading document %s", file_path)
         return f"Error reading {file_path.name}: {type(e).__name__}: {e}"

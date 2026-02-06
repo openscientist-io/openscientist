@@ -1,6 +1,5 @@
 """Tests for document_reader module."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -49,7 +48,7 @@ class TestPDFExtraction:
     @pytest.fixture
     def sample_pdf(self, tmp_path):
         """Create a sample PDF file for testing."""
-        import fitz  # PyMuPDF
+        import fitz  # type: ignore[import-untyped]  # PyMuPDF
 
         pdf_path = tmp_path / "sample.pdf"
         doc = fitz.open()
