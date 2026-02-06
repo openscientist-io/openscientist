@@ -16,7 +16,10 @@ services:
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
 
-      # Vertex AI settings
+      # Direct Anthropic API (if using anthropic provider)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+      # Vertex AI settings (if using Vertex provider)
       CLAUDE_CODE_USE_VERTEX: ${CLAUDE_CODE_USE_VERTEX}
       ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcp-credentials.json}
