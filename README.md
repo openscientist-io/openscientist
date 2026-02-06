@@ -57,7 +57,7 @@ SHANDY supports **Phenix integration** for protein structure analysis:
 - One of the following for model access:
   - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
   - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
-  - **AWS Bedrock**: *(Coming soon)*
+  - **AWS Bedrock**: AWS account with Bedrock access (see below)
 
 ### Installation
 
@@ -102,7 +102,7 @@ shandy/
 │   │   ├── base.py        # Base provider interface
 │   │   ├── cborg.py       # CBORG provider
 │   │   ├── vertex.py      # Google Vertex AI provider
-│   │   └── bedrock.py     # AWS Bedrock provider (stub)
+│   │   └── bedrock.py     # AWS Bedrock provider
 │   └── mcp_server/        # MCP tools server
 ├── .claude/               # Claude Code configuration
 │   ├── skills/            # Discovery skills
@@ -156,7 +156,27 @@ GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
 
 #### Option 3: AWS Bedrock
 
-*(Coming soon)*
+```bash
+# Provider selection
+CLAUDE_PROVIDER=bedrock
+
+# AWS configuration
+AWS_REGION=us-east-1
+
+# Authentication (choose one):
+# Option A: Access keys
+AWS_ACCESS_KEY_ID=your-access-key-id
+AWS_SECRET_ACCESS_KEY=your-secret-access-key
+
+# Option B: AWS profile
+# AWS_PROFILE=your-profile-name
+
+# Option C: Bedrock API key
+# AWS_BEARER_TOKEN_BEDROCK=your-bedrock-api-key
+```
+
+**Cost Tracking**: Via AWS Cost Explorer (24-48 hour lag)
+**Note**: Requires IAM permissions for `bedrock:InvokeModel` and `ce:GetCostAndUsage`
 
 ### Budget Controls
 
