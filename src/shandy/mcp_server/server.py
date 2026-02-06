@@ -12,8 +12,6 @@ Provides tools for autonomous discovery:
 - parse_alphafold_confidence: Extract AlphaFold confidence metrics
 """
 
-import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,9 +20,10 @@ import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
 # Import tool implementations
-from ..code_executor import execute_code as exec_code, format_execution_result
-from ..document_reader import read_document as read_doc, is_binary_document
-from ..file_loader import load_data_file, get_file_info, FileTooBigError
+from ..code_executor import execute_code as exec_code
+from ..code_executor import format_execution_result
+from ..document_reader import read_document as read_doc
+from ..file_loader import FileTooBigError, get_file_info, load_data_file
 from ..knowledge_state import KnowledgeState
 from ..literature import search_pubmed as search_pm
 from ..phenix_setup import check_phenix_available
@@ -81,7 +80,7 @@ def ensure_data_loaded() -> Optional[str]:
 
         return None  # Success
 
-    except FileTooBigError as e:
+    except FileTooBigError:
         DATA_LOAD_ERROR = f"Unable to load data file: file exceeds size limit ({file_size_mb:.1f} MB). Please contact the administrator."
         print(f"❌ {DATA_LOAD_ERROR}", file=sys.stderr)
         return DATA_LOAD_ERROR
@@ -466,7 +465,7 @@ def main():
         # No primary data file
         DATA_FILE_PATH = None
         DATA_FILES = []
-        print(f"ℹ️  No data file provided - server running in no-data mode", file=sys.stderr)
+        print("ℹ️  No data file provided - server running in no-data mode", file=sys.stderr)
 
     # Scan job data directory for additional files (metadata only)
     data_dir = JOB_DIR / "data"

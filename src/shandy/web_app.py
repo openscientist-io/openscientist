@@ -4,7 +4,6 @@ NiceGUI web interface for SHANDY.
 Provides web UI for job submission, monitoring, and results viewing.
 """
 
-import bcrypt
 import json
 import logging
 import os
@@ -12,8 +11,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from nicegui import app, ui
+import bcrypt
 from dotenv import load_dotenv
+from nicegui import app, ui
 
 from .job_manager import JobManager, JobStatus
 from .providers import get_provider
@@ -240,7 +240,7 @@ def new_job_page():
             # Determine investigation mode
             mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
 
-            job_info = job_manager.create_job(
+            _job_info = job_manager.create_job(
                 job_id=job_id,
                 research_question=research_question.value,
                 data_files=data_files,
@@ -1077,8 +1077,8 @@ Download as Markdown or PDF.
 ## Tips for Success
 
 1. **Clear Research Question**: Be specific about what you want to discover
-2. **Clean Data**: Ensure files are properly formatted. Provide a detailed explanation of the 
-data file in your query if possible, including how it is formatted, any relevant details 
+2. **Clean Data**: Ensure files are properly formatted. Provide a detailed explanation of the
+data file in your query if possible, including how it is formatted, any relevant details
 about the file (e.g. what the column headers signify), and how the file relates to the research question.
 3. **Appropriate Iterations**: 10 is sufficient for many analyses. More iterations may help with more
 complicated questions.

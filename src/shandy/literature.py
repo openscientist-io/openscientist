@@ -5,7 +5,8 @@ Proactive literature integration to inform hypothesis generation.
 """
 
 import time
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import requests
 
 
@@ -87,7 +88,7 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
         List of paper dictionaries
     """
     try:
-        import xml.etree.ElementTree as ET
+        import xml.etree.ElementTree as ET  # noqa: N817
         root = ET.fromstring(xml_text)
 
         papers = []
@@ -123,7 +124,7 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
                     "authors": authors,
                     "year": year
                 })
-            except Exception as e:
+            except Exception:
                 # Skip malformed articles
                 continue
 

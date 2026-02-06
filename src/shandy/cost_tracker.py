@@ -5,7 +5,8 @@ Monitors API spending and enforces budget limits.
 """
 
 import os
-from typing import Dict, Any, Optional
+from typing import Any, Dict
+
 import requests
 
 

@@ -9,17 +9,16 @@ import json
 import logging
 import os
 import subprocess
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional
-import pandas as pd
+from typing import Any, Dict, Optional
+
 from dotenv import load_dotenv
 
+from .file_loader import get_file_info
 from .knowledge_state import KnowledgeState
 from .providers import get_provider
-from .file_loader import load_data_file, get_file_info
 
 # Load environment variables (important for Claude CLI subprocess)
 if not load_dotenv("/app/.env", override=True):
@@ -116,7 +115,6 @@ def wait_for_feedback_or_timeout(job_dir: Path, timeout_seconds: int = FEEDBACK_
     Returns:
         Feedback text if submitted, None if timeout or cancelled
     """
-    import time
 
     config_path = job_dir / "config.json"
     ks_path = job_dir / "knowledge_state.json"
@@ -442,7 +440,7 @@ understand your investigation progress.
 Start your investigation by using these tools to analyze the data.
 """
 
-        logger.info(f"Starting discovery loop with Claude CLI headless mode")
+        logger.info("Starting discovery loop with Claude CLI headless mode")
 
         # Iteration 1: Start session
         # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
@@ -513,7 +511,7 @@ Start your investigation by using these tools to analyze the data.
         # Log iteration (human-readable summary)
         log_file = job_dir / "claude_iterations.log"
         with open(log_file, "w") as f:
-            f.write(f"=== Iteration 1 ===\n")
+            f.write("=== Iteration 1 ===\n")
             f.write(f"Prompt: {initial_prompt}\n\n")
             f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
 
@@ -535,7 +533,7 @@ Start your investigation by using these tools to analyze the data.
         # 1. Prevent unbounded context growth over 10+ iterations
         # 2. Reduce cost while maintaining continuity within batches
         # 3. Agent gets reasoning context within a batch (5 iterations)
-        RESET_INTERVAL = 5  # Start fresh session every N iterations
+        RESET_INTERVAL = 5  # Start fresh session every N iterations  # noqa: N806
 
         for iteration in range(2, max_iterations + 1):
             # Reload knowledge graph to see latest state
@@ -665,7 +663,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 pending_feedback = wait_for_feedback_or_timeout(job_dir)
                 update_job_status(job_dir, "running")
 
-        logger.info(f"Discovery loop completed")
+        logger.info("Discovery loop completed")
 
         # Generate final report using Claude
         logger.info("Generating final report...")
@@ -796,7 +794,7 @@ def main():
     # Run discovery
     result = run_discovery(Path(args.job_dir))
 
-    print(f"\nDiscovery complete!")
+    print("\nDiscovery complete!")
     print(f"Job ID: {result['job_id']}")
     print(f"Iterations: {result['iterations']}")
     print(f"Findings: {result['findings']}")

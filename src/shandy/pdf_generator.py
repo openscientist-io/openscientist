@@ -10,7 +10,6 @@ import re
 from pathlib import Path
 from typing import Optional
 
-import markdown
 from fpdf import FPDF, XPos, YPos
 
 logger = logging.getLogger(__name__)

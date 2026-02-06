@@ -4,11 +4,10 @@ File loading and type detection for SHANDY.
 Handles multiple file formats with validation and magic number detection.
 """
 
-import io
 import logging
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Any, Dict, Optional
 
 import pandas as pd
 

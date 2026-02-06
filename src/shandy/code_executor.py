@@ -6,32 +6,33 @@ Executes Python code with timeouts, import whitelisting, and safety measures.
 
 import ast
 import io
-import sys
 import signal
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-import pandas as pd
-import numpy as np
+from typing import Any, Dict, List, Optional
+
 import matplotlib
+import numpy as np
+import pandas as pd
+
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 
-class TimeoutException(Exception):
+class CodeTimeoutError(Exception):
     """Raised when code execution times out."""
     pass
 
 
-class ForbiddenImportException(Exception):
+class ForbiddenImportError(Exception):
     """Raised when code tries to import forbidden modules."""
     pass
 
 
 def timeout_handler(signum, frame):
     """Signal handler for execution timeout."""
-    raise TimeoutException("Code execution timed out")
+    raise CodeTimeoutError("Code execution timed out")
 
 
 def validate_imports(code: str, allowed_imports: List[str]) -> None:
@@ -43,7 +44,7 @@ def validate_imports(code: str, allowed_imports: List[str]) -> None:
         allowed_imports: List of allowed module names
 
     Raises:
-        ForbiddenImportException: If code imports forbidden modules
+        ForbiddenImportError: If code imports forbidden modules
     """
     try:
         tree = ast.parse(code)
@@ -55,7 +56,7 @@ def validate_imports(code: str, allowed_imports: List[str]) -> None:
             for alias in node.names:
                 module_name = alias.name.split('.')[0]  # Get top-level module
                 if module_name not in allowed_imports:
-                    raise ForbiddenImportException(
+                    raise ForbiddenImportError(
                         f"Import of '{alias.name}' is not allowed. "
                         f"Allowed imports: {', '.join(allowed_imports)}"
                     )
@@ -63,7 +64,7 @@ def validate_imports(code: str, allowed_imports: List[str]) -> None:
             if node.module:
                 module_name = node.module.split('.')[0]
                 if module_name not in allowed_imports:
-                    raise ForbiddenImportException(
+                    raise ForbiddenImportError(
                         f"Import from '{node.module}' is not allowed. "
                         f"Allowed imports: {', '.join(allowed_imports)}"
                     )
@@ -128,7 +129,7 @@ def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
     # Validate imports
     try:
         validate_imports(code, allowed_imports)
-    except (SyntaxError, ForbiddenImportException) as e:
+    except (SyntaxError, ForbiddenImportError) as e:
         return {
             "success": False,
             "error": str(e),
@@ -258,7 +259,7 @@ def execute_code(code: str, data: Optional[pd.DataFrame], plots_dir: Path,
             "execution_time": execution_time
         }
 
-    except TimeoutException:
+    except CodeTimeoutError:
         if hasattr(signal, 'SIGALRM'):
             signal.alarm(0)
         return {

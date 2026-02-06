@@ -4,7 +4,7 @@ Prompt templates for SHANDY orchestrator.
 System prompts and discovery iteration prompts for the autonomous agent.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 
 def get_system_prompt(skills_enabled: bool = True) -> str:

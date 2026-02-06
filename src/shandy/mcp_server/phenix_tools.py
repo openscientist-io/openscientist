@@ -3,7 +3,6 @@
 import json
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 from ..phenix_setup import setup_phenix_env
 
@@ -199,15 +198,15 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
                 low_conf_regions.append(f"{region_start}-{residues[-1]}")
 
             # Format output
-            output = f"=== AlphaFold Confidence Analysis ===\n\n"
+            output = "=== AlphaFold Confidence Analysis ===\n\n"
             output += f"File: {alphafold_pdb}\n"
             output += f"Residues analyzed: {len(residues)}\n\n"
-            output += f"📊 pLDDT Statistics:\n"
+            output += "📊 pLDDT Statistics:\n"
             output += f"  - Average: {avg_plddt:.2f}\n"
             output += f"  - Range: {min_plddt:.2f} - {max_plddt:.2f}\n\n"
 
             if low_conf_regions:
-                output += f"⚠️  Low confidence regions (pLDDT < 70):\n"
+                output += "⚠️  Low confidence regions (pLDDT < 70):\n"
                 for region in low_conf_regions:
                     output += f"  - Residues {region}\n"
             else:
@@ -224,7 +223,7 @@ def register_phenix_tools(mcp, job_dir: Path, ks):
                 pae_path = data_dir / pae_json
                 if pae_path.exists():
                     with open(pae_path, "r") as f:
-                        pae_data = json.load(f)
+                        _pae_data = json.load(f)
                     output += f"\n\n📈 PAE data loaded from {pae_json}"
                     output += "\n(Use execute_code to visualize PAE matrix)"
 

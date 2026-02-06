@@ -8,11 +8,11 @@ import json
 import logging
 import shutil
 import threading
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from .orchestrator import create_job, run_discovery
 from .providers import get_provider
@@ -162,7 +162,7 @@ class JobManager:
 
         # Create job directory and files
         logger.info(f"Creating job {job_id}")
-        job_dir = create_job(
+        _job_dir = create_job(
             job_id=job_id,
             research_question=research_question,
             data_files=data_files,
