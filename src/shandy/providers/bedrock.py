@@ -6,7 +6,7 @@ Uses AWS Bedrock for model access. Cost tracking via AWS Cost Explorer.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 from shandy.providers.base import BaseProvider, CostInfo
@@ -98,8 +98,7 @@ class BedrockProvider(BaseProvider):
         # For now, return unavailable status with instructions
         # Full implementation would use boto3 cost explorer client
         try:
-            import boto3
-            from datetime import timedelta
+            import boto3  # type: ignore[import-untyped]
 
             # Initialize Cost Explorer client
             ce_client = boto3.client("ce", region_name=os.getenv("AWS_REGION", "us-east-1"))
@@ -116,12 +115,7 @@ class BedrockProvider(BaseProvider):
                     TimePeriod={"Start": start, "End": end},
                     Granularity="DAILY",
                     Metrics=["UnblendedCost"],
-                    Filter={
-                        "Dimensions": {
-                            "Key": "SERVICE",
-                            "Values": ["Amazon Bedrock"]
-                        }
-                    }
+                    Filter={"Dimensions": {"Key": "SERVICE", "Values": ["Amazon Bedrock"]}},
                 )
                 total = 0.0
                 for result in response.get("ResultsByTime", []):
@@ -151,5 +145,5 @@ class BedrockProvider(BaseProvider):
             recent_period_hours=lookback_hours,
             last_updated=now,
             data_lag_note=data_lag_note,
-            metadata={"region": os.getenv("AWS_REGION")}
+            metadata={"region": os.getenv("AWS_REGION")},
         )
