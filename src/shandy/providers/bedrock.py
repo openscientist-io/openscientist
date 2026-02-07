@@ -7,7 +7,7 @@ This provider is a placeholder for future AWS Bedrock support.
 import logging
 from typing import List
 
-from .base import BaseProvider, CostInfo
+from shandy.providers.base import BaseProvider, CostInfo
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class BedrockProvider(BaseProvider):
         """Bedrock validation - not implemented."""
         return [
             "AWS Bedrock provider is not yet implemented.",
-            "Please use 'cborg' or 'vertex' as CLAUDE_PROVIDER."
+            "Please use 'cborg' or 'vertex' as CLAUDE_PROVIDER.",
         ]
 
     def setup_environment(self) -> None:

@@ -12,7 +12,7 @@ def setup_phenix_env() -> Optional[dict]:
     Returns:
         dict: Environment variables with Phenix paths, or None if PHENIX_PATH not set
     """
-    phenix_path = os.getenv('PHENIX_PATH')
+    phenix_path = os.getenv("PHENIX_PATH")
     if not phenix_path:
         return None
 
@@ -33,15 +33,16 @@ def setup_phenix_env() -> Optional[dict]:
             shell=True,
             capture_output=True,
             text=True,
-            executable='/bin/bash',
-            timeout=10
+            executable="/bin/bash",
+            timeout=10,
+            check=False,
         )
 
         # Parse environment variables
         phenix_env = os.environ.copy()
-        for line in proc.stdout.split('\n'):
-            if '=' in line:
-                key, _, value = line.partition('=')
+        for line in proc.stdout.split("\n"):
+            if "=" in line:
+                key, _, value = line.partition("=")
                 phenix_env[key] = value
 
         return phenix_env
@@ -49,7 +50,7 @@ def setup_phenix_env() -> Optional[dict]:
     except subprocess.TimeoutExpired:
         print("Warning: Phenix environment setup timed out")
         return None
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         print(f"Warning: Failed to setup Phenix environment: {e}")
         return None
 

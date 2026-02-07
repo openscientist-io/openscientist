@@ -31,8 +31,7 @@ class AnthropicProvider(BaseProvider):
 
         if not os.getenv("ANTHROPIC_API_KEY"):
             errors.append(
-                "ANTHROPIC_API_KEY not set. "
-                "Get your API key from https://console.anthropic.com"
+                "ANTHROPIC_API_KEY not set. Get your API key from https://console.anthropic.com"
             )
 
         return errors
@@ -65,5 +64,5 @@ class AnthropicProvider(BaseProvider):
             total_spend_usd=None,
             recent_spend_usd=None,
             recent_period_hours=lookback_hours,
-            data_lag_note="Cost tracking not available for direct Anthropic API"
+            data_lag_note="Cost tracking not available for direct Anthropic API",
         )

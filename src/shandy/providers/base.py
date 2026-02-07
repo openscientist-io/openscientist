@@ -7,7 +7,9 @@ import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
+from shandy.exceptions import ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +50,16 @@ class BaseProvider(ABC):
         errors = self._validate_required_config()
         if errors:
             raise ValueError(
-                f"{self.name} provider configuration errors:\n" +
-                "\n".join(f"  - {err}" for err in errors)
+                f"{self.name} provider configuration errors:\n"
+                + "\n".join(f"  - {err}" for err in errors)
             )
 
         warnings = self._validate_optional_config()
         if warnings:
             logger.warning(
-                f"{self.name} provider configuration warnings:\n" +
-                "\n".join(f"  - {warn}" for warn in warnings)
+                "%s provider configuration warnings:\n%s",
+                self.name,
+                "\n".join(f"  - {warn}" for warn in warnings),
             )
 
     @abstractmethod
@@ -109,13 +112,13 @@ class BaseProvider(ABC):
         """
         try:
             cost_info = self.get_cost_info(lookback_hours=lookback_hours)
-        except Exception as e:
-            logger.error(f"Could not fetch cost info for budget check: {e}")
+        except (ProviderError, ValueError, OSError) as e:
+            logger.error("Could not fetch cost info for budget check: %s", e)
             # If we can't check costs, allow job to proceed but warn
             return {
                 "can_proceed": True,
                 "warnings": [f"Could not check budget limits: {e}"],
-                "errors": []
+                "errors": [],
             }
 
         warnings = []
@@ -132,13 +135,16 @@ class BaseProvider(ABC):
             max_total = float(os.getenv("MAX_PROJECT_SPEND_TOTAL_USD", "inf"))
             if cost_info.total_spend_usd >= max_total:
                 errors.append(
-                    f"Total spend ${cost_info.total_spend_usd:.2f} "
-                    f"exceeds limit ${max_total:.2f}"
+                    f"Total spend ${cost_info.total_spend_usd:.2f} exceeds limit ${max_total:.2f}"
                 )
 
             # Check 24h spend limit
-            max_recent = float(os.getenv(f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
-                                          os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf")))
+            max_recent = float(
+                os.getenv(
+                    f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
+                    os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf"),
+                )
+            )
             if cost_info.recent_spend_usd >= max_recent:
                 errors.append(
                     f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
@@ -146,9 +152,16 @@ class BaseProvider(ABC):
                 )
 
             # Check warning threshold
-            warn_recent = float(os.getenv(f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
-                                           os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf")))
-            if cost_info.recent_spend_usd >= warn_recent and cost_info.recent_spend_usd < max_recent:
+            warn_recent = float(
+                os.getenv(
+                    f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
+                    os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf"),
+                )
+            )
+            if (
+                cost_info.recent_spend_usd >= warn_recent
+                and cost_info.recent_spend_usd < max_recent
+            ):
                 warnings.append(
                     f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
                     f"approaching limit (warning threshold: ${warn_recent:.2f})"
@@ -158,19 +171,14 @@ class BaseProvider(ABC):
         if cost_info.budget_remaining_usd is not None:
             if cost_info.budget_remaining_usd <= 0:
                 errors.append(
-                    f"{self.name} budget exhausted "
-                    f"(${cost_info.budget_limit_usd:.2f} limit)"
+                    f"{self.name} budget exhausted (${cost_info.budget_limit_usd:.2f} limit)"
                 )
             elif cost_info.budget_remaining_usd < 10:
                 warnings.append(
                     f"{self.name} budget low: ${cost_info.budget_remaining_usd:.2f} remaining"
                 )
 
-        return {
-            "can_proceed": len(errors) == 0,
-            "warnings": warnings,
-            "errors": errors
-        }
+        return {"can_proceed": len(errors) == 0, "warnings": warnings, "errors": errors}
 
     @property
     @abstractmethod

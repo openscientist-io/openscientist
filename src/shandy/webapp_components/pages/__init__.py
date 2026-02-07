@@ -1,0 +1,20 @@
+"""Page modules for the web application."""
+
+# Import all page functions to register routes
+from shandy.webapp_components.pages.billing import billing_page
+from shandy.webapp_components.pages.docs import docs_page
+from shandy.webapp_components.pages.index import index_page
+from shandy.webapp_components.pages.job_detail import job_detail_page
+from shandy.webapp_components.pages.jobs_list import jobs_page
+from shandy.webapp_components.pages.login import login_page
+from shandy.webapp_components.pages.new_job import new_job_page
+
+__all__ = [
+    "login_page",
+    "index_page",
+    "new_job_page",
+    "jobs_page",
+    "job_detail_page",
+    "billing_page",
+    "docs_page",
+]

@@ -7,6 +7,6 @@ Provides tools for autonomous discovery:
 - update_knowledge_state: Record findings
 """
 
-from .server import main
+from shandy.mcp_server.server import main
 
 __all__ = ["main"]

@@ -1,12 +1,11 @@
-# SHANDY
-
-**Scientific Hypothesis Agent for Novel Discovery**
+# SHANDY: Scientific Hypothesis Agent for Novel Discovery
 
 An autonomous AI scientist that generates and tests hypotheses from scientific data.
 
 ## Overview
 
 SHANDY is a domain-agnostic autonomous discovery agent that:
+
 - Accepts data files and a research question
 - Runs for N iterations autonomously
 - Generates hypotheses, tests them, searches literature
@@ -15,6 +14,7 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 ## Features
 
 ### Core Capabilities
+
 - **Autonomous Discovery**: Runs iterative hypothesis-testing loop using an agentic coding assistant
 - **Domain-Agnostic**: Works with genomics, transcriptomics, proteomics, metabolomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
@@ -23,10 +23,12 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 - **Sandboxed Execution**: Safe Python code execution for data analysis
 
 ### Skills System
+
 - **Workflow Skills**: Hypothesis generation, result interpretation, prioritization, stopping criteria
 - **Domain Skills**: Metabolomics, genomics/transcriptomics, structural biology, data science/statistics
 
 ### Architecture
+
 - **MCP Tools**: Provides tools via Model Context Protocol
   - `execute_code`: Run Python analysis
   - `search_pubmed`: Search literature
@@ -39,6 +41,7 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 ### Structural Biology Support (Optional)
 
 SHANDY supports **Phenix integration** for protein structure analysis:
+
 - Structure comparison and superposition
 - Validation metrics (clash score, backbone geometry)
 - AlphaFold confidence analysis
@@ -58,8 +61,6 @@ SHANDY supports **Phenix integration** for protein structure analysis:
 
 ### Installation
 
-#### Option 1: Docker (Recommended)
-
 ```bash
 # Clone the repository
 git clone <repository-url>
@@ -71,19 +72,6 @@ cp .env.example .env
 
 # Build and start
 make build
-make start
-```
-
-#### Option 2: Local Development
-
-```bash
-# Install dependencies with uv
-uv pip install -e .
-
-# Install Claude Code CLI (if not already installed)
-# See https://docs.anthropic.com/en/docs/claude-code
-
-# Run the web app
 make start
 ```
 
@@ -183,6 +171,7 @@ MAX_PROJECT_SPEND_24H_USD=50
 ```
 
 Budget limits are checked before job creation. The web UI displays:
+
 - Total project spend
 - Recent spend (last 24h)
 - Budget remaining (if provider supports it)
@@ -201,133 +190,19 @@ DISABLE_AUTH=false
 ### Job Manager Settings
 
 In `src/shandy/web_app.py`:
+
 - `max_concurrent`: Maximum concurrent jobs (default: 1)
 - `jobs_dir`: Directory for job data (default: `jobs/`)
 
 ## Development
 
-### Local Development
-
-```bash
-# Install dependencies
-uv pip install -e .
-
-# Start the web app
-make start
-
-# View logs
-make logs
-
-# Run tests
-make test
-```
-
-### Docker Development
-
-```bash
-# Build and start
-make build
-make start
-
-# View logs
-make logs
-
-# Open shell in container
-make shell
-
-# Rebuild after code changes
-make rebuild
-```
-
-## Deployment
-
-### Production Deployment
-
-The Makefile includes a generic `deploy` target that works with any server:
-
-```bash
-# Deploy with default settings (gassh)
-make deploy
-
-# Deploy to custom server
-make deploy DEPLOY_HOST=myserver DEPLOY_DIR=~/myapp
-```
-
-The deploy target:
-1. Pulls latest code on the remote server
-2. Checks that .env exists (warns if missing)
-3. Builds and restarts Docker containers
-
-**Prerequisites on production server:**
-1. Clone the repository to the deployment directory
-2. Create `.env` from `.env.example` and configure:
-   - `ANTHROPIC_AUTH_TOKEN` - Your API token
-   - `APP_PASSWORD_HASH` - BCrypt hash for login password
-   - Other settings from `.env.example`
-3. Stop any existing application on the target port
-
-**Custom docker-compose files:**
-
-For production deployments with different port mappings or configurations:
-
-1. Create `docker-compose.production.yml` (gitignored by default)
-2. Use it with: `COMPOSE_FILE=docker-compose.production.yml make start`
-
-Server-specific deployment details are kept private (not in git).
-
-## Troubleshooting
-
-### Code changes not appearing in web UI
-
-If you've updated the code but don't see changes in the web interface:
-
-```bash
-# Rebuild Docker image and restart
-make rebuild
-```
-
-This rebuilds the Docker image with your latest code changes and restarts the container.
-
-### Form fields showing old default values
-
-If the web UI shows old default values (e.g., 50 iterations instead of 10), this is browser caching. Solutions:
-
-- **Hard refresh**: Cmd+Shift+R (Mac) or Ctrl+Shift+R (Windows/Linux)
-- **Clear cache**: Clear browser cache for localhost:8080
-- **Incognito mode**: Open the UI in a private/incognito window
-
-The actual job will still use the correct defaults from the code - this only affects what's displayed in the form.
-
-### Missing tabs or features
-
-If tabs like "Plots" are missing from the job detail page, the Docker container needs to be rebuilt:
-
-```bash
-make rebuild
-```
-
-### CBORG HTTP 400 errors with newer Claude versions
-
-**Symptom**: Jobs fail with HTTP 400 errors when using CBORG provider.
-
-**Cause**: Newer versions of the Claude CLI may send headers that CBORG doesn't recognize or support, causing the CBORG API to reject requests with HTTP 400 errors.
-
-**Solution**: Consider using an older version of the Claude CLI if you encounter this issue:
-
-```bash
-# Check current Claude CLI version
-claude --version
-
-# If needed, install a specific older version
-npm install -g @anthropic-ai/claude-code@<version>
-```
-
-**Alternative**: Switch to Vertex AI provider (see `docs/VERTEX_SETUP.md`), which may have better compatibility with newer Claude CLI versions.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and deployment.
 
 ## Documentation
 
 - [Design Document](docs/DESIGN.md)
-- [Skills Documentation](.claude/skills/)
+- [Vertex AI Setup](docs/VERTEX_SETUP.md)
+- [Phenix Setup](docs/PHENIX_SETUP.md)
 
 ## Author
 

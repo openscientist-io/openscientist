@@ -1,9 +1,10 @@
 # Dockerfile for SHANDY
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-# Build args for version tracking
+# Build args
 ARG SHANDY_COMMIT=unknown
 ARG BUILD_TIME=unknown
+ARG INSTALL_PHENIX=false
 
 # Install system dependencies including Node.js and fonts
 RUN apt-get update && apt-get install -y \
@@ -15,17 +16,19 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI via npm (pinned to v2.0.37 - last version before beta header)
+# Install Claude Code CLI via npm
 RUN npm install -g @anthropic-ai/claude-code@2.0.37
 
-# Install Phenix for structural biology
-COPY data/phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz /tmp/
-RUN cd /tmp && \
-    tar xzf phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz && \
-    cd phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6 && \
-    ./install --prefix=/opt && \
-    cd / && \
-    rm -rf /tmp/phenix-installer-*
+# Optionally install Phenix for structural biology
+# Requires data/phenix-installer-*.tar.gz to be present
+RUN if [ "$INSTALL_PHENIX" = "true" ]; then \
+        INSTALLER=$(ls /tmp/phenix-installer-*.tar.gz 2>/dev/null | head -1) && \
+        if [ -n "$INSTALLER" ]; then \
+            cd /tmp && tar xzf "$INSTALLER" && \
+            cd phenix-installer-* && ./install --prefix=/opt && \
+            cd / && rm -rf /tmp/phenix-installer-*; \
+        fi; \
+    fi
 
 # Set working directory
 WORKDIR /app
@@ -52,12 +55,9 @@ EXPOSE 8080
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV ANTHROPIC_AUTH_TOKEN=""
-ENV DISABLE_AUTH="false"
-ENV APP_PASSWORD_HASH=""
-ENV PHENIX_PATH="/opt/phenix-1.21.2-5419"
 ENV SHANDY_COMMIT=${SHANDY_COMMIT}
 ENV SHANDY_BUILD_TIME=${BUILD_TIME}
 
 # Run web app
+# Note: In development mode, override with --reload flag by setting command in docker-compose.override.yml
 CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]

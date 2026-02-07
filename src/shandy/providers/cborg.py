@@ -11,7 +11,8 @@ from typing import List
 
 import requests
 
-from .base import BaseProvider, CostInfo
+from shandy.exceptions import ProviderError
+from shandy.providers.base import BaseProvider, CostInfo
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class CborgProvider(BaseProvider):
             info_response = requests.get(
                 "https://api.cborg.lbl.gov/key/info",
                 headers={"Authorization": f"Bearer {token}"},
-                timeout=10
+                timeout=10,
             )
             info_response.raise_for_status()
             info = info_response.json()["info"]
@@ -83,9 +84,9 @@ class CborgProvider(BaseProvider):
             max_budget = info.get("max_budget")
             key_expires = info.get("expires")
 
-        except Exception as e:
-            logger.error(f"Failed to fetch CBORG /key/info: {e}")
-            raise
+        except (requests.RequestException, KeyError, ValueError) as e:
+            logger.error("Failed to fetch CBORG /key/info: %s", e)
+            raise ProviderError(f"Failed to fetch CBORG /key/info: {e}") from e
 
         # Get recent spend from /user/daily/activity
         try:
@@ -97,23 +98,20 @@ class CborgProvider(BaseProvider):
                 params={
                     "start_date": start_time.isoformat(),
                     "end_date": end_time.isoformat(),
-                    "page": 1,
-                    "page_size": 1000
+                    "page": "1",
+                    "page_size": "1000",
                 },
                 headers={"x-litellm-api-key": token},
-                timeout=10
+                timeout=10,
             )
             activity_response.raise_for_status()
 
             # Sum up costs from activity records
             activity_data = activity_response.json().get("data", [])
-            recent_spend = sum(
-                record.get("spend", 0)
-                for record in activity_data
-            )
+            recent_spend = sum(record.get("spend", 0) for record in activity_data)
 
-        except Exception as e:
-            logger.warning(f"Failed to fetch CBORG activity data: {e}")
+        except (requests.RequestException, KeyError, ValueError) as e:
+            logger.warning("Failed to fetch CBORG activity data: %s", e)
             # Fall back to 0 if activity endpoint fails
             recent_spend = 0.0
 
@@ -130,5 +128,5 @@ class CborgProvider(BaseProvider):
             budget_limit_usd=max_budget,
             budget_remaining_usd=budget_remaining,
             last_updated=datetime.now(timezone.utc),
-            key_expires=key_expires
+            key_expires=key_expires,
         )

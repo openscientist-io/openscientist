@@ -12,9 +12,8 @@ Provides tools for autonomous discovery:
 - parse_alphafold_confidence: Extract AlphaFold confidence metrics
 """
 
-import json
-import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -22,12 +21,18 @@ import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
 # Import tool implementations
-from ..code_executor import execute_code as exec_code, format_execution_result
-from ..document_reader import read_document as read_doc, is_binary_document
-from ..file_loader import load_data_file, get_file_info, FileTooBigError
-from ..knowledge_state import KnowledgeState
-from ..literature import search_pubmed as search_pm
-from ..phenix_setup import check_phenix_available
+from shandy.code_executor import execute_code as exec_code
+from shandy.code_executor import format_execution_result
+from shandy.document_reader import read_document as read_doc
+from shandy.exceptions import FileLoadError
+from shandy.file_loader import (
+    FileTooBigError,
+    get_file_info,
+    load_data_file,
+)
+from shandy.knowledge_state import KnowledgeState
+from shandy.literature import search_pubmed as search_pm
+from shandy.phenix_setup import check_phenix_available
 
 # Global state (initialized by main())
 DATA: Optional[pd.DataFrame] = None  # None for non-tabular files or not yet loaded
@@ -35,8 +40,8 @@ DATA_FILES: List[Dict[str, Any]] = []  # Metadata for all data files
 DATA_LOAD_ERROR: Optional[str] = None  # Error message if data failed to load
 DATA_FILE_PATH: Optional[Path] = None  # Path to primary data file (for lazy loading)
 DATA_LOADED: bool = False  # Track whether we've attempted to load data
-JOB_DIR: Path = None
-KS: KnowledgeState = None
+JOB_DIR: Optional[Path] = None
+KS: Optional[KnowledgeState] = None
 
 # Create FastMCP server
 mcp = FastMCP("shandy-tools")
@@ -48,7 +53,7 @@ def ensure_data_loaded() -> Optional[str]:
 
     Returns error message if loading failed, None if successful.
     """
-    global DATA, DATA_LOADED, DATA_LOAD_ERROR, DATA_FILE_PATH
+    global DATA, DATA_LOADED, DATA_LOAD_ERROR
 
     # Already attempted to load?
     if DATA_LOADED:
@@ -65,9 +70,11 @@ def ensure_data_loaded() -> Optional[str]:
 
     # Load data now
     file_size_mb = DATA_FILE_PATH.stat().st_size / (1024 * 1024)
-    print(f"⏳ Loading data file on first use: {DATA_FILE_PATH.name} ({file_size_mb:.1f} MB)", file=sys.stderr)
+    print(
+        f"⏳ Loading data file on first use: {DATA_FILE_PATH.name} ({file_size_mb:.1f} MB)",
+        file=sys.stderr,
+    )
 
-    import time
     start_time = time.time()
 
     try:
@@ -75,19 +82,24 @@ def ensure_data_loaded() -> Optional[str]:
         load_time = time.time() - start_time
 
         if DATA is not None:
-            print(f"✅ Loaded tabular data: {DATA.shape[0]} rows × {DATA.shape[1]} columns in {load_time:.1f}s", file=sys.stderr)
+            print(
+                f"✅ Loaded tabular data: {DATA.shape[0]} rows × {DATA.shape[1]} columns in {load_time:.1f}s",
+                file=sys.stderr,
+            )
         else:
             print(f"ℹ️  Non-tabular file loaded in {load_time:.1f}s", file=sys.stderr)
 
         return None  # Success
 
-    except FileTooBigError as e:
+    except FileTooBigError:
         DATA_LOAD_ERROR = f"Unable to load data file: file exceeds size limit ({file_size_mb:.1f} MB). Please contact the administrator."
         print(f"❌ {DATA_LOAD_ERROR}", file=sys.stderr)
         return DATA_LOAD_ERROR
 
-    except Exception as e:
-        DATA_LOAD_ERROR = f"Unable to load data file '{DATA_FILE_PATH.name}': {type(e).__name__}: {e}"
+    except (ValueError, OSError, FileLoadError) as e:
+        DATA_LOAD_ERROR = (
+            f"Unable to load data file '{DATA_FILE_PATH.name}': {type(e).__name__}: {e}"
+        )
         print(f"❌ {DATA_LOAD_ERROR}", file=sys.stderr)
         return DATA_LOAD_ERROR
 
@@ -113,7 +125,8 @@ def execute_code(code: str, description: str = "") -> str:
     Returns:
         Formatted execution result with output, plots, and any errors
     """
-    global DATA, DATA_FILES, JOB_DIR, KS
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     # Lazy load data on first execute_code call
     load_error = ensure_data_loaded()
@@ -128,8 +141,15 @@ def execute_code(code: str, description: str = "") -> str:
     provenance_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute code (DATA may be None for non-tabular files)
-    result = exec_code(code, DATA, provenance_dir, timeout=60, description=description,
-                      iteration=KS.data["iteration"], data_files=DATA_FILES)
+    result = exec_code(
+        code,
+        DATA,
+        provenance_dir,
+        timeout=60,
+        description=description,
+        iteration=int(KS.data["iteration"]),
+        data_files=DATA_FILES,
+    )
 
     # Log to knowledge graph (code is stored in plot metadata files, not here)
     KS.log_analysis(
@@ -159,7 +179,8 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
     Returns:
         Formatted list of papers with titles, abstracts, and PMIDs
     """
-    global JOB_DIR, KS
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
     KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
@@ -176,7 +197,12 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
             search_query=query,
         )
 
-    KS.log_analysis(action="search_pubmed", query=query, results_count=len(papers), description=description)
+    KS.log_analysis(
+        action="search_pubmed",
+        query=query,
+        results_count=len(papers),
+        description=description,
+    )
     KS.save(JOB_DIR / "knowledge_state.json")
 
     # Format results
@@ -194,7 +220,9 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
 
 
 @mcp.tool()
-def update_knowledge_state(title: str, evidence: str, interpretation: str = "", description: str = "") -> str:
+def update_knowledge_state(
+    title: str, evidence: str, interpretation: str = "", description: str = ""
+) -> str:
     """
     Record a confirmed finding to the knowledge graph.
 
@@ -207,7 +235,8 @@ def update_knowledge_state(title: str, evidence: str, interpretation: str = "", 
     Returns:
         Confirmation message with finding ID
     """
-    global JOB_DIR, KS
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     # Reload knowledge graph to get latest state (orchestrator may have incremented iteration)
     KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
@@ -222,7 +251,12 @@ def update_knowledge_state(title: str, evidence: str, interpretation: str = "", 
                 finding["biological_interpretation"] = interpretation
 
     # Log the action
-    KS.log_analysis(action="update_knowledge_state", finding_id=finding_id, title=title, description=description)
+    KS.log_analysis(
+        action="update_knowledge_state",
+        finding_id=finding_id,
+        title=title,
+        description=description,
+    )
     KS.save(JOB_DIR / "knowledge_state.json")
 
     return f"✅ Finding recorded as {finding_id}: {title}"
@@ -250,7 +284,8 @@ def add_hypothesis(statement: str) -> str:
     Returns:
         Confirmation with hypothesis ID (e.g., "H001")
     """
-    global JOB_DIR, KS
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     # Reload knowledge graph to get latest state
     KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
@@ -272,7 +307,7 @@ def update_hypothesis(
     result_summary: str = "",
     p_value: str = "",
     effect_size: str = "",
-    conclusion: str = ""
+    conclusion: str = "",
 ) -> str:
     """
     Update a hypothesis with test results.
@@ -293,7 +328,8 @@ def update_hypothesis(
     Returns:
         Confirmation message
     """
-    global JOB_DIR, KS
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     # Validate status
     valid_statuses = ["pending", "testing", "supported", "rejected"]
@@ -304,7 +340,7 @@ def update_hypothesis(
     KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
 
     # Build updates dict
-    updates = {"status": status}
+    updates: Dict[str, Any] = {"status": status}
 
     if status in ["supported", "rejected"]:
         updates["tested_at_iteration"] = KS.data["iteration"]
@@ -312,7 +348,7 @@ def update_hypothesis(
             "summary": result_summary,
             "p_value": p_value,
             "effect_size": effect_size,
-            "conclusion": conclusion
+            "conclusion": conclusion,
         }
 
     # Update hypothesis
@@ -326,7 +362,7 @@ def update_hypothesis(
         action="update_hypothesis",
         hypothesis_id=hypothesis_id,
         status=status,
-        result_summary=result_summary
+        result_summary=result_summary,
     )
     KS.save(JOB_DIR / "knowledge_state.json")
 
@@ -364,13 +400,14 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
     Returns:
         Confirmation message
     """
-    global JOB_DIR, KS
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     # Reload knowledge graph to get latest state
     KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
 
     # Get current iteration
-    current_iteration = KS.data["iteration"]
+    current_iteration = int(KS.data["iteration"])
 
     # Save the summary with strapline
     KS.add_iteration_summary(current_iteration, summary, strapline=strapline)
@@ -402,7 +439,7 @@ def read_document(file_path: str) -> str:
     Returns:
         Extracted text content from the document
     """
-    global JOB_DIR
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
 
     path = Path(file_path)
 
@@ -437,7 +474,9 @@ def main():
 
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
-    parser.add_argument("--data-file", required=False, default=None, help="Primary data file (optional)")
+    parser.add_argument(
+        "--data-file", required=False, default=None, help="Primary data file (optional)"
+    )
 
     args = parser.parse_args()
 
@@ -455,18 +494,27 @@ def main():
         try:
             primary_info = get_file_info(primary_file)
             DATA_FILES = [primary_info]
-        except Exception as e:
-            print(f"❌ ERROR: Could not read file info for {primary_file}: {e}", file=sys.stderr)
+        except (ValueError, OSError) as e:
+            print(
+                f"❌ ERROR: Could not read file info for {primary_file}: {e}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         # Log file info (but don't load data yet)
-        file_size_mb = primary_info['size'] / (1024 * 1024)
-        print(f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use", file=sys.stderr)
+        file_size_mb = primary_info["size"] / (1024 * 1024)
+        print(
+            f"📂 Data file registered: {primary_file.name} ({file_size_mb:.1f} MB) - will load on first use",
+            file=sys.stderr,
+        )
     else:
         # No primary data file
         DATA_FILE_PATH = None
         DATA_FILES = []
-        print(f"ℹ️  No data file provided - server running in no-data mode", file=sys.stderr)
+        print(
+            "ℹ️  No data file provided - server running in no-data mode",
+            file=sys.stderr,
+        )
 
     # Scan job data directory for additional files (metadata only)
     data_dir = JOB_DIR / "data"
@@ -476,10 +524,13 @@ def main():
                 try:
                     file_info = get_file_info(file_path)
                     DATA_FILES.append(file_info)
-                except Exception as e:
+                except (ValueError, OSError, FileLoadError) as e:
                     print(f"Warning: Could not process {file_path}: {e}", file=sys.stderr)
 
-    print(f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}", file=sys.stderr)
+    print(
+        f"📁 {len(DATA_FILES)} data file(s) available: {', '.join(f['name'] for f in DATA_FILES)}",
+        file=sys.stderr,
+    )
 
     # Load or create knowledge graph
     ks_path = JOB_DIR / "knowledge_state.json"
@@ -491,6 +542,7 @@ def main():
     # Register Phenix tools if available
     if check_phenix_available():
         from . import phenix_tools
+
         phenix_tools.register_phenix_tools(mcp, JOB_DIR, KS)
         print("✅ Phenix tools registered", file=sys.stderr)
     else:

@@ -34,12 +34,7 @@ def migrate_job(job_dir: Path, dry_run: bool = False) -> dict:
     Returns:
         Dict with migration results
     """
-    results = {
-        "job_id": job_dir.name,
-        "changes": [],
-        "errors": [],
-        "skipped": False
-    }
+    results = {"job_id": job_dir.name, "changes": [], "errors": [], "skipped": False}
 
     # Check if already migrated
     if (job_dir / "knowledge_state.json").exists():
@@ -54,11 +49,11 @@ def migrate_job(job_dir: Path, dry_run: bool = False) -> dict:
     if old_ks.exists():
         if not dry_run:
             old_ks.rename(new_ks)
-        results["changes"].append(f"Renamed knowledge_graph.json -> knowledge_state.json")
+        results["changes"].append("Renamed knowledge_graph.json -> knowledge_state.json")
 
         # Add missing fields to the knowledge state
         try:
-            with open(new_ks if not dry_run else old_ks) as f:
+            with open(new_ks if not dry_run else old_ks, encoding="utf-8") as f:
                 ks_data = json.load(f)
 
             modified = False
@@ -75,7 +70,9 @@ def migrate_job(job_dir: Path, dry_run: bool = False) -> dict:
                     summary["strapline"] = ""
                     modified = True
 
-            if modified and any("strapline" not in s for s in ks_data.get("iteration_summaries", [])):
+            if modified and any(
+                "strapline" not in s for s in ks_data.get("iteration_summaries", [])
+            ):
                 results["changes"].append("Added missing strapline fields to iteration_summaries")
 
             # Ensure feedback_history exists
@@ -86,7 +83,7 @@ def migrate_job(job_dir: Path, dry_run: bool = False) -> dict:
 
             # Write back if modified
             if modified and not dry_run:
-                with open(new_ks, 'w') as f:
+                with open(new_ks, "w", encoding="utf-8") as f:
                     json.dump(ks_data, f, indent=2)
 
         except json.JSONDecodeError as e:
@@ -147,7 +144,7 @@ def migrate_all_jobs(jobs_dir: Path, dry_run: bool = False, create_backup: bool 
         backup_dir = jobs_dir.parent / f"jobs_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         print(f"Creating backup at {backup_dir}...")
         shutil.copytree(jobs_dir, backup_dir)
-        print(f"Backup created successfully")
+        print("Backup created successfully")
 
     # Migrate each job
     migrated = 0
@@ -188,26 +185,25 @@ def migrate_all_jobs(jobs_dir: Path, dry_run: bool = False, create_backup: bool 
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate SHANDY jobs to new naming convention")
-    parser.add_argument("--jobs-dir", type=Path, default=Path("jobs"),
-                        help="Jobs directory (default: jobs)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be done without making changes")
-    parser.add_argument("--no-backup", action="store_true",
-                        help="Skip creating backup (not recommended)")
+    parser.add_argument(
+        "--jobs-dir", type=Path, default=Path("jobs"), help="Jobs directory (default: jobs)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be done without making changes"
+    )
+    parser.add_argument(
+        "--no-backup", action="store_true", help="Skip creating backup (not recommended)"
+    )
 
     args = parser.parse_args()
 
-    print(f"SHANDY Jobs Migration")
+    print("SHANDY Jobs Migration")
     print(f"Jobs directory: {args.jobs_dir}")
     print(f"Dry run: {args.dry_run}")
     print(f"Create backup: {not args.no_backup}")
     print()
 
-    migrate_all_jobs(
-        jobs_dir=args.jobs_dir,
-        dry_run=args.dry_run,
-        create_backup=not args.no_backup
-    )
+    migrate_all_jobs(jobs_dir=args.jobs_dir, dry_run=args.dry_run, create_backup=not args.no_backup)
 
 
 if __name__ == "__main__":

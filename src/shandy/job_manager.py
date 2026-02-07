@@ -8,20 +8,22 @@ import json
 import logging
 import shutil
 import threading
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from pathlib import Path
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
 from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from .orchestrator import create_job, run_discovery
-from .providers import get_provider
+from shandy.exceptions import ProviderError
+from shandy.orchestrator import create_job, run_discovery
+from shandy.providers import get_provider
 
 logger = logging.getLogger(__name__)
 
 
 class JobStatus(str, Enum):
     """Job status enum."""
+
     CREATED = "created"
     QUEUED = "queued"
     RUNNING = "running"
@@ -34,6 +36,7 @@ class JobStatus(str, Enum):
 @dataclass
 class JobInfo:
     """Job information."""
+
     job_id: str
     research_question: str
     status: JobStatus
@@ -92,7 +95,11 @@ class JobManager:
         # Clean up any stale running/queued jobs from previous restart
         self._cleanup_stale_jobs()
 
-        logger.info(f"JobManager initialized: {self.jobs_dir}, max_concurrent={max_concurrent}")
+        logger.info(
+            "JobManager initialized: %s, max_concurrent=%d",
+            self.jobs_dir,
+            max_concurrent,
+        )
 
     def _cleanup_stale_jobs(self) -> None:
         """
@@ -107,13 +114,21 @@ class JobManager:
             if job_info is None:
                 continue
 
-            if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED, JobStatus.AWAITING_FEEDBACK]:
-                logger.warning(f"Marking stale job {job_id} as cancelled (was {job_info.status.value})")
+            if job_info.status in [
+                JobStatus.RUNNING,
+                JobStatus.QUEUED,
+                JobStatus.AWAITING_FEEDBACK,
+            ]:
+                logger.warning(
+                    "Marking stale job %s as cancelled (was %s)",
+                    job_id,
+                    job_info.status.value,
+                )
                 self._update_job_status(job_id, JobStatus.CANCELLED)
                 stale_count += 1
 
         if stale_count > 0:
-            logger.info(f"Cleaned up {stale_count} stale job(s) from previous run")
+            logger.info("Cleaned up %d stale job(s) from previous run", stale_count)
 
     def create_job(
         self,
@@ -123,7 +138,7 @@ class JobManager:
         max_iterations: int = 10,
         use_skills: bool = True,
         auto_start: bool = True,
-        investigation_mode: str = "autonomous"
+        investigation_mode: str = "autonomous",
     ) -> JobInfo:
         """
         Create a new discovery job.
@@ -157,23 +172,25 @@ class JobManager:
                 errors = budget_check.get("errors", [])
                 error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
                 raise ValueError(f"Cannot create job: {error_msg}")
-        except Exception as e:
-            logger.warning(f"Budget check failed: {e}")
+        except (ValueError, ProviderError) as e:
+            logger.warning("Budget check failed: %s", e)
 
         # Create job directory and files
-        logger.info(f"Creating job {job_id}")
-        job_dir = create_job(
+        logger.info("Creating job %s", job_id)
+        create_job(
             job_id=job_id,
             research_question=research_question,
             data_files=data_files,
             max_iterations=max_iterations,
             use_skills=use_skills,
             jobs_dir=self.jobs_dir,
-            investigation_mode=investigation_mode
+            investigation_mode=investigation_mode,
         )
 
         # Load job info
         job_info = self._load_job_info(job_id)
+        if job_info is None:
+            raise ValueError(f"Failed to load newly created job {job_id}")
 
         # Auto-start if requested
         if auto_start:
@@ -205,16 +222,12 @@ class JobManager:
             if self._get_active_job_count() >= self.max_concurrent:
                 # Queue the job
                 self._update_job_status(job_id, JobStatus.QUEUED)
-                logger.info(f"Job {job_id} queued (max concurrent reached)")
+                logger.info("Job %s queued (max concurrent reached)", job_id)
                 return
 
             # Start the job
-            logger.info(f"Starting job {job_id}")
-            thread = threading.Thread(
-                target=self._run_job,
-                args=(job_id,),
-                daemon=True
-            )
+            logger.info("Starting job %s", job_id)
+            thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
             self._running_jobs[job_id] = thread
             thread.start()
 
@@ -232,13 +245,13 @@ class JobManager:
             self._update_job_status(job_id, JobStatus.RUNNING)
 
             # Run discovery
-            logger.info(f"Running discovery for job {job_id}")
+            logger.info("Running discovery for job %s", job_id)
             result = run_discovery(job_dir)
 
-            logger.info(f"Job {job_id} completed: {result}")
+            logger.info("Job %s completed: %s", job_id, result)
 
-        except Exception as e:
-            logger.error(f"Job {job_id} failed: {e}", exc_info=True)
+        except Exception as e:  # noqa: BLE001 — thread-level safety net
+            logger.error("Job %s failed: %s", job_id, e, exc_info=True)
             # Error already recorded in orchestrator
 
         finally:
@@ -259,12 +272,8 @@ class JobManager:
             for job_id in self._list_job_ids():
                 job_info = self.get_job(job_id)
                 if job_info and job_info.status == JobStatus.QUEUED:
-                    logger.info(f"Starting queued job {job_id}")
-                    thread = threading.Thread(
-                        target=self._run_job,
-                        args=(job_id,),
-                        daemon=True
-                    )
+                    logger.info("Starting queued job %s", job_id)
+                    thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
                     self._running_jobs[job_id] = thread
                     thread.start()
                     break
@@ -295,7 +304,7 @@ class JobManager:
 
         # Note: We can't actually kill the thread cleanly in Python
         # The orchestrator will check status and stop at next iteration
-        logger.info(f"Job {job_id} cancelled (will stop at next iteration)")
+        logger.info("Job %s cancelled (will stop at next iteration)", job_id)
 
         # Start next queued job if any
         self._start_next_queued_job()
@@ -313,9 +322,7 @@ class JobManager:
         return self._load_job_info(job_id)
 
     def list_jobs(
-        self,
-        status: Optional[JobStatus] = None,
-        limit: Optional[int] = None
+        self, status: Optional[JobStatus] = None, limit: Optional[int] = None
     ) -> List[JobInfo]:
         """
         List jobs.
@@ -370,7 +377,7 @@ class JobManager:
         job_dir = self.jobs_dir / job_id
         if job_dir.exists():
             shutil.rmtree(job_dir)
-            logger.info(f"Deleted job {job_id}")
+            logger.info("Deleted job %s", job_id)
 
     def cleanup_old_jobs(self, days: int = 7, keep_completed: bool = True) -> int:
         """
@@ -407,10 +414,10 @@ class JobManager:
                 try:
                     self.delete_job(job_id)
                     deleted += 1
-                except Exception as e:
-                    logger.error(f"Failed to delete job {job_id}: {e}")
+                except (OSError, ValueError) as e:
+                    logger.error("Failed to delete job %s: %s", job_id, e)
 
-        logger.info(f"Cleaned up {deleted} old jobs")
+        logger.info("Cleaned up %d old jobs", deleted)
         return deleted
 
     def get_running_jobs(self) -> List[JobInfo]:
@@ -441,7 +448,11 @@ class JobManager:
         for job_id in self._list_job_ids():
             job_info = self.get_job(job_id)
             if job_info and job_info.investigation_mode == "coinvestigate":
-                if job_info.status in [JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK, JobStatus.QUEUED]:
+                if job_info.status in [
+                    JobStatus.RUNNING,
+                    JobStatus.AWAITING_FEEDBACK,
+                    JobStatus.QUEUED,
+                ]:
                     count += 1
         return count
 
@@ -475,8 +486,8 @@ class JobManager:
             provider = get_provider()
             cost_info = provider.get_cost_info(lookback_hours=24)
             budget_check = provider.check_budget_limits()
-        except Exception as e:
-            logger.warning(f"Could not fetch cost info: {e}")
+        except (ValueError, ProviderError) as e:
+            logger.warning("Could not fetch cost info: %s", e)
             cost_info = None
             budget_check = None
 
@@ -484,7 +495,7 @@ class JobManager:
             "total_jobs": len(jobs),
             "status_counts": status_counts,
             "cost_info": cost_info,
-            "budget_check": budget_check
+            "budget_check": budget_check,
         }
 
     def _list_job_ids(self) -> List[str]:
@@ -507,7 +518,7 @@ class JobManager:
             return None
 
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
             # For running jobs, get real-time progress from knowledge_state.json
@@ -518,14 +529,18 @@ class JobManager:
                 ks_path = self.jobs_dir / job_id / "knowledge_state.json"
                 if ks_path.exists():
                     try:
-                        with open(ks_path) as f:
-                            ks =json.load(f)
+                        with open(ks_path, encoding="utf-8") as f:
+                            ks = json.load(f)
                         # KS iteration is the NEXT iteration to run, so completed = iteration - 1
                         ks_iteration = ks.get("iteration", 1)
                         iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
                         findings_count = len(ks.get("findings", []))
-                    except Exception as e:
-                        logger.warning(f"Failed to load KS for running job {job_id}: {e}")
+                    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+                        logger.warning(
+                            "Failed to load KS for running job %s: %s",
+                            job_id,
+                            e,
+                        )
 
             return JobInfo(
                 job_id=config["job_id"],
@@ -540,11 +555,11 @@ class JobManager:
                 findings_count=findings_count,
                 error=config.get("error"),
                 use_skills=config.get("use_skills", True),
-                investigation_mode=config.get("investigation_mode", "autonomous")
+                investigation_mode=config.get("investigation_mode", "autonomous"),
             )
 
-        except Exception as e:
-            logger.error(f"Failed to load job info for {job_id}: {e}")
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.error("Failed to load job info for %s: %s", job_id, e)
             return None
 
     def _update_job_status(self, job_id: str, status: JobStatus) -> None:
@@ -555,7 +570,7 @@ class JobManager:
             return
 
         try:
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
             config["status"] = status.value
@@ -570,11 +585,11 @@ class JobManager:
             elif status == JobStatus.CANCELLED:
                 config["cancelled_at"] = datetime.now().isoformat()
 
-            with open(config_path, "w") as f:
+            with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2)
 
-        except Exception as e:
-            logger.error(f"Failed to update job status for {job_id}: {e}")
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            logger.error("Failed to update job status for %s: %s", job_id, e)
 
 
 def main():
@@ -600,7 +615,9 @@ def main():
     # Cleanup
     cleanup_parser = subparsers.add_parser("cleanup", help="Clean up old jobs")
     cleanup_parser.add_argument("--days", type=int, default=7, help="Delete jobs older than N days")
-    cleanup_parser.add_argument("--delete-completed", action="store_true", help="Delete completed jobs too")
+    cleanup_parser.add_argument(
+        "--delete-completed", action="store_true", help="Delete completed jobs too"
+    )
 
     # Summary
     subparsers.add_parser("summary", help="Get job summary")
@@ -610,7 +627,7 @@ def main():
     # Set up logging
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
     # Create job manager
@@ -625,9 +642,11 @@ def main():
         print("-" * 80)
 
         for job in jobs:
-            print(f"{job.job_id:<20} {job.status.value:<12} "
-                  f"{job.iterations_completed}/{job.max_iterations:<6} "
-                  f"{job.findings_count:<10} {job.created_at}")
+            print(
+                f"{job.job_id:<20} {job.status.value:<12} "
+                f"{job.iterations_completed}/{job.max_iterations:<6} "
+                f"{job.findings_count:<10} {job.created_at}"
+            )
 
     elif args.command == "get":
         job = manager.get_job(args.job_id)
@@ -641,10 +660,7 @@ def main():
         print(f"Deleted job {args.job_id}")
 
     elif args.command == "cleanup":
-        deleted = manager.cleanup_old_jobs(
-            days=args.days,
-            keep_completed=not args.delete_completed
-        )
+        deleted = manager.cleanup_old_jobs(days=args.days, keep_completed=not args.delete_completed)
         print(f"Deleted {deleted} jobs")
 
     elif args.command == "summary":
