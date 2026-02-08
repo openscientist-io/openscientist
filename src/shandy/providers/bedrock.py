@@ -68,13 +68,35 @@ class BedrockProvider(BaseProvider):
         os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
 
         # Unset Vertex-related vars to avoid conflicts
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)
-        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)
-        os.environ.pop("VERTEX_REGION_CLAUDE_4_5_SONNET", None)
-        os.environ.pop("VERTEX_REGION_CLAUDE_4_5_HAIKU", None)
+        vertex_vars = [
+            "CLAUDE_CODE_USE_VERTEX",
+            "ANTHROPIC_VERTEX_PROJECT_ID",
+            "VERTEX_REGION_CLAUDE_4_5_SONNET",
+            "VERTEX_REGION_CLAUDE_4_5_HAIKU",
+        ]
+        for var in vertex_vars:
+            if var in os.environ:
+                logger.debug(f"Removing conflicting {var}")
+                del os.environ[var]
 
         # Unset direct API key to avoid conflicts
         os.environ.pop("ANTHROPIC_API_KEY", None)
+
+        # Unset empty vars that interfere with Bedrock auth
+        # This happens when docker-compose passes VAR=${VAR} and it's unset
+        empty_vars_to_clear = [
+            "AWS_PROFILE",
+            "AWS_SESSION_TOKEN",
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_BASE_URL",
+        ]
+        for var in empty_vars_to_clear:
+            val = os.environ.get(var)
+            if val == "":
+                os.environ.pop(var, None)
+                logger.debug(f"Unset empty {var}")
 
         logger.info("Bedrock provider initialized (using AWS credentials)")
 
