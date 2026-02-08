@@ -38,6 +38,7 @@ env/
 
 # Environment variables
 .env
+.env.backup-*
 
 # Deployment-specific configs (keep private)
 docker-compose.*.yml
