@@ -5,20 +5,34 @@ Provides async session factory and dependency injection for FastAPI/NiceGUI.
 """
 
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from .engine import engine
+from .engine import get_engine
 
-# Session factory
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,  # Don't expire objects after commit
-    autocommit=False,  # Explicit commits required
-    autoflush=False,  # Explicit flushes required
-)
+# Lazy session factory (initialized on first use)
+_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+
+
+def _get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Get or create the async session factory."""
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            get_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autocommit=False,
+            autoflush=False,
+        )
+    return _session_factory
+
+
+# Keep for backward compatibility but make it a function call
+def AsyncSessionLocal() -> AsyncSession:  # noqa: N802
+    """Create a new async session. Lazy-initializes the engine on first call."""
+    return _get_session_factory()()
 
 
 @asynccontextmanager
@@ -38,7 +52,8 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         AsyncSession: A SQLAlchemy async session.
     """
-    async with AsyncSessionLocal() as session:
+    factory = _get_session_factory()
+    async with factory() as session:
         try:
             yield session
         except Exception:

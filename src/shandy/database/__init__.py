@@ -5,7 +5,7 @@ Provides SQLAlchemy ORM models, session management, and database utilities.
 """
 
 from .base import Base, UUIDv7Mixin
-from .engine import engine, get_engine
+from .engine import get_engine
 from .rls import (
     bypass_rls,
     get_current_user,
@@ -19,7 +19,6 @@ from .session import AsyncSessionLocal, get_session
 __all__ = [
     "Base",
     "UUIDv7Mixin",
-    "engine",
     "get_engine",
     "get_session",
     "AsyncSessionLocal",

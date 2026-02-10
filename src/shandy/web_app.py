@@ -115,7 +115,9 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     try:
         import asyncio
 
-        from shandy.database.engine import engine
+        from shandy.database.engine import get_engine
+
+        engine = get_engine()
 
         async def verify_db():
             """Verify database connection and tables exist."""

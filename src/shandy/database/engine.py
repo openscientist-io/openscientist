@@ -57,5 +57,6 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
-# Create default engine instance
-engine = get_engine()
+def get_async_engine() -> AsyncEngine:
+    """Alias for get_engine() used by migration scripts."""
+    return get_engine()
