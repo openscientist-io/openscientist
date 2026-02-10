@@ -16,7 +16,7 @@ class TestJobStatus:
 
     def test_all_statuses_exist(self):
         expected = {
-            "created",
+            "pending",
             "queued",
             "running",
             "awaiting_feedback",

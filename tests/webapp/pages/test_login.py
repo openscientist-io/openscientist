@@ -1,5 +1,6 @@
 """Integration tests for login page."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -12,25 +13,25 @@ class TestLoginPage:
     @pytest.mark.asyncio
     async def test_login_page_renders(self):
         """Test that login page renders without errors."""
-        # Mock password hash to avoid env var requirements
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", False):
-            with patch("shandy.webapp_components.utils.auth.PASSWORD_HASH", b"test_hash"):
-                # Import after patching
+        # Set APP_PASSWORD_HASH env var so the login page shows the password form
+        with patch.dict(os.environ, {"APP_PASSWORD_HASH": "test_hash"}):
+            # Disable the autouse _disable_auth fixture's effect for this test
+            with patch("shandy.auth.middleware.DISABLE_AUTH", False):
                 from shandy.webapp_components.pages.login import login_page
 
                 async with user_simulation(root=login_page) as user:
                     await user.open("/")
 
-                    # Should see login form elements (checking content in Markdown)
-                    await user.should_see(content="# SHANDY")
+                    # Should see login form elements
+                    await user.should_see(content="SHANDY")
                     await user.should_see(content="Password")
                     await user.should_see(content="Login")
 
     @pytest.mark.asyncio
     async def test_login_form_exists(self):
         """Test that login form has password input."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", False):
-            with patch("shandy.webapp_components.utils.auth.PASSWORD_HASH", b"test_hash"):
+        with patch.dict(os.environ, {"APP_PASSWORD_HASH": "test_hash"}):
+            with patch("shandy.auth.middleware.DISABLE_AUTH", False):
                 from shandy.webapp_components.pages.login import login_page
 
                 async with user_simulation(root=login_page) as user:
@@ -47,11 +48,10 @@ class TestLoginWithAuthDisabled:
     @pytest.mark.asyncio
     async def test_auth_disabled_redirects(self):
         """Test that disabling auth bypasses login."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
-            from shandy.webapp_components.pages.login import login_page
+        from shandy.webapp_components.pages.login import login_page
 
-            async with user_simulation(root=login_page) as user:
-                # This would normally show login, but with DISABLE_AUTH it should redirect
-                await user.open("/")
-                # The page function should exist and be callable
-                assert login_page is not None
+        async with user_simulation(root=login_page) as user:
+            # This would normally show login, but with DISABLE_AUTH it should redirect
+            await user.open("/")
+            # The page function should exist and be callable
+            assert login_page is not None

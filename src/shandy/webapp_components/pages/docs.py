@@ -2,7 +2,7 @@
 
 from nicegui import ui
 
-from shandy.webapp_components.utils.auth import require_auth
+from shandy.auth import require_auth
 
 
 @ui.page("/docs")

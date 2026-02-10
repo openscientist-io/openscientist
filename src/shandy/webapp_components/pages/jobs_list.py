@@ -1,9 +1,13 @@
 """Jobs list page."""
 
+import logging
+
 from nicegui import ui
 
+from shandy.auth import get_current_user_id, require_auth
 from shandy.webapp_components.ui_components import render_status_cell_slot
-from shandy.webapp_components.utils.auth import require_auth
+
+logger = logging.getLogger(__name__)
 
 
 @ui.page("/jobs")
@@ -15,12 +19,12 @@ def jobs_page():
 
     job_manager = web_app.get_job_manager()
 
-    def refresh_jobs():
+    def refresh_jobs(table_to_update):
         """Refresh jobs table."""
         jobs = job_manager.list_jobs()
 
         # Update table
-        table.rows = [
+        table_to_update.rows = [
             {
                 "job_id": job.job_id,
                 "question": (
@@ -36,17 +40,82 @@ def jobs_page():
             }
             for job in jobs
         ]
-        table.update()
+        table_to_update.update()
+
+    async def refresh_shared_jobs(table_to_update):
+        """Refresh shared jobs table from database."""
+        from uuid import UUID
+
+        from sqlalchemy import select
+
+        from shandy.database.models import Job, JobShare, User
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        try:
+            # Get current user ID
+            user_id = get_current_user_id()
+
+            # Query shared jobs from database
+            async for session in get_session():
+                try:
+                    await set_current_user(session, UUID(user_id))
+
+                    # Get jobs shared with current user
+                    stmt = (
+                        select(Job, User, JobShare)
+                        .join(JobShare, Job.id == JobShare.job_id)
+                        .join(User, Job.owner_id == User.id)
+                        .where(JobShare.shared_with_user_id == UUID(user_id))
+                        .order_by(Job.updated_at.desc())
+                    )
+                    result = await session.execute(stmt)
+                    shared_jobs = result.all()
+
+                    # Get job info from job_manager for each shared job
+                    rows = []
+                    for job, owner, share in shared_jobs:
+                        job_info = job_manager.get_job(str(job.id))
+                        if job_info:
+                            rows.append(
+                                {
+                                    "job_id": str(job.id),
+                                    "question": (
+                                        job_info.research_question[:50] + "..."
+                                        if len(job_info.research_question) > 50
+                                        else job_info.research_question
+                                    ),
+                                    "owner": owner.name,
+                                    "permission": share.permission_level,
+                                    "status": job_info.status.value,
+                                    "error": job_info.error or "",
+                                    "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
+                                    "findings": job_info.findings_count,
+                                    "created": job_info.created_at[:19],
+                                }
+                            )
+
+                    table_to_update.rows = rows
+                    table_to_update.update()
+
+                except Exception as e:
+                    logger.error("Failed to load shared jobs: %s", e)
+                finally:
+                    break  # Exit the async generator
+        except Exception as e:
+            logger.error("Failed to get database session: %s", e)
 
     # Page header
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Jobs").classes("text-h4")
         with ui.row():
             ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
-            ui.button("Refresh", on_click=refresh_jobs, icon="refresh")
             ui.button(
                 "Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments"
             ).props("flat")
+            ui.button(
+                "Admin", on_click=lambda: ui.navigate.to("/admin"), icon="admin_panel_settings"
+            ).props("flat color=secondary")
 
     # Summary cards
     summary = job_manager.get_job_summary()
@@ -67,62 +136,155 @@ def jobs_page():
                 "text-h4 text-green-600"
             )
 
-    # Jobs table
-    table = ui.table(
-        columns=[
-            {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
-            {
-                "name": "question",
-                "label": "Research Question",
-                "field": "question",
-                "align": "left",
-            },
-            {"name": "status", "label": "Status", "field": "status", "align": "center"},
-            {
-                "name": "iterations",
-                "label": "Iterations",
-                "field": "iterations",
-                "align": "center",
-            },
-            {
-                "name": "findings",
-                "label": "Findings",
-                "field": "findings",
-                "align": "center",
-            },
-            {
-                "name": "created",
-                "label": "Created",
-                "field": "created",
-                "align": "left",
-            },
-            {
-                "name": "actions",
-                "label": "Actions",
-                "field": "actions",
-                "align": "center",
-            },
-        ],
-        rows=[],
-        row_key="job_id",
-        pagination=10,
-    ).classes("w-full")
+    # Tabs for My Jobs vs Shared with me
+    with ui.tabs().classes("w-full") as tabs:
+        my_jobs_tab = ui.tab("My Jobs", icon="work")
+        shared_tab = ui.tab("Shared with me", icon="people")
 
-    # Add status column slot with enhanced styling for failed jobs
-    table.add_slot("body-cell-status", render_status_cell_slot())
+    with ui.tab_panels(tabs, value=my_jobs_tab).classes("w-full"):
+        # ===== MY JOBS TAB =====
+        with ui.tab_panel(my_jobs_tab):
+            with ui.row().classes("w-full justify-end mb-2"):
+                ui.button("Refresh", on_click=lambda: refresh_jobs(my_jobs_table), icon="refresh")
 
-    # Add action buttons using slot template
-    table.add_slot(
-        "body-cell-actions",
-        r"""
-        <q-td :props="props">
-            <q-btn flat dense color="primary" label="View"
-                   @click="$parent.$emit('view-job', props.row.job_id)" />
-        </q-td>
-    """,
-    )
+            # My jobs table
+            my_jobs_table = ui.table(
+                columns=[
+                    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+                    {
+                        "name": "question",
+                        "label": "Research Question",
+                        "field": "question",
+                        "align": "left",
+                    },
+                    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+                    {
+                        "name": "iterations",
+                        "label": "Iterations",
+                        "field": "iterations",
+                        "align": "center",
+                    },
+                    {
+                        "name": "findings",
+                        "label": "Findings",
+                        "field": "findings",
+                        "align": "center",
+                    },
+                    {
+                        "name": "created",
+                        "label": "Created",
+                        "field": "created",
+                        "align": "left",
+                    },
+                    {
+                        "name": "actions",
+                        "label": "Actions",
+                        "field": "actions",
+                        "align": "center",
+                    },
+                ],
+                rows=[],
+                row_key="job_id",
+                pagination=10,
+            ).classes("w-full")
 
-    table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+            # Add status column slot with enhanced styling for failed jobs
+            my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
 
-    # Initial load
-    refresh_jobs()
+            # Add action buttons using slot template
+            my_jobs_table.add_slot(
+                "body-cell-actions",
+                r"""
+                <q-td :props="props">
+                    <q-btn flat dense color="primary" label="View"
+                           @click="$parent.$emit('view-job', props.row.job_id)" />
+                </q-td>
+            """,
+            )
+
+            my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+
+            # Initial load
+            refresh_jobs(my_jobs_table)
+
+        # ===== SHARED WITH ME TAB =====
+        with ui.tab_panel(shared_tab):
+            with ui.row().classes("w-full justify-end mb-2"):
+                ui.button(
+                    "Refresh",
+                    on_click=lambda: refresh_shared_jobs(shared_jobs_table),
+                    icon="refresh",
+                )
+
+            # Shared jobs table (includes owner and permission columns)
+            shared_jobs_table = ui.table(
+                columns=[
+                    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+                    {
+                        "name": "question",
+                        "label": "Research Question",
+                        "field": "question",
+                        "align": "left",
+                    },
+                    {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
+                    {
+                        "name": "permission",
+                        "label": "Permission",
+                        "field": "permission",
+                        "align": "center",
+                    },
+                    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+                    {
+                        "name": "iterations",
+                        "label": "Iterations",
+                        "field": "iterations",
+                        "align": "center",
+                    },
+                    {
+                        "name": "findings",
+                        "label": "Findings",
+                        "field": "findings",
+                        "align": "center",
+                    },
+                    {
+                        "name": "actions",
+                        "label": "Actions",
+                        "field": "actions",
+                        "align": "center",
+                    },
+                ],
+                rows=[],
+                row_key="job_id",
+                pagination=10,
+            ).classes("w-full")
+
+            # Add status column slot
+            shared_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
+
+            # Add permission badge slot
+            shared_jobs_table.add_slot(
+                "body-cell-permission",
+                r"""
+                <q-td :props="props">
+                    <q-badge :color="props.row.permission === 'edit' ? 'orange' : 'blue'">
+                        {{ props.row.permission }}
+                    </q-badge>
+                </q-td>
+            """,
+            )
+
+            # Add action buttons
+            shared_jobs_table.add_slot(
+                "body-cell-actions",
+                r"""
+                <q-td :props="props">
+                    <q-btn flat dense color="primary" label="View"
+                           @click="$parent.$emit('view-job', props.row.job_id)" />
+                </q-td>
+            """,
+            )
+
+            shared_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+
+            # Initial load
+            ui.timer(0.1, lambda: refresh_shared_jobs(shared_jobs_table), once=True)

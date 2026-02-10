@@ -1,4 +1,4 @@
-.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy dev-start dev-stop dev-restart dev-rebuild lint format typecheck
+.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy dev-start dev-stop dev-restart dev-rebuild lint format typecheck diagrams
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -35,6 +35,7 @@ help:
 	@echo "  make lint             - Lint src/ and tests/ with ruff"
 	@echo "  make format           - Format src/ and tests/ with ruff"
 	@echo "  make typecheck        - Type check with mypy"
+	@echo "  make diagrams         - Regenerate database schema diagrams"
 	@echo ""
 	@echo "Jobs are stored in: ./jobs/"
 	@echo "Web interface at: http://localhost:8080"
@@ -119,6 +120,11 @@ format:
 typecheck:
 	@echo "Type checking..."
 	uv run mypy src/shandy/ tests/
+
+diagrams:
+	@echo "Generating database schema diagrams..."
+	uv run python generate_diagrams.py
+	@echo "Diagrams written to docs/diagrams/"
 
 # Show job status
 status:

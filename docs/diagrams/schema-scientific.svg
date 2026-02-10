@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="896" height="1697" viewBox="0 0 896 1697">
+<defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+  <filter id="shadow" x="-4%" y="-4%" width="110%" height="110%">
+    <feDropShadow dx="1" dy="2" stdDeviation="3" flood-opacity="0.10" />
+  </filter>
+  <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#607D8B" />
+  </marker>
+  <marker id="ah-null" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#90A4AE" />
+  </marker>
+</defs>
+<rect width="896" height="1697" fill="#FFFFFF"/>
+  <symbol id="icon-rocket" viewBox="0 0 24 24"><path d="M12 2C9.5 2 8 5.5 7.5 9L5 13h3v4h8v-4h3l-2.5-4C16 5.5 14.5 2 12 2ZM9.5 18.5L8 22h2ZM14.5 18.5L16 22h-2Z"/></symbol>
+  <symbol id="icon-clipboard" viewBox="0 0 24 24"><path d="M8 0h8v3h4v21H4V3h4ZM7.5 9h9v1.5h-9ZM7.5 13h9v1.5h-9ZM7.5 17h5v1.5h-5Z"/></symbol>
+  <symbol id="icon-briefcase" viewBox="0 0 24 24"><path d="M8 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1h5v7H3V5h5ZM3 14h18v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-lightbulb" viewBox="0 0 24 24"><path d="M12 1a7 7 0 0 0-4.5 12.4V17h9v-3.6A7 7 0 0 0 12 1ZM9 19h6v2a3 3 0 0 1-6 0Z"/></symbol>
+  <symbol id="icon-star" viewBox="0 0 24 24"><path d="M12 2l2.9 6 6.6.9-4.8 4.7 1.1 6.6L12 17.2l-5.8 3 1.1-6.6-4.8-4.7 6.6-.9Z"/></symbol>
+  <symbol id="icon-book" viewBox="0 0 24 24"><path d="M4 2a2 2 0 0 1 2-2h14v17H6a3 3 0 0 0-2 .8ZM4 20a2 2 0 0 1 2-2h14v4H6a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-link" viewBox="0 0 24 24"><path d="M8 7H6a5 5 0 0 0 0 10h2v-2H6a3 3 0 0 1 0-6h2ZM16 7h2a5 5 0 0 1 0 10h-2v-2h2a3 3 0 0 0 0-6h-2ZM8 11h8v2H8Z"/></symbol>
+  <symbol id="icon-branch" viewBox="0 0 24 24"><path d="M6 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM18 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM12 17a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM11.2 17V12l-4.5-4.5 1.1-1.1L12 10.8l4.2-4.4 1.1 1.1L12.8 12v5Z"/></symbol>
+<text x="448" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">SHANDY — Scientific Knowledge Graph</text>
+<text x="448" y="48" font-size="10" fill="#616161" text-anchor="middle">6 tables  ·  RLS enabled  ·  PostgreSQL 18 UUIDv7</text>
+<path d="M 232 606 C 192 606, 192 497, 420 497" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="420" cy="497" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 474 781 C 368 781, 368 501, 420 501" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="420" cy="501" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 270 204 C 206 204, 206 505, 420 505" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="420" cy="505" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 567 602 C 434 602, 434 748, 474 748" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="474" cy="748" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 567 602 C 521 598, 497 610, 451 606" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="451" cy="606" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 50 454 C -2 454, -2 633, 232 633" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="232" cy="633" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 50 445 C 10 445, 10 122, 270 122" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="270" cy="122" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 262 1045 C 210 1045, 210 781, 474 781" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="474" cy="781" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 262 1067 C 198 1067, 198 814, 474 814" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="474" cy="814" r="3" fill="#607D8B" opacity="0.8"/>
+<rect x="474" y="706" width="219" height="283" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-hypotheses"><rect x="474" y="706" width="219" height="283" rx="6"/></clipPath>
+<rect x="474" y="706" width="219" height="30" fill="#F3D9E4" clip-path="url(#clip-hypotheses)"/>
+<rect x="474" y="736" width="4" height="253" fill="#F3D9E4" clip-path="url(#clip-hypotheses)"/>
+<use href="#icon-lightbulb" x="484" y="715" width="14" height="14" fill="#212121"/>
+<text x="502" y="726" font-size="12" fill="#212121" text-anchor="start" font-weight="600">HYPOTHESES</text>
+<text x="683" y="726" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="474" y1="736" x2="693" y2="736" stroke="#E0E0E0" stroke-width="1"/>
+<text x="488" y="750" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="506" y="750" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="486" y="758" width="12" height="12" fill="#616161"/>
+<text x="506" y="768" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="506" y="786" font-size="10" fill="#212121" text-anchor="start">confidence: FLOAT</text>
+<text x="506" y="804" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="506" y="822" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="506" y="840" font-size="10" fill="#212121" text-anchor="start">priority: INTEGER</text>
+<text x="506" y="858" font-size="10" fill="#212121" text-anchor="start">rationale: TEXT</text>
+<text x="506" y="876" font-size="10" fill="#212121" text-anchor="start">status: VARCHAR(50)</text>
+<text x="506" y="894" font-size="10" fill="#212121" text-anchor="start">supporting_evidence: JSONB</text>
+<text x="506" y="912" font-size="10" fill="#212121" text-anchor="start">test_strategy: TEXT</text>
+<text x="506" y="930" font-size="10" fill="#212121" text-anchor="start">text: TEXT</text>
+<text x="506" y="948" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="482" y1="966" x2="685" y2="966" stroke="#E0E0E0" stroke-width="1"/>
+<text x="488" y="978" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="232" y="572" width="219" height="229" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-findings"><rect x="232" y="572" width="219" height="229" rx="6"/></clipPath>
+<rect x="232" y="572" width="219" height="30" fill="#F3D9E4" clip-path="url(#clip-findings)"/>
+<rect x="232" y="602" width="4" height="199" fill="#F3D9E4" clip-path="url(#clip-findings)"/>
+<use href="#icon-star" x="242" y="581" width="14" height="14" fill="#212121"/>
+<text x="260" y="592" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FINDINGS</text>
+<text x="441" y="592" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="232" y1="602" x2="451" y2="602" stroke="#E0E0E0" stroke-width="1"/>
+<text x="246" y="616" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="264" y="616" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="244" y="624" width="12" height="12" fill="#616161"/>
+<text x="264" y="634" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="264" y="652" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="264" y="670" font-size="10" fill="#212121" text-anchor="start">data: JSONB</text>
+<text x="264" y="688" font-size="10" fill="#212121" text-anchor="start">finding_type: VARCHAR(50)</text>
+<text x="264" y="706" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="264" y="724" font-size="10" fill="#212121" text-anchor="start">source: VARCHAR(50)</text>
+<text x="264" y="742" font-size="10" fill="#212121" text-anchor="start">text: TEXT</text>
+<text x="264" y="760" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="240" y1="778" x2="443" y2="778" stroke="#E0E0E0" stroke-width="1"/>
+<text x="246" y="790" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="270" y="70" width="219" height="352" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-literature"><rect x="270" y="70" width="219" height="352" rx="6"/></clipPath>
+<rect x="270" y="70" width="219" height="30" fill="#F3D9E4" clip-path="url(#clip-literature)"/>
+<rect x="270" y="100" width="4" height="322" fill="#F3D9E4" clip-path="url(#clip-literature)"/>
+<use href="#icon-book" x="280" y="79" width="14" height="14" fill="#212121"/>
+<text x="298" y="90" font-size="12" fill="#212121" text-anchor="start" font-weight="600">LITERATURE</text>
+<text x="479" y="90" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="270" y1="100" x2="489" y2="100" stroke="#E0E0E0" stroke-width="1"/>
+<text x="284" y="114" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="302" y="114" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="282" y="122" width="12" height="12" fill="#616161"/>
+<text x="302" y="132" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="302" y="150" font-size="10" fill="#212121" text-anchor="start">abstract: TEXT</text>
+<text x="302" y="168" font-size="10" fill="#212121" text-anchor="start">authors: TEXT</text>
+<text x="302" y="186" font-size="10" fill="#212121" text-anchor="start">citation_key: VARCHAR(100)</text>
+<text x="302" y="204" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="302" y="222" font-size="10" fill="#212121" text-anchor="start">doi: VARCHAR(255)  [I]</text>
+<text x="302" y="240" font-size="10" fill="#212121" text-anchor="start">extra_metadata: JSONB</text>
+<text x="302" y="258" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="302" y="276" font-size="10" fill="#212121" text-anchor="start">journal: VARCHAR(255)</text>
+<text x="302" y="294" font-size="10" fill="#212121" text-anchor="start">relevance_score: FLOAT</text>
+<text x="302" y="312" font-size="10" fill="#212121" text-anchor="start">title: VARCHAR(500)</text>
+<text x="302" y="330" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<text x="302" y="348" font-size="10" fill="#212121" text-anchor="start">url: TEXT</text>
+<text x="302" y="366" font-size="10" fill="#212121" text-anchor="start">year: INTEGER</text>
+<line x1="278" y1="384" x2="481" y2="384" stroke="#E0E0E0" stroke-width="1"/>
+<text x="284" y="396" font-size="9" fill="#616161" text-anchor="start">⚡ doi</text>
+<text x="284" y="411" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="567" y="591" width="269" height="76" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-finding_hypotheses"><rect x="567" y="591" width="269" height="76" rx="6"/></clipPath>
+<rect x="567" y="591" width="269" height="30" fill="#F3D9E4" clip-path="url(#clip-finding_hypotheses)"/>
+<rect x="567" y="621" width="4" height="46" fill="#F3D9E4" clip-path="url(#clip-finding_hypotheses)"/>
+<use href="#icon-link" x="577" y="600" width="14" height="14" fill="#212121"/>
+<text x="595" y="611" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FINDING_HYPOTHESES</text>
+<text x="826" y="611" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="567" y1="621" x2="836" y2="621" stroke="#E0E0E0" stroke-width="1"/>
+<text x="581" y="635" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="599" y="635" font-size="10" fill="#212121" text-anchor="start">finding_id: UUID → findings.id</text>
+<text x="581" y="653" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="599" y="653" font-size="10" fill="#212121" text-anchor="start">hypothesis_id: UUID → hypotheses.id</text>
+<rect x="50" y="434" width="269" height="76" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-finding_literature"><rect x="50" y="434" width="269" height="76" rx="6"/></clipPath>
+<rect x="50" y="434" width="269" height="30" fill="#F3D9E4" clip-path="url(#clip-finding_literature)"/>
+<rect x="50" y="464" width="4" height="46" fill="#F3D9E4" clip-path="url(#clip-finding_literature)"/>
+<use href="#icon-link" x="60" y="443" width="14" height="14" fill="#212121"/>
+<text x="78" y="454" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FINDING_LITERATURE</text>
+<text x="309" y="454" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="50" y1="464" x2="319" y2="464" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="478" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="478" font-size="10" fill="#212121" text-anchor="start">finding_id: UUID → findings.id</text>
+<text x="64" y="496" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="496" font-size="10" fill="#212121" text-anchor="start">literature_id: UUID → literature.id</text>
+<rect x="262" y="995" width="275" height="190" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-hypothesis_spawns"><rect x="262" y="995" width="275" height="190" rx="6"/></clipPath>
+<rect x="262" y="995" width="275" height="30" fill="#F3D9E4" clip-path="url(#clip-hypothesis_spawns)"/>
+<rect x="262" y="1025" width="4" height="160" fill="#F3D9E4" clip-path="url(#clip-hypothesis_spawns)"/>
+<use href="#icon-branch" x="272" y="1004" width="14" height="14" fill="#212121"/>
+<text x="290" y="1015" font-size="12" fill="#212121" text-anchor="start" font-weight="600">HYPOTHESIS_SPAWNS</text>
+<text x="527" y="1015" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="262" y1="1025" x2="537" y2="1025" stroke="#E0E0E0" stroke-width="1"/>
+<text x="276" y="1039" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="294" y="1039" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-lightbulb" x="274" y="1047" width="12" height="12" fill="#616161"/>
+<text x="294" y="1057" font-size="10" fill="#212121" text-anchor="start">child_id: UUID → hypotheses.id  [I]</text>
+<use href="#icon-lightbulb" x="274" y="1065" width="12" height="12" fill="#616161"/>
+<text x="294" y="1075" font-size="10" fill="#212121" text-anchor="start">parent_id: UUID → hypotheses.id  [I]</text>
+<text x="294" y="1093" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="294" y="1111" font-size="10" fill="#212121" text-anchor="start">spawn_reason: TEXT</text>
+<text x="294" y="1129" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="270" y1="1147" x2="529" y2="1147" stroke="#E0E0E0" stroke-width="1"/>
+<text x="276" y="1159" font-size="9" fill="#616161" text-anchor="start">⚡ child_id</text>
+<text x="276" y="1174" font-size="9" fill="#616161" text-anchor="start">⚡ parent_id</text>
+<rect x="420" y="492" width="180" height="36" fill="#F0F0F0" stroke="#CCCCCC" stroke-width="1" rx="4" opacity="0.65"/>
+<text x="510" y="514" font-size="11" fill="#616161" text-anchor="middle" font-style="italic">JOBS</text>
+<line x1="40" y1="1215" x2="856" y2="1215" stroke="#E0E0E0" stroke-width="1"/>
+<rect x="40" y="1233" width="816" height="24" fill="#FAFAFA" stroke="#E0E0E0" stroke-width="1" rx="4"/>
+<text x="52" y="1249" font-size="9" fill="#616161" text-anchor="start">━ CASCADE     ╌ ╌ SET NULL     🔑 PK     ● FK (target table icon)     [U] Unique     [I] Indexed     RLS = Row-Level Security</text>
+<text x="40" y="1273" font-size="9" fill="#616161" text-anchor="start" font-weight="600">Table icons:</text>
+<use href="#icon-lightbulb" x="118" y="1264" width="12" height="12" fill="#616161"/>
+<text x="134" y="1273" font-size="9" fill="#616161" text-anchor="start">hypotheses</text>
+<use href="#icon-star" x="207" y="1264" width="12" height="12" fill="#616161"/>
+<text x="223" y="1273" font-size="9" fill="#616161" text-anchor="start">findings</text>
+<use href="#icon-book" x="285" y="1264" width="12" height="12" fill="#616161"/>
+<text x="301" y="1273" font-size="9" fill="#616161" text-anchor="start">literature</text>
+<use href="#icon-link" x="374" y="1264" width="12" height="12" fill="#616161"/>
+<text x="390" y="1273" font-size="9" fill="#616161" text-anchor="start">finding hypotheses</text>
+<use href="#icon-link" x="508" y="1264" width="12" height="12" fill="#616161"/>
+<text x="524" y="1273" font-size="9" fill="#616161" text-anchor="start">finding literature</text>
+<use href="#icon-branch" x="642" y="1264" width="12" height="12" fill="#616161"/>
+<text x="658" y="1273" font-size="9" fill="#616161" text-anchor="start">hypothesis spawns</text>
+<text x="40" y="1291" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Overview</text>
+<text x="52" y="1307" font-size="9" fill="#616161" text-anchor="start">The scientific knowledge graph captures the AI agent&#x27;s reasoning process. Hypotheses are proposed, tested and refined; findings record discrete observations; literature references ground the</text>
+<text x="52" y="1321" font-size="9" fill="#616161" text-anchor="start">analysis in published research. Junction tables weave these entities into an interconnected evidence web.</text>
+<text x="40" y="1349" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Tables</text>
+<use href="#icon-lightbulb" x="40" y="1358" width="12" height="12" fill="#616161"/>
+<text x="60" y="1367" font-size="9" fill="#212121" text-anchor="start" font-weight="600">HYPOTHESES</text>
+<text x="60" y="1381" font-size="9" fill="#616161" text-anchor="start">A testable scientific explanation proposed by the AI agent. Carries a confidence score, priority ranking and explicit test strategy. Hypotheses evolve through states — active, tested,</text>
+<text x="60" y="1395" font-size="9" fill="#616161" text-anchor="start">disproved, merged or spawned into child hypotheses.</text>
+<use href="#icon-star" x="40" y="1406" width="12" height="12" fill="#616161"/>
+<text x="60" y="1415" font-size="9" fill="#212121" text-anchor="start" font-weight="600">FINDINGS</text>
+<text x="60" y="1429" font-size="9" fill="#616161" text-anchor="start">A discrete observation produced during analysis — from code execution, literature review or reasoning. Findings are the raw evidence that supports or challenges hypotheses.</text>
+<use href="#icon-book" x="40" y="1440" width="12" height="12" fill="#616161"/>
+<text x="60" y="1449" font-size="9" fill="#212121" text-anchor="start" font-weight="600">LITERATURE</text>
+<text x="60" y="1463" font-size="9" fill="#616161" text-anchor="start">A scientific publication retrieved from PubMed or arXiv. Stores bibliographic metadata, DOI, abstract and a relevance score indicating how closely the paper relates to the current analysis.</text>
+<use href="#icon-link" x="40" y="1474" width="12" height="12" fill="#616161"/>
+<text x="60" y="1483" font-size="9" fill="#212121" text-anchor="start" font-weight="600">FINDING_HYPOTHESES</text>
+<text x="60" y="1497" font-size="9" fill="#616161" text-anchor="start">Junction table linking findings to the hypotheses they support or contradict, forming the evidence web of the knowledge graph.</text>
+<use href="#icon-link" x="40" y="1508" width="12" height="12" fill="#616161"/>
+<text x="60" y="1517" font-size="9" fill="#212121" text-anchor="start" font-weight="600">FINDING_LITERATURE</text>
+<text x="60" y="1531" font-size="9" fill="#616161" text-anchor="start">Junction table connecting findings to the literature references that produced or corroborate them.</text>
+<use href="#icon-branch" x="40" y="1542" width="12" height="12" fill="#616161"/>
+<text x="60" y="1551" font-size="9" fill="#212121" text-anchor="start" font-weight="600">HYPOTHESIS_SPAWNS</text>
+<text x="60" y="1565" font-size="9" fill="#616161" text-anchor="start">Records the parent–child lineage when one hypothesis gives rise to a more refined successor, including the reason for the derivation.</text>
+<text x="40" y="1593" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Row-Level Security</text>
+<text x="52" y="1609" font-size="9" fill="#616161" text-anchor="start">All scientific records are scoped to their parent job. A user can read and modify hypotheses, findings and literature only if they own the job or hold an edit-level share. Read-only share</text>
+<text x="52" y="1623" font-size="9" fill="#616161" text-anchor="start">holders can view the knowledge graph but cannot alter it. Junction tables inherit access from either linked side.</text>
+<line x1="40" y1="1655" x2="856" y2="1655" stroke="#E0E0E0" stroke-width="1"/>
+<text x="167" y="1671" font-size="9" fill="#9E9E9E" text-anchor="start">See also:</text>
+<use href="#icon-rocket" x="233" y="1662" width="12" height="12" fill="#616161"/>
+<text x="249" y="1671" font-size="9" fill="#9E9E9E" text-anchor="start">Job Core &amp; Sharing (schema-job-core)</text>
+<text x="461" y="1671" font-size="9" fill="#9E9E9E" text-anchor="start">·</text>
+<use href="#icon-clipboard" x="477" y="1662" width="12" height="12" fill="#616161"/>
+<text x="493" y="1671" font-size="9" fill="#9E9E9E" text-anchor="start">Operations &amp; Logging (schema-operations)</text>
+</svg>

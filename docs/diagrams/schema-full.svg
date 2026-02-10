@@ -1,0 +1,503 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1729" height="1419" viewBox="0 0 1729 1419">
+<defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+  <filter id="shadow" x="-4%" y="-4%" width="110%" height="110%">
+    <feDropShadow dx="1" dy="2" stdDeviation="3" flood-opacity="0.10" />
+  </filter>
+  <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#607D8B" />
+  </marker>
+  <marker id="ah-null" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#90A4AE" />
+  </marker>
+</defs>
+<rect width="1729" height="1419" fill="#FFFFFF"/>
+  <symbol id="icon-user" viewBox="0 0 24 24"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM4 22a8 8 0 0 1 16 0Z"/></symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 1L22 5v6c0 5-3.5 9.5-10 12-6.5-2.5-10-7-10-12V5Z"/></symbol>
+  <symbol id="icon-clock" viewBox="0 0 24 24"><path d="M12 0a12 12 0 1 1 0 24 12 12 0 0 1 0-24ZM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM11 6h2v5.5h4v2H11Z"/></symbol>
+  <symbol id="icon-key" viewBox="0 0 24 24"><path d="M12 0a5 5 0 1 1 0 10 5 5 0 0 1 0-10ZM12 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM10.5 10h3v13h-3ZM7.5 17h3v2h-3ZM7.5 21h3v2h-3Z"/></symbol>
+  <symbol id="icon-briefcase" viewBox="0 0 24 24"><path d="M8 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1h5v7H3V5h5ZM3 14h18v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-share" viewBox="0 0 24 24"><path d="M18 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM6 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM18 16a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM15.6 6.4l-7.2 3.6.8 1.5 7.2-3.6ZM15.6 17.6l-7.2-3.6.8-1.5 7.2 3.6Z"/></symbol>
+  <symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 0H4v24h16V6Z"/></symbol>
+  <symbol id="icon-comment" viewBox="0 0 24 24"><path d="M2 3a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-7l-4 5v-5H3a1 1 0 0 1-1-1Z"/></symbol>
+  <symbol id="icon-coins" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 4.2 2 7s4.5 5 10 5 10-2.2 10-5-4.5-5-10-5ZM2 10c0 2.8 4.5 5 10 5s10-2.2 10-5v4c0 2.8-4.5 5-10 5S2 16.8 2 14ZM2 17c0 2.8 4.5 5 10 5s10-2.2 10-5v3c0 2.8-4.5 5-10 5S2 22.8 2 20Z"/></symbol>
+  <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M2 2v18a2 2 0 0 0 2 2h18v-2H4V2ZM8 18h3V10H8ZM14 18h3V6h-3Z"/></symbol>
+  <symbol id="icon-rotate" viewBox="0 0 24 24"><path d="M12 4V1l5 4-5 4V6a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8Z"/></symbol>
+  <symbol id="icon-lightbulb" viewBox="0 0 24 24"><path d="M12 1a7 7 0 0 0-4.5 12.4V17h9v-3.6A7 7 0 0 0 12 1ZM9 19h6v2a3 3 0 0 1-6 0Z"/></symbol>
+  <symbol id="icon-star" viewBox="0 0 24 24"><path d="M12 2l2.9 6 6.6.9-4.8 4.7 1.1 6.6L12 17.2l-5.8 3 1.1-6.6-4.8-4.7 6.6-.9Z"/></symbol>
+  <symbol id="icon-book" viewBox="0 0 24 24"><path d="M4 2a2 2 0 0 1 2-2h14v17H6a3 3 0 0 0-2 .8ZM4 20a2 2 0 0 1 2-2h14v4H6a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-link" viewBox="0 0 24 24"><path d="M8 7H6a5 5 0 0 0 0 10h2v-2H6a3 3 0 0 1 0-6h2ZM16 7h2a5 5 0 0 1 0 10h-2v-2h2a3 3 0 0 0 0-6h-2ZM8 11h8v2H8Z"/></symbol>
+  <symbol id="icon-branch" viewBox="0 0 24 24"><path d="M6 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM18 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM12 17a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM11.2 17V12l-4.5-4.5 1.1-1.1L12 10.8l4.2-4.4 1.1 1.1L12.8 12v5Z"/></symbol>
+<text x="864" y="30" font-size="20" fill="#212121" text-anchor="middle" font-weight="600">SHANDY Database Schema — Full Detail</text>
+<text x="864" y="52" font-size="11" fill="#616161" text-anchor="middle">19 tables  ·  Row Level Security  ·  PostgreSQL 18 UUIDv7</text>
+<path d="M 50 855 C 10 855, 10 106, 50 106" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="50" cy="106" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 368 178 C 336 178, 320 126, 288 126" fill="none" stroke="#90A4AE" stroke-width="1.4" stroke-dasharray="6,4" opacity="0.7"/>
+<circle cx="288" cy="126" r="3" fill="#90A4AE" opacity="0.7"/>
+<path d="M 50 389 C -14 389, -14 147, 50 147" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="50" cy="147" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 50 692 C -26 692, -26 167, 50 167" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="50" cy="167" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 754 878 C 722 874, 706 140, 674 135" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="135" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 754 610 C 722 610, 706 178, 674 178" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="178" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 167 C 1088 172, 950 216, 674 221" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="221" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1053 505 C 901 514, 826 256, 674 265" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="265" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1053 254 C 901 268, 826 294, 674 308" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="308" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1053 1248 C 901 1266, 826 333, 674 351" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="351" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 754 485 C 722 508, 706 372, 674 394" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="394" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 754 114 C 722 141, 706 108, 674 135" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="135" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 368 613 C 336 626, 320 174, 288 187" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="288" cy="187" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 368 536 C 232 536, 232 178, 368 178" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="368" cy="178" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1053 782 C 901 818, 826 185, 674 221" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="221" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 460 C 1088 500, 950 224, 674 265" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="674" cy="265" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 623 C 1332 618, 1316 126, 1284 122" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="1284" cy="122" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 623 C 1332 618, 1316 430, 1284 425" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="1284" cy="425" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 736 C 1332 736, 1316 452, 1284 452" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="1284" cy="452" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 727 C 1332 722, 1316 704, 1284 700" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="1284" cy="700" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 870 C 1332 870, 1316 155, 1284 155" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="1284" cy="155" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 1364 892 C 1332 896, 1316 184, 1284 188" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="1284" cy="188" r="3" fill="#607D8B" opacity="0.8"/>
+<rect x="50" y="80" width="238" height="175" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-users"><rect x="50" y="80" width="238" height="175" rx="6"/></clipPath>
+<rect x="50" y="80" width="238" height="30" fill="#DCEAF5" clip-path="url(#clip-users)"/>
+<rect x="50" y="110" width="4" height="145" fill="#DCEAF5" clip-path="url(#clip-users)"/>
+<use href="#icon-user" x="60" y="89" width="14" height="14" fill="#212121"/>
+<text x="78" y="100" font-size="12" fill="#212121" text-anchor="start" font-weight="600">USERS</text>
+<text x="278" y="100" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="50" y1="110" x2="288" y2="110" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="124" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="124" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<text x="82" y="142" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="82" y="160" font-size="10" fill="#212121" text-anchor="start">email: VARCHAR(255)  [U] [I]</text>
+<text x="82" y="178" font-size="10" fill="#212121" text-anchor="start">is_active: BOOLEAN</text>
+<text x="82" y="196" font-size="10" fill="#212121" text-anchor="start">name: VARCHAR(255)</text>
+<text x="82" y="214" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="58" y1="232" x2="280" y2="232" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="244" font-size="9" fill="#616161" text-anchor="start">✓ email</text>
+<rect x="50" y="283" width="238" height="277" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-oauth_accounts"><rect x="50" y="283" width="238" height="277" rx="6"/></clipPath>
+<rect x="50" y="283" width="238" height="30" fill="#DCEAF5" clip-path="url(#clip-oauth_accounts)"/>
+<rect x="50" y="313" width="4" height="247" fill="#DCEAF5" clip-path="url(#clip-oauth_accounts)"/>
+<use href="#icon-shield" x="60" y="292" width="14" height="14" fill="#212121"/>
+<text x="78" y="303" font-size="12" fill="#212121" text-anchor="start" font-weight="600">OAUTH_ACCOUNTS</text>
+<text x="278" y="303" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="50" y1="313" x2="288" y2="313" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="327" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="327" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="62" y="335" width="12" height="12" fill="#616161"/>
+<text x="82" y="345" font-size="10" fill="#212121" text-anchor="start">user_id: UUID → users.id  [I]</text>
+<text x="82" y="363" font-size="10" fill="#212121" text-anchor="start">access_token: TEXT</text>
+<text x="82" y="381" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="82" y="399" font-size="10" fill="#212121" text-anchor="start">email: VARCHAR(255)</text>
+<text x="82" y="417" font-size="10" fill="#212121" text-anchor="start">name: VARCHAR(255)</text>
+<text x="82" y="435" font-size="10" fill="#212121" text-anchor="start">provider: VARCHAR(50)  [I]</text>
+<text x="82" y="453" font-size="10" fill="#212121" text-anchor="start">provider_user_id: VARCHAR(255)</text>
+<text x="82" y="471" font-size="10" fill="#212121" text-anchor="start">refresh_token: TEXT</text>
+<text x="82" y="489" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="58" y1="507" x2="280" y2="507" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="519" font-size="9" fill="#616161" text-anchor="start">⚡ provider</text>
+<text x="64" y="534" font-size="9" fill="#616161" text-anchor="start">⚡ user_id</text>
+<text x="64" y="549" font-size="9" fill="#616161" text-anchor="start">✓ (provider, provider_user_id)</text>
+<rect x="50" y="588" width="238" height="208" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-sessions"><rect x="50" y="588" width="238" height="208" rx="6"/></clipPath>
+<rect x="50" y="588" width="238" height="30" fill="#DCEAF5" clip-path="url(#clip-sessions)"/>
+<rect x="50" y="618" width="4" height="178" fill="#DCEAF5" clip-path="url(#clip-sessions)"/>
+<use href="#icon-clock" x="60" y="597" width="14" height="14" fill="#212121"/>
+<text x="78" y="608" font-size="12" fill="#212121" text-anchor="start" font-weight="600">SESSIONS</text>
+<text x="278" y="608" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="50" y1="618" x2="288" y2="618" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="632" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="632" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="62" y="640" width="12" height="12" fill="#616161"/>
+<text x="82" y="650" font-size="10" fill="#212121" text-anchor="start">user_id: UUID → users.id  [I]</text>
+<text x="82" y="668" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="82" y="686" font-size="10" fill="#212121" text-anchor="start">expires_at: TIMESTAMP  [I]</text>
+<text x="82" y="704" font-size="10" fill="#212121" text-anchor="start">ip_address: VARCHAR(45)</text>
+<text x="82" y="722" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<text x="82" y="740" font-size="10" fill="#212121" text-anchor="start">user_agent: VARCHAR(500)</text>
+<line x1="58" y1="758" x2="280" y2="758" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="770" font-size="9" fill="#616161" text-anchor="start">⚡ expires_at</text>
+<text x="64" y="785" font-size="9" fill="#616161" text-anchor="start">⚡ user_id</text>
+<rect x="50" y="824" width="238" height="211" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-api_keys"><rect x="50" y="824" width="238" height="211" rx="6"/></clipPath>
+<rect x="50" y="824" width="238" height="30" fill="#DCEAF5" clip-path="url(#clip-api_keys)"/>
+<rect x="50" y="854" width="4" height="181" fill="#DCEAF5" clip-path="url(#clip-api_keys)"/>
+<use href="#icon-key" x="60" y="833" width="14" height="14" fill="#212121"/>
+<text x="78" y="844" font-size="12" fill="#212121" text-anchor="start" font-weight="600">API_KEYS</text>
+<text x="278" y="844" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="50" y1="854" x2="288" y2="854" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="868" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="868" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="62" y="876" width="12" height="12" fill="#616161"/>
+<text x="82" y="886" font-size="10" fill="#212121" text-anchor="start">user_id: UUID → users.id  [I]</text>
+<text x="82" y="904" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="82" y="922" font-size="10" fill="#212121" text-anchor="start">is_active: BOOLEAN</text>
+<text x="82" y="940" font-size="10" fill="#212121" text-anchor="start">key_hash: TEXT  [U]</text>
+<text x="82" y="958" font-size="10" fill="#212121" text-anchor="start">last_used_at: TIMESTAMP</text>
+<text x="82" y="976" font-size="10" fill="#212121" text-anchor="start">name: VARCHAR(100)</text>
+<text x="82" y="994" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="58" y1="1012" x2="280" y2="1012" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="1024" font-size="9" fill="#616161" text-anchor="start">⚡ user_id</text>
+<rect x="368" y="80" width="306" height="370" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-jobs"><rect x="368" y="80" width="306" height="370" rx="6"/></clipPath>
+<rect x="368" y="80" width="306" height="30" fill="#D5EDDA" clip-path="url(#clip-jobs)"/>
+<rect x="368" y="110" width="4" height="340" fill="#D5EDDA" clip-path="url(#clip-jobs)"/>
+<use href="#icon-briefcase" x="378" y="89" width="14" height="14" fill="#212121"/>
+<text x="396" y="100" font-size="12" fill="#212121" text-anchor="start" font-weight="600">JOBS</text>
+<text x="664" y="100" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="368" y1="110" x2="674" y2="110" stroke="#E0E0E0" stroke-width="1"/>
+<text x="382" y="124" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="400" y="124" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="380" y="132" width="12" height="12" fill="#616161"/>
+<text x="400" y="142" font-size="10" fill="#212121" text-anchor="start">owner_id: UUID → users.id  [I]</text>
+<text x="400" y="160" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="400" y="178" font-size="10" fill="#212121" text-anchor="start">current_iteration: INTEGER</text>
+<text x="400" y="196" font-size="10" fill="#212121" text-anchor="start">description: TEXT</text>
+<text x="400" y="214" font-size="10" fill="#212121" text-anchor="start">error_message: TEXT</text>
+<text x="400" y="232" font-size="10" fill="#212121" text-anchor="start">llm_config: JSONB</text>
+<text x="400" y="250" font-size="10" fill="#212121" text-anchor="start">llm_provider: VARCHAR(50)</text>
+<text x="400" y="268" font-size="10" fill="#212121" text-anchor="start">max_iterations: INTEGER</text>
+<text x="400" y="286" font-size="10" fill="#212121" text-anchor="start">pdb_code: VARCHAR(10)</text>
+<text x="400" y="304" font-size="10" fill="#212121" text-anchor="start">result_summary: TEXT</text>
+<text x="400" y="322" font-size="10" fill="#212121" text-anchor="start">resume_iteration: INTEGER</text>
+<text x="400" y="340" font-size="10" fill="#212121" text-anchor="start">space_group: VARCHAR(50)</text>
+<text x="400" y="358" font-size="10" fill="#212121" text-anchor="start">status: VARCHAR(50)  [I]</text>
+<text x="400" y="376" font-size="10" fill="#212121" text-anchor="start">title: VARCHAR(255)</text>
+<text x="400" y="394" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="376" y1="412" x2="666" y2="412" stroke="#E0E0E0" stroke-width="1"/>
+<text x="382" y="424" font-size="9" fill="#616161" text-anchor="start">⚡ owner_id</text>
+<text x="382" y="439" font-size="9" fill="#616161" text-anchor="start">⚡ status</text>
+<rect x="368" y="478" width="306" height="220" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-job_shares"><rect x="368" y="478" width="306" height="220" rx="6"/></clipPath>
+<rect x="368" y="478" width="306" height="30" fill="#D5EDDA" clip-path="url(#clip-job_shares)"/>
+<rect x="368" y="508" width="4" height="190" fill="#D5EDDA" clip-path="url(#clip-job_shares)"/>
+<use href="#icon-share" x="378" y="487" width="14" height="14" fill="#212121"/>
+<text x="396" y="498" font-size="12" fill="#212121" text-anchor="start" font-weight="600">JOB_SHARES</text>
+<text x="664" y="498" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="368" y1="508" x2="674" y2="508" stroke="#E0E0E0" stroke-width="1"/>
+<text x="382" y="522" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="400" y="522" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="380" y="530" width="12" height="12" fill="#616161"/>
+<text x="400" y="540" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<use href="#icon-user" x="380" y="548" width="12" height="12" fill="#616161"/>
+<text x="400" y="558" font-size="10" fill="#212121" text-anchor="start">shared_with_user_id: UUID → users.id  [I]</text>
+<text x="400" y="576" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="400" y="594" font-size="10" fill="#212121" text-anchor="start">permission_level: VARCHAR(10)</text>
+<text x="400" y="612" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="376" y1="630" x2="666" y2="630" stroke="#E0E0E0" stroke-width="1"/>
+<text x="382" y="642" font-size="9" fill="#616161" text-anchor="start">⚡ shared_with_user_id</text>
+<text x="382" y="657" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<text x="382" y="672" font-size="9" fill="#616161" text-anchor="start">✓ (job_id, shared_with_user_id)</text>
+<text x="382" y="687" font-size="9" fill="#616161" text-anchor="start">⚙️ permission_level IN (&#x27;view&#x27;, &#x27;edit&#x27;)</text>
+<rect x="754" y="80" width="219" height="229" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-job_data_files"><rect x="754" y="80" width="219" height="229" rx="6"/></clipPath>
+<rect x="754" y="80" width="219" height="30" fill="#FFF3CD" clip-path="url(#clip-job_data_files)"/>
+<rect x="754" y="110" width="4" height="199" fill="#FFF3CD" clip-path="url(#clip-job_data_files)"/>
+<use href="#icon-file" x="764" y="89" width="14" height="14" fill="#212121"/>
+<text x="782" y="100" font-size="12" fill="#212121" text-anchor="start" font-weight="600">JOB_DATA_FILES</text>
+<text x="963" y="100" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="754" y1="110" x2="973" y2="110" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="124" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="786" y="124" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="766" y="132" width="12" height="12" fill="#616161"/>
+<text x="786" y="142" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="786" y="160" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="786" y="178" font-size="10" fill="#212121" text-anchor="start">file_path: VARCHAR(500)</text>
+<text x="786" y="196" font-size="10" fill="#212121" text-anchor="start">file_size: BIGINT</text>
+<text x="786" y="214" font-size="10" fill="#212121" text-anchor="start">file_type: VARCHAR(50)</text>
+<text x="786" y="232" font-size="10" fill="#212121" text-anchor="start">filename: VARCHAR(255)</text>
+<text x="786" y="250" font-size="10" fill="#212121" text-anchor="start">mime_type: VARCHAR(100)</text>
+<text x="786" y="268" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="762" y1="286" x2="965" y2="286" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="298" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="754" y="337" width="219" height="175" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-job_chat_messages"><rect x="754" y="337" width="219" height="175" rx="6"/></clipPath>
+<rect x="754" y="337" width="219" height="30" fill="#FFF3CD" clip-path="url(#clip-job_chat_messages)"/>
+<rect x="754" y="367" width="4" height="145" fill="#FFF3CD" clip-path="url(#clip-job_chat_messages)"/>
+<use href="#icon-comment" x="764" y="346" width="14" height="14" fill="#212121"/>
+<text x="782" y="357" font-size="12" fill="#212121" text-anchor="start" font-weight="600">JOB_CHAT_MESSAGES</text>
+<text x="963" y="357" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="754" y1="367" x2="973" y2="367" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="381" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="786" y="381" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="766" y="389" width="12" height="12" fill="#616161"/>
+<text x="786" y="399" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="786" y="417" font-size="10" fill="#212121" text-anchor="start">content: TEXT</text>
+<text x="786" y="435" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="786" y="453" font-size="10" fill="#212121" text-anchor="start">role: VARCHAR(20)</text>
+<text x="786" y="471" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="762" y1="489" x2="965" y2="489" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="501" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="754" y="540" width="219" height="265" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-cost_records"><rect x="754" y="540" width="219" height="265" rx="6"/></clipPath>
+<rect x="754" y="540" width="219" height="30" fill="#FFF3CD" clip-path="url(#clip-cost_records)"/>
+<rect x="754" y="570" width="4" height="235" fill="#FFF3CD" clip-path="url(#clip-cost_records)"/>
+<use href="#icon-coins" x="764" y="549" width="14" height="14" fill="#212121"/>
+<text x="782" y="560" font-size="12" fill="#212121" text-anchor="start" font-weight="600">COST_RECORDS</text>
+<text x="963" y="560" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="754" y1="570" x2="973" y2="570" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="584" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="786" y="584" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="766" y="592" width="12" height="12" fill="#616161"/>
+<text x="786" y="602" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="786" y="620" font-size="10" fill="#212121" text-anchor="start">cost_usd: FLOAT</text>
+<text x="786" y="638" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="786" y="656" font-size="10" fill="#212121" text-anchor="start">input_tokens: INTEGER</text>
+<text x="786" y="674" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="786" y="692" font-size="10" fill="#212121" text-anchor="start">model: VARCHAR(100)</text>
+<text x="786" y="710" font-size="10" fill="#212121" text-anchor="start">operation_type: VARCHAR(50)</text>
+<text x="786" y="728" font-size="10" fill="#212121" text-anchor="start">output_tokens: INTEGER</text>
+<text x="786" y="746" font-size="10" fill="#212121" text-anchor="start">provider: VARCHAR(50)</text>
+<text x="786" y="764" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="762" y1="782" x2="965" y2="782" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="794" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="754" y="833" width="219" height="301" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-analysis_log"><rect x="754" y="833" width="219" height="301" rx="6"/></clipPath>
+<rect x="754" y="833" width="219" height="30" fill="#FFF3CD" clip-path="url(#clip-analysis_log)"/>
+<rect x="754" y="863" width="4" height="271" fill="#FFF3CD" clip-path="url(#clip-analysis_log)"/>
+<use href="#icon-chart" x="764" y="842" width="14" height="14" fill="#212121"/>
+<text x="782" y="853" font-size="12" fill="#212121" text-anchor="start" font-weight="600">ANALYSIS_LOG</text>
+<text x="963" y="853" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="754" y1="863" x2="973" y2="863" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="877" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="786" y="877" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="766" y="885" width="12" height="12" fill="#616161"/>
+<text x="786" y="895" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="786" y="913" font-size="10" fill="#212121" text-anchor="start">action_type: VARCHAR(50)</text>
+<text x="786" y="931" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="786" y="949" font-size="10" fill="#212121" text-anchor="start">description: TEXT</text>
+<text x="786" y="967" font-size="10" fill="#212121" text-anchor="start">duration_seconds: FLOAT</text>
+<text x="786" y="985" font-size="10" fill="#212121" text-anchor="start">error_message: TEXT</text>
+<text x="786" y="1003" font-size="10" fill="#212121" text-anchor="start">input_data: JSONB</text>
+<text x="786" y="1021" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="786" y="1039" font-size="10" fill="#212121" text-anchor="start">output_data: JSONB</text>
+<text x="786" y="1057" font-size="10" fill="#212121" text-anchor="start">step_number: INTEGER</text>
+<text x="786" y="1075" font-size="10" fill="#212121" text-anchor="start">success: BOOLEAN</text>
+<text x="786" y="1093" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="762" y1="1111" x2="965" y2="1111" stroke="#E0E0E0" stroke-width="1"/>
+<text x="768" y="1123" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1053" y="80" width="231" height="283" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-hypotheses"><rect x="1053" y="80" width="231" height="283" rx="6"/></clipPath>
+<rect x="1053" y="80" width="231" height="30" fill="#F3D9E4" clip-path="url(#clip-hypotheses)"/>
+<rect x="1053" y="110" width="4" height="253" fill="#F3D9E4" clip-path="url(#clip-hypotheses)"/>
+<use href="#icon-lightbulb" x="1063" y="89" width="14" height="14" fill="#212121"/>
+<text x="1081" y="100" font-size="12" fill="#212121" text-anchor="start" font-weight="600">HYPOTHESES</text>
+<text x="1274" y="100" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1053" y1="110" x2="1284" y2="110" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="124" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1085" y="124" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="1065" y="132" width="12" height="12" fill="#616161"/>
+<text x="1085" y="142" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="1085" y="160" font-size="10" fill="#212121" text-anchor="start">confidence: FLOAT</text>
+<text x="1085" y="178" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1085" y="196" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="1085" y="214" font-size="10" fill="#212121" text-anchor="start">priority: INTEGER</text>
+<text x="1085" y="232" font-size="10" fill="#212121" text-anchor="start">rationale: TEXT</text>
+<text x="1085" y="250" font-size="10" fill="#212121" text-anchor="start">status: VARCHAR(50)</text>
+<text x="1085" y="268" font-size="10" fill="#212121" text-anchor="start">supporting_evidence: JSONB</text>
+<text x="1085" y="286" font-size="10" fill="#212121" text-anchor="start">test_strategy: TEXT</text>
+<text x="1085" y="304" font-size="10" fill="#212121" text-anchor="start">text: TEXT</text>
+<text x="1085" y="322" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="1061" y1="340" x2="1276" y2="340" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="352" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1053" y="391" width="231" height="229" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-findings"><rect x="1053" y="391" width="231" height="229" rx="6"/></clipPath>
+<rect x="1053" y="391" width="231" height="30" fill="#F3D9E4" clip-path="url(#clip-findings)"/>
+<rect x="1053" y="421" width="4" height="199" fill="#F3D9E4" clip-path="url(#clip-findings)"/>
+<use href="#icon-star" x="1063" y="400" width="14" height="14" fill="#212121"/>
+<text x="1081" y="411" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FINDINGS</text>
+<text x="1274" y="411" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1053" y1="421" x2="1284" y2="421" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="435" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1085" y="435" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="1065" y="443" width="12" height="12" fill="#616161"/>
+<text x="1085" y="453" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="1085" y="471" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1085" y="489" font-size="10" fill="#212121" text-anchor="start">data: JSONB</text>
+<text x="1085" y="507" font-size="10" fill="#212121" text-anchor="start">finding_type: VARCHAR(50)</text>
+<text x="1085" y="525" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="1085" y="543" font-size="10" fill="#212121" text-anchor="start">source: VARCHAR(50)</text>
+<text x="1085" y="561" font-size="10" fill="#212121" text-anchor="start">text: TEXT</text>
+<text x="1085" y="579" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="1061" y1="597" x2="1276" y2="597" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="609" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1053" y="648" width="231" height="352" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-literature"><rect x="1053" y="648" width="231" height="352" rx="6"/></clipPath>
+<rect x="1053" y="648" width="231" height="30" fill="#F3D9E4" clip-path="url(#clip-literature)"/>
+<rect x="1053" y="678" width="4" height="322" fill="#F3D9E4" clip-path="url(#clip-literature)"/>
+<use href="#icon-book" x="1063" y="657" width="14" height="14" fill="#212121"/>
+<text x="1081" y="668" font-size="12" fill="#212121" text-anchor="start" font-weight="600">LITERATURE</text>
+<text x="1274" y="668" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1053" y1="678" x2="1284" y2="678" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="692" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1085" y="692" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="1065" y="700" width="12" height="12" fill="#616161"/>
+<text x="1085" y="710" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="1085" y="728" font-size="10" fill="#212121" text-anchor="start">abstract: TEXT</text>
+<text x="1085" y="746" font-size="10" fill="#212121" text-anchor="start">authors: TEXT</text>
+<text x="1085" y="764" font-size="10" fill="#212121" text-anchor="start">citation_key: VARCHAR(100)</text>
+<text x="1085" y="782" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1085" y="800" font-size="10" fill="#212121" text-anchor="start">doi: VARCHAR(255)  [I]</text>
+<text x="1085" y="818" font-size="10" fill="#212121" text-anchor="start">extra_metadata: JSONB</text>
+<text x="1085" y="836" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="1085" y="854" font-size="10" fill="#212121" text-anchor="start">journal: VARCHAR(255)</text>
+<text x="1085" y="872" font-size="10" fill="#212121" text-anchor="start">relevance_score: FLOAT</text>
+<text x="1085" y="890" font-size="10" fill="#212121" text-anchor="start">title: VARCHAR(500)</text>
+<text x="1085" y="908" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<text x="1085" y="926" font-size="10" fill="#212121" text-anchor="start">url: TEXT</text>
+<text x="1085" y="944" font-size="10" fill="#212121" text-anchor="start">year: INTEGER</text>
+<line x1="1061" y1="962" x2="1276" y2="962" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="974" font-size="9" fill="#616161" text-anchor="start">⚡ doi</text>
+<text x="1067" y="989" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1053" y="1028" width="231" height="301" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-iteration_summaries"><rect x="1053" y="1028" width="231" height="301" rx="6"/></clipPath>
+<rect x="1053" y="1028" width="231" height="30" fill="#FFF3CD" clip-path="url(#clip-iteration_summaries)"/>
+<rect x="1053" y="1058" width="4" height="271" fill="#FFF3CD" clip-path="url(#clip-iteration_summaries)"/>
+<use href="#icon-rotate" x="1063" y="1037" width="14" height="14" fill="#212121"/>
+<text x="1081" y="1048" font-size="12" fill="#212121" text-anchor="start" font-weight="600">ITERATION_SUMMARIES</text>
+<text x="1274" y="1048" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1053" y1="1058" x2="1284" y2="1058" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="1072" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1085" y="1072" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="1065" y="1080" width="12" height="12" fill="#616161"/>
+<text x="1085" y="1090" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="1085" y="1108" font-size="10" fill="#212121" text-anchor="start">code_executed: INTEGER</text>
+<text x="1085" y="1126" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1085" y="1144" font-size="10" fill="#212121" text-anchor="start">hypotheses_generated: INTEGER</text>
+<text x="1085" y="1162" font-size="10" fill="#212121" text-anchor="start">hypotheses_tested: INTEGER</text>
+<text x="1085" y="1180" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER  [U]</text>
+<text x="1085" y="1198" font-size="10" fill="#212121" text-anchor="start">key_findings: JSONB</text>
+<text x="1085" y="1216" font-size="10" fill="#212121" text-anchor="start">metrics: JSONB</text>
+<text x="1085" y="1234" font-size="10" fill="#212121" text-anchor="start">new_insights: JSONB</text>
+<text x="1085" y="1252" font-size="10" fill="#212121" text-anchor="start">next_steps: JSONB</text>
+<text x="1085" y="1270" font-size="10" fill="#212121" text-anchor="start">summary_text: TEXT</text>
+<text x="1085" y="1288" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="1061" y1="1306" x2="1276" y2="1306" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1067" y="1318" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1364" y="80" width="275" height="229" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-feedback_history"><rect x="1364" y="80" width="275" height="229" rx="6"/></clipPath>
+<rect x="1364" y="80" width="275" height="30" fill="#FFF3CD" clip-path="url(#clip-feedback_history)"/>
+<rect x="1364" y="110" width="4" height="199" fill="#FFF3CD" clip-path="url(#clip-feedback_history)"/>
+<use href="#icon-comment" x="1374" y="89" width="14" height="14" fill="#212121"/>
+<text x="1392" y="100" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FEEDBACK_HISTORY</text>
+<text x="1629" y="100" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1364" y1="110" x2="1639" y2="110" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="124" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="124" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="1376" y="132" width="12" height="12" fill="#616161"/>
+<text x="1396" y="142" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="1396" y="160" font-size="10" fill="#212121" text-anchor="start">applied: BOOLEAN</text>
+<text x="1396" y="178" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1396" y="196" font-size="10" fill="#212121" text-anchor="start">feedback_text: TEXT</text>
+<text x="1396" y="214" font-size="10" fill="#212121" text-anchor="start">feedback_type: VARCHAR(50)</text>
+<text x="1396" y="232" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="1396" y="250" font-size="10" fill="#212121" text-anchor="start">response_text: TEXT</text>
+<text x="1396" y="268" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="1372" y1="286" x2="1631" y2="286" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="298" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1364" y="337" width="275" height="247" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-plots"><rect x="1364" y="337" width="275" height="247" rx="6"/></clipPath>
+<rect x="1364" y="337" width="275" height="30" fill="#FFF3CD" clip-path="url(#clip-plots)"/>
+<rect x="1364" y="367" width="4" height="217" fill="#FFF3CD" clip-path="url(#clip-plots)"/>
+<use href="#icon-chart" x="1374" y="346" width="14" height="14" fill="#212121"/>
+<text x="1392" y="357" font-size="12" fill="#212121" text-anchor="start" font-weight="600">PLOTS</text>
+<text x="1629" y="357" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1364" y1="367" x2="1639" y2="367" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="381" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="381" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-briefcase" x="1376" y="389" width="12" height="12" fill="#616161"/>
+<text x="1396" y="399" font-size="10" fill="#212121" text-anchor="start">job_id: UUID → jobs.id  [I]</text>
+<text x="1396" y="417" font-size="10" fill="#212121" text-anchor="start">code_used: TEXT</text>
+<text x="1396" y="435" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1396" y="453" font-size="10" fill="#212121" text-anchor="start">description: TEXT</text>
+<text x="1396" y="471" font-size="10" fill="#212121" text-anchor="start">file_path: VARCHAR(500)</text>
+<text x="1396" y="489" font-size="10" fill="#212121" text-anchor="start">iteration: INTEGER</text>
+<text x="1396" y="507" font-size="10" fill="#212121" text-anchor="start">plot_type: VARCHAR(50)</text>
+<text x="1396" y="525" font-size="10" fill="#212121" text-anchor="start">title: VARCHAR(255)</text>
+<text x="1396" y="543" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="1372" y1="561" x2="1631" y2="561" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="573" font-size="9" fill="#616161" text-anchor="start">⚡ job_id</text>
+<rect x="1364" y="612" width="275" height="76" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-finding_hypotheses"><rect x="1364" y="612" width="275" height="76" rx="6"/></clipPath>
+<rect x="1364" y="612" width="275" height="30" fill="#F3D9E4" clip-path="url(#clip-finding_hypotheses)"/>
+<rect x="1364" y="642" width="4" height="46" fill="#F3D9E4" clip-path="url(#clip-finding_hypotheses)"/>
+<use href="#icon-link" x="1374" y="621" width="14" height="14" fill="#212121"/>
+<text x="1392" y="632" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FINDING_HYPOTHESES</text>
+<text x="1629" y="632" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1364" y1="642" x2="1639" y2="642" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="656" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="656" font-size="10" fill="#212121" text-anchor="start">finding_id: UUID → findings.id</text>
+<text x="1378" y="674" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="674" font-size="10" fill="#212121" text-anchor="start">hypothesis_id: UUID → hypotheses.id</text>
+<rect x="1364" y="716" width="275" height="76" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-finding_literature"><rect x="1364" y="716" width="275" height="76" rx="6"/></clipPath>
+<rect x="1364" y="716" width="275" height="30" fill="#F3D9E4" clip-path="url(#clip-finding_literature)"/>
+<rect x="1364" y="746" width="4" height="46" fill="#F3D9E4" clip-path="url(#clip-finding_literature)"/>
+<use href="#icon-link" x="1374" y="725" width="14" height="14" fill="#212121"/>
+<text x="1392" y="736" font-size="12" fill="#212121" text-anchor="start" font-weight="600">FINDING_LITERATURE</text>
+<text x="1629" y="736" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1364" y1="746" x2="1639" y2="746" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="760" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="760" font-size="10" fill="#212121" text-anchor="start">finding_id: UUID → findings.id</text>
+<text x="1378" y="778" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="778" font-size="10" fill="#212121" text-anchor="start">literature_id: UUID → literature.id</text>
+<rect x="1364" y="820" width="275" height="190" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-hypothesis_spawns"><rect x="1364" y="820" width="275" height="190" rx="6"/></clipPath>
+<rect x="1364" y="820" width="275" height="30" fill="#F3D9E4" clip-path="url(#clip-hypothesis_spawns)"/>
+<rect x="1364" y="850" width="4" height="160" fill="#F3D9E4" clip-path="url(#clip-hypothesis_spawns)"/>
+<use href="#icon-branch" x="1374" y="829" width="14" height="14" fill="#212121"/>
+<text x="1392" y="840" font-size="12" fill="#212121" text-anchor="start" font-weight="600">HYPOTHESIS_SPAWNS</text>
+<text x="1629" y="840" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="1364" y1="850" x2="1639" y2="850" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="864" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="1396" y="864" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-lightbulb" x="1376" y="872" width="12" height="12" fill="#616161"/>
+<text x="1396" y="882" font-size="10" fill="#212121" text-anchor="start">child_id: UUID → hypotheses.id  [I]</text>
+<use href="#icon-lightbulb" x="1376" y="890" width="12" height="12" fill="#616161"/>
+<text x="1396" y="900" font-size="10" fill="#212121" text-anchor="start">parent_id: UUID → hypotheses.id  [I]</text>
+<text x="1396" y="918" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="1396" y="936" font-size="10" fill="#212121" text-anchor="start">spawn_reason: TEXT</text>
+<text x="1396" y="954" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="1372" y1="972" x2="1631" y2="972" stroke="#E0E0E0" stroke-width="1"/>
+<text x="1378" y="984" font-size="9" fill="#616161" text-anchor="start">⚡ child_id</text>
+<text x="1378" y="999" font-size="9" fill="#616161" text-anchor="start">⚡ parent_id</text>
+<rect x="1439" y="80" width="270" height="230" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<text x="1451" y="100" font-size="13" fill="#212121" text-anchor="start" font-weight="600">Legend</text>
+<rect x="1451" y="112" width="16" height="16" fill="#DCEAF5" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="1473" y="123" font-size="10" fill="#212121" text-anchor="start">User Management</text>
+<rect x="1451" y="132" width="16" height="16" fill="#D5EDDA" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="1473" y="143" font-size="10" fill="#212121" text-anchor="start">Job Execution</text>
+<rect x="1451" y="152" width="16" height="16" fill="#FFF3CD" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="1473" y="163" font-size="10" fill="#212121" text-anchor="start">Operations &amp; Logging</text>
+<rect x="1451" y="172" width="16" height="16" fill="#F3D9E4" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="1473" y="183" font-size="10" fill="#212121" text-anchor="start">Scientific Discovery</text>
+<text x="1451" y="208" font-size="10" fill="#212121" text-anchor="start">🔑 Primary Key</text>
+<text x="1451" y="225" font-size="10" fill="#212121" text-anchor="start">● FK (target table icon)</text>
+<text x="1451" y="242" font-size="10" fill="#212121" text-anchor="start">[I] Indexed   [U] Unique</text>
+<text x="1451" y="259" font-size="10" fill="#212121" text-anchor="start">⚡ Index   ✓ Unique Constraint</text>
+<text x="1451" y="276" font-size="10" fill="#212121" text-anchor="start">⚙️ Check Constraint</text>
+<text x="1451" y="293" font-size="10" fill="#212121" text-anchor="start">RLS = Row Level Security</text>
+<text x="1451" y="314" font-size="9" fill="#616161" text-anchor="start">━ CASCADE (solid)    ╌ ╌ SET NULL (dashed)</text>
+<line x1="30" y1="1359" x2="1699" y2="1359" stroke="#E0E0E0" stroke-width="1"/>
+<text x="864" y="1377" font-size="9" fill="#9E9E9E" text-anchor="middle">Domain views: schema-user-auth · schema-job-core · schema-scientific · schema-operations  |  Overview: schema-overview</text>
+</svg>

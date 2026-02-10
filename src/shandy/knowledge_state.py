@@ -4,11 +4,25 @@ Knowledge state management for SHANDY.
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
 
+import asyncio
 import fcntl
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from sqlalchemy import select
+
+from shandy.database.models.analysis_log import AnalysisLog
+from shandy.database.models.feedback_history import FeedbackHistory
+from shandy.database.models.finding import Finding
+from shandy.database.models.hypothesis import Hypothesis
+from shandy.database.models.iteration_summary import IterationSummary
+from shandy.database.models.job import Job as JobModel
+from shandy.database.models.literature import Literature
+from shandy.database.rls import set_current_user
+from shandy.database.session import AsyncSessionLocal
 
 
 class KnowledgeState:
@@ -400,3 +414,385 @@ class KnowledgeState:
     def to_dict(self) -> Dict[str, Any]:
         """Return the raw data dictionary."""
         return self.data
+
+    # Database persistence methods
+
+    async def save_to_database(self, job_id: str, user_id: Optional[UUID] = None) -> None:
+        """
+        Save knowledge state to database tables.
+
+        This persists hypotheses, findings, literature, analysis_log, iteration_summaries,
+        and feedback_history to their respective tables.
+
+        Args:
+            job_id: Job ID (UUID string)
+            user_id: User ID for RLS context (optional)
+        """
+        async with AsyncSessionLocal() as session:
+            if user_id:
+                await set_current_user(session, user_id)
+
+            job_uuid = UUID(job_id)
+
+            # Update job's current iteration
+            job_stmt = select(JobModel).where(JobModel.id == job_uuid)
+            job_result = await session.execute(job_stmt)
+            job = job_result.scalar_one_or_none()
+            if job:
+                job.current_iteration = self.data["iteration"]
+
+            # Save hypotheses
+            for hyp_data in self.data["hypotheses"]:
+                # Check if hypothesis already exists (by looking for external_id match)
+                hyp_stmt = select(Hypothesis).where(
+                    Hypothesis.job_id == job_uuid,
+                    Hypothesis.text == hyp_data["statement"],
+                )
+                hyp_result = await session.execute(hyp_stmt)
+                existing_hyp = hyp_result.scalar_one_or_none()
+
+                if not existing_hyp:
+                    hypothesis = Hypothesis(
+                        job_id=job_uuid,
+                        iteration=hyp_data["iteration_proposed"],
+                        text=hyp_data["statement"],
+                        status=hyp_data["status"],
+                        confidence=None,
+                        priority=None,
+                        rationale=f"Proposed by {hyp_data.get('proposed_by', 'agent')}",
+                        test_strategy=hyp_data.get("test_code"),
+                        supporting_evidence={"result": hyp_data.get("result")},
+                    )
+                    session.add(hypothesis)
+                else:
+                    # Update existing
+                    existing_hyp.status = hyp_data["status"]
+                    existing_hyp.test_strategy = hyp_data.get("test_code")
+                    existing_hyp.supporting_evidence = {"result": hyp_data.get("result")}
+
+            # Save findings
+            for finding_data in self.data["findings"]:
+                # Check if finding already exists
+                finding_stmt = select(Finding).where(
+                    Finding.job_id == job_uuid, Finding.text == finding_data["title"]
+                )
+                finding_result = await session.execute(finding_stmt)
+                existing_finding = finding_result.scalar_one_or_none()
+
+                if not existing_finding:
+                    finding = Finding(
+                        job_id=job_uuid,
+                        iteration=finding_data["iteration_discovered"],
+                        text=finding_data["title"],
+                        finding_type="observation",
+                        source="code_execution",
+                        data={
+                            "evidence": finding_data["evidence"],
+                            "supporting_hypotheses": finding_data.get("supporting_hypotheses", []),
+                            "literature_support": finding_data.get("literature_support", []),
+                            "plots": finding_data.get("plots", []),
+                            "biological_interpretation": finding_data.get(
+                                "biological_interpretation", ""
+                            ),
+                        },
+                    )
+                    session.add(finding)
+
+            # Save literature
+            for lit_data in self.data["literature"]:
+                # Check if literature already exists (by title match since no pmid field)
+                lit_stmt = select(Literature).where(
+                    Literature.job_id == job_uuid, Literature.title == lit_data["title"]
+                )
+                lit_result = await session.execute(lit_stmt)
+                existing_lit = lit_result.scalar_one_or_none()
+
+                if not existing_lit:
+                    lit_record = Literature(
+                        job_id=job_uuid,
+                        iteration=lit_data.get("retrieved_at_iteration", 1),
+                        title=lit_data["title"],
+                        abstract=lit_data.get("abstract"),
+                        authors=None,
+                        journal=None,
+                        year=None,
+                        doi=None,
+                        extra_metadata={
+                            "pmid": lit_data.get("pmid"),
+                            "search_query": lit_data.get("search_query"),
+                        },
+                    )
+                    session.add(lit_record)
+
+            # Save analysis log entries
+            for log_entry in self.data["analysis_log"]:
+                # Check if log entry already exists (by iteration + step)
+                log_stmt = select(AnalysisLog).where(
+                    AnalysisLog.job_id == job_uuid,
+                    AnalysisLog.iteration == log_entry["iteration"],
+                    AnalysisLog.description == log_entry.get("action", ""),
+                    AnalysisLog.created_at >= datetime.fromisoformat(log_entry["timestamp"]),
+                )
+                log_result = await session.execute(log_stmt)
+                existing_log = log_result.scalar_one_or_none()
+
+                if not existing_log:
+                    analysis_log = AnalysisLog(
+                        job_id=job_uuid,
+                        iteration=log_entry["iteration"],
+                        step_number=1,
+                        action_type=log_entry["action"],
+                        description=log_entry.get("action", ""),
+                        input_data=(
+                            {"code": log_entry.get("code")} if log_entry.get("code") else None
+                        ),
+                        output_data=(
+                            {"output": log_entry.get("output")} if log_entry.get("output") else None
+                        ),
+                        success=True,
+                    )
+                    session.add(analysis_log)
+
+            # Save iteration summaries
+            for summary_data in self.data.get("iteration_summaries", []):
+                # Check if summary already exists
+                summ_stmt = select(IterationSummary).where(
+                    IterationSummary.job_id == job_uuid,
+                    IterationSummary.iteration == summary_data["iteration"],
+                )
+                summ_result = await session.execute(summ_stmt)
+                existing_summ = summ_result.scalar_one_or_none()
+
+                if not existing_summ:
+                    iteration_summary = IterationSummary(
+                        job_id=job_uuid,
+                        iteration=summary_data["iteration"],
+                        summary_text=summary_data["summary"],
+                    )
+                    session.add(iteration_summary)
+                else:
+                    existing_summ.summary_text = summary_data["summary"]
+
+            # Save feedback history
+            for feedback_data in self.data.get("feedback_history", []):
+                # Check if feedback already exists
+                fb_stmt = select(FeedbackHistory).where(
+                    FeedbackHistory.job_id == job_uuid,
+                    FeedbackHistory.iteration == feedback_data["after_iteration"],
+                )
+                fb_result = await session.execute(fb_stmt)
+                existing_fb = fb_result.scalar_one_or_none()
+
+                if not existing_fb:
+                    feedback = FeedbackHistory(
+                        job_id=job_uuid,
+                        iteration=feedback_data["after_iteration"],
+                        feedback_type="user_feedback",
+                        feedback_text=feedback_data["text"],
+                    )
+                    session.add(feedback)
+
+            await session.commit()
+
+    @classmethod
+    async def load_from_database(
+        cls, job_id: str, user_id: Optional[UUID] = None
+    ) -> "KnowledgeState":
+        """
+        Load knowledge state from database tables.
+
+        Args:
+            job_id: Job ID (UUID string)
+            user_id: User ID for RLS context (optional)
+
+        Returns:
+            KnowledgeState instance populated from database
+        """
+        async with AsyncSessionLocal() as session:
+            if user_id:
+                await set_current_user(session, user_id)
+
+            job_uuid = UUID(job_id)
+
+            # Load job
+            job_stmt = select(JobModel).where(JobModel.id == job_uuid)
+            job_result = await session.execute(job_stmt)
+            job = job_result.scalar_one_or_none()
+
+            if not job:
+                raise ValueError(f"Job {job_id} not found in database")
+
+            # Create new KnowledgeState instance
+            ks = cls.__new__(cls)
+            ks.data = {
+                "config": {
+                    "job_id": job_id,
+                    "research_question": job.title,
+                    "max_iterations": job.max_iterations,
+                    "use_skills": True,  # Default
+                    "started_at": job.created_at.isoformat(),
+                },
+                "data_summary": {},  # Would need to load from job_data_files
+                "iteration": job.current_iteration,
+                "hypotheses": [],
+                "findings": [],
+                "literature": [],
+                "analysis_log": [],
+                "iteration_summaries": [],
+                "feedback_history": [],
+            }
+
+            # Load hypotheses
+            hyp_stmt = (
+                select(Hypothesis)
+                .where(Hypothesis.job_id == job_uuid)
+                .order_by(Hypothesis.created_at)
+            )
+            hyp_result = await session.execute(hyp_stmt)
+            hypotheses = hyp_result.scalars().all()
+
+            for hyp in hypotheses:
+                ks.data["hypotheses"].append(
+                    {
+                        "id": f"H{len(ks.data['hypotheses']) + 1:03d}",
+                        "iteration_proposed": hyp.iteration,
+                        "statement": hyp.text,
+                        "status": hyp.status,
+                        "proposed_by": "agent",
+                        "tested_at_iteration": None,
+                        "test_code": hyp.test_strategy,
+                        "result": (
+                            hyp.supporting_evidence.get("result")
+                            if hyp.supporting_evidence
+                            else None
+                        ),
+                        "spawned_hypotheses": [],
+                    }
+                )
+
+            # Load findings
+            finding_stmt = (
+                select(Finding).where(Finding.job_id == job_uuid).order_by(Finding.created_at)
+            )
+            finding_result = await session.execute(finding_stmt)
+            findings = finding_result.scalars().all()
+
+            for finding in findings:
+                finding_data = finding.data or {}
+                ks.data["findings"].append(
+                    {
+                        "id": f"F{len(ks.data['findings']) + 1:03d}",
+                        "iteration_discovered": finding.iteration,
+                        "title": finding.text,
+                        "evidence": finding_data.get("evidence", ""),
+                        "supporting_hypotheses": finding_data.get("supporting_hypotheses", []),
+                        "literature_support": finding_data.get("literature_support", []),
+                        "plots": finding_data.get("plots", []),
+                        "biological_interpretation": finding_data.get(
+                            "biological_interpretation", ""
+                        ),
+                    }
+                )
+
+            # Load literature
+            lit_stmt = (
+                select(Literature)
+                .where(Literature.job_id == job_uuid)
+                .order_by(Literature.created_at)
+            )
+            lit_result = await session.execute(lit_stmt)
+            literature_list = lit_result.scalars().all()
+
+            for lit in literature_list:
+                extra = lit.extra_metadata or {}
+                ks.data["literature"].append(
+                    {
+                        "id": f"L{len(ks.data['literature']) + 1:03d}",
+                        "pmid": extra.get("pmid", ""),
+                        "title": lit.title,
+                        "abstract": lit.abstract,
+                        "relevance_to": [],
+                        "retrieved_at_iteration": lit.iteration,
+                        "search_query": extra.get("search_query"),
+                    }
+                )
+
+            # Load analysis log
+            log_stmt = (
+                select(AnalysisLog)
+                .where(AnalysisLog.job_id == job_uuid)
+                .order_by(AnalysisLog.created_at)
+            )
+            log_result = await session.execute(log_stmt)
+            logs = log_result.scalars().all()
+
+            for log in logs:
+                log_entry: Dict[str, Any] = {
+                    "iteration": log.iteration,
+                    "action": log.action_type,
+                    "timestamp": log.created_at.isoformat(),
+                }
+                if log.input_data and log.input_data.get("code"):
+                    log_entry["code"] = log.input_data["code"]
+                if log.output_data and log.output_data.get("output"):
+                    log_entry["output"] = log.output_data["output"]
+                ks.data["analysis_log"].append(log_entry)
+
+            # Load iteration summaries
+            summ_stmt = (
+                select(IterationSummary)
+                .where(IterationSummary.job_id == job_uuid)
+                .order_by(IterationSummary.iteration)
+            )
+            summ_result = await session.execute(summ_stmt)
+            summaries = summ_result.scalars().all()
+
+            for summary in summaries:
+                ks.data["iteration_summaries"].append(
+                    {
+                        "iteration": summary.iteration,
+                        "summary": summary.summary_text,
+                        "created_at": summary.created_at.isoformat(),
+                    }
+                )
+
+            # Load feedback history
+            fb_stmt = (
+                select(FeedbackHistory)
+                .where(FeedbackHistory.job_id == job_uuid)
+                .order_by(FeedbackHistory.created_at)
+            )
+            fb_result = await session.execute(fb_stmt)
+            feedback_list = fb_result.scalars().all()
+
+            for feedback in feedback_list:
+                ks.data["feedback_history"].append(
+                    {
+                        "after_iteration": feedback.iteration,
+                        "text": feedback.feedback_text,
+                        "submitted_at": feedback.created_at.isoformat(),
+                    }
+                )
+
+            return ks
+
+    def save_to_database_sync(self, job_id: str, user_id: Optional[UUID] = None) -> None:
+        """Synchronous wrapper for save_to_database."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self.save_to_database(job_id, user_id))
+        finally:
+            loop.close()
+
+    @classmethod
+    def load_from_database_sync(
+        cls, job_id: str, user_id: Optional[UUID] = None
+    ) -> "KnowledgeState":
+        """Synchronous wrapper for load_from_database."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(cls.load_from_database(job_id, user_id))
+        finally:
+            loop.close()

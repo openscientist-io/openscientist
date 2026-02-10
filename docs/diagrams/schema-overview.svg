@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1261" height="832" viewBox="0 0 1261 832">
+<defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+  <filter id="shadow" x="-4%" y="-4%" width="110%" height="110%">
+    <feDropShadow dx="1" dy="2" stdDeviation="3" flood-opacity="0.10" />
+  </filter>
+  <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#607D8B" />
+  </marker>
+  <marker id="ah-null" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#90A4AE" />
+  </marker>
+</defs>
+<rect width="1261" height="832" fill="#FFFFFF"/>
+  <symbol id="icon-users" viewBox="0 0 24 24"><path d="M9 3a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7ZM2 20a7 7 0 0 1 14 0ZM15 3a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7ZM8 20a7 7 0 0 1 14 0Z"/></symbol>
+  <symbol id="icon-rocket" viewBox="0 0 24 24"><path d="M12 2C9.5 2 8 5.5 7.5 9L5 13h3v4h8v-4h3l-2.5-4C16 5.5 14.5 2 12 2ZM9.5 18.5L8 22h2ZM14.5 18.5L16 22h-2Z"/></symbol>
+  <symbol id="icon-clipboard" viewBox="0 0 24 24"><path d="M8 0h8v3h4v21H4V3h4ZM7.5 9h9v1.5h-9ZM7.5 13h9v1.5h-9ZM7.5 17h5v1.5h-5Z"/></symbol>
+  <symbol id="icon-flask" viewBox="0 0 24 24"><path d="M8 0h8v2h-2.5v7l5.5 11H5l5.5-11V2H8Z"/></symbol>
+  <symbol id="icon-user" viewBox="0 0 24 24"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM4 22a8 8 0 0 1 16 0Z"/></symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 1L22 5v6c0 5-3.5 9.5-10 12-6.5-2.5-10-7-10-12V5Z"/></symbol>
+  <symbol id="icon-clock" viewBox="0 0 24 24"><path d="M12 0a12 12 0 1 1 0 24 12 12 0 0 1 0-24ZM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM11 6h2v5.5h4v2H11Z"/></symbol>
+  <symbol id="icon-key" viewBox="0 0 24 24"><path d="M12 0a5 5 0 1 1 0 10 5 5 0 0 1 0-10ZM12 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM10.5 10h3v13h-3ZM7.5 17h3v2h-3ZM7.5 21h3v2h-3Z"/></symbol>
+  <symbol id="icon-briefcase" viewBox="0 0 24 24"><path d="M8 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1h5v7H3V5h5ZM3 14h18v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-share" viewBox="0 0 24 24"><path d="M18 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM6 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM18 16a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM15.6 6.4l-7.2 3.6.8 1.5 7.2-3.6ZM15.6 17.6l-7.2-3.6.8-1.5 7.2 3.6Z"/></symbol>
+  <symbol id="icon-file" viewBox="0 0 24 24"><path d="M14 0H4v24h16V6Z"/></symbol>
+  <symbol id="icon-comment" viewBox="0 0 24 24"><path d="M2 3a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-7l-4 5v-5H3a1 1 0 0 1-1-1Z"/></symbol>
+  <symbol id="icon-coins" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 4.2 2 7s4.5 5 10 5 10-2.2 10-5-4.5-5-10-5ZM2 10c0 2.8 4.5 5 10 5s10-2.2 10-5v4c0 2.8-4.5 5-10 5S2 16.8 2 14ZM2 17c0 2.8 4.5 5 10 5s10-2.2 10-5v3c0 2.8-4.5 5-10 5S2 22.8 2 20Z"/></symbol>
+  <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M2 2v18a2 2 0 0 0 2 2h18v-2H4V2ZM8 18h3V10H8ZM14 18h3V6h-3Z"/></symbol>
+  <symbol id="icon-rotate" viewBox="0 0 24 24"><path d="M12 4V1l5 4-5 4V6a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8Z"/></symbol>
+  <symbol id="icon-lightbulb" viewBox="0 0 24 24"><path d="M12 1a7 7 0 0 0-4.5 12.4V17h9v-3.6A7 7 0 0 0 12 1ZM9 19h6v2a3 3 0 0 1-6 0Z"/></symbol>
+  <symbol id="icon-star" viewBox="0 0 24 24"><path d="M12 2l2.9 6 6.6.9-4.8 4.7 1.1 6.6L12 17.2l-5.8 3 1.1-6.6-4.8-4.7 6.6-.9Z"/></symbol>
+  <symbol id="icon-book" viewBox="0 0 24 24"><path d="M4 2a2 2 0 0 1 2-2h14v17H6a3 3 0 0 0-2 .8ZM4 20a2 2 0 0 1 2-2h14v4H6a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-link" viewBox="0 0 24 24"><path d="M8 7H6a5 5 0 0 0 0 10h2v-2H6a3 3 0 0 1 0-6h2ZM16 7h2a5 5 0 0 1 0 10h-2v-2h2a3 3 0 0 0 0-6h-2ZM8 11h8v2H8Z"/></symbol>
+  <symbol id="icon-branch" viewBox="0 0 24 24"><path d="M6 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM18 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM12 17a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM11.2 17V12l-4.5-4.5 1.1-1.1L12 10.8l4.2-4.4 1.1 1.1L12.8 12v5Z"/></symbol>
+  <symbol id="icon-grid" viewBox="0 0 24 24"><path d="M2 2h9v9H2ZM13 2h9v9h-9ZM2 13h9v9H2ZM13 13h9v9h-9Z"/></symbol>
+<text x="630" y="30" font-size="22" fill="#212121" text-anchor="middle" font-weight="600">SHANDY Database — Overview</text>
+<text x="630" y="52" font-size="12" fill="#616161" text-anchor="middle">19 tables · 4 domains · Row-Level Security on every table</text>
+<path d="M 582 270 C 582 220, 630 220, 630 170" fill="none" stroke="#607D8B" stroke-width="2" opacity="0.55"/>
+<rect x="552" y="209" width="108" height="20" fill="#FFFFFF" stroke="none" stroke-width="0" rx="4" opacity="0.95"/>
+<text x="606" y="223" font-size="11" fill="#616161" text-anchor="middle" font-style="italic">job_id → jobs</text>
+<path d="M 1019 270 C 1019 220, 630 220, 630 170" fill="none" stroke="#607D8B" stroke-width="2" opacity="0.55"/>
+<rect x="770" y="209" width="108" height="20" fill="#FFFFFF" stroke="none" stroke-width="0" rx="4" opacity="0.95"/>
+<text x="824" y="223" font-size="11" fill="#616161" text-anchor="middle" font-style="italic">job_id → jobs</text>
+<path d="M 630 170 C 630 220, 194 220, 194 270" fill="none" stroke="#90A4AE" stroke-width="2" stroke-dasharray="8,5" opacity="0.55"/>
+<rect x="348" y="209" width="129" height="20" fill="#FFFFFF" stroke="none" stroke-width="0" rx="4" opacity="0.95"/>
+<text x="412" y="223" font-size="11" fill="#616161" text-anchor="middle" font-style="italic">owner_id → users</text>
+<rect x="485" y="76" width="290" height="94" fill="#FFFFFF" stroke="#D5EDDA" stroke-width="2" rx="8" filter="url(#shadow)"/>
+<clipPath id="gc-job_core"><rect x="485" y="76" width="290" height="94" rx="8"/></clipPath>
+<rect x="485" y="76" width="290" height="36" fill="#D5EDDA" clip-path="url(#gc-job_core)"/>
+<use href="#icon-rocket" x="497" y="87" width="14" height="14" fill="#212121"/>
+<text x="517" y="100" font-size="14" fill="#212121" text-anchor="start" font-weight="600">Job Execution</text>
+<text x="761" y="100" font-size="10" fill="#616161" text-anchor="end">2 tables · 🔒 RLS</text>
+<rect x="514" y="124" width="100" height="30" fill="#FFFFFF" stroke="#D5EDDA" stroke-width="1.5" rx="5"/>
+<use href="#icon-briefcase" x="522" y="132" width="14" height="14" fill="#616161"/>
+<text x="541" y="144" font-size="12" fill="#212121" text-anchor="start">Jobs</text>
+<rect x="624" y="124" width="122" height="30" fill="#FFFFFF" stroke="#D5EDDA" stroke-width="1.5" rx="5"/>
+<use href="#icon-share" x="632" y="132" width="14" height="14" fill="#616161"/>
+<text x="651" y="144" font-size="12" fill="#212121" text-anchor="start">Job Shares</text>
+<rect x="40" y="270" width="308" height="132" fill="#FFFFFF" stroke="#DCEAF5" stroke-width="2" rx="8" filter="url(#shadow)"/>
+<clipPath id="gc-user_auth"><rect x="40" y="270" width="308" height="132" rx="8"/></clipPath>
+<rect x="40" y="270" width="308" height="36" fill="#DCEAF5" clip-path="url(#gc-user_auth)"/>
+<use href="#icon-users" x="52" y="281" width="14" height="14" fill="#212121"/>
+<text x="72" y="294" font-size="14" fill="#212121" text-anchor="start" font-weight="600">User Management</text>
+<text x="334" y="294" font-size="10" fill="#616161" text-anchor="end">4 tables · 🔒 RLS</text>
+<rect x="59" y="318" width="107" height="30" fill="#FFFFFF" stroke="#DCEAF5" stroke-width="1.5" rx="5"/>
+<use href="#icon-user" x="67" y="326" width="14" height="14" fill="#616161"/>
+<text x="86" y="338" font-size="12" fill="#212121" text-anchor="start">Users</text>
+<rect x="176" y="318" width="152" height="30" fill="#FFFFFF" stroke="#DCEAF5" stroke-width="1.5" rx="5"/>
+<use href="#icon-shield" x="184" y="326" width="14" height="14" fill="#616161"/>
+<text x="203" y="338" font-size="12" fill="#212121" text-anchor="start">Oauth Accounts</text>
+<rect x="59" y="356" width="107" height="30" fill="#FFFFFF" stroke="#DCEAF5" stroke-width="1.5" rx="5"/>
+<use href="#icon-clock" x="67" y="364" width="14" height="14" fill="#616161"/>
+<text x="86" y="376" font-size="12" fill="#212121" text-anchor="start">Sessions</text>
+<rect x="176" y="356" width="152" height="30" fill="#FFFFFF" stroke="#DCEAF5" stroke-width="1.5" rx="5"/>
+<use href="#icon-key" x="184" y="364" width="14" height="14" fill="#616161"/>
+<text x="203" y="376" font-size="12" fill="#212121" text-anchor="start">Api Keys</text>
+<rect x="380" y="270" width="405" height="208" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="2" rx="8" filter="url(#shadow)"/>
+<clipPath id="gc-job_data"><rect x="380" y="270" width="405" height="208" rx="8"/></clipPath>
+<rect x="380" y="270" width="405" height="36" fill="#FFF3CD" clip-path="url(#gc-job_data)"/>
+<use href="#icon-clipboard" x="392" y="281" width="14" height="14" fill="#212121"/>
+<text x="412" y="294" font-size="14" fill="#212121" text-anchor="start" font-weight="600">Operations &amp; Logging</text>
+<text x="771" y="294" font-size="10" fill="#616161" text-anchor="end">7 tables · 🔒 RLS</text>
+<rect x="396" y="318" width="189" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-file" x="404" y="326" width="14" height="14" fill="#616161"/>
+<text x="423" y="338" font-size="12" fill="#212121" text-anchor="start">Job Data Files</text>
+<rect x="595" y="318" width="174" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-comment" x="603" y="326" width="14" height="14" fill="#616161"/>
+<text x="622" y="338" font-size="12" fill="#212121" text-anchor="start">Job Chat Messages</text>
+<rect x="396" y="356" width="189" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-coins" x="404" y="364" width="14" height="14" fill="#616161"/>
+<text x="423" y="376" font-size="12" fill="#212121" text-anchor="start">Cost Records</text>
+<rect x="595" y="356" width="174" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-chart" x="603" y="364" width="14" height="14" fill="#616161"/>
+<text x="622" y="376" font-size="12" fill="#212121" text-anchor="start">Analysis Log</text>
+<rect x="396" y="394" width="189" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-rotate" x="404" y="402" width="14" height="14" fill="#616161"/>
+<text x="423" y="414" font-size="12" fill="#212121" text-anchor="start">Iteration Summaries</text>
+<rect x="595" y="394" width="174" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-comment" x="603" y="402" width="14" height="14" fill="#616161"/>
+<text x="622" y="414" font-size="12" fill="#212121" text-anchor="start">Feedback History</text>
+<rect x="396" y="432" width="189" height="30" fill="#FFFFFF" stroke="#FFF3CD" stroke-width="1.5" rx="5"/>
+<use href="#icon-chart" x="404" y="440" width="14" height="14" fill="#616161"/>
+<text x="423" y="452" font-size="12" fill="#212121" text-anchor="start">Plots</text>
+<rect x="817" y="270" width="404" height="170" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="2" rx="8" filter="url(#shadow)"/>
+<clipPath id="gc-scientific"><rect x="817" y="270" width="404" height="170" rx="8"/></clipPath>
+<rect x="817" y="270" width="404" height="36" fill="#F3D9E4" clip-path="url(#gc-scientific)"/>
+<use href="#icon-flask" x="829" y="281" width="14" height="14" fill="#212121"/>
+<text x="849" y="294" font-size="14" fill="#212121" text-anchor="start" font-weight="600">Scientific Discovery</text>
+<text x="1207" y="294" font-size="10" fill="#616161" text-anchor="end">6 tables · 🔒 RLS</text>
+<rect x="833" y="318" width="181" height="30" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="1.5" rx="5"/>
+<use href="#icon-lightbulb" x="841" y="326" width="14" height="14" fill="#616161"/>
+<text x="860" y="338" font-size="12" fill="#212121" text-anchor="start">Hypotheses</text>
+<rect x="1024" y="318" width="181" height="30" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="1.5" rx="5"/>
+<use href="#icon-star" x="1032" y="326" width="14" height="14" fill="#616161"/>
+<text x="1051" y="338" font-size="12" fill="#212121" text-anchor="start">Findings</text>
+<rect x="833" y="356" width="181" height="30" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="1.5" rx="5"/>
+<use href="#icon-book" x="841" y="364" width="14" height="14" fill="#616161"/>
+<text x="860" y="376" font-size="12" fill="#212121" text-anchor="start">Literature</text>
+<rect x="1024" y="356" width="181" height="30" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="1.5" rx="5"/>
+<use href="#icon-link" x="1032" y="364" width="14" height="14" fill="#616161"/>
+<text x="1051" y="376" font-size="12" fill="#212121" text-anchor="start">Finding Hypotheses</text>
+<rect x="833" y="394" width="181" height="30" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="1.5" rx="5"/>
+<use href="#icon-link" x="841" y="402" width="14" height="14" fill="#616161"/>
+<text x="860" y="414" font-size="12" fill="#212121" text-anchor="start">Finding Literature</text>
+<rect x="1024" y="394" width="181" height="30" fill="#FFFFFF" stroke="#F3D9E4" stroke-width="1.5" rx="5"/>
+<use href="#icon-branch" x="1032" y="402" width="14" height="14" fill="#616161"/>
+<text x="1051" y="414" font-size="12" fill="#212121" text-anchor="start">Hypothesis Spawns</text>
+<rect x="390" y="502" width="480" height="120" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<text x="402" y="526" font-size="12" fill="#212121" text-anchor="start" font-weight="600">Legend</text>
+<rect x="402" y="533" width="14" height="14" fill="#DCEAF5" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="422" y="543" font-size="10" fill="#212121" text-anchor="start">User Management (4)</text>
+<rect x="402" y="553" width="14" height="14" fill="#D5EDDA" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="422" y="563" font-size="10" fill="#212121" text-anchor="start">Job Execution (2)</text>
+<rect x="402" y="573" width="14" height="14" fill="#FFF3CD" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="422" y="583" font-size="10" fill="#212121" text-anchor="start">Operations &amp; Logging (7)</text>
+<rect x="402" y="593" width="14" height="14" fill="#F3D9E4" stroke="#BDBDBD" stroke-width="1" rx="2"/>
+<text x="422" y="603" font-size="10" fill="#212121" text-anchor="start">Scientific Discovery (6)</text>
+<rect x="638" y="533" width="14" height="14" fill="#FFFFFF" stroke="#43A047" stroke-width="1.5" rx="3"/>
+<text x="658" y="543" font-size="10" fill="#212121" text-anchor="start">🔒 RLS — Row-Level Security</text>
+<text x="658" y="563" font-size="10" fill="#616161" text-anchor="start">Users see their own data + shared</text>
+<line x1="638" y1="586" x2="662" y2="586" stroke="#607D8B" stroke-width="2"/>
+<text x="668" y="590" font-size="10" fill="#212121" text-anchor="start">CASCADE (solid)</text>
+<line x1="638" y1="606" x2="662" y2="606" stroke="#90A4AE" stroke-width="2" stroke-dasharray="8,5"/>
+<text x="668" y="610" font-size="10" fill="#212121" text-anchor="start">SET NULL (dashed)</text>
+<line x1="200" y1="638" x2="1060" y2="638" stroke="#E0E0E0" stroke-width="1"/>
+<text x="630" y="656" font-size="12" fill="#616161" text-anchor="middle" font-weight="600">For column-level detail, see the domain diagrams:</text>
+<use href="#icon-users" x="220" y="678" width="14" height="14" fill="#616161"/>
+<text x="239" y="688" font-size="11" fill="#212121" text-anchor="start" font-weight="600">schema-user-auth  —  User Authentication</text>
+<text x="239" y="704" font-size="10" fill="#9E9E9E" text-anchor="start">OAuth accounts, sessions, API keys — all columns, types, FK targets and unique constraints</text>
+<use href="#icon-rocket" x="220" y="722" width="14" height="14" fill="#616161"/>
+<text x="239" y="732" font-size="11" fill="#212121" text-anchor="start" font-weight="600">schema-job-core  —  Job Core &amp; Sharing</text>
+<text x="239" y="748" font-size="10" fill="#9E9E9E" text-anchor="start">Jobs and job_shares tables with cascade rules, owner relationship and sharing permissions</text>
+<use href="#icon-clipboard" x="220" y="766" width="14" height="14" fill="#616161"/>
+<text x="239" y="776" font-size="11" fill="#212121" text-anchor="start" font-weight="600">schema-operations  —  Operations &amp; Logging</text>
+<text x="239" y="792" font-size="10" fill="#9E9E9E" text-anchor="start">Data files, chat messages, cost records, analysis log, iteration summaries, feedback and plots</text>
+<use href="#icon-flask" x="660" y="678" width="14" height="14" fill="#616161"/>
+<text x="679" y="688" font-size="11" fill="#212121" text-anchor="start" font-weight="600">schema-scientific  —  Scientific Knowledge</text>
+<text x="679" y="704" font-size="10" fill="#9E9E9E" text-anchor="start">Hypotheses, findings, literature and the junction tables that link them together</text>
+<use href="#icon-grid" x="660" y="722" width="14" height="14" fill="#616161"/>
+<text x="679" y="732" font-size="11" fill="#212121" text-anchor="start" font-weight="600">schema-full  —  Full Schema</text>
+<text x="679" y="748" font-size="10" fill="#9E9E9E" text-anchor="start">All 19 tables in one diagram with every column, index, constraint and foreign key</text>
+</svg>

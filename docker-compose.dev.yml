@@ -2,6 +2,11 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 services:
+  postgres:
+    # Expose postgres port to host for direct access during development
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
   shandy:
     # Override command to enable NiceGUI auto-reload
     command: ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
@@ -19,6 +24,9 @@ services:
     environment:
       # Prevent Python from writing .pyc files
       PYTHONDONTWRITEBYTECODE: "1"
+
+      # Enable mock OAuth for testing (DEVELOPMENT ONLY!)
+      ENABLE_MOCK_AUTH: "true"
 
     # Override restart policy - don't auto-restart in dev mode
     restart: "no"

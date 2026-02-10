@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import UUID
 
 from dotenv import load_dotenv
 
@@ -30,6 +31,46 @@ logger = logging.getLogger(__name__)
 
 
 FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
+
+
+def sync_knowledge_state_to_db(job_dir: Path, ks: Optional[KnowledgeState] = None) -> None:
+    """
+    Sync knowledge state to database.
+
+    Args:
+        job_dir: Job directory path
+        ks: KnowledgeState instance (if None, will load from file)
+    """
+    try:
+        # Extract job_id from path
+        job_id = job_dir.name
+
+        # Load KS if not provided
+        if ks is None:
+            ks_path = job_dir / "knowledge_state.json"
+            if ks_path.exists():
+                ks = KnowledgeState.load(ks_path)
+            else:
+                logger.warning("Knowledge state file not found: %s", ks_path)
+                return
+
+        # Extract owner_id from config.json if available
+        config_path = job_dir / "config.json"
+        owner_id = None
+        if config_path.exists():
+            with open(config_path, encoding="utf-8") as f:
+                config = json.load(f)
+                owner_id_str = config.get("owner_id")
+                if owner_id_str:
+                    owner_id = UUID(owner_id_str)
+
+        # Save to database (synchronous wrapper)
+        ks.save_to_database_sync(job_id, owner_id)
+        logger.debug("Synced knowledge state to database for job %s", job_id)
+
+    except Exception as e:
+        # Log but don't fail - database sync is supplementary to file storage
+        logger.warning("Failed to sync knowledge state to database: %s", e)
 
 
 def get_version_metadata() -> Dict[str, str]:
@@ -327,6 +368,7 @@ def create_job(
         ks.set_data_summary({"files": [], "file_type": "none", "file_size_mb": 0})
 
     ks.save(job_dir / "knowledge_state.json")
+    sync_knowledge_state_to_db(job_dir, ks)  # Sync to database
 
     # Save job config
     config = {
@@ -534,6 +576,7 @@ Start your investigation by using these tools to analyze the data.
             ks = KnowledgeState.load(job_dir / "knowledge_state.json")
             ks.set_version_info(version_info)
             ks.save(job_dir / "knowledge_state.json")
+            sync_knowledge_state_to_db(job_dir, ks)  # Sync to database
             logger.info("Saved version info: %s", version_info)
 
         # Save full transcript to provenance/ for scientific reproducibility
@@ -850,6 +893,9 @@ Format as professional scientific markdown."""
 
         with open(job_dir / "config.json", "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
+
+        # Sync final state to database
+        sync_knowledge_state_to_db(job_dir, ks)
 
         return {
             "job_id": job_id,

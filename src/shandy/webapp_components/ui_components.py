@@ -14,7 +14,7 @@ from shandy.job_manager import JobInfo, JobStatus
 
 # Status color mappings
 STATUS_COLORS = {
-    JobStatus.CREATED: "gray",
+    JobStatus.PENDING: "gray",
     JobStatus.QUEUED: "blue",
     JobStatus.RUNNING: "yellow",
     JobStatus.COMPLETED: "green",
@@ -25,7 +25,7 @@ STATUS_COLORS = {
 
 # Status icons (unicode/emoji)
 STATUS_ICONS = {
-    JobStatus.CREATED: "○",
+    JobStatus.PENDING: "○",
     JobStatus.QUEUED: "⟳",
     JobStatus.RUNNING: "▶",
     JobStatus.COMPLETED: "✓",

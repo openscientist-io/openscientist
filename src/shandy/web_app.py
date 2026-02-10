@@ -35,8 +35,50 @@ class _AppState:
 
 _state = _AppState()
 
+
+def _register_oauth_routes():
+    """Register OAuth authentication routes with the underlying FastAPI app."""
+    try:
+        from shandy.auth.fastapi_routes import router as auth_router
+
+        # NiceGUI's app is a FastAPI app, so we can mount routers
+        app.include_router(auth_router)
+        logger.info("OAuth authentication routes registered")
+    except Exception as e:
+        logger.warning("Failed to register OAuth routes: %s", e)
+
+
+def _register_api_routes():
+    """Register REST API routes with the underlying FastAPI app."""
+    try:
+        from shandy.api import api_router
+
+        # Mount the REST API
+        app.include_router(api_router)
+        logger.info("REST API routes registered at /api/v1")
+    except Exception as e:
+        logger.warning("Failed to register API routes: %s", e)
+
+
+def _register_share_routes():
+    """Register web share routes for session-based job sharing."""
+    try:
+        from shandy.webapp_components.share_routes import router as share_router
+
+        # Mount the share routes
+        app.include_router(share_router)
+        logger.info("Share routes registered at /web/shares")
+    except Exception as e:
+        logger.warning("Failed to register share routes: %s", e)
+
+
 # Import page modules to register routes
 # Must be imported after _state is defined so pages can access it
+# Import auth routes first
+_register_oauth_routes()
+_register_api_routes()
+_register_share_routes()
+
 from shandy.webapp_components import pages  # noqa: E402, F401
 
 
@@ -68,6 +110,41 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     if _state.job_manager is not None:
         logger.info("Web app already initialized, skipping re-initialization")
         return
+
+    # Initialize database connection
+    try:
+        import asyncio
+
+        from shandy.database.engine import engine
+
+        async def verify_db():
+            """Verify database connection and tables exist."""
+            try:
+                async with engine.begin() as conn:
+                    # Simple query to verify connection
+                    await conn.execute("SELECT 1")
+                logger.info("Database connection verified")
+            except Exception as e:
+                logger.error("Database connection failed: %s", e)
+                logger.warning("Application will continue but database features may not work")
+
+        # Run verification
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If loop is already running (NiceGUI context), schedule as task
+                asyncio.create_task(verify_db())
+            else:
+                loop.run_until_complete(verify_db())
+        except RuntimeError:
+            # Create new event loop if none exists
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(verify_db())
+
+    except Exception as e:
+        logger.error("Failed to initialize database: %s", e)
+        logger.warning("Application will continue but database features may not work")
 
     _state.job_manager = JobManager(jobs_dir=jobs_dir, max_concurrent=max_concurrent)
 

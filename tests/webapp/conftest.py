@@ -1,10 +1,35 @@
 """Pytest fixtures for webapp tests."""
 
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from .mocks import MockJobInfo, MockJobManager, MockProvider
+
+
+@pytest.fixture(autouse=True)
+def _nicegui_storage_dir(tmp_path):
+    """Provide a temporary directory for NiceGUI storage during tests.
+
+    NiceGUI persists user storage to .nicegui/ on disk. Without this,
+    teardown fails with FileNotFoundError when async_backup runs.
+    """
+    storage_dir = tmp_path / ".nicegui"
+    storage_dir.mkdir()
+    with patch.dict(os.environ, {"NICEGUI_STORAGE_PATH": str(storage_dir)}):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _disable_auth():
+    """Disable authentication for all webapp tests.
+
+    The require_auth decorator reads DISABLE_AUTH from shandy.auth.middleware.
+    """
+    with patch("shandy.auth.middleware.DISABLE_AUTH", True):
+        yield
 
 
 @pytest.fixture

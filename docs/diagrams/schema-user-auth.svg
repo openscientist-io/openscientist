@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="912" height="1196" viewBox="0 0 912 1196">
+<defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  </style>
+  <filter id="shadow" x="-4%" y="-4%" width="110%" height="110%">
+    <feDropShadow dx="1" dy="2" stdDeviation="3" flood-opacity="0.10" />
+  </filter>
+  <marker id="ah" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#607D8B" />
+  </marker>
+  <marker id="ah-null" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+    <polygon points="0 0, 8 3, 0 6" fill="#90A4AE" />
+  </marker>
+</defs>
+<rect width="912" height="1196" fill="#FFFFFF"/>
+  <symbol id="icon-rocket" viewBox="0 0 24 24"><path d="M12 2C9.5 2 8 5.5 7.5 9L5 13h3v4h8v-4h3l-2.5-4C16 5.5 14.5 2 12 2ZM9.5 18.5L8 22h2ZM14.5 18.5L16 22h-2Z"/></symbol>
+  <symbol id="icon-user" viewBox="0 0 24 24"><path d="M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8ZM4 22a8 8 0 0 1 16 0Z"/></symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 1L22 5v6c0 5-3.5 9.5-10 12-6.5-2.5-10-7-10-12V5Z"/></symbol>
+  <symbol id="icon-clock" viewBox="0 0 24 24"><path d="M12 0a12 12 0 1 1 0 24 12 12 0 0 1 0-24ZM12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM11 6h2v5.5h4v2H11Z"/></symbol>
+  <symbol id="icon-key" viewBox="0 0 24 24"><path d="M12 0a5 5 0 1 1 0 10 5 5 0 0 1 0-10ZM12 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM10.5 10h3v13h-3ZM7.5 17h3v2h-3ZM7.5 21h3v2h-3Z"/></symbol>
+  <symbol id="icon-briefcase" viewBox="0 0 24 24"><path d="M8 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1h5v7H3V5h5ZM3 14h18v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
+  <symbol id="icon-grid" viewBox="0 0 24 24"><path d="M2 2h9v9H2ZM13 2h9v9h-9ZM2 13h9v9H2ZM13 13h9v9h-9Z"/></symbol>
+<text x="456" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">SHANDY — User Authentication &amp; Authorization</text>
+<text x="456" y="48" font-size="10" fill="#616161" text-anchor="middle">4 tables  ·  RLS enabled  ·  PostgreSQL 18 UUIDv7</text>
+<path d="M 281 292 C 303 288, 315 312, 337 307" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="337" cy="307" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 359 79 C 285 79, 285 327, 337 327" fill="none" stroke="#90A4AE" stroke-width="1.4" stroke-dasharray="6,4" opacity="0.7"/>
+<circle cx="337" cy="327" r="3" fill="#90A4AE" opacity="0.7"/>
+<path d="M 614 334 C 593 338, 583 344, 562 348" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="562" cy="348" r="3" fill="#607D8B" opacity="0.8"/>
+<path d="M 334 648 C 258 648, 258 368, 337 368" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
+<circle cx="337" cy="368" r="3" fill="#607D8B" opacity="0.8"/>
+<rect x="337" y="281" width="225" height="175" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-users"><rect x="337" y="281" width="225" height="175" rx="6"/></clipPath>
+<rect x="337" y="281" width="225" height="30" fill="#DCEAF5" clip-path="url(#clip-users)"/>
+<rect x="337" y="311" width="4" height="145" fill="#DCEAF5" clip-path="url(#clip-users)"/>
+<use href="#icon-user" x="347" y="290" width="14" height="14" fill="#212121"/>
+<text x="365" y="301" font-size="12" fill="#212121" text-anchor="start" font-weight="600">USERS</text>
+<text x="552" y="301" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="337" y1="311" x2="562" y2="311" stroke="#E0E0E0" stroke-width="1"/>
+<text x="351" y="325" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="369" y="325" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<text x="369" y="343" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="369" y="361" font-size="10" fill="#212121" text-anchor="start">email: VARCHAR(255)  [U] [I]</text>
+<text x="369" y="379" font-size="10" fill="#212121" text-anchor="start">is_active: BOOLEAN</text>
+<text x="369" y="397" font-size="10" fill="#212121" text-anchor="start">name: VARCHAR(255)</text>
+<text x="369" y="415" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="345" y1="433" x2="554" y2="433" stroke="#E0E0E0" stroke-width="1"/>
+<text x="351" y="445" font-size="9" fill="#616161" text-anchor="start">✓ email</text>
+<rect x="614" y="228" width="238" height="277" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-oauth_accounts"><rect x="614" y="228" width="238" height="277" rx="6"/></clipPath>
+<rect x="614" y="228" width="238" height="30" fill="#DCEAF5" clip-path="url(#clip-oauth_accounts)"/>
+<rect x="614" y="258" width="4" height="247" fill="#DCEAF5" clip-path="url(#clip-oauth_accounts)"/>
+<use href="#icon-shield" x="624" y="237" width="14" height="14" fill="#212121"/>
+<text x="642" y="248" font-size="12" fill="#212121" text-anchor="start" font-weight="600">OAUTH_ACCOUNTS</text>
+<text x="842" y="248" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="614" y1="258" x2="852" y2="258" stroke="#E0E0E0" stroke-width="1"/>
+<text x="628" y="272" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="646" y="272" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="626" y="280" width="12" height="12" fill="#616161"/>
+<text x="646" y="290" font-size="10" fill="#212121" text-anchor="start">user_id: UUID → users.id  [I]</text>
+<text x="646" y="308" font-size="10" fill="#212121" text-anchor="start">access_token: TEXT</text>
+<text x="646" y="326" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="646" y="344" font-size="10" fill="#212121" text-anchor="start">email: VARCHAR(255)</text>
+<text x="646" y="362" font-size="10" fill="#212121" text-anchor="start">name: VARCHAR(255)</text>
+<text x="646" y="380" font-size="10" fill="#212121" text-anchor="start">provider: VARCHAR(50)  [I]</text>
+<text x="646" y="398" font-size="10" fill="#212121" text-anchor="start">provider_user_id: VARCHAR(255)</text>
+<text x="646" y="416" font-size="10" fill="#212121" text-anchor="start">refresh_token: TEXT</text>
+<text x="646" y="434" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="622" y1="452" x2="844" y2="452" stroke="#E0E0E0" stroke-width="1"/>
+<text x="628" y="464" font-size="9" fill="#616161" text-anchor="start">⚡ provider</text>
+<text x="628" y="479" font-size="9" fill="#616161" text-anchor="start">⚡ user_id</text>
+<text x="628" y="494" font-size="9" fill="#616161" text-anchor="start">✓ (provider, provider_user_id)</text>
+<rect x="334" y="544" width="231" height="208" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-sessions"><rect x="334" y="544" width="231" height="208" rx="6"/></clipPath>
+<rect x="334" y="544" width="231" height="30" fill="#DCEAF5" clip-path="url(#clip-sessions)"/>
+<rect x="334" y="574" width="4" height="178" fill="#DCEAF5" clip-path="url(#clip-sessions)"/>
+<use href="#icon-clock" x="344" y="553" width="14" height="14" fill="#212121"/>
+<text x="362" y="564" font-size="12" fill="#212121" text-anchor="start" font-weight="600">SESSIONS</text>
+<text x="555" y="564" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="334" y1="574" x2="565" y2="574" stroke="#E0E0E0" stroke-width="1"/>
+<text x="348" y="588" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="366" y="588" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="346" y="596" width="12" height="12" fill="#616161"/>
+<text x="366" y="606" font-size="10" fill="#212121" text-anchor="start">user_id: UUID → users.id  [I]</text>
+<text x="366" y="624" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="366" y="642" font-size="10" fill="#212121" text-anchor="start">expires_at: TIMESTAMP  [I]</text>
+<text x="366" y="660" font-size="10" fill="#212121" text-anchor="start">ip_address: VARCHAR(45)</text>
+<text x="366" y="678" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<text x="366" y="696" font-size="10" fill="#212121" text-anchor="start">user_agent: VARCHAR(500)</text>
+<line x1="342" y1="714" x2="557" y2="714" stroke="#E0E0E0" stroke-width="1"/>
+<text x="348" y="726" font-size="9" fill="#616161" text-anchor="start">⚡ expires_at</text>
+<text x="348" y="741" font-size="9" fill="#616161" text-anchor="start">⚡ user_id</text>
+<rect x="50" y="261" width="231" height="211" fill="#FFFFFF" stroke="#E0E0E0" stroke-width="1" rx="6" filter="url(#shadow)"/>
+<clipPath id="clip-api_keys"><rect x="50" y="261" width="231" height="211" rx="6"/></clipPath>
+<rect x="50" y="261" width="231" height="30" fill="#DCEAF5" clip-path="url(#clip-api_keys)"/>
+<rect x="50" y="291" width="4" height="181" fill="#DCEAF5" clip-path="url(#clip-api_keys)"/>
+<use href="#icon-key" x="60" y="270" width="14" height="14" fill="#212121"/>
+<text x="78" y="281" font-size="12" fill="#212121" text-anchor="start" font-weight="600">API_KEYS</text>
+<text x="271" y="281" font-size="9" fill="#43A047" text-anchor="end" font-weight="600">RLS</text>
+<line x1="50" y1="291" x2="281" y2="291" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="305" font-size="10" fill="#212121" text-anchor="start">🔑</text>
+<text x="82" y="305" font-size="10" fill="#212121" text-anchor="start">id: UUID</text>
+<use href="#icon-user" x="62" y="313" width="12" height="12" fill="#616161"/>
+<text x="82" y="323" font-size="10" fill="#212121" text-anchor="start">user_id: UUID → users.id  [I]</text>
+<text x="82" y="341" font-size="10" fill="#212121" text-anchor="start">created_at: TIMESTAMP</text>
+<text x="82" y="359" font-size="10" fill="#212121" text-anchor="start">is_active: BOOLEAN</text>
+<text x="82" y="377" font-size="10" fill="#212121" text-anchor="start">key_hash: TEXT  [U]</text>
+<text x="82" y="395" font-size="10" fill="#212121" text-anchor="start">last_used_at: TIMESTAMP</text>
+<text x="82" y="413" font-size="10" fill="#212121" text-anchor="start">name: VARCHAR(100)</text>
+<text x="82" y="431" font-size="10" fill="#212121" text-anchor="start">updated_at: TIMESTAMP</text>
+<line x1="58" y1="449" x2="273" y2="449" stroke="#E0E0E0" stroke-width="1"/>
+<text x="64" y="461" font-size="9" fill="#616161" text-anchor="start">⚡ user_id</text>
+<rect x="359" y="70" width="180" height="36" fill="#F0F0F0" stroke="#CCCCCC" stroke-width="1" rx="4" opacity="0.65"/>
+<text x="449" y="92" font-size="11" fill="#616161" text-anchor="middle" font-style="italic">JOBS</text>
+<line x1="40" y1="782" x2="872" y2="782" stroke="#E0E0E0" stroke-width="1"/>
+<rect x="40" y="800" width="832" height="24" fill="#FAFAFA" stroke="#E0E0E0" stroke-width="1" rx="4"/>
+<text x="52" y="816" font-size="9" fill="#616161" text-anchor="start">━ CASCADE     ╌ ╌ SET NULL     🔑 PK     ● FK (target table icon)     [U] Unique     [I] Indexed     RLS = Row-Level Security</text>
+<text x="40" y="840" font-size="9" fill="#616161" text-anchor="start" font-weight="600">Table icons:</text>
+<use href="#icon-user" x="118" y="831" width="12" height="12" fill="#616161"/>
+<text x="134" y="840" font-size="9" fill="#616161" text-anchor="start">users</text>
+<use href="#icon-shield" x="179" y="831" width="12" height="12" fill="#616161"/>
+<text x="195" y="840" font-size="9" fill="#616161" text-anchor="start">oauth accounts</text>
+<use href="#icon-clock" x="291" y="831" width="12" height="12" fill="#616161"/>
+<text x="307" y="840" font-size="9" fill="#616161" text-anchor="start">sessions</text>
+<use href="#icon-key" x="369" y="831" width="12" height="12" fill="#616161"/>
+<text x="385" y="840" font-size="9" fill="#616161" text-anchor="start">api keys</text>
+<text x="40" y="858" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Overview</text>
+<text x="52" y="874" font-size="9" fill="#616161" text-anchor="start">Identity and credential management for every person who interacts with SHANDY. Users sign in through OAuth providers, receive a browser session, and may optionally create API keys for</text>
+<text x="52" y="888" font-size="9" fill="#616161" text-anchor="start">programmatic access.</text>
+<text x="40" y="916" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Tables</text>
+<use href="#icon-user" x="40" y="925" width="12" height="12" fill="#616161"/>
+<text x="60" y="934" font-size="9" fill="#212121" text-anchor="start" font-weight="600">USERS</text>
+<text x="60" y="948" font-size="9" fill="#616161" text-anchor="start">Central identity record. Stores display name, email and active status. Every authorisation decision in the system ultimately traces back to a row in this table.</text>
+<use href="#icon-shield" x="40" y="959" width="12" height="12" fill="#616161"/>
+<text x="60" y="968" font-size="9" fill="#212121" text-anchor="start" font-weight="600">OAUTH_ACCOUNTS</text>
+<text x="60" y="982" font-size="9" fill="#616161" text-anchor="start">Links a user to an external identity provider (GitHub, ORCID). A single user may connect several providers. Access and refresh tokens are stored here and rotated transparently on each login.</text>
+<use href="#icon-clock" x="40" y="993" width="12" height="12" fill="#616161"/>
+<text x="60" y="1002" font-size="9" fill="#212121" text-anchor="start" font-weight="600">SESSIONS</text>
+<text x="60" y="1016" font-size="9" fill="#616161" text-anchor="start">Represents an active browser session created after a successful OAuth handshake. Sessions carry a TTL, the originating IP address and user-agent string for audit purposes.</text>
+<use href="#icon-key" x="40" y="1027" width="12" height="12" fill="#616161"/>
+<text x="60" y="1036" font-size="9" fill="#212121" text-anchor="start" font-weight="600">API_KEYS</text>
+<text x="60" y="1050" font-size="9" fill="#616161" text-anchor="start">Enables programmatic (non-browser) access. The raw secret is shown exactly once at creation; only a bcrypt hash is persisted. Keys can be individually revoked without affecting other</text>
+<text x="60" y="1064" font-size="9" fill="#616161" text-anchor="start">credentials.</text>
+<text x="40" y="1092" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Row-Level Security</text>
+<text x="52" y="1108" font-size="9" fill="#616161" text-anchor="start">Every user can only read and modify their own identity row. OAuth accounts, sessions and API keys are likewise restricted to their owning user. Access is governed by the PostgreSQL session</text>
+<text x="52" y="1122" font-size="9" fill="#616161" text-anchor="start">variable app.current_user_id, which the application sets on every request.</text>
+<line x1="40" y1="1154" x2="872" y2="1154" stroke="#E0E0E0" stroke-width="1"/>
+<text x="184" y="1170" font-size="9" fill="#9E9E9E" text-anchor="start">See also:</text>
+<use href="#icon-rocket" x="250" y="1161" width="12" height="12" fill="#616161"/>
+<text x="266" y="1170" font-size="9" fill="#9E9E9E" text-anchor="start">Job Core &amp; Sharing (schema-job-core)</text>
+<text x="478" y="1170" font-size="9" fill="#9E9E9E" text-anchor="start">·</text>
+<use href="#icon-grid" x="494" y="1161" width="12" height="12" fill="#616161"/>
+<text x="510" y="1170" font-size="9" fill="#9E9E9E" text-anchor="start">High-level Overview (schema-overview)</text>
+</svg>

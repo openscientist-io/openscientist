@@ -31,12 +31,12 @@ class TestStatusConstants:
 class TestGetStatusBadgeProps:
     """Tests for get_status_badge_props function."""
 
-    def test_created_status(self):
-        """Test badge props for created status."""
-        props = get_status_badge_props(JobStatus.CREATED)
+    def test_pending_status(self):
+        """Test badge props for pending status."""
+        props = get_status_badge_props(JobStatus.PENDING)
         assert props["color"] == "gray"
         assert props["icon"] == "○"
-        assert props["text"] == "created"
+        assert props["text"] == "pending"
 
     def test_queued_status(self):
         """Test badge props for queued status."""

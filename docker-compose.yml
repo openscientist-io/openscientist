@@ -1,12 +1,35 @@
 # Docker Compose for SHANDY
 
 services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-shandy}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shandy_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-shandy}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shandy} -d ${POSTGRES_DB:-shandy}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   shandy:
     platform: linux/amd64
     build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "${PORT:-8080}:8080"
     environment:
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shandy}:${POSTGRES_PASSWORD:-shandy_dev_password}@postgres:5432/${POSTGRES_DB:-shandy}
       PORT: ${PORT:-8080}
 
       # Provider selection
@@ -60,3 +83,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  postgres_data:

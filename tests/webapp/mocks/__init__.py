@@ -41,6 +41,9 @@ class MockJobInfo:
                             return self.value == other.value
                         return self.value == str(other)
 
+                    def __hash__(self):
+                        return hash(self.value)
+
                 self.status = StatusValue(self.status)
 
 

@@ -2,8 +2,8 @@
 
 from nicegui import ui
 
+from shandy.auth import require_auth
 from shandy.providers import get_provider
-from shandy.webapp_components.utils.auth import require_auth
 
 
 @ui.page("/billing")

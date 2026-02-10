@@ -7,7 +7,7 @@ from pathlib import Path
 
 from nicegui import ui
 
-from shandy.webapp_components.utils.auth import require_auth
+from shandy.auth import get_current_user_id, require_auth
 from shandy.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
@@ -55,6 +55,9 @@ def new_job_page():
 
         # Create job
         try:
+            # Get current user ID
+            user_id = get_current_user_id()
+
             # Determine investigation mode
             mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
 
@@ -66,6 +69,7 @@ def new_job_page():
                 use_skills=True,
                 auto_start=True,
                 investigation_mode=mode,
+                owner_id=user_id,  # Associate job with current user
             )
 
             ui.notify(f"Job {job_id} created and started!", type="positive")

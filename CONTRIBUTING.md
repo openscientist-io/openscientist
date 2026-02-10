@@ -6,13 +6,33 @@
 - Docker
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
+## Environment Setup
+
+⚠️ **Required before running tests or the application**
+
+Create a `.env` file with database configuration:
+
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env and uncomment the DATABASE_URL line (around line 68)
+# For local development, use:
+# DATABASE_URL=postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy
+
+# Start the database with Docker
+make dev-start
+```
+
+See the README for provider-specific settings if you need to configure Claude API access.
+
 ## Local Development
 
 ```bash
 # Install all dependencies (including dev tools)
 uv sync
 
-# Run tests
+# Run tests (requires .env to be configured)
 uv run pytest
 
 # Run tests with coverage
@@ -59,10 +79,6 @@ make deploy DEPLOY_HOST=myserver     # custom host
 ```
 
 The remote server must have the repo cloned and a `.env` file configured (see `.env.example`).
-
-## Environment
-
-Copy `.env.example` to `.env` and configure your provider credentials. See the README for provider-specific settings.
 
 ## Code Quality
 

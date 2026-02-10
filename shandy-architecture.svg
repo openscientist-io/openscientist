@@ -1,0 +1,544 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1650" width="1400" height="1650" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="7" markerHeight="5" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="7" markerHeight="5" orient="auto-start-reverse">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#D97706"/>
+    </marker>
+    <linearGradient id="title-bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#334155"/>
+    </linearGradient>
+    <style>
+      .sec-num { font-size: 28px; font-weight: 800; opacity: 0.18; }
+      .sec-title { font-size: 14px; font-weight: 700; fill: #1E293B; letter-spacing: 0.3px; }
+      .card-title { font-size: 11.5px; font-weight: 700; fill: #1E293B; }
+      .card-sub { font-size: 9.5px; fill: #475569; }
+      .card-tech { font-size: 8.5px; fill: #94A3B8; font-style: italic; }
+      .pill { font-size: 8px; font-weight: 600; }
+      .red-label { font-size: 9px; fill: #DC2626; font-weight: 600; }
+      .legend-t { font-size: 10px; fill: #475569; }
+      .tbl { font-size: 9.5px; font-weight: 600; fill: #1E293B; }
+      .tbl-fk { font-size: 8px; fill: #94A3B8; }
+      .rls-t { font-size: 9.5px; fill: #475569; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="1650" fill="#F8FAFC" rx="0"/>
+
+  <!-- ============ TITLE BANNER ============ -->
+  <rect x="0" y="0" width="1400" height="56" fill="url(#title-bg)" rx="0"/>
+  <text x="700" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#fff" letter-spacing="1.5">SHANDY</text>
+  <text x="700" y="46" text-anchor="middle" font-size="10" fill="#94A3B8" letter-spacing="0.8">Scientific Hypothesis Agent for Novel Discovery — System Architecture</text>
+
+  <!-- ============ ABSTRACT ============ -->
+  <rect x="30" y="62" width="1340" height="46" rx="8" fill="#F1F5F9" stroke="#E2E8F0" stroke-width="1"/>
+  <text x="700" y="80" text-anchor="middle" font-size="9" fill="#475569">SHANDY is an autonomous scientific discovery platform that runs Claude Code CLI as a headless AI agent. It iteratively explores datasets,</text>
+  <text x="700" y="92" text-anchor="middle" font-size="9" fill="#475569">formulates hypotheses, tests them through statistical analysis and literature review, and produces research reports with full provenance.</text>
+  <text x="700" y="104" text-anchor="middle" font-size="9" fill="#475569">Two modes: fully autonomous discovery loops or collaborative coinvestigation with scientist feedback. Multi-tenant via PostgreSQL RLS.</text>
+
+  <!-- ============ 1 · ENTRY POINTS ============ -->
+  <g id="s1">
+    <rect x="30" y="118" width="1340" height="95" rx="10" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+    <text x="52" y="154" class="sec-num" fill="#3B82F6">1</text>
+    <text x="80" y="138" class="sec-title">Entry Points</text>
+
+    <g>
+      <rect x="80" y="148" width="280" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+      <rect x="80" y="148" width="4" height="50" rx="2" fill="#3B82F6"/>
+      <text x="96" y="168" class="card-title">Browser User</text>
+      <text x="96" y="183" class="card-sub">OAuth login  →  NiceGUI web pages</text>
+      <text x="96" y="194" class="card-tech">Primary entry path for scientists</text>
+    </g>
+    <g>
+      <rect x="390" y="148" width="280" height="50" rx="7" fill="#FEF2F2" stroke="#DC2626" stroke-width="1.2" stroke-dasharray="6 3"/>
+      <rect x="390" y="148" width="4" height="50" rx="2" fill="#DC2626"/>
+      <text x="406" y="168" class="card-title">Bot / API Client</text>
+      <text x="406" y="183" class="red-label">Not yet implemented — REST API stubs only</text>
+      <text x="406" y="194" class="card-tech">API key auth → /api/v1 endpoints</text>
+    </g>
+    <g>
+      <rect x="700" y="148" width="280" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+      <rect x="700" y="148" width="4" height="50" rx="2" fill="#3B82F6"/>
+      <text x="716" y="168" class="card-title">Shared Job Viewer</text>
+      <text x="716" y="183" class="card-sub">Public share links  ·  read-only access</text>
+      <text x="716" y="194" class="card-tech">/web/shares/&lt;token&gt;</text>
+    </g>
+    <g>
+      <rect x="1010" y="148" width="280" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+      <rect x="1010" y="148" width="4" height="50" rx="2" fill="#3B82F6"/>
+      <text x="1026" y="168" class="card-title">Admin Panel</text>
+      <text x="1026" y="183" class="card-sub">Orphaned jobs  ·  user management</text>
+      <text x="1026" y="194" class="card-tech">admin.py</text>
+    </g>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="213" x2="700" y2="231" stroke="#D97706" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
+
+  <!-- ============ 2 · AUTHENTICATION ============ -->
+  <g id="s2">
+    <rect x="30" y="231" width="1340" height="120" rx="10" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+    <text x="52" y="270" class="sec-num" fill="#D97706">2</text>
+    <text x="80" y="251" class="sec-title">Authentication &amp; Authorization</text>
+
+    <rect x="80" y="261" width="195" height="38" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
+    <text x="94" y="277" class="card-title">GitHub OAuth</text>
+    <text x="94" y="290" class="card-tech">authlib  ·  code flow</text>
+
+    <rect x="290" y="261" width="195" height="38" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="290" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
+    <text x="304" y="277" class="card-title">ORCID OAuth</text>
+    <text x="304" y="290" class="card-tech">authlib  ·  researcher ID</text>
+
+    <rect x="500" y="261" width="195" height="38" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="500" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
+    <text x="514" y="277" class="card-title">Session Management</text>
+    <text x="514" y="290" class="card-tech">DB-backed sessions</text>
+
+    <rect x="710" y="261" width="195" height="38" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="710" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
+    <text x="724" y="277" class="card-title">API Key Auth</text>
+    <text x="724" y="290" class="card-tech">Bearer token  ·  hashed in DB</text>
+
+    <rect x="920" y="261" width="195" height="38" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="920" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
+    <text x="934" y="277" class="card-title">Row-Level Security</text>
+    <text x="934" y="290" class="card-tech">set_current_user()  ·  per-request</text>
+
+    <rect x="1130" y="261" width="195" height="38" rx="6" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1130" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
+    <text x="1144" y="277" class="card-title">Mock Auth</text>
+    <text x="1144" y="290" class="card-tech">Dev only  ·  ENABLE_MOCK_AUTH</text>
+
+    <!-- token warning -->
+    <rect x="80" y="308" width="1245" height="26" rx="5" fill="#FEF2F2" stroke="#DC2626" stroke-width="1" stroke-dasharray="6 3"/>
+    <text x="700" y="325" text-anchor="middle" class="red-label">OAuth tokens stored as plaintext in DB — needs encryption at rest</text>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="351" x2="700" y2="369" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ============ 3 · WEB FRONTEND ============ -->
+  <g id="s3">
+    <rect x="30" y="369" width="1340" height="150" rx="10" fill="#ECFDF5" stroke="#A7F3D0" stroke-width="1"/>
+    <text x="52" y="408" class="sec-num" fill="#059669">3</text>
+    <text x="80" y="389" class="sec-title">Web Frontend</text>
+
+    <!-- Left: NiceGUI pages -->
+    <text x="80" y="406" class="card-tech" style="font-style:normal; font-weight:600; fill:#059669;">NICEGUI PAGES</text>
+
+    <rect x="80" y="413" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="147" y="433" text-anchor="middle" class="card-title">Login</text>
+    <rect x="225" y="413" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="292" y="433" text-anchor="middle" class="card-title">New Job</text>
+    <rect x="370" y="413" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="437" y="433" text-anchor="middle" class="card-title">Jobs List</text>
+    <rect x="515" y="413" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="582" y="433" text-anchor="middle" class="card-title">Job Detail</text>
+
+    <rect x="80" y="451" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="147" y="471" text-anchor="middle" class="card-title">Billing</text>
+    <rect x="225" y="451" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="292" y="471" text-anchor="middle" class="card-title">Admin</text>
+    <rect x="370" y="451" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="437" y="471" text-anchor="middle" class="card-title">Docs</text>
+    <rect x="515" y="451" width="135" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="582" y="471" text-anchor="middle" class="card-title">Mock Login</text>
+
+    <text x="355" y="499" text-anchor="middle" class="card-tech">NiceGUI (WebSocket push)  ·  FastAPI (ASGI)</text>
+
+    <!-- Vertical divider -->
+    <line x1="675" y1="389" x2="675" y2="506" stroke="#A7F3D0" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <!-- Right: REST API -->
+    <text x="700" y="406" class="card-tech" style="font-style:normal; font-weight:600; fill:#059669;">REST API  (/api/v1)</text>
+
+    <rect x="700" y="413" width="185" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="792" y="429" text-anchor="middle" class="card-title">/jobs</text>
+    <text x="792" y="440" text-anchor="middle" class="card-tech">CRUD · status · report · artifacts</text>
+
+    <rect x="895" y="413" width="185" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="987" y="429" text-anchor="middle" class="card-title">/keys</text>
+    <text x="987" y="440" text-anchor="middle" class="card-tech">API key management</text>
+
+    <rect x="1090" y="413" width="185" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="1182" y="429" text-anchor="middle" class="card-title">/shares</text>
+    <text x="1182" y="440" text-anchor="middle" class="card-tech">Job sharing · permission levels</text>
+
+    <rect x="700" y="451" width="282" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="841" y="471" text-anchor="middle" class="card-title">UI Components</text>
+    <text x="841" y="481" text-anchor="middle" class="card-tech" style="font-size:7.5px">ui_components.py  ·  reusable widgets</text>
+
+    <rect x="992" y="451" width="283" height="32" rx="5" fill="#fff" stroke="#D1FAE5" stroke-width="1"/>
+    <text x="1133" y="471" text-anchor="middle" class="card-title">Share Routes</text>
+    <text x="1133" y="481" text-anchor="middle" class="card-tech" style="font-size:7.5px">share_routes.py  ·  /web/shares/</text>
+
+    <text x="990" y="499" text-anchor="middle" class="card-tech">FastAPI  ·  slowapi rate limiting  ·  Pydantic</text>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="519" x2="700" y2="537" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ============ 4 · APPLICATION CORE ============ -->
+  <g id="s4">
+    <rect x="30" y="537" width="1340" height="165" rx="10" fill="#EEF2FF" stroke="#C7D2FE" stroke-width="1"/>
+    <text x="52" y="576" class="sec-num" fill="#6366F1">4</text>
+    <text x="80" y="557" class="sec-title">Application Core</text>
+
+    <!-- Row 1 -->
+    <rect x="80" y="568" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="568" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="96" y="585" class="card-title">Job Manager</text>
+    <text x="96" y="598" class="card-sub">Lifecycle · queue · threading · max concurrent</text>
+    <text x="96" y="610" class="card-tech">JobStatus enum  ·  JobInfo dataclass</text>
+
+    <rect x="400" y="568" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="400" y="568" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="416" y="585" class="card-title">Orchestrator</text>
+    <text x="416" y="598" class="card-sub">Discovery loop · CLI subprocess · session mgmt</text>
+    <text x="416" y="610" class="card-tech">reset_interval=5  ·  stream-json parsing</text>
+
+    <rect x="720" y="568" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="720" y="568" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="736" y="585" class="card-title">Knowledge State</text>
+    <text x="736" y="598" class="card-sub">JSON + DB dual sync · file-locked (fcntl)</text>
+    <text x="736" y="610" class="card-tech">Hypotheses · findings · literature · analysis_log</text>
+
+    <rect x="1040" y="568" width="285" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1040" y="568" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="1056" y="585" class="card-title">Cost Tracker</text>
+    <text x="1056" y="598" class="card-sub">Budget controls  ·  provider spend APIs</text>
+    <text x="1056" y="610" class="card-tech">Per-job  ·  24h rolling  ·  total cap</text>
+
+    <!-- Row 2 -->
+    <rect x="80" y="628" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="628" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="96" y="645" class="card-title">Job Chat</text>
+    <text x="96" y="658" class="card-sub">LLM Q&amp;A about job results and findings</text>
+    <text x="96" y="670" class="card-tech">job_chat.py  ·  Anthropic API  ·  context loading</text>
+
+    <rect x="400" y="628" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="400" y="628" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="416" y="645" class="card-title">Report Generator</text>
+    <text x="416" y="658" class="card-sub">Markdown → PDF final report</text>
+    <text x="416" y="670" class="card-tech">pdf_generator.py  ·  fpdf2  ·  DejaVu fonts</text>
+
+    <rect x="720" y="628" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="720" y="628" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="736" y="645" class="card-title">Artifact Packager</text>
+    <text x="736" y="658" class="card-sub">ZIP export of reports · plots · provenance</text>
+    <text x="736" y="670" class="card-tech">artifact_packager.py</text>
+
+    <rect x="1040" y="628" width="285" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1040" y="628" width="4" height="50" rx="2" fill="#6366F1"/>
+    <text x="1056" y="645" class="card-title">File Loader</text>
+    <text x="1056" y="658" class="card-sub">CSV · Excel · HDF5 · netCDF · AnnData</text>
+    <text x="1056" y="670" class="card-tech">file_loader.py  ·  document_reader.py</text>
+
+    <text x="700" y="694" text-anchor="middle" class="card-tech">job_manager.py · orchestrator.py · knowledge_state.py · cost_tracker.py · job_chat.py · pdf_generator.py</text>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="702" x2="700" y2="720" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ============ 5 · AGENT EXECUTION ============ -->
+  <g id="s5">
+    <rect x="30" y="720" width="1340" height="148" rx="10" fill="#FEF2F2" stroke="#FECACA" stroke-width="1"/>
+    <text x="52" y="759" class="sec-num" fill="#DC2626">5</text>
+    <text x="80" y="740" class="sec-title">Agent Execution</text>
+
+    <rect x="80" y="751" width="300" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="751" width="4" height="56" rx="2" fill="#DC2626"/>
+    <text x="96" y="768" class="card-title">Claude Code CLI</text>
+    <text x="96" y="781" class="card-sub">Subprocess: --output-format stream-json</text>
+    <text x="96" y="794" class="card-sub">Headless mode · session resume · 5-iter batches</text>
+
+    <rect x="400" y="751" width="300" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="400" y="751" width="4" height="56" rx="2" fill="#DC2626"/>
+    <text x="416" y="768" class="card-title">MCP Server  (shandy-tools)</text>
+    <text x="416" y="781" class="card-sub">execute_code · search_pubmed · hypotheses</text>
+    <text x="416" y="794" class="card-sub">update_knowledge_state · save_summary · read_doc</text>
+
+    <rect x="720" y="751" width="300" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="720" y="751" width="4" height="56" rx="2" fill="#DC2626"/>
+    <text x="736" y="768" class="card-title">Skills System</text>
+    <text x="736" y="781" class="card-sub">Workflow: hypothesis · prioritization · stopping</text>
+    <text x="736" y="794" class="card-sub">Domain: metabolomics · genomics · structural bio</text>
+
+    <rect x="1040" y="751" width="285" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1040" y="751" width="4" height="56" rx="2" fill="#DC2626"/>
+    <text x="1056" y="768" class="card-title">Phenix / Structural Tools</text>
+    <text x="1056" y="781" class="card-sub">compare_structures · parse_alphafold</text>
+    <text x="1056" y="794" class="card-sub">run_phenix_tool · clashscore · cablam</text>
+
+    <!-- Two red warning strips -->
+    <rect x="80" y="815" width="608" height="26" rx="5" fill="#FEF2F2" stroke="#DC2626" stroke-width="1.2" stroke-dasharray="6 3"/>
+    <text x="384" y="832" text-anchor="middle" class="red-label">Agent runs unsandboxed — CLI subprocess has full host container access</text>
+
+    <rect x="708" y="815" width="617" height="26" rx="5" fill="#FEF2F2" stroke="#DC2626" stroke-width="1.2" stroke-dasharray="6 3"/>
+    <text x="1016" y="832" text-anchor="middle" class="red-label">No per-user code execution sandbox — import whitelist + 60s timeout only</text>
+
+    <text x="700" y="856" text-anchor="middle" class="card-tech">FastMCP · provenance/artifact storage · plot auto-save · lazy data loading</text>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="868" x2="700" y2="886" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ============ 6 · DATA LAYER ============ -->
+  <g id="s6">
+    <rect x="30" y="886" width="1340" height="335" rx="10" fill="#F0FDFA" stroke="#99F6E4" stroke-width="1"/>
+    <text x="52" y="925" class="sec-num" fill="#0D9488">6</text>
+    <text x="80" y="906" class="sec-title">Data Layer</text>
+
+    <!-- LEFT: Database Schema -->
+    <text x="80" y="923" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">POSTGRESQL 18  ·  19 TABLES  ·  ROW-LEVEL SECURITY</text>
+
+    <!-- users (root) -->
+    <rect x="270" y="935" width="100" height="36" rx="5" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.3"/>
+    <text x="320" y="951" text-anchor="middle" class="tbl">users</text>
+    <text x="320" y="963" text-anchor="middle" class="tbl-fk">UUID v7 · email</text>
+
+    <!-- Lines from users to auth tables -->
+    <line x1="270" y1="953" x2="115" y2="983" stroke="#CBD5E1" stroke-width="1"/>
+    <line x1="300" y1="971" x2="240" y2="983" stroke="#CBD5E1" stroke-width="1"/>
+    <line x1="340" y1="971" x2="385" y2="983" stroke="#CBD5E1" stroke-width="1"/>
+
+    <!-- Auth tables row -->
+    <rect x="60" y="983" width="110" height="24" rx="4" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+    <text x="115" y="999" text-anchor="middle" class="tbl" style="font-size:8.5px">oauth_accounts</text>
+    <rect x="185" y="983" width="110" height="24" rx="4" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+    <text x="240" y="999" text-anchor="middle" class="tbl" style="font-size:8.5px">sessions</text>
+    <rect x="310" y="983" width="110" height="24" rx="4" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+    <text x="365" y="999" text-anchor="middle" class="tbl" style="font-size:8.5px">api_keys</text>
+
+    <!-- Line from users to jobs -->
+    <line x1="370" y1="953" x2="480" y2="953" stroke="#CBD5E1" stroke-width="1.3"/>
+    <text x="425" y="948" text-anchor="middle" class="tbl-fk">owns</text>
+
+    <!-- jobs -->
+    <rect x="480" y="935" width="100" height="36" rx="5" fill="#EFF6FF" stroke="#3B82F6" stroke-width="1.3"/>
+    <text x="530" y="951" text-anchor="middle" class="tbl">jobs</text>
+    <text x="530" y="963" text-anchor="middle" class="tbl-fk">UUID v7 · owner_id FK</text>
+
+    <!-- job_shares -->
+    <rect x="440" y="983" width="100" height="24" rx="4" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
+    <text x="490" y="999" text-anchor="middle" class="tbl" style="font-size:8.5px">job_shares</text>
+    <line x1="490" y1="983" x2="530" y2="971" stroke="#CBD5E1" stroke-width="1"/>
+
+    <!-- Lines from jobs down to knowledge tables -->
+    <line x1="530" y1="971" x2="530" y2="1021" stroke="#CBD5E1" stroke-width="1"/>
+
+    <!-- RLS boundary -->
+    <rect x="55" y="1021" width="600" height="138" rx="8" fill="none" stroke="#0D9488" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <rect x="55" y="1016" width="155" height="14" rx="3" fill="#F0FDFA"/>
+    <text x="60" y="1026" class="card-tech" style="font-weight:700; fill:#0D9488; font-style:normal; font-size:8px;">RLS ENFORCED BOUNDARY</text>
+
+    <!-- Knowledge tables (row 1) -->
+    <rect x="70" y="1036" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="122" y="1052" text-anchor="middle" class="tbl" style="font-size:8.5px">hypotheses</text>
+    <rect x="185" y="1036" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="237" y="1052" text-anchor="middle" class="tbl" style="font-size:8.5px">findings</text>
+    <rect x="300" y="1036" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="352" y="1052" text-anchor="middle" class="tbl" style="font-size:8.5px">literature</text>
+    <rect x="415" y="1036" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="467" y="1052" text-anchor="middle" class="tbl" style="font-size:8.5px">analysis_log</text>
+    <rect x="530" y="1036" width="110" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="585" y="1052" text-anchor="middle" class="tbl" style="font-size:8.5px">cost_records</text>
+
+    <!-- Knowledge tables (row 2) -->
+    <rect x="70" y="1069" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="122" y="1085" text-anchor="middle" class="tbl" style="font-size:8.5px">iter_summaries</text>
+    <rect x="185" y="1069" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="237" y="1085" text-anchor="middle" class="tbl" style="font-size:8.5px">feedback_hist</text>
+    <rect x="300" y="1069" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="352" y="1085" text-anchor="middle" class="tbl" style="font-size:8.5px">plots</text>
+    <rect x="415" y="1069" width="105" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="467" y="1085" text-anchor="middle" class="tbl" style="font-size:8.5px">data_files</text>
+    <rect x="530" y="1069" width="110" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="585" y="1085" text-anchor="middle" class="tbl" style="font-size:8.5px">chat_messages</text>
+
+    <!-- Junction tables -->
+    <text x="80" y="1114" class="card-tech" style="font-weight:600; fill:#64748B; font-style:normal; font-size:8px;">JUNCTION TABLES</text>
+    <rect x="80" y="1119" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
+    <text x="142" y="1134" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">finding_hypotheses</text>
+    <rect x="215" y="1119" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
+    <text x="277" y="1134" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">finding_literature</text>
+    <rect x="350" y="1119" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
+    <text x="412" y="1134" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">hypothesis_spawns</text>
+
+    <text x="350" y="1174" text-anchor="middle" class="card-tech">SQLAlchemy ORM · asyncpg · Alembic migrations · UUID v7 PKs · CASCADE deletes</text>
+
+    <!-- Vertical divider -->
+    <line x1="680" y1="906" x2="680" y2="1212" stroke="#99F6E4" stroke-width="1" stroke-dasharray="3 3"/>
+
+    <!-- RIGHT TOP: RLS Model -->
+    <text x="710" y="923" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">ROW-LEVEL SECURITY MODEL</text>
+
+    <rect x="710" y="935" width="615" height="115" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+
+    <text x="730" y="954" class="card-title">Three-Tier Access Control</text>
+
+    <!-- Tier 1: Owner -->
+    <rect x="730" y="961" width="150" height="22" rx="4" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <text x="805" y="976" text-anchor="middle" class="tbl" style="font-size:8.5px; fill:#166534">Owner (full CRUD)</text>
+
+    <text x="893" y="976" text-anchor="middle" class="tbl-fk">→</text>
+
+    <!-- Tier 2: Shared Edit -->
+    <rect x="905" y="961" width="150" height="22" rx="4" fill="#FEF9C3" stroke="#FDE047" stroke-width="1"/>
+    <text x="980" y="976" text-anchor="middle" class="tbl" style="font-size:8.5px; fill:#854D0E">Shared Edit (CRUD)</text>
+
+    <text x="1068" y="976" text-anchor="middle" class="tbl-fk">→</text>
+
+    <!-- Tier 3: Shared View -->
+    <rect x="1080" y="961" width="150" height="22" rx="4" fill="#EFF6FF" stroke="#93C5FD" stroke-width="1"/>
+    <text x="1155" y="976" text-anchor="middle" class="tbl" style="font-size:8.5px; fill:#1E40AF">Shared View (read)</text>
+
+    <!-- Mechanism -->
+    <text x="730" y="1001" class="rls-t" style="font-weight:600">Mechanism</text>
+    <text x="730" y="1014" class="rls-t">set_current_user(session, user_id) → sets app.current_user_id</text>
+    <text x="730" y="1027" class="rls-t">PostgreSQL evaluates policies per-row using session variable</text>
+    <text x="730" y="1040" class="rls-t">bypass_rls() context manager for admin / migration operations</text>
+
+    <!-- RIGHT BOTTOM: File System -->
+    <text x="710" y="1072" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">FILE SYSTEM</text>
+
+    <rect x="710" y="1082" width="615" height="100" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+
+    <text x="730" y="1100" class="card-title">jobs/&lt;job_id&gt;/ Directory</text>
+    <text x="730" y="1115" class="card-sub">config.json — job configuration &amp; parameters</text>
+    <text x="730" y="1128" class="card-sub">knowledge_state.json — agent memory (file-locked via fcntl)</text>
+    <text x="730" y="1141" class="card-sub">data/ — uploaded data files (CSV, Excel, HDF5, AnnData)</text>
+    <text x="730" y="1154" class="card-sub">provenance/ — transcripts, plots, artifacts</text>
+    <text x="730" y="1167" class="card-sub">report.md · report.pdf — final output · artifacts.zip</text>
+
+    <!-- Dual sync callout -->
+    <rect x="715" y="1190" width="300" height="22" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
+    <text x="865" y="1205" text-anchor="middle" class="card-tech" style="font-weight:600; fill:#0D9488; font-style:normal">DB ⇄ Filesystem dual sync via KnowledgeState</text>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="1221" x2="700" y2="1239" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ============ 7 · EXTERNAL SERVICES ============ -->
+  <g id="s7">
+    <rect x="30" y="1239" width="1340" height="110" rx="10" fill="#FAF5FF" stroke="#E9D5FF" stroke-width="1"/>
+    <text x="52" y="1278" class="sec-num" fill="#7C3AED">7</text>
+    <text x="80" y="1259" class="sec-title">External Services &amp; LLM Providers</text>
+
+    <rect x="80" y="1272" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="1272" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="96" y="1289" class="card-title">CBORG (LBNL)</text>
+    <text x="96" y="1302" class="card-sub" style="fill:#059669">Working — primary provider</text>
+    <text x="96" y="1312" class="card-tech">Cost tracking via /key/info API</text>
+
+    <rect x="290" y="1272" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="290" y="1272" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="306" y="1289" class="card-title">Anthropic Direct</text>
+    <text x="306" y="1302" class="card-sub" style="fill:#059669">Working</text>
+    <text x="306" y="1312" class="card-tech">ANTHROPIC_API_KEY</text>
+
+    <rect x="500" y="1272" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="500" y="1272" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="516" y="1289" class="card-title">Google Vertex AI</text>
+    <text x="516" y="1302" class="card-sub" style="fill:#059669">Working</text>
+    <text x="516" y="1312" class="card-tech">BigQuery billing (1-6h lag)</text>
+
+    <!-- RED: AWS Bedrock -->
+    <rect x="710" y="1272" width="195" height="44" rx="7" fill="#FEF2F2" stroke="#DC2626" stroke-width="1.2" stroke-dasharray="6 3"/>
+    <rect x="710" y="1272" width="4" height="44" rx="2" fill="#DC2626"/>
+    <text x="726" y="1289" class="card-title">AWS Bedrock</text>
+    <text x="726" y="1302" class="red-label">Stub only (NotImplementedError)</text>
+
+    <!-- RED: OpenAI Codex -->
+    <rect x="920" y="1272" width="195" height="44" rx="7" fill="#FEF2F2" stroke="#DC2626" stroke-width="1.2" stroke-dasharray="6 3"/>
+    <rect x="920" y="1272" width="4" height="44" rx="2" fill="#DC2626"/>
+    <text x="936" y="1289" class="card-title">OpenAI Codex</text>
+    <text x="936" y="1302" class="red-label">Future work — not in codebase</text>
+
+    <!-- PubMed -->
+    <rect x="1130" y="1272" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1130" y="1272" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="1146" y="1289" class="card-title">PubMed / NCBI</text>
+    <text x="1146" y="1302" class="card-sub" style="fill:#059669">Working — literature search</text>
+    <text x="1146" y="1312" class="card-tech">via search_pubmed MCP tool</text>
+
+    <text x="700" y="1339" text-anchor="middle" class="card-tech">Provider selection: CLAUDE_PROVIDER env var (cborg | anthropic | vertex | bedrock)</text>
+  </g>
+
+  <!-- connector -->
+  <line x1="700" y1="1349" x2="700" y2="1367" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+
+  <!-- ============ 8 · INFRASTRUCTURE ============ -->
+  <g id="s8">
+    <rect x="30" y="1367" width="1340" height="100" rx="10" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1"/>
+    <text x="52" y="1406" class="sec-num" fill="#6B7280">8</text>
+    <text x="80" y="1387" class="sec-title">Infrastructure</text>
+
+    <rect x="80" y="1400" width="300" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="1400" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="96" y="1417" class="card-title">Docker + Docker Compose</text>
+    <text x="96" y="1430" class="card-sub">Dev and production configs · auto-restart</text>
+
+    <rect x="400" y="1400" width="300" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="400" y="1400" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="416" y="1417" class="card-title">PostgreSQL 18 Container</text>
+    <text x="416" y="1430" class="card-sub">postgres:18 · health checks · init scripts</text>
+
+    <rect x="720" y="1400" width="300" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="720" y="1400" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="736" y="1417" class="card-title">Shandy App Container</text>
+    <text x="736" y="1430" class="card-sub">Python 3.10+ · NiceGUI · port 8080</text>
+
+    <rect x="1040" y="1400" width="285" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1040" y="1400" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="1056" y="1417" class="card-title">Environment &amp; Secrets</text>
+    <text x="1056" y="1430" class="card-sub">.env · provider keys · DB credentials</text>
+
+    <text x="700" y="1458" text-anchor="middle" class="card-tech">docker-compose.yml · docker-compose.dev.yml · Makefile</text>
+  </g>
+
+  <!-- ============ LEGEND ============ -->
+  <g id="legend">
+    <rect x="30" y="1482" width="1340" height="160" rx="10" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+
+    <text x="80" y="1509" class="sec-title">Legend</text>
+
+    <!-- Line types -->
+    <text x="80" y="1530" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">CONNECTORS</text>
+    <line x1="80" y1="1542" x2="130" y2="1542" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="140" y="1546" class="legend-t">Data flow</text>
+    <line x1="80" y1="1562" x2="130" y2="1562" stroke="#D97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
+    <text x="140" y="1566" class="legend-t">Auth flow</text>
+
+    <!-- Box types -->
+    <text x="300" y="1530" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">BOX TYPES</text>
+    <rect x="300" y="1536" width="60" height="16" rx="3" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="300" y="1536" width="3" height="16" rx="1.5" fill="#6366F1"/>
+    <text x="370" y="1548" class="legend-t">Implemented</text>
+    <rect x="300" y="1558" width="60" height="16" rx="3" fill="#FEF2F2" stroke="#DC2626" stroke-width="1" stroke-dasharray="5 2"/>
+    <rect x="300" y="1558" width="3" height="16" rx="1.5" fill="#DC2626"/>
+    <text x="370" y="1570" class="legend-t">Not implemented / security issue</text>
+
+    <!-- Incomplete areas -->
+    <text x="560" y="1530" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">INCOMPLETE / PROBLEMATIC  (RED DASHED)</text>
+
+    <text x="570" y="1547" class="legend-t">1.  Bot/API Client — authenticated bot endpoints not yet implemented</text>
+    <text x="570" y="1563" class="legend-t">2.  OAuth Token Storage — tokens stored plaintext in DB, needs encryption</text>
+    <text x="570" y="1579" class="legend-t">3.  Agent Execution Sandbox — CLI subprocess has full host container access</text>
+    <text x="570" y="1595" class="legend-t">4.  Per-User Code Sandbox — no per-user isolation, import whitelist + timeout only</text>
+    <text x="570" y="1611" class="legend-t">5.  AWS Bedrock — provider is a stub (NotImplementedError)</text>
+    <text x="570" y="1627" class="legend-t">6.  OpenAI Codex — not in codebase at all, future work</text>
+
+    <!-- Tech stack -->
+    <text x="80" y="1592" class="card-tech" style="font-weight:600; fill:#64748B;">TECH STACK</text>
+    <text x="80" y="1608" class="card-tech">Python 3.10+ · NiceGUI · FastAPI</text>
+    <text x="80" y="1620" class="card-tech">SQLAlchemy · asyncpg · PostgreSQL 18</text>
+    <text x="80" y="1632" class="card-tech">Claude Code CLI · FastMCP · Docker</text>
+  </g>
+</svg>
