@@ -64,6 +64,7 @@ def new_job_page():
                 data_files=data_files,
                 max_iterations=int(max_iterations.value),
                 use_skills=True,
+                use_hypotheses=use_hypotheses.value,
                 auto_start=True,
                 investigation_mode=mode,
             )
@@ -127,16 +128,23 @@ def new_job_page():
             label="Max Iterations", value=10, min=2, max=100, step=1
         ).classes("w-full")
 
-        # Advanced options (collapsed by default)
-        with ui.expansion("Advanced Options (Experimental)", icon="science").classes("w-full mt-4"):
-            with ui.card().classes("w-full"):
-                coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
-                ui.label(
-                    "Requires your active participation. After each iteration, I will pause to receive your feedback."
-                ).classes("text-sm text-gray-700 mt-1")
-                ui.label(
-                    "Requires you to stay near your computer. Auto-continues after 15 min if you don't respond."
-                ).classes("text-xs text-orange-700")
+        # Options
+        ui.separator().classes("my-4")
+
+        use_hypotheses = ui.switch("Hypothesis Generation", value=False)
+        ui.label(
+            "Explicitly propose and test hypotheses before recording findings. Creates a structured audit trail."
+        ).classes("text-sm text-gray-700 mt-1")
+
+        ui.separator().classes("my-4")
+
+        coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
+        ui.label(
+            "Requires your active participation. After each iteration, I will pause to receive your feedback."
+        ).classes("text-sm text-gray-700 mt-1")
+        ui.label(
+            "Requires you to stay near your computer. Auto-continues after 15 min if you don't respond."
+        ).classes("text-xs text-orange-700")
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")

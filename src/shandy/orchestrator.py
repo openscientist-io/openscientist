@@ -258,6 +258,7 @@ def create_job(
     data_files: list,
     max_iterations: int,
     use_skills: bool = True,
+    use_hypotheses: bool = False,
     jobs_dir: Path = Path("jobs"),
     investigation_mode: str = "autonomous",
 ) -> Path:
@@ -270,6 +271,7 @@ def create_job(
         data_files: List of uploaded data file paths
         max_iterations: Maximum number of iterations
         use_skills: Whether to use skills
+        use_hypotheses: Whether to enable hypothesis tracking tools
         jobs_dir: Base directory for jobs
         investigation_mode: "autonomous" (default) or "coinvestigate"
 
@@ -335,6 +337,7 @@ def create_job(
         "data_files": [str(p) for p in data_paths],
         "max_iterations": max_iterations,
         "use_skills": use_skills,
+        "use_hypotheses": use_hypotheses,
         "investigation_mode": investigation_mode,
         "created_at": datetime.now().isoformat(),
         "status": "created",
@@ -366,9 +369,11 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     job_id = config["job_id"]
     max_iterations = config["max_iterations"]
     investigation_mode = config.get("investigation_mode", "autonomous")
+    use_hypotheses = config.get("use_hypotheses", False)
     data_file = Path(config["data_files"][0]) if config["data_files"] else None
 
     logger.info("Investigation mode: %s", investigation_mode)
+    logger.info("Hypothesis tracking: %s", "enabled" if use_hypotheses else "disabled")
 
     # Ensure data_file is absolute (if present)
     if data_file and not data_file.is_absolute():
@@ -457,6 +462,27 @@ Start your investigation by using these tools to analyze the data.
 
         # Iteration 1: Start session
         # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
+        # Build allowed tools list
+        allowed_tools = [
+            "Skill",  # Enable skill invocation for domain-specific workflows
+            "mcp__shandy-tools__execute_code",
+            "mcp__shandy-tools__search_pubmed",
+            "mcp__shandy-tools__update_knowledge_state",
+            "mcp__shandy-tools__save_iteration_summary",
+            "mcp__shandy-tools__read_document",
+        ]
+        if use_hypotheses:
+            allowed_tools.extend([
+                "mcp__shandy-tools__add_hypothesis",
+                "mcp__shandy-tools__update_hypothesis",
+            ])
+        allowed_tools.extend([
+            "mcp__shandy-tools__run_phenix_tool",
+            "mcp__shandy-tools__compare_structures",
+            "mcp__shandy-tools__parse_alphafold_confidence",
+        ])
+
+        # Build command with allowed tools
         cmd = [
             claude_cli,
             "-p",
@@ -465,29 +491,9 @@ Start your investigation by using these tools to analyze the data.
             "stream-json",
             "--mcp-config",
             str(mcp_config_path.absolute()),
-            "--allowedTools",
-            "Skill",  # Enable skill invocation for domain-specific workflows
-            "--allowedTools",
-            "mcp__shandy-tools__execute_code",
-            "--allowedTools",
-            "mcp__shandy-tools__search_pubmed",
-            "--allowedTools",
-            "mcp__shandy-tools__update_knowledge_state",
-            "--allowedTools",
-            "mcp__shandy-tools__save_iteration_summary",
-            "--allowedTools",
-            "mcp__shandy-tools__read_document",
-            "--allowedTools",
-            "mcp__shandy-tools__add_hypothesis",
-            "--allowedTools",
-            "mcp__shandy-tools__update_hypothesis",
-            "--allowedTools",
-            "mcp__shandy-tools__run_phenix_tool",
-            "--allowedTools",
-            "mcp__shandy-tools__compare_structures",
-            "--allowedTools",
-            "mcp__shandy-tools__parse_alphafold_confidence",
         ]
+        for tool in allowed_tools:
+            cmd.extend(["--allowedTools", tool])
 
         logger.info("Iteration 1/%d: Starting session", max_iterations)
         logger.info("Running command: %s", " ".join(cmd))
@@ -629,29 +635,9 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     "stream-json",
                     "--mcp-config",
                     str(mcp_config_path.absolute()),
-                    "--allowedTools",
-                    "Skill",  # Enable skill invocation for domain-specific workflows
-                    "--allowedTools",
-                    "mcp__shandy-tools__execute_code",
-                    "--allowedTools",
-                    "mcp__shandy-tools__search_pubmed",
-                    "--allowedTools",
-                    "mcp__shandy-tools__update_knowledge_state",
-                    "--allowedTools",
-                    "mcp__shandy-tools__save_iteration_summary",
-                    "--allowedTools",
-                    "mcp__shandy-tools__read_document",
-                    "--allowedTools",
-                    "mcp__shandy-tools__add_hypothesis",
-                    "--allowedTools",
-                    "mcp__shandy-tools__update_hypothesis",
-                    "--allowedTools",
-                    "mcp__shandy-tools__run_phenix_tool",
-                    "--allowedTools",
-                    "mcp__shandy-tools__compare_structures",
-                    "--allowedTools",
-                    "mcp__shandy-tools__parse_alphafold_confidence",
                 ]
+                for tool in allowed_tools:
+                    cmd.extend(["--allowedTools", tool])
             else:
                 logger.info(
                     "Iteration %d/%d: Resuming session %s",
@@ -670,29 +656,9 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     "stream-json",
                     "--mcp-config",
                     str(mcp_config_path.absolute()),
-                    "--allowedTools",
-                    "Skill",  # Enable skill invocation for domain-specific workflows
-                    "--allowedTools",
-                    "mcp__shandy-tools__execute_code",
-                    "--allowedTools",
-                    "mcp__shandy-tools__search_pubmed",
-                    "--allowedTools",
-                    "mcp__shandy-tools__update_knowledge_state",
-                    "--allowedTools",
-                    "mcp__shandy-tools__save_iteration_summary",
-                    "--allowedTools",
-                    "mcp__shandy-tools__read_document",
-                    "--allowedTools",
-                    "mcp__shandy-tools__add_hypothesis",
-                    "--allowedTools",
-                    "mcp__shandy-tools__update_hypothesis",
-                    "--allowedTools",
-                    "mcp__shandy-tools__run_phenix_tool",
-                    "--allowedTools",
-                    "mcp__shandy-tools__compare_structures",
-                    "--allowedTools",
-                    "mcp__shandy-tools__parse_alphafold_confidence",
                 ]
+                for tool in allowed_tools:
+                    cmd.extend(["--allowedTools", tool])
 
             logger.info("Prompt length: %d characters", len(iteration_prompt))
             result = subprocess.run(

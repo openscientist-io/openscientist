@@ -49,6 +49,7 @@ class JobInfo:
     findings_count: int = 0
     error: Optional[str] = None
     use_skills: bool = True
+    use_hypotheses: bool = False
     investigation_mode: str = "autonomous"  # "autonomous" or "coinvestigate"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -137,6 +138,7 @@ class JobManager:
         data_files: List[Path],
         max_iterations: int = 10,
         use_skills: bool = True,
+        use_hypotheses: bool = False,
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
     ) -> JobInfo:
@@ -149,6 +151,7 @@ class JobManager:
             data_files: List of data file paths (can be empty for literature-only jobs)
             max_iterations: Maximum iterations
             use_skills: Whether to use skills
+            use_hypotheses: Whether to enable hypothesis tracking tools
             auto_start: Whether to start job immediately
             investigation_mode: "autonomous" (default) or "coinvestigate"
 
@@ -183,6 +186,7 @@ class JobManager:
             data_files=data_files,
             max_iterations=max_iterations,
             use_skills=use_skills,
+            use_hypotheses=use_hypotheses,
             jobs_dir=self.jobs_dir,
             investigation_mode=investigation_mode,
         )
@@ -555,6 +559,7 @@ class JobManager:
                 findings_count=findings_count,
                 error=config.get("error"),
                 use_skills=config.get("use_skills", True),
+                use_hypotheses=config.get("use_hypotheses", False),
                 investigation_mode=config.get("investigation_mode", "autonomous"),
             )
 
