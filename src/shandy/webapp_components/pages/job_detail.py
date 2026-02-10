@@ -174,7 +174,11 @@ def job_detail_page(job_id: str):
                                 [e for e in entries if e["action"] == "update_knowledge_state"]
                             )
                             hypothesis_count = len(
-                                [e for e in entries if e["action"] in ("add_hypothesis", "update_hypothesis")]
+                                [
+                                    e
+                                    for e in entries
+                                    if e["action"] in ("add_hypothesis", "update_hypothesis")
+                                ]
                             )
 
                             # Determine color based on outcome
@@ -301,9 +305,9 @@ def job_detail_page(job_id: str):
                                                             ui.label(
                                                                 f"{status_icons.get(status, '📝')} {hyp.get('id', 'H?')}"
                                                             ).classes("font-bold")
-                                                            ui.badge(
-                                                                status, color="orange"
-                                                            ).props("outline")
+                                                            ui.badge(status, color="orange").props(
+                                                                "outline"
+                                                            )
                                                         ui.label(hyp.get("statement", "")).classes(
                                                             "text-sm text-gray-800"
                                                         )

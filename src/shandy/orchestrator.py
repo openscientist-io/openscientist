@@ -472,15 +472,19 @@ Start your investigation by using these tools to analyze the data.
             "mcp__shandy-tools__read_document",
         ]
         if use_hypotheses:
-            allowed_tools.extend([
-                "mcp__shandy-tools__add_hypothesis",
-                "mcp__shandy-tools__update_hypothesis",
-            ])
-        allowed_tools.extend([
-            "mcp__shandy-tools__run_phenix_tool",
-            "mcp__shandy-tools__compare_structures",
-            "mcp__shandy-tools__parse_alphafold_confidence",
-        ])
+            allowed_tools.extend(
+                [
+                    "mcp__shandy-tools__add_hypothesis",
+                    "mcp__shandy-tools__update_hypothesis",
+                ]
+            )
+        allowed_tools.extend(
+            [
+                "mcp__shandy-tools__run_phenix_tool",
+                "mcp__shandy-tools__compare_structures",
+                "mcp__shandy-tools__parse_alphafold_confidence",
+            ]
+        )
 
         # Build command with allowed tools
         cmd = [
