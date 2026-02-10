@@ -96,6 +96,11 @@ def job_detail_page(job_id: str):
                     ui.linear_progress(progress)
 
                 with ui.card().classes("flex-1"):
+                    ui.label("Hypotheses").classes("text-subtitle2")
+                    hyp_count = len(ks_data.get("hypotheses", [])) if ks_data else 0
+                    ui.label(str(hyp_count)).classes("text-h5 text-orange-600")
+
+                with ui.card().classes("flex-1"):
                     ui.label("Findings").classes("text-subtitle2")
                     ui.label(str(job_info.findings_count)).classes("text-h5 text-green-600")
 
@@ -168,6 +173,9 @@ def job_detail_page(job_id: str):
                             finding_count = len(
                                 [e for e in entries if e["action"] == "update_knowledge_state"]
                             )
+                            hypothesis_count = len(
+                                [e for e in entries if e["action"] in ("add_hypothesis", "update_hypothesis")]
+                            )
 
                             # Determine color based on outcome
                             border_class = "border-l-4 border-gray-300"
@@ -214,6 +222,11 @@ def job_detail_page(job_id: str):
                                                 f"{search_count} searches",
                                                 color="purple",
                                             ).props("outline")
+                                        if hypothesis_count:
+                                            ui.badge(
+                                                f"{hypothesis_count} hypotheses",
+                                                color="orange",
+                                            ).props("outline")
                                         if finding_count:
                                             ui.badge(
                                                 f"{finding_count} findings",
@@ -251,6 +264,61 @@ def job_detail_page(job_id: str):
                                                 ui.label(iter_summary_text).classes(
                                                     "text-sm text-gray-700"
                                                 )
+
+                                        # Show hypotheses tested
+                                        iteration_hypotheses = [
+                                            h
+                                            for h in iter_ks_data.get("hypotheses", [])
+                                            if h.get("iteration_proposed") == iter_num
+                                            or h.get("iteration_tested") == iter_num
+                                        ]
+                                        if iteration_hypotheses:
+                                            with ui.expansion(
+                                                f"Hypotheses ({len(iteration_hypotheses)})",
+                                                icon="science",
+                                            ).classes("w-full mt-2"):
+                                                for hyp in iteration_hypotheses:
+                                                    status = hyp.get("status", "pending")
+                                                    status_colors = {
+                                                        "pending": "bg-gray-50 border-gray-300",
+                                                        "testing": "bg-blue-50 border-blue-300",
+                                                        "supported": "bg-green-50 border-green-300",
+                                                        "rejected": "bg-red-50 border-red-300",
+                                                    }
+                                                    status_icons = {
+                                                        "pending": "⏳",
+                                                        "testing": "🔬",
+                                                        "supported": "✅",
+                                                        "rejected": "❌",
+                                                    }
+                                                    card_class = status_colors.get(
+                                                        status, "bg-gray-50 border-gray-300"
+                                                    )
+                                                    with ui.card().classes(
+                                                        f"w-full mb-2 {card_class} border-l-4"
+                                                    ):
+                                                        with ui.row().classes("items-center gap-2"):
+                                                            ui.label(
+                                                                f"{status_icons.get(status, '📝')} {hyp.get('id', 'H?')}"
+                                                            ).classes("font-bold")
+                                                            ui.badge(
+                                                                status, color="orange"
+                                                            ).props("outline")
+                                                        ui.label(hyp.get("statement", "")).classes(
+                                                            "text-sm text-gray-800"
+                                                        )
+                                                        if hyp.get("result_summary"):
+                                                            ui.label(
+                                                                f"Result: {hyp['result_summary']}"
+                                                            ).classes("text-sm text-gray-600 mt-1")
+                                                        if hyp.get("p_value"):
+                                                            ui.label(
+                                                                f"p-value: {hyp['p_value']}"
+                                                            ).classes("text-xs text-gray-500")
+                                                        if hyp.get("effect_size"):
+                                                            ui.label(
+                                                                f"Effect size: {hyp['effect_size']}"
+                                                            ).classes("text-xs text-gray-500")
 
                                         # Show findings recorded
                                         iteration_findings = [
