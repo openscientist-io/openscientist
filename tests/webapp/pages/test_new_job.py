@@ -60,8 +60,8 @@ class TestNewJobPage:
                     await user.should_see("Documentation")
 
     @pytest.mark.asyncio
-    async def test_new_job_advanced_options(self, mock_job_manager):
-        """Test that advanced options section exists."""
+    async def test_new_job_options(self, mock_job_manager):
+        """Test that job options are visible."""
         from shandy.webapp_components.pages.new_job import new_job_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
@@ -71,6 +71,6 @@ class TestNewJobPage:
                 async with user_simulation(root=new_job_page) as user:
                     await user.open("/new")
 
-                    # Should show advanced options
-                    await user.should_see("Advanced Options (Experimental)")
+                    # Should show options (no longer hidden in Advanced Options)
+                    await user.should_see("Hypothesis Generation")
                     await user.should_see("Coinvestigate Mode")
