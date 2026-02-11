@@ -347,17 +347,17 @@ class TestSkillSourcesEndpoints:
     async def test_list_skill_sources(
         self,
         db_session: AsyncSession,
-        test_user: User,
+        test_admin_user: User,
         test_skill_source: SkillSource,
     ):
-        """Test listing skill sources."""
+        """Test listing skill sources (requires admin)."""
         from shandy.api.endpoints.skills import list_skill_sources
         from shandy.database.rls import set_current_user
 
-        await set_current_user(db_session, test_user.id)
+        await set_current_user(db_session, test_admin_user.id)
 
         response = await list_skill_sources(
-            user=test_user,
+            user=test_admin_user,
             session=db_session,
         )
 
@@ -369,13 +369,13 @@ class TestSkillSourcesEndpoints:
     async def test_create_skill_source(
         self,
         db_session: AsyncSession,
-        test_user: User,
+        test_admin_user: User,
     ):
-        """Test creating a skill source."""
+        """Test creating a skill source (requires admin)."""
         from shandy.api.endpoints.skills import SkillSourceCreate, create_skill_source
         from shandy.database.rls import set_current_user
 
-        await set_current_user(db_session, test_user.id)
+        await set_current_user(db_session, test_admin_user.id)
 
         source_data = SkillSourceCreate(
             name="New Source",
@@ -387,7 +387,7 @@ class TestSkillSourcesEndpoints:
 
         response = await create_skill_source(
             source_data=source_data,
-            user=test_user,
+            user=test_admin_user,
             session=db_session,
         )
 
@@ -399,15 +399,15 @@ class TestSkillSourcesEndpoints:
     async def test_create_skill_source_missing_url(
         self,
         db_session: AsyncSession,
-        test_user: User,
+        test_admin_user: User,
     ):
-        """Test creating a GitHub source without URL fails."""
+        """Test creating a GitHub source without URL fails (requires admin)."""
         from fastapi import HTTPException
 
         from shandy.api.endpoints.skills import SkillSourceCreate, create_skill_source
         from shandy.database.rls import set_current_user
 
-        await set_current_user(db_session, test_user.id)
+        await set_current_user(db_session, test_admin_user.id)
 
         source_data = SkillSourceCreate(
             name="Invalid Source",
@@ -418,7 +418,7 @@ class TestSkillSourcesEndpoints:
         with pytest.raises(HTTPException) as exc_info:
             await create_skill_source(
                 source_data=source_data,
-                user=test_user,
+                user=test_admin_user,
                 session=db_session,
             )
 
@@ -429,9 +429,9 @@ class TestSkillSourcesEndpoints:
     async def test_delete_skill_source(
         self,
         db_session: AsyncSession,
-        test_user: User,
+        test_admin_user: User,
     ):
-        """Test deleting a skill source."""
+        """Test deleting a skill source (requires admin)."""
         from sqlalchemy import select
 
         from shandy.api.endpoints.skills import (
@@ -441,7 +441,7 @@ class TestSkillSourcesEndpoints:
         )
         from shandy.database.rls import set_current_user
 
-        await set_current_user(db_session, test_user.id)
+        await set_current_user(db_session, test_admin_user.id)
 
         # Create a source to delete
         source_data = SkillSourceCreate(
@@ -452,14 +452,14 @@ class TestSkillSourcesEndpoints:
 
         created = await create_skill_source(
             source_data=source_data,
-            user=test_user,
+            user=test_admin_user,
             session=db_session,
         )
 
         # Delete it
         await delete_skill_source(
             source_id=created.id,
-            user=test_user,
+            user=test_admin_user,
             session=db_session,
         )
 
@@ -477,15 +477,15 @@ class TestSkillSourcesEndpoints:
     async def test_sync_skill_source(
         self,
         db_session: AsyncSession,
-        test_user: User,
+        test_admin_user: User,
         test_skill_source: SkillSource,
     ):
-        """Test triggering a sync for a source."""
+        """Test triggering a sync for a source (requires admin)."""
         from shandy.api.endpoints.skills import sync_skill_source_endpoint
         from shandy.database.rls import set_current_user
         from shandy.skill_scheduler import SyncResult
 
-        await set_current_user(db_session, test_user.id)
+        await set_current_user(db_session, test_admin_user.id)
 
         # Mock the scheduler
         mock_result = SyncResult(
@@ -505,10 +505,85 @@ class TestSkillSourcesEndpoints:
 
             response = await sync_skill_source_endpoint(
                 source_id=str(test_skill_source.id),
-                user=test_user,
+                user=test_admin_user,
                 session=db_session,
             )
 
         assert response.success is True
         assert response.created == 5
         assert response.updated == 2
+
+    @pytest.mark.asyncio
+    async def test_list_skill_sources_non_admin_returns_empty(
+        self,
+        db_session: AsyncSession,
+        test_user: User,
+        test_skill_source: SkillSource,
+    ):
+        """Test that non-admin users get empty list when listing sources."""
+        from shandy.api.endpoints.skills import list_skill_sources
+        from shandy.database.rls import set_current_user
+
+        # test_user is NOT an admin
+        await set_current_user(db_session, test_user.id)
+
+        response = await list_skill_sources(
+            user=test_user,
+            session=db_session,
+        )
+
+        # Non-admin sees empty list due to RLS
+        assert response.total == 0
+        assert response.sources == []
+
+    @pytest.mark.asyncio
+    async def test_delete_skill_source_non_admin_returns_404(
+        self,
+        db_session: AsyncSession,
+        test_user: User,
+        test_skill_source: SkillSource,
+    ):
+        """Test that non-admin users get 404 when deleting a source."""
+        from fastapi import HTTPException
+
+        from shandy.api.endpoints.skills import delete_skill_source
+        from shandy.database.rls import set_current_user
+
+        # test_user is NOT an admin
+        await set_current_user(db_session, test_user.id)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_skill_source(
+                source_id=str(test_skill_source.id),
+                user=test_user,
+                session=db_session,
+            )
+
+        # Non-admin gets 404 because RLS hides the source
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_sync_skill_source_non_admin_returns_404(
+        self,
+        db_session: AsyncSession,
+        test_user: User,
+        test_skill_source: SkillSource,
+    ):
+        """Test that non-admin users get 404 when syncing a source."""
+        from fastapi import HTTPException
+
+        from shandy.api.endpoints.skills import sync_skill_source_endpoint
+        from shandy.database.rls import set_current_user
+
+        # test_user is NOT an admin
+        await set_current_user(db_session, test_user.id)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await sync_skill_source_endpoint(
+                source_id=str(test_skill_source.id),
+                user=test_user,
+                session=db_session,
+            )
+
+        # Non-admin gets 404 because RLS hides the source
+        assert exc_info.value.status_code == 404

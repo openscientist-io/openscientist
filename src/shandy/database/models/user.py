@@ -5,7 +5,7 @@ The User model represents authenticated users in the system.
 Users can log in via OAuth providers (GitHub, ORCID) and own jobs.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import Boolean, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..base import Base, UUIDv7Mixin
 
 if TYPE_CHECKING:
+    from .administrator import Administrator
     from .api_key import APIKey
     from .job import Job
     from .oauth_account import OAuthAccount
@@ -77,6 +78,12 @@ class User(UUIDv7Mixin, Base):
 
     jobs: Mapped[list["Job"]] = relationship(
         back_populates="owner",
+    )
+
+    administrator: Mapped[Optional["Administrator"]] = relationship(
+        back_populates="user",
+        uselist=False,
+        foreign_keys="[Administrator.user_id]",
     )
 
     def __repr__(self) -> str:

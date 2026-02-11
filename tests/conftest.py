@@ -16,7 +16,15 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from shandy.database.models import APIKey, Job, JobSkill, Skill, SkillSource, User
+from shandy.database.models import (
+    Administrator,
+    APIKey,
+    Job,
+    JobSkill,
+    Skill,
+    SkillSource,
+    User,
+)
 from shandy.database.rls import bypass_rls
 
 # Set up encryption key for tests (required for EncryptedText columns)
@@ -242,6 +250,25 @@ async def test_user2(db_session: AsyncSession) -> User:
         db_session.add(user)
         await db_session.commit()
         await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def test_admin_user(db_session: AsyncSession) -> User:
+    """Create an admin test user."""
+    async with bypass_rls(db_session):
+        user = User(
+            email="admin@example.com",
+            name="Admin User",
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+
+        # Grant admin privileges
+        admin = Administrator(user_id=user.id)
+        db_session.add(admin)
+        await db_session.commit()
     return user
 
 

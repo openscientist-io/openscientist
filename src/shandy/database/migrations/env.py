@@ -20,6 +20,7 @@ from shandy.database.base import Base
 # Import all models here so they're registered with Base.metadata
 # This is necessary for auto-generating migrations
 from shandy.database.models import (  # noqa: F401
+    Administrator,
     AnalysisLog,
     APIKey,
     CostRecord,

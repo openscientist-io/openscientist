@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
 from shandy.database.models import Skill, SkillSource, User
-from shandy.database.rls import bypass_rls, set_current_user
+from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
 from shandy.skill_relevance import (
     SkillRelevanceService,
@@ -426,15 +426,14 @@ async def list_skill_sources(
     """
     List all skill sources.
 
-    Requires admin access (bypass_rls).
+    Requires admin access (enforced by RLS policy).
     """
     await set_current_user(session, user.id)
 
-    # Sources require bypass_rls to read
-    async with bypass_rls(session):
-        stmt = select(SkillSource).order_by(SkillSource.name)
-        result = await session.execute(stmt)
-        sources = list(result.scalars().all())
+    # RLS policy enforces admin-only access
+    stmt = select(SkillSource).order_by(SkillSource.name)
+    result = await session.execute(stmt)
+    sources = list(result.scalars().all())
 
     return SkillSourceListResponse(
         sources=[_source_to_response(s) for s in sources],
@@ -467,19 +466,19 @@ async def create_skill_source(
             detail="Local sources require a 'path' field",
         )
 
-    async with bypass_rls(session):
-        source = SkillSource(
-            name=source_data.name,
-            source_type=source_data.source_type,
-            url=source_data.url,
-            path=source_data.path,
-            branch=source_data.branch,
-            skills_path=source_data.skills_path,
-            is_enabled=True,
-        )
-        session.add(source)
-        await session.commit()
-        await session.refresh(source)
+    # RLS policy enforces admin-only access
+    source = SkillSource(
+        name=source_data.name,
+        source_type=source_data.source_type,
+        url=source_data.url,
+        path=source_data.path,
+        branch=source_data.branch,
+        skills_path=source_data.skills_path,
+        is_enabled=True,
+    )
+    session.add(source)
+    await session.commit()
+    await session.refresh(source)
 
     logger.info("Created skill source: %s (%s)", source.name, source.source_type)
     return _source_to_response(source)
@@ -494,9 +493,26 @@ async def sync_skill_source_endpoint(
     """
     Manually trigger a sync for a skill source.
 
-    Bypasses the normal sync interval to force an immediate sync.
+    Requires admin access (enforced by RLS policy).
     """
     await set_current_user(session, user.id)
+
+    # Verify admin access by trying to read the source (RLS will block non-admins)
+    try:
+        source_uuid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid source ID format",
+        )
+
+    stmt = select(SkillSource).where(SkillSource.id == source_uuid)
+    check_result = await session.execute(stmt)
+    if not check_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill source {source_id} not found",
+        )
 
     from shandy.skill_scheduler import get_scheduler
 
@@ -542,18 +558,18 @@ async def delete_skill_source(
             detail="Invalid source ID format",
         )
 
-    async with bypass_rls(session):
-        stmt = select(SkillSource).where(SkillSource.id == source_uuid)
-        result = await session.execute(stmt)
-        source = result.scalar_one_or_none()
+    # RLS policy enforces admin-only access
+    stmt = select(SkillSource).where(SkillSource.id == source_uuid)
+    result = await session.execute(stmt)
+    source = result.scalar_one_or_none()
 
-        if not source:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Skill source {source_id} not found",
-            )
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill source {source_id} not found",
+        )
 
-        await session.delete(source)
-        await session.commit()
+    await session.delete(source)
+    await session.commit()
 
     logger.info("Deleted skill source: %s", source_id)

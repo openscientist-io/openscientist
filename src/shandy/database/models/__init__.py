@@ -10,6 +10,7 @@ Models are organized by domain:
 """
 
 # Core authentication models
+from .administrator import Administrator
 from .analysis_log import AnalysisLog
 from .api_key import APIKey
 
@@ -49,6 +50,7 @@ __all__ = [
     "OAuthAccount",
     "Session",
     "APIKey",
+    "Administrator",
     # Jobs
     "Job",
     "JobShare",
