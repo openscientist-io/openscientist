@@ -49,6 +49,7 @@ dependencies = [
 
     # Environment & config
     "python-dotenv>=1.0.0",
+    "pydantic-settings>=2.0.0",
 
     # Authentication (OAuth)
     "authlib>=1.3.0",

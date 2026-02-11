@@ -7,9 +7,8 @@ Providers handle:
 - Provider-specific authentication and setup
 """
 
-import os
-
 from shandy.providers.base import BaseProvider, CostInfo
+from shandy.settings import get_settings
 
 
 def get_provider() -> BaseProvider:
@@ -27,7 +26,8 @@ def get_provider() -> BaseProvider:
         CLAUDE_PROVIDER: Provider name ("anthropic", "cborg", "vertex", "bedrock", "codex")
                         Defaults to "cborg" if not set
     """
-    provider_name = os.getenv("CLAUDE_PROVIDER", "cborg").lower()
+    settings = get_settings()
+    provider_name = settings.provider.claude_provider.lower()
 
     if provider_name == "anthropic":
         from shandy.providers.anthropic import AnthropicProvider

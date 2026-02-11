@@ -4,7 +4,6 @@ FROM python:3.12-slim
 # Build args
 ARG SHANDY_COMMIT=unknown
 ARG BUILD_TIME=unknown
-ARG INSTALL_PHENIX=false
 
 # Install system dependencies including Node.js and fonts
 RUN apt-get update && apt-get install -y \
@@ -18,17 +17,6 @@ RUN apt-get update && apt-get install -y \
 
 # Install Claude Code CLI via npm
 RUN npm install -g @anthropic-ai/claude-code@2.0.37
-
-# Optionally install Phenix for structural biology
-# Requires data/phenix-installer-*.tar.gz to be present
-RUN if [ "$INSTALL_PHENIX" = "true" ]; then \
-        INSTALLER=$(ls /tmp/phenix-installer-*.tar.gz 2>/dev/null | head -1) && \
-        if [ -n "$INSTALLER" ]; then \
-            cd /tmp && tar xzf "$INSTALLER" && \
-            cd phenix-installer-* && ./install --prefix=/opt && \
-            cd / && rm -rf /tmp/phenix-installer-*; \
-        fi; \
-    fi
 
 # Set working directory
 WORKDIR /app

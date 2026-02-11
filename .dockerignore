@@ -14,7 +14,6 @@ ENV/
 # Jobs and data (mounted as volumes)
 jobs/
 data/
-!data/phenix-installer-*.tar.gz
 
 # Git
 .git/

@@ -529,6 +529,16 @@ def main():
     """Main entry point for MCP server."""
     import argparse
 
+    # Validate settings at startup
+    try:
+        from shandy.settings import get_settings
+
+        get_settings()  # Validates and caches settings
+        print("✅ Settings validated successfully", file=sys.stderr)
+    except Exception as e:
+        print(f"❌ Configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="SHANDY MCP Server")
     parser.add_argument("--job-dir", required=True, help="Job directory")
     parser.add_argument(

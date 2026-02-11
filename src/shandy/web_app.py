@@ -5,7 +5,7 @@ Provides web UI for job submission, monitoring, and results viewing.
 """
 
 import logging
-import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -21,8 +21,21 @@ if not load_dotenv("/app/.env", override=True):
 
 logger = logging.getLogger(__name__)
 
-# Storage secret for NiceGUI app.storage.user
-STORAGE_SECRET = os.getenv("STORAGE_SECRET", "change-this-to-a-random-secret-string-in-production")
+# Validate settings at import time (but don't fail yet - defer to main())
+_settings_error: Optional[str] = None
+try:
+    from shandy.settings import get_settings
+
+    _loaded_settings = get_settings()
+    STORAGE_SECRET = _loaded_settings.auth.storage_secret
+except Exception as e:
+    _settings_error = str(e)
+    # Fallback for import-time usage
+    import os
+
+    STORAGE_SECRET = os.getenv(
+        "STORAGE_SECRET", "change-this-to-a-random-secret-string-in-production"
+    )
 
 
 class _AppState:
@@ -176,6 +189,13 @@ def main(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    # Validate settings at startup
+    if _settings_error is not None:
+        logger.error("Configuration error: %s", _settings_error)
+        sys.exit(1)
+
+    logger.info("Settings validated successfully")
 
     # Initialize app BEFORE ui.run() to ensure job_manager is set
     # This must happen before any page is accessed

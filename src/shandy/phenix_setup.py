@@ -2,27 +2,97 @@
 
 import os
 import subprocess
+import sys
 from typing import Optional
 
 
-def setup_phenix_env() -> Optional[dict]:
+class PhenixConfigError(ValueError):
+    """Raised when Phenix configuration is invalid."""
+
+    pass
+
+
+def validate_phenix_path(phenix_path: str) -> list[str]:
+    """
+    Validate PHENIX_PATH configuration.
+
+    This function is kept for backward compatibility with existing code.
+    For new code, prefer using `get_settings().phenix` which validates
+    at startup.
+
+    Args:
+        phenix_path: The path to validate.
+
+    Returns:
+        List of error messages (empty if valid).
+    """
+    errors = []
+
+    # Must be an absolute path
+    if not phenix_path.startswith("/"):
+        errors.append(
+            f"PHENIX_PATH must be an absolute path (starting with '/'), "
+            f"got: '{phenix_path}'\n"
+            f"  Example: PHENIX_PATH=/opt/phenix-1.21.2-5419"
+        )
+        return errors  # Don't check further if not absolute
+
+    # Must not contain path traversal
+    if ".." in phenix_path:
+        errors.append(f"PHENIX_PATH must not contain path traversal (..): '{phenix_path}'")
+
+    # Must exist
+    if not os.path.exists(phenix_path):
+        errors.append(
+            f"PHENIX_PATH directory does not exist: '{phenix_path}'\n"
+            f"  Please verify the path is correct and the directory exists.\n"
+            f"  If using Docker, ensure PHENIX_PATH in .env points to your host installation."
+        )
+
+    # Must be a directory
+    elif not os.path.isdir(phenix_path):
+        errors.append(f"PHENIX_PATH must be a directory, not a file: '{phenix_path}'")
+
+    return errors
+
+
+def setup_phenix_env(*, raise_on_error: bool = False) -> Optional[dict]:
     """
     Source Phenix environment and return updated environment dict.
 
+    Args:
+        raise_on_error: If True, raise PhenixConfigError on invalid config.
+                       If False (default), print warnings and return None.
+
     Returns:
-        dict: Environment variables with Phenix paths, or None if PHENIX_PATH not set
+        dict: Environment variables with Phenix paths, or None if not configured/invalid.
+
+    Raises:
+        PhenixConfigError: If raise_on_error=True and configuration is invalid.
     """
     phenix_path = os.getenv("PHENIX_PATH")
     if not phenix_path:
         return None
 
-    if not os.path.exists(phenix_path):
-        print(f"Warning: PHENIX_PATH {phenix_path} does not exist")
+    # Validate the path
+    errors = validate_phenix_path(phenix_path)
+    if errors:
+        error_msg = "PHENIX_PATH configuration error:\n" + "\n".join(f"  - {e}" for e in errors)
+        if raise_on_error:
+            raise PhenixConfigError(error_msg)
+        print(f"Warning: {error_msg}", file=sys.stderr)
         return None
 
     env_script = os.path.join(phenix_path, "phenix_env.sh")
     if not os.path.exists(env_script):
-        print(f"Warning: Phenix environment script not found at {env_script}")
+        msg = (
+            f"Phenix environment script not found at: {env_script}\n"
+            f"  This suggests PHENIX_PATH is not a valid Phenix installation.\n"
+            f"  Expected to find 'phenix_env.sh' in the Phenix root directory."
+        )
+        if raise_on_error:
+            raise PhenixConfigError(msg)
+        print(f"Warning: {msg}", file=sys.stderr)
         return None
 
     # Source the script and capture environment
@@ -59,7 +129,16 @@ def check_phenix_available() -> bool:
     """
     Check if Phenix is properly configured and available.
 
+    First tries to use the centralized settings module for validation,
+    falling back to the original setup_phenix_env() for compatibility.
+
     Returns:
         bool: True if Phenix is available, False otherwise
     """
-    return setup_phenix_env() is not None
+    try:
+        from shandy.settings import get_settings
+
+        return get_settings().phenix.is_available
+    except Exception:
+        # Fall back to original behavior if settings can't be loaded
+        return setup_phenix_env() is not None

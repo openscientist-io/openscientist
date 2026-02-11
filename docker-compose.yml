@@ -72,7 +72,7 @@ services:
       # App settings
       DISABLE_AUTH: ${DISABLE_AUTH}
       APP_PASSWORD_HASH: ${APP_PASSWORD_HASH}
-      PHENIX_PATH: ${PHENIX_PATH:-}
+      PHENIX_PATH: ${PHENIX_PATH:+/opt/phenix}
       STORAGE_SECRET: ${STORAGE_SECRET}
 
       # Security: OAuth token encryption (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
@@ -94,6 +94,8 @@ services:
       - ./.env:/app/.env:ro
       # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
+      # Mount Phenix installation if available (set PHENIX_PATH in .env)
+      - ${PHENIX_PATH:-/dev/null}:/opt/phenix:ro
       # Mount Docker socket for sibling container execution
       - /var/run/docker.sock:/var/run/docker.sock:ro
     group_add:

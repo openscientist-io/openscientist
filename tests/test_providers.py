@@ -9,6 +9,7 @@ import pytest
 from shandy.exceptions import ProviderError
 from shandy.providers import get_provider
 from shandy.providers.base import BaseProvider, CostInfo
+from shandy.settings import clear_settings_cache
 
 # ─── Concrete stub for testing BaseProvider ───────────────────────────
 
@@ -51,6 +52,14 @@ class StubProvider(BaseProvider):
 
 class TestGetProvider:
     """Tests for the provider factory function."""
+
+    def setup_method(self):
+        """Clear settings cache before each test."""
+        clear_settings_cache()
+
+    def teardown_method(self):
+        """Clear settings cache after each test."""
+        clear_settings_cache()
 
     @patch.dict(
         os.environ,
@@ -105,9 +114,16 @@ class TestGetProvider:
         with pytest.raises(ValueError, match="Unknown provider"):
             get_provider()
 
-    @patch.dict(os.environ, {}, clear=True)
-    def test_defaults_to_cborg(self):
+    def test_defaults_to_cborg(self, monkeypatch, tmp_path):
         """Without CLAUDE_PROVIDER, defaults to cborg (which may fail validation)."""
+        # Change to temp dir to avoid .env file
+        monkeypatch.chdir(tmp_path)
+
+        # Clear environment of provider-related vars
+        for key in list(os.environ.keys()):
+            if key.startswith(("CLAUDE_", "ANTHROPIC_", "AWS_", "GOOGLE_", "GCP_", "VERTEX_")):
+                monkeypatch.delenv(key, raising=False)
+
         # We don't set ANTHROPIC_AUTH_TOKEN, so cborg validation will fail—
         # but the factory still routes to cborg.
         with pytest.raises(ValueError, match="cborg|ANTHROPIC_AUTH_TOKEN"):
