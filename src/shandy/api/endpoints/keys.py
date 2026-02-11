@@ -21,6 +21,7 @@ from shandy.api.auth import (
     hash_secret,
 )
 from shandy.database.models import APIKey, User
+from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,9 @@ async def create_api_key(
 
     Rate limit: 10 keys per user maximum.
     """
+    # Set RLS context
+    await set_current_user(session, user.id)
+
     # Check if name already exists for this user
     stmt = select(APIKey).where(
         APIKey.user_id == user.id,
@@ -140,6 +144,9 @@ async def list_api_keys(
 
     Note: The secret portion of keys is not included (it's only shown once at creation).
     """
+    # Set RLS context
+    await set_current_user(session, user.id)
+
     stmt = select(APIKey).where(APIKey.user_id == user.id).order_by(APIKey.created_at.desc())
     result = await session.execute(stmt)
     keys = result.scalars().all()
@@ -169,6 +176,9 @@ async def revoke_api_key(
 
     Revoked keys cannot be reactivated - create a new key instead.
     """
+    # Set RLS context
+    await set_current_user(session, user.id)
+
     api_key = await get_api_key_by_id(key_id, user, session)
 
     if not api_key:

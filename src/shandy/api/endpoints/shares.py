@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
 from shandy.database.models import Job, JobShare, User
-from shandy.database.rls import set_current_user
+from shandy.database.rls import bypass_rls, set_current_user
 from shandy.database.session import get_session
 
 logger = logging.getLogger(__name__)
@@ -117,10 +117,11 @@ async def create_share(
             detail="You can only share jobs you own",
         )
 
-    # Find user to share with by email
-    target_stmt = select(User).where(User.email == share_data.shared_with_email)
-    target_result = await session.execute(target_stmt)
-    target_user = target_result.scalar_one_or_none()
+    # Find user to share with by email (bypass RLS to search all users)
+    async with bypass_rls(session):
+        target_stmt = select(User).where(User.email == share_data.shared_with_email)
+        target_result = await session.execute(target_stmt)
+        target_user = target_result.scalar_one_or_none()
 
     if not target_user:
         raise HTTPException(
@@ -311,21 +312,22 @@ async def search_users(
     Returns users whose email or name contains the search query.
     Used for finding users to share jobs with.
     """
-    # Search users by email or name (case-insensitive)
+    # Search users by email or name (bypass RLS to search all users)
     search_pattern = f"%{q}%"
-    stmt = (
-        select(User)
-        .where(
-            or_(
-                User.email.ilike(search_pattern),
-                User.name.ilike(search_pattern),
+    async with bypass_rls(session):
+        stmt = (
+            select(User)
+            .where(
+                or_(
+                    User.email.ilike(search_pattern),
+                    User.name.ilike(search_pattern),
+                )
             )
+            .where(User.is_active == True)  # noqa: E712
+            .order_by(User.email)
+            .limit(limit)
         )
-        .where(User.is_active == True)  # noqa: E712
-        .order_by(User.email)
-        .limit(limit)
-    )
-    result = await session.execute(stmt)
+        result = await session.execute(stmt)
     users = result.scalars().all()
 
     return UserSearchResponse(

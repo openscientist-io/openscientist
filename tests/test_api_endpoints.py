@@ -1,0 +1,987 @@
+"""
+HTTP endpoint tests for the REST API.
+
+Tests actual HTTP requests to API endpoints with mocked authentication.
+"""
+
+import uuid
+from unittest.mock import MagicMock, patch
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from shandy.api.auth import hash_secret
+from shandy.database.models import APIKey, Job, User
+from shandy.database.rls import bypass_rls
+
+
+@pytest.fixture
+def mock_user() -> User:
+    """Create a mock user for testing."""
+    user = MagicMock(spec=User)
+    user.id = uuid.uuid4()
+    user.email = "test@example.com"
+    user.name = "Test User"
+    user.is_active = True
+    return user
+
+
+@pytest.fixture
+def mock_user2() -> User:
+    """Create a second mock user for testing."""
+    user = MagicMock(spec=User)
+    user.id = uuid.uuid4()
+    user.email = "test2@example.com"
+    user.name = "Test User 2"
+    user.is_active = True
+    return user
+
+
+@pytest_asyncio.fixture
+async def test_user_db(db_session: AsyncSession) -> User:
+    """Create a real user in the test database."""
+    async with bypass_rls(db_session):
+        user = User(
+            email="apitest@example.com",
+            name="API Test User",
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def test_user2_db(db_session: AsyncSession) -> User:
+    """Create a second real user in the test database."""
+    async with bypass_rls(db_session):
+        user = User(
+            email="apitest2@example.com",
+            name="API Test User 2",
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+    return user
+
+
+@pytest_asyncio.fixture
+async def test_api_key_db(
+    db_session: AsyncSession,
+    test_user_db: User,
+) -> tuple[APIKey, str]:
+    """Create a real API key in the test database."""
+    secret = "test_secret_for_api_tests"
+    async with bypass_rls(db_session):
+        api_key = APIKey(
+            user_id=test_user_db.id,
+            name="test-api-key",
+            key_hash=hash_secret(secret),
+            is_active=True,
+        )
+        db_session.add(api_key)
+        await db_session.commit()
+        await db_session.refresh(api_key)
+    return api_key, f"test-api-key:{secret}"
+
+
+@pytest_asyncio.fixture
+async def test_job_db(
+    db_session: AsyncSession,
+    test_user_db: User,
+) -> Job:
+    """Create a real job in the test database."""
+    async with bypass_rls(db_session):
+        job = Job(
+            owner_id=test_user_db.id,
+            title="Test API Job",
+            description="A job for API testing",
+            status="pending",
+            max_iterations=5,
+            current_iteration=0,
+        )
+        db_session.add(job)
+        await db_session.commit()
+        await db_session.refresh(job)
+    return job
+
+
+@pytest_asyncio.fixture
+async def completed_job_db(
+    db_session: AsyncSession,
+    test_user_db: User,
+) -> Job:
+    """Create a completed job in the test database."""
+    async with bypass_rls(db_session):
+        job = Job(
+            owner_id=test_user_db.id,
+            title="Completed Test Job",
+            description="A completed job for testing",
+            status="completed",
+            max_iterations=5,
+            current_iteration=5,
+            result_summary="Analysis complete.",
+        )
+        db_session.add(job)
+        await db_session.commit()
+        await db_session.refresh(job)
+    return job
+
+
+class TestHealthEndpoint:
+    """Tests for the health check endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_health_check(self):
+        """Health check returns ok status."""
+        # Create a minimal FastAPI app for testing
+        from fastapi import FastAPI
+
+        from shandy.api.router import api_router as router
+
+        app = FastAPI()
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get("/api/v1/health")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert data["api"] == "shandy"
+
+
+class TestAPIKeyEndpoints:
+    """Tests for API key management endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_create_api_key_requires_auth(self):
+        """Creating an API key requires authentication."""
+        from fastapi import FastAPI
+
+        from shandy.api.router import api_router as router
+
+        app = FastAPI()
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/keys",
+                json={"name": "test-key"},
+            )
+
+        # Should fail without auth (401 Unauthorized)
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_create_api_key_success(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Create a new API key successfully."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        # Override dependencies
+        async def override_get_session():
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/keys",
+                json={"name": "new-test-key"},
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["name"] == "new-test-key"
+        assert "key" in data  # Full key is returned on creation
+        assert data["key"].startswith("new-test-key:")
+        assert data["is_active"] is True
+
+    @pytest.mark.asyncio
+    async def test_list_api_keys(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """List API keys for authenticated user."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        api_key, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/keys",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "keys" in data
+        # Should have at least our test key
+        assert len(data["keys"]) >= 1
+        # Keys should not include the secret
+        for key in data["keys"]:
+            assert "key" not in key or ":" not in key.get("key", "")
+
+    @pytest.mark.asyncio
+    async def test_revoke_api_key(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Revoke an API key."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        api_key, full_key = test_api_key_db
+
+        # Create another key to revoke (can't revoke the one we're using)
+        async with bypass_rls(db_session):
+            key_to_revoke = APIKey(
+                user_id=test_user_db.id,
+                name="key-to-revoke",
+                key_hash=hash_secret("revoke-secret"),
+                is_active=True,
+            )
+            db_session.add(key_to_revoke)
+            await db_session.commit()
+            await db_session.refresh(key_to_revoke)
+
+        app = FastAPI()
+
+        async def override_get_session():
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.delete(
+                f"/api/v1/keys/{key_to_revoke.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 204
+
+        # Verify key is now inactive
+        await db_session.refresh(key_to_revoke)
+        assert key_to_revoke.is_active is False
+
+    @pytest.mark.asyncio
+    async def test_duplicate_key_name_rejected(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Duplicate API key name for same user is rejected."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        api_key, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            # Try to create key with same name as existing
+            response = await client.post(
+                "/api/v1/keys",
+                json={"name": "test-api-key"},  # Same as test_api_key_db
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 409
+        assert "already exists" in response.json()["detail"]
+
+
+class TestJobEndpoints:
+    """Tests for job management endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_list_jobs(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """List jobs for authenticated user."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            # Set RLS context for the user
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/jobs",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "jobs" in data
+        assert "total" in data
+        assert data["total"] >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_job_detail(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Get job details."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{test_job_db.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == str(test_job_db.id)
+        assert data["title"] == "Test API Job"
+        assert data["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_get_job_status(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Get job status (lightweight endpoint)."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{test_job_db.id}/status",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == str(test_job_db.id)
+        assert data["status"] == "pending"
+        assert data["current_iteration"] == 0
+        assert data["max_iterations"] == 5
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_job_returns_404(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Getting a non-existent job returns 404."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        fake_job_id = str(uuid.uuid4())
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{fake_job_id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cannot_access_other_users_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Users cannot access jobs they don't own."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create job for user2
+        async with bypass_rls(db_session):
+            other_job = Job(
+                owner_id=test_user2_db.id,
+                title="Other User's Job",
+                description="Belongs to user2",
+                status="pending",
+            )
+            db_session.add(other_job)
+            await db_session.commit()
+            await db_session.refresh(other_job)
+
+        app = FastAPI()
+
+        async def override_get_session():
+            # Set RLS context to user1 (who shouldn't have access)
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db  # Authenticated as user1
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{other_job.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        # RLS should block access
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cancel_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Cancel a running job."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create a running job to cancel
+        async with bypass_rls(db_session):
+            running_job = Job(
+                owner_id=test_user_db.id,
+                title="Running Job",
+                description="Will be cancelled",
+                status="running",
+            )
+            db_session.add(running_job)
+            await db_session.commit()
+            await db_session.refresh(running_job)
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        # Mock the job manager
+        mock_job_manager = MagicMock()
+        mock_job_manager.cancel_job = MagicMock()
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/jobs/{running_job.id}/cancel",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 204
+        mock_job_manager.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cannot_cancel_completed_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        completed_job_db: Job,
+    ):
+        """Cannot cancel a completed job."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                f"/api/v1/jobs/{completed_job_db.id}/cancel",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 400
+        assert "Cannot cancel" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_create_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Create a new job via API."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        # Mock job manager
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = MagicMock()
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/jobs",
+                    json={
+                        "title": "API Created Job",
+                        "description": "Created via REST API",
+                        "research_question": "What is the structure of protein X?",
+                        "max_iterations": 10,
+                        "use_skills": True,
+                        "investigation_mode": "autonomous",
+                    },
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["title"] == "API Created Job"
+        assert data["status"] == "pending"
+        mock_job_manager.create_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_filter_jobs_by_status(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+        completed_job_db: Job,
+    ):
+        """Filter jobs by status."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/jobs?status=completed",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        # All returned jobs should be completed
+        for job in data["jobs"]:
+            assert job["status"] == "completed"
+
+
+class TestJobSharingEndpoints:
+    """Tests for job sharing endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_share_job_with_user(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Share a job with another user."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/v1/shares",
+                json={
+                    "job_id": str(test_job_db.id),
+                    "shared_with_email": test_user2_db.email,
+                    "permission_level": "view",
+                },
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 201, (
+            f"Expected 201, got {response.status_code}: {response.json()}"
+        )
+        data = response.json()
+        assert data["job_id"] == str(test_job_db.id)
+        assert data["permission_level"] == "view"
+
+    @pytest.mark.asyncio
+    async def test_search_users_for_sharing(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Search for users to share with."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/shares/search/users?q={test_user2_db.email[:5]}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "users" in data
+
+
+class TestAuthenticationFlow:
+    """Tests for full authentication flow."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_api_key_format(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Invalid API key format returns 401."""
+        from fastapi import FastAPI
+
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        app = FastAPI()
+
+        async def override_get_session():
+            yield db_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/jobs",
+                headers={"Authorization": "Bearer invalid-no-colon"},
+            )
+
+        assert response.status_code == 401
+        assert "Invalid API key format" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_api_key(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Non-existent API key returns 401."""
+        from fastapi import FastAPI
+
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        app = FastAPI()
+
+        async def override_get_session():
+            yield db_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/jobs",
+                headers={"Authorization": "Bearer nonexistent:wrongsecret"},
+            )
+
+        assert response.status_code == 401
