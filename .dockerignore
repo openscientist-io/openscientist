@@ -20,6 +20,9 @@ data/
 .git/
 .gitignore
 
+# Claude Code local settings (keep skills, exclude user preferences)
+.claude/settings*.json
+
 # IDE
 .vscode/
 .idea/

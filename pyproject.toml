@@ -67,8 +67,9 @@ dependencies = [
     # Type hints
     "typing-extensions>=4.8.0",
 
-    # Cloud providers (for Vertex AI cost tracking)
-    "google-cloud-bigquery>=3.11.0",
+    # Cloud providers (for cost tracking)
+    "google-cloud-bigquery>=3.11.0",  # Vertex AI
+    "boto3>=1.34.0",  # AWS Bedrock
 
     # PDF generation (lightweight, pure Python)
     "fpdf2>=2.7.0",

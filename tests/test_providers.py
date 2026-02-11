@@ -80,11 +80,19 @@ class TestGetProvider:
             provider = get_provider()
             assert "vertex" in provider.name.lower()
 
-    @patch.dict(os.environ, {"CLAUDE_PROVIDER": "bedrock"})
-    def test_bedrock_provider_raises_not_implemented(self):
-        """Bedrock is a stub — validation always fails."""
-        with pytest.raises(ValueError, match="not yet implemented"):
-            get_provider()
+    @patch.dict(
+        os.environ,
+        {
+            "CLAUDE_PROVIDER": "bedrock",
+            "AWS_REGION": "us-east-1",
+            "AWS_ACCESS_KEY_ID": "test-key",
+            "AWS_SECRET_ACCESS_KEY": "test-secret",
+        },
+    )
+    def test_bedrock_provider(self):
+        """Bedrock provider initializes with valid AWS config."""
+        provider = get_provider()
+        assert "bedrock" in provider.name.lower()
 
     @patch.dict(os.environ, {"CLAUDE_PROVIDER": "codex"})
     def test_codex_provider_raises_not_implemented(self):
