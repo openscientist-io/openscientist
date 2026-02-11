@@ -117,7 +117,7 @@ async def test_job_skills_relationship(
     db_session: AsyncSession,
     test_job: Job,
     test_skill: Skill,
-    test_job_skill: JobSkill,
+    test_job_skill: JobSkill,  # noqa: ARG001  # Fixture ensures relationship exists
 ):
     """Test job-skills relationship via junction table."""
     async with bypass_rls(db_session):
@@ -141,7 +141,6 @@ async def test_skill_cascade_delete(
 ):
     """Test that deleting a source cascades to skills."""
     skill_id = test_skill.id
-    source_id = test_skill_source.id
 
     async with bypass_rls(db_session):
         # Delete source
@@ -160,7 +159,7 @@ async def test_job_skill_cascade_delete(
     db_session: AsyncSession,
     test_job: Job,
     test_skill: Skill,
-    test_job_skill: JobSkill,
+    test_job_skill: JobSkill,  # noqa: ARG001  # Fixture ensures relationship exists
 ):
     """Test that deleting a job cascades to job_skills."""
     job_id = test_job.id
@@ -203,7 +202,7 @@ async def test_skill_rls_public_read(
 @pytest.mark.asyncio
 async def test_skill_unique_category_slug(
     db_session: AsyncSession,
-    test_skill_source: SkillSource,
+    test_skill_source: SkillSource,  # noqa: ARG001  # Required for test_skill fixture
     test_skill: Skill,
 ):
     """Test unique constraint on (category, slug)."""

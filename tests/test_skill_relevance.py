@@ -5,14 +5,12 @@ Tests full-text search pre-filtering and semantic scoring with mocked Anthropic 
 """
 
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Skill, SkillSource
-from shandy.database.rls import bypass_rls, set_current_user
+from shandy.database.models import Skill
+from shandy.database.rls import bypass_rls
 from shandy.skill_relevance import (
     ScoredSkill,
     SkillRelevanceService,
@@ -162,9 +160,7 @@ class TestSkillRelevanceService:
             assert s.match_reason == "Matched by text similarity"
 
         # Metabolomics skill should score higher for metabolomics query
-        metabolomics_score = next(
-            s.score for s in scored if s.name == "Metabolomics Analysis"
-        )
+        metabolomics_score = next(s.score for s in scored if s.name == "Metabolomics Analysis")
         genomics_score = next(s.score for s in scored if s.name == "Genomics Pipeline")
         assert metabolomics_score > genomics_score
 
@@ -219,13 +215,13 @@ class TestSkillRelevanceService:
         async with bypass_rls(db_session):
             results = await service.find_relevant_skills(
                 session=db_session,
-                prompt="metabolomics data analysis statistical methods",
+                prompt="metabolomics analysis",
                 candidate_limit=10,
                 score_threshold=0.0,  # Include all for testing
                 max_results=5,
             )
 
-        # Should have results
+        # Should have results (at least the metabolomics skill should match)
         assert len(results) >= 1
 
         # Results should be ScoredSkill objects

@@ -9,12 +9,19 @@ Two-stage approach:
 import logging
 import os
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill
+
+# Import anthropic at module level for mocking in tests
+try:
+    import anthropic  # type: ignore[import-not-found]
+except ImportError:
+    anthropic: Any = None  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +141,7 @@ class SkillRelevanceService:
         stmt = (
             select(Skill)
             .where(
-                Skill.is_enabled == True,  # noqa: E712
+                Skill.is_enabled.is_(True),
                 Skill.search_vector.op("@@")(tsquery),
             )
             .order_by(
@@ -164,26 +171,18 @@ class SkillRelevanceService:
             List of ScoredSkill objects
         """
         if not self.api_key:
-            logger.warning(
-                "No Anthropic API key configured, using fallback text similarity"
-            )
+            logger.warning("No Anthropic API key configured, using fallback text similarity")
             return self._fallback_scoring(prompt, candidates)
 
-        try:
-            import anthropic  # type: ignore[import-not-found]
-        except ImportError:
-            logger.warning(
-                "anthropic package not installed, using fallback text similarity"
-            )
+        if anthropic is None:
+            logger.warning("anthropic package not installed, using fallback text similarity")
             return self._fallback_scoring(prompt, candidates)
 
         # Build the scoring prompt
         skill_descriptions = []
         for i, skill in enumerate(candidates, 1):
             desc = skill.description or "(No description)"
-            skill_descriptions.append(
-                f"{i}. **{skill.name}** ({skill.category}): {desc}"
-            )
+            skill_descriptions.append(f"{i}. **{skill.name}** ({skill.category}): {desc}")
 
         system_prompt = """You are a scientific research assistant helping match domain-specific skills to research questions.
 

@@ -238,9 +238,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_skills_category"), "skills", ["category"], unique=False)
     op.create_index(op.f("ix_skills_slug"), "skills", ["slug"], unique=False)
     op.create_index(op.f("ix_skills_source_id"), "skills", ["source_id"], unique=False)
-    op.create_index(
-        op.f("ix_skills_is_enabled"), "skills", ["is_enabled"], unique=False
-    )
+    op.create_index(op.f("ix_skills_is_enabled"), "skills", ["is_enabled"], unique=False)
 
     # GIN index for full-text search on search_vector
     op.create_index(
@@ -341,12 +339,8 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("job_id", "skill_id"),
     )
-    op.create_index(
-        op.f("ix_job_skills_job_id"), "job_skills", ["job_id"], unique=False
-    )
-    op.create_index(
-        op.f("ix_job_skills_skill_id"), "job_skills", ["skill_id"], unique=False
-    )
+    op.create_index(op.f("ix_job_skills_job_id"), "job_skills", ["job_id"], unique=False)
+    op.create_index(op.f("ix_job_skills_skill_id"), "job_skills", ["skill_id"], unique=False)
 
     # =========================================================================
     # ROW-LEVEL SECURITY POLICIES

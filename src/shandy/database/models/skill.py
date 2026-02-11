@@ -144,6 +144,5 @@ class Skill(UUIDv7Mixin, Base):
 
     def __repr__(self) -> str:
         return (
-            f"<Skill(id={self.id}, name={self.name}, "
-            f"category={self.category}, slug={self.slug})>"
+            f"<Skill(id={self.id}, name={self.name}, category={self.category}, slug={self.slug})>"
         )

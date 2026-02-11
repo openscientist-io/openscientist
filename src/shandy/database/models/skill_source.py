@@ -110,7 +110,4 @@ class SkillSource(UUIDv7Mixin, Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<SkillSource(id={self.id}, name={self.name}, "
-            f"source_type={self.source_type})>"
-        )
+        return f"<SkillSource(id={self.id}, name={self.name}, source_type={self.source_type})>"

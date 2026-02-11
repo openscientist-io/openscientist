@@ -19,7 +19,6 @@ from shandy.skill_ingestion import (
     LocalSkillIngester,
     SkillParseError,
     SkillParser,
-    sync_skill_source,
 )
 
 
@@ -44,9 +43,7 @@ class TestSkillParser:
         parser = SkillParser()
         content = "# Just Markdown\n\nNo frontmatter here."
 
-        with pytest.raises(
-            SkillParseError, match="Missing or malformed YAML frontmatter"
-        ):
+        with pytest.raises(SkillParseError, match="Missing or malformed YAML frontmatter"):
             parser.parse_content(content, "test.md")
 
     def test_parse_missing_name(self):

@@ -134,6 +134,8 @@ async def test_engine(test_database_url: str) -> AsyncGenerator[AsyncEngine, Non
     # Clean database before test to ensure fresh state
     try:
         async with engine.begin() as conn:
+            # Drop alembic_version table first to avoid type conflicts when recreating schema
+            await conn.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
             await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
             await conn.execute(text("CREATE SCHEMA public"))
             await conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
@@ -345,6 +347,8 @@ async def test_skill_source(db_session: AsyncSession) -> SkillSource:
 @pytest_asyncio.fixture
 async def test_skill(db_session: AsyncSession, test_skill_source: SkillSource) -> Skill:
     """Create a test skill."""
+    from sqlalchemy import text
+
     async with bypass_rls(db_session):
         skill = Skill(
             name="Metabolomics Analysis",
@@ -359,6 +363,21 @@ async def test_skill(db_session: AsyncSession, test_skill_source: SkillSource) -
             is_enabled=True,
         )
         db_session.add(skill)
+        await db_session.commit()
+
+        # Manually populate search_vector since trigger may not run in tests
+        await db_session.execute(
+            text(
+                """
+                UPDATE skills SET search_vector =
+                    setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(category, '')), 'C')
+                WHERE id = :skill_id
+            """
+            ),
+            {"skill_id": skill.id},
+        )
         await db_session.commit()
         await db_session.refresh(skill)
     return skill
@@ -381,6 +400,21 @@ async def test_skill2(db_session: AsyncSession, test_skill_source: SkillSource) 
             is_enabled=True,
         )
         db_session.add(skill)
+        await db_session.commit()
+
+        # Manually populate search_vector since trigger may not run in tests
+        await db_session.execute(
+            text(
+                """
+                UPDATE skills SET search_vector =
+                    setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+                    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+                    setweight(to_tsvector('english', coalesce(category, '')), 'C')
+                WHERE id = :skill_id
+            """
+            ),
+            {"skill_id": skill.id},
+        )
         await db_session.commit()
         await db_session.refresh(skill)
     return skill

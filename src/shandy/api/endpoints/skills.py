@@ -20,7 +20,6 @@ from shandy.database.models import Skill, SkillSource, User
 from shandy.database.rls import bypass_rls, set_current_user
 from shandy.database.session import get_session
 from shandy.skill_relevance import (
-    ScoredSkill,
     SkillRelevanceService,
     get_all_categories,
     search_skills,
@@ -443,9 +442,7 @@ async def list_skill_sources(
     )
 
 
-@router.post(
-    "/sources", response_model=SkillSourceResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("/sources", response_model=SkillSourceResponse, status_code=status.HTTP_201_CREATED)
 async def create_skill_source(
     source_data: SkillSourceCreate,
     user: User = Depends(get_current_user_from_api_key),

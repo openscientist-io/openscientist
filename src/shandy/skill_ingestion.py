@@ -21,7 +21,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database.models import Skill, SkillSource
 from .database.rls import bypass_rls
 
-
 # =============================================================================
 # Base Class for Extensible Ingesters
 # =============================================================================
@@ -150,8 +149,7 @@ class SkillParser:
         match = self.FRONTMATTER_PATTERN.match(content)
         if not match:
             raise SkillParseError(
-                f"Invalid skill format in {source_path}: "
-                "Missing or malformed YAML frontmatter"
+                f"Invalid skill format in {source_path}: Missing or malformed YAML frontmatter"
             )
 
         frontmatter_raw, body = match.groups()
@@ -159,14 +157,10 @@ class SkillParser:
         try:
             frontmatter = yaml.safe_load(frontmatter_raw)
         except yaml.YAMLError as e:
-            raise SkillParseError(
-                f"Invalid YAML frontmatter in {source_path}: {e}"
-            ) from e
+            raise SkillParseError(f"Invalid YAML frontmatter in {source_path}: {e}") from e
 
         if not isinstance(frontmatter, dict):
-            raise SkillParseError(
-                f"YAML frontmatter must be a mapping in {source_path}"
-            )
+            raise SkillParseError(f"YAML frontmatter must be a mapping in {source_path}")
 
         # Extract required fields
         name = frontmatter.get("name")
@@ -341,9 +335,7 @@ class GitHubSkillIngester(BaseSkillIngester):
                 continue
 
             # Build raw content URL
-            download_url = (
-                f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
-            )
+            download_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
             skill_files.append(
                 {
                     "path": path,
@@ -399,9 +391,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         commit_sha = await self.get_latest_commit(owner, repo, branch)
 
         # List skill files
-        skill_files = await self.list_skill_files(
-            owner, repo, branch, source.skills_path
-        )
+        skill_files = await self.list_skill_files(owner, repo, branch, source.skills_path)
 
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
 
@@ -568,9 +558,7 @@ class LocalSkillIngester(BaseSkillIngester):
                     stats["errors"] += 1
                     import logging
 
-                    logging.getLogger(__name__).warning(
-                        f"Error processing {md_file}: {e}"
-                    )
+                    logging.getLogger(__name__).warning(f"Error processing {md_file}: {e}")
 
             # Update source metadata
             source.last_synced_at = datetime.now(timezone.utc)

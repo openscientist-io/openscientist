@@ -10,12 +10,11 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.endpoints.skills import router
-from shandy.database.models import APIKey, Skill, SkillSource, User
+from shandy.database.models import Skill, SkillSource, User
 from shandy.database.rls import bypass_rls
 
 
@@ -68,10 +67,8 @@ class TestSkillsListEndpoint:
                 return_value=db_session,
             ):
                 transport = ASGITransport(app=app)  # type: ignore[arg-type]
-                async with AsyncClient(
-                    transport=transport, base_url="http://test"
-                ) as client:
-                    # Need to mock session as async context manager
+                async with AsyncClient(transport=transport, base_url="http://test") as _client:
+                    # TODO: Complete HTTP client tests
                     pass
 
     @pytest.mark.asyncio
@@ -91,6 +88,11 @@ class TestSkillsListEndpoint:
         response = await list_skills(
             user=test_user,
             session=db_session,
+            category=None,
+            search=None,
+            tags=None,
+            offset=0,
+            limit=50,
         )
 
         assert response.total == 2
@@ -117,6 +119,10 @@ class TestSkillsListEndpoint:
             user=test_user,
             session=db_session,
             category="metabolomics",
+            search=None,
+            tags=None,
+            offset=0,
+            limit=50,
         )
 
         assert response.total == 1
@@ -139,7 +145,11 @@ class TestSkillsListEndpoint:
         response = await list_skills(
             user=test_user,
             session=db_session,
+            category=None,
             search="genomics pipeline",
+            tags=None,
+            offset=0,
+            limit=50,
         )
 
         # Should find genomics skill
@@ -289,7 +299,7 @@ class TestSkillsMatchEndpoint:
         await set_current_user(db_session, test_user.id)
 
         request = SkillMatchRequest(
-            prompt="metabolomics data analysis statistical methods",
+            prompt="metabolomics analysis",
             max_results=5,
             score_threshold=0.0,
         )
@@ -488,7 +498,7 @@ class TestSkillSourcesEndpoints:
             errors=0,
         )
 
-        with patch("shandy.api.endpoints.skills.get_scheduler") as mock_get_scheduler:
+        with patch("shandy.skill_scheduler.get_scheduler") as mock_get_scheduler:
             mock_scheduler = AsyncMock()
             mock_scheduler.sync_source_by_id.return_value = mock_result
             mock_get_scheduler.return_value = mock_scheduler

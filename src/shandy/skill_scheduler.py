@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -150,9 +150,7 @@ class SkillSyncScheduler:
     ) -> list[SkillSource]:
         """Get all enabled skill sources."""
         async with bypass_rls(session):
-            stmt = select(SkillSource).where(
-                SkillSource.is_enabled == True
-            )  # noqa: E712
+            stmt = select(SkillSource).where(SkillSource.is_enabled.is_(True))
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
