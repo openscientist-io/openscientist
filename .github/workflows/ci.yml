@@ -6,8 +6,51 @@ on:
   pull_request:
 
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: uv sync
+
+      - name: Lint
+        run: uv run ruff check src/ tests/
+
+      - name: Format check
+        run: uv run ruff format --check src/ tests/
+
+      - name: No direct env access
+        run: ./scripts/check-no-env-access.sh
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: uv sync
+
+      - name: Type check
+        run: uv run mypy src/shandy/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck]
 
     services:
       postgres:
@@ -40,20 +83,43 @@ jobs:
 
       - run: uv sync
 
-      - name: Lint
-        run: uv run ruff check src/ tests/
-
-      - name: No direct env access
-        run: ./scripts/check-no-env-access.sh
-
-      - name: Format check
-        run: uv run ruff format --check src/ tests/
-
-      - name: Type check
-        run: uv run mypy src/shandy/ tests/
-
-      - name: Tests (excluding E2E)
+      - name: Unit & Integration Tests
         run: uv run pytest --ignore=tests/zz_e2e --cov=src/shandy --cov-report=term-missing
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [test]
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: shandy
+          POSTGRES_PASSWORD: shandy_dev_password
+          POSTGRES_DB: shandy
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U shandy -d shandy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: uv sync
 
       - name: Install Playwright browsers
         run: uv run playwright install chromium
