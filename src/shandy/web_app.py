@@ -5,6 +5,7 @@ Provides web UI for job submission, monitoring, and results viewing.
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -31,8 +32,6 @@ try:
 except Exception as e:
     _settings_error = str(e)
     # Fallback for import-time usage
-    import os
-
     STORAGE_SECRET = os.getenv(
         "STORAGE_SECRET", "change-this-to-a-random-secret-string-in-production"
     )
@@ -106,7 +105,9 @@ def get_job_manager() -> JobManager:
         The global JobManager instance.
     """
     if _state.job_manager is None:
-        logger.warning("Job manager was None, initializing now (likely due to module reload)")
+        logger.warning(
+            "Job manager was None, initializing now (likely due to module reload)"
+        )
         _state.job_manager = JobManager(jobs_dir=_state.jobs_dir, max_concurrent=1)
         # Add static file serving
         try:
@@ -141,7 +142,9 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
                 logger.info("Database connection verified")
             except Exception as e:
                 logger.error("Database connection failed: %s", e)
-                logger.warning("Application will continue but database features may not work")
+                logger.warning(
+                    "Application will continue but database features may not work"
+                )
 
         async def start_background_tasks():
             """Start background tasks after database verification."""
@@ -241,4 +244,6 @@ if __name__ in {"__main__", "__mp_main__"}:
 
     args = parser.parse_args()
 
-    main(host=args.host, port=args.port, jobs_dir=Path(args.jobs_dir), reload=args.reload)
+    main(
+        host=args.host, port=args.port, jobs_dir=Path(args.jobs_dir), reload=args.reload
+    )

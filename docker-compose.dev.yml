@@ -24,6 +24,8 @@ services:
     environment:
       # Prevent Python from writing .pyc files
       PYTHONDONTWRITEBYTECODE: "1"
+      # Enable dev mode for mock OAuth login
+      SHANDY_DEV_MODE: "true"
 
       # Enable mock OAuth for testing (DEVELOPMENT ONLY!)
       ENABLE_MOCK_AUTH: "true"

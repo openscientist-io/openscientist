@@ -2,8 +2,7 @@
 
 from shandy.webapp_components.utils.auth import (
     DISABLE_AUTH,
-    PASSWORD_HASH,
-    check_password,
+    is_dev_mode,
     require_auth,
 )
 from shandy.webapp_components.utils.session import (
@@ -17,10 +16,9 @@ from shandy.webapp_components.utils.transcript_parser import (
 )
 
 __all__ = [
-    "check_password",
+    "is_dev_mode",
     "require_auth",
     "DISABLE_AUTH",
-    "PASSWORD_HASH",
     "get_uploaded_files",
     "add_uploaded_file",
     "clear_uploaded_files",

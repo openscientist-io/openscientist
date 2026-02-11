@@ -5,6 +5,7 @@ import logging
 from nicegui import ui
 
 from shandy.auth import get_current_user_id, require_auth
+from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import render_status_cell_slot
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,9 @@ def jobs_page():
     from shandy import web_app
 
     job_manager = web_app.get_job_manager()
+
+    # Check provider configuration
+    is_configured, provider_name, config_errors = check_provider_config()
 
     def refresh_jobs(table_to_update):
         """Refresh jobs table."""
@@ -109,13 +113,40 @@ def jobs_page():
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Jobs").classes("text-h4")
         with ui.row():
-            ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
+            new_job_btn = ui.button(
+                "New Job", on_click=lambda: ui.navigate.to("/new"), icon="add"
+            )
+            if not is_configured:
+                new_job_btn.disable()
+                new_job_btn.tooltip("Server not configured - cannot start jobs")
             ui.button(
                 "Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments"
             ).props("flat")
             ui.button(
-                "Admin", on_click=lambda: ui.navigate.to("/admin"), icon="admin_panel_settings"
+                "Admin",
+                on_click=lambda: ui.navigate.to("/admin"),
+                icon="admin_panel_settings",
             ).props("flat color=secondary")
+
+    # Show configuration error banner if provider is not configured
+    if not is_configured:
+        with ui.card().classes("w-full mx-4 mt-4 bg-red-50 border-l-4 border-red-500"):
+            with ui.row().classes("items-center gap-3"):
+                ui.icon("error", color="red", size="md")
+                with ui.column().classes("gap-1"):
+                    ui.label("Server Configuration Error").classes(
+                        "text-red-800 font-bold"
+                    )
+                    ui.label(
+                        f"The {provider_name.upper()} provider is not configured correctly. "
+                        "Jobs cannot be started until this is resolved."
+                    ).classes("text-red-700")
+                    ui.label("Please contact the system administrator.").classes(
+                        "text-red-600 text-sm"
+                    )
+            with ui.expansion("Technical Details", icon="info").classes("mt-2"):
+                for error in config_errors:
+                    ui.label(f"• {error}").classes("text-red-600 text-sm font-mono")
 
     # Summary cards
     summary = job_manager.get_job_summary()
@@ -145,19 +176,33 @@ def jobs_page():
         # ===== MY JOBS TAB =====
         with ui.tab_panel(my_jobs_tab):
             with ui.row().classes("w-full justify-end mb-2"):
-                ui.button("Refresh", on_click=lambda: refresh_jobs(my_jobs_table), icon="refresh")
+                ui.button(
+                    "Refresh",
+                    on_click=lambda: refresh_jobs(my_jobs_table),
+                    icon="refresh",
+                )
 
             # My jobs table
             my_jobs_table = ui.table(
                 columns=[
-                    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+                    {
+                        "name": "job_id",
+                        "label": "Job ID",
+                        "field": "job_id",
+                        "align": "left",
+                    },
                     {
                         "name": "question",
                         "label": "Research Question",
                         "field": "question",
                         "align": "left",
                     },
-                    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+                    {
+                        "name": "status",
+                        "label": "Status",
+                        "field": "status",
+                        "align": "center",
+                    },
                     {
                         "name": "iterations",
                         "label": "Iterations",
@@ -219,21 +264,36 @@ def jobs_page():
             # Shared jobs table (includes owner and permission columns)
             shared_jobs_table = ui.table(
                 columns=[
-                    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+                    {
+                        "name": "job_id",
+                        "label": "Job ID",
+                        "field": "job_id",
+                        "align": "left",
+                    },
                     {
                         "name": "question",
                         "label": "Research Question",
                         "field": "question",
                         "align": "left",
                     },
-                    {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
+                    {
+                        "name": "owner",
+                        "label": "Owner",
+                        "field": "owner",
+                        "align": "left",
+                    },
                     {
                         "name": "permission",
                         "label": "Permission",
                         "field": "permission",
                         "align": "center",
                     },
-                    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+                    {
+                        "name": "status",
+                        "label": "Status",
+                        "field": "status",
+                        "align": "center",
+                    },
                     {
                         "name": "iterations",
                         "label": "Iterations",
