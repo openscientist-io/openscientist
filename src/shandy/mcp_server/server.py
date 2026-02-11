@@ -12,6 +12,7 @@ Provides tools for autonomous discovery:
 - parse_alphafold_confidence: Extract AlphaFold confidence metrics
 """
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -33,6 +34,9 @@ from shandy.file_loader import (
 from shandy.knowledge_state import KnowledgeState
 from shandy.literature import search_pubmed as search_pm
 from shandy.phenix_setup import check_phenix_available
+
+# Container isolation feature flag
+USE_CONTAINER_ISOLATION = os.getenv("SHANDY_USE_CONTAINER_ISOLATION", "false").lower() == "true"
 
 # Global state (initialized by main())
 DATA: Optional[pd.DataFrame] = None  # None for non-tabular files or not yet loaded
@@ -104,6 +108,50 @@ def ensure_data_loaded() -> Optional[str]:
         return DATA_LOAD_ERROR
 
 
+def _execute_in_container(
+    code: str,
+    description: str,
+    provenance_dir: Path,
+    iteration: int,
+) -> Dict[str, Any]:
+    """
+    Execute code in an isolated Docker container.
+
+    Args:
+        code: Python code to execute
+        description: Description of what's being investigated
+        provenance_dir: Directory to save plots and artifacts
+        iteration: Current iteration number
+
+    Returns:
+        Execution result dictionary
+    """
+    from shandy.container_manager import get_container_manager
+
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
+
+    # Get job ID from directory name
+    job_id = JOB_DIR.name
+
+    # Get data file path if available
+    data_path = str(DATA_FILE_PATH) if DATA_FILE_PATH else None
+
+    # Execute in container
+    container_manager = get_container_manager()
+    result = container_manager.execute_code(
+        code=code,
+        job_id=job_id,
+        data_path=data_path,
+        output_dir=provenance_dir,
+        timeout=60,
+        description=description,
+        iteration=iteration,
+        data_files=DATA_FILES,
+    )
+
+    return result
+
+
 @mcp.tool()
 def execute_code(code: str, description: str = "") -> str:
     """
@@ -140,16 +188,25 @@ def execute_code(code: str, description: str = "") -> str:
     provenance_dir = JOB_DIR / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
 
-    # Execute code (DATA may be None for non-tabular files)
-    result = exec_code(
-        code,
-        DATA,
-        provenance_dir,
-        timeout=60,
-        description=description,
-        iteration=int(KS.data["iteration"]),
-        data_files=DATA_FILES,
-    )
+    # Execute code - use container isolation if enabled
+    if USE_CONTAINER_ISOLATION:
+        result = _execute_in_container(
+            code=code,
+            description=description,
+            provenance_dir=provenance_dir,
+            iteration=int(KS.data["iteration"]),
+        )
+    else:
+        # Execute code in-process (DATA may be None for non-tabular files)
+        result = exec_code(
+            code,
+            DATA,
+            provenance_dir,
+            timeout=60,
+            description=description,
+            iteration=int(KS.data["iteration"]),
+            data_files=DATA_FILES,
+        )
 
     # Log to knowledge graph (code is stored in plot metadata files, not here)
     KS.log_analysis(

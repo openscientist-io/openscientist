@@ -81,10 +81,12 @@ class JobInfo:
             research_question=job.title,
             status=JobStatus(job.status),
             created_at=job.created_at.isoformat(),
-            started_at=job.updated_at.isoformat()
-            if job.status in ["running", "completed", "failed"]
-            else None,
-            completed_at=job.updated_at.isoformat() if job.status == "completed" else None,
+            started_at=(
+                job.updated_at.isoformat()
+                if job.status in ["running", "completed", "failed"]
+                else None
+            ),
+            completed_at=(job.updated_at.isoformat() if job.status == "completed" else None),
             failed_at=job.updated_at.isoformat() if job.status == "failed" else None,
             max_iterations=job.max_iterations,
             iterations_completed=iterations_completed,
@@ -550,6 +552,18 @@ class JobManager:
         except Exception as e:
             logger.error("Failed to delete job from database: %s", e)
 
+        # Clean up any executor containers for this job
+        try:
+            from shandy.container_manager import get_container_manager
+
+            container_manager = get_container_manager()
+            if container_manager.is_available():
+                removed = container_manager.cleanup_job_containers(job_id)
+                if removed > 0:
+                    logger.info("Removed %d executor container(s) for job %s", removed, job_id)
+        except Exception as e:
+            logger.warning("Failed to cleanup containers for job %s: %s", job_id, e)
+
         # Delete job directory
         job_dir = self.jobs_dir / job_id
         if job_dir.exists():
@@ -593,6 +607,18 @@ class JobManager:
                     deleted += 1
                 except (OSError, ValueError) as e:
                     logger.error("Failed to delete job %s: %s", job_id, e)
+
+        # Also cleanup orphaned executor containers
+        try:
+            from shandy.container_manager import get_container_manager
+
+            container_manager = get_container_manager()
+            if container_manager.is_available():
+                orphaned = container_manager.cleanup_orphaned_containers(max_age_hours=days * 24)
+                if orphaned > 0:
+                    logger.info("Removed %d orphaned executor container(s)", orphaned)
+        except Exception as e:
+            logger.warning("Failed to cleanup orphaned containers: %s", e)
 
         logger.info("Cleaned up %d old jobs", deleted)
         return deleted
@@ -710,7 +736,12 @@ class JobManager:
                             ks_iteration = ks.get("iteration", 1)
                             iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
                             findings_count = len(ks.get("findings", []))
-                        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+                        except (
+                            OSError,
+                            json.JSONDecodeError,
+                            KeyError,
+                            ValueError,
+                        ) as e:
                             logger.warning("Failed to load KS for running job %s: %s", job_id, e)
 
                 return JobInfo.from_db_model(job_model, iterations_completed, findings_count)

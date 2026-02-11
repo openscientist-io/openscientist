@@ -77,6 +77,9 @@ dependencies = [
 
     # Berkeley Lab Data Lakehouse
     "linkml-store[dremio]>=0.2.0",
+
+    # Container isolation
+    "docker>=7.0.0",
 ]
 
 [project.optional-dependencies]
@@ -121,6 +124,9 @@ python_files = "test_*.py"
 python_functions = "test_*"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: marks tests as integration tests (require Docker and executor image)",
+]
 
 [tool.coverage.run]
 source = ["src/shandy"]
@@ -172,5 +178,6 @@ dev = [
     "types-seaborn>=0.13.0",
     "types-openpyxl>=3.1.0",
     "types-fpdf2>=2.7.0",
+    "types-docker>=7.0.0",
     "pre-commit>=3.5.0",
 ]

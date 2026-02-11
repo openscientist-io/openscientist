@@ -1,0 +1,33 @@
+# SHANDY Executor Container
+# Minimal image for isolated Python code execution
+
+FROM python:3.12-slim
+
+# Create non-root user for security
+RUN useradd --create-home executor
+
+WORKDIR /app
+
+# Install system dependencies for scientific libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libhdf5-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements-executor.txt .
+RUN pip install --no-cache-dir -r requirements-executor.txt
+
+# Create directories for data and output
+RUN mkdir -p /data /output && chown executor:executor /data /output
+
+# Copy executor module
+COPY src/shandy_executor /app/shandy_executor
+
+# Switch to non-root user
+USER executor
+
+# Run the executor module
+ENTRYPOINT ["python", "-m", "shandy_executor"]

@@ -1,4 +1,4 @@
-.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy dev-start dev-stop dev-restart dev-rebuild lint format typecheck diagrams
+.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy dev-start dev-stop dev-restart dev-rebuild lint format typecheck diagrams build-executor
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -17,6 +17,7 @@ help:
 	@echo "  make build-no-cache   - Build the Docker image (without cache, for dependency updates)"
 	@echo "  make rebuild          - Rebuild image and restart (use after code changes, with cache)"
 	@echo "  make rebuild-no-cache - Rebuild image and restart (without cache)"
+	@echo "  make build-executor   - Build executor image for container isolation"
 	@echo "  make logs             - Tail container logs"
 	@echo "  make shell            - Open a shell in the running container"
 	@echo "  make clean            - Remove container and volumes"
@@ -57,6 +58,10 @@ build:
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
 		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+build-executor:
+	@echo "Building SHANDY executor image for container isolation..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t shandy-executor:latest .
 
 build-no-cache:
 	@echo "Building SHANDY Docker image (without cache)..."

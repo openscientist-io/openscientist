@@ -82,12 +82,22 @@ services:
       KBASE_TOKEN: ${KBASE_TOKEN}
       DREMIO_USER: ${DREMIO_USER}
       DREMIO_PASSWORD: ${DREMIO_PASSWORD}
+
+      # Container isolation settings
+      SHANDY_USE_CONTAINER_ISOLATION: ${SHANDY_USE_CONTAINER_ISOLATION:-true}
+      SHANDY_EXECUTOR_IMAGE: ${SHANDY_EXECUTOR_IMAGE:-shandy-executor:latest}
+      SHANDY_EXECUTOR_MEMORY: ${SHANDY_EXECUTOR_MEMORY:-2g}
+      SHANDY_EXECUTOR_CPU: ${SHANDY_EXECUTOR_CPU:-0.5}
     volumes:
       - ./jobs:/app/jobs
       - ./data:/app/data
       - ./.env:/app/.env:ro
       # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
+      # Mount Docker socket for sibling container execution
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    group_add:
+      - "${DOCKER_GID:-999}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]

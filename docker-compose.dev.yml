@@ -28,6 +28,9 @@ services:
       # Enable mock OAuth for testing (DEVELOPMENT ONLY!)
       ENABLE_MOCK_AUTH: "true"
 
+      # Disable container isolation in dev mode (use in-process execution)
+      SHANDY_USE_CONTAINER_ISOLATION: "false"
+
     # Override restart policy - don't auto-restart in dev mode
     restart: "no"
 
