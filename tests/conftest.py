@@ -1,5 +1,6 @@
 """Global pytest fixtures for SHANDY tests."""
 
+import asyncio
 import os
 import subprocess
 import tempfile
@@ -15,6 +16,18 @@ if "ANTHROPIC_API_KEY" not in os.environ:
 
 import pytest
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
+
+
+@pytest.fixture
+def event_loop():
+    """Create a new event loop for each test.
+
+    This overrides pytest-playwright's event_loop fixture to prevent
+    conflicts with async database tests and NiceGUI user_simulation.
+    """
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 # Clear any cached settings after environment setup

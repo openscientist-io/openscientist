@@ -133,6 +133,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: marks tests as integration tests (require Docker and executor image)",
+    "e2e: marks tests as end-to-end tests (require running web server and browser)",
 ]
 
 [tool.coverage.run]
@@ -178,6 +179,7 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.12.0",
+    "pytest-playwright>=0.7.0",
     "ruff>=0.1.0",
     "mypy>=1.5.0",
     "types-requests>=2.31.0",

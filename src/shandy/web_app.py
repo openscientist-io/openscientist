@@ -5,7 +5,6 @@ Provides web UI for job submission, monitoring, and results viewing.
 """
 
 import logging
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +31,68 @@ except Exception as e:
     _settings_error = str(e)
     # Fallback for import-time usage - use a sentinel value
     STORAGE_SECRET = "change-this-to-a-random-secret-string-in-production"
+
+
+def _create_config_error_page(error_message: str):
+    """Create an error page for configuration errors.
+
+    This page is shown when required configuration keys are missing,
+    allowing deployers to see the error in the UI rather than just in logs.
+    """
+
+    @ui.page("/")
+    @ui.page("/{path:path}")
+    def config_error_page(path: str = ""):
+        """Display configuration error with 500 status."""
+        app.storage.user["_error_shown"] = True
+
+        with ui.column().classes("absolute-center items-center gap-6 max-w-2xl p-8"):
+            # Error icon
+            ui.icon("error", size="80px", color="red")
+
+            # Title
+            ui.markdown("# Configuration Error").classes("text-red-600")
+
+            # Subtitle
+            ui.markdown("_SHANDY cannot start due to missing or invalid configuration._").classes(
+                "text-gray-600"
+            )
+
+            ui.separator().classes("w-full")
+
+            # Error details card
+            with ui.card().classes("w-full bg-red-50 border-l-4 border-red-500"):
+                ui.label("Error Details").classes("font-bold text-red-800 mb-2")
+                ui.code(error_message).classes("w-full text-sm whitespace-pre-wrap break-words")
+
+            ui.separator().classes("w-full")
+
+            # Instructions
+            with ui.card().classes("w-full bg-blue-50 border-l-4 border-blue-500"):
+                ui.label("How to Fix").classes("font-bold text-blue-800 mb-2")
+                ui.markdown(
+                    """
+1. **Check your `.env` file** - Ensure all required environment variables are set
+2. **Review the error message above** - It indicates which configuration is missing
+3. **Restart the application** after fixing the configuration
+
+For setup instructions, see the project's `README.md` or `CONTRIBUTING.md`.
+                    """
+                ).classes("text-blue-700")
+
+            # HTTP 500 indicator
+            ui.label("HTTP 500 - Internal Server Error").classes("text-gray-400 text-sm mt-4")
+
+    # Also add a health check endpoint that returns 500
+    from fastapi import Response
+
+    @app.get("/health")
+    def health_check():
+        return Response(
+            content='{"status": "error", "message": "Configuration error"}',
+            status_code=500,
+            media_type="application/json",
+        )
 
 
 class _AppState:
@@ -198,10 +259,23 @@ def main(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Validate settings at startup
+    # Check for configuration errors
     if _settings_error is not None:
         logger.error("Configuration error: %s", _settings_error)
-        sys.exit(1)
+        logger.info("Starting minimal error page to display configuration error in UI")
+
+        # Create the error page and run with minimal config
+        _create_config_error_page(_settings_error)
+
+        ui.run(
+            host=host,
+            port=port,
+            title="SHANDY - Configuration Error",
+            reload=False,  # No reload in error mode
+            show=False,
+            storage_secret=STORAGE_SECRET,
+        )
+        return  # Exit after running error mode
 
     logger.info("Settings validated successfully")
 
