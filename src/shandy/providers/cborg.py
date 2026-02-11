@@ -13,6 +13,7 @@ import requests
 
 from shandy.exceptions import ProviderError
 from shandy.providers.base import BaseProvider, CostInfo
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,12 @@ class CborgProvider(BaseProvider):
     def _validate_required_config(self) -> List[str]:
         """Check required CBORG configuration."""
         errors = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_AUTH_TOKEN"):
+        if not settings.provider.anthropic_auth_token:
             errors.append("ANTHROPIC_AUTH_TOKEN not set (required for CBORG)")
 
-        if not os.getenv("ANTHROPIC_BASE_URL"):
+        if not settings.provider.anthropic_base_url:
             errors.append("ANTHROPIC_BASE_URL not set (should be https://api.cborg.lbl.gov)")
 
         return errors
@@ -46,8 +48,9 @@ class CborgProvider(BaseProvider):
     def _validate_optional_config(self) -> List[str]:
         """Check optional CBORG configuration."""
         warnings = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_MODEL"):
+        if not settings.provider.anthropic_model:
             warnings.append("ANTHROPIC_MODEL not set (will use Claude CLI default)")
 
         return warnings
@@ -55,9 +58,9 @@ class CborgProvider(BaseProvider):
     def setup_environment(self) -> None:
         """CBORG environment should be configured via .env and docker-compose.yml."""
         # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)
-        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # noqa: env-ok
+        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
 
         logger.info("CBORG provider initialized (configuration from environment)")
 
@@ -71,7 +74,8 @@ class CborgProvider(BaseProvider):
         Returns:
             CostInfo with CBORG spend data
         """
-        token = os.getenv("ANTHROPIC_AUTH_TOKEN")
+        settings = get_settings()
+        token = settings.provider.anthropic_auth_token
         if not token:
             raise ValueError("ANTHROPIC_AUTH_TOKEN not set")
 

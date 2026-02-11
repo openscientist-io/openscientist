@@ -12,7 +12,7 @@ class TestIndexPage:
     @pytest.mark.asyncio
     async def test_index_redirects_to_jobs(self):
         """Test that index page redirects to jobs list."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
             from shandy.webapp_components.pages.index import index_page
 
             async with user_simulation(root=index_page) as user:

@@ -6,17 +6,39 @@ import tempfile
 from pathlib import Path
 from typing import AsyncGenerator, Generator
 
+# Set up test environment variables BEFORE any shandy imports
+# This prevents settings validation errors during test collection
+if "CLAUDE_PROVIDER" not in os.environ or os.environ.get("CLAUDE_PROVIDER") == "cborg":
+    os.environ["CLAUDE_PROVIDER"] = "anthropic"
+if "ANTHROPIC_API_KEY" not in os.environ:
+    os.environ["ANTHROPIC_API_KEY"] = "test-api-key-for-testing"
+
 import pytest
-import pytest_asyncio
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import (
+from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
+
+
+# Clear any cached settings after environment setup
+# This must be done after shandy imports to access the cache_clear function
+def _clear_settings_cache():
+    """Clear settings cache - called after imports."""
+    try:
+        from shandy.settings import clear_settings_cache
+
+        clear_settings_cache()
+    except ImportError:
+        pass
+
+
+import pytest_asyncio  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
 
-from shandy.database.models import (
+from shandy.database.models import (  # noqa: E402
     Administrator,
     APIKey,
     Job,
@@ -25,7 +47,7 @@ from shandy.database.models import (
     SkillSource,
     User,
 )
-from shandy.database.rls import bypass_rls
+from shandy.database.rls import bypass_rls  # noqa: E402
 
 # Set up encryption key for tests (required for EncryptedText columns)
 # This must be done before any database operations that use encrypted fields
@@ -35,6 +57,48 @@ if "TOKEN_ENCRYPTION_KEY" not in os.environ:
     os.environ["TOKEN_ENCRYPTION_KEY"] = crypto.generate_key()
     # Clear the cached Fernet instance so it picks up the new key
     crypto._get_fernet.cache_clear()
+
+# Clear and reload settings cache after setting up test environment
+_clear_settings_cache()
+
+
+@pytest.fixture(scope="session")
+def postgres_container() -> Generator[PostgresContainer, None, None]:
+    """Start a PostgreSQL container for the test session.
+
+    This container is shared across all tests in the session for efficiency.
+    It's only started if TEST_DATABASE_URL is not explicitly set.
+
+    Uses postgres:18 for native uuidv7() function support.
+    """
+    # Skip container if explicit database URL is provided
+    if os.getenv("TEST_DATABASE_URL"):
+        yield None  # type: ignore[misc]
+        return
+
+    # Start PostgreSQL 18 container (required for native uuidv7() support)
+    # Uses same credentials as dev environment
+    with PostgresContainer(
+        image="postgres:18",
+        username="shandy",
+        password="shandy_dev_password",
+        dbname="shandy",
+    ) as postgres:
+        yield postgres
+
+
+@pytest.fixture
+def clear_settings():
+    """Fixture to clear settings cache before and after test.
+
+    Use this fixture in tests that need to patch environment variables
+    and have the settings reload with new values.
+    """
+    from shandy.settings import clear_settings_cache
+
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
 
 
 def _apply_alembic_migrations(database_url: str) -> None:
@@ -87,27 +151,30 @@ def _apply_alembic_migrations(database_url: str) -> None:
 
 
 @pytest.fixture(scope="session")
-def test_database_url() -> str:
-    """Get test database URL from environment or use default.
+def test_database_url(postgres_container: PostgresContainer | None) -> str:
+    """Get test database URL from environment or testcontainer.
 
     Priority:
     1. TEST_DATABASE_URL if explicitly set
-    2. DATABASE_URL from .env, with hostname replacement for Docker
-    3. Default localhost:5434 connection
+    2. Testcontainer PostgreSQL (auto-started)
     """
+    # Check for explicit test database URL
     test_url = os.getenv("TEST_DATABASE_URL")
     if test_url:
         return test_url
 
-    # Get DATABASE_URL and replace Docker hostname with localhost for testing
-    db_url = os.getenv("DATABASE_URL", "")
-    if db_url:
-        # Replace Docker hostname with localhost and port 5434
-        db_url = db_url.replace("@postgres:5432", "@localhost:5434")
-        return db_url
+    # Use testcontainer - it should always be available at this point
+    if postgres_container is None:
+        raise RuntimeError(
+            "No TEST_DATABASE_URL set and postgres_container fixture returned None. "
+            "This should not happen - check the postgres_container fixture."
+        )
 
-    # Final fallback
-    return "postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy"
+    # Get connection URL from container and convert to asyncpg driver
+    # testcontainers returns psycopg2 URL, we need asyncpg
+    sync_url: str = postgres_container.get_connection_url()
+    async_url = sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+    return async_url
 
 
 @pytest_asyncio.fixture

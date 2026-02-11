@@ -6,7 +6,6 @@ which integrate with NiceGUI's underlying FastAPI application.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -19,12 +18,9 @@ from shandy.auth.oauth import get_oauth_client
 from shandy.auth.providers import GitHubProvider, MockProvider, ORCIDProvider
 from shandy.database.models import OAuthAccount, Session, User
 from shandy.database.session import get_session
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
-
-# Session configuration
-SESSION_DURATION_DAYS = int(os.getenv("SESSION_DURATION_DAYS", "30"))
-APP_URL = os.getenv("APP_URL", "http://localhost:8080")
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -120,7 +116,8 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
     Returns:
         New Session object
     """
-    expires_at = datetime.utcnow() + timedelta(days=SESSION_DURATION_DAYS)
+    settings = get_settings()
+    expires_at = datetime.utcnow() + timedelta(days=settings.auth.session_duration_days)
 
     session = Session(
         user_id=user_id,
@@ -156,7 +153,8 @@ async def oauth_login(provider: str, request: Request):
             )
 
         # Build redirect URI
-        redirect_uri = f"{APP_URL}/auth/{provider}/callback"
+        settings = get_settings()
+        redirect_uri = f"{settings.auth.app_url}/auth/{provider}/callback"
 
         # Redirect to OAuth provider
         return await client.authorize_redirect(request, redirect_uri)
@@ -215,12 +213,13 @@ async def oauth_callback(provider: str, request: Request):
         response = RedirectResponse(url="/")
 
         # Set session cookie (HttpOnly for security)
+        settings = get_settings()
         response.set_cookie(
             key="session_token",
             value=str(session.id),
-            max_age=SESSION_DURATION_DAYS * 24 * 60 * 60,  # seconds
+            max_age=settings.auth.session_duration_days * 24 * 60 * 60,  # seconds
             httponly=True,
-            secure=APP_URL.startswith("https"),  # Secure cookie for HTTPS
+            secure=settings.auth.app_url.startswith("https"),  # Secure cookie for HTTPS
             samesite="lax",
         )
 
@@ -268,7 +267,8 @@ async def mock_oauth_login():
 
     Security Warning: Never enable this in production!
     """
-    if not os.getenv("ENABLE_MOCK_AUTH"):
+    settings = get_settings()
+    if not settings.auth.enable_mock_auth:
         raise HTTPException(status_code=404, detail="Mock auth not enabled")
 
     # Redirect to mock login form (handled by NiceGUI)
@@ -284,7 +284,8 @@ async def mock_oauth_callback(request: Request):
 
     Security Warning: Never enable this in production!
     """
-    if not os.getenv("ENABLE_MOCK_AUTH"):
+    settings = get_settings()
+    if not settings.auth.enable_mock_auth:
         raise HTTPException(status_code=404, detail="Mock auth not enabled")
 
     try:
@@ -323,9 +324,9 @@ async def mock_oauth_callback(request: Request):
         response.set_cookie(
             key="session_token",
             value=str(session.id),
-            max_age=SESSION_DURATION_DAYS * 24 * 60 * 60,  # seconds
+            max_age=settings.auth.session_duration_days * 24 * 60 * 60,  # seconds
             httponly=True,
-            secure=APP_URL.startswith("https"),  # Secure cookie for HTTPS
+            secure=settings.auth.app_url.startswith("https"),  # Secure cookie for HTTPS
             samesite="lax",
         )
 

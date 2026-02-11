@@ -65,15 +65,15 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
         - provider_name: Name of the configured provider
         - error_messages: List of configuration error messages (empty if configured)
     """
-    provider_name = os.getenv("CLAUDE_PROVIDER", "cborg").lower()
+    settings = get_settings()
+    provider_name = settings.provider.claude_provider.lower()
 
-    if provider_name not in ("anthropic", "cborg", "vertex", "bedrock"):
+    valid_providers = ("anthropic", "cborg", "vertex", "bedrock", "codex")
+    if provider_name not in valid_providers:
         return (
             False,
             provider_name,
-            [
-                f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock"
-            ],
+            [f"Unknown provider '{provider_name}'. Valid options: {', '.join(valid_providers)}"],
         )
 
     try:

@@ -15,7 +15,7 @@ class TestNewJobPage:
         from shandy.webapp_components.pages.new_job import new_job_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_get_jm.return_value = mock_job_manager
 
                 async with user_simulation(root=new_job_page) as user:
@@ -32,7 +32,7 @@ class TestNewJobPage:
         from shandy.webapp_components.pages.new_job import new_job_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_get_jm.return_value = mock_job_manager
 
                 async with user_simulation(root=new_job_page) as user:
@@ -49,7 +49,7 @@ class TestNewJobPage:
         from shandy.webapp_components.pages.new_job import new_job_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_get_jm.return_value = mock_job_manager
 
                 async with user_simulation(root=new_job_page) as user:
@@ -65,7 +65,7 @@ class TestNewJobPage:
         from shandy.webapp_components.pages.new_job import new_job_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_get_jm.return_value = mock_job_manager
 
                 async with user_simulation(root=new_job_page) as user:

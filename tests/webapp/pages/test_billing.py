@@ -15,7 +15,7 @@ class TestBillingPage:
         from shandy.webapp_components.pages.billing import billing_page
 
         with patch("shandy.providers.get_provider") as mock_get_provider:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_get_provider.return_value = mock_provider
 
                 async with user_simulation(root=billing_page) as user:
@@ -31,7 +31,7 @@ class TestBillingPage:
         from shandy.webapp_components.pages.billing import billing_page
 
         with patch("shandy.providers.get_provider") as mock_get_provider:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_get_provider.return_value = mock_provider
 
                 async with user_simulation(root=billing_page) as user:

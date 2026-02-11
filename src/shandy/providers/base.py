@@ -3,13 +3,13 @@ Base provider interface and shared types.
 """
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from shandy.exceptions import ProviderError
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -131,20 +131,16 @@ class BaseProvider(ABC):
                 f"Reason: {cost_info.data_lag_note or 'Unknown'}"
             )
         else:
+            settings = get_settings()
             # Check total spend limit
-            max_total = float(os.getenv("MAX_PROJECT_SPEND_TOTAL_USD", "inf"))
+            max_total = settings.budget.max_project_spend_total_usd
             if cost_info.total_spend_usd >= max_total:
                 errors.append(
                     f"Total spend ${cost_info.total_spend_usd:.2f} exceeds limit ${max_total:.2f}"
                 )
 
-            # Check 24h spend limit
-            max_recent = float(
-                os.getenv(
-                    f"MAX_PROJECT_SPEND_{lookback_hours}H_USD",
-                    os.getenv("MAX_PROJECT_SPEND_24H_USD", "inf"),
-                )
-            )
+            # Check 24h spend limit (use settings for default, assumes 24h lookback)
+            max_recent = settings.budget.max_project_spend_24h_usd
             if cost_info.recent_spend_usd >= max_recent:
                 errors.append(
                     f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
@@ -152,12 +148,7 @@ class BaseProvider(ABC):
                 )
 
             # Check warning threshold
-            warn_recent = float(
-                os.getenv(
-                    f"WARN_PROJECT_SPEND_{lookback_hours}H_USD",
-                    os.getenv("WARN_PROJECT_SPEND_24H_USD", "inf"),
-                )
-            )
+            warn_recent = settings.budget.warn_project_spend_24h_usd
             if (
                 cost_info.recent_spend_usd >= warn_recent
                 and cost_info.recent_spend_usd < max_recent

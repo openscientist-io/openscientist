@@ -15,7 +15,7 @@ class TestJobsListPage:
         from shandy.webapp_components.pages.jobs_list import jobs_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 with patch.object(mock_job_manager, "list_jobs", return_value=[]):
                     mock_get_jm.return_value = mock_job_manager
 
@@ -33,7 +33,7 @@ class TestJobsListPage:
         from shandy.webapp_components.pages.jobs_list import jobs_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 with patch.object(mock_job_manager, "list_jobs", return_value=[]):
                     mock_get_jm.return_value = mock_job_manager
 
@@ -50,7 +50,7 @@ class TestJobsListPage:
         from shandy.webapp_components.pages.jobs_list import jobs_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 with patch.object(mock_job_manager, "list_jobs", return_value=[]):
                     mock_get_jm.return_value = mock_job_manager
 
@@ -78,7 +78,7 @@ class TestJobsListPage:
         job2.created_at = "2026-02-05T15:30:00.000"
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 with patch.object(
                     mock_job_manager, "list_jobs", return_value=[sample_job_info, job2]
                 ):

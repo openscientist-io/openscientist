@@ -1,26 +1,24 @@
 """Authentication utilities for the web application."""
 
 import logging
-import os
 from functools import wraps
 from typing import Callable
 
 from nicegui import app, ui
 
+from shandy.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
-# Authentication settings
-DISABLE_AUTH = os.getenv("DISABLE_AUTH", "false").lower() == "true"
+
+def is_auth_disabled() -> bool:
+    """Check if authentication is disabled."""
+    return get_settings().auth.disable_auth
 
 
 def is_dev_mode() -> bool:
     """Check if running in development mode."""
-    return os.getenv("SHANDY_DEV_MODE", "false").lower() == "true"
-
-
-if DISABLE_AUTH:
-    logger.warning("Authentication is DISABLED! Anyone can access this app.")
-    logger.warning("Set DISABLE_AUTH=false in .env to re-enable authentication.")
+    return get_settings().dev.dev_mode
 
 
 def require_auth(func: Callable) -> Callable:
@@ -37,7 +35,7 @@ def require_auth(func: Callable) -> Callable:
     @wraps(func)
     def wrapper(*args, **kwargs):
         # Skip if auth is disabled
-        if DISABLE_AUTH:
+        if is_auth_disabled():
             return func(*args, **kwargs)
 
         # Check if authenticated

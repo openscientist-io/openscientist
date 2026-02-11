@@ -217,6 +217,7 @@ class TestCheckBudgetLimits:
                 "WARN_PROJECT_SPEND_24H_USD": "75",
             },
         ):
+            clear_settings_cache()
             result = provider.check_budget_limits()
         assert result["can_proceed"] is True
         assert any("approaching" in w for w in result["warnings"])

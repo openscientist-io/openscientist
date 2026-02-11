@@ -16,6 +16,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 
+class DevSettings(BaseSettings):
+    """Development mode settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    dev_mode: bool = Field(default=False, alias="SHANDY_DEV_MODE")
+
+
 class ProviderSettings(BaseSettings):
     """Provider configuration for model access."""
 
@@ -31,6 +43,12 @@ class ProviderSettings(BaseSettings):
         alias="CLAUDE_PROVIDER",
         description="Provider: anthropic, cborg, vertex, bedrock, codex",
     )
+
+    # Claude CLI path
+    claude_cli_path: str = Field(default="claude", alias="CLAUDE_CLI_PATH")
+
+    # GitHub token for skill syncing
+    github_token: Optional[str] = Field(default=None, alias="GITHUB_TOKEN")
 
     # Anthropic direct API
     anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
@@ -194,8 +212,7 @@ class AuthSettings(BaseSettings):
     )
 
     # General auth settings
-    disable_auth: bool = Field(default=False, alias="DISABLE_AUTH")
-    app_url: Optional[str] = Field(default=None, alias="APP_URL")
+    app_url: str = Field(default="http://localhost:8080", alias="APP_URL")
     storage_secret: str = Field(
         default="change-this-to-a-random-secret-string-in-production",
         alias="STORAGE_SECRET",
@@ -204,6 +221,7 @@ class AuthSettings(BaseSettings):
     # Session settings
     session_secret: Optional[str] = Field(default=None, alias="SESSION_SECRET")
     session_max_age: int = Field(default=86400, alias="SESSION_MAX_AGE")
+    session_duration_days: int = Field(default=30, alias="SESSION_DURATION_DAYS")
 
     # GitHub OAuth
     github_client_id: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_ID")
@@ -216,7 +234,9 @@ class AuthSettings(BaseSettings):
 
     # Development/testing
     enable_mock_auth: bool = Field(default=False, alias="ENABLE_MOCK_AUTH")
+    disable_auth: bool = Field(default=False, alias="DISABLE_AUTH")
     app_password_hash: Optional[str] = Field(default=None, alias="APP_PASSWORD_HASH")
+    # Note: disable_auth is intentionally here for development purposes
 
     # Encryption
     token_encryption_key: Optional[str] = Field(default=None, alias="TOKEN_ENCRYPTION_KEY")
@@ -262,6 +282,17 @@ class BudgetSettings(BaseSettings):
     max_project_spend_hard: float = Field(default=500.0, alias="MAX_PROJECT_SPEND_HARD")
     max_job_cost_usd: float = Field(default=10.0, alias="MAX_JOB_COST_USD")
     app_max_budget_usd: float = Field(default=1000.0, alias="APP_MAX_BUDGET_USD")
+
+    # Provider-agnostic budget limits (used by check_budget_limits)
+    max_project_spend_total_usd: float = Field(
+        default=float("inf"), alias="MAX_PROJECT_SPEND_TOTAL_USD"
+    )
+    max_project_spend_24h_usd: float = Field(
+        default=float("inf"), alias="MAX_PROJECT_SPEND_24H_USD"
+    )
+    warn_project_spend_24h_usd: float = Field(
+        default=float("inf"), alias="WARN_PROJECT_SPEND_24H_USD"
+    )
 
     @field_validator(
         "max_project_spend_warn",
@@ -394,6 +425,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8080, alias="PORT")
 
     # Nested settings
+    dev: DevSettings = Field(default_factory=DevSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)

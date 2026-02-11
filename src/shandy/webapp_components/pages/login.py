@@ -1,10 +1,9 @@
 """Login page with OAuth authentication."""
 
-import os
-
 from nicegui import app, ui
 
 from shandy.auth.oauth import is_mock_auth_enabled, is_oauth_configured
+from shandy.settings import get_settings
 
 
 @ui.page("/login")
@@ -12,9 +11,10 @@ def login_page():
     """Login page with OAuth support."""
 
     # Check if OAuth is configured
+    settings = get_settings()
     oauth_enabled = is_oauth_configured()
-    github_enabled = bool(os.getenv("GITHUB_CLIENT_ID"))
-    orcid_enabled = bool(os.getenv("ORCID_CLIENT_ID"))
+    github_enabled = bool(settings.auth.github_client_id)
+    orcid_enabled = bool(settings.auth.orcid_client_id)
     mock_enabled = is_mock_auth_enabled()
 
     # Check if already authenticated (from return redirect)
@@ -77,15 +77,13 @@ def login_page():
 
             # No auth configured warning
             if not oauth_enabled:
-                with ui.card().classes(
-                    "w-full bg-yellow-50 border-l-4 border-yellow-500"
-                ):
+                with ui.card().classes("w-full bg-yellow-50 border-l-4 border-yellow-500"):
                     with ui.row().classes("items-center gap-3"):
                         ui.icon("warning", color="orange", size="md")
                         with ui.column().classes("gap-1"):
                             ui.label("No Authentication Configured").classes(
                                 "text-yellow-800 font-bold"
                             )
-                            ui.label(
-                                "Please configure OAuth providers in .env"
-                            ).classes("text-yellow-700 text-sm")
+                            ui.label("Please configure OAuth providers in .env").classes(
+                                "text-yellow-700 text-sm"
+                            )

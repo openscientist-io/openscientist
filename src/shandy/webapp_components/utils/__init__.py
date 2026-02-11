@@ -1,7 +1,7 @@
 """Utility modules for the web application."""
 
 from shandy.webapp_components.utils.auth import (
-    DISABLE_AUTH,
+    is_auth_disabled,
     is_dev_mode,
     require_auth,
 )
@@ -16,9 +16,9 @@ from shandy.webapp_components.utils.transcript_parser import (
 )
 
 __all__ = [
+    "is_auth_disabled",
     "is_dev_mode",
     "require_auth",
-    "DISABLE_AUTH",
     "get_uploaded_files",
     "add_uploaded_file",
     "clear_uploaded_files",

@@ -438,7 +438,7 @@ class TestJobDetailPage:
         from shandy.webapp_components.pages.job_detail import job_detail_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 # Mock get_job to return None
                 mock_get_jm.return_value = mock_job_manager
                 mock_job_manager._jobs = {}
@@ -456,7 +456,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_pending
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -487,7 +487,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_running
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -520,7 +520,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_completed
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -544,7 +544,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_failed
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -570,7 +570,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_awaiting_feedback
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -597,7 +597,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_running
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -627,7 +627,7 @@ class TestJobDetailPage:
         job_dir.mkdir(parents=True, exist_ok=True)
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -650,7 +650,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_completed
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager
@@ -674,7 +674,7 @@ class TestJobDetailPage:
         job_completed, job_dir_completed = mock_job_completed
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job_completed.job_id: job_completed}
                 mock_get_jm.return_value = mock_job_manager
@@ -696,7 +696,7 @@ class TestJobDetailPage:
         job, job_dir = mock_job_completed
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
                 mock_job_manager.jobs_dir = temp_jobs_dir
                 mock_job_manager._jobs = {job.job_id: job}
                 mock_get_jm.return_value = mock_job_manager

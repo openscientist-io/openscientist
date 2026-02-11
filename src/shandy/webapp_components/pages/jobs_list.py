@@ -113,9 +113,7 @@ def jobs_page():
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY - Jobs").classes("text-h4")
         with ui.row():
-            new_job_btn = ui.button(
-                "New Job", on_click=lambda: ui.navigate.to("/new"), icon="add"
-            )
+            new_job_btn = ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
             if not is_configured:
                 new_job_btn.disable()
                 new_job_btn.tooltip("Server not configured - cannot start jobs")
@@ -134,9 +132,7 @@ def jobs_page():
             with ui.row().classes("items-center gap-3"):
                 ui.icon("error", color="red", size="md")
                 with ui.column().classes("gap-1"):
-                    ui.label("Server Configuration Error").classes(
-                        "text-red-800 font-bold"
-                    )
+                    ui.label("Server Configuration Error").classes("text-red-800 font-bold")
                     ui.label(
                         f"The {provider_name.upper()} provider is not configured correctly. "
                         "Jobs cannot be started until this is resolved."

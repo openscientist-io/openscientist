@@ -1,8 +1,8 @@
 """Mock login form page for development testing."""
 
-import os
-
 from nicegui import ui
+
+from shandy.settings import get_settings
 
 
 @ui.page("/mock-login-form")
@@ -10,7 +10,8 @@ def mock_login_form():
     """Mock OAuth login form for development testing."""
 
     # Security check - only show in development mode
-    if not os.getenv("ENABLE_MOCK_AUTH"):
+    settings = get_settings()
+    if not settings.auth.enable_mock_auth:
         ui.label("Mock authentication is not enabled").classes("text-center mt-8")
         ui.button("Back to Login", on_click=lambda: ui.navigate.to("/login")).classes("mt-4")
         return
@@ -54,7 +55,7 @@ def mock_login_form():
                 # Submit to mock callback endpoint
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
-                        f"{os.getenv('APP_URL', 'http://localhost:8080')}/auth/mock/callback",
+                        f"{settings.auth.app_url}/auth/mock/callback",
                         data=form_data,
                         follow_redirects=False,
                     )

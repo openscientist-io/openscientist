@@ -8,6 +8,8 @@ import logging
 import os
 from typing import List
 
+from shandy.settings import get_settings
+
 from .base import BaseProvider, CostInfo
 
 logger = logging.getLogger(__name__)
@@ -28,8 +30,9 @@ class AnthropicProvider(BaseProvider):
     def _validate_required_config(self) -> List[str]:
         """Check required Anthropic configuration."""
         errors = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not settings.provider.anthropic_api_key:
             errors.append(
                 "ANTHROPIC_API_KEY not set. Get your API key from https://console.anthropic.com"
             )
@@ -39,8 +42,9 @@ class AnthropicProvider(BaseProvider):
     def _validate_optional_config(self) -> List[str]:
         """Check optional configuration."""
         warnings = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_MODEL"):
+        if not settings.provider.anthropic_model:
             warnings.append("ANTHROPIC_MODEL not set (will use Claude CLI default)")
 
         return warnings
@@ -48,8 +52,8 @@ class AnthropicProvider(BaseProvider):
     def setup_environment(self) -> None:
         """Anthropic environment is configured via ANTHROPIC_API_KEY in .env."""
         # Unset Vertex-related vars to ensure Claude Code uses ANTHROPIC_API_KEY
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)
-        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)
+        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)  # noqa: env-ok
         logger.info("Anthropic provider initialized (using ANTHROPIC_API_KEY)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:

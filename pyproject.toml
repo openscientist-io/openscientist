@@ -187,4 +187,5 @@ dev = [
     "types-fpdf2>=2.7.0",
     "types-docker>=7.0.0",
     "pre-commit>=3.5.0",
+    "testcontainers[postgres]>=4.0.0",
 ]

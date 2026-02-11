@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from shandy.providers.vertex import VertexProvider
+from shandy.settings import clear_settings_cache
 
 
 class TestVertexProviderValidation:
@@ -17,30 +18,35 @@ class TestVertexProviderValidation:
         with patch.dict(
             os.environ,
             {
+                "CLAUDE_PROVIDER": "vertex",
                 "ANTHROPIC_VERTEX_PROJECT_ID": "my-project",
                 "GOOGLE_APPLICATION_CREDENTIALS": str(creds),
                 "GCP_BILLING_ACCOUNT_ID": "012345-ABCDEF",
                 "CLOUD_ML_REGION": "us-east5",
             },
         ):
+            clear_settings_cache()
             provider = VertexProvider()
             assert "vertex" in provider.name.lower()
 
-    @patch.dict(os.environ, {}, clear=True)
     def test_missing_all_config_raises(self):
-        with pytest.raises(ValueError, match="configuration errors"):
-            VertexProvider()
+        with patch.dict(os.environ, {"CLAUDE_PROVIDER": "vertex"}, clear=True):
+            clear_settings_cache()
+            with pytest.raises(ValueError, match="configuration errors"):
+                VertexProvider()
 
     def test_missing_creds_file_raises(self, tmp_path):
         with patch.dict(
             os.environ,
             {
+                "CLAUDE_PROVIDER": "vertex",
                 "ANTHROPIC_VERTEX_PROJECT_ID": "proj",
                 "GOOGLE_APPLICATION_CREDENTIALS": "/nonexistent/creds.json",
                 "GCP_BILLING_ACCOUNT_ID": "id",
                 "CLOUD_ML_REGION": "us-east5",
             },
         ):
+            clear_settings_cache()
             with pytest.raises(ValueError, match="not found"):
                 VertexProvider()
 
@@ -54,11 +60,13 @@ class TestVertexSetupEnvironment:
         with patch.dict(
             os.environ,
             {
+                "CLAUDE_PROVIDER": "vertex",
                 "ANTHROPIC_VERTEX_PROJECT_ID": "my-project",
                 "GOOGLE_APPLICATION_CREDENTIALS": str(creds),
                 "GCP_BILLING_ACCOUNT_ID": "id",
                 "CLOUD_ML_REGION": "us-east5",
             },
         ):
+            clear_settings_cache()
             provider = VertexProvider()
             provider.setup_environment()  # should just log, not raise

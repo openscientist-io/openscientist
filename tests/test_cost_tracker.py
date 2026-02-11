@@ -14,6 +14,7 @@ from shandy.cost_tracker import (
     get_cost_per_iteration,
     track_job_cost,
 )
+from shandy.settings import clear_settings_cache
 
 
 class TestGetCostPerIteration:
@@ -73,71 +74,97 @@ class TestTrackJobCost:
 class TestGetCborgSpend:
     """Tests for CBORG API spend query."""
 
-    @patch.dict(os.environ, {}, clear=True)
     def test_no_token_raises(self):
-        # Remove ANTHROPIC_AUTH_TOKEN
-        with patch.dict(os.environ, {}, clear=True):
+        # Remove ANTHROPIC_AUTH_TOKEN but keep basic config
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PROVIDER": "cborg",
+                "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+            },
+            clear=True,
+        ):
+            clear_settings_cache()
             with pytest.raises(ValueError, match="ANTHROPIC_AUTH_TOKEN"):
                 get_cborg_spend()
 
     @patch("shandy.cost_tracker.requests.get")
-    @patch.dict(os.environ, {"ANTHROPIC_AUTH_TOKEN": "test-token"})
     def test_returns_spend(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"info": {"spend": 42.5}}
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PROVIDER": "cborg",
+                "ANTHROPIC_AUTH_TOKEN": "test-token",
+                "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+            },
+        ):
+            clear_settings_cache()
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"info": {"spend": 42.5}}
+            mock_resp.raise_for_status = MagicMock()
+            mock_get.return_value = mock_resp
 
-        result = get_cborg_spend()
-        assert result == 42.5
-        mock_get.assert_called_once()
+            result = get_cborg_spend()
+            assert result == 42.5
+            mock_get.assert_called_once()
 
 
 class TestGetBudgetInfo:
     """Tests for budget info retrieval."""
 
     @patch("shandy.cost_tracker.requests.get")
-    @patch.dict(
-        os.environ,
-        {
-            "ANTHROPIC_AUTH_TOKEN": "tok",
-            "MAX_JOB_COST_USD": "15.0",
-            "APP_MAX_BUDGET_USD": "500.0",
-        },
-    )
     def test_returns_budget_info(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "info": {
-                "spend": 100.0,
-                "max_budget": 200.0,
-                "expires": "2026-12-31",
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PROVIDER": "cborg",
+                "ANTHROPIC_AUTH_TOKEN": "tok",
+                "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+                "MAX_JOB_COST_USD": "15.0",
+                "APP_MAX_BUDGET_USD": "500.0",
+            },
+        ):
+            clear_settings_cache()
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {
+                "info": {
+                    "spend": 100.0,
+                    "max_budget": 200.0,
+                    "expires": "2026-12-31",
+                }
             }
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
+            mock_resp.raise_for_status = MagicMock()
+            mock_get.return_value = mock_resp
 
-        info = get_budget_info()
-        assert info["current_spend"] == 100.0
-        assert info["cborg_max_budget"] == 200.0
-        assert info["budget_remaining"] == pytest.approx(100.0)
-        assert info["app_max_job_cost"] == 15.0
-        assert info["app_max_total_budget"] == 500.0
-        assert info["key_expires"] == "2026-12-31"
+            info = get_budget_info()
+            assert info["current_spend"] == 100.0
+            assert info["cborg_max_budget"] == 200.0
+            assert info["budget_remaining"] == pytest.approx(100.0)
+            assert info["app_max_job_cost"] == 15.0
+            assert info["app_max_total_budget"] == 500.0
+            assert info["key_expires"] == "2026-12-31"
 
     @patch("shandy.cost_tracker.requests.get")
-    @patch.dict(os.environ, {"ANTHROPIC_AUTH_TOKEN": "tok"})
     def test_no_cborg_budget(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "info": {"spend": 50.0, "max_budget": None, "expires": "2027-01-01"}
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PROVIDER": "cborg",
+                "ANTHROPIC_AUTH_TOKEN": "tok",
+                "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+            },
+        ):
+            clear_settings_cache()
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {
+                "info": {"spend": 50.0, "max_budget": None, "expires": "2027-01-01"}
+            }
+            mock_resp.raise_for_status = MagicMock()
+            mock_get.return_value = mock_resp
 
-        info = get_budget_info()
-        assert info["cborg_max_budget"] is None
-        assert info["budget_remaining"] is None
+            info = get_budget_info()
+            assert info["cborg_max_budget"] is None
+            assert info["budget_remaining"] is None
 
 
 class TestCheckBudgetBeforeJob:

@@ -208,12 +208,12 @@ Be concise, accurate, and helpful. If you're unsure about something, say so."""
     # Note: The provider's setup_environment() configures Claude CLI
     # We'll use a simple approach here - call the LLM via anthropic client
     try:
-        import os
-
         import anthropic  # type: ignore[import-not-found]
 
+        from shandy.settings import get_settings
+
         # Get API key from provider config
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = get_settings().provider.anthropic_api_key
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not configured")
 

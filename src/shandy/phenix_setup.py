@@ -5,6 +5,8 @@ import subprocess
 import sys
 from typing import Optional
 
+from shandy.settings import get_settings
+
 
 class PhenixConfigError(ValueError):
     """Raised when Phenix configuration is invalid."""
@@ -70,7 +72,7 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> Optional[dict]:
     Raises:
         PhenixConfigError: If raise_on_error=True and configuration is invalid.
     """
-    phenix_path = os.getenv("PHENIX_PATH")
+    phenix_path = get_settings().phenix.phenix_path
     if not phenix_path:
         return None
 
@@ -109,7 +111,7 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> Optional[dict]:
         )
 
         # Parse environment variables
-        phenix_env = os.environ.copy()
+        phenix_env = os.environ.copy()  # noqa: env-ok
         for line in proc.stdout.split("\n"):
             if "=" in line:
                 key, _, value = line.partition("=")

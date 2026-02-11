@@ -6,7 +6,6 @@ Supports both cookie-based sessions (OAuth) and legacy auth.
 """
 
 import logging
-import os
 from datetime import datetime
 from functools import wraps
 from typing import Callable, Optional
@@ -17,15 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Session, User
 from shandy.database.session import get_session
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Authentication settings
-DISABLE_AUTH = os.getenv("DISABLE_AUTH", "false").lower() == "true"
 
-if DISABLE_AUTH:
-    logger.warning("Authentication is DISABLED! Anyone can access this app.")
-    logger.warning("Set DISABLE_AUTH=false in .env to re-enable authentication.")
+def _is_auth_disabled() -> bool:
+    """Check if authentication is disabled."""
+    return get_settings().auth.disable_auth
 
 
 async def get_current_user(db: AsyncSession, session_token: str) -> Optional[User]:
@@ -121,7 +119,7 @@ def require_auth(func: Callable) -> Callable:
     @wraps(func)
     async def async_wrapper(*args, **kwargs):
         # Skip if auth is disabled
-        if DISABLE_AUTH:
+        if _is_auth_disabled():
             return await func(*args, **kwargs)
 
         # Check for legacy "authenticated" flag (password auth)
@@ -164,7 +162,7 @@ def require_auth(func: Callable) -> Callable:
     @wraps(func)
     def sync_wrapper(*args, **kwargs):
         # Skip if auth is disabled
-        if DISABLE_AUTH:
+        if _is_auth_disabled():
             return func(*args, **kwargs)
 
         # Check if authenticated (set by async middleware or legacy auth)
@@ -195,7 +193,7 @@ def get_current_user_id() -> Optional[str]:
     Returns:
         User ID if authenticated, None otherwise
     """
-    if DISABLE_AUTH:
+    if _is_auth_disabled():
         return None
     return app.storage.user.get("user_id")
 
@@ -207,7 +205,7 @@ def get_current_user_email() -> Optional[str]:
     Returns:
         User email if authenticated, None otherwise
     """
-    if DISABLE_AUTH:
+    if _is_auth_disabled():
         return None
     return app.storage.user.get("email")
 
@@ -219,6 +217,6 @@ def get_current_user_name() -> Optional[str]:
     Returns:
         User name if authenticated, None otherwise
     """
-    if DISABLE_AUTH:
+    if _is_auth_disabled():
         return None
     return app.storage.user.get("name")

@@ -7,7 +7,6 @@ Two-stage approach:
 """
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -16,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill
+from .settings import get_settings
 
 # Import anthropic at module level for mocking in tests
 try:
@@ -69,7 +69,7 @@ class SkillRelevanceService:
             api_key: Anthropic API key (uses ANTHROPIC_API_KEY env var if not provided)
             model: Model to use for scoring (default: claude-3-5-sonnet)
         """
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = api_key or get_settings().provider.anthropic_api_key
         self.model = model
 
     async def find_relevant_skills(

@@ -22,6 +22,7 @@ from shandy.exceptions import ShandyError
 from shandy.file_loader import get_file_info
 from shandy.knowledge_state import KnowledgeState
 from shandy.providers import get_provider
+from shandy.settings import get_settings
 
 # Load environment variables (important for Claude CLI subprocess)
 if not load_dotenv("/app/.env", override=True):
@@ -83,11 +84,11 @@ def get_version_metadata() -> Dict[str, str]:
     metadata = {}
 
     # Try environment variables first (set during Docker build)
-    shandy_commit = os.environ.get("SHANDY_COMMIT")
+    shandy_commit = os.environ.get("SHANDY_COMMIT")  # noqa: env-ok
     if shandy_commit and shandy_commit != "unknown":
         metadata["shandy_commit"] = shandy_commit[:12]
 
-    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")
+    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # noqa: env-ok
     if shandy_build_time and shandy_build_time != "unknown":
         metadata["shandy_build_time"] = shandy_build_time
 
@@ -457,7 +458,7 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     # Run autonomous discovery loop using Claude Code CLI headless mode
     try:
         # Get Claude Code path
-        claude_cli = os.getenv("CLAUDE_CLI_PATH", "claude")
+        claude_cli = get_settings().provider.claude_cli_path
 
         # Prepare initial prompt
         ks = KnowledgeState.load(job_dir / "knowledge_state.json")
@@ -536,7 +537,7 @@ Start your investigation by using these tools to analyze the data.
             capture_output=True,
             text=True,
             cwd=str(Path.cwd()),
-            env=os.environ.copy(),
+            env=os.environ.copy(),  # noqa: env-ok
             check=False,
         )
 
@@ -732,7 +733,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 capture_output=True,
                 text=True,
                 cwd=str(Path.cwd()),
-                env=os.environ.copy(),
+                env=os.environ.copy(),  # noqa: env-ok
                 check=False,
             )
 
@@ -839,7 +840,7 @@ Format as professional scientific markdown."""
             capture_output=True,
             text=True,
             cwd=str(Path.cwd()),
-            env=os.environ.copy(),
+            env=os.environ.copy(),  # noqa: env-ok
             check=False,
         )
 

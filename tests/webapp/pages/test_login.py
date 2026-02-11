@@ -1,7 +1,6 @@
 """Integration tests for login page."""
 
-import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from nicegui.testing import user_simulation
@@ -11,35 +10,82 @@ class TestLoginPage:
     """Tests for login page rendering and functionality."""
 
     @pytest.mark.asyncio
-    async def test_login_page_renders(self):
-        """Test that login page renders without errors."""
-        # Set APP_PASSWORD_HASH env var so the login page shows the password form
-        with patch.dict(os.environ, {"APP_PASSWORD_HASH": "test_hash"}):
-            # Disable the autouse _disable_auth fixture's effect for this test
-            with patch("shandy.auth.middleware.DISABLE_AUTH", False):
-                from shandy.webapp_components.pages.login import login_page
+    async def test_login_page_renders_with_github(self):
+        """Test that login page renders with GitHub OAuth."""
+        mock_settings = MagicMock()
+        mock_settings.auth.github_client_id = "test_github_id"
+        mock_settings.auth.orcid_client_id = None
 
-                async with user_simulation(root=login_page) as user:
-                    await user.open("/")
+        with patch(
+            "shandy.webapp_components.pages.login.get_settings",
+            return_value=mock_settings,
+        ):
+            with patch(
+                "shandy.webapp_components.pages.login.is_oauth_configured",
+                return_value=True,
+            ):
+                with patch(
+                    "shandy.webapp_components.pages.login.is_mock_auth_enabled",
+                    return_value=False,
+                ):
+                    from shandy.webapp_components.pages.login import login_page
 
-                    # Should see login form elements
-                    await user.should_see(content="SHANDY")
-                    await user.should_see(content="Password")
-                    await user.should_see(content="Login")
+                    async with user_simulation(root=login_page) as user:
+                        await user.open("/")
+                        await user.should_see(content="SHANDY")
+                        await user.should_see(content="Continue with GitHub")
 
     @pytest.mark.asyncio
-    async def test_login_form_exists(self):
-        """Test that login form has password input."""
-        with patch.dict(os.environ, {"APP_PASSWORD_HASH": "test_hash"}):
-            with patch("shandy.auth.middleware.DISABLE_AUTH", False):
-                from shandy.webapp_components.pages.login import login_page
+    async def test_login_page_renders_with_orcid(self):
+        """Test that login page renders with ORCID OAuth."""
+        mock_settings = MagicMock()
+        mock_settings.auth.github_client_id = None
+        mock_settings.auth.orcid_client_id = "test_orcid_id"
 
-                async with user_simulation(root=login_page) as user:
-                    await user.open("/")
+        with patch(
+            "shandy.webapp_components.pages.login.get_settings",
+            return_value=mock_settings,
+        ):
+            with patch(
+                "shandy.webapp_components.pages.login.is_oauth_configured",
+                return_value=True,
+            ):
+                with patch(
+                    "shandy.webapp_components.pages.login.is_mock_auth_enabled",
+                    return_value=False,
+                ):
+                    from shandy.webapp_components.pages.login import login_page
 
-                    # Verify form structure
-                    await user.should_see(content="Password")
-                    await user.should_see(content="Login")
+                    async with user_simulation(root=login_page) as user:
+                        await user.open("/")
+                        await user.should_see(content="SHANDY")
+                        await user.should_see(content="Continue with ORCID")
+
+    @pytest.mark.asyncio
+    async def test_login_page_no_auth_configured(self):
+        """Test that login page shows warning when no OAuth configured."""
+        mock_settings = MagicMock()
+        mock_settings.auth.github_client_id = None
+        mock_settings.auth.orcid_client_id = None
+
+        with patch(
+            "shandy.webapp_components.pages.login.get_settings",
+            return_value=mock_settings,
+        ):
+            with patch(
+                "shandy.webapp_components.pages.login.is_oauth_configured",
+                return_value=False,
+            ):
+                with patch(
+                    "shandy.webapp_components.pages.login.is_mock_auth_enabled",
+                    return_value=False,
+                ):
+                    from shandy.webapp_components.pages.login import login_page
+
+                    async with user_simulation(root=login_page) as user:
+                        await user.open("/")
+                        await user.should_see(content="SHANDY")
+                        await user.should_see(content="No Authentication Configured")
 
 
 class TestLoginWithAuthDisabled:
@@ -51,7 +97,5 @@ class TestLoginWithAuthDisabled:
         from shandy.webapp_components.pages.login import login_page
 
         async with user_simulation(root=login_page) as user:
-            # This would normally show login, but with DISABLE_AUTH it should redirect
             await user.open("/")
-            # The page function should exist and be callable
             assert login_page is not None

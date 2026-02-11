@@ -5,10 +5,11 @@ Handles ORCID OAuth flow and user profile extraction.
 """
 
 import logging
-import os
 from typing import Any
 
 import httpx
+
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class ORCIDProvider:
             raise ValueError("Missing access_token or orcid in token response")
 
         # Use production ORCID by default, sandbox for testing
-        orcid_base = os.getenv("ORCID_API_BASE", "https://orcid.org")
+        orcid_base = get_settings().auth.orcid_api_base
         api_url = f"{orcid_base}/v3.0/{orcid_id}/record"
 
         headers = {

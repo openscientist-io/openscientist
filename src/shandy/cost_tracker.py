@@ -4,12 +4,12 @@ Cost tracking via CBORG API for SHANDY.
 Monitors API spending and enforces budget limits.
 """
 
-import os
 from typing import Any, Dict
 
 import requests
 
 from shandy.exceptions import BudgetExceededError
+from shandy.settings import get_settings
 
 
 def get_cborg_spend() -> float:
@@ -22,7 +22,8 @@ def get_cborg_spend() -> float:
     Raises:
         requests.RequestException: If API call fails
     """
-    api_token = os.getenv("ANTHROPIC_AUTH_TOKEN")
+    settings = get_settings()
+    api_token = settings.provider.anthropic_auth_token
     if not api_token:
         raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
 
@@ -49,7 +50,8 @@ def get_budget_info() -> Dict[str, Any]:
         - app_max_total_budget: Total app budget from .env (float)
         - key_expires: API key expiration date (str)
     """
-    api_token = os.getenv("ANTHROPIC_AUTH_TOKEN")
+    settings = get_settings()
+    api_token = settings.provider.anthropic_auth_token
     if not api_token:
         raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
 
@@ -64,9 +66,9 @@ def get_budget_info() -> Dict[str, Any]:
     current_spend = info["spend"]
     cborg_budget = info.get("max_budget")  # May be None
 
-    # Application-level limits from .env
-    app_max_job = float(os.getenv("MAX_JOB_COST_USD", "10.0"))
-    app_max_total = float(os.getenv("APP_MAX_BUDGET_USD", "1000.0"))
+    # Application-level limits from settings
+    app_max_job = settings.budget.max_job_cost_usd
+    app_max_total = settings.budget.app_max_budget_usd
 
     return {
         "current_spend": current_spend,
@@ -122,7 +124,8 @@ def track_job_cost(job_id: str, start_spend: float) -> float:
     job_cost = current_spend - start_spend
 
     # Check if exceeding per-job limit
-    max_job_cost = float(os.getenv("MAX_JOB_COST_USD", "10.0"))
+    settings = get_settings()
+    max_job_cost = settings.budget.max_job_cost_usd
     if job_cost > max_job_cost:
         raise BudgetExceededError(
             f"Job {job_id} cost ${job_cost:.2f} exceeds limit ${max_job_cost}"

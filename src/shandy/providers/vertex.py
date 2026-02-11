@@ -11,6 +11,7 @@ from typing import List
 
 from shandy.exceptions import ProviderError
 from shandy.providers.base import BaseProvider, CostInfo
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,12 @@ class VertexProvider(BaseProvider):
     def _validate_required_config(self) -> List[str]:
         """Check required Vertex AI configuration."""
         errors = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_VERTEX_PROJECT_ID"):
+        if not settings.provider.anthropic_vertex_project_id:
             errors.append("ANTHROPIC_VERTEX_PROJECT_ID not set (GCP project ID)")
 
-        creds_env = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        creds_env = settings.provider.google_application_credentials
         if not creds_env:
             errors.append("GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)")
         else:
@@ -38,10 +40,10 @@ class VertexProvider(BaseProvider):
             if not os.path.exists(creds_path):
                 errors.append(f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}")
 
-        if not os.getenv("GCP_BILLING_ACCOUNT_ID"):
+        if not settings.provider.gcp_billing_account_id:
             errors.append("GCP_BILLING_ACCOUNT_ID not set (needed for cost tracking)")
 
-        if not os.getenv("CLOUD_ML_REGION"):
+        if not settings.provider.cloud_ml_region:
             errors.append("CLOUD_ML_REGION not set (e.g., us-east5)")
 
         return errors
@@ -49,14 +51,15 @@ class VertexProvider(BaseProvider):
     def _validate_optional_config(self) -> List[str]:
         """Check optional Vertex AI configuration."""
         warnings = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_MODEL"):
+        if not settings.provider.anthropic_model:
             warnings.append("ANTHROPIC_MODEL not set (will use claude-sonnet-4-5@20250929)")
 
-        if not os.getenv("VERTEX_REGION_CLAUDE_4_5_SONNET"):
+        if not settings.provider.vertex_region_claude_4_5_sonnet:
             warnings.append("VERTEX_REGION_CLAUDE_4_5_SONNET not set (may cause region issues)")
 
-        if not os.getenv("VERTEX_REGION_CLAUDE_4_5_HAIKU"):
+        if not settings.provider.vertex_region_claude_4_5_haiku:
             warnings.append("VERTEX_REGION_CLAUDE_4_5_HAIKU not set (may cause region issues)")
 
         return warnings
@@ -64,8 +67,8 @@ class VertexProvider(BaseProvider):
     def setup_environment(self) -> None:
         """Vertex AI environment should be configured via .env and docker-compose.yml."""
         # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)
-        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
 
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
@@ -94,14 +97,15 @@ class VertexProvider(BaseProvider):
             raise
 
         # Load credentials
-        creds_env = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        settings = get_settings()
+        creds_env = settings.provider.google_application_credentials
         if not creds_env:
             raise ProviderError("GOOGLE_APPLICATION_CREDENTIALS not set")
         creds_path = os.path.expanduser(creds_env)
         credentials = service_account.Credentials.from_service_account_file(creds_path)
 
-        project_id = os.getenv("ANTHROPIC_VERTEX_PROJECT_ID")
-        billing_account = os.getenv("GCP_BILLING_ACCOUNT_ID")
+        project_id = settings.provider.anthropic_vertex_project_id
+        billing_account = settings.provider.gcp_billing_account_id
         if not billing_account:
             raise ProviderError("GCP_BILLING_ACCOUNT_ID not set")
 

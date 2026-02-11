@@ -11,6 +11,7 @@ from shandy.phenix_setup import (
     setup_phenix_env,
     validate_phenix_path,
 )
+from shandy.settings import clear_settings_cache
 
 
 class TestValidatePhenixPath:
@@ -63,49 +64,73 @@ class TestValidatePhenixPath:
 class TestSetupPhenixEnv:
     """Tests for Phenix environment setup."""
 
-    @patch.dict(os.environ, {}, clear=True)
     def test_no_phenix_path_returns_none(self):
-        result = setup_phenix_env()
-        assert result is None
+        # Need to keep CLAUDE_PROVIDER and ANTHROPIC_API_KEY for settings validation
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PROVIDER": "anthropic",
+                "ANTHROPIC_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            clear_settings_cache()
+            result = setup_phenix_env()
+            assert result is None
 
-    @patch.dict(os.environ, {"PHENIX_PATH": "/nonexistent/path"})
     def test_nonexistent_path_returns_none(self):
-        result = setup_phenix_env()
-        assert result is None
+        with patch.dict(os.environ, {"PHENIX_PATH": "/nonexistent/path"}):
+            clear_settings_cache()
+            result = setup_phenix_env()
+            assert result is None
 
-    @patch.dict(os.environ, {"PHENIX_PATH": "relative/path"})
     def test_relative_path_returns_none(self):
-        """Relative paths should return None (invalid config)."""
-        result = setup_phenix_env()
-        assert result is None
+        """Relative paths should return None (invalid config via settings validation)."""
+        # Relative paths are now rejected at the pydantic settings level
+        # So we test that without PHENIX_PATH set, setup returns None
+        with patch.dict(
+            os.environ,
+            {"CLAUDE_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+            clear=True,
+        ):
+            clear_settings_cache()
+            result = setup_phenix_env()
+            assert result is None
 
-    @patch.dict(os.environ, {"PHENIX_PATH": "relative/path"})
-    def test_relative_path_raises_with_flag(self):
-        """Relative paths should raise when raise_on_error=True."""
-        with pytest.raises(PhenixConfigError) as exc_info:
-            setup_phenix_env(raise_on_error=True)
-        assert "absolute path" in str(exc_info.value)
+    def test_relative_path_rejected_by_settings(self):
+        """Relative paths are rejected by pydantic settings validation."""
+        from pydantic import ValidationError as PydanticValidationError
 
-    @patch.dict(os.environ, {"PHENIX_PATH": "/nonexistent/path"})
+        with patch.dict(os.environ, {"PHENIX_PATH": "relative/path"}):
+            clear_settings_cache()
+            # The settings validation rejects relative paths
+            with pytest.raises(PydanticValidationError, match="absolute path"):
+                from shandy.settings import get_settings
+
+                get_settings()
+
     def test_nonexistent_path_raises_with_flag(self):
         """Non-existent paths should raise when raise_on_error=True."""
-        with pytest.raises(PhenixConfigError) as exc_info:
-            setup_phenix_env(raise_on_error=True)
-        assert "does not exist" in str(exc_info.value)
+        with patch.dict(os.environ, {"PHENIX_PATH": "/nonexistent/path"}):
+            clear_settings_cache()
+            with pytest.raises(PhenixConfigError) as exc_info:
+                setup_phenix_env(raise_on_error=True)
+            assert "does not exist" in str(exc_info.value)
 
     @patch("shandy.phenix_setup.subprocess.run")
     @patch("shandy.phenix_setup.os.path.isdir")
     @patch("shandy.phenix_setup.os.path.exists")
-    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_successful_setup(self, mock_exists, mock_isdir, mock_run):
         mock_exists.return_value = True
         mock_isdir.return_value = True
         mock_run.return_value = MagicMock(
             stdout="PATH=/opt/phenix/bin:/usr/bin\nPHENIX_HOME=/opt/phenix\n"
         )
-        result = setup_phenix_env()
-        assert result is not None
-        assert "PHENIX_HOME" in result
+        with patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"}):
+            clear_settings_cache()
+            result = setup_phenix_env()
+            assert result is not None
+            assert "PHENIX_HOME" in result
 
     @patch("shandy.phenix_setup.subprocess.run")
     @patch("shandy.phenix_setup.os.path.isdir")

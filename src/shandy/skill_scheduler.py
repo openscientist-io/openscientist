@@ -7,7 +7,6 @@ Uses caching based on commit SHA to avoid redundant syncs.
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -18,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database.models import SkillSource
 from .database.rls import bypass_rls
 from .database.session import get_session
+from .settings import get_settings
 from .skill_ingestion import sync_skill_source
 
 logger = logging.getLogger(__name__)
@@ -27,9 +27,6 @@ DEFAULT_SYNC_INTERVAL_SECONDS = 3600
 
 # Minimum time between syncs for the same source (to avoid hammering)
 MIN_SYNC_INTERVAL_SECONDS = 300  # 5 minutes
-
-# Environment variable for GitHub token
-GITHUB_TOKEN_ENV = "GITHUB_TOKEN"
 
 
 @dataclass
@@ -68,10 +65,10 @@ class SkillSyncScheduler:
 
         Args:
             sync_interval: Seconds between sync runs
-            github_token: Optional GitHub token (uses GITHUB_TOKEN env var if not provided)
+            github_token: Optional GitHub token (uses settings.provider.github_token if not provided)
         """
         self.sync_interval = sync_interval
-        self.github_token = github_token or os.getenv(GITHUB_TOKEN_ENV)
+        self.github_token = github_token or get_settings().provider.github_token
         self._task: Optional[asyncio.Task] = None
         self._running = False
         self._last_sync: dict[str, datetime] = {}  # source_id -> last sync time

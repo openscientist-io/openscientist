@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List
 
 from shandy.providers.base import BaseProvider, CostInfo
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +25,17 @@ class BedrockProvider(BaseProvider):
     def _validate_required_config(self) -> List[str]:
         """Check required Bedrock configuration."""
         errors = []
+        settings = get_settings()
 
-        if not os.getenv("AWS_REGION"):
+        if not settings.provider.aws_region:
             errors.append("AWS_REGION not set (e.g., us-east-1)")
 
         # Check for at least one auth method
-        has_access_key = os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY")
-        has_profile = os.getenv("AWS_PROFILE")
-        has_bearer_token = os.getenv("AWS_BEARER_TOKEN_BEDROCK")
+        has_access_key = (
+            settings.provider.aws_access_key_id and settings.provider.aws_secret_access_key
+        )
+        has_profile = settings.provider.aws_profile
+        has_bearer_token = settings.provider.aws_bearer_token_bedrock
 
         if not (has_access_key or has_profile or has_bearer_token):
             errors.append(
@@ -44,13 +48,14 @@ class BedrockProvider(BaseProvider):
     def _validate_optional_config(self) -> List[str]:
         """Check optional Bedrock configuration."""
         warnings = []
+        settings = get_settings()
 
-        if not os.getenv("ANTHROPIC_MODEL"):
+        if not settings.provider.anthropic_model:
             warnings.append(
                 "ANTHROPIC_MODEL not set (will use global.anthropic.claude-sonnet-4-5-20250929-v1:0)"
             )
 
-        if not os.getenv("ANTHROPIC_SMALL_FAST_MODEL"):
+        if not settings.provider.anthropic_small_fast_model:
             warnings.append(
                 "ANTHROPIC_SMALL_FAST_MODEL not set (will use us.anthropic.claude-haiku-4-5-20251001-v1:0)"
             )
@@ -65,7 +70,7 @@ class BedrockProvider(BaseProvider):
         environment variables from other providers.
         """
         # Enable Bedrock mode for Claude Code
-        os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"
+        os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # noqa: env-ok
 
         # Unset Vertex-related vars to avoid conflicts
         vertex_vars = [
@@ -75,12 +80,12 @@ class BedrockProvider(BaseProvider):
             "VERTEX_REGION_CLAUDE_4_5_HAIKU",
         ]
         for var in vertex_vars:
-            if var in os.environ:
+            if var in os.environ:  # noqa: env-ok
                 logger.debug(f"Removing conflicting {var}")
-                del os.environ[var]
+                del os.environ[var]  # noqa: env-ok
 
         # Unset direct API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
 
         # Unset empty vars that interfere with Bedrock auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -93,9 +98,9 @@ class BedrockProvider(BaseProvider):
             "ANTHROPIC_BASE_URL",
         ]
         for var in empty_vars_to_clear:
-            val = os.environ.get(var)
+            val = os.environ.get(var)  # noqa: env-ok
             if val == "":
-                os.environ.pop(var, None)
+                os.environ.pop(var, None)  # noqa: env-ok
                 logger.debug(f"Unset empty {var}")
 
         logger.info("Bedrock provider initialized (using AWS credentials)")
@@ -122,8 +127,9 @@ class BedrockProvider(BaseProvider):
         try:
             import boto3  # type: ignore[import-untyped]
 
+            settings = get_settings()
             # Initialize Cost Explorer client
-            ce_client = boto3.client("ce", region_name=os.getenv("AWS_REGION", "us-east-1"))
+            ce_client = boto3.client("ce", region_name=settings.provider.aws_region or "us-east-1")
 
             # Calculate time windows (Cost Explorer requires date strings)
             end_date = now.strftime("%Y-%m-%d")
@@ -160,6 +166,7 @@ class BedrockProvider(BaseProvider):
             recent_spend = None
             data_lag_note = f"Cost data unavailable: {e}"
 
+        settings = get_settings()
         return CostInfo(
             provider_name="AWS Bedrock",
             total_spend_usd=total_spend,
@@ -167,5 +174,5 @@ class BedrockProvider(BaseProvider):
             recent_period_hours=lookback_hours,
             last_updated=now,
             data_lag_note=data_lag_note,
-            metadata={"region": os.getenv("AWS_REGION")},
+            metadata={"region": settings.provider.aws_region},
         )

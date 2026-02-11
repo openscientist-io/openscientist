@@ -5,7 +5,6 @@ Handles OAuth callback flows and session creation for authenticated users.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -16,12 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shandy.auth.oauth import get_oauth_client, is_oauth_configured
 from shandy.database.models import OAuthAccount, Session, User
 from shandy.database.session import get_session
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
-
-# Session configuration
-SESSION_DURATION_DAYS = int(os.getenv("SESSION_DURATION_DAYS", "30"))
-SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-in-production")
 
 
 async def create_or_update_user(
@@ -115,7 +111,8 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
     """
     from uuid import UUID as _UUID
 
-    expires_at = datetime.utcnow() + timedelta(days=SESSION_DURATION_DAYS)
+    settings = get_settings()
+    expires_at = datetime.utcnow() + timedelta(days=settings.auth.session_duration_days)
 
     session = Session(
         user_id=_UUID(user_id) if isinstance(user_id, str) else user_id,
@@ -163,7 +160,8 @@ async def oauth_login(provider: str):
         # Redirect to OAuth provider
         # Note: This is a placeholder - actual implementation depends on
         # NiceGUI's request handling. May need to use Starlette directly.
-        redirect_uri = f"{os.getenv('APP_URL', 'http://localhost:8080')}/auth/{provider}/callback"
+        settings = get_settings()
+        redirect_uri = f"{settings.auth.app_url}/auth/{provider}/callback"
 
         # For NiceGUI, we'll need to handle this differently
         # This is a template for the actual implementation

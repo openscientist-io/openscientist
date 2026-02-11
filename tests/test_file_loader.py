@@ -61,7 +61,7 @@ class TestGetFileInfo:
     def test_file_too_big(self, tmp_path):
         p = tmp_path / "big.csv"
         p.write_text("x" * 100)
-        with patch("shandy.file_loader.MAX_FILE_SIZE", 10):
+        with patch("shandy.file_loader._get_max_file_size", return_value=10):
             with pytest.raises(FileTooBigError, match="exceeds limit"):
                 get_file_info(p)
 
@@ -163,7 +163,7 @@ class TestValidateUploadedFile:
 
     def test_file_too_big_raises(self, tmp_path):
         content = b"x" * 100
-        with patch("shandy.file_loader.MAX_FILE_SIZE", 10):
+        with patch("shandy.file_loader._get_max_file_size", return_value=10):
             with pytest.raises(FileTooBigError):
                 validate_uploaded_file(tmp_path / "data.csv", content)
 

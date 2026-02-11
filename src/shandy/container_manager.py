@@ -12,14 +12,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from shandy.settings import get_settings
+
 logger = logging.getLogger(__name__)
-
-
-# Configuration from environment
-EXECUTOR_IMAGE = os.getenv("SHANDY_EXECUTOR_IMAGE", "shandy-executor:latest")
-EXECUTOR_MEMORY = os.getenv("SHANDY_EXECUTOR_MEMORY", "2g")
-EXECUTOR_CPU = float(os.getenv("SHANDY_EXECUTOR_CPU", "0.5"))
-EXECUTOR_TIMEOUT = int(os.getenv("SHANDY_EXECUTOR_TIMEOUT", "120"))
 
 
 class ContainerManager:
@@ -35,10 +30,10 @@ class ContainerManager:
 
     def __init__(
         self,
-        image: str = EXECUTOR_IMAGE,
-        memory_limit: str = EXECUTOR_MEMORY,
-        cpu_limit: float = EXECUTOR_CPU,
-        timeout: int = EXECUTOR_TIMEOUT,
+        image: str | None = None,
+        memory_limit: str | None = None,
+        cpu_limit: float | None = None,
+        timeout: int | None = None,
     ):
         """
         Initialize container manager.
@@ -49,10 +44,11 @@ class ContainerManager:
             cpu_limit: CPU limit as fraction (e.g., 0.5 = 50% of one CPU)
             timeout: Default execution timeout in seconds
         """
-        self.image = image
-        self.memory_limit = memory_limit
-        self.cpu_limit = cpu_limit
-        self.timeout = timeout
+        settings = get_settings()
+        self.image = image or settings.container.executor_image
+        self.memory_limit = memory_limit or settings.container.executor_memory
+        self.cpu_limit = cpu_limit if cpu_limit is not None else settings.container.executor_cpu
+        self.timeout = timeout if timeout is not None else settings.container.executor_timeout
         self._client = None
 
     @property

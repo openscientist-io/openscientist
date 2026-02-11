@@ -12,7 +12,6 @@ Provides tools for autonomous discovery:
 - parse_alphafold_confidence: Extract AlphaFold confidence metrics
 """
 
-import os
 import sys
 import time
 from pathlib import Path
@@ -34,9 +33,7 @@ from shandy.file_loader import (
 from shandy.knowledge_state import KnowledgeState
 from shandy.literature import search_pubmed as search_pm
 from shandy.phenix_setup import check_phenix_available
-
-# Container isolation feature flag
-USE_CONTAINER_ISOLATION = os.getenv("SHANDY_USE_CONTAINER_ISOLATION", "false").lower() == "true"
+from shandy.settings import get_settings
 
 # Global state (initialized by main())
 DATA: Optional[pd.DataFrame] = None  # None for non-tabular files or not yet loaded
@@ -189,7 +186,7 @@ def execute_code(code: str, description: str = "") -> str:
     provenance_dir.mkdir(parents=True, exist_ok=True)
 
     # Execute code - use container isolation if enabled
-    if USE_CONTAINER_ISOLATION:
+    if get_settings().container.use_container_isolation:
         result = _execute_in_container(
             code=code,
             description=description,

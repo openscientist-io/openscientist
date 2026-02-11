@@ -26,10 +26,11 @@ def _nicegui_storage_dir(tmp_path):
 def _disable_auth():
     """Disable authentication for all webapp tests.
 
-    The require_auth decorator reads DISABLE_AUTH from shandy.auth.middleware.
+    Patches the is_auth_disabled function to return True.
     """
-    with patch("shandy.auth.middleware.DISABLE_AUTH", True):
-        yield
+    with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
+        with patch("shandy.auth.middleware._is_auth_disabled", return_value=True):
+            yield
 
 
 @pytest.fixture

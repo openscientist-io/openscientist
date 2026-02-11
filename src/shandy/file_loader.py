@@ -5,13 +5,13 @@ Handles multiple file formats with validation and magic number detection.
 """
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
 
 from shandy.exceptions import FileLoadError, FileTooBigError, UnsupportedFileTypeError
+from shandy.settings import get_settings
 
 # Try to import python-magic, but make it optional
 try:
@@ -23,22 +23,11 @@ except (ImportError, OSError):
 
 logger = logging.getLogger(__name__)
 
-# File size limits (in bytes) - configurable via environment variable
-# Default: 1GB
-_default_max_file_size_mb = 1000
-_env_max_file_size = os.getenv("MAX_FILE_SIZE_MB")
-if _env_max_file_size:
-    try:
-        MAX_FILE_SIZE = int(_env_max_file_size) * 1024 * 1024
-    except ValueError:
-        logger.warning(
-            "Invalid MAX_FILE_SIZE_MB value '%s', using default %sMB",
-            _env_max_file_size,
-            _default_max_file_size_mb,
-        )
-        MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
-else:
-    MAX_FILE_SIZE = _default_max_file_size_mb * 1024 * 1024
+
+def _get_max_file_size() -> int:
+    """Get max file size in bytes from settings."""
+    return get_settings().file.max_file_size_mb * 1024 * 1024
+
 
 # Supported file extensions
 TABULAR_EXTENSIONS = {
@@ -116,10 +105,10 @@ def get_file_info(file_path: Path) -> Dict[str, Any]:
 
     # Check file size
     size = file_path.stat().st_size
-    if size > MAX_FILE_SIZE:
+    if size > _get_max_file_size():
         raise FileTooBigError(
             f"File {file_path.name} is {size / 1024 / 1024:.1f}MB, "
-            f"exceeds limit of {MAX_FILE_SIZE / 1024 / 1024}MB"
+            f"exceeds limit of {_get_max_file_size() / 1024 / 1024}MB"
         )
 
     # Get extension
@@ -275,10 +264,10 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
         ValueError: If file fails validation
     """
     # Check size
-    if len(content) > MAX_FILE_SIZE:
+    if len(content) > _get_max_file_size():
         raise FileTooBigError(
             f"File is {len(content) / 1024 / 1024:.1f}MB, "
-            f"exceeds limit of {MAX_FILE_SIZE / 1024 / 1024}MB"
+            f"exceeds limit of {_get_max_file_size() / 1024 / 1024}MB"
         )
 
     # Get extension

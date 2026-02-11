@@ -12,7 +12,7 @@ class TestDocsPage:
     @pytest.mark.asyncio
     async def test_docs_page_renders(self):
         """Test that docs page renders with content."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
             from shandy.webapp_components.pages.docs import docs_page
 
             async with user_simulation(root=docs_page) as user:
@@ -25,7 +25,7 @@ class TestDocsPage:
     @pytest.mark.asyncio
     async def test_docs_content_present(self):
         """Test that documentation content is rendered."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
             from shandy.webapp_components.pages.docs import docs_page
 
             async with user_simulation(root=docs_page) as user:
@@ -40,7 +40,7 @@ class TestDocsPage:
     @pytest.mark.asyncio
     async def test_docs_examples_section(self):
         """Test that documentation includes key sections."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
             from nicegui.elements.markdown import Markdown
 
             from shandy.webapp_components.pages.docs import docs_page
@@ -54,7 +54,7 @@ class TestDocsPage:
     @pytest.mark.asyncio
     async def test_docs_has_back_button(self):
         """Test that docs page has navigation button."""
-        with patch("shandy.webapp_components.utils.auth.DISABLE_AUTH", True):
+        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
             from shandy.webapp_components.pages.docs import docs_page
 
             async with user_simulation(root=docs_page) as user:

@@ -12,6 +12,7 @@ from shandy.database.crypto import (
     encryption_available,
     generate_key,
 )
+from shandy.settings import clear_settings_cache
 
 
 class TestEncryptionAvailable:
@@ -20,7 +21,8 @@ class TestEncryptionAvailable:
     def test_available_when_key_set(self):
         """Encryption is available when key is configured."""
         with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": generate_key()}):
-            # Clear the cached Fernet instance
+            # Clear both settings and Fernet caches
+            clear_settings_cache()
             from shandy.database import crypto
 
             crypto._get_fernet.cache_clear()
@@ -28,14 +30,20 @@ class TestEncryptionAvailable:
 
     def test_unavailable_when_key_not_set(self):
         """Encryption is unavailable when key is not configured."""
-        with patch.dict(os.environ, {}, clear=True):
+        # Save current key to restore later
+        original_key = os.environ.get("TOKEN_ENCRYPTION_KEY")
+        try:
+            os.environ.pop("TOKEN_ENCRYPTION_KEY", None)
+            clear_settings_cache()
             from shandy.database import crypto
 
             crypto._get_fernet.cache_clear()
-            # Also need to remove TOKEN_ENCRYPTION_KEY if it exists
-            os.environ.pop("TOKEN_ENCRYPTION_KEY", None)
-            crypto._get_fernet.cache_clear()
             assert encryption_available() is False
+        finally:
+            # Restore key
+            if original_key:
+                os.environ["TOKEN_ENCRYPTION_KEY"] = original_key
+            clear_settings_cache()
 
 
 class TestEncryptDecrypt:
@@ -46,11 +54,13 @@ class TestEncryptDecrypt:
         """Set up a test encryption key for each test."""
         test_key = generate_key()
         with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": test_key}):
+            clear_settings_cache()
             from shandy.database import crypto
 
             crypto._get_fernet.cache_clear()
             yield
             crypto._get_fernet.cache_clear()
+        clear_settings_cache()
 
     def test_encrypt_decrypt_roundtrip(self):
         """Encrypted data can be decrypted back to original."""
@@ -87,6 +97,7 @@ class TestEncryptDecrypt:
 
         crypto._get_fernet.cache_clear()
         with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": generate_key()}):
+            clear_settings_cache()
             crypto._get_fernet.cache_clear()
             with pytest.raises(EncryptionError, match="invalid token"):
                 decrypt(encrypted)
@@ -117,13 +128,23 @@ class TestEncryptWithoutKey:
     @pytest.fixture(autouse=True)
     def clear_key(self):
         """Ensure no encryption key is set."""
-        with patch.dict(os.environ, {}, clear=True):
+        # Save original key
+        original_key = os.environ.get("TOKEN_ENCRYPTION_KEY")
+        try:
             os.environ.pop("TOKEN_ENCRYPTION_KEY", None)
+            clear_settings_cache()
             from shandy.database import crypto
 
             crypto._get_fernet.cache_clear()
             yield
+        finally:
+            # Restore original key
+            if original_key:
+                os.environ["TOKEN_ENCRYPTION_KEY"] = original_key
+            from shandy.database import crypto
+
             crypto._get_fernet.cache_clear()
+            clear_settings_cache()
 
     def test_encrypt_without_key_raises(self):
         """Encryption raises error when key not configured."""

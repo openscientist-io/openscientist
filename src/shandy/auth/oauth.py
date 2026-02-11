@@ -5,11 +5,12 @@ Provides OAuth client initialization and configuration for supported providers.
 """
 
 import logging
-import os
 from typing import Optional
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore[import-untyped]
 from starlette.config import Config
+
+from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +25,13 @@ def get_oauth_config() -> Config:
     Returns:
         Starlette Config object with OAuth settings
     """
+    settings = get_settings()
     return Config(
         environ={
-            "GITHUB_CLIENT_ID": os.getenv("GITHUB_CLIENT_ID", ""),
-            "GITHUB_CLIENT_SECRET": os.getenv("GITHUB_CLIENT_SECRET", ""),
-            "ORCID_CLIENT_ID": os.getenv("ORCID_CLIENT_ID", ""),
-            "ORCID_CLIENT_SECRET": os.getenv("ORCID_CLIENT_SECRET", ""),
+            "GITHUB_CLIENT_ID": settings.auth.github_client_id or "",
+            "GITHUB_CLIENT_SECRET": settings.auth.github_client_secret or "",
+            "ORCID_CLIENT_ID": settings.auth.orcid_client_id or "",
+            "ORCID_CLIENT_SECRET": settings.auth.orcid_client_secret or "",
         }
     )
 
@@ -45,14 +47,15 @@ def get_oauth_client() -> OAuth:
     if _oauth is None:
         config = get_oauth_config()
         _oauth = OAuth(config)
+        settings = get_settings()
 
         # Register GitHub provider
-        github_client_id = os.getenv("GITHUB_CLIENT_ID")
+        github_client_id = settings.auth.github_client_id
         if github_client_id:
             _oauth.register(
                 name="github",
                 client_id=github_client_id,
-                client_secret=os.getenv("GITHUB_CLIENT_SECRET"),
+                client_secret=settings.auth.github_client_secret,
                 access_token_url="https://github.com/login/oauth/access_token",
                 access_token_params=None,
                 authorize_url="https://github.com/login/oauth/authorize",
@@ -65,14 +68,14 @@ def get_oauth_client() -> OAuth:
             logger.info("GitHub OAuth not configured (GITHUB_CLIENT_ID not set)")
 
         # Register ORCID provider
-        orcid_client_id = os.getenv("ORCID_CLIENT_ID")
+        orcid_client_id = settings.auth.orcid_client_id
         if orcid_client_id:
             # Use production ORCID by default, sandbox for testing
-            orcid_base = os.getenv("ORCID_API_BASE", "https://orcid.org")
+            orcid_base = settings.auth.orcid_api_base
             _oauth.register(
                 name="orcid",
                 client_id=orcid_client_id,
-                client_secret=os.getenv("ORCID_CLIENT_SECRET"),
+                client_secret=settings.auth.orcid_client_secret,
                 access_token_url=f"{orcid_base}/oauth/token",
                 access_token_params=None,
                 authorize_url=f"{orcid_base}/oauth/authorize",
@@ -94,11 +97,8 @@ def is_oauth_configured() -> bool:
     Returns:
         True if GitHub, ORCID, or Mock OAuth is configured
     """
-    return bool(
-        os.getenv("GITHUB_CLIENT_ID")
-        or os.getenv("ORCID_CLIENT_ID")
-        or os.getenv("ENABLE_MOCK_AUTH")
-    )
+    settings = get_settings()
+    return settings.auth.is_oauth_configured
 
 
 def is_mock_auth_enabled() -> bool:
@@ -108,4 +108,5 @@ def is_mock_auth_enabled() -> bool:
     Returns:
         True if ENABLE_MOCK_AUTH environment variable is set
     """
-    return os.getenv("ENABLE_MOCK_AUTH", "").lower() in ("true", "1", "yes")
+    settings = get_settings()
+    return settings.auth.enable_mock_auth

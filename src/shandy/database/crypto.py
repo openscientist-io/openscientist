@@ -8,15 +8,13 @@ The encryption key should be stored securely in environment variables.
 import base64
 import hashlib
 import logging
-import os
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
 
-logger = logging.getLogger(__name__)
+from shandy.settings import get_settings
 
-# Environment variable for the encryption key
-TOKEN_ENCRYPTION_KEY_ENV = "TOKEN_ENCRYPTION_KEY"
+logger = logging.getLogger(__name__)
 
 
 class EncryptionError(Exception):
@@ -28,7 +26,7 @@ class EncryptionError(Exception):
 @lru_cache(maxsize=1)
 def _get_fernet() -> Fernet | None:
     """
-    Get or create Fernet instance from environment key.
+    Get or create Fernet instance from settings.
 
     The key can be either:
     - A 32-byte URL-safe base64-encoded key (Fernet format)
@@ -37,7 +35,7 @@ def _get_fernet() -> Fernet | None:
     Returns:
         Fernet instance or None if no key is configured
     """
-    key = os.getenv(TOKEN_ENCRYPTION_KEY_ENV)
+    key = get_settings().auth.token_encryption_key
     if not key:
         return None
 
@@ -75,7 +73,7 @@ def encrypt(plaintext: str) -> str:
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
-            f"Encryption key not configured. Set {TOKEN_ENCRYPTION_KEY_ENV} environment variable."
+            "Encryption key not configured. Set TOKEN_ENCRYPTION_KEY environment variable."
         )
 
     encrypted = fernet.encrypt(plaintext.encode())
@@ -98,7 +96,7 @@ def decrypt(ciphertext: str) -> str:
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
-            f"Encryption key not configured. Set {TOKEN_ENCRYPTION_KEY_ENV} environment variable."
+            "Encryption key not configured. Set TOKEN_ENCRYPTION_KEY environment variable."
         )
 
     try:
