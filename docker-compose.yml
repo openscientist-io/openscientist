@@ -66,6 +66,9 @@ services:
       PHENIX_PATH: ${PHENIX_PATH:-}
       STORAGE_SECRET: ${STORAGE_SECRET}
 
+      # Security: OAuth token encryption (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+
       # Berkeley Lab Data Lakehouse
       KBASE_TOKEN: ${KBASE_TOKEN}
       DREMIO_USER: ${DREMIO_USER}

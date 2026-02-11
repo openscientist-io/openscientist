@@ -8,11 +8,12 @@ Multiple OAuth accounts can be linked to a single user.
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, UUIDv7Mixin
+from ..types import EncryptedText
 
 if TYPE_CHECKING:
     from .user import User
@@ -31,8 +32,8 @@ class OAuthAccount(UUIDv7Mixin, Base):
         provider_user_id: User's unique ID on the OAuth provider
         email: Email address from the OAuth provider
         name: Display name from the OAuth provider
-        access_token: OAuth access token (encrypted in production)
-        refresh_token: OAuth refresh token (encrypted in production)
+        access_token: OAuth access token (encrypted at rest via Fernet)
+        refresh_token: OAuth refresh token (encrypted at rest via Fernet)
         user: Related User object
     """
 
@@ -79,15 +80,15 @@ class OAuthAccount(UUIDv7Mixin, Base):
     )
 
     access_token: Mapped[str | None] = mapped_column(
-        Text,
+        EncryptedText(),
         nullable=True,
-        comment="OAuth access token (encrypted in production)",
+        comment="OAuth access token (encrypted at rest)",
     )
 
     refresh_token: Mapped[str | None] = mapped_column(
-        Text,
+        EncryptedText(),
         nullable=True,
-        comment="OAuth refresh token (encrypted in production)",
+        comment="OAuth refresh token (encrypted at rest)",
     )
 
     # Relationships

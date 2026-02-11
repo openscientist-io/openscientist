@@ -19,6 +19,15 @@ from sqlalchemy.ext.asyncio import (
 from shandy.database.models import APIKey, Job, User
 from shandy.database.rls import bypass_rls
 
+# Set up encryption key for tests (required for EncryptedText columns)
+# This must be done before any database operations that use encrypted fields
+if "TOKEN_ENCRYPTION_KEY" not in os.environ:
+    from shandy.database import crypto
+
+    os.environ["TOKEN_ENCRYPTION_KEY"] = crypto.generate_key()
+    # Clear the cached Fernet instance so it picks up the new key
+    crypto._get_fernet.cache_clear()
+
 
 def _apply_alembic_migrations(database_url: str) -> None:
     """Apply all Alembic migrations to the test database.
