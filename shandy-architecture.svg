@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1890" width="1400" height="1890" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xhtml="http://www.w3.org/1999/xhtml" viewBox="0 0 1400 1900" width="1400" height="1900" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <defs>
     <marker id="arr" viewBox="0 0 10 7" refX="10" refY="3.5" markerWidth="7" markerHeight="5" orient="auto-start-reverse">
       <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
@@ -23,11 +23,18 @@
       .tbl { font-size: 9.5px; font-weight: 600; fill: #1E293B; }
       .tbl-fk { font-size: 8px; fill: #94A3B8; }
       .rls-t { font-size: 9.5px; fill: #475569; }
+      /* foreignObject HTML styles */
+      .fo-justify { text-align: justify; text-justify: inter-word; }
+      .fo-text { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; margin: 0; padding: 0; line-height: 1.4; }
+      .fo-abstract { font-size: 9px; color: #475569; }
+      .fo-rls { font-size: 9.5px; color: #475569; }
+      .fo-glossary { font-size: 9.5px; color: #475569; }
+      .fo-glossary-term { font-weight: 600; color: #1E293B; }
     </style>
   </defs>
 
   <!-- Background -->
-  <rect width="1400" height="1890" fill="#F8FAFC" rx="0"/>
+  <rect width="1400" height="1900" fill="#F8FAFC" rx="0"/>
 
   <!-- ============ TITLE BANNER ============ -->
   <rect x="0" y="0" width="1400" height="56" fill="url(#title-bg)" rx="0"/>
@@ -36,9 +43,11 @@
 
   <!-- ============ ABSTRACT ============ -->
   <rect x="30" y="62" width="1340" height="46" rx="8" fill="#F1F5F9" stroke="#E2E8F0" stroke-width="1"/>
-  <text x="700" y="80" text-anchor="middle" font-size="9" fill="#475569">SHANDY is an autonomous scientific discovery platform that runs Claude Code CLI as a headless AI agent. It iteratively explores datasets,</text>
-  <text x="700" y="92" text-anchor="middle" font-size="9" fill="#475569">formulates hypotheses, tests them through statistical analysis and literature review, and produces research reports with full provenance.</text>
-  <text x="700" y="104" text-anchor="middle" font-size="9" fill="#475569">Two modes: fully autonomous discovery loops or collaborative coinvestigation with scientist feedback. Multi-tenant via PostgreSQL RLS.</text>
+  <foreignObject x="40" y="66" width="1320" height="40">
+    <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" class="fo-justify fo-text fo-abstract">
+      SHANDY is an autonomous scientific discovery platform that runs Claude Code CLI as a headless AI agent. It iteratively explores datasets, formulates hypotheses, tests them through statistical analysis and literature review, and produces research reports with full provenance. Two modes: fully autonomous discovery loops or collaborative coinvestigation with scientist feedback. Multi-tenant via PostgreSQL RLS.
+    </xhtml:div>
+  </foreignObject>
 
   <!-- ============ 1 · ENTRY POINTS ============ -->
   <g id="s1">
@@ -234,13 +243,13 @@
     <text x="736" y="658" class="card-sub">ZIP export of reports · plots · provenance</text>
     <text x="736" y="670" class="card-tech">artifact_packager.py</text>
 
-    <rect x="1040" y="628" width="285" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="1040" y="628" width="4" height="50" rx="2" fill="#6366F1"/>
-    <text x="1056" y="645" class="card-title">File Loader</text>
-    <text x="1056" y="658" class="card-sub">CSV · Excel · HDF5 · netCDF · AnnData</text>
-    <text x="1056" y="670" class="card-tech">file_loader.py  ·  document_reader.py</text>
+    <rect x="1040" y="628" width="285" height="50" rx="7" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="1040" y="628" width="4" height="50" rx="2" fill="#059669"/>
+    <text x="1056" y="645" class="card-title">Skill Relevance Service</text>
+    <text x="1056" y="658" class="card-sub" style="fill:#059669">GIN full-text pre-filter · Anthropic semantic scoring</text>
+    <text x="1056" y="670" class="card-tech">skill_relevance.py · auto-match to jobs</text>
 
-    <text x="700" y="694" text-anchor="middle" class="card-tech">job_manager.py · orchestrator.py · knowledge_state.py · cost_tracker.py · job_chat.py · pdf_generator.py</text>
+    <text x="700" y="694" text-anchor="middle" class="card-tech">job_manager.py · orchestrator.py · knowledge_state.py · skill_relevance.py · skill_scheduler.py</text>
   </g>
 
   <!-- connector -->
@@ -264,11 +273,11 @@
     <text x="416" y="781" class="card-sub">execute_code · search_pubmed · hypotheses</text>
     <text x="416" y="794" class="card-sub">update_knowledge_state · save_summary · read_doc</text>
 
-    <rect x="720" y="751" width="300" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="720" y="751" width="4" height="56" rx="2" fill="#6366F1"/>
-    <text x="736" y="768" class="card-title">Skills System</text>
-    <text x="736" y="781" class="card-sub">Workflow: hypothesis · prioritization · stopping</text>
-    <text x="736" y="794" class="card-sub">Domain: metabolomics · genomics · structural bio</text>
+    <rect x="720" y="751" width="300" height="56" rx="7" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="720" y="751" width="4" height="56" rx="2" fill="#059669"/>
+    <text x="736" y="768" class="card-title">Skills System (Database-Backed)</text>
+    <text x="736" y="781" class="card-sub" style="fill:#059669">Auto-matching · GIN full-text · Anthropic scoring</text>
+    <text x="736" y="794" class="card-sub">GitHub/local sync · extensible registry pattern</text>
 
     <rect x="1040" y="751" width="285" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
     <rect x="1040" y="751" width="4" height="56" rx="2" fill="#6366F1"/>
@@ -290,12 +299,12 @@
 
   <!-- ============ 6 · DATA LAYER ============ -->
   <g id="s6">
-    <rect x="30" y="910" width="1340" height="335" rx="10" fill="#F0FDFA" stroke="#99F6E4" stroke-width="1"/>
+    <rect x="30" y="910" width="1340" height="345" rx="10" fill="#F0FDFA" stroke="#99F6E4" stroke-width="1"/>
     <text x="52" y="949" class="sec-num" fill="#0D9488">6</text>
     <text x="80" y="930" class="sec-title">Data Layer</text>
 
     <!-- LEFT: Database Schema -->
-    <text x="80" y="947" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">POSTGRESQL 18  ·  19 TABLES  ·  ROW-LEVEL SECURITY</text>
+    <text x="80" y="947" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">POSTGRESQL 18  ·  22 TABLES  ·  ROW-LEVEL SECURITY</text>
 
     <!-- users (root) -->
     <rect x="270" y="959" width="100" height="36" rx="5" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1.3"/>
@@ -333,7 +342,7 @@
     <line x1="530" y1="995" x2="530" y2="1045" stroke="#CBD5E1" stroke-width="1"/>
 
     <!-- RLS boundary -->
-    <rect x="55" y="1045" width="600" height="138" rx="8" fill="none" stroke="#0D9488" stroke-width="1.5" stroke-dasharray="8 4"/>
+    <rect x="55" y="1045" width="600" height="165" rx="8" fill="none" stroke="#0D9488" stroke-width="1.5" stroke-dasharray="8 4"/>
     <rect x="55" y="1040" width="155" height="14" rx="3" fill="#F0FDFA"/>
     <text x="60" y="1050" class="card-tech" style="font-weight:700; fill:#0D9488; font-style:normal; font-size:8px;">RLS ENFORCED BOUNDARY</text>
 
@@ -361,19 +370,28 @@
     <rect x="530" y="1093" width="110" height="24" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
     <text x="585" y="1109" text-anchor="middle" class="tbl" style="font-size:8.5px">chat_messages</text>
 
-    <!-- Junction tables -->
-    <text x="80" y="1138" class="card-tech" style="font-weight:600; fill:#64748B; font-style:normal; font-size:8px;">JUNCTION TABLES</text>
-    <rect x="80" y="1143" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
-    <text x="142" y="1158" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">finding_hypotheses</text>
-    <rect x="215" y="1143" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
-    <text x="277" y="1158" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">finding_literature</text>
-    <rect x="350" y="1143" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
-    <text x="412" y="1158" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">hypothesis_spawns</text>
+    <!-- Skills tables (NEW) -->
+    <text x="80" y="1128" class="card-tech" style="font-weight:600; fill:#059669; font-style:normal; font-size:8px;">SKILLS TABLES (NEW)</text>
+    <rect x="80" y="1133" width="105" height="24" rx="4" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <text x="132" y="1149" text-anchor="middle" class="tbl" style="font-size:8.5px; fill:#059669">skills</text>
+    <rect x="195" y="1133" width="105" height="24" rx="4" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <text x="247" y="1149" text-anchor="middle" class="tbl" style="font-size:8.5px; fill:#059669">skill_sources</text>
+    <rect x="310" y="1133" width="105" height="24" rx="4" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <text x="362" y="1149" text-anchor="middle" class="tbl" style="font-size:8.5px; fill:#059669">job_skills</text>
 
-    <text x="350" y="1198" text-anchor="middle" class="card-tech">SQLAlchemy ORM · asyncpg · Alembic migrations · UUID v7 PKs · CASCADE deletes</text>
+    <!-- Junction tables -->
+    <text x="80" y="1175" class="card-tech" style="font-weight:600; fill:#64748B; font-style:normal; font-size:8px;">JUNCTION TABLES</text>
+    <rect x="80" y="1180" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
+    <text x="142" y="1195" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">finding_hypotheses</text>
+    <rect x="215" y="1180" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
+    <text x="277" y="1195" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">finding_literature</text>
+    <rect x="350" y="1180" width="125" height="22" rx="3" fill="#F1F5F9" stroke="#CBD5E1" stroke-width="0.8"/>
+    <text x="412" y="1195" text-anchor="middle" class="tbl-fk" style="font-size:8px; font-weight:500">hypothesis_spawns</text>
+
+    <text x="350" y="1218" text-anchor="middle" class="card-tech">SQLAlchemy ORM · asyncpg · Alembic migrations · UUID v7 PKs · CASCADE deletes</text>
 
     <!-- Vertical divider -->
-    <line x1="680" y1="930" x2="680" y2="1236" stroke="#99F6E4" stroke-width="1" stroke-dasharray="3 3"/>
+    <line x1="680" y1="930" x2="680" y2="1245" stroke="#99F6E4" stroke-width="1" stroke-dasharray="3 3"/>
 
     <!-- RIGHT TOP: RLS Model -->
     <text x="710" y="947" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">ROW-LEVEL SECURITY MODEL</text>
@@ -400,9 +418,11 @@
 
     <!-- Mechanism -->
     <text x="730" y="1025" class="rls-t" style="font-weight:600">Mechanism</text>
-    <text x="730" y="1038" class="rls-t">set_current_user(session, user_id) → sets app.current_user_id</text>
-    <text x="730" y="1051" class="rls-t">PostgreSQL evaluates policies per-row using session variable</text>
-    <text x="730" y="1064" class="rls-t">bypass_rls() context manager for admin / migration operations</text>
+    <foreignObject x="730" y="1028" width="580" height="50">
+      <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" style="font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 9.5px; color: #475569; line-height: 1.45; text-align: justify;">
+        <xhtml:p style="margin: 0 0 2px 0;"><xhtml:code style="background: #F1F5F9; padding: 1px 3px; border-radius: 2px; font-size: 8.5px;">set_current_user(session, user_id)</xhtml:code> sets <xhtml:code style="background: #F1F5F9; padding: 1px 3px; border-radius: 2px; font-size: 8.5px;">app.current_user_id</xhtml:code> session variable. PostgreSQL evaluates RLS policies per-row using this variable. The <xhtml:code style="background: #F1F5F9; padding: 1px 3px; border-radius: 2px; font-size: 8.5px;">bypass_rls()</xhtml:code> context manager allows admin and migration operations to skip policy checks.</xhtml:p>
+      </xhtml:div>
+    </foreignObject>
 
     <!-- RIGHT BOTTOM: File System -->
     <text x="710" y="1096" class="card-tech" style="font-style:normal; font-weight:600; fill:#0D9488;">FILE SYSTEM</text>
@@ -410,11 +430,32 @@
     <rect x="710" y="1106" width="615" height="100" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
 
     <text x="730" y="1124" class="card-title">jobs/&lt;job_id&gt;/ Directory</text>
-    <text x="730" y="1139" class="card-sub">config.json — job configuration &amp; parameters</text>
-    <text x="730" y="1152" class="card-sub">knowledge_state.json — agent memory (file-locked via fcntl)</text>
-    <text x="730" y="1165" class="card-sub">data/ — uploaded data files (CSV, Excel, HDF5, AnnData)</text>
-    <text x="730" y="1178" class="card-sub">provenance/ — transcripts, plots, artifacts</text>
-    <text x="730" y="1191" class="card-sub">report.md · report.pdf — final output · artifacts.zip</text>
+    <foreignObject x="730" y="1128" width="580" height="75">
+      <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" style="font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 9.5px; color: #475569; line-height: 1.5;">
+        <xhtml:table style="width: 100%; border-collapse: collapse;">
+          <xhtml:tr>
+            <xhtml:td style="width: 160px; font-weight: 500; padding: 1px 0;"><xhtml:code style="background: #F1F5F9; padding: 1px 4px; border-radius: 2px; font-size: 8.5px;">config.json</xhtml:code></xhtml:td>
+            <xhtml:td style="text-align: justify; padding: 1px 0;">Job configuration and parameters</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 500; padding: 1px 0;"><xhtml:code style="background: #F1F5F9; padding: 1px 4px; border-radius: 2px; font-size: 8.5px;">knowledge_state.json</xhtml:code></xhtml:td>
+            <xhtml:td style="text-align: justify; padding: 1px 0;">Agent memory (file-locked via fcntl)</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 500; padding: 1px 0;"><xhtml:code style="background: #F1F5F9; padding: 1px 4px; border-radius: 2px; font-size: 8.5px;">data/</xhtml:code></xhtml:td>
+            <xhtml:td style="text-align: justify; padding: 1px 0;">Uploaded data files (CSV, Excel, HDF5, AnnData)</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 500; padding: 1px 0;"><xhtml:code style="background: #F1F5F9; padding: 1px 4px; border-radius: 2px; font-size: 8.5px;">provenance/</xhtml:code></xhtml:td>
+            <xhtml:td style="text-align: justify; padding: 1px 0;">Transcripts, plots, artifacts</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 500; padding: 1px 0;"><xhtml:code style="background: #F1F5F9; padding: 1px 4px; border-radius: 2px; font-size: 8.5px;">report.md · report.pdf</xhtml:code></xhtml:td>
+            <xhtml:td style="text-align: justify; padding: 1px 0;">Final output and artifacts.zip</xhtml:td>
+          </xhtml:tr>
+        </xhtml:table>
+      </xhtml:div>
+    </foreignObject>
 
     <!-- Dual sync callout -->
     <rect x="715" y="1214" width="300" height="22" rx="4" fill="#F0FDFA" stroke="#5EEAD4" stroke-width="1"/>
@@ -422,179 +463,180 @@
   </g>
 
   <!-- connector -->
-  <line x1="700" y1="1245" x2="700" y2="1263" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <line x1="700" y1="1255" x2="700" y2="1273" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
 
   <!-- ============ 7 · EXTERNAL SERVICES ============ -->
   <g id="s7">
-    <rect x="30" y="1263" width="1340" height="110" rx="10" fill="#FAF5FF" stroke="#E9D5FF" stroke-width="1"/>
-    <text x="52" y="1302" class="sec-num" fill="#7C3AED">7</text>
-    <text x="80" y="1283" class="sec-title">External Services &amp; LLM Providers</text>
+    <rect x="30" y="1273" width="1340" height="110" rx="10" fill="#FAF5FF" stroke="#E9D5FF" stroke-width="1"/>
+    <text x="52" y="1312" class="sec-num" fill="#7C3AED">7</text>
+    <text x="80" y="1293" class="sec-title">External Services &amp; LLM Providers</text>
 
-    <rect x="80" y="1296" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="80" y="1296" width="4" height="44" rx="2" fill="#059669"/>
-    <text x="96" y="1313" class="card-title">CBORG (LBNL)</text>
-    <text x="96" y="1326" class="card-sub" style="fill:#059669">Working — primary provider</text>
-    <text x="96" y="1336" class="card-tech">Cost tracking via /key/info API</text>
+    <rect x="80" y="1306" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="1306" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="96" y="1323" class="card-title">CBORG (LBNL)</text>
+    <text x="96" y="1336" class="card-sub" style="fill:#059669">Working — primary provider</text>
+    <text x="96" y="1346" class="card-tech">Cost tracking via /key/info API</text>
 
-    <rect x="290" y="1296" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="290" y="1296" width="4" height="44" rx="2" fill="#059669"/>
-    <text x="306" y="1313" class="card-title">Anthropic Direct</text>
-    <text x="306" y="1326" class="card-sub" style="fill:#059669">Working</text>
-    <text x="306" y="1336" class="card-tech">ANTHROPIC_API_KEY</text>
+    <rect x="290" y="1306" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="290" y="1306" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="306" y="1323" class="card-title">Anthropic Direct</text>
+    <text x="306" y="1336" class="card-sub" style="fill:#059669">Working</text>
+    <text x="306" y="1346" class="card-tech">ANTHROPIC_API_KEY</text>
 
-    <rect x="500" y="1296" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="500" y="1296" width="4" height="44" rx="2" fill="#059669"/>
-    <text x="516" y="1313" class="card-title">Google Vertex AI</text>
-    <text x="516" y="1326" class="card-sub" style="fill:#059669">Working</text>
-    <text x="516" y="1336" class="card-tech">BigQuery billing (1-6h lag)</text>
+    <rect x="500" y="1306" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="500" y="1306" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="516" y="1323" class="card-title">Google Vertex AI</text>
+    <text x="516" y="1336" class="card-sub" style="fill:#059669">Working</text>
+    <text x="516" y="1346" class="card-tech">BigQuery billing (1-6h lag)</text>
 
     <!-- AWS Bedrock -->
-    <rect x="710" y="1296" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="710" y="1296" width="4" height="44" rx="2" fill="#059669"/>
-    <text x="726" y="1313" class="card-title">AWS Bedrock</text>
-    <text x="726" y="1326" class="card-sub" style="fill:#059669">Working</text>
-    <text x="726" y="1336" class="card-tech">AWS SDK · Cost Explorer API</text>
+    <rect x="710" y="1306" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="710" y="1306" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="726" y="1323" class="card-title">AWS Bedrock</text>
+    <text x="726" y="1336" class="card-sub" style="fill:#059669">Working</text>
+    <text x="726" y="1346" class="card-tech">AWS SDK · Cost Explorer API</text>
 
     <!-- OpenAI Codex (stub) -->
-    <rect x="920" y="1296" width="195" height="44" rx="7" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
-    <rect x="920" y="1296" width="4" height="44" rx="2" fill="#D97706"/>
-    <text x="936" y="1313" class="card-title">OpenAI Codex</text>
-    <text x="936" y="1326" class="card-sub" style="fill:#D97706">Stub ready — not yet implemented</text>
-    <text x="936" y="1336" class="card-tech">codex.py provider scaffold</text>
+    <rect x="920" y="1306" width="195" height="44" rx="7" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+    <rect x="920" y="1306" width="4" height="44" rx="2" fill="#D97706"/>
+    <text x="936" y="1323" class="card-title">OpenAI Codex</text>
+    <text x="936" y="1336" class="card-sub" style="fill:#D97706">Stub ready — not yet implemented</text>
+    <text x="936" y="1346" class="card-tech">codex.py provider scaffold</text>
 
     <!-- PubMed -->
-    <rect x="1130" y="1296" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="1130" y="1296" width="4" height="44" rx="2" fill="#059669"/>
-    <text x="1146" y="1313" class="card-title">PubMed / NCBI</text>
-    <text x="1146" y="1326" class="card-sub" style="fill:#059669">Working — literature search</text>
-    <text x="1146" y="1336" class="card-tech">via search_pubmed MCP tool</text>
+    <rect x="1130" y="1306" width="195" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1130" y="1306" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="1146" y="1323" class="card-title">PubMed / NCBI</text>
+    <text x="1146" y="1336" class="card-sub" style="fill:#059669">Working — literature search</text>
+    <text x="1146" y="1346" class="card-tech">via search_pubmed MCP tool</text>
 
-    <text x="700" y="1363" text-anchor="middle" class="card-tech">Provider selection: CLAUDE_PROVIDER env var (cborg | anthropic | vertex | bedrock)</text>
+    <text x="700" y="1373" text-anchor="middle" class="card-tech">Provider selection: CLAUDE_PROVIDER env var (cborg | anthropic | vertex | bedrock)</text>
   </g>
 
   <!-- connector -->
-  <line x1="700" y1="1373" x2="700" y2="1391" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <line x1="700" y1="1383" x2="700" y2="1401" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
 
   <!-- ============ 8 · INFRASTRUCTURE ============ -->
   <g id="s8">
-    <rect x="30" y="1391" width="1340" height="120" rx="10" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1"/>
-    <text x="52" y="1430" class="sec-num" fill="#6B7280">8</text>
-    <text x="80" y="1411" class="sec-title">Infrastructure</text>
+    <rect x="30" y="1401" width="1340" height="120" rx="10" fill="#F3F4F6" stroke="#D1D5DB" stroke-width="1"/>
+    <text x="52" y="1440" class="sec-num" fill="#6B7280">8</text>
+    <text x="80" y="1421" class="sec-title">Infrastructure</text>
 
-    <rect x="80" y="1424" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="80" y="1424" width="4" height="44" rx="2" fill="#6B7280"/>
-    <text x="96" y="1441" class="card-title">Docker + Docker Compose</text>
-    <text x="96" y="1454" class="card-sub">Dev and production configs · auto-restart</text>
+    <rect x="80" y="1434" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="80" y="1434" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="96" y="1451" class="card-title">Docker + Docker Compose</text>
+    <text x="96" y="1464" class="card-sub">Dev and production configs · auto-restart</text>
 
-    <rect x="345" y="1424" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="345" y="1424" width="4" height="44" rx="2" fill="#6B7280"/>
-    <text x="361" y="1441" class="card-title">PostgreSQL 18 Container</text>
-    <text x="361" y="1454" class="card-sub">postgres:18 · health checks · init scripts</text>
+    <rect x="345" y="1434" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="345" y="1434" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="361" y="1451" class="card-title">PostgreSQL 18 Container</text>
+    <text x="361" y="1464" class="card-sub">postgres:18 · health checks · init scripts</text>
 
-    <rect x="610" y="1424" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="610" y="1424" width="4" height="44" rx="2" fill="#6B7280"/>
-    <text x="626" y="1441" class="card-title">Shandy App Container</text>
-    <text x="626" y="1454" class="card-sub">Python 3.10+ · NiceGUI · port 8080</text>
+    <rect x="610" y="1434" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="610" y="1434" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="626" y="1451" class="card-title">Shandy App Container</text>
+    <text x="626" y="1464" class="card-sub">Python 3.10+ · NiceGUI · port 8080</text>
 
-    <rect x="875" y="1424" width="225" height="44" rx="7" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
-    <rect x="875" y="1424" width="4" height="44" rx="2" fill="#059669"/>
-    <text x="891" y="1441" class="card-title">Sibling Executor Containers</text>
-    <text x="891" y="1454" class="card-sub" style="fill:#059669">Implemented · Docker SDK · per-job isolation</text>
+    <rect x="875" y="1434" width="225" height="44" rx="7" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="875" y="1434" width="4" height="44" rx="2" fill="#059669"/>
+    <text x="891" y="1451" class="card-title">Sibling Executor Containers</text>
+    <text x="891" y="1464" class="card-sub" style="fill:#059669">Implemented · Docker SDK · per-job isolation</text>
 
-    <rect x="1115" y="1424" width="210" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="1115" y="1424" width="4" height="44" rx="2" fill="#6B7280"/>
-    <text x="1131" y="1441" class="card-title">Environment &amp; Secrets</text>
-    <text x="1131" y="1454" class="card-sub">.env · provider keys · encryption keys</text>
+    <rect x="1115" y="1434" width="210" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="1115" y="1434" width="4" height="44" rx="2" fill="#6B7280"/>
+    <text x="1131" y="1451" class="card-title">Environment &amp; Secrets</text>
+    <text x="1131" y="1464" class="card-sub">.env · provider keys · encryption keys</text>
 
-    <text x="700" y="1498" text-anchor="middle" class="card-tech">docker-compose.yml · docker-compose.dev.yml · /var/run/docker.sock mount · Makefile</text>
+    <text x="700" y="1508" text-anchor="middle" class="card-tech">docker-compose.yml · docker-compose.dev.yml · /var/run/docker.sock mount · Makefile</text>
   </g>
 
   <!-- ============ LEGEND ============ -->
   <g id="legend">
-    <rect x="30" y="1526" width="1340" height="148" rx="10" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="30" y="1536" width="1340" height="148" rx="10" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
 
-    <text x="80" y="1553" class="sec-title">Legend</text>
+    <text x="80" y="1563" class="sec-title">Legend</text>
 
     <!-- Line types -->
-    <text x="80" y="1574" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">CONNECTORS</text>
-    <line x1="80" y1="1586" x2="130" y2="1586" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
-    <text x="140" y="1590" class="legend-t">Data flow</text>
-    <line x1="80" y1="1606" x2="130" y2="1606" stroke="#D97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
-    <text x="140" y="1610" class="legend-t">Auth flow</text>
+    <text x="80" y="1584" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">CONNECTORS</text>
+    <line x1="80" y1="1596" x2="130" y2="1596" stroke="#94A3B8" stroke-width="1.5" marker-end="url(#arr)"/>
+    <text x="140" y="1600" class="legend-t">Data flow</text>
+    <line x1="80" y1="1616" x2="130" y2="1616" stroke="#D97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
+    <text x="140" y="1620" class="legend-t">Auth flow</text>
 
     <!-- Box types -->
-    <text x="300" y="1574" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">BOX TYPES</text>
-    <rect x="300" y="1580" width="60" height="16" rx="3" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
-    <rect x="300" y="1580" width="3" height="16" rx="1.5" fill="#6366F1"/>
-    <text x="370" y="1592" class="legend-t">Implemented</text>
-    <rect x="300" y="1602" width="60" height="16" rx="3" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
-    <rect x="300" y="1602" width="3" height="16" rx="1.5" fill="#D97706"/>
-    <text x="370" y="1614" class="legend-t">Planned / Stub</text>
-    <rect x="300" y="1624" width="60" height="16" rx="3" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
-    <rect x="300" y="1624" width="3" height="16" rx="1.5" fill="#059669"/>
-    <text x="370" y="1636" class="legend-t">Recently completed</text>
+    <text x="300" y="1584" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">BOX TYPES</text>
+    <rect x="300" y="1590" width="60" height="16" rx="3" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="300" y="1590" width="3" height="16" rx="1.5" fill="#6366F1"/>
+    <text x="370" y="1602" class="legend-t">Implemented</text>
+    <rect x="300" y="1612" width="60" height="16" rx="3" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
+    <rect x="300" y="1612" width="3" height="16" rx="1.5" fill="#D97706"/>
+    <text x="370" y="1624" class="legend-t">Planned / Stub</text>
+    <rect x="300" y="1634" width="60" height="16" rx="3" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="300" y="1634" width="3" height="16" rx="1.5" fill="#059669"/>
+    <text x="370" y="1646" class="legend-t">Recently completed</text>
 
     <!-- Status summary -->
-    <text x="560" y="1574" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">STATUS SUMMARY</text>
+    <text x="560" y="1584" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">STATUS SUMMARY</text>
 
-    <text x="570" y="1591" class="legend-t" style="fill:#059669">✓  Bot/API Client — Full REST API with /jobs, /keys, /shares endpoints</text>
-    <text x="570" y="1607" class="legend-t" style="fill:#059669">✓  OAuth Token Encryption — Fernet encryption at rest via TOKEN_ENCRYPTION_KEY</text>
-    <text x="570" y="1623" class="legend-t" style="fill:#059669">✓  AWS Bedrock — Provider fully implemented with Cost Explorer API</text>
-    <text x="570" y="1639" class="legend-t" style="fill:#D97706">○  OpenAI Codex — Provider stub created (codex.py), implementation pending</text>
-    <text x="570" y="1655" class="legend-t" style="fill:#059669">✓  Sibling Container Isolation — Docker SDK spawns isolated executor containers</text>
+    <text x="570" y="1601" class="legend-t" style="fill:#059669">✓  Bot/API Client — Full REST API with /jobs, /keys, /shares, /skills endpoints</text>
+    <text x="570" y="1617" class="legend-t" style="fill:#059669">✓  Skills Database System — GIN-indexed full-text search + Anthropic semantic scoring</text>
+    <text x="570" y="1633" class="legend-t" style="fill:#059669">✓  Skill Auto-Matching — Auto-match skills to jobs based on research questions</text>
+    <text x="570" y="1649" class="legend-t" style="fill:#059669">✓  Periodic Skill Sync — Background scheduler syncs GitHub/local sources hourly</text>
+    <text x="570" y="1665" class="legend-t" style="fill:#059669">✓  Extensible Ingesters — Registry pattern for adding new skill sources (S3, GitLab, etc.)</text>
 
     <!-- Tech stack -->
-    <text x="80" y="1636" class="card-tech" style="font-weight:600; fill:#64748B;">TECH STACK</text>
-    <text x="80" y="1652" class="card-tech">Python 3.10+ · NiceGUI · FastAPI · SQLAlchemy · asyncpg · PostgreSQL 18 · Claude Code CLI · FastMCP · Docker</text>
+    <text x="80" y="1646" class="card-tech" style="font-weight:600; fill:#64748B;">TECH STACK</text>
+    <text x="80" y="1662" class="card-tech">Python 3.10+ · NiceGUI · FastAPI · SQLAlchemy · asyncpg · PostgreSQL 18 · Claude Code CLI · FastMCP · Docker</text>
   </g>
 
   <!-- ============ TECHNOLOGY GLOSSARY ============ -->
   <g id="glossary">
-    <rect x="30" y="1690" width="1340" height="185" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
+    <rect x="30" y="1700" width="1340" height="185" rx="10" fill="#F8FAFC" stroke="#E2E8F0" stroke-width="1"/>
 
-    <text x="80" y="1717" class="sec-title">Technology Glossary</text>
-    <text x="80" y="1732" class="card-tech" style="font-style:normal; fill:#64748B;">Terms and technologies used in this architecture, explained for non-technical stakeholders</text>
+    <text x="80" y="1727" class="sec-title">Technology Glossary</text>
+    <text x="80" y="1742" class="card-tech" style="font-style:normal; fill:#64748B;">Terms and technologies used in this architecture, explained for non-technical stakeholders</text>
 
-    <!-- Row 1 -->
-    <text x="80" y="1755" class="card-sub" style="font-weight:600; fill:#1E293B;">Sibling Containers</text>
-    <text x="220" y="1755" class="card-sub">Docker containers spawned by the main container to run code in isolation — like separate secure rooms</text>
-
-    <text x="730" y="1755" class="card-sub" style="font-weight:600; fill:#1E293B;">Docker</text>
-    <text x="795" y="1755" class="card-sub">Software that packages applications into isolated, portable containers that run anywhere</text>
-
-    <!-- Row 2 -->
-    <text x="80" y="1775" class="card-sub" style="font-weight:600; fill:#1E293B;">OAuth</text>
-    <text x="130" y="1775" class="card-sub">Industry-standard login protocol — "Sign in with GitHub" uses this. You don't share passwords.</text>
-
-    <text x="730" y="1775" class="card-sub" style="font-weight:600; fill:#1E293B;">Row-Level Security (RLS)</text>
-    <text x="905" y="1775" class="card-sub">Database feature ensuring users can only see their own data — built into PostgreSQL</text>
-
-    <!-- Row 3 -->
-    <text x="80" y="1795" class="card-sub" style="font-weight:600; fill:#1E293B;">FastMCP / MCP</text>
-    <text x="185" y="1795" class="card-sub">Model Context Protocol — standard interface for AI assistants to use tools (execute code, search, etc.)</text>
-
-    <text x="730" y="1795" class="card-sub" style="font-weight:600; fill:#1E293B;">NiceGUI</text>
-    <text x="805" y="1795" class="card-sub">Python framework for building web interfaces with real-time updates (no JavaScript needed)</text>
-
-    <!-- Row 4 -->
-    <text x="80" y="1815" class="card-sub" style="font-weight:600; fill:#1E293B;">FastAPI</text>
-    <text x="145" y="1815" class="card-sub">Modern Python framework for building REST APIs with automatic documentation and validation</text>
-
-    <text x="730" y="1815" class="card-sub" style="font-weight:600; fill:#1E293B;">SQLAlchemy</text>
-    <text x="825" y="1815" class="card-sub">Python library for database access — translates Python code to SQL database queries</text>
-
-    <!-- Row 5 -->
-    <text x="80" y="1835" class="card-sub" style="font-weight:600; fill:#1E293B;">Fernet Encryption</text>
-    <text x="205" y="1835" class="card-sub">Symmetric encryption standard — same key encrypts and decrypts. Used for OAuth token storage.</text>
-
-    <text x="730" y="1835" class="card-sub" style="font-weight:600; fill:#1E293B;">Claude Code CLI</text>
-    <text x="850" y="1835" class="card-sub">Anthropic's command-line AI assistant that SHANDY runs as an autonomous agent</text>
-
-    <!-- Row 6 -->
-    <text x="80" y="1855" class="card-sub" style="font-weight:600; fill:#1E293B;">PostgreSQL</text>
-    <text x="170" y="1855" class="card-sub">Open-source relational database with advanced features like RLS. Version 18 used here.</text>
-
-    <text x="730" y="1855" class="card-sub" style="font-weight:600; fill:#1E293B;">REST API</text>
-    <text x="810" y="1855" class="card-sub">Standard way for programs to communicate over HTTP — enables bot/automation access</text>
+    <foreignObject x="50" y="1750" width="1300" height="130">
+      <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" style="font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 9.5px; color: #475569; line-height: 1.5;">
+        <xhtml:table style="width: 100%; border-collapse: collapse;">
+          <xhtml:tr>
+            <xhtml:td style="width: 130px; font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">Sibling Containers</xhtml:td>
+            <xhtml:td style="width: 370px; text-align: justify; vertical-align: top; padding: 2px 20px 2px 0;">Docker containers spawned by the main container to run code in isolation — like separate secure rooms.</xhtml:td>
+            <xhtml:td style="width: 130px; font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">Docker</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 0;">Software that packages applications into isolated, portable containers that run anywhere.</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">OAuth</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 20px 2px 0;">Industry-standard login protocol — "Sign in with GitHub" uses this. You don't share passwords.</xhtml:td>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">Row-Level Security</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 0;">Database feature ensuring users can only see their own data — built into PostgreSQL.</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">FastMCP / MCP</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 20px 2px 0;">Model Context Protocol — standard interface for AI assistants to use tools (execute code, search, etc.).</xhtml:td>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">NiceGUI</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 0;">Python framework for building web interfaces with real-time updates (no JavaScript needed).</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">FastAPI</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 20px 2px 0;">Modern Python framework for building REST APIs with automatic documentation and validation.</xhtml:td>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">SQLAlchemy</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 0;">Python library for database access — translates Python code to SQL database queries.</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">Fernet Encryption</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 20px 2px 0;">Symmetric encryption standard — same key encrypts and decrypts. Used for OAuth token storage.</xhtml:td>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">Claude Code CLI</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 0;">Anthropic's command-line AI assistant that SHANDY runs as an autonomous agent.</xhtml:td>
+          </xhtml:tr>
+          <xhtml:tr>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">PostgreSQL</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 20px 2px 0;">Open-source relational database with advanced features like RLS. Version 18 used here.</xhtml:td>
+            <xhtml:td style="font-weight: 600; color: #1E293B; vertical-align: top; padding: 2px 8px 2px 0;">REST API</xhtml:td>
+            <xhtml:td style="text-align: justify; vertical-align: top; padding: 2px 0;">Standard way for programs to communicate over HTTP — enables bot/automation access.</xhtml:td>
+          </xhtml:tr>
+        </xhtml:table>
+      </xhtml:div>
+    </foreignObject>
   </g>
 </svg>

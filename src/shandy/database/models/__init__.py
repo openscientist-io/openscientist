@@ -32,10 +32,15 @@ from .job import Job
 from .job_chat_message import JobChatMessage
 from .job_data_file import JobDataFile
 from .job_share import JobShare
+from .job_skill import JobSkill
 from .literature import Literature
 from .oauth_account import OAuthAccount
 from .plot import Plot
 from .session import Session
+
+# Skill models
+from .skill import Skill
+from .skill_source import SkillSource
 from .user import User
 
 __all__ = [
@@ -49,6 +54,10 @@ __all__ = [
     "JobShare",
     "JobDataFile",
     "JobChatMessage",
+    "JobSkill",
+    # Skills
+    "Skill",
+    "SkillSource",
     # Knowledge state
     "Hypothesis",
     "Finding",

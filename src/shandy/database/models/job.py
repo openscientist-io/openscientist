@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from .job_chat_message import JobChatMessage
     from .job_data_file import JobDataFile
     from .job_share import JobShare
+    from .job_skill import JobSkill
+    from .skill import Skill
     from .user import User
 
 
@@ -167,6 +169,22 @@ class Job(UUIDv7Mixin, Base):
         back_populates="job",
         cascade="all, delete-orphan",
     )
+
+    job_skills: Mapped[list["JobSkill"]] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+    )
+
+    # Convenience property to access skills via junction table
+    @property
+    def skills(self) -> list["Skill"]:
+        """Get all skills associated with this job."""
+        return [js.skill for js in self.job_skills if js.is_enabled]
+
+    @property
+    def enabled_skills(self) -> list["Skill"]:
+        """Get only enabled skills for this job."""
+        return [js.skill for js in self.job_skills if js.is_enabled]
 
     def __repr__(self) -> str:
         return (

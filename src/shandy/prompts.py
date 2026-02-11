@@ -4,7 +4,13 @@ Prompt templates for SHANDY orchestrator.
 System prompts and discovery iteration prompts for the autonomous agent.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .database.models import JobSkill, Skill
 
 
 def get_system_prompt(skills_enabled: bool = True) -> str:
@@ -226,5 +232,105 @@ def format_skills_list(skills: Dict[str, Dict[str, Any]]) -> str:
     for skill_name, skill_info in skills.items():
         description = skill_info.get("description", "No description")
         lines.append(f"  - `{skill_name}`: {description}")
+
+    return "\n".join(lines)
+
+
+async def get_job_skills(
+    session: AsyncSession,
+    job_id: UUID,
+) -> List[Skill]:
+    """
+    Get all enabled skills for a job.
+
+    Args:
+        session: Database session
+        job_id: Job ID
+
+    Returns:
+        List of enabled Skill objects
+    """
+    stmt = (
+        select(Skill)
+        .join(JobSkill, JobSkill.skill_id == Skill.id)
+        .where(
+            JobSkill.job_id == job_id,
+            JobSkill.is_enabled == True,  # noqa: E712
+        )
+        .order_by(Skill.category, Skill.name)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def format_skills_for_job(
+    session: AsyncSession,
+    job_id: UUID,
+) -> str:
+    """
+    Format skills content for inclusion in a job's agent prompt.
+
+    Loads all enabled skills for a job and formats them into a single
+    string suitable for the agent's context.
+
+    Args:
+        session: Database session
+        job_id: Job ID
+
+    Returns:
+        Formatted skills content string
+    """
+    skills = await get_job_skills(session, job_id)
+
+    if not skills:
+        return ""
+
+    parts = [
+        "# Domain-Specific Skills",
+        "",
+        "The following skills have been matched to your research question.",
+        "Use these as guidance for analysis approaches and best practices.",
+        "",
+    ]
+
+    # Group skills by category
+    categories: Dict[str, List[Skill]] = {}
+    for skill in skills:
+        if skill.category not in categories:
+            categories[skill.category] = []
+        categories[skill.category].append(skill)
+
+    for category, category_skills in sorted(categories.items()):
+        parts.append(f"## {category.title()} Skills")
+        parts.append("")
+
+        for skill in category_skills:
+            parts.append(f"### {skill.name}")
+            if skill.description:
+                parts.append(f"*{skill.description}*")
+            parts.append("")
+            parts.append(skill.content)
+            parts.append("")
+
+    return "\n".join(parts)
+
+
+def format_skills_summary(skills: List[Skill]) -> str:
+    """
+    Format a summary list of skills for prompt display.
+
+    Args:
+        skills: List of Skill objects
+
+    Returns:
+        Formatted summary string
+    """
+    if not skills:
+        return ""
+
+    lines = ["Available skills:"]
+    for skill in skills:
+        desc = skill.description or "No description"
+        lines.append(f"  - `{skill.category}/{skill.slug}`: {desc}")
 
     return "\n".join(lines)

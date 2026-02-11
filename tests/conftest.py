@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from shandy.database.models import APIKey, Job, User
+from shandy.database.models import APIKey, Job, JobSkill, Skill, SkillSource, User
 from shandy.database.rls import bypass_rls
 
 # Set up encryption key for tests (required for EncryptedText columns)
@@ -317,3 +317,113 @@ def sample_knowledge_state() -> dict:
         "literature": [],
         "datasets": [],
     }
+
+
+# =============================================================================
+# Skill Fixtures
+# =============================================================================
+
+
+@pytest_asyncio.fixture
+async def test_skill_source(db_session: AsyncSession) -> SkillSource:
+    """Create a test skill source."""
+    async with bypass_rls(db_session):
+        source = SkillSource(
+            name="Test Skills",
+            source_type="github",
+            url="https://github.com/test/test-skills",
+            branch="main",
+            skills_path="skills",
+            is_enabled=True,
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+    return source
+
+
+@pytest_asyncio.fixture
+async def test_skill(db_session: AsyncSession, test_skill_source: SkillSource) -> Skill:
+    """Create a test skill."""
+    async with bypass_rls(db_session):
+        skill = Skill(
+            name="Metabolomics Analysis",
+            slug="metabolomics-analysis",
+            category="metabolomics",
+            description="Statistical analysis of metabolomics data",
+            content="# Metabolomics Analysis\n\nThis skill provides guidance...",
+            tags=["statistics", "metabolomics", "analysis"],
+            source_id=test_skill_source.id,
+            source_path="metabolomics/analysis.md",
+            content_hash="abc123def456",
+            is_enabled=True,
+        )
+        db_session.add(skill)
+        await db_session.commit()
+        await db_session.refresh(skill)
+    return skill
+
+
+@pytest_asyncio.fixture
+async def test_skill2(db_session: AsyncSession, test_skill_source: SkillSource) -> Skill:
+    """Create a second test skill."""
+    async with bypass_rls(db_session):
+        skill = Skill(
+            name="Genomics Pipeline",
+            slug="genomics-pipeline",
+            category="genomics",
+            description="Genomics data processing pipeline",
+            content="# Genomics Pipeline\n\nThis skill provides guidance...",
+            tags=["genomics", "pipeline", "bioinformatics"],
+            source_id=test_skill_source.id,
+            source_path="genomics/pipeline.md",
+            content_hash="xyz789ghi012",
+            is_enabled=True,
+        )
+        db_session.add(skill)
+        await db_session.commit()
+        await db_session.refresh(skill)
+    return skill
+
+
+@pytest_asyncio.fixture
+async def test_job_skill(
+    db_session: AsyncSession,
+    test_job: Job,
+    test_skill: Skill,
+) -> JobSkill:
+    """Create a test job-skill association."""
+    async with bypass_rls(db_session):
+        job_skill = JobSkill(
+            job_id=test_job.id,
+            skill_id=test_skill.id,
+            is_enabled=True,
+            relevance_score=0.85,
+            match_reason="High relevance to metabolomics research",
+        )
+        db_session.add(job_skill)
+        await db_session.commit()
+        await db_session.refresh(job_skill)
+    return job_skill
+
+
+@pytest.fixture
+def sample_skill_markdown() -> str:
+    """Sample skill markdown content with YAML frontmatter."""
+    return """---
+name: Test Skill
+category: testing
+description: A skill for testing purposes
+tags:
+  - test
+  - example
+---
+
+# Test Skill
+
+This is the skill content.
+
+## Usage
+
+Use this skill when testing.
+"""

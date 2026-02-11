@@ -143,19 +143,31 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
                 logger.error("Database connection failed: %s", e)
                 logger.warning("Application will continue but database features may not work")
 
-        # Run verification
+        async def start_background_tasks():
+            """Start background tasks after database verification."""
+            await verify_db()
+            # Start skill sync scheduler
+            try:
+                from shandy.skill_scheduler import start_skill_scheduler
+
+                await start_skill_scheduler()
+                logger.info("Skill sync scheduler started")
+            except Exception as e:
+                logger.warning("Failed to start skill sync scheduler: %s", e)
+
+        # Run verification and background tasks
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
                 # If loop is already running (NiceGUI context), schedule as task
-                asyncio.create_task(verify_db())
+                asyncio.create_task(start_background_tasks())
             else:
-                loop.run_until_complete(verify_db())
+                loop.run_until_complete(start_background_tasks())
         except RuntimeError:
             # Create new event loop if none exists
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            loop.run_until_complete(verify_db())
+            loop.run_until_complete(start_background_tasks())
 
     except Exception as e:
         logger.error("Failed to initialize database: %s", e)
