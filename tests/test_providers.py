@@ -86,6 +86,12 @@ class TestGetProvider:
         with pytest.raises(ValueError, match="not yet implemented"):
             get_provider()
 
+    @patch.dict(os.environ, {"CLAUDE_PROVIDER": "codex"})
+    def test_codex_provider_raises_not_implemented(self):
+        """Codex is a stub — validation always fails."""
+        with pytest.raises(ValueError, match="not yet implemented"):
+            get_provider()
+
     @patch.dict(os.environ, {"CLAUDE_PROVIDER": "unknown_provider"})
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError, match="Unknown provider"):
