@@ -52,5 +52,11 @@ jobs:
       - name: Type check
         run: uv run mypy src/shandy/ tests/
 
-      - name: Tests
-        run: uv run pytest --cov=src/shandy --cov-report=term-missing
+      - name: Tests (excluding E2E)
+        run: uv run pytest --ignore=tests/zz_e2e --cov=src/shandy --cov-report=term-missing
+
+      - name: Install Playwright browsers
+        run: uv run playwright install chromium
+
+      - name: E2E Tests
+        run: uv run pytest tests/zz_e2e/ -v
