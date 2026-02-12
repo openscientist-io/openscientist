@@ -1,0 +1,19 @@
+{
+  "annotations": [
+    [
+      {"type": "click", "x": 188, "y": 532, "label": "Click"}
+    ],
+    [
+      {"type": "badge", "x": 70, "y": 210, "text": "Error!", "color": [244, 67, 54]},
+      {"type": "click", "x": 170, "y": 428, "label": "Click to expand"}
+    ],
+    [
+      {"type": "badge", "x": 190, "y": 480, "text": "Details", "color": [76, 175, 80]}
+    ]
+  ],
+  "descriptions": [
+    "Login page - no error visible",
+    "After login: error banner, click Technical Details",
+    "Technical details show specific errors"
+  ]
+}

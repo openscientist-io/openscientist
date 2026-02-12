@@ -26,7 +26,6 @@ from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
 from shandy.job_manager import JobManager
 from shandy.skill_relevance import SkillRelevanceService
-from shandy.web_app import get_job_manager
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +153,9 @@ async def get_job_by_id(
 
 def _get_job_manager() -> JobManager:
     """Get the job manager instance."""
+    # Import lazily to avoid circular import with web_app
+    from shandy.web_app import get_job_manager
+
     return get_job_manager()
 
 

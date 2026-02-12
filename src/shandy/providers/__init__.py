@@ -64,7 +64,23 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
         - is_configured: True if provider can be instantiated
         - provider_name: Name of the configured provider
         - error_messages: List of configuration error messages (empty if configured)
+
+    Environment:
+        SIMULATE_PROVIDER_ERROR: Set to "true" for E2E testing of error UI
     """
+    import os
+
+    # Testing hook: simulate provider misconfiguration for E2E tests
+    if os.environ.get("SIMULATE_PROVIDER_ERROR") == "true":  # noqa: env-ok
+        return (
+            False,
+            "anthropic",
+            [
+                "ANTHROPIC_API_KEY is missing or invalid",
+                "Please contact your administrator to configure API credentials",
+            ],
+        )
+
     settings = get_settings()
     provider_name = settings.provider.claude_provider.lower()
 

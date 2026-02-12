@@ -1,5 +1,7 @@
 """Mock login form page for development testing."""
 
+import uuid
+
 from nicegui import ui
 
 from shandy.settings import get_settings
@@ -16,25 +18,31 @@ def mock_login_form():
         ui.button("Back to Login", on_click=lambda: ui.navigate.to("/login")).classes("mt-4")
         return
 
+    # Generate random default values for convenience
+    random_id = uuid.uuid4().hex[:8]
+    default_email = f"dev-{random_id}@example.com"
+    default_name = f"Dev User {random_id}"
+    default_username = f"devuser{random_id}"
+
     with ui.column().classes("absolute-center items-center"):
         ui.markdown("# 🧪 Mock OAuth Login")
         ui.markdown("_Development Testing Only_").classes("text-sm text-gray-600 mb-4")
 
         ui.label("Enter test user information:").classes("text-lg mb-2")
 
-        # Create form
+        # Create form with random defaults
         with ui.card().classes("w-96 p-4"):
             email_input = ui.input(
-                "Email", placeholder="dev@example.com", value="dev@example.com"
+                "Email", placeholder="dev@example.com", value=default_email
             ).classes("w-full")
 
-            name_input = ui.input("Name", placeholder="Dev User", value="Dev User").classes(
+            name_input = ui.input("Name", placeholder="Dev User", value=default_name).classes(
                 "w-full mt-2"
             )
 
-            username_input = ui.input("Username", placeholder="devuser", value="devuser").classes(
-                "w-full mt-2"
-            )
+            username_input = ui.input(
+                "Username", placeholder="devuser", value=default_username
+            ).classes("w-full mt-2")
 
             ui.markdown(
                 "**Note:** This creates a test user without real authentication. "

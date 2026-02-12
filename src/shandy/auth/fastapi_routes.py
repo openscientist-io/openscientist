@@ -25,6 +25,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
 async def create_or_update_user(
     db: AsyncSession,
     provider: str,
@@ -129,6 +134,139 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
 
     logger.info("Created session for user %s, expires %s", user_id, expires_at)
     return session
+
+
+# =============================================================================
+# Mock Authentication Routes (must come BEFORE parameterized routes)
+# =============================================================================
+
+
+@router.get("/mock/login")
+async def mock_oauth_login():
+    """
+    Mock OAuth login (development only).
+
+    Automatically creates a user with random credentials and logs them in.
+    No form needed - just click and you're in.
+
+    Security Warning: Never enable this in production!
+    """
+    import uuid
+
+    settings = get_settings()
+    if not settings.auth.enable_mock_auth:
+        raise HTTPException(status_code=404, detail="Mock auth not enabled")
+
+    # Generate random user credentials
+    random_id = uuid.uuid4().hex[:8]
+    email = f"dev-{random_id}@example.com"
+    name = f"Dev User {random_id}"
+    username = f"devuser{random_id}"
+
+    # Create user info using MockProvider
+    user_info = await MockProvider.get_user_info(
+        {
+            "email": email,
+            "name": name,
+            "username": username,
+        }
+    )
+
+    # Create/update user and create session
+    async with get_session() as db:
+        user = await create_or_update_user(
+            db,
+            provider="mock",
+            provider_user_id=user_info["provider_user_id"],
+            email=user_info["email"],
+            name=user_info["name"],
+            access_token="mock_access_token",
+            refresh_token=None,
+        )
+        session = await create_session(db, str(user.id))
+
+    # Create redirect response with session cookie
+    response = RedirectResponse(url="/", status_code=303)
+
+    response.set_cookie(
+        key="session_token",
+        value=str(session.id),
+        max_age=settings.auth.session_duration_days * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.auth.app_url.startswith("https"),
+        samesite="lax",
+    )
+
+    logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
+    return response
+
+
+@router.post("/mock/callback")
+async def mock_oauth_callback(request: Request):
+    """
+    Handle mock OAuth callback (development only).
+
+    Accepts form data with email, name, and username to create a mock user.
+
+    Security Warning: Never enable this in production!
+    """
+    settings = get_settings()
+    if not settings.auth.enable_mock_auth:
+        raise HTTPException(status_code=404, detail="Mock auth not enabled")
+
+    try:
+        # Get form data
+        form_data = await request.form()
+        email = str(form_data.get("email", "dev@example.com"))
+        name = str(form_data.get("name", "Dev User"))
+        username = str(form_data.get("username", email.split("@")[0]))
+
+        # Prepare user info using MockProvider
+        user_info = await MockProvider.get_user_info(
+            {
+                "email": email,
+                "name": name,
+                "username": username,
+            }
+        )
+
+        # Create/update user and create session
+        async with get_session() as db:
+            user = await create_or_update_user(
+                db,
+                provider="mock",
+                provider_user_id=user_info["provider_user_id"],
+                email=user_info["email"],
+                name=user_info["name"],
+                access_token="mock_access_token",
+                refresh_token=None,
+            )
+            session = await create_session(db, str(user.id))
+
+        # Create redirect response with session cookie
+        response = RedirectResponse(url="/", status_code=303)
+
+        # Set session cookie (HttpOnly for security)
+        response.set_cookie(
+            key="session_token",
+            value=str(session.id),
+            max_age=settings.auth.session_duration_days * 24 * 60 * 60,  # seconds
+            httponly=True,
+            secure=settings.auth.app_url.startswith("https"),  # Secure cookie for HTTPS
+            samesite="lax",
+        )
+
+        logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
+        return response
+
+    except Exception as e:
+        logger.error("Mock OAuth callback error: %s", e, exc_info=True)
+        return RedirectResponse(url="/login?error=mock_auth_failed", status_code=303)
+
+
+# =============================================================================
+# OAuth Routes (parameterized - must come AFTER specific routes)
+# =============================================================================
 
 
 @router.get("/{provider}/login")
@@ -255,84 +393,3 @@ async def logout(request: Request):
     response = RedirectResponse(url="/login")
     response.delete_cookie(key="session_token")
     return response
-
-
-@router.get("/mock/login")
-async def mock_oauth_login():
-    """
-    Initiate mock OAuth login flow (development only).
-
-    This endpoint is only available when ENABLE_MOCK_AUTH is set.
-    It redirects to a simple form where users can enter their test credentials.
-
-    Security Warning: Never enable this in production!
-    """
-    settings = get_settings()
-    if not settings.auth.enable_mock_auth:
-        raise HTTPException(status_code=404, detail="Mock auth not enabled")
-
-    # Redirect to mock login form (handled by NiceGUI)
-    return RedirectResponse(url="/mock-login-form")
-
-
-@router.post("/mock/callback")
-async def mock_oauth_callback(request: Request):
-    """
-    Handle mock OAuth callback (development only).
-
-    Accepts form data with email, name, and username to create a mock user.
-
-    Security Warning: Never enable this in production!
-    """
-    settings = get_settings()
-    if not settings.auth.enable_mock_auth:
-        raise HTTPException(status_code=404, detail="Mock auth not enabled")
-
-    try:
-        # Get form data
-        form_data = await request.form()
-        email = str(form_data.get("email", "dev@example.com"))
-        name = str(form_data.get("name", "Dev User"))
-        username = str(form_data.get("username", email.split("@")[0]))
-
-        # Prepare user info using MockProvider
-        user_info = await MockProvider.get_user_info(
-            {
-                "email": email,
-                "name": name,
-                "username": username,
-            }
-        )
-
-        # Create/update user and create session
-        async with get_session() as db:
-            user = await create_or_update_user(
-                db,
-                provider="mock",
-                provider_user_id=user_info["provider_user_id"],
-                email=user_info["email"],
-                name=user_info["name"],
-                access_token="mock_access_token",
-                refresh_token=None,
-            )
-            session = await create_session(db, str(user.id))
-
-        # Create redirect response with session cookie
-        response = RedirectResponse(url="/", status_code=303)
-
-        # Set session cookie (HttpOnly for security)
-        response.set_cookie(
-            key="session_token",
-            value=str(session.id),
-            max_age=settings.auth.session_duration_days * 24 * 60 * 60,  # seconds
-            httponly=True,
-            secure=settings.auth.app_url.startswith("https"),  # Secure cookie for HTTPS
-            samesite="lax",
-        )
-
-        logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
-        return response
-
-    except Exception as e:
-        logger.error("Mock OAuth callback error: %s", e, exc_info=True)
-        return RedirectResponse(url="/login?error=mock_auth_failed", status_code=303)

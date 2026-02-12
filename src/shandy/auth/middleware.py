@@ -122,10 +122,6 @@ def require_auth(func: Callable) -> Callable:
         if _is_auth_disabled():
             return await func(*args, **kwargs)
 
-        # Check for legacy "authenticated" flag (password auth)
-        if app.storage.user.get("authenticated", False):
-            return await func(*args, **kwargs)
-
         # Get session token
         session_token = _get_session_token()
         if not session_token:
@@ -165,15 +161,32 @@ def require_auth(func: Callable) -> Callable:
         if _is_auth_disabled():
             return func(*args, **kwargs)
 
-        # Check if authenticated (set by async middleware or legacy auth)
-        if not app.storage.user.get("authenticated", False):
-            logger.debug("Not authenticated, redirecting to login")
+        # Check for session token in cookie (the authoritative source)
+        # Don't trust app.storage.user as it persists in browser localStorage
+        session_token_from_cookie = None
+        try:
+            if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
+                session_token_from_cookie = ui.context.client.request.cookies.get("session_token")
+        except Exception:
+            pass
+
+        if not session_token_from_cookie:
+            # No cookie = not authenticated, clear any stale storage
+            logger.debug("No session cookie, redirecting to login")
+            app.storage.user.clear()
             try:
                 app.storage.user["return_to"] = str(ui.context.client.page.path)
             except Exception:
                 pass
             ui.navigate.to("/login")
             return
+
+        # Cookie exists - check if storage is set up (may need to be validated by async)
+        if not app.storage.user.get("authenticated", False):
+            # Storage not set up yet - this will be handled by first async page visit
+            # For now, trust the cookie and allow access
+            # The session will be validated on next async page visit
+            pass
 
         return func(*args, **kwargs)
 

@@ -6,7 +6,10 @@ from nicegui import ui
 
 from shandy.auth import get_current_user_id, require_auth
 from shandy.providers import check_provider_config
-from shandy.webapp_components.ui_components import render_status_cell_slot
+from shandy.webapp_components.ui_components import (
+    render_config_error_banner,
+    render_status_cell_slot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,21 +131,7 @@ def jobs_page():
 
     # Show configuration error banner if provider is not configured
     if not is_configured:
-        with ui.card().classes("w-full mx-4 mt-4 bg-red-50 border-l-4 border-red-500"):
-            with ui.row().classes("items-center gap-3"):
-                ui.icon("error", color="red", size="md")
-                with ui.column().classes("gap-1"):
-                    ui.label("Server Configuration Error").classes("text-red-800 font-bold")
-                    ui.label(
-                        f"The {provider_name.upper()} provider is not configured correctly. "
-                        "Jobs cannot be started until this is resolved."
-                    ).classes("text-red-700")
-                    ui.label("Please contact the system administrator.").classes(
-                        "text-red-600 text-sm"
-                    )
-            with ui.expansion("Technical Details", icon="info").classes("mt-2"):
-                for error in config_errors:
-                    ui.label(f"• {error}").classes("text-red-600 text-sm font-mono")
+        render_config_error_banner(provider_name, config_errors)
 
     # Summary cards
     summary = job_manager.get_job_summary()

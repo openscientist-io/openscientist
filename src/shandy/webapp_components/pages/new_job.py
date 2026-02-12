@@ -8,6 +8,8 @@ from pathlib import Path
 from nicegui import ui
 
 from shandy.auth import get_current_user_id, require_auth
+from shandy.providers import check_provider_config
+from shandy.webapp_components.ui_components import render_config_error_banner
 from shandy.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
@@ -82,8 +84,21 @@ def new_job_page():
             # Redirect to job detail page
             ui.navigate.to(f"/job/{job_id}")
 
-        except (ValueError, OSError) as e:
-            ui.notify(f"Error creating job: {e}", type="negative")
+        except Exception as e:
+            # Show user-friendly error message
+            error_msg = str(e)
+            if "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+                ui.notify(
+                    "Authentication error. Please contact your administrator to check API credentials.",
+                    type="negative",
+                )
+            elif "event loop" in error_msg.lower():
+                ui.notify(
+                    "Internal server error. Please try again or contact support.",
+                    type="negative",
+                )
+            else:
+                ui.notify(f"Error creating job: {e}", type="negative")
             logger.error("Error creating job: %s", e, exc_info=True)
 
     async def handle_upload(e):
@@ -101,10 +116,18 @@ def new_job_page():
             logger.error("Upload failed: %s", ex, exc_info=True)
             ui.notify(f"Upload failed: {str(ex)}", type="negative")
 
+    # Check provider configuration
+    is_configured, provider_name, config_errors = check_provider_config()
+
     # Page header
     with ui.header().classes("items-center justify-between"):
         ui.label("SHANDY").classes("text-h4")
         ui.label("Scientific Hypothesis Agent for Novel Discovery").classes("text-subtitle1")
+
+    # Show configuration error if provider is not set up
+    if not is_configured:
+        render_config_error_banner(provider_name, config_errors, show_back_button=True)
+        return  # Don't render the form
 
     # Main content
     with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):

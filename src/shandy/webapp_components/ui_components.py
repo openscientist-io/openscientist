@@ -108,9 +108,11 @@ def render_error_card(error_info: Dict, job_info: JobInfo, job_dir: Path) -> Non
                     ui.label("Raw Error Output:").classes("text-sm font-bold text-gray-800")
 
                     def copy_to_clipboard():
-                        ui.run_javascript(f"""
+                        ui.run_javascript(
+                            f"""
                             navigator.clipboard.writeText({repr(error_info["raw"])});
-                        """)
+                        """
+                        )
                         ui.notify("Error message copied to clipboard", type="positive")
 
                     with (
@@ -132,6 +134,121 @@ def render_error_card(error_info: Dict, job_info: JobInfo, job_dir: Path) -> Non
                     ui.label("Check the orchestrator.log file for complete details.").classes(
                         "text-xs text-gray-600 mt-2"
                     )
+
+
+def render_config_error_banner(
+    provider_name: str,
+    config_errors: list[str],
+    show_back_button: bool = False,
+) -> None:
+    """
+    Render a configuration error banner with consistent styling.
+
+    This is a reusable component for displaying provider configuration errors
+    across the application. Use this instead of creating custom error displays.
+
+    Args:
+        provider_name: Name of the misconfigured provider (e.g., "anthropic")
+        config_errors: List of specific error messages
+        show_back_button: Whether to show a "Back to Jobs" button
+    """
+    # Use a wrapper div with padding to ensure proper spacing on mobile
+    # This avoids the w-full + margin overflow issue
+    with ui.element("div").classes("w-full px-4 mt-4 box-border"):
+        with ui.card().classes("w-full bg-red-50 border-l-4 border-red-500"):
+            with ui.row().classes("items-start gap-3 flex-wrap"):
+                ui.icon("error", color="red", size="md").classes("flex-shrink-0 mt-1")
+                with ui.column().classes("gap-1 flex-1 min-w-0"):
+                    ui.label("Server Configuration Error").classes(
+                        "text-red-800 font-bold text-base sm:text-lg"
+                    )
+                    ui.label(
+                        f"The {provider_name.upper()} provider is not configured correctly. "
+                        "Jobs cannot be started until this is resolved."
+                    ).classes("text-red-700 text-sm sm:text-base break-words")
+                    ui.label("Please contact the system administrator.").classes(
+                        "text-red-600 text-xs sm:text-sm"
+                    )
+
+            with ui.expansion("Technical Details", icon="info").classes("mt-2 w-full"):
+                for error in config_errors:
+                    ui.label(f"• {error}").classes(
+                        "text-red-600 text-xs sm:text-sm font-mono break-words"
+                    )
+
+            if show_back_button:
+                ui.button(
+                    "Back to Jobs",
+                    on_click=lambda: ui.navigate.to("/jobs"),
+                    icon="arrow_back",
+                ).classes("mt-4")
+
+
+def render_alert_banner(
+    title: str,
+    message: str,
+    severity: str = "error",
+    details: list[str] | None = None,
+    expansion_title: str = "Details",
+) -> None:
+    """
+    Render a generic alert banner with consistent styling.
+
+    This is a reusable component for displaying alerts (errors, warnings, info)
+    across the application.
+
+    Args:
+        title: Alert title
+        message: Main alert message
+        severity: One of "error", "warning", "info" (affects colors)
+        details: Optional list of detail messages shown in expansion
+        expansion_title: Title for the expandable details section
+    """
+    # Color mappings
+    colors = {
+        "error": {
+            "bg": "bg-red-50",
+            "border": "border-red-500",
+            "icon_color": "red",
+            "title": "text-red-800",
+            "message": "text-red-700",
+            "detail": "text-red-600",
+        },
+        "warning": {
+            "bg": "bg-yellow-50",
+            "border": "border-yellow-500",
+            "icon_color": "orange",
+            "title": "text-yellow-800",
+            "message": "text-yellow-700",
+            "detail": "text-yellow-600",
+        },
+        "info": {
+            "bg": "bg-blue-50",
+            "border": "border-blue-500",
+            "icon_color": "blue",
+            "title": "text-blue-800",
+            "message": "text-blue-700",
+            "detail": "text-blue-600",
+        },
+    }
+    c = colors.get(severity, colors["error"])
+    icon_name = {"error": "error", "warning": "warning", "info": "info"}.get(severity, "error")
+
+    # Use a wrapper div with padding to ensure proper spacing on mobile
+    with ui.element("div").classes("w-full px-4 mt-4 box-border"):
+        with ui.card().classes(f"w-full {c['bg']} border-l-4 {c['border']}"):
+            with ui.row().classes("items-start gap-3 flex-wrap"):
+                ui.icon(icon_name, color=c["icon_color"], size="md").classes("flex-shrink-0 mt-1")
+                with ui.column().classes("gap-1 flex-1 min-w-0"):
+                    ui.label(title).classes(f"{c['title']} font-bold text-base sm:text-lg")
+                    ui.label(message).classes(f"{c['message']} text-sm sm:text-base break-words")
+
+            if details:
+                with ui.expansion(expansion_title, icon="info").classes("mt-2 w-full"):
+                    for detail in details:
+                        ui.label(f"• {detail}").classes(
+                            f"{c['detail']} text-xs sm:text-sm font-mono break-words"
+                        )
 
 
 def get_status_badge_props(status: JobStatus) -> Dict:

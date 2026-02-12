@@ -191,10 +191,12 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
 
         async def verify_db():
             """Verify database connection and tables exist."""
+            from sqlalchemy import text
+
             try:
                 async with engine.begin() as conn:
                     # Simple query to verify connection
-                    await conn.execute("SELECT 1")
+                    await conn.execute(text("SELECT 1"))
                 logger.info("Database connection verified")
             except Exception as e:
                 logger.error("Database connection failed: %s", e)

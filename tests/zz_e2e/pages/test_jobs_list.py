@@ -85,6 +85,111 @@ class TestNewJobPage:
         expect(e2e_logged_in_page.locator("text=Please enter a research question")).to_be_visible()
 
 
+class TestAdminPage:
+    """Tests for the admin page."""
+
+    def test_admin_page_accessible_when_logged_in(self, e2e_logged_in_page: Page, e2e_server: str):
+        """Test that admin page is accessible after login."""
+        e2e_logged_in_page.goto(f"{e2e_server}/admin")
+
+        # Check that admin page elements are present
+        expect(e2e_logged_in_page.locator("text=SHANDY - Admin")).to_be_visible()
+        expect(
+            e2e_logged_in_page.get_by_role("heading", name="Admin - Orphaned Jobs")
+        ).to_be_visible()
+
+    def test_admin_page_has_tabs(self, e2e_logged_in_page: Page, e2e_server: str):
+        """Test that admin page has expected tabs."""
+        e2e_logged_in_page.goto(f"{e2e_server}/admin")
+
+        # Check tabs are present (use exact text match for tab labels)
+        expect(e2e_logged_in_page.get_by_role("tab", name="Orphaned Jobs")).to_be_visible()
+        expect(e2e_logged_in_page.get_by_role("tab", name="Users")).to_be_visible()
+        expect(e2e_logged_in_page.get_by_role("tab", name="Legacy User")).to_be_visible()
+
+
+class TestBillingPage:
+    """Tests for the billing page."""
+
+    def test_billing_page_accessible_when_logged_in(
+        self, e2e_logged_in_page: Page, e2e_server: str
+    ):
+        """Test that billing page is accessible after login."""
+        e2e_logged_in_page.goto(f"{e2e_server}/billing")
+
+        # Check that billing page elements are present
+        expect(e2e_logged_in_page.locator("text=SHANDY - Billing")).to_be_visible()
+        expect(e2e_logged_in_page.locator("text=Project Costs")).to_be_visible()
+
+    def test_billing_page_shows_provider_info(self, e2e_logged_in_page: Page, e2e_server: str):
+        """Test that billing page shows provider information."""
+        e2e_logged_in_page.goto(f"{e2e_server}/billing")
+
+        # Should show provider information
+        expect(e2e_logged_in_page.locator("text=Provider Information")).to_be_visible()
+
+
+class TestMockLoginFlow:
+    """Tests for the mock login UI flow."""
+
+    def test_mock_login_button_works(self, e2e_page: Page, e2e_server: str):
+        """Test that the mock login button on login page works."""
+        e2e_page.goto(f"{e2e_server}/login")
+
+        # Click the mock login button (quick login - no form)
+        e2e_page.click("button:has-text('Mock Login')")
+
+        # Should redirect to jobs page after login
+        e2e_page.wait_for_url(f"{e2e_server}/jobs", timeout=10000)
+        expect(e2e_page.locator("text=SHANDY - Jobs")).to_be_visible()
+
+    def test_mock_login_form_accessible(self, e2e_page: Page, e2e_server: str):
+        """Test that the mock login form page is accessible and has expected elements."""
+        e2e_page.goto(f"{e2e_server}/mock-login-form")
+
+        # The form should have pre-filled values
+        expect(e2e_page.locator('input[placeholder="dev@example.com"]')).to_be_visible()
+        expect(e2e_page.locator('input[placeholder="Dev User"]')).to_be_visible()
+        expect(e2e_page.locator('input[placeholder="devuser"]')).to_be_visible()
+
+        # Sign In button should be present
+        expect(e2e_page.locator("button:has-text('Sign In')")).to_be_visible()
+        expect(e2e_page.locator("button:has-text('Cancel')")).to_be_visible()
+
+
+class TestLogout:
+    """Tests for logout functionality."""
+
+    def test_logout_redirects_to_login(self, e2e_logged_in_page: Page, e2e_server: str):
+        """Test that logout redirects to login page."""
+        # First verify we're logged in
+        e2e_logged_in_page.goto(f"{e2e_server}/jobs")
+        expect(e2e_logged_in_page.locator("text=SHANDY - Jobs")).to_be_visible()
+
+        # Navigate to logout
+        e2e_logged_in_page.goto(f"{e2e_server}/auth/logout")
+
+        # Should redirect to login page
+        e2e_logged_in_page.wait_for_url(f"{e2e_server}/login", timeout=10000)
+
+    def test_session_invalidated_after_logout(self, e2e_logged_in_page: Page, e2e_server: str):
+        """Test that session is invalidated after logout."""
+        # First verify we're logged in
+        e2e_logged_in_page.goto(f"{e2e_server}/jobs")
+        expect(e2e_logged_in_page.locator("text=SHANDY - Jobs")).to_be_visible()
+
+        # Logout
+        e2e_logged_in_page.goto(f"{e2e_server}/auth/logout")
+        e2e_logged_in_page.wait_for_url(f"{e2e_server}/login", timeout=10000)
+
+        # Try to access protected page - should redirect to login
+        e2e_logged_in_page.goto(f"{e2e_server}/jobs")
+        e2e_logged_in_page.wait_for_load_state("networkidle")
+
+        # Should redirect to login page
+        expect(e2e_logged_in_page).to_have_url(f"{e2e_server}/login", timeout=10000)
+
+
 class TestJobsListWithDatabase:
     """Tests that verify UI state matches database state.
 
