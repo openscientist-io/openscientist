@@ -39,6 +39,8 @@ services:
       - "${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
     restart: ${SHANDY_RESTART_POLICY:-unless-stopped}
+    # Enable --reload in dev mode for live reloading
+    command: ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
     environment:
       # Mode flag (controls reload, mock auth, etc.)
       SHANDY_DEV_MODE: ${SHANDY_DEV_MODE:-false}
@@ -112,8 +114,7 @@ services:
     volumes:
       - ./jobs:/app/jobs
       - ./data:/app/data
-      # Note: .env is NOT mounted - docker-compose passes env vars directly
-      # This prevents .env values from overriding Docker env vars
+      - ./src:/app/src  # Mount source for live reload in dev mode
 
       # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro

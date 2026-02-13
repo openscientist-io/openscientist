@@ -9,7 +9,13 @@ from nicegui import ui
 from shandy.auth import require_auth
 from shandy.job_manager import JobStatus
 from shandy.webapp_components.error_handler import get_user_friendly_error
-from shandy.webapp_components.ui_components import render_error_card
+from shandy.webapp_components.ui_components import (
+    STATUS_COLORS,
+    render_error_card,
+    render_metric_card,
+    render_navigator,
+)
+from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
 from shandy.webapp_components.utils.transcript_parser import parse_transcript_actions
 
 logger = logging.getLogger(__name__)
@@ -47,12 +53,12 @@ def job_detail_page(job_id: str):
             logger.warning("Failed to parse knowledge_state.json for %s: %s", job_id, e)
             ks_load_error = "Knowledge state is being updated. Please refresh the page."
 
-    # Page header
-    with ui.header().classes("items-center justify-between"):
-        ui.label(f"SHANDY - {job_id}").classes("text-h4")
-        with ui.row().classes("gap-2"):
-            ui.button("Share", on_click=lambda: share_dialog.open(), icon="share").props("outline")  # type: ignore[has-type]
-            ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
+    # Page header with navigation
+    render_navigator(
+        extra_buttons=[
+            ("Share", "share", lambda: share_dialog.open(), "outline"),  # type: ignore[has-type]
+        ],
+    )
 
     # Share dialog (defined here but opened later)
     with ui.dialog() as share_dialog, ui.card().classes("w-[600px]"):
@@ -64,53 +70,42 @@ def job_detail_page(job_id: str):
         # Function to refresh shares list
         async def refresh_shares():
             """Load and display current shares."""
-            import httpx
-            from nicegui import app
-
             shares_container.clear()
 
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(
-                        f"http://localhost:8080/web/shares/job/{job_id}",
-                        cookies=dict(app.storage.browser),
-                    )
+                response = await api_get(f"/web/shares/job/{job_id}")
 
-                    if response.status_code == 200:
-                        shares = response.json()
+                if response.status_code == 200:
+                    shares = response.json()
 
-                        if shares:
-                            with shares_container:
-                                ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
-                                for share in shares:
-                                    with ui.card().classes("w-full p-2"):
-                                        with ui.row().classes(
-                                            "items-center justify-between w-full"
-                                        ):
-                                            with ui.column():
-                                                ui.label(share["shared_with_name"]).classes(
-                                                    "font-bold"
-                                                )
-                                                ui.label(share["shared_with_email"]).classes(
-                                                    "text-sm text-gray-600"
-                                                )
-                                            with ui.row().classes("items-center gap-2"):
-                                                ui.badge(
-                                                    share["permission_level"],
-                                                    color="blue",
-                                                )
-                                                ui.button(
-                                                    icon="delete",
-                                                    on_click=lambda s=share: revoke_share(s["id"]),
-                                                ).props("flat dense color=red")
-                        else:
-                            with shares_container:
-                                ui.label("No shares yet").classes("text-gray-500 italic")
-                    elif response.status_code == 403:
+                    if shares:
                         with shares_container:
-                            ui.label("You can only view shares for jobs you own").classes(
-                                "text-red-600"
-                            )
+                            ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
+                            for share in shares:
+                                with ui.card().classes("w-full p-2"):
+                                    with ui.row().classes("items-center justify-between w-full"):
+                                        with ui.column():
+                                            ui.label(share["shared_with_name"]).classes("font-bold")
+                                            ui.label(share["shared_with_email"]).classes(
+                                                "text-sm text-gray-600"
+                                            )
+                                        with ui.row().classes("items-center gap-2"):
+                                            ui.badge(
+                                                share["permission_level"],
+                                                color="blue",
+                                            )
+                                            ui.button(
+                                                icon="delete",
+                                                on_click=lambda s=share: revoke_share(s["id"]),
+                                            ).props("flat dense color=red")
+                    else:
+                        with shares_container:
+                            ui.label("No shares yet").classes("text-gray-500 italic")
+                elif response.status_code == 403:
+                    with shares_container:
+                        ui.label("You can only view shares for jobs you own").classes(
+                            "text-red-600"
+                        )
             except Exception as e:
                 logger.error("Failed to load shares: %s", e)
                 with shares_container:
@@ -119,21 +114,14 @@ def job_detail_page(job_id: str):
         # Function to revoke a share
         async def revoke_share(share_id: str):
             """Revoke a job share."""
-            import httpx
-            from nicegui import app
-
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.delete(
-                        f"http://localhost:8080/web/shares/{share_id}",
-                        cookies=dict(app.storage.browser),
-                    )
+                response = await api_delete(f"/web/shares/{share_id}")
 
-                    if response.status_code == 200:
-                        ui.notify("Share revoked successfully", type="positive")
-                        await refresh_shares()
-                    else:
-                        ui.notify("Failed to revoke share", type="negative")
+                if response.status_code == 200:
+                    ui.notify("Share revoked successfully", type="positive")
+                    await refresh_shares()
+                else:
+                    ui.notify("Failed to revoke share", type="negative")
             except Exception as e:
                 logger.error("Failed to revoke share: %s", e)
                 ui.notify("Error revoking share", type="negative")
@@ -162,52 +150,43 @@ def job_detail_page(job_id: str):
         # Function to search users
         async def search_users(search_query: str):
             """Search for users by email or name."""
-            import httpx
-            from nicegui import app
-
             search_results.clear()
 
             if not search_query or len(search_query) < 2:
                 return
 
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(
-                        f"http://localhost:8080/web/shares/search/users?q={search_query}",
-                        cookies=dict(app.storage.browser),
-                    )
+                response = await api_get(f"/web/shares/search/users?q={search_query}")
 
-                    if response.status_code == 200:
-                        users = response.json()
+                if response.status_code == 200:
+                    users = response.json()
 
-                        if users:
-                            with search_results:
-                                ui.label(f"Found {len(users)} user(s)").classes(
-                                    "text-sm text-gray-600 mb-2"
-                                )
-                                for user in users:
-                                    with ui.card().classes(
-                                        "w-full p-2 cursor-pointer hover:bg-gray-100"
+                    if users:
+                        with search_results:
+                            ui.label(f"Found {len(users)} user(s)").classes(
+                                "text-sm text-gray-600 mb-2"
+                            )
+                            for user in users:
+                                with ui.card().classes(
+                                    "w-full p-2 cursor-pointer hover:bg-gray-100"
+                                ):
+                                    with (
+                                        ui.row()
+                                        .classes("items-center justify-between w-full")
+                                        .on(
+                                            "click",
+                                            lambda u=user: share_with_user(u["email"]),
+                                        )
                                     ):
-                                        with (
-                                            ui.row()
-                                            .classes("items-center justify-between w-full")
-                                            .on(
-                                                "click",
-                                                lambda u=user: share_with_user(u["email"]),
-                                            )
-                                        ):
-                                            with ui.column():
-                                                ui.label(user["name"]).classes("font-bold")
-                                                ui.label(user["email"]).classes(
-                                                    "text-sm text-gray-600"
-                                                )
-                                            ui.button(icon="person_add").props(
-                                                "flat dense color=primary"
-                                            )
-                        else:
-                            with search_results:
-                                ui.label("No users found").classes("text-gray-500 italic")
+                                        with ui.column():
+                                            ui.label(user["name"]).classes("font-bold")
+                                            ui.label(user["email"]).classes("text-sm text-gray-600")
+                                        ui.button(icon="person_add").props(
+                                            "flat dense color=primary"
+                                        )
+                    else:
+                        with search_results:
+                            ui.label("No users found").classes("text-gray-500 italic")
             except Exception as e:
                 logger.error("Failed to search users: %s", e)
                 with search_results:
@@ -216,30 +195,25 @@ def job_detail_page(job_id: str):
         # Function to share with a user
         async def share_with_user(email: str):
             """Share job with a user."""
-            import httpx
-            from nicegui import app
-
             try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        f"http://localhost:8080/web/shares/job/{job_id}",
-                        json={
-                            "shared_with_email": email,
-                            "permission_level": permission_select.value,
-                        },
-                        cookies=dict(app.storage.browser),
-                    )
+                response = await api_post(
+                    f"/web/shares/job/{job_id}",
+                    json={
+                        "shared_with_email": email,
+                        "permission_level": permission_select.value,
+                    },
+                )
 
-                    if response.status_code == 200:
-                        ui.notify(f"Shared with {email}", type="positive")
-                        search_input.value = ""
-                        search_results.clear()
-                        await refresh_shares()
-                    elif response.status_code == 400:
-                        error = response.json()
-                        ui.notify(error.get("detail", "Failed to share"), type="warning")
-                    else:
-                        ui.notify("Failed to share job", type="negative")
+                if response.status_code == 200:
+                    ui.notify(f"Shared with {email}", type="positive")
+                    search_input.value = ""
+                    search_results.clear()
+                    await refresh_shares()
+                elif response.status_code == 400:
+                    error = response.json()
+                    ui.notify(error.get("detail", "Failed to share"), type="warning")
+                else:
+                    ui.notify("Failed to share job", type="negative")
             except Exception as e:
                 logger.error("Failed to share job: %s", e)
                 ui.notify("Error sharing job", type="negative")
@@ -274,37 +248,33 @@ def job_detail_page(job_id: str):
         # ===== TIMELINE TAB (Primary View) =====
         with ui.tab_panel(timeline_tab):
             # Status cards row (moved from Summary)
-            status_colors = {
-                JobStatus.PENDING: "gray",
-                JobStatus.QUEUED: "blue",
-                JobStatus.RUNNING: "yellow",
-                JobStatus.COMPLETED: "green",
-                JobStatus.FAILED: "red",
-                JobStatus.CANCELLED: "gray",
-            }
-
             with ui.row().classes("w-full gap-4 mb-4"):
-                with ui.card().classes("flex-1"):
-                    ui.label("Status").classes("text-subtitle2")
-                    color = status_colors.get(job_info.status, "gray")
-                    ui.badge(job_info.status.value, color=color).classes("text-h6")
+                color = STATUS_COLORS.get(job_info.status, "gray")
+                render_metric_card(
+                    label="Status",
+                    value=job_info.status.value,
+                    badge_color=color,
+                )
 
-                with ui.card().classes("flex-1"):
-                    ui.label("Progress").classes("text-subtitle2")
-                    progress = job_info.iterations_completed / max(job_info.max_iterations, 1)
-                    ui.label(
-                        f"{job_info.iterations_completed} / {job_info.max_iterations}"
-                    ).classes("text-h5")
-                    ui.linear_progress(progress)
+                progress = job_info.iterations_completed / max(job_info.max_iterations, 1)
+                render_metric_card(
+                    label="Progress",
+                    value=f"{job_info.iterations_completed} / {job_info.max_iterations}",
+                    progress=progress,
+                )
 
-                with ui.card().classes("flex-1"):
-                    ui.label("Findings").classes("text-subtitle2")
-                    ui.label(str(job_info.findings_count)).classes("text-h5 text-green-600")
+                render_metric_card(
+                    label="Findings",
+                    value=job_info.findings_count,
+                    color_class="text-green-600",
+                )
 
-                with ui.card().classes("flex-1"):
-                    ui.label("Papers Reviewed").classes("text-subtitle2")
-                    lit_count = len(ks_data.get("literature", [])) if ks_data else 0
-                    ui.label(str(lit_count)).classes("text-h5 text-blue-600")
+                lit_count = len(ks_data.get("literature", [])) if ks_data else 0
+                render_metric_card(
+                    label="Papers Reviewed",
+                    value=lit_count,
+                    color_class="text-blue-600",
+                )
 
             # Research question
             with ui.card().classes("w-full mb-4"):

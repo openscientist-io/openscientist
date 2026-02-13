@@ -9,7 +9,10 @@ from nicegui import ui
 
 from shandy.auth import get_current_user_id, require_auth
 from shandy.providers import check_provider_config
-from shandy.webapp_components.ui_components import render_config_error_banner
+from shandy.webapp_components.ui_components import (
+    render_config_error_banner,
+    render_navigator,
+)
 from shandy.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
@@ -120,10 +123,11 @@ def new_job_page():
     # Check provider configuration
     is_configured, provider_name, config_errors = check_provider_config()
 
-    # Page header
-    with ui.header().classes("items-center justify-between"):
-        ui.label("SHANDY").classes("text-h4")
-        ui.label("Scientific Hypothesis Agent for Novel Discovery").classes("text-subtitle1")
+    # Page header with navigation
+    render_navigator(
+        active_page="new",
+        show_new_job=is_configured,
+    )
 
     # Show configuration error if provider is not set up
     if not is_configured:
@@ -168,12 +172,3 @@ def new_job_page():
 
         # Submit button
         ui.button("Start Discovery", on_click=submit_job).classes("w-full mt-4")
-
-    # Quick links
-    with ui.row().classes("w-full max-w-2xl mx-auto mt-4"):
-        ui.button("View Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="list").classes(
-            "flex-1"
-        )
-        ui.button("Documentation", on_click=lambda: ui.navigate.to("/docs"), icon="help").classes(
-            "flex-1"
-        )

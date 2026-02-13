@@ -4,16 +4,14 @@ from nicegui import ui
 
 from shandy.auth import require_auth
 from shandy.providers import get_provider
+from shandy.webapp_components.ui_components import render_navigator
 
 
 @ui.page("/billing")
 @require_auth
 def billing_page():
     """Billing and cost tracking page."""
-
-    with ui.header().classes("items-center justify-between"):
-        ui.label("SHANDY - Billing").classes("text-h4")
-        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="arrow_back")
+    render_navigator(active_page="billing")
 
     with ui.card().classes("w-full max-w-4xl mx-auto mt-8"):
         ui.label("Project Costs").classes("text-h5 mb-4")

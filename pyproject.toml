@@ -10,7 +10,7 @@ requires-python = ">=3.12"
 
 dependencies = [
     # Web framework
-    "nicegui>=1.4.0",
+    "nicegui>=3.7.1",
 
     # Core scientific computing
     "pandas>=3.0.0",

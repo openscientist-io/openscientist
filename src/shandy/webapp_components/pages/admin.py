@@ -10,6 +10,13 @@ from shandy.auth.middleware import require_auth
 from shandy.database.models import Job, User
 from shandy.database.rls import bypass_rls
 from shandy.database.session import get_session
+from shandy.webapp_components.ui_components import (
+    make_action_button_slot,
+    render_dialog_actions,
+    render_empty_state,
+    render_navigator,
+    render_user_search,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +29,7 @@ async def admin_page():
     # Note: In production, add admin role checking here
     # For now, any authenticated user can access admin functions
 
-    with ui.header().classes("items-center justify-between"):
-        ui.label("SHANDY - Admin").classes("text-h4")
-        with ui.row():
-            ui.button("Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="work")
-            ui.button(
-                "Billing",
-                on_click=lambda: ui.navigate.to("/billing"),
-                icon="attach_money",
-            )
-            ui.button("Docs", on_click=lambda: ui.navigate.to("/docs"), icon="description")
+    render_navigator(active_page="admin")
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-6"):
         ui.markdown("# Admin - Orphaned Jobs")
@@ -113,7 +111,7 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
 
         if not orphaned_jobs:
             with container:
-                ui.label("No orphaned jobs found.").classes("text-gray-500 text-center p-8")
+                render_empty_state("No orphaned jobs found.")
             return
 
         # Display count
@@ -157,17 +155,12 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
             table = ui.table(columns=columns, rows=rows, row_key="full_id").classes("w-full")
             table.add_slot(
                 "body-cell-actions",
-                r"""
-                <q-td :props="props">
-                    <q-btn
-                        size="sm"
-                        color="primary"
-                        icon="person_add"
-                        label="Assign"
-                        @click="$parent.$emit('assign', props.row)"
-                    />
-                </q-td>
-                """,
+                make_action_button_slot(
+                    label="Assign",
+                    event_name="assign",
+                    icon="person_add",
+                    row_id_field="full_id",
+                ),
             )
 
             # Handle assign button clicks
@@ -185,112 +178,57 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
 
 async def show_assign_dialog(job_id: str):
     """Show dialog to assign a job to a user."""
+    selected_user: dict | None = None
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Assign Job to User").classes("text-lg font-bold mb-4")
-
         ui.label(f"Job ID: {job_id}").classes("text-sm text-gray-600 mb-4")
 
-        # User search input
-        users_found: list[User] = []
-        selected_user_id = None
+        # User search using shared component
+        async def on_user_select(user_data: dict):
+            nonlocal selected_user
+            selected_user = user_data
+            search_input.value = f"{user_data['name']} ({user_data['email']})"
+            results_container.clear()
 
-        search_input = ui.input(
-            label="Search users by email or name",
-            placeholder="Type to search...",
-        ).classes("w-full mb-4")
+        search_input, results_container = await render_user_search(
+            on_select=on_user_select,
+            placeholder="Search users by email or name",
+        )
 
-        results_container = ui.column().classes("w-full max-h-48 overflow-y-auto")
-
-        async def search_users():
-            """Search for users."""
-            query = search_input.value
-            if not query or len(query) < 2:
-                results_container.clear()
+        # Action handlers
+        async def do_assign():
+            if not selected_user:
+                ui.notify("Please select a user", color="negative")
                 return
 
             try:
                 async with get_session() as session:
                     async with bypass_rls(session):
-                        stmt = (
-                            select(User)
-                            .where(User.email.ilike(f"%{query}%") | User.name.ilike(f"%{query}%"))
-                            .limit(10)
-                        )
-
+                        stmt = select(Job).where(Job.id == UUID(job_id))
                         result = await session.execute(stmt)
-                        users_found.clear()
-                        users_found.extend(result.scalars().all())
+                        job = result.scalar_one_or_none()
 
-                # Display results
-                results_container.clear()
-                with results_container:
-                    if not users_found:
-                        ui.label("No users found").classes("text-gray-500 text-sm p-2")
-                    else:
-                        for user in users_found:
-                            with ui.row().classes(
-                                "w-full items-center gap-2 p-2 hover:bg-gray-100 cursor-pointer"
-                            ):
-                                ui.label(f"{user.name} ({user.email})").classes("flex-grow text-sm")
+                        if not job:
+                            ui.notify("Job not found", color="negative")
+                            return
 
-                                async def select_user(u=user):
-                                    nonlocal selected_user_id
-                                    selected_user_id = u.id
-                                    search_input.value = f"{u.name} ({u.email})"
-                                    results_container.clear()
+                        job.owner_id = selected_user["id"]
+                        await session.commit()
 
-                                ui.button(
-                                    "Select",
-                                    icon="check",
-                                    on_click=select_user,
-                                ).props("size=sm flat")
+                ui.notify("Job assigned successfully", color="positive")
+                dialog.close()
+                ui.navigate.reload()
 
             except Exception as e:
-                logger.error("Error searching users: %s", e, exc_info=True)
-                results_container.clear()
-                with results_container:
-                    ui.label(f"Error: {str(e)}").classes("text-red-500 text-sm")
+                logger.error("Error assigning job: %s", e, exc_info=True)
+                ui.notify(f"Error: {str(e)}", color="negative")
 
-        search_input.on("input", search_users)
-
-        # Action buttons
-        with ui.row().classes("w-full justify-end gap-2 mt-4"):
-            ui.button("Cancel", on_click=dialog.close).props("flat")
-
-            async def do_assign():
-                if not selected_user_id:
-                    ui.notify("Please select a user", color="negative")
-                    return
-
-                try:
-                    async with get_session() as session:
-                        async with bypass_rls(session):
-                            # Find the job
-                            stmt = select(Job).where(Job.id == UUID(job_id))
-                            result = await session.execute(stmt)
-                            job = result.scalar_one_or_none()
-
-                            if not job:
-                                ui.notify("Job not found", color="negative")
-                                return
-
-                            # Assign to user
-                            job.owner_id = selected_user_id
-                            await session.commit()
-
-                    ui.notify("Job assigned successfully", color="positive")
-                    dialog.close()
-
-                    # Refresh the jobs list
-                    # This is a bit hacky - ideally we'd trigger a refresh event
-                    ui.navigate.reload()
-
-                except Exception as e:
-                    logger.error("Error assigning job: %s", e, exc_info=True)
-                    ui.notify(f"Error: {str(e)}", color="negative")
-
-            ui.button("Assign", on_click=do_assign).props("color=primary")
+        render_dialog_actions(
+            on_confirm=do_assign,
+            on_cancel=dialog.close,
+            confirm_label="Assign",
+        )
 
     dialog.open()
 
@@ -317,7 +255,7 @@ async def render_users_panel():
 
                 if not users:
                     with users_container:
-                        ui.label("No users found.").classes("text-gray-500")
+                        render_empty_state("No users found.")
                     return
 
                 # Create table

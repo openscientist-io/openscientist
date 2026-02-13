@@ -3900,7 +3900,7 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
     { name = "networkx", specifier = ">=3.0" },
-    { name = "nicegui", specifier = ">=1.4.0" },
+    { name = "nicegui", specifier = ">=3.7.1" },
     { name = "numpy", specifier = ">=2.2.0,<2.4" },
     { name = "openpyxl", specifier = ">=3.1.0" },
     { name = "pandas", specifier = ">=3.0.0" },

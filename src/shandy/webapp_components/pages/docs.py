@@ -3,19 +3,18 @@
 from nicegui import ui
 
 from shandy.auth import require_auth
+from shandy.webapp_components.ui_components import render_navigator
 
 
 @ui.page("/docs")
 @require_auth
 def docs_page():
     """Documentation page."""
-
-    with ui.header().classes("items-center justify-between"):
-        ui.label("SHANDY - Documentation").classes("text-h4")
-        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"), icon="arrow_back")
+    render_navigator(active_page="docs")
 
     with ui.card().classes("w-full max-w-4xl mx-auto mt-8"):
-        ui.markdown("""
+        ui.markdown(
+            """
 # SHANDY Documentation
 
 **Scientific Hypothesis Agent for Novel Discovery**
@@ -82,4 +81,5 @@ complicated questions.
 ## Support
 
 For issues or questions, contact your system administrator.
-        """)
+        """
+        )

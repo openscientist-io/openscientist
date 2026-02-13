@@ -46,4 +46,4 @@ ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
 # Run web app
 # Note: In development mode, override with --reload flag by setting command in docker-compose.override.yml
-CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080", "--reload"]

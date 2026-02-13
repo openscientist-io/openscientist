@@ -7,7 +7,10 @@ from nicegui import ui
 from shandy.auth import get_current_user_id, require_auth
 from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import (
+    VIEW_BUTTON_SLOT,
     render_config_error_banner,
+    render_navigator,
+    render_stat_row,
     render_status_cell_slot,
 )
 
@@ -112,22 +115,8 @@ def jobs_page():
         except Exception as e:
             logger.error("Failed to get database session: %s", e)
 
-    # Page header
-    with ui.header().classes("items-center justify-between"):
-        ui.label("SHANDY - Jobs").classes("text-h4")
-        with ui.row():
-            new_job_btn = ui.button("New Job", on_click=lambda: ui.navigate.to("/new"), icon="add")
-            if not is_configured:
-                new_job_btn.disable()
-                new_job_btn.tooltip("Server not configured - cannot start jobs")
-            ui.button(
-                "Billing", on_click=lambda: ui.navigate.to("/billing"), icon="payments"
-            ).props("flat")
-            ui.button(
-                "Admin",
-                on_click=lambda: ui.navigate.to("/admin"),
-                icon="admin_panel_settings",
-            ).props("flat color=secondary")
+    # Page header with navigation
+    render_navigator(active_page="jobs", show_new_job=is_configured)
 
     # Show configuration error banner if provider is not configured
     if not is_configured:
@@ -135,22 +124,17 @@ def jobs_page():
 
     # Summary cards
     summary = job_manager.get_job_summary()
-    with ui.row().classes("w-full gap-4 p-4"):
-        with ui.card():
-            ui.label("Total Jobs").classes("text-subtitle2")
-            ui.label(str(summary["total_jobs"])).classes("text-h4")
-
-        with ui.card():
-            ui.label("Running").classes("text-subtitle2")
-            ui.label(str(summary["status_counts"].get("running", 0))).classes(
-                "text-h4 text-blue-600"
-            )
-
-        with ui.card():
-            ui.label("Completed").classes("text-subtitle2")
-            ui.label(str(summary["status_counts"].get("completed", 0))).classes(
-                "text-h4 text-green-600"
-            )
+    render_stat_row(
+        [
+            ("Total Jobs", summary["total_jobs"], ""),
+            ("Running", summary["status_counts"].get("running", 0), "text-blue-600"),
+            (
+                "Completed",
+                summary["status_counts"].get("completed", 0),
+                "text-green-600",
+            ),
+        ]
+    )
 
     # Tabs for My Jobs vs Shared with me
     with ui.tabs().classes("w-full") as tabs:
@@ -222,15 +206,7 @@ def jobs_page():
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
 
             # Add action buttons using slot template
-            my_jobs_table.add_slot(
-                "body-cell-actions",
-                r"""
-                <q-td :props="props">
-                    <q-btn flat dense color="primary" label="View"
-                           @click="$parent.$emit('view-job', props.row.job_id)" />
-                </q-td>
-            """,
-            )
+            my_jobs_table.add_slot("body-cell-actions", VIEW_BUTTON_SLOT)
 
             my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
 
@@ -319,15 +295,7 @@ def jobs_page():
             )
 
             # Add action buttons
-            shared_jobs_table.add_slot(
-                "body-cell-actions",
-                r"""
-                <q-td :props="props">
-                    <q-btn flat dense color="primary" label="View"
-                           @click="$parent.$emit('view-job', props.row.job_id)" />
-                </q-td>
-            """,
-            )
+            shared_jobs_table.add_slot("body-cell-actions", VIEW_BUTTON_SLOT)
 
             shared_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
 
