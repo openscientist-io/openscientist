@@ -28,6 +28,8 @@ services:
       start_period: 10s
 
   shandy:
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
     platform: linux/amd64
     build: .
     depends_on:
