@@ -414,11 +414,93 @@ def render_navigator(
     New Job, Billing, Docs, and Admin pages. The SHANDY logo/title acts
     as a home button linking to the jobs list.
 
+    On mobile screens (< 640px), navigation buttons are collapsed into a
+    hamburger menu that opens a right-side drawer.
+
     Args:
         active_page: Current page name for highlighting ("jobs", "new", "billing", "docs", "admin")
         show_new_job: Whether to show the New Job button (disable on config error)
         extra_buttons: List of (label, icon, on_click, props) tuples for page-specific buttons
     """
+    # Add responsive CSS for mobile/desktop navigation toggle
+    ui.add_css(
+        """
+        @media (max-width: 639px) {
+            .mobile-menu-btn { display: inline-flex !important; }
+            .desktop-nav { display: none !important; }
+        }
+        @media (min-width: 640px) {
+            .mobile-menu-btn { display: none !important; }
+            .desktop-nav { display: flex !important; }
+        }
+    """
+    )
+
+    # Button styles: active = white bg with cyan text, inactive = flat white
+    active_style = "unelevated color=white text-color=primary"
+    inactive_style = "flat color=white"
+
+    # Define navigation items for reuse in both desktop and mobile views
+    nav_items: list[tuple[str, str, str, bool]] = []
+    if show_new_job:
+        nav_items.append(("New", "add", "/new", active_page == "new"))
+    nav_items.extend(
+        [
+            ("Billing", "payments", "/billing", active_page == "billing"),
+            ("Docs", "description", "/docs", active_page == "docs"),
+            ("Admin", "admin_panel_settings", "/admin", active_page == "admin"),
+        ]
+    )
+
+    # Mobile drawer for navigation
+    with ui.right_drawer(value=False).props("overlay behavior=mobile bordered") as drawer:
+        drawer.classes("bg-primary")
+        with ui.column().classes("w-full gap-2 p-4"):
+            ui.label("Navigation").classes("text-white text-h6 font-bold mb-2")
+
+            # Page-specific extra buttons in drawer
+            if extra_buttons:
+                for label, icon, on_click, props in extra_buttons:
+
+                    def make_drawer_click(fn: Callable[[], None]) -> Callable[[], None]:
+                        def handler() -> None:
+                            drawer.set_value(False)
+                            fn()
+
+                        return handler
+
+                    ui.button(
+                        label,
+                        on_click=make_drawer_click(on_click),
+                        icon=icon,
+                    ).props("flat color=white align=left").classes("w-full justify-start")
+
+            # Navigation items in drawer
+            for label, icon, route, is_active in nav_items:
+                style = active_style if is_active else "flat color=white"
+
+                def make_nav_click(r: str) -> Callable[[], None]:
+                    def handler() -> None:
+                        drawer.set_value(False)
+                        ui.navigate.to(r)
+
+                    return handler
+
+                ui.button(
+                    label,
+                    on_click=make_nav_click(route),
+                    icon=icon,
+                ).props(f"{style} align=left").classes("w-full justify-start")
+
+            ui.separator().classes("bg-white/30 my-2")
+
+            # Logout button in drawer
+            ui.button(
+                "Logout",
+                on_click=lambda: ui.navigate.to("/auth/logout"),
+                icon="logout",
+            ).props("flat color=white align=left").classes("w-full justify-start")
+
     with ui.header().classes("items-center justify-between"):
         # Title section - clickable to go home
         with ui.row().classes("items-center gap-2"):
@@ -428,8 +510,18 @@ def render_navigator(
                 icon="home",
             ).props("unelevated color=white text-color=primary").classes("text-h5 font-bold")
 
-        # Navigation section
-        with ui.row().classes("gap-1"):
+        # Mobile hamburger menu button (visible on small screens only)
+        hamburger = ui.button(
+            icon="menu",
+            on_click=lambda: drawer.set_value(True),
+        ).props("flat color=white")
+        hamburger.style("display: none").classes("mobile-menu-btn")
+
+        # Desktop navigation section (hidden on small screens)
+        nav_row = ui.row().classes("gap-1 desktop-nav")
+        nav_row.style("display: flex")
+
+        with nav_row:
             # Page-specific extra buttons first
             if extra_buttons:
                 for label, icon, on_click, props in extra_buttons:
@@ -437,39 +529,21 @@ def render_navigator(
                     if props:
                         btn.props(props)
 
-            # Button styles: active = white bg with cyan text, inactive = flat white
-            active_style = "unelevated color=white text-color=primary"
-            inactive_style = "flat color=white"
-
-            # Standard navigation
-            if show_new_job:
-                new_style = active_style if active_page == "new" else inactive_style
+            # Standard navigation buttons
+            for label, icon, route, is_active in nav_items:
+                style = active_style if is_active else inactive_style
                 ui.button(
-                    "New",
-                    on_click=lambda: ui.navigate.to("/new"),
-                    icon="add",
-                ).props(new_style)
+                    label,
+                    on_click=lambda r=route: ui.navigate.to(r),
+                    icon=icon,
+                ).props(style)
 
-            billing_style = active_style if active_page == "billing" else inactive_style
+            # Logout button
             ui.button(
-                "Billing",
-                on_click=lambda: ui.navigate.to("/billing"),
-                icon="payments",
-            ).props(billing_style)
-
-            docs_style = active_style if active_page == "docs" else inactive_style
-            ui.button(
-                "Docs",
-                on_click=lambda: ui.navigate.to("/docs"),
-                icon="description",
-            ).props(docs_style)
-
-            admin_style = active_style if active_page == "admin" else inactive_style
-            ui.button(
-                "Admin",
-                on_click=lambda: ui.navigate.to("/admin"),
-                icon="admin_panel_settings",
-            ).props(admin_style)
+                "Logout",
+                on_click=lambda: ui.navigate.to("/auth/logout"),
+                icon="logout",
+            ).props(inactive_style)
 
 
 def render_stat_card(
