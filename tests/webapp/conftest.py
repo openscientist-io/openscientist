@@ -461,36 +461,3 @@ async def webapp_job_awaiting_feedback(
 def job_manager(temp_jobs_dir: Path) -> JobManager:
     """Create a real JobManager instance for testing."""
     return JobManager(jobs_dir=temp_jobs_dir, max_concurrent=1)
-
-
-# Provider fixtures - we still need to mock external API calls
-
-
-class TestCostInfo:
-    """Test cost info for provider mocking."""
-
-    def __init__(self):
-        self.total_spend_usd = 15.50
-        self.recent_spend_usd = 2.25
-        self.recent_period_hours = 24
-        self.budget_remaining_usd = 84.50
-        self.provider_name = "test"
-        self.description = "Test provider costs"
-        self.data_lag_note = None
-
-
-@pytest.fixture
-def mock_provider_cost_info():
-    """Mock provider that returns cost info without external calls."""
-    from unittest.mock import MagicMock
-
-    provider = MagicMock()
-    provider.name = "test"
-    provider.get_cost_info.return_value = TestCostInfo()
-    provider.check_budget_limits.return_value = {
-        "can_proceed": True,
-        "within_budget": True,
-        "warnings": [],
-        "errors": [],
-    }
-    return provider
