@@ -378,10 +378,12 @@ async def test_filter_orphaned_jobs_by_status(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
     """Test that orphaned jobs are sorted by creation date."""
-    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    base_time = datetime.now(timezone.utc)
 
     async with bypass_rls(db_session):
-        # Create jobs with slight delays to ensure different timestamps
+        # Create jobs with explicit timestamps to ensure proper ordering
         jobs = []
         for i in range(3):
             job = Job(
@@ -389,12 +391,13 @@ async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
                 title=f"Job {i}",
                 description="Test",
                 status="pending",
+                # Set explicit timestamps - Job 0 oldest, Job 2 newest
+                created_at=base_time + timedelta(hours=i),
             )
             db_session.add(job)
             await db_session.commit()
             await db_session.refresh(job)
             jobs.append(job)
-            await asyncio.sleep(0.01)  # Small delay
 
     # Query sorted by creation date descending (newest first)
     async with bypass_rls(db_session):

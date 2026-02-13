@@ -4,7 +4,7 @@ Tests for REST API endpoints.
 Tests job management, authentication, and API key functionality.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
@@ -227,7 +227,7 @@ async def test_api_key_last_used_update(db_session: AsyncSession, test_user: Use
         assert api_key.last_used_at is None
 
         # Update last_used_at
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         api_key.last_used_at = now
         await db_session.commit()
         await db_session.refresh(api_key)

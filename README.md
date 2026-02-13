@@ -202,9 +202,8 @@ Budget limits are checked before job creation. The web UI displays:
 # Claude Code CLI path (optional, default: claude)
 CLAUDE_CLI_PATH=claude
 
-# Web app authentication (optional)
-APP_PASSWORD_HASH=<bcrypt-hash>
-DISABLE_AUTH=false
+# Web app authentication - use mock auth for development
+ENABLE_MOCK_AUTH=true
 ```
 
 ### Job Manager Settings

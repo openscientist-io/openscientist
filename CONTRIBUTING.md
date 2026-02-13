@@ -38,6 +38,9 @@ uv run pytest
 # Run tests with coverage
 uv run pytest --cov=src/shandy --cov-report=term-missing
 
+# Run NiceGUI page tests (slower, excluded from pre-commit)
+uv run pytest tests/webapp/pages/
+
 # Type checking
 uv run mypy src/shandy/ tests/
 

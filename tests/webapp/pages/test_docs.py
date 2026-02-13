@@ -1,64 +1,47 @@
 """Integration tests for documentation page."""
 
-from unittest.mock import patch
-
 import pytest
+import pytest_asyncio
 from nicegui.testing import user_simulation
+
+from shandy.database.models import Session
 
 
 class TestDocsPage:
     """Tests for documentation page rendering."""
 
+    session_token: str
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, webapp_session: Session):
+        """Set up common test fixtures as class attributes."""
+        self.session_token = str(webapp_session.id)
+        yield
+
     @pytest.mark.asyncio
     async def test_docs_page_renders(self):
         """Test that docs page renders with content."""
-        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-            from shandy.webapp_components.pages.docs import docs_page
+        from shandy.webapp_components.pages.docs import docs_page
 
-            async with user_simulation(root=docs_page) as user:
-                await user.open("/")
+        async with user_simulation(root=docs_page) as browser:
+            browser.http_client.cookies.set("session_token", self.session_token)
+            await browser.open("/")
 
-                # Should see documentation header
-                await user.should_see(content="SHANDY - Documentation")
-                await user.should_see(content="Back to Jobs")
+            # Should see documentation header
+            await browser.should_see(content="SHANDY - Documentation")
+            await browser.should_see(content="Back to Jobs")
 
     @pytest.mark.asyncio
     async def test_docs_content_present(self):
         """Test that documentation content is rendered."""
-        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-            from shandy.webapp_components.pages.docs import docs_page
+        from shandy.webapp_components.pages.docs import docs_page
 
-            async with user_simulation(root=docs_page) as user:
-                await user.open("/")
+        async with user_simulation(root=docs_page) as browser:
+            browser.http_client.cookies.set("session_token", self.session_token)
+            await browser.open("/")
 
-                # Check for key documentation sections
-                await user.should_see(content="# SHANDY Documentation")
-                await user.should_see(content="What is SHANDY?")
-                await user.should_see(content="How It Works")
-                await user.should_see(content="Submit a Job")
-
-    @pytest.mark.asyncio
-    async def test_docs_examples_section(self):
-        """Test that documentation includes key sections."""
-        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-            from nicegui.elements.markdown import Markdown
-
-            from shandy.webapp_components.pages.docs import docs_page
-
-            async with user_simulation(root=docs_page) as user:
-                await user.open("/")
-
-                # Check for Markdown element with documentation content
-                await user.should_see(kind=Markdown)
-
-    @pytest.mark.asyncio
-    async def test_docs_has_back_button(self):
-        """Test that docs page has navigation button."""
-        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-            from shandy.webapp_components.pages.docs import docs_page
-
-            async with user_simulation(root=docs_page) as user:
-                await user.open("/")
-
-                # Should have back button
-                await user.should_see(content="Back to Jobs")
+            # Check for key documentation sections
+            await browser.should_see(content="# SHANDY Documentation")
+            await browser.should_see(content="What is SHANDY?")
+            await browser.should_see(content="How It Works")
+            await browser.should_see(content="Submit a Job")

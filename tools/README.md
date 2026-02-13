@@ -9,7 +9,7 @@ Creates tiled images from multiple screenshots to visualize user flows. Useful f
 ### Features
 
 - Tiles multiple screenshots into a grid layout
-- Adds numbered step indicators (high-quality anti-aliased circles)
+- Adds numbered step labels in descriptions (e.g., "Step 1: ...")
 - Supports interaction annotations (clicks, typing, badges, arrows)
 - Adds descriptions below each screenshot
 - Configurable thumbnail sizes and grid columns
@@ -20,9 +20,10 @@ Creates tiled images from multiple screenshots to visualize user flows. Useful f
 # Basic usage - tile screenshots into a grid
 uv run python tools/tile_screenshots.py \
   screenshot1.png screenshot2.png screenshot3.png \
-  -o output_tiled.png
+  -o output_tiled.png \
+  -a annotations.json
 
-# With annotations and custom layout
+# With custom layout
 uv run python tools/tile_screenshots.py \
   flow_screenshots/*.png \
   -o flow_screenshots/tiled_output.png \
@@ -40,32 +41,43 @@ uv run python tools/tile_screenshots.py \
 | `-c, --columns` | Number of columns in grid | 3 |
 | `--max-width` | Maximum thumbnail width (px) | 400 |
 | `--max-height` | Maximum thumbnail height (px) | 300 |
-| `-a, --annotations` | JSON file with annotations | None |
+| `-a, --annotations` | JSON file with annotations (required) | None |
+| `--git-footer` | Auto-generate footer with date, branch, commit | False |
 
-### Annotations Format
+### Annotations Format (Required)
 
-Create a JSON file with annotations and descriptions:
+**Annotations are required.** Create a JSON file with metadata, descriptions, and interaction annotations:
 
 ```json
 {
-  "annotations": [
-    [
-      {"type": "click", "x": 640, "y": 475, "label": "Click"}
-    ],
-    [
-      {"type": "badge", "x": 180, "y": 130, "text": "Error visible!", "color": [244, 67, 54]}
-    ],
-    [
-      {"type": "type", "x": 100, "y": 200, "text": "User input here"}
-    ]
-  ],
+  "metadata": {
+    "viewport": "1280x800",
+    "browser": "Chromium"
+  },
   "descriptions": [
-    "Step 1: Click the login button",
-    "Step 2: Error message appears",
-    "Step 3: Enter text in the field"
+    "Jobs dashboard - view existing jobs and create new ones",
+    "New job form - enter research question and configure settings",
+    "Form filled with research question, max iterations set to 2"
+  ],
+  "annotations": [
+    [{"type": "click", "x": 936, "y": 36, "label": "New Job"}],
+    [{"type": "click", "x": 640, "y": 285, "label": "Enter question"}],
+    [
+      {"type": "type", "x": 400, "y": 236, "text": "Research question..."},
+      {"type": "click", "x": 640, "y": 695, "label": "Start Discovery"}
+    ]
   ]
 }
 ```
+
+**Note:** Step numbers are automatically added by the script. Just provide the description text without "Step N:" prefix.
+
+**Required fields:**
+- `descriptions`: List of description strings, one per image (required, non-empty)
+- `annotations`: List of annotation lists for click/type indicators on images
+
+**Optional fields:**
+- `metadata`: Object with viewport, browser (displayed in header)
 
 ### Annotation Types
 
@@ -76,33 +88,51 @@ Create a JSON file with annotations and descriptions:
 | `badge` | `x`, `y`, `text` | `color` (RGB array) | Shows colored badge with text |
 | `arrow` | `from` [x,y], `to` [x,y] | | Draws arrow between two points |
 
-### Optimal Usage
+### Capturing Screenshots with Playwright
 
-1. **Capture screenshots at consistent viewport sizes** (e.g., 1280x720 for desktop, 375x812 for mobile)
-2. **Use Playwright MCP** to get accurate element positions via `browser_evaluate`
-3. **Record positions** when clicking elements for accurate annotations
-4. **Keep descriptions concise** - they wrap to fit thumbnail width
+**Efficient multi-viewport workflow:** For each step in the flow, capture screenshots at all viewport sizes before proceeding to the next step. This avoids running the entire flow multiple times.
 
-### Example Workflow
+1. **At each step:**
+   - Take screenshot at desktop viewport (e.g., 1280x800)
+   - Resize viewport to mobile (e.g., 390x844)
+   - Take screenshot at mobile viewport
+   - Resize back to desktop
+   - Proceed to next step in the flow
 
-```bash
-# 1. Capture screenshots with Playwright at desktop size
-# 2. Record click positions using browser_evaluate
-# 3. Create annotations.json with positions and descriptions
-# 4. Generate tiled image
+2. **Record element positions** using `browser_evaluate` before clicking:
+   ```javascript
+   // Get element position for annotation
+   () => {
+     const btn = document.querySelector('button');
+     const rect = btn.getBoundingClientRect();
+     return {
+       x: Math.round(rect.left + rect.width / 2),
+       y: Math.round(rect.top + rect.height / 2)
+     };
+   }
+   ```
 
-uv run python tools/tile_screenshots.py \
-  flow_screenshots/01_login.png \
-  flow_screenshots/02_jobs_with_error.png \
-  -o flow_screenshots/config_error_flow.png \
-  -a flow_screenshots/annotations.json \
-  -c 2 \
-  --max-width 600 \
-  --max-height 340
-```
+3. **Save positions** to the annotations JSON file with the appropriate annotation type (`click`, `type`, etc.)
+
+4. **Generate tiled images** for each viewport size:
+   ```bash
+   # Desktop flow
+   uv run python tools/tile_screenshots.py \
+     flow_screenshots/01_*.png \
+     -o flow_screenshots/desktop_flow.png \
+     -a flow_screenshots/annotations.json \
+     --git-footer
+
+   # Mobile flow
+   uv run python tools/tile_screenshots.py \
+     flow_screenshots/mobile_01_*.png \
+     -o flow_screenshots/mobile_flow.png \
+     -a flow_screenshots/mobile_annotations.json \
+     --git-footer
+   ```
 
 ### Output Examples
 
 The tool generates images like:
-- `flow_screenshots/config_error_flow.png` - Desktop flow (1280x720 captures)
-- `flow_screenshots/mobile_config_error_flow.png` - Mobile flow (375x812 captures)
+- `flow_screenshots/job_creation_flow.png` - Desktop flow (1280x800 captures)
+- `flow_screenshots/mobile_job_creation_flow.png` - Mobile flow (390x844 captures)

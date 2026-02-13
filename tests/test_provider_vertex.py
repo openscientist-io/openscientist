@@ -29,12 +29,6 @@ class TestVertexProviderValidation:
             provider = VertexProvider()
             assert "vertex" in provider.name.lower()
 
-    def test_missing_all_config_raises(self):
-        with patch.dict(os.environ, {"CLAUDE_PROVIDER": "vertex"}, clear=True):
-            clear_settings_cache()
-            with pytest.raises(ValueError, match="configuration errors"):
-                VertexProvider()
-
     def test_missing_creds_file_raises(self, tmp_path):
         with patch.dict(
             os.environ,

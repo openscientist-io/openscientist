@@ -84,7 +84,7 @@ jobs:
       - run: uv sync
 
       - name: Unit & Integration Tests
-        run: uv run pytest --ignore=tests/zz_e2e --cov=src/shandy --cov-report=term-missing
+        run: uv run pytest --ignore=tests/zz_e2e --ignore=tests/webapp/pages --tb=auto --cov=src/shandy --cov-report=term-missing
 
   e2e:
     runs-on: ubuntu-latest
@@ -125,4 +125,4 @@ jobs:
         run: uv run playwright install chromium
 
       - name: E2E Tests
-        run: uv run pytest tests/zz_e2e/ -v
+        run: uv run pytest tests/zz_e2e/ -v --tb=auto

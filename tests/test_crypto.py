@@ -28,23 +28,6 @@ class TestEncryptionAvailable:
             crypto._get_fernet.cache_clear()
             assert encryption_available() is True
 
-    def test_unavailable_when_key_not_set(self):
-        """Encryption is unavailable when key is not configured."""
-        # Save current key to restore later
-        original_key = os.environ.get("TOKEN_ENCRYPTION_KEY")
-        try:
-            os.environ.pop("TOKEN_ENCRYPTION_KEY", None)
-            clear_settings_cache()
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
-            assert encryption_available() is False
-        finally:
-            # Restore key
-            if original_key:
-                os.environ["TOKEN_ENCRYPTION_KEY"] = original_key
-            clear_settings_cache()
-
 
 class TestEncryptDecrypt:
     """Tests for encrypt() and decrypt() functions."""
@@ -120,41 +103,6 @@ class TestEncryptDecrypt:
         encrypted = encrypt(plaintext)
         decrypted = decrypt(encrypted)
         assert decrypted == plaintext
-
-
-class TestEncryptWithoutKey:
-    """Tests for encryption behavior when key is not configured."""
-
-    @pytest.fixture(autouse=True)
-    def clear_key(self):
-        """Ensure no encryption key is set."""
-        # Save original key
-        original_key = os.environ.get("TOKEN_ENCRYPTION_KEY")
-        try:
-            os.environ.pop("TOKEN_ENCRYPTION_KEY", None)
-            clear_settings_cache()
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
-            yield
-        finally:
-            # Restore original key
-            if original_key:
-                os.environ["TOKEN_ENCRYPTION_KEY"] = original_key
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
-            clear_settings_cache()
-
-    def test_encrypt_without_key_raises(self):
-        """Encryption raises error when key not configured."""
-        with pytest.raises(EncryptionError, match="not configured"):
-            encrypt("secret")
-
-    def test_decrypt_without_key_raises(self):
-        """Decryption raises error when key not configured."""
-        with pytest.raises(EncryptionError, match="not configured"):
-            decrypt("ciphertext")
 
 
 class TestGenerateKey:

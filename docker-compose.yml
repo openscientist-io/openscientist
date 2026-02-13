@@ -1,9 +1,17 @@
 # Docker Compose for SHANDY
+#
+# Usage:
+#   Development: docker compose up
+#                (uses docker-compose.override.yml for source mounts)
+#                Set SHANDY_DEV_MODE=true in .env for auto-reload & mock auth
+#
+#   Production:  docker compose -f docker-compose.yml up
+#                (explicit file flag ignores override.yml)
 
 services:
   postgres:
     image: postgres:18
-    restart: unless-stopped
+    restart: ${SHANDY_RESTART_POLICY:-unless-stopped}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-shandy}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shandy_dev_password}
@@ -27,7 +35,12 @@ services:
         condition: service_healthy
     ports:
       - "${PORT:-8080}:8080"
+    # In dev mode, restart=no; in production, restart=unless-stopped
+    restart: ${SHANDY_RESTART_POLICY:-unless-stopped}
     environment:
+      # Mode flag (controls reload, mock auth, etc.)
+      SHANDY_DEV_MODE: ${SHANDY_DEV_MODE:-false}
+
       # Database
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shandy}:${POSTGRES_PASSWORD:-shandy_dev_password}@postgres:5432/${POSTGRES_DB:-shandy}
       PORT: ${PORT:-8080}
@@ -45,7 +58,8 @@ services:
       # Vertex AI settings (if using Vertex provider)
       CLAUDE_CODE_USE_VERTEX: ${CLAUDE_CODE_USE_VERTEX}
       ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID}
-      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-/app/gcp-credentials.json}
+      # GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile to /app/gcp-credentials.json
+      # The file is mounted from GCP_CREDENTIALS_FILE (set in .env)
       CLOUD_ML_REGION: ${CLOUD_ML_REGION}
       VERTEX_REGION_CLAUDE_4_5_SONNET: ${VERTEX_REGION_CLAUDE_4_5_SONNET}
       VERTEX_REGION_CLAUDE_4_5_HAIKU: ${VERTEX_REGION_CLAUDE_4_5_HAIKU}
@@ -70,43 +84,56 @@ services:
       MAX_PROJECT_SPEND_24H_USD: ${MAX_PROJECT_SPEND_24H_USD}
 
       # App settings
-      DISABLE_AUTH: ${DISABLE_AUTH}
-      APP_PASSWORD_HASH: ${APP_PASSWORD_HASH}
       PHENIX_PATH: ${PHENIX_PATH:+/opt/phenix}
       STORAGE_SECRET: ${STORAGE_SECRET}
 
-      # Security: OAuth token encryption (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+      # Security: OAuth token encryption
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+
+      # Enable mock OAuth in dev mode (set explicitly to override)
+      ENABLE_MOCK_AUTH: ${ENABLE_MOCK_AUTH:-${SHANDY_DEV_MODE:-false}}
 
       # Berkeley Lab Data Lakehouse
       KBASE_TOKEN: ${KBASE_TOKEN}
       DREMIO_USER: ${DREMIO_USER}
       DREMIO_PASSWORD: ${DREMIO_PASSWORD}
 
-      # Container isolation settings
+      # Container isolation (disabled in dev mode by default)
       SHANDY_USE_CONTAINER_ISOLATION: ${SHANDY_USE_CONTAINER_ISOLATION:-true}
       SHANDY_EXECUTOR_IMAGE: ${SHANDY_EXECUTOR_IMAGE:-shandy-executor:latest}
       SHANDY_EXECUTOR_MEMORY: ${SHANDY_EXECUTOR_MEMORY:-2g}
       SHANDY_EXECUTOR_CPU: ${SHANDY_EXECUTOR_CPU:-0.5}
+
+      # Prevent .pyc files in dev mode
+      PYTHONDONTWRITEBYTECODE: ${SHANDY_DEV_MODE:+1}
+
     volumes:
       - ./jobs:/app/jobs
       - ./data:/app/data
-      - ./.env:/app/.env:ro
+      # Note: .env is NOT mounted - docker-compose passes env vars directly
+      # This prevents .env values from overriding Docker env vars
+
       # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
+
       # Mount Phenix installation if available (set PHENIX_PATH in .env)
       - ${PHENIX_PATH:-/dev/null}:/opt/phenix:ro
+
       # Mount Docker socket for sibling container execution
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
     group_add:
       - "${DOCKER_GID:-999}"
-    restart: unless-stopped
+
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    labels:
+      - "shandy.mode=${SHANDY_DEV_MODE:-production}"
 
 volumes:
   postgres_data:

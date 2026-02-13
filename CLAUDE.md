@@ -53,6 +53,53 @@ uv run pytest tests/zz_e2e/ -v
 uv run pytest tests/zz_e2e/ -v --headed
 ```
 
+### Testing Conventions
+
+**Use real database objects, not mocks.** Tests use testcontainers to spin up a real PostgreSQL database. Always create real SQLAlchemy model instances instead of mock classes:
+
+```python
+# GOOD: Create real database records
+@pytest_asyncio.fixture
+async def test_job(db_session: AsyncSession, webapp_user: User) -> Job:
+    job = Job(
+        owner_id=webapp_user.id,
+        title="Test research question",
+        status="pending",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    return job
+
+# BAD: Don't create mock classes that bypass the database
+class MockJobInfo:  # Don't do this
+    job_id = "fake-id"
+    status = "pending"
+```
+
+**Organize tests in submodules.** Each test file should be in its own submodule when possible, mirroring the source structure:
+
+```text
+tests/
+├── webapp/
+│   ├── pages/
+│   │   ├── test_jobs_list.py
+│   │   ├── test_job_detail.py
+│   │   └── test_new_job.py
+│   └── conftest.py
+├── api/
+│   └── test_endpoints.py
+└── conftest.py
+```
+
+**NiceGUI browser simulation.** Use `user_simulation` for UI tests with `browser` as the variable name (not `user`, to avoid confusion with database User model):
+
+```python
+async with user_simulation(root=some_page) as browser:
+    browser.http_client.cookies.set("session_token", session_token)
+    await browser.open("/page")
+    await browser.should_see("Expected content")
+```
+
 ## Code Conventions
 
 - **Python 3.10+** with type hints

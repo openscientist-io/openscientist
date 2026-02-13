@@ -234,9 +234,6 @@ class AuthSettings(BaseSettings):
 
     # Development/testing
     enable_mock_auth: bool = Field(default=False, alias="ENABLE_MOCK_AUTH")
-    disable_auth: bool = Field(default=False, alias="DISABLE_AUTH")
-    app_password_hash: Optional[str] = Field(default=None, alias="APP_PASSWORD_HASH")
-    # Note: disable_auth is intentionally here for development purposes
 
     # Encryption
     token_encryption_key: Optional[str] = Field(default=None, alias="TOKEN_ENCRYPTION_KEY")

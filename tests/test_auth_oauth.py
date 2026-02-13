@@ -4,7 +4,7 @@ Tests for OAuth authentication functionality.
 Tests user creation, OAuth account linking, session management, and authentication.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -149,10 +149,10 @@ async def test_create_session(db_session: AsyncSession, test_user: User):
 
     assert isinstance(session.id, UUID)
     assert session.user_id == test_user.id
-    assert session.expires_at > datetime.utcnow()
+    assert session.expires_at > datetime.now(timezone.utc)
 
     # Session should expire in approximately 30 days (default)
-    expected_expiry = datetime.utcnow() + timedelta(days=30)
+    expected_expiry = datetime.now(timezone.utc) + timedelta(days=30)
     time_diff = abs((session.expires_at - expected_expiry).total_seconds())
     assert time_diff < 60  # Within 1 minute tolerance
 
@@ -176,7 +176,7 @@ async def test_expired_session(db_session: AsyncSession, test_user: User):
     async with bypass_rls(db_session):
         session = DBSession(
             user_id=test_user.id,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
         )
         db_session.add(session)
         await db_session.commit()
@@ -188,7 +188,7 @@ async def test_expired_session(db_session: AsyncSession, test_user: User):
             .join(DBSession)
             .where(
                 DBSession.id == session.id,
-                DBSession.expires_at > datetime.utcnow(),
+                DBSession.expires_at > datetime.now(timezone.utc),
             )
         )
         result = await db_session.execute(stmt)
@@ -204,7 +204,7 @@ async def test_valid_session(db_session: AsyncSession, test_user: User):
     async with bypass_rls(db_session):
         session = DBSession(
             user_id=test_user.id,
-            expires_at=datetime.utcnow() + timedelta(days=7),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
         )
         db_session.add(session)
         await db_session.commit()
@@ -216,7 +216,7 @@ async def test_valid_session(db_session: AsyncSession, test_user: User):
             .join(DBSession)
             .where(
                 DBSession.id == session.id,
-                DBSession.expires_at > datetime.utcnow(),
+                DBSession.expires_at > datetime.now(timezone.utc),
             )
         )
         result = await db_session.execute(stmt)

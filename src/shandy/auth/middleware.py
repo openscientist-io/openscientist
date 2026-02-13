@@ -6,7 +6,7 @@ Supports both cookie-based sessions (OAuth) and legacy auth.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 from typing import Callable, Optional
 
@@ -16,14 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Session, User
 from shandy.database.session import get_session
-from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
-
-
-def _is_auth_disabled() -> bool:
-    """Check if authentication is disabled."""
-    return get_settings().auth.disable_auth
 
 
 async def get_current_user(db: AsyncSession, session_token: str) -> Optional[User]:
@@ -43,7 +37,7 @@ async def get_current_user(db: AsyncSession, session_token: str) -> Optional[Use
             .join(Session)
             .where(
                 Session.id == session_token,
-                Session.expires_at > datetime.utcnow(),
+                Session.expires_at > datetime.now(timezone.utc),
             )
         )
         result = await db.execute(stmt)
@@ -118,10 +112,6 @@ def require_auth(func: Callable) -> Callable:
 
     @wraps(func)
     async def async_wrapper(*args, **kwargs):
-        # Skip if auth is disabled
-        if _is_auth_disabled():
-            return await func(*args, **kwargs)
-
         # Get session token
         session_token = _get_session_token()
         if not session_token:
@@ -157,10 +147,6 @@ def require_auth(func: Callable) -> Callable:
 
     @wraps(func)
     def sync_wrapper(*args, **kwargs):
-        # Skip if auth is disabled
-        if _is_auth_disabled():
-            return func(*args, **kwargs)
-
         # Check for session token in cookie (the authoritative source)
         # Don't trust app.storage.user as it persists in browser localStorage
         session_token_from_cookie = None
@@ -173,10 +159,11 @@ def require_auth(func: Callable) -> Callable:
         if not session_token_from_cookie:
             # No cookie = not authenticated, clear any stale storage
             logger.debug("No session cookie, redirecting to login")
-            app.storage.user.clear()
             try:
+                app.storage.user.clear()
                 app.storage.user["return_to"] = str(ui.context.client.page.path)
-            except Exception:
+            except (AssertionError, AttributeError):
+                # Storage may not be initialized in test environments
                 pass
             ui.navigate.to("/login")
             return
@@ -206,8 +193,6 @@ def get_current_user_id() -> Optional[str]:
     Returns:
         User ID if authenticated, None otherwise
     """
-    if _is_auth_disabled():
-        return None
     return app.storage.user.get("user_id")
 
 
@@ -218,8 +203,6 @@ def get_current_user_email() -> Optional[str]:
     Returns:
         User email if authenticated, None otherwise
     """
-    if _is_auth_disabled():
-        return None
     return app.storage.user.get("email")
 
 
@@ -230,6 +213,4 @@ def get_current_user_name() -> Optional[str]:
     Returns:
         User name if authenticated, None otherwise
     """
-    if _is_auth_disabled():
-        return None
     return app.storage.user.get("name")

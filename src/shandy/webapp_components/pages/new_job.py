@@ -41,8 +41,9 @@ def new_job_page():
 
         # Files are optional - no validation needed
 
-        # Generate job ID
-        job_id = f"job_{uuid.uuid4().hex[:8]}"
+        # Generate job ID (full UUID for database compatibility)
+        job_uuid = uuid.uuid4()
+        job_id = str(job_uuid)
 
         # Save uploaded files to temp location (if any)
         data_files = []

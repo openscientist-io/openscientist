@@ -1,19 +1,23 @@
 {
-  "annotations": [
-    [
-      {"type": "click", "x": 640, "y": 475, "label": "Click"}
-    ],
-    [
-      {"type": "badge", "x": 180, "y": 130, "text": "Error visible!", "color": [244, 67, 54]},
-      {"type": "click", "x": 170, "y": 238, "label": "Click to expand"}
-    ],
-    [
-      {"type": "badge", "x": 250, "y": 288, "text": "Details shown", "color": [76, 175, 80]}
-    ]
-  ],
+  "metadata": {
+    "viewport": "1280x800",
+    "browser": "Chromium"
+  },
   "descriptions": [
-    "Login page - no error visible to unauthenticated users",
-    "After login: error banner appears, click 'Technical Details'",
-    "Technical details show specific error messages"
+    "Jobs dashboard - view existing jobs and create new ones",
+    "New job form - enter research question and configure settings",
+    "Form filled with research question, max iterations set to 2",
+    "Job created successfully - status pending, progress 0/2",
+    "Jobs list showing new job with running status"
+  ],
+  "annotations": [
+    [{"type": "click", "x": 936, "y": 36, "label": "New Job"}],
+    [{"type": "click", "x": 640, "y": 285, "label": "Enter question"}],
+    [
+      {"type": "type", "x": 400, "y": 236, "text": "What are the structural features..."},
+      {"type": "click", "x": 640, "y": 695, "label": "Start Discovery"}
+    ],
+    [],
+    []
   ]
 }

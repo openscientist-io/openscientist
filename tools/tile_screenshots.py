@@ -422,9 +422,26 @@ def tile_screenshots(
 
     Returns:
         Path to the created tiled image
+
+    Raises:
+        ValueError: If no images provided or descriptions are empty/missing
     """
     if not image_paths:
         raise ValueError("No images provided")
+
+    # Validate descriptions - must be provided and non-empty for each image
+    if not descriptions:
+        raise ValueError(
+            "Descriptions are required. Provide a 'descriptions' list in annotations JSON."
+        )
+    if len(descriptions) != len(image_paths):
+        raise ValueError(
+            f"Number of descriptions ({len(descriptions)}) must match "
+            f"number of images ({len(image_paths)})"
+        )
+    for idx, desc in enumerate(descriptions):
+        if not desc or not desc.strip():
+            raise ValueError(f"Description for image {idx + 1} is empty")
 
     # Load, annotate, and resize images
     thumbnails = []
@@ -441,44 +458,7 @@ def tile_screenshots(
         new_size = (int(img.width * ratio), int(img.height * ratio))
         thumb = img.resize(new_size, Image.Resampling.LANCZOS)
 
-        # Draw step number badge inside the thumbnail (top-left)
-        step_num = str(idx + 1)
-        badge_size = 24
-        badge_margin = 6
-        badge_x = badge_margin
-        badge_y = badge_margin
-
-        thumb_draw = ImageDraw.Draw(thumb)
-        try:
-            badge_font = ImageFont.truetype(
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 13
-            )
-        except (OSError, IOError):
-            badge_font = ImageFont.load_default()
-
-        # Draw badge circle - white fill with black border
-        thumb_draw.ellipse(
-            [badge_x, badge_y, badge_x + badge_size, badge_y + badge_size],
-            fill=(255, 255, 255),
-            outline=(0, 0, 0),
-            width=1,
-        )
-
-        # Draw step number text
-        bbox = thumb_draw.textbbox((0, 0), step_num, font=badge_font)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-        thumb_draw.text(
-            (
-                badge_x + (badge_size - text_w) // 2,
-                badge_y + (badge_size - text_h) // 2 - 1,
-            ),
-            step_num,
-            fill=(0, 0, 0),
-            font=badge_font,
-        )
-
-        # Apply rounded corners (returns RGBA)
+        # Apply rounded corners (returns RGBA) - no badge on image
         thumb_rounded = add_rounded_corners(thumb, radius=8)
 
         # Create canvas - minimal margin
@@ -609,9 +589,10 @@ def tile_screenshots(
         canvas.paste(thumb, (cell_x, cell_y))
 
         # Draw description below image (reduced spacing)
+        # Auto-prefix with "Step N:" - user only provides the description text
         if descriptions and idx < len(descriptions) and descriptions[idx]:
             desc_y = cell_y + thumb_h + 1  # Minimal gap
-            desc_text = descriptions[idx]
+            desc_text = f"Step {idx + 1}: {descriptions[idx]}"
 
             # Word wrap the description
             words = desc_text.split()
@@ -764,19 +745,37 @@ def main():
     # Load annotations if provided
     annotations = None
     descriptions = None
+    metadata = {}
     if args.annotations and args.annotations.exists():
         with open(args.annotations) as f:
             data = json.load(f)
-            # Support both old format (list of annotation lists) and new format (dict with annotations and descriptions)
+            # Support dict format with metadata, descriptions, annotations
             if isinstance(data, dict):
                 annotations = data.get("annotations")
                 descriptions = data.get("descriptions")
+                metadata = data.get("metadata", {})
             else:
                 annotations = data
 
-    # Generate footer text
+    # Get viewport and browser from metadata or args
+    viewport = args.viewport or metadata.get("viewport")
+    browser = args.browser or metadata.get("browser", "Chromium")
+
+    # Generate footer text from metadata or git
     footer_text = args.footer
-    if args.git_footer:
+    if not footer_text and metadata:
+        # Build footer from metadata
+        parts = []
+        if metadata.get("datetime"):
+            parts.append(f"Created: {metadata['datetime']}")
+        if metadata.get("branch"):
+            parts.append(f"Branch: {metadata['branch']}")
+        if metadata.get("commit"):
+            parts.append(f"Commit: {metadata['commit']}")
+        if parts:
+            footer_text = " | ".join(parts)
+
+    if not footer_text and args.git_footer:
         import subprocess
         from datetime import datetime
 
@@ -814,8 +813,8 @@ def main():
         max_thumb_height=args.max_height,
         footer_text=footer_text,
         title=args.title,
-        viewport=args.viewport,
-        browser=args.browser,
+        viewport=viewport,
+        browser=browser,
         test_status=args.test_status,
         scale=args.scale,
     )

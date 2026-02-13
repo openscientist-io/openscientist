@@ -100,6 +100,56 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
         yield postgres
 
 
+@pytest.fixture(scope="session")
+def _apply_migrations_once(test_database_url: str) -> None:
+    """Apply migrations once at session start (synchronous).
+
+    This fixture applies Alembic migrations once per test session rather than
+    per test, significantly improving test performance. Individual tests use
+    transaction rollback for isolation instead of schema recreation.
+
+    Uses asyncio.run() to execute async database operations since only asyncpg
+    driver is available.
+    """
+
+    async def _setup_schema() -> None:
+        engine = create_async_engine(test_database_url, echo=False)
+
+        # Clean schema before applying migrations
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
+            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+            await conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
+
+        await engine.dispose()
+
+    async def _setup_role() -> None:
+        engine = create_async_engine(test_database_url, echo=False)
+
+        # Create app role for RLS enforcement
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "DO $$ BEGIN CREATE ROLE shandy_app NOLOGIN; "
+                    "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+                )
+            )
+            await conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO shandy_app"))
+            await conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO shandy_app"))
+
+        await engine.dispose()
+
+    # Run schema setup
+    asyncio.run(_setup_schema())
+
+    # Apply Alembic migrations (creates tables AND adds RLS policies)
+    _apply_alembic_migrations(test_database_url)
+
+    # Create app role
+    asyncio.run(_setup_role())
+
+
 @pytest.fixture
 def clear_settings():
     """Fixture to clear settings cache before and after test.
@@ -191,11 +241,14 @@ def test_database_url(postgres_container: PostgresContainer | None) -> str:
 
 
 @pytest_asyncio.fixture
-async def test_engine(test_database_url: str) -> AsyncGenerator[AsyncEngine, None]:
-    """Create a test database engine with migrations applied.
+async def test_engine(
+    test_database_url: str,
+    _apply_migrations_once: None,  # Depends on session-scoped migration
+) -> AsyncGenerator[AsyncEngine, None]:
+    """Create a test database engine (migrations already applied at session start).
 
-    Note: Changed from session-scoped to function-scoped to avoid event loop conflicts.
-    Each test gets a fresh database with all tables and RLS policies applied.
+    Function-scoped to avoid event loop conflicts. Schema and migrations are
+    applied once per session by the _apply_migrations_once fixture.
 
     Raises:
         RuntimeError: If database connection fails or is not available
@@ -219,74 +272,24 @@ async def test_engine(test_database_url: str) -> AsyncGenerator[AsyncEngine, Non
             f"Error: {type(e).__name__}: {e}"
         ) from e
 
-    # Clean database before test to ensure fresh state
-    try:
-        async with engine.begin() as conn:
-            # Drop alembic_version table first to avoid type conflicts when recreating schema
-            await conn.execute(text("DROP TABLE IF EXISTS alembic_version CASCADE"))
-            await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-            await conn.execute(text("CREATE SCHEMA public"))
-            await conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
-    except Exception as e:
-        await engine.dispose()
-        raise RuntimeError(
-            f"Failed to clean test database schema. Error: {type(e).__name__}: {e}"
-        ) from e
-
-    # Apply Alembic migrations (which creates tables AND adds RLS policies)
-    try:
-        _apply_alembic_migrations(test_database_url)
-    except Exception as e:
-        await engine.dispose()
-        raise RuntimeError(
-            f"Failed to apply Alembic migrations. "
-            f"This may indicate migration syntax errors or database issues. "
-            f"Error: {e}"
-        ) from e
-
-    # Create a non-superuser app role for RLS enforcement.
-    # Superusers always bypass RLS, so tests must use a regular role.
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "DO $$ BEGIN CREATE ROLE shandy_app NOLOGIN; "
-                    "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
-                )
-            )
-            await conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO shandy_app"))
-            await conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO shandy_app"))
-    except Exception as e:
-        await engine.dispose()
-        raise RuntimeError(
-            f"Failed to create app role for RLS testing. Error: {type(e).__name__}: {e}"
-        ) from e
-
     yield engine
-
-    # Drop all tables after test with CASCADE to handle RLS policy dependencies
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(text("DROP SCHEMA public CASCADE"))
-            await conn.execute(text("CREATE SCHEMA public"))
-            await conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
-    except Exception:
-        # Ignore cleanup errors - test database will be cleaned on next run
-        pass
-
     await engine.dispose()
 
 
 @pytest_asyncio.fixture
 async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    """Create a database session for a test.
+    """Create a database session with automatic rollback for test isolation.
+
+    Uses the transaction rollback pattern: each test runs inside a transaction
+    that is rolled back at the end, restoring the database to its initial state.
+    This is much faster than recreating the schema for each test.
 
     Uses a persistent connection to ensure RLS settings persist across queries.
-    All operations within the test use the same database connection.
     """
-    # Get a persistent connection for the test
     async with test_engine.connect() as conn:
-        # Create session bound to this connection
+        # Start outer transaction (will be rolled back at end)
+        trans = await conn.begin()
+
         async_session_maker = async_sessionmaker(
             bind=conn,
             class_=AsyncSession,
@@ -303,6 +306,9 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
             await session.execute(text("SELECT set_config('app.bypass_rls', '', false)"))
 
             yield session
+
+        # Rollback outer transaction - undoes ALL changes from this test
+        await trans.rollback()
 
 
 @pytest_asyncio.fixture

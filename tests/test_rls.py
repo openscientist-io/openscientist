@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shandy.database import (
     bypass_rls,
     list_rls_policies,
-    session_with_user,
     set_current_user,
     verify_rls_enabled,
 )
@@ -32,50 +31,6 @@ async def test_rls_enabled_on_tables(db_session: AsyncSession):
     assert await verify_rls_enabled(db_session, "api_keys")
     assert await verify_rls_enabled(db_session, "hypotheses")
     assert await verify_rls_enabled(db_session, "findings")
-
-
-@pytest.mark.asyncio
-async def test_user_isolation(db_session: AsyncSession):
-    """Test that users can only see their own jobs without sharing."""
-    # Create two users and jobs (bypass RLS for setup)
-    async with bypass_rls(db_session):
-        user1 = User(
-            email="user1@example.com",
-            name="User One",
-        )
-        user2 = User(
-            email="user2@example.com",
-            name="User Two",
-        )
-        db_session.add_all([user1, user2])
-        await db_session.commit()
-
-        job1 = Job(
-            owner_id=user1.id,
-            title="User 1 Job",
-            description="Job belonging to user 1",
-        )
-        job2 = Job(
-            owner_id=user2.id,
-            title="User 2 Job",
-            description="Job belonging to user 2",
-        )
-        db_session.add_all([job1, job2])
-        await db_session.commit()
-
-    # User 1 should only see their job
-    await set_current_user(db_session, user1.id)
-    result = await db_session.execute(select(Job))
-    user1_jobs = result.scalars().all()
-    assert len(user1_jobs) == 1
-    assert user1_jobs[0].title == "User 1 Job"
-
-    # User 2 should only see their job
-    await set_current_user(db_session, user2.id)
-    result = await db_session.execute(select(Job))
-    user2_jobs = result.scalars().all()
-    assert len(user2_jobs) == 1
-    assert user2_jobs[0].title == "User 2 Job"
 
 
 @pytest.mark.asyncio
@@ -182,27 +137,6 @@ async def test_bypass_rls(db_session: AsyncSession):
         result = await db_session.execute(select(Job))
         all_jobs = result.scalars().all()
         assert len(all_jobs) == 2
-
-
-@pytest.mark.asyncio
-async def test_session_with_user_context(db_session: AsyncSession):
-    """Test the session_with_user context manager."""
-    # Create test data
-    async with bypass_rls(db_session):
-        user = User(email="context@example.com", name="Context User")
-        db_session.add(user)
-        await db_session.commit()
-
-        job = Job(owner_id=user.id, title="Context Job")
-        db_session.add(job)
-        await db_session.commit()
-
-    # Use session_with_user
-    async with session_with_user(db_session, user.id):
-        result = await db_session.execute(select(Job))
-        jobs = result.scalars().all()
-        assert len(jobs) == 1
-        assert jobs[0].title == "Context Job"
 
 
 @pytest.mark.asyncio

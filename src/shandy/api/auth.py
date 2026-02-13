@@ -12,7 +12,7 @@ at creation time.
 import hashlib
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -136,7 +136,9 @@ async def get_current_user_from_api_key(
     # Update last_used_at timestamp
     try:
         update_stmt = (
-            update(APIKey).where(APIKey.id == api_key.id).values(last_used_at=datetime.utcnow())
+            update(APIKey)
+            .where(APIKey.id == api_key.id)
+            .values(last_used_at=datetime.now(timezone.utc))
         )
         await session.execute(update_stmt)
         await session.commit()

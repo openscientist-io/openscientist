@@ -1,27 +1,21 @@
 """Integration tests for index/home page."""
 
-from unittest.mock import patch
-
 import pytest
-from nicegui.testing import user_simulation
+import pytest_asyncio
+
+from shandy.database.models import Session
 
 
 class TestIndexPage:
     """Tests for index page rendering and redirection."""
 
-    @pytest.mark.asyncio
-    async def test_index_redirects_to_jobs(self):
-        """Test that index page redirects to jobs list."""
-        with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-            from shandy.webapp_components.pages.index import index_page
+    session_token: str
 
-            async with user_simulation(root=index_page) as user:
-                # Open the index page - it should redirect
-                await user.open("/")
-
-                # The function should execute without error
-                # (actual redirect testing is complex with user_simulation)
-                assert index_page is not None
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, webapp_session: Session):
+        """Set up common test fixtures as class attributes."""
+        self.session_token = str(webapp_session.id)
+        yield
 
     @pytest.mark.asyncio
     async def test_index_requires_auth(self):

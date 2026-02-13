@@ -107,8 +107,18 @@ async def _db_create_job(
     max_iterations: int,
     owner_id: Optional[UUID] = None,
 ) -> JobModel:
-    """Create a job in the database."""
-    async with AsyncSessionLocal() as session:
+    """Create a job in the database (thread-safe for worker threads).
+
+    Args:
+        job_id: UUID string for the job (used as primary key)
+        research_question: The research question/title
+        max_iterations: Maximum iterations allowed
+        owner_id: UUID of the job owner (optional)
+
+    Returns:
+        The created JobModel instance
+    """
+    async with AsyncSessionLocal(thread_safe=True) as session:
         if owner_id:
             await set_current_user(session, owner_id)
 
@@ -128,8 +138,8 @@ async def _db_create_job(
 
 
 async def _db_get_job(job_id: str, user_id: Optional[UUID] = None) -> Optional[JobModel]:
-    """Get a job from the database."""
-    async with AsyncSessionLocal() as session:
+    """Get a job from the database (thread-safe for worker threads)."""
+    async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
             await set_current_user(session, user_id)
 
@@ -144,8 +154,8 @@ async def _db_update_job_status(
     error_message: Optional[str] = None,
     user_id: Optional[UUID] = None,
 ) -> None:
-    """Update job status in the database."""
-    async with AsyncSessionLocal() as session:
+    """Update job status in the database (thread-safe for worker threads)."""
+    async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
             await set_current_user(session, user_id)
 
@@ -165,8 +175,8 @@ async def _db_list_jobs(
     limit: Optional[int] = None,
     user_id: Optional[UUID] = None,
 ) -> List[JobModel]:
-    """List jobs from the database."""
-    async with AsyncSessionLocal() as session:
+    """List jobs from the database (thread-safe for worker threads)."""
+    async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
             await set_current_user(session, user_id)
 
@@ -183,8 +193,8 @@ async def _db_list_jobs(
 
 
 async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
-    """Delete a job from the database."""
-    async with AsyncSessionLocal() as session:
+    """Delete a job from the database (thread-safe for worker threads)."""
+    async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
             await set_current_user(session, user_id)
 
@@ -198,24 +208,33 @@ async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
 
 
 def _run_async(coro):
-    """Helper to run async code from sync context."""
+    """Helper to run async code from sync context.
+
+    When called from within a running event loop (e.g., NiceGUI handlers),
+    this runs the coroutine in a separate thread with its own event loop
+    and a fresh database session to avoid connection pool conflicts.
+    """
     import asyncio
+    import concurrent.futures
 
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        loop = None
 
-    if loop.is_running():
-        # If loop is running, we need to create a new thread
-        import concurrent.futures
+    if loop is not None:
+        # We're inside a running event loop - run in a separate thread
+        # with a fresh event loop. The coroutine will create its own
+        # database session via AsyncSessionLocal context manager.
+        def run_in_thread():
+            return asyncio.run(coro)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result(timeout=30)
     else:
-        return loop.run_until_complete(coro)
+        # No running loop - create one
+        return asyncio.run(coro)
 
 
 class JobManager:

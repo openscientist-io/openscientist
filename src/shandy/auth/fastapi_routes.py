@@ -6,7 +6,7 @@ which integrate with NiceGUI's underlying FastAPI application.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -122,7 +122,7 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
         New Session object
     """
     settings = get_settings()
-    expires_at = datetime.utcnow() + timedelta(days=settings.auth.session_duration_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.auth.session_duration_days)
 
     session = Session(
         user_id=user_id,

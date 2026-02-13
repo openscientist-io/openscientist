@@ -1011,9 +1011,8 @@ WARN_COST_THRESHOLD_USD=5.00     # Warn user at this threshold
 SKILLS_ENABLED=true              # Global default for using skills
 ALLOW_SKILLS_TOGGLE=true         # Let users override per-job
 
-# Optional: Authentication (like agent-alz-assistant)
-DISABLE_AUTH=false
-APP_PASSWORD_HASH=...bcrypt_hash...
+# Optional: Authentication (use mock auth for development)
+ENABLE_MOCK_AUTH=true
 
 # Data paths (if not using Docker volumes)
 DATA_DIR=/data

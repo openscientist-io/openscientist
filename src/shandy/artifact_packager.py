@@ -8,7 +8,7 @@ into downloadable archives in various formats (ZIP, Markdown, JSON).
 import json
 import logging
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -59,7 +59,9 @@ def create_artifacts_zip(job_dir: Path, job_id: str) -> BytesIO:
 
     zip_buffer.seek(0)
     logger.info(
-        "Created artifacts ZIP for job %s (%d bytes)", job_id, zip_buffer.getbuffer().nbytes
+        "Created artifacts ZIP for job %s (%d bytes)",
+        job_id,
+        zip_buffer.getbuffer().nbytes,
     )
 
     return zip_buffer
@@ -89,7 +91,7 @@ def export_documentation_markdown(job_dir: Path) -> Optional[str]:
 
     # Header
     md_parts.append("# SHANDY Analysis Documentation\n")
-    md_parts.append(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n")
+    md_parts.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     # Load config for research question
     if config_path.exists():
@@ -233,7 +235,7 @@ def export_interaction_log_json(job_dir: Path) -> Optional[str]:
 
     # Extract relevant parts
     export_data = {
-        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "exported_at": datetime.now(timezone.utc).isoformat() + "Z",
         "iteration": ks.get("iteration", 0),
         "analysis_log": ks.get("analysis_log", []),
         "iteration_summaries": ks.get("iteration_summaries", []),
@@ -272,7 +274,7 @@ def export_interaction_log_markdown(job_dir: Path) -> Optional[str]:
 
     # Header
     md_parts.append("# SHANDY Interaction Log\n")
-    md_parts.append(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n")
+    md_parts.append(f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     # Analysis log grouped by iteration
     analysis_log = ks.get("analysis_log", [])

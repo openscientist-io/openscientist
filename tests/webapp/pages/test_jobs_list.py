@@ -1,93 +1,77 @@
 """Integration tests for jobs list page."""
 
-from unittest.mock import Mock, patch
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 from nicegui.testing import user_simulation
+
+from shandy.database.models import Job, Session
+from shandy.job_manager import JobInfo, JobManager
 
 
 class TestJobsListPage:
     """Tests for jobs list page."""
 
+    session_token: str
+    job_manager: JobManager
+
+    @pytest_asyncio.fixture(autouse=True)
+    async def setup(self, webapp_session: Session, job_manager: JobManager):
+        """Set up common test fixtures as class attributes."""
+        self.session_token = str(webapp_session.id)
+        self.job_manager = job_manager
+        yield
+
     @pytest.mark.asyncio
-    async def test_jobs_list_page_renders(self, mock_job_manager):
+    async def test_jobs_list_page_renders(self):
         """Test that jobs list page renders."""
         from shandy.webapp_components.pages.jobs_list import jobs_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-                with patch.object(mock_job_manager, "list_jobs", return_value=[]):
-                    mock_get_jm.return_value = mock_job_manager
+            mock_get_jm.return_value = self.job_manager
 
-                    async with user_simulation(root=jobs_page) as user:
-                        await user.open("/jobs")
+            async with user_simulation(root=jobs_page) as browser:
+                browser.http_client.cookies.set("session_token", self.session_token)
+                await browser.open("/jobs")
 
-                        # Should see jobs list header and summary cards
-                        await user.should_see("SHANDY - Jobs")
-                        await user.should_see("Total Jobs")
-                        await user.should_see("Running")
+                # Should see jobs list header and summary cards
+                await browser.should_see("SHANDY - Jobs")
+                await browser.should_see("Total Jobs")
+                await browser.should_see("Running")
 
     @pytest.mark.asyncio
-    async def test_jobs_list_with_no_jobs(self, mock_job_manager):
+    async def test_jobs_list_with_no_jobs(self):
         """Test jobs list when no jobs exist."""
         from shandy.webapp_components.pages.jobs_list import jobs_page
 
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-                with patch.object(mock_job_manager, "list_jobs", return_value=[]):
-                    mock_get_jm.return_value = mock_job_manager
+            mock_get_jm.return_value = self.job_manager
 
-                    async with user_simulation(root=jobs_page) as user:
-                        await user.open("/jobs")
+            async with user_simulation(root=jobs_page) as browser:
+                browser.http_client.cookies.set("session_token", self.session_token)
+                await browser.open("/jobs")
 
-                        # Should show summary cards even when empty
-                        await user.should_see("SHANDY - Jobs")
-                        await user.should_see("Total Jobs")
-
-    @pytest.mark.asyncio
-    async def test_jobs_list_navigation_buttons(self, mock_job_manager):
-        """Test that page has action buttons."""
-        from shandy.webapp_components.pages.jobs_list import jobs_page
-
-        with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-                with patch.object(mock_job_manager, "list_jobs", return_value=[]):
-                    mock_get_jm.return_value = mock_job_manager
-
-                    async with user_simulation(root=jobs_page) as user:
-                        await user.open("/jobs")
-
-                        # Should have navigation buttons
-                        await user.should_see("New Job")
-                        await user.should_see("Billing")
+                # Should show summary cards even when empty
+                await browser.should_see("SHANDY - Jobs")
+                await browser.should_see("Total Jobs")
 
     @pytest.mark.asyncio
-    async def test_jobs_list_with_jobs(self, mock_job_manager, sample_job_info):
+    async def test_jobs_list_with_jobs(
+        self,
+        webapp_job_completed: tuple[Job, JobInfo, Path],
+        webapp_job_running: tuple[Job, JobInfo, Path],
+    ):
         """Test jobs list when jobs exist."""
         from shandy.webapp_components.pages.jobs_list import jobs_page
 
-        # Create a second job
-        job2 = Mock()
-        job2.job_id = "test-456"
-        job2.research_question = "How do proteins fold?"
-        job2.status = Mock(value="completed")
-        job2.error = None
-        job2.iterations_completed = 5
-        job2.max_iterations = 10
-        job2.findings_count = 12
-        job2.created_at = "2026-02-05T15:30:00.000"
-
         with patch("shandy.web_app.get_job_manager") as mock_get_jm:
-            with patch("shandy.webapp_components.utils.auth.is_auth_disabled", return_value=True):
-                with patch.object(
-                    mock_job_manager, "list_jobs", return_value=[sample_job_info, job2]
-                ):
-                    mock_get_jm.return_value = mock_job_manager
+            mock_get_jm.return_value = self.job_manager
 
-                    async with user_simulation(root=jobs_page) as user:
-                        await user.open("/jobs")
+            async with user_simulation(root=jobs_page) as browser:
+                browser.http_client.cookies.set("session_token", self.session_token)
+                await browser.open("/jobs")
 
-                        # Should show summary with total jobs count
-                        # Note: Table row content is internal and not directly visible in test
-                        await user.should_see("Total Jobs")
-                        # The table should be rendered (jobs data is in table rows internally)
+                # Should show summary with total jobs count
+                await browser.should_see("Total Jobs")

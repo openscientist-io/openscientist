@@ -176,7 +176,7 @@ MAX_PROJECT_SPEND_24H_USD=500     # Prevent daily spikes
 **Important:**
 - Use absolute path for `GOOGLE_APPLICATION_CREDENTIALS`
 - Verify path exists and has correct permissions
-- Keep existing `PORT`, `STORAGE_SECRET`, `APP_PASSWORD_HASH` values
+- Keep existing `PORT`, `STORAGE_SECRET` values
 
 ### 2.3: Verify Prerequisites on gassh
 
@@ -460,7 +460,7 @@ echo "Budget enforcer: ACTIVE ($5,000/month limit)" >> DEPLOYMENT_HISTORY.txt
 
 Document for team members:
 - URL: https://shandy.alzassistant.org
-- Auth: (if enabled - from `APP_PASSWORD_HASH`)
+- Auth: OAuth (Google/GitHub) or mock auth in dev mode
 - Budget: $5,000/month shared between test + production
 - Recovery contact: (your email for budget alerts)
 

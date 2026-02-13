@@ -1,10 +1,6 @@
 """Utility modules for the web application."""
 
-from shandy.webapp_components.utils.auth import (
-    is_auth_disabled,
-    is_dev_mode,
-    require_auth,
-)
+from shandy.webapp_components.utils.auth import is_dev_mode
 from shandy.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
@@ -16,9 +12,7 @@ from shandy.webapp_components.utils.transcript_parser import (
 )
 
 __all__ = [
-    "is_auth_disabled",
     "is_dev_mode",
-    "require_auth",
     "get_uploaded_files",
     "add_uploaded_file",
     "clear_uploaded_files",

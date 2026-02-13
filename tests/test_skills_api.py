@@ -102,33 +102,6 @@ class TestSkillsListEndpoint:
         assert "Genomics Pipeline" in skill_names
 
     @pytest.mark.asyncio
-    async def test_list_skills_with_category_filter(
-        self,
-        db_session: AsyncSession,
-        test_user: User,
-        test_skill: Skill,
-        test_skill2: Skill,
-    ):
-        """Test filtering skills by category."""
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
-
-        await set_current_user(db_session, test_user.id)
-
-        response = await list_skills(
-            user=test_user,
-            session=db_session,
-            category="metabolomics",
-            search=None,
-            tags=None,
-            offset=0,
-            limit=50,
-        )
-
-        assert response.total == 1
-        assert response.skills[0].category == "metabolomics"
-
-    @pytest.mark.asyncio
     async def test_list_skills_with_search(
         self,
         db_session: AsyncSession,

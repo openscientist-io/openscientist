@@ -31,10 +31,6 @@ COPY src/ src/
 RUN pip install --no-cache-dir uv && \
     uv pip install --system -e .
 
-# Copy additional application files
-COPY .claude/ .claude/
-COPY CLAUDE.md .
-
 # Create jobs directory
 RUN mkdir -p jobs
 
@@ -45,6 +41,8 @@ EXPOSE 8080
 ENV PYTHONUNBUFFERED=1
 ENV SHANDY_COMMIT=${SHANDY_COMMIT}
 ENV SHANDY_BUILD_TIME=${BUILD_TIME}
+# Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
+ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
 # Run web app
 # Note: In development mode, override with --reload flag by setting command in docker-compose.override.yml

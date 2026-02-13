@@ -5,7 +5,7 @@ Handles OAuth callback flows and session creation for authenticated users.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from nicegui import app, ui
@@ -112,7 +112,7 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
     from uuid import UUID as _UUID
 
     settings = get_settings()
-    expires_at = datetime.utcnow() + timedelta(days=settings.auth.session_duration_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.auth.session_duration_days)
 
     session = Session(
         user_id=_UUID(user_id) if isinstance(user_id, str) else user_id,

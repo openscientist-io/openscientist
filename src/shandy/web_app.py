@@ -15,8 +15,9 @@ from shandy.job_manager import JobManager
 
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
-if not load_dotenv("/app/.env", override=True):
-    load_dotenv(".env", override=True)
+# Use override=False so Docker/system env vars take precedence over .env
+if not load_dotenv("/app/.env", override=False):
+    load_dotenv(".env", override=False)
 
 logger = logging.getLogger(__name__)
 
@@ -36,47 +37,41 @@ except Exception as e:
 def _create_config_error_page(error_message: str):
     """Create an error page for configuration errors.
 
-    This page is shown when required configuration keys are missing,
-    allowing deployers to see the error in the UI rather than just in logs.
+    This page is shown when required configuration keys are missing.
+    For security, only a generic error is shown to users - full details
+    are logged server-side for administrators.
     """
+    # Log full error details server-side for administrators
+    logger.error("Server configuration error (details hidden from UI): %s", error_message)
 
     @ui.page("/")
     @ui.page("/{path:path}")
     def config_error_page(path: str = ""):
-        """Display configuration error with 500 status."""
+        """Display generic server error with 500 status."""
         app.storage.user["_error_shown"] = True
 
-        with ui.column().classes("absolute-center items-center gap-6 max-w-2xl p-8"):
+        with ui.column().classes("absolute-center items-center gap-6 max-w-lg p-8"):
             # Error icon
             ui.icon("error", size="80px", color="red")
 
             # Title
-            ui.markdown("# Configuration Error").classes("text-red-600")
+            ui.markdown("# Server Error").classes("text-red-600")
 
-            # Subtitle
-            ui.markdown("_SHANDY cannot start due to missing or invalid configuration._").classes(
-                "text-gray-600"
-            )
-
-            ui.separator().classes("w-full")
-
-            # Error details card
-            with ui.card().classes("w-full bg-red-50 border-l-4 border-red-500"):
-                ui.label("Error Details").classes("font-bold text-red-800 mb-2")
-                ui.code(error_message).classes("w-full text-sm whitespace-pre-wrap break-words")
+            # Generic message - no internal details exposed
+            ui.markdown(
+                "_The server encountered a configuration error and cannot process requests._"
+            ).classes("text-gray-600 text-center")
 
             ui.separator().classes("w-full")
 
-            # Instructions
+            # Instructions card
             with ui.card().classes("w-full bg-blue-50 border-l-4 border-blue-500"):
-                ui.label("How to Fix").classes("font-bold text-blue-800 mb-2")
+                ui.label("What to do").classes("font-bold text-blue-800 mb-2")
                 ui.markdown(
                     """
-1. **Check your `.env` file** - Ensure all required environment variables are set
-2. **Review the error message above** - It indicates which configuration is missing
-3. **Restart the application** after fixing the configuration
+Please contact your **system administrator** to resolve this issue.
 
-For setup instructions, see the project's `README.md` or `CONTRIBUTING.md`.
+Administrators can find detailed error information in the server logs.
                     """
                 ).classes("text-blue-700")
 
@@ -89,7 +84,7 @@ For setup instructions, see the project's `README.md` or `CONTRIBUTING.md`.
     @app.get("/health")
     def health_check():
         return Response(
-            content='{"status": "error", "message": "Configuration error"}',
+            content='{"status": "error", "message": "Server error"}',
             status_code=500,
             media_type="application/json",
         )
@@ -272,7 +267,7 @@ def main(
         ui.run(
             host=host,
             port=port,
-            title="SHANDY - Configuration Error",
+            title="SHANDY - Server Error",
             reload=False,  # No reload in error mode
             show=False,
             storage_secret=STORAGE_SECRET,
@@ -301,6 +296,11 @@ def main(
 if __name__ in {"__main__", "__mp_main__"}:
     import argparse
 
+    from shandy.settings import get_settings
+
+    # Auto-detect dev mode from environment
+    dev_mode = get_settings().dev.dev_mode
+
     parser = argparse.ArgumentParser(description="SHANDY Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
@@ -308,7 +308,8 @@ if __name__ in {"__main__", "__mp_main__"}:
     parser.add_argument(
         "--reload",
         action="store_true",
-        help="Enable auto-reload on file changes (development mode)",
+        default=dev_mode,  # Auto-enable in dev mode
+        help="Enable auto-reload on file changes (auto-enabled when SHANDY_DEV_MODE=true)",
     )
 
     args = parser.parse_args()

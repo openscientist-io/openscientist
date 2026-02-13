@@ -4,7 +4,7 @@ Tests for core database functionality.
 Tests basic CRUD operations, model relationships, and UUIDv7 generation.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -124,7 +124,7 @@ async def test_api_key_creation(db_session: AsyncSession, test_user: User):
 @pytest.mark.asyncio
 async def test_session_creation(db_session: AsyncSession, test_user: User):
     """Test creating a user session."""
-    expires_at = datetime.utcnow() + timedelta(days=7)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
     async with bypass_rls(db_session):
         session = DBSession(
             user_id=test_user.id,
