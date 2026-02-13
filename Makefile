@@ -136,34 +136,6 @@ status:
 	@echo "Job status:"
 	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager summary
 
-# Development mode commands
-dev-start:
-	@echo "Starting SHANDY in development mode (with live reload)..."
-	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml up -d
-	@echo "SHANDY development mode started at http://localhost:8080"
-	@echo "Source code is mounted - changes will auto-reload!"
-
-dev-stop:
-	@echo "Stopping SHANDY development container..."
-	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml down
-	@echo "Development container stopped"
-
-dev-restart: dev-stop dev-start
-
-dev-rebuild:
-	@echo "Rebuilding SHANDY for development mode..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml build \
-		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
-		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	@echo "Restarting with new build..."
-	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml down
-	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml up -d
-	@echo "SHANDY rebuilt and started in development mode at http://localhost:8080"
-
-dev-logs:
-	@echo "Tailing SHANDY development logs (Ctrl+C to exit)..."
-	docker compose -f $(COMPOSE_FILE) -f docker-compose.dev.yml logs -f
-
 # Deploy to production server
 deploy:
 	@echo "========================================="
