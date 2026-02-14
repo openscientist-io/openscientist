@@ -17,6 +17,9 @@ if "ANTHROPIC_API_KEY" not in os.environ:
 import pytest
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
+# Re-export enable_rls from helpers for backward compatibility
+from tests.helpers import enable_rls as enable_rls  # noqa: F401
+
 
 @pytest.fixture
 def event_loop():
@@ -60,7 +63,6 @@ from shandy.database.models import (  # noqa: E402
     SkillSource,
     User,
 )
-from shandy.database.rls import bypass_rls  # noqa: E402
 
 # Set up encryption key for tests (required for EncryptedText columns)
 # This must be done before any database operations that use encrypted fields
@@ -124,11 +126,14 @@ def _apply_migrations_once(test_database_url: str) -> None:
 
         await engine.dispose()
 
-    async def _setup_role() -> None:
+    async def _setup_roles() -> None:
         engine = create_async_engine(test_database_url, echo=False)
 
-        # Create app role for RLS enforcement
+        # Create roles to match production environment:
+        # - shandy_app: Non-superuser role subject to RLS (used by get_session)
+        # - shandy_admin: Role with BYPASSRLS (used by get_admin_session)
         async with engine.begin() as conn:
+            # App role - subject to RLS
             await conn.execute(
                 text(
                     "DO $$ BEGIN CREATE ROLE shandy_app NOLOGIN; "
@@ -138,6 +143,16 @@ def _apply_migrations_once(test_database_url: str) -> None:
             await conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO shandy_app"))
             await conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO shandy_app"))
 
+            # Admin role - bypasses RLS (matches docker/postgres/init.sql)
+            await conn.execute(
+                text(
+                    "DO $$ BEGIN CREATE ROLE shandy_admin NOLOGIN BYPASSRLS; "
+                    "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
+                )
+            )
+            await conn.execute(text("GRANT ALL ON ALL TABLES IN SCHEMA public TO shandy_admin"))
+            await conn.execute(text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO shandy_admin"))
+
         await engine.dispose()
 
     # Run schema setup
@@ -146,8 +161,8 @@ def _apply_migrations_once(test_database_url: str) -> None:
     # Apply Alembic migrations (creates tables AND adds RLS policies)
     _apply_alembic_migrations(test_database_url)
 
-    # Create app role
-    asyncio.run(_setup_role())
+    # Create app and admin roles
+    asyncio.run(_setup_roles())
 
 
 @pytest.fixture
@@ -278,13 +293,16 @@ async def test_engine(
 
 @pytest_asyncio.fixture
 async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    """Create a database session with automatic rollback for test isolation.
+    """Create a database session with RLS enforced (matches production behavior).
 
     Uses the transaction rollback pattern: each test runs inside a transaction
     that is rolled back at the end, restoring the database to its initial state.
-    This is much faster than recreating the schema for each test.
 
-    Uses a persistent connection to ensure RLS settings persist across queries.
+    The session runs as shandy_admin role which has BYPASSRLS privilege.
+    This matches how get_admin_session() works in production.
+
+    For most tests, this is the right fixture to use. Tests can then call
+    set_current_user() to simulate a specific user's view of the data.
     """
     async with test_engine.connect() as conn:
         # Start outer transaction (will be rolled back at end)
@@ -297,97 +315,127 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
         )
 
         async with async_session_maker() as session:
-            # Switch to non-superuser role so RLS policies are enforced.
-            # Superusers always bypass RLS, even with FORCE ROW LEVEL SECURITY.
-            await session.execute(text("SET ROLE shandy_app"))
+            # Run as shandy_admin (BYPASSRLS) - matches get_admin_session()
+            # This allows fixtures to create data across tenants
+            await session.execute(text("SET ROLE shandy_admin"))
 
-            # Clear RLS context for test isolation (session-local, persists across transactions)
+            # Clear RLS context for test isolation
             await session.execute(text("SELECT set_config('app.current_user_id', NULL, false)"))
-            await session.execute(text("SELECT set_config('app.bypass_rls', '', false)"))
 
             yield session
+
+            await session.execute(text("RESET ROLE"))
 
         # Rollback outer transaction - undoes ALL changes from this test
         await trans.rollback()
 
 
 @pytest_asyncio.fixture
+async def db_session_rls(
+    test_engine: AsyncEngine,
+) -> AsyncGenerator[AsyncSession, None]:
+    """Create a database session with RLS enforced (for testing RLS behavior).
+
+    Uses shandy_app role which is subject to RLS policies.
+    Use this fixture for tests that specifically verify RLS blocks access.
+
+    Remember to call set_current_user() to set which user's view to test.
+    """
+    async with test_engine.connect() as conn:
+        trans = await conn.begin()
+
+        async_session_maker = async_sessionmaker(
+            bind=conn,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+
+        async with async_session_maker() as session:
+            # Run as shandy_app (subject to RLS) - matches get_session()
+            await session.execute(text("SET ROLE shandy_app"))
+
+            # Clear RLS context
+            await session.execute(text("SELECT set_config('app.current_user_id', NULL, false)"))
+
+            yield session
+
+            await session.execute(text("RESET ROLE"))
+
+        await trans.rollback()
+
+
+@pytest_asyncio.fixture
 async def test_user(db_session: AsyncSession) -> User:
     """Create a test user."""
-    async with bypass_rls(db_session):
-        user = User(
-            email="test@example.com",
-            name="Test User",
-        )
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    user = User(
+        email="test@example.com",
+        name="Test User",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
 @pytest_asyncio.fixture
 async def test_user2(db_session: AsyncSession) -> User:
     """Create a second test user."""
-    async with bypass_rls(db_session):
-        user = User(
-            email="test2@example.com",
-            name="Test User 2",
-        )
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    user = User(
+        email="test2@example.com",
+        name="Test User 2",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
 @pytest_asyncio.fixture
 async def test_admin_user(db_session: AsyncSession) -> User:
     """Create an admin test user."""
-    async with bypass_rls(db_session):
-        user = User(
-            email="admin@example.com",
-            name="Admin User",
-        )
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    user = User(
+        email="admin@example.com",
+        name="Admin User",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
 
-        # Grant admin privileges
-        admin = Administrator(user_id=user.id)
-        db_session.add(admin)
-        await db_session.commit()
+    # Grant admin privileges
+    admin = Administrator(user_id=user.id)
+    db_session.add(admin)
+    await db_session.commit()
     return user
 
 
 @pytest_asyncio.fixture
 async def test_job(db_session: AsyncSession, test_user: User) -> Job:
     """Create a test job owned by test_user."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=test_user.id,
-            title="Test Job",
-            description="A test job for testing",
-            llm_provider="mock",
-            llm_config={"model": "mock-model-v1"},
-            status="pending",
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=test_user.id,
+        title="Test Job",
+        description="A test job for testing",
+        llm_provider="mock",
+        llm_config={"model": "mock-model-v1"},
+        status="pending",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
     return job
 
 
 @pytest_asyncio.fixture
 async def test_api_key(db_session: AsyncSession, test_user: User) -> APIKey:
     """Create a test API key for test_user."""
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user.id,
-            name="Test API Key",
-            key_hash="test_hash_12345",
-        )
-        db_session.add(api_key)
-        await db_session.commit()
-        await db_session.refresh(api_key)
+    api_key = APIKey(
+        user_id=test_user.id,
+        name="Test API Key",
+        key_hash="test_hash_12345",
+    )
+    db_session.add(api_key)
+    await db_session.commit()
+    await db_session.refresh(api_key)
     return api_key
 
 
@@ -442,94 +490,89 @@ def sample_knowledge_state() -> dict:
 @pytest_asyncio.fixture
 async def test_skill_source(db_session: AsyncSession) -> SkillSource:
     """Create a test skill source."""
-    async with bypass_rls(db_session):
-        source = SkillSource(
-            name="Test Skills",
-            source_type="github",
-            url="https://github.com/test/test-skills",
-            branch="main",
-            skills_path="skills",
-            is_enabled=True,
-        )
-        db_session.add(source)
-        await db_session.commit()
-        await db_session.refresh(source)
+    source = SkillSource(
+        name="Test Skills",
+        source_type="github",
+        url="https://github.com/test/test-skills",
+        branch="main",
+        skills_path="skills",
+        is_enabled=True,
+    )
+    db_session.add(source)
+    await db_session.commit()
+    await db_session.refresh(source)
     return source
 
 
 @pytest_asyncio.fixture
 async def test_skill(db_session: AsyncSession, test_skill_source: SkillSource) -> Skill:
     """Create a test skill."""
-    from sqlalchemy import text
+    skill = Skill(
+        name="Metabolomics Analysis",
+        slug="metabolomics-analysis",
+        category="metabolomics",
+        description="Statistical analysis of metabolomics data",
+        content="# Metabolomics Analysis\n\nThis skill provides guidance...",
+        tags=["statistics", "metabolomics", "analysis"],
+        source_id=test_skill_source.id,
+        source_path="metabolomics/analysis.md",
+        content_hash="abc123def456",
+        is_enabled=True,
+    )
+    db_session.add(skill)
+    await db_session.commit()
 
-    async with bypass_rls(db_session):
-        skill = Skill(
-            name="Metabolomics Analysis",
-            slug="metabolomics-analysis",
-            category="metabolomics",
-            description="Statistical analysis of metabolomics data",
-            content="# Metabolomics Analysis\n\nThis skill provides guidance...",
-            tags=["statistics", "metabolomics", "analysis"],
-            source_id=test_skill_source.id,
-            source_path="metabolomics/analysis.md",
-            content_hash="abc123def456",
-            is_enabled=True,
-        )
-        db_session.add(skill)
-        await db_session.commit()
-
-        # Manually populate search_vector since trigger may not run in tests
-        await db_session.execute(
-            text(
-                """
-                UPDATE skills SET search_vector =
-                    setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
-                    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
-                    setweight(to_tsvector('english', coalesce(category, '')), 'C')
-                WHERE id = :skill_id
+    # Manually populate search_vector since trigger may not run in tests
+    await db_session.execute(
+        text(
             """
-            ),
-            {"skill_id": skill.id},
-        )
-        await db_session.commit()
-        await db_session.refresh(skill)
+            UPDATE skills SET search_vector =
+                setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+                setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+                setweight(to_tsvector('english', coalesce(category, '')), 'C')
+            WHERE id = :skill_id
+        """
+        ),
+        {"skill_id": skill.id},
+    )
+    await db_session.commit()
+    await db_session.refresh(skill)
     return skill
 
 
 @pytest_asyncio.fixture
 async def test_skill2(db_session: AsyncSession, test_skill_source: SkillSource) -> Skill:
     """Create a second test skill."""
-    async with bypass_rls(db_session):
-        skill = Skill(
-            name="Genomics Pipeline",
-            slug="genomics-pipeline",
-            category="genomics",
-            description="Genomics data processing pipeline",
-            content="# Genomics Pipeline\n\nThis skill provides guidance...",
-            tags=["genomics", "pipeline", "bioinformatics"],
-            source_id=test_skill_source.id,
-            source_path="genomics/pipeline.md",
-            content_hash="xyz789ghi012",
-            is_enabled=True,
-        )
-        db_session.add(skill)
-        await db_session.commit()
+    skill = Skill(
+        name="Genomics Pipeline",
+        slug="genomics-pipeline",
+        category="genomics",
+        description="Genomics data processing pipeline",
+        content="# Genomics Pipeline\n\nThis skill provides guidance...",
+        tags=["genomics", "pipeline", "bioinformatics"],
+        source_id=test_skill_source.id,
+        source_path="genomics/pipeline.md",
+        content_hash="xyz789ghi012",
+        is_enabled=True,
+    )
+    db_session.add(skill)
+    await db_session.commit()
 
-        # Manually populate search_vector since trigger may not run in tests
-        await db_session.execute(
-            text(
-                """
-                UPDATE skills SET search_vector =
-                    setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
-                    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
-                    setweight(to_tsvector('english', coalesce(category, '')), 'C')
-                WHERE id = :skill_id
+    # Manually populate search_vector since trigger may not run in tests
+    await db_session.execute(
+        text(
             """
-            ),
-            {"skill_id": skill.id},
-        )
-        await db_session.commit()
-        await db_session.refresh(skill)
+            UPDATE skills SET search_vector =
+                setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+                setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+                setweight(to_tsvector('english', coalesce(category, '')), 'C')
+            WHERE id = :skill_id
+        """
+        ),
+        {"skill_id": skill.id},
+    )
+    await db_session.commit()
+    await db_session.refresh(skill)
     return skill
 
 
@@ -540,17 +583,16 @@ async def test_job_skill(
     test_skill: Skill,
 ) -> JobSkill:
     """Create a test job-skill association."""
-    async with bypass_rls(db_session):
-        job_skill = JobSkill(
-            job_id=test_job.id,
-            skill_id=test_skill.id,
-            is_enabled=True,
-            relevance_score=0.85,
-            match_reason="High relevance to metabolomics research",
-        )
-        db_session.add(job_skill)
-        await db_session.commit()
-        await db_session.refresh(job_skill)
+    job_skill = JobSkill(
+        job_id=test_job.id,
+        skill_id=test_skill.id,
+        is_enabled=True,
+        relevance_score=0.85,
+        match_reason="High relevance to metabolomics research",
+    )
+    db_session.add(job_skill)
+    await db_session.commit()
+    await db_session.refresh(job_skill)
     return job_skill
 
 

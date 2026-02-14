@@ -9,15 +9,19 @@ from shandy.auth.middleware import (
     get_current_user_email,
     get_current_user_id,
     get_current_user_name,
+    is_current_user_admin,
+    require_admin,
     require_auth,
 )
 from shandy.auth.oauth import get_oauth_client, is_oauth_configured
 
 __all__ = [
     "require_auth",
+    "require_admin",
     "get_oauth_client",
     "is_oauth_configured",
     "get_current_user_id",
     "get_current_user_email",
     "get_current_user_name",
+    "is_current_user_admin",
 ]

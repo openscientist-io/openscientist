@@ -1,26 +1,39 @@
 """
 Database engine configuration for SHANDY.
 
-Provides async SQLAlchemy engine instance with PostgreSQL connection pooling.
+Provides async SQLAlchemy engine instances with PostgreSQL connection pooling.
+
+Engine Types:
+    - app_engine: Standard connection with limited privileges, subject to RLS policies
+    - admin_engine: Elevated connection that bypasses RLS (via PostgreSQL role)
+
+For the dual-engine pattern to work properly, ADMIN_DATABASE_URL should connect
+with a PostgreSQL role that has elevated privileges (table owner or role with
+BYPASSRLS). If not configured, falls back to the regular DATABASE_URL.
 """
 
 from typing import Optional
 
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from shandy.settings import get_settings
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Global engine instance
+# Global engine instances
 _engine: Optional[AsyncEngine] = None
+_admin_engine: Optional[AsyncEngine] = None
 
 
 def get_engine() -> AsyncEngine:
     """
-    Get or create the async database engine.
+    Get or create the async database engine for standard operations.
+
+    This engine uses the app database role with limited privileges.
+    All queries through this engine are subject to RLS policies.
 
     Returns:
         AsyncEngine: The SQLAlchemy async engine instance.
@@ -47,6 +60,43 @@ def get_engine() -> AsyncEngine:
         )
 
     return _engine
+
+
+def get_admin_engine() -> AsyncEngine:
+    """
+    Get or create the admin database engine for privileged operations.
+
+    This engine uses the admin database role with elevated privileges.
+    Queries through this engine bypass RLS policies via the PostgreSQL
+    role's privileges (table owner or BYPASSRLS grant).
+
+    Use this engine only for:
+    - Background schedulers (no user context available)
+    - Admin-authenticated endpoints (verified by @require_admin)
+    - Migrations and schema changes
+    - Test fixtures that need to create data across tenants
+
+    Returns:
+        AsyncEngine: The admin SQLAlchemy async engine instance.
+
+    Raises:
+        ValueError: If database is not properly configured.
+    """
+    global _admin_engine
+
+    if _admin_engine is None:
+        settings = get_settings()
+        database_url = settings.database.effective_admin_database_url
+
+        _admin_engine = create_async_engine(
+            database_url,
+            # Use NullPool to avoid event loop conflicts in web frameworks
+            # Each connection is fresh, avoiding pool-related async issues
+            poolclass=NullPool,
+            echo=settings.database.sql_echo,
+        )
+
+    return _admin_engine
 
 
 def get_async_engine() -> AsyncEngine:

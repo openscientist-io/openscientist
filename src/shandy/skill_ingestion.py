@@ -19,7 +19,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill, SkillSource
-from .database.rls import bypass_rls
 
 # =============================================================================
 # Base Class for Extensible Ingesters
@@ -395,68 +394,66 @@ class GitHubSkillIngester(BaseSkillIngester):
 
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
 
-        async with bypass_rls(session):
-            for file_info in skill_files:
-                try:
-                    content = await self.fetch_file_content(file_info["download_url"])
-                    parsed = self.parser.parse_content(content, file_info["path"])
+        # Session is expected to be an admin session (bypasses RLS)
+        for file_info in skill_files:
+            try:
+                content = await self.fetch_file_content(file_info["download_url"])
+                parsed = self.parser.parse_content(content, file_info["path"])
 
-                    # Check if skill exists
-                    stmt = select(Skill).where(
-                        Skill.source_id == source.id,
-                        Skill.source_path == file_info["path"],
+                # Check if skill exists
+                stmt = select(Skill).where(
+                    Skill.source_id == source.id,
+                    Skill.source_path == file_info["path"],
+                )
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    if existing.content_hash == parsed.content_hash:
+                        stats["unchanged"] += 1
+                        continue
+
+                    # Update existing skill
+                    existing.name = parsed.name
+                    existing.slug = parsed.slug
+                    existing.category = parsed.category
+                    existing.description = parsed.description
+                    existing.content = parsed.content
+                    existing.tags = parsed.tags
+                    existing.content_hash = parsed.content_hash
+                    existing.commit_sha = commit_sha
+                    existing.version = existing.version + 1
+                    stats["updated"] += 1
+                else:
+                    # Create new skill
+                    skill = Skill(
+                        name=parsed.name,
+                        slug=parsed.slug,
+                        category=parsed.category,
+                        description=parsed.description,
+                        content=parsed.content,
+                        tags=parsed.tags,
+                        source_id=source.id,
+                        source_path=file_info["path"],
+                        content_hash=parsed.content_hash,
+                        commit_sha=commit_sha,
                     )
-                    result = await session.execute(stmt)
-                    existing = result.scalar_one_or_none()
+                    session.add(skill)
+                    stats["created"] += 1
 
-                    if existing:
-                        if existing.content_hash == parsed.content_hash:
-                            stats["unchanged"] += 1
-                            continue
+            except (SkillParseError, httpx.HTTPError) as e:
+                stats["errors"] += 1
+                # Log error but continue
+                import logging
 
-                        # Update existing skill
-                        existing.name = parsed.name
-                        existing.slug = parsed.slug
-                        existing.category = parsed.category
-                        existing.description = parsed.description
-                        existing.content = parsed.content
-                        existing.tags = parsed.tags
-                        existing.content_hash = parsed.content_hash
-                        existing.commit_sha = commit_sha
-                        existing.version = existing.version + 1
-                        stats["updated"] += 1
-                    else:
-                        # Create new skill
-                        skill = Skill(
-                            name=parsed.name,
-                            slug=parsed.slug,
-                            category=parsed.category,
-                            description=parsed.description,
-                            content=parsed.content,
-                            tags=parsed.tags,
-                            source_id=source.id,
-                            source_path=file_info["path"],
-                            content_hash=parsed.content_hash,
-                            commit_sha=commit_sha,
-                        )
-                        session.add(skill)
-                        stats["created"] += 1
+                logging.getLogger(__name__).warning(f"Error processing {file_info['path']}: {e}")
 
-                except (SkillParseError, httpx.HTTPError) as e:
-                    stats["errors"] += 1
-                    # Log error but continue
-                    import logging
+        # Update source metadata
+        source.last_synced_at = datetime.now(timezone.utc)
+        source.last_commit_sha = commit_sha
+        source.sync_error = None
 
-                    logging.getLogger(__name__).warning(
-                        f"Error processing {file_info['path']}: {e}"
-                    )
-
-            # Update source metadata
-            source.last_synced_at = datetime.now(timezone.utc)
-            source.last_commit_sha = commit_sha
-            source.sync_error = None
-
-            await session.commit()
+        await session.commit()
 
         return stats
 
@@ -509,62 +506,62 @@ class LocalSkillIngester(BaseSkillIngester):
 
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
 
-        async with bypass_rls(session):
-            for md_file in base_path.rglob("*.md"):
-                try:
-                    relative_path = str(md_file.relative_to(Path(source.path)))
-                    parsed = self.parser.parse_file(md_file)
+        # Session is expected to be an admin session (bypasses RLS)
+        for md_file in base_path.rglob("*.md"):
+            try:
+                relative_path = str(md_file.relative_to(Path(source.path)))
+                parsed = self.parser.parse_file(md_file)
 
-                    # Check if skill exists
-                    stmt = select(Skill).where(
-                        Skill.source_id == source.id,
-                        Skill.source_path == relative_path,
+                # Check if skill exists
+                stmt = select(Skill).where(
+                    Skill.source_id == source.id,
+                    Skill.source_path == relative_path,
+                )
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    if existing.content_hash == parsed.content_hash:
+                        stats["unchanged"] += 1
+                        continue
+
+                    # Update existing skill
+                    existing.name = parsed.name
+                    existing.slug = parsed.slug
+                    existing.category = parsed.category
+                    existing.description = parsed.description
+                    existing.content = parsed.content
+                    existing.tags = parsed.tags
+                    existing.content_hash = parsed.content_hash
+                    existing.version = existing.version + 1
+                    stats["updated"] += 1
+                else:
+                    # Create new skill
+                    skill = Skill(
+                        name=parsed.name,
+                        slug=parsed.slug,
+                        category=parsed.category,
+                        description=parsed.description,
+                        content=parsed.content,
+                        tags=parsed.tags,
+                        source_id=source.id,
+                        source_path=relative_path,
+                        content_hash=parsed.content_hash,
                     )
-                    result = await session.execute(stmt)
-                    existing = result.scalar_one_or_none()
+                    session.add(skill)
+                    stats["created"] += 1
 
-                    if existing:
-                        if existing.content_hash == parsed.content_hash:
-                            stats["unchanged"] += 1
-                            continue
+            except SkillParseError as e:
+                stats["errors"] += 1
+                import logging
 
-                        # Update existing skill
-                        existing.name = parsed.name
-                        existing.slug = parsed.slug
-                        existing.category = parsed.category
-                        existing.description = parsed.description
-                        existing.content = parsed.content
-                        existing.tags = parsed.tags
-                        existing.content_hash = parsed.content_hash
-                        existing.version = existing.version + 1
-                        stats["updated"] += 1
-                    else:
-                        # Create new skill
-                        skill = Skill(
-                            name=parsed.name,
-                            slug=parsed.slug,
-                            category=parsed.category,
-                            description=parsed.description,
-                            content=parsed.content,
-                            tags=parsed.tags,
-                            source_id=source.id,
-                            source_path=relative_path,
-                            content_hash=parsed.content_hash,
-                        )
-                        session.add(skill)
-                        stats["created"] += 1
+                logging.getLogger(__name__).warning(f"Error processing {md_file}: {e}")
 
-                except SkillParseError as e:
-                    stats["errors"] += 1
-                    import logging
+        # Update source metadata
+        source.last_synced_at = datetime.now(timezone.utc)
+        source.sync_error = None
 
-                    logging.getLogger(__name__).warning(f"Error processing {md_file}: {e}")
-
-            # Update source metadata
-            source.last_synced_at = datetime.now(timezone.utc)
-            source.sync_error = None
-
-            await session.commit()
+        await session.commit()
 
         return stats
 

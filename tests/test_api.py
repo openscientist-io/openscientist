@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import generate_api_key_secret, hash_secret, verify_secret
 from shandy.database.models import APIKey, Job, User
-from shandy.database.rls import bypass_rls, set_current_user
+from shandy.database.rls import set_current_user
+from tests.helpers import enable_rls
 
 
 @pytest.fixture
@@ -33,15 +34,14 @@ async def test_api_key_with_secret(
     Returns:
         Tuple of (APIKey object, full "name:secret" string)
     """
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user.id,
-            name="test_key",
-            key_hash=hash_secret(api_key_secret),
-        )
-        db_session.add(api_key)
-        await db_session.commit()
-        await db_session.refresh(api_key)
+    api_key = APIKey(
+        user_id=test_user.id,
+        name="test_key",
+        key_hash=hash_secret(api_key_secret),
+    )
+    db_session.add(api_key)
+    await db_session.commit()
+    await db_session.refresh(api_key)
 
     return api_key, f"test_key:{api_key_secret}"
 
@@ -99,9 +99,8 @@ async def test_api_key_authentication(
     assert verify_secret(secret, api_key.key_hash) is True
 
     # Verify relationship to user
-    async with bypass_rls(db_session):
-        await db_session.refresh(api_key, ["user"])
-        assert api_key.user.id == test_user.id
+    await db_session.refresh(api_key, ["user"])
+    assert api_key.user.id == test_user.id
 
 
 @pytest.mark.asyncio
@@ -109,24 +108,22 @@ async def test_expired_api_key(db_session: AsyncSession, test_user: User):
     """Test that inactive API keys are filtered out."""
     # Create inactive API key
     secret = "expired_secret"
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user.id,
-            name="expired_key",
-            key_hash=hash_secret(secret),
-            is_active=False,
-        )
-        db_session.add(api_key)
-        await db_session.commit()
+    api_key = APIKey(
+        user_id=test_user.id,
+        name="expired_key",
+        key_hash=hash_secret(secret),
+        is_active=False,
+    )
+    db_session.add(api_key)
+    await db_session.commit()
 
     # Query for active keys only
-    async with bypass_rls(db_session):
-        stmt = select(APIKey).where(
-            APIKey.name == "expired_key",
-            APIKey.is_active.is_(True),
-        )
-        result = await db_session.execute(stmt)
-        valid_key = result.scalar_one_or_none()
+    stmt = select(APIKey).where(
+        APIKey.name == "expired_key",
+        APIKey.is_active.is_(True),
+    )
+    result = await db_session.execute(stmt)
+    valid_key = result.scalar_one_or_none()
 
     assert valid_key is None
 
@@ -135,24 +132,22 @@ async def test_expired_api_key(db_session: AsyncSession, test_user: User):
 async def test_inactive_api_key(db_session: AsyncSession, test_user: User):
     """Test that inactive API keys are not valid."""
     secret = "inactive_secret"
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user.id,
-            name="inactive_key",
-            key_hash=hash_secret(secret),
-            is_active=False,
-        )
-        db_session.add(api_key)
-        await db_session.commit()
+    api_key = APIKey(
+        user_id=test_user.id,
+        name="inactive_key",
+        key_hash=hash_secret(secret),
+        is_active=False,
+    )
+    db_session.add(api_key)
+    await db_session.commit()
 
     # Query for valid keys only
-    async with bypass_rls(db_session):
-        stmt = select(APIKey).where(
-            APIKey.name == "inactive_key",
-            APIKey.is_active.is_(True),
-        )
-        result = await db_session.execute(stmt)
-        valid_key = result.scalar_one_or_none()
+    stmt = select(APIKey).where(
+        APIKey.name == "inactive_key",
+        APIKey.is_active.is_(True),
+    )
+    result = await db_session.execute(stmt)
+    valid_key = result.scalar_one_or_none()
 
     assert valid_key is None
 
@@ -161,47 +156,45 @@ async def test_inactive_api_key(db_session: AsyncSession, test_user: User):
 async def test_revoke_api_key(db_session: AsyncSession, test_user: User):
     """Test revoking an API key."""
     secret = "to_revoke"
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user.id,
-            name="revoke_key",
-            key_hash=hash_secret(secret),
-        )
-        db_session.add(api_key)
-        await db_session.commit()
-        await db_session.refresh(api_key)
+    api_key = APIKey(
+        user_id=test_user.id,
+        name="revoke_key",
+        key_hash=hash_secret(secret),
+    )
+    db_session.add(api_key)
+    await db_session.commit()
+    await db_session.refresh(api_key)
 
-        # Revoke the key
-        api_key.is_active = False
-        await db_session.commit()
+    # Revoke the key
+    api_key.is_active = False
+    await db_session.commit()
 
-        # Verify it's inactive
-        await db_session.refresh(api_key)
-        assert api_key.is_active is False
+    # Verify it's inactive
+    await db_session.refresh(api_key)
+    assert api_key.is_active is False
 
 
 @pytest.mark.asyncio
 async def test_multiple_api_keys_same_user(db_session: AsyncSession, test_user: User):
     """Test that a user can have multiple API keys."""
-    async with bypass_rls(db_session):
-        key1 = APIKey(
-            user_id=test_user.id,
-            name="key1",
-            key_hash=hash_secret("secret1"),
-        )
-        key2 = APIKey(
-            user_id=test_user.id,
-            name="key2",
-            key_hash=hash_secret("secret2"),
-        )
+    key1 = APIKey(
+        user_id=test_user.id,
+        name="key1",
+        key_hash=hash_secret("secret1"),
+    )
+    key2 = APIKey(
+        user_id=test_user.id,
+        name="key2",
+        key_hash=hash_secret("secret2"),
+    )
 
-        db_session.add_all([key1, key2])
-        await db_session.commit()
+    db_session.add_all([key1, key2])
+    await db_session.commit()
 
-        # Verify both keys exist
-        stmt = select(APIKey).where(APIKey.user_id == test_user.id)
-        result = await db_session.execute(stmt)
-        keys = result.scalars().all()
+    # Verify both keys exist
+    stmt = select(APIKey).where(APIKey.user_id == test_user.id)
+    result = await db_session.execute(stmt)
+    keys = result.scalars().all()
 
     # At least key1 and key2 (may also have fixture key)
     assert len(keys) >= 2
@@ -213,26 +206,25 @@ async def test_multiple_api_keys_same_user(db_session: AsyncSession, test_user: 
 @pytest.mark.asyncio
 async def test_api_key_last_used_update(db_session: AsyncSession, test_user: User):
     """Test updating last_used_at timestamp."""
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user.id,
-            name="usage_key",
-            key_hash=hash_secret("secret"),
-        )
-        db_session.add(api_key)
-        await db_session.commit()
-        await db_session.refresh(api_key)
+    api_key = APIKey(
+        user_id=test_user.id,
+        name="usage_key",
+        key_hash=hash_secret("secret"),
+    )
+    db_session.add(api_key)
+    await db_session.commit()
+    await db_session.refresh(api_key)
 
-        # Initially should be None
-        assert api_key.last_used_at is None
+    # Initially should be None
+    assert api_key.last_used_at is None
 
-        # Update last_used_at
-        now = datetime.now(timezone.utc)
-        api_key.last_used_at = now
-        await db_session.commit()
-        await db_session.refresh(api_key)
+    # Update last_used_at
+    now = datetime.now(timezone.utc)
+    api_key.last_used_at = now
+    await db_session.commit()
+    await db_session.refresh(api_key)
 
-        assert api_key.last_used_at is not None
+    assert api_key.last_used_at is not None
 
 
 @pytest.mark.asyncio
@@ -263,18 +255,18 @@ async def test_cannot_access_other_user_jobs(
 ):
     """Test that API key cannot access other users' jobs."""
     # Create job for user2
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=test_user2.id,
-            title="User 2 Job",
-            description="Belongs to user2",
-            status="pending",
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=test_user2.id,
+        title="User 2 Job",
+        description="Belongs to user2",
+        status="pending",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     # Try to access as user1 (should fail with RLS)
+    await enable_rls(db_session)  # Switch to non-superuser role to enforce RLS
     await set_current_user(db_session, test_user.id)
 
     stmt = select(Job).where(Job.id == job.id)
@@ -287,33 +279,32 @@ async def test_cannot_access_other_user_jobs(
 @pytest.mark.asyncio
 async def test_cascade_delete_api_keys(db_session: AsyncSession):
     """Test that deleting a user deletes their API keys."""
-    async with bypass_rls(db_session):
-        # Create user and API key
-        user = User(email="delete_keys@example.com", name="Delete Keys")
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    # Create user and API key
+    user = User(email="delete_keys@example.com", name="Delete Keys")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
 
-        api_key = APIKey(
-            user_id=user.id,
-            name="test_key",
-            key_hash=hash_secret("secret"),
-        )
-        db_session.add(api_key)
-        await db_session.commit()
+    api_key = APIKey(
+        user_id=user.id,
+        name="test_key",
+        key_hash=hash_secret("secret"),
+    )
+    db_session.add(api_key)
+    await db_session.commit()
 
-        user_id = user.id
+    user_id = user.id
 
-        # Delete user
-        await db_session.delete(user)
-        await db_session.commit()
+    # Delete user
+    await db_session.delete(user)
+    await db_session.commit()
 
-        # Verify API key is also deleted
-        stmt = select(APIKey).where(APIKey.user_id == user_id)
-        result = await db_session.execute(stmt)
-        keys = result.scalars().all()
+    # Verify API key is also deleted
+    stmt = select(APIKey).where(APIKey.user_id == user_id)
+    result = await db_session.execute(stmt)
+    keys = result.scalars().all()
 
-        assert len(keys) == 0
+    assert len(keys) == 0
 
 
 @pytest.mark.asyncio
@@ -323,28 +314,27 @@ async def test_api_key_name_not_unique_across_users(
     test_user2: User,
 ):
     """Test that different users can have API keys with the same name."""
-    async with bypass_rls(db_session):
-        key1 = APIKey(
-            user_id=test_user.id,
-            name="my_key",
-            key_hash=hash_secret("secret1"),
-        )
-        key2 = APIKey(
-            user_id=test_user2.id,
-            name="my_key",
-            key_hash=hash_secret("secret2"),
-        )
+    key1 = APIKey(
+        user_id=test_user.id,
+        name="my_key",
+        key_hash=hash_secret("secret1"),
+    )
+    key2 = APIKey(
+        user_id=test_user2.id,
+        name="my_key",
+        key_hash=hash_secret("secret2"),
+    )
 
-        db_session.add_all([key1, key2])
-        await db_session.commit()
+    db_session.add_all([key1, key2])
+    await db_session.commit()
 
-        # Both keys should exist with the same name
-        stmt = select(APIKey).where(APIKey.name == "my_key")
-        result = await db_session.execute(stmt)
-        keys = result.scalars().all()
+    # Both keys should exist with the same name
+    stmt = select(APIKey).where(APIKey.name == "my_key")
+    result = await db_session.execute(stmt)
+    keys = result.scalars().all()
 
-        assert len(keys) == 2
-        assert {key.user_id for key in keys} == {test_user.id, test_user2.id}
+    assert len(keys) == 2
+    assert {key.user_id for key in keys} == {test_user.id, test_user2.id}
 
 
 @pytest.mark.asyncio

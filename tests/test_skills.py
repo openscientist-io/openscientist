@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Skill, SkillSource, User
-from shandy.database.rls import bypass_rls, set_current_user
+from shandy.database.rls import set_current_user
 
 
 @pytest.mark.asyncio
@@ -40,24 +40,23 @@ async def test_skill_unique_category_slug(
     """Test unique constraint on (category, slug)."""
     from sqlalchemy.exc import IntegrityError
 
-    async with bypass_rls(db_session):
-        # Try to create a skill with same category and slug
-        duplicate_skill = Skill(
-            name="Different Name",
-            slug=test_skill.slug,  # Same slug
-            category=test_skill.category,  # Same category
-            description="Different description",
-            content="Different content",
-            tags=[],
-            content_hash="different_hash",
-            is_enabled=True,
-        )
-        db_session.add(duplicate_skill)
+    # Try to create a skill with same category and slug
+    duplicate_skill = Skill(
+        name="Different Name",
+        slug=test_skill.slug,  # Same slug
+        category=test_skill.category,  # Same category
+        description="Different description",
+        content="Different content",
+        tags=[],
+        content_hash="different_hash",
+        is_enabled=True,
+    )
+    db_session.add(duplicate_skill)
 
-        with pytest.raises(IntegrityError):
-            await db_session.commit()
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
 
-        await db_session.rollback()
+    await db_session.rollback()
 
 
 @pytest.mark.asyncio
@@ -68,12 +67,11 @@ async def test_skill_version_increment(
     """Test skill version tracking."""
     assert test_skill.version == 1
 
-    async with bypass_rls(db_session):
-        # Update skill
-        test_skill.content = "Updated content"
-        test_skill.content_hash = "new_hash"
-        test_skill.version = test_skill.version + 1
-        await db_session.commit()
-        await db_session.refresh(test_skill)
+    # Update skill
+    test_skill.content = "Updated content"
+    test_skill.content_hash = "new_hash"
+    test_skill.version = test_skill.version + 1
+    await db_session.commit()
+    await db_session.refresh(test_skill)
 
     assert test_skill.version == 2

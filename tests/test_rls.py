@@ -5,7 +5,7 @@ Verifies that:
 1. RLS policies are properly enforced
 2. Users can only access their own data
 3. Job sharing permissions work correctly
-4. Admin bypass functionality works
+4. Admin session functionality works
 """
 
 import pytest
@@ -13,12 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database import (
-    bypass_rls,
     list_rls_policies,
     set_current_user,
     verify_rls_enabled,
 )
 from shandy.database.models import Job, JobShare, User
+from tests.helpers import enable_rls
 
 
 @pytest.mark.asyncio
@@ -36,29 +36,31 @@ async def test_rls_enabled_on_tables(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_job_sharing_view_permission(db_session: AsyncSession):
     """Test that view permission grants read-only access."""
-    # Create two users and a job (bypass RLS for setup)
-    async with bypass_rls(db_session):
-        owner = User(email="owner@example.com", name="Owner")
-        viewer = User(email="viewer@example.com", name="Viewer")
-        db_session.add_all([owner, viewer])
-        await db_session.commit()
+    # Create two users and a job (tests run as superuser, bypassing RLS)
+    owner = User(email="owner@example.com", name="Owner")
+    viewer = User(email="viewer@example.com", name="Viewer")
+    db_session.add_all([owner, viewer])
+    await db_session.commit()
 
-        job = Job(
-            owner_id=owner.id,
-            title="Shared Job",
-            description="Job shared with viewer",
-        )
-        db_session.add(job)
-        await db_session.commit()
+    job = Job(
+        owner_id=owner.id,
+        title="Shared Job",
+        description="Job shared with viewer",
+    )
+    db_session.add(job)
+    await db_session.commit()
 
-        # Share the job with view permission
-        share = JobShare(
-            job_id=job.id,
-            shared_with_user_id=viewer.id,
-            permission_level="view",
-        )
-        db_session.add(share)
-        await db_session.commit()
+    # Share the job with view permission
+    share = JobShare(
+        job_id=job.id,
+        shared_with_user_id=viewer.id,
+        permission_level="view",
+    )
+    db_session.add(share)
+    await db_session.commit()
+
+    # Enable RLS before setting user context (superuser bypasses RLS)
+    await enable_rls(db_session)
 
     # Viewer should be able to read the job
     await set_current_user(db_session, viewer.id)
@@ -71,29 +73,31 @@ async def test_job_sharing_view_permission(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_job_sharing_edit_permission(db_session: AsyncSession):
     """Test that edit permission grants full access."""
-    # Create two users and a job (bypass RLS for setup)
-    async with bypass_rls(db_session):
-        owner = User(email="owner2@example.com", name="Owner 2")
-        editor = User(email="editor@example.com", name="Editor")
-        db_session.add_all([owner, editor])
-        await db_session.commit()
+    # Create two users and a job
+    owner = User(email="owner2@example.com", name="Owner 2")
+    editor = User(email="editor@example.com", name="Editor")
+    db_session.add_all([owner, editor])
+    await db_session.commit()
 
-        job = Job(
-            owner_id=owner.id,
-            title="Editable Job",
-            description="Job shared with editor",
-        )
-        db_session.add(job)
-        await db_session.commit()
+    job = Job(
+        owner_id=owner.id,
+        title="Editable Job",
+        description="Job shared with editor",
+    )
+    db_session.add(job)
+    await db_session.commit()
 
-        # Share the job with edit permission
-        share = JobShare(
-            job_id=job.id,
-            shared_with_user_id=editor.id,
-            permission_level="edit",
-        )
-        db_session.add(share)
-        await db_session.commit()
+    # Share the job with edit permission
+    share = JobShare(
+        job_id=job.id,
+        shared_with_user_id=editor.id,
+        permission_level="edit",
+    )
+    db_session.add(share)
+    await db_session.commit()
+
+    # Enable RLS before setting user context (superuser bypasses RLS)
+    await enable_rls(db_session)
 
     # Editor should be able to read and update the job
     await set_current_user(db_session, editor.id)
@@ -112,45 +116,43 @@ async def test_job_sharing_edit_permission(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_bypass_rls(db_session: AsyncSession):
-    """Test that bypass_rls allows admin access to all rows."""
-    # Create data for multiple users (all with bypass_rls)
-    async with bypass_rls(db_session):
-        user1 = User(email="user_a@example.com", name="User A")
-        user2 = User(email="user_b@example.com", name="User B")
-        db_session.add_all([user1, user2])
-        await db_session.commit()
+async def test_admin_session_access(db_session: AsyncSession):
+    """Test that admin session (superuser) allows access to all rows.
 
-        job1 = Job(owner_id=user1.id, title="Job A")
-        job2 = Job(owner_id=user2.id, title="Job B")
-        db_session.add_all([job1, job2])
-        await db_session.commit()
+    Since db_session runs as superuser by default (bypassing RLS),
+    this tests the behavior when no user context is set.
+    """
+    # Create data for multiple users
+    user1 = User(email="user_a@example.com", name="User A")
+    user2 = User(email="user_b@example.com", name="User B")
+    db_session.add_all([user1, user2])
+    await db_session.commit()
 
-    # Without bypass, user1 should only see their job
-    await set_current_user(db_session, user1.id)
+    job1 = Job(owner_id=user1.id, title="Job A")
+    job2 = Job(owner_id=user2.id, title="Job B")
+    db_session.add_all([job1, job2])
+    await db_session.commit()
+
+    # Without user context set, superuser should see all jobs
     result = await db_session.execute(select(Job))
-    jobs = result.scalars().all()
-    assert len(jobs) == 1
-
-    #  With bypass, should see all jobs
-    async with bypass_rls(db_session):
-        result = await db_session.execute(select(Job))
-        all_jobs = result.scalars().all()
-        assert len(all_jobs) == 2
+    all_jobs = result.scalars().all()
+    assert len(all_jobs) == 2
 
 
 @pytest.mark.asyncio
 async def test_orphaned_jobs_visible(db_session: AsyncSession):
     """Test that orphaned jobs (owner_id=NULL) are visible to all users."""
     # Create orphaned job
-    async with bypass_rls(db_session):
-        orphaned = Job(owner_id=None, title="Orphaned Job")
-        db_session.add(orphaned)
-        await db_session.commit()
+    orphaned = Job(owner_id=None, title="Orphaned Job")
+    db_session.add(orphaned)
+    await db_session.commit()
 
-        user = User(email="viewer@example.com", name="Viewer")
-        db_session.add(user)
-        await db_session.commit()
+    user = User(email="viewer@example.com", name="Viewer")
+    db_session.add(user)
+    await db_session.commit()
+
+    # Enable RLS before setting user context (superuser bypasses RLS)
+    await enable_rls(db_session)
 
     # User should be able to see orphaned job
     await set_current_user(db_session, user.id)

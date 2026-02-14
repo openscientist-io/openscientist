@@ -6,10 +6,9 @@ from uuid import UUID
 from nicegui import app, ui
 from sqlalchemy import String, select
 
-from shandy.auth.middleware import require_auth
+from shandy.auth.middleware import require_admin, require_auth
 from shandy.database.models import Job, User
-from shandy.database.rls import bypass_rls
-from shandy.database.session import get_session
+from shandy.database.session import get_admin_session
 from shandy.webapp_components.ui_components import (
     make_action_button_slot,
     render_dialog_actions,
@@ -23,12 +22,9 @@ logger = logging.getLogger(__name__)
 
 @ui.page("/admin")
 @require_auth
+@require_admin
 async def admin_page():
     """Admin page for managing orphaned jobs and user assignments."""
-
-    # Note: In production, add admin role checking here
-    # For now, any authenticated user can access admin functions
-
     render_navigator(active_page="admin")
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-6"):
@@ -91,23 +87,22 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
     container.clear()
 
     try:
-        async with get_session() as session:
-            # Use bypass_rls to query all orphaned jobs regardless of current user
-            async with bypass_rls(session):
-                # Query orphaned jobs (owner_id IS NULL)
-                stmt = select(Job).where(Job.owner_id.is_(None))
+        # Use admin session to query all orphaned jobs regardless of current user
+        async with get_admin_session() as session:
+            # Query orphaned jobs (owner_id IS NULL)
+            stmt = select(Job).where(Job.owner_id.is_(None))
 
-                # Add search filter if provided
-                if search_query:
-                    stmt = stmt.where(
-                        Job.title.ilike(f"%{search_query}%")
-                        | Job.id.cast(String).ilike(f"%{search_query}%")
-                    )
+            # Add search filter if provided
+            if search_query:
+                stmt = stmt.where(
+                    Job.title.ilike(f"%{search_query}%")
+                    | Job.id.cast(String).ilike(f"%{search_query}%")
+                )
 
-                stmt = stmt.order_by(Job.created_at.desc())
+            stmt = stmt.order_by(Job.created_at.desc())
 
-                result = await session.execute(stmt)
-                orphaned_jobs = result.scalars().all()
+            result = await session.execute(stmt)
+            orphaned_jobs = result.scalars().all()
 
         if not orphaned_jobs:
             with container:
@@ -203,18 +198,17 @@ async def show_assign_dialog(job_id: str):
                 return
 
             try:
-                async with get_session() as session:
-                    async with bypass_rls(session):
-                        stmt = select(Job).where(Job.id == UUID(job_id))
-                        result = await session.execute(stmt)
-                        job = result.scalar_one_or_none()
+                async with get_admin_session() as session:
+                    stmt = select(Job).where(Job.id == UUID(job_id))
+                    result = await session.execute(stmt)
+                    job = result.scalar_one_or_none()
 
-                        if not job:
-                            ui.notify("Job not found", color="negative")
-                            return
+                    if not job:
+                        ui.notify("Job not found", color="negative")
+                        return
 
-                        job.owner_id = selected_user["id"]
-                        await session.commit()
+                    job.owner_id = selected_user["id"]
+                    await session.commit()
 
                 ui.notify("Job assigned successfully", color="positive")
                 dialog.close()
@@ -247,61 +241,67 @@ async def render_users_panel():
             users_container.clear()
 
             try:
-                async with get_session() as session:
-                    async with bypass_rls(session):
-                        stmt = select(User).order_by(User.created_at.desc())
-                        result = await session.execute(stmt)
-                        users = result.scalars().all()
-
-                if not users:
-                    with users_container:
-                        render_empty_state("No users found.")
-                    return
-
-                # Create table
-                columns = [
-                    {"name": "name", "label": "Name", "field": "name", "align": "left"},
-                    {
-                        "name": "email",
-                        "label": "Email",
-                        "field": "email",
-                        "align": "left",
-                    },
-                    {
-                        "name": "created_at",
-                        "label": "Joined",
-                        "field": "created_at",
-                        "align": "left",
-                    },
-                    {
-                        "name": "job_count",
-                        "label": "Jobs",
-                        "field": "job_count",
-                        "align": "center",
-                    },
-                ]
-
-                rows = []
-                for user in users:
-                    # Count user's jobs
-                    stmt = select(Job).where(Job.owner_id == user.id)
+                async with get_admin_session() as session:
+                    stmt = select(User).order_by(User.created_at.desc())
                     result = await session.execute(stmt)
-                    job_count = len(result.scalars().all())
+                    users = result.scalars().all()
 
-                    rows.append(
+                    if not users:
+                        with users_container:
+                            render_empty_state("No users found.")
+                        return
+
+                    # Create table
+                    columns = [
                         {
-                            "id": str(user.id),
-                            "name": user.name or "N/A",
-                            "email": user.email,
-                            "created_at": (
-                                user.created_at.strftime("%Y-%m-%d") if user.created_at else "N/A"
-                            ),
-                            "job_count": job_count,
-                        }
-                    )
+                            "name": "name",
+                            "label": "Name",
+                            "field": "name",
+                            "align": "left",
+                        },
+                        {
+                            "name": "email",
+                            "label": "Email",
+                            "field": "email",
+                            "align": "left",
+                        },
+                        {
+                            "name": "created_at",
+                            "label": "Joined",
+                            "field": "created_at",
+                            "align": "left",
+                        },
+                        {
+                            "name": "job_count",
+                            "label": "Jobs",
+                            "field": "job_count",
+                            "align": "center",
+                        },
+                    ]
 
-                with users_container:
-                    ui.table(columns=columns, rows=rows, row_key="id").classes("w-full")
+                    rows = []
+                    for user in users:
+                        # Count user's jobs
+                        stmt = select(Job).where(Job.owner_id == user.id)
+                        result = await session.execute(stmt)
+                        job_count = len(result.scalars().all())
+
+                        rows.append(
+                            {
+                                "id": str(user.id),
+                                "name": user.name or "N/A",
+                                "email": user.email,
+                                "created_at": (
+                                    user.created_at.strftime("%Y-%m-%d")
+                                    if user.created_at
+                                    else "N/A"
+                                ),
+                                "job_count": job_count,
+                            }
+                        )
+
+                    with users_container:
+                        ui.table(columns=columns, rows=rows, row_key="id").classes("w-full")
 
             except Exception as e:
                 logger.error("Error loading users: %s", e, exc_info=True)
@@ -345,27 +345,26 @@ async def render_legacy_user_panel():
                     return
 
                 try:
-                    async with get_session() as session:
-                        async with bypass_rls(session):
-                            # Check if user already exists
-                            stmt = select(User).where(User.email == email_input.value)
-                            result = await session.execute(stmt)
-                            existing_user = result.scalar_one_or_none()
+                    async with get_admin_session() as session:
+                        # Check if user already exists
+                        stmt = select(User).where(User.email == email_input.value)
+                        result = await session.execute(stmt)
+                        existing_user = result.scalar_one_or_none()
 
-                            if existing_user:
-                                ui.notify(
-                                    "User with this email already exists",
-                                    color="warning",
-                                )
-                                return
-
-                            # Create legacy user
-                            user = User(
-                                name=name_input.value,
-                                email=email_input.value,
+                        if existing_user:
+                            ui.notify(
+                                "User with this email already exists",
+                                color="warning",
                             )
-                            session.add(user)
-                            await session.commit()
+                            return
+
+                        # Create legacy user
+                        user = User(
+                            name=name_input.value,
+                            email=email_input.value,
+                        )
+                        session.add(user)
+                        await session.commit()
 
                     ui.notify("Legacy user created successfully", color="positive")
 
@@ -412,24 +411,23 @@ async def render_legacy_user_panel():
                         ui.notify("You must be logged in to claim a job", color="negative")
                         return
 
-                    async with get_session() as session:
-                        async with bypass_rls(session):
-                            # Find the job
-                            stmt = select(Job).where(Job.id == UUID(job_id))
-                            result = await session.execute(stmt)
-                            job = result.scalar_one_or_none()
+                    async with get_admin_session() as session:
+                        # Find the job
+                        stmt = select(Job).where(Job.id == UUID(job_id))
+                        result = await session.execute(stmt)
+                        job = result.scalar_one_or_none()
 
-                            if not job:
-                                ui.notify("Job not found", color="negative")
-                                return
+                        if not job:
+                            ui.notify("Job not found", color="negative")
+                            return
 
-                            if job.owner_id is not None:
-                                ui.notify("Job already has an owner", color="warning")
-                                return
+                        if job.owner_id is not None:
+                            ui.notify("Job already has an owner", color="warning")
+                            return
 
-                            # Claim the job
-                            job.owner_id = UUID(current_user_id)
-                            await session.commit()
+                        # Claim the job
+                        job.owner_id = UUID(current_user_id)
+                        await session.commit()
 
                     ui.notify("Job claimed successfully!", color="positive")
                     job_id_input.value = ""

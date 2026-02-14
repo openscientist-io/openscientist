@@ -13,6 +13,7 @@ from typing import Callable, Optional
 from nicegui import app, ui
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from shandy.database.models import Session, User
 from shandy.database.session import get_session
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 async def get_current_user(db: AsyncSession, session_token: str) -> Optional[User]:
     """
     Get user from session token.
+
+    Eagerly loads the administrator relationship to avoid extra queries.
 
     Args:
         db: Database session
@@ -39,6 +42,7 @@ async def get_current_user(db: AsyncSession, session_token: str) -> Optional[Use
                 Session.id == session_token,
                 Session.expires_at > datetime.now(timezone.utc),
             )
+            .options(selectinload(User.administrator))
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
@@ -55,7 +59,7 @@ async def validate_session(session_token: str) -> Optional[dict]:
         session_token: Session token to validate
 
     Returns:
-        Dictionary with user_id, email, and name if valid, None otherwise
+        Dictionary with user_id, email, name, and is_admin if valid, None otherwise
     """
     try:
         async with get_session() as db:
@@ -65,6 +69,7 @@ async def validate_session(session_token: str) -> Optional[dict]:
                     "user_id": str(user.id),
                     "email": user.email,
                     "name": user.name,
+                    "is_admin": user.administrator is not None,
                 }
     except Exception as e:
         logger.error("Session validation error: %s", e)
@@ -140,6 +145,7 @@ def require_auth(func: Callable) -> Callable:
         app.storage.user["user_id"] = user_info["user_id"]
         app.storage.user["email"] = user_info["email"]
         app.storage.user["name"] = user_info["name"]
+        app.storage.user["is_admin"] = user_info.get("is_admin", False)
         app.storage.user["authenticated"] = True
 
         # Call the decorated function
@@ -214,3 +220,59 @@ def get_current_user_name() -> Optional[str]:
         User name if authenticated, None otherwise
     """
     return app.storage.user.get("name")
+
+
+def is_current_user_admin() -> bool:
+    """
+    Check if the current authenticated user is an administrator.
+
+    Returns:
+        True if user is an admin, False otherwise
+    """
+    return bool(app.storage.user.get("is_admin", False))
+
+
+def require_admin(func: Callable) -> Callable:
+    """
+    Decorator to require admin privileges for a page.
+
+    Must be used AFTER @require_auth to ensure user is authenticated first.
+    Redirects non-admin users to the homepage with a notification.
+
+    Args:
+        func: Page function to protect
+
+    Returns:
+        Wrapped function that checks admin status
+    """
+
+    @wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        if not app.storage.user.get("is_admin", False):
+            logger.warning(
+                "Non-admin user %s attempted to access admin page",
+                app.storage.user.get("email", "unknown"),
+            )
+            ui.notify("Admin access required", type="warning")
+            ui.navigate.to("/")
+            return
+        return await func(*args, **kwargs)
+
+    @wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        if not app.storage.user.get("is_admin", False):
+            logger.warning(
+                "Non-admin user %s attempted to access admin page",
+                app.storage.user.get("email", "unknown"),
+            )
+            ui.notify("Admin access required", type="warning")
+            ui.navigate.to("/")
+            return
+        return func(*args, **kwargs)
+
+    import inspect
+
+    if inspect.iscoroutinefunction(func):
+        return async_wrapper
+    else:
+        return sync_wrapper

@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from shandy.auth.oauth import get_oauth_client
 from shandy.auth.providers import GitHubProvider, MockProvider, ORCIDProvider
@@ -57,10 +58,14 @@ async def create_or_update_user(
     Returns:
         User object (created or existing)
     """
-    # Check if OAuth account exists
-    oauth_stmt = select(OAuthAccount).where(
-        OAuthAccount.provider == provider,
-        OAuthAccount.provider_user_id == provider_user_id,
+    # Check if OAuth account exists (eager load user to avoid lazy load in async)
+    oauth_stmt = (
+        select(OAuthAccount)
+        .options(selectinload(OAuthAccount.user))
+        .where(
+            OAuthAccount.provider == provider,
+            OAuthAccount.provider_user_id == provider_user_id,
+        )
     )
     oauth_result = await db.execute(oauth_stmt)
     oauth_account = oauth_result.scalar_one_or_none()
@@ -198,6 +203,85 @@ async def mock_oauth_login():
     )
 
     logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
+    return response
+
+
+@router.get("/mock/admin-login")
+async def mock_admin_oauth_login():
+    """
+    Mock OAuth login for admin user (development only).
+
+    Creates/updates a fixed admin user with email admin@mock.local
+    and grants admin privileges.
+
+    Security Warning: Never enable this in production!
+    """
+    from shandy.database.models import Administrator
+    from shandy.database.session import get_admin_session
+
+    settings = get_settings()
+    if not settings.auth.enable_mock_auth:
+        raise HTTPException(status_code=404, detail="Mock auth not enabled")
+
+    # Fixed admin credentials for persistence across logins
+    email = "admin@mock.local"
+    name = "Mock Admin"
+    username = "mockadmin"
+
+    # Create user info using MockProvider
+    user_info = await MockProvider.get_user_info(
+        {
+            "email": email,
+            "name": name,
+            "username": username,
+        }
+    )
+
+    # Create/update user and create session
+    async with get_session() as db:
+        user = await create_or_update_user(
+            db,
+            provider="mock",
+            provider_user_id=user_info["provider_user_id"],
+            email=user_info["email"],
+            name=user_info["name"],
+            access_token="mock_access_token",
+            refresh_token=None,
+        )
+        user_id = user.id
+        user_email = user.email
+        login_session = await create_session(db, str(user_id))
+        # Extract session ID before exiting context to avoid MissingGreenlet
+        session_token = str(login_session.id)
+
+    # Ensure Administrator record exists (use admin session to bypass RLS)
+    async with get_admin_session() as db:
+        stmt = select(Administrator).where(Administrator.user_id == user_id)
+        result = await db.execute(stmt)
+        existing_admin = result.scalar_one_or_none()
+
+        if not existing_admin:
+            admin_record = Administrator(
+                user_id=user_id,
+                notes="Auto-created via mock admin login",
+            )
+            db.add(admin_record)
+            await db.commit()
+            logger.info("Created admin record for user %s", user_email)
+
+    # Create redirect response with session cookie
+    response = RedirectResponse(url="/", status_code=303)
+
+    response.set_cookie(
+        key="session_token",
+        value=session_token,
+        max_age=settings.auth.session_duration_days * 24 * 60 * 60,
+        httponly=True,
+        secure=settings.auth.app_url.startswith("https"),
+        samesite="lax",
+    )
+
+    logger.info("Admin user %s logged in via mock auth (DEV MODE)", user_email)
     return response
 
 

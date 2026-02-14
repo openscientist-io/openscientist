@@ -15,8 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import SkillSource
-from .database.rls import bypass_rls
-from .database.session import get_session
+from .database.session import get_admin_session
 from .settings import get_settings
 from .skill_ingestion import sync_skill_source
 
@@ -121,13 +120,16 @@ class SkillSyncScheduler:
         """
         Sync all enabled skill sources.
 
+        Uses admin session since this runs as a background task with no user context.
+
         Returns:
             List of SyncResult for each source
         """
         results: list[SyncResult] = []
 
         try:
-            async with get_session() as session:
+            # Use admin session for background tasks (no user context)
+            async with get_admin_session() as session:
                 sources = await self._get_enabled_sources(session)
                 logger.info("Found %d enabled skill sources", len(sources))
 
@@ -146,10 +148,9 @@ class SkillSyncScheduler:
         session: AsyncSession,
     ) -> list[SkillSource]:
         """Get all enabled skill sources."""
-        async with bypass_rls(session):
-            stmt = select(SkillSource).where(SkillSource.is_enabled.is_(True))
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
+        stmt = select(SkillSource).where(SkillSource.is_enabled.is_(True))
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     async def _sync_source_if_needed(
         self,
@@ -220,10 +221,9 @@ class SkillSyncScheduler:
         except Exception as e:
             logger.error("Failed to sync %s: %s", source.name, e)
 
-            # Update source with error
-            async with bypass_rls(session):
-                source.sync_error = str(e)
-                await session.commit()
+            # Update source with error (session is already admin session)
+            source.sync_error = str(e)
+            await session.commit()
 
             return SyncResult(
                 source_id=source_id_str,
@@ -250,19 +250,19 @@ class SkillSyncScheduler:
             logger.warning("Invalid source ID: %s", source_id)
             return None
 
-        async with get_session() as session:
-            async with bypass_rls(session):
-                stmt = select(SkillSource).where(SkillSource.id == source_uuid)
-                result = await session.execute(stmt)
-                source = result.scalar_one_or_none()
+        # Use admin session for background/admin operations
+        async with get_admin_session() as session:
+            stmt = select(SkillSource).where(SkillSource.id == source_uuid)
+            result = await session.execute(stmt)
+            source = result.scalar_one_or_none()
 
-                if not source:
-                    logger.warning("Source not found: %s", source_id)
-                    return None
+            if not source:
+                logger.warning("Source not found: %s", source_id)
+                return None
 
-                # Force sync (bypass rate limiting)
-                self._last_sync.pop(source_id, None)
-                return await self._sync_source_if_needed(session, source)
+            # Force sync (bypass rate limiting)
+            self._last_sync.pop(source_id, None)
+            return await self._sync_source_if_needed(session, source)
 
 
 # Global scheduler instance

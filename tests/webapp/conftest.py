@@ -11,7 +11,6 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Job, Session, User
-from shandy.database.rls import bypass_rls
 from shandy.job_manager import JobInfo, JobManager
 
 
@@ -31,30 +30,28 @@ def _nicegui_storage_dir(tmp_path):
 @pytest_asyncio.fixture
 async def webapp_user(db_session: AsyncSession) -> User:
     """Create a test user for webapp tests."""
-    async with bypass_rls(db_session):
-        user = User(
-            email="webapp-test@example.com",
-            name="Webapp Test User",
-        )
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    user = User(
+        email="webapp-test@example.com",
+        name="Webapp Test User",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
 @pytest_asyncio.fixture
 async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session:
     """Create a valid session for the webapp test user."""
-    async with bypass_rls(db_session):
-        session = Session(
-            user_id=webapp_user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-            ip_address="127.0.0.1",
-            user_agent="pytest-test-agent",
-        )
-        db_session.add(session)
-        await db_session.commit()
-        await db_session.refresh(session)
+    session = Session(
+        user_id=webapp_user.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        ip_address="127.0.0.1",
+        user_agent="pytest-test-agent",
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(session)
     return session
 
 
@@ -109,17 +106,16 @@ async def webapp_job_pending(
     db_session: AsyncSession, webapp_user: User, temp_jobs_dir: Path
 ) -> tuple[Job, JobInfo, Path]:
     """Create a pending job in the database with file structure."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=webapp_user.id,
-            title="What is the effect of gene X on disease Y?",
-            status="pending",
-            max_iterations=10,
-            current_iteration=0,
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=webapp_user.id,
+        title="What is the effect of gene X on disease Y?",
+        status="pending",
+        max_iterations=10,
+        current_iteration=0,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     job_dir = temp_jobs_dir / str(job.id)
 
@@ -158,17 +154,16 @@ async def webapp_job_running(
     db_session: AsyncSession, webapp_user: User, temp_jobs_dir: Path
 ) -> tuple[Job, JobInfo, Path]:
     """Create a running job with partial results."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=webapp_user.id,
-            title="How does protein A interact with protein B?",
-            status="running",
-            max_iterations=10,
-            current_iteration=2,
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=webapp_user.id,
+        title="How does protein A interact with protein B?",
+        status="running",
+        max_iterations=10,
+        current_iteration=2,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     job_dir = temp_jobs_dir / str(job.id)
 
@@ -257,17 +252,16 @@ async def webapp_job_completed(
     db_session: AsyncSession, webapp_user: User, temp_jobs_dir: Path
 ) -> tuple[Job, JobInfo, Path]:
     """Create a completed job with full results."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=webapp_user.id,
-            title="What are the mechanisms of drug resistance in cancer cells?",
-            status="completed",
-            max_iterations=10,
-            current_iteration=5,
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=webapp_user.id,
+        title="What are the mechanisms of drug resistance in cancer cells?",
+        status="completed",
+        max_iterations=10,
+        current_iteration=5,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     job_dir = temp_jobs_dir / str(job.id)
 
@@ -354,18 +348,17 @@ async def webapp_job_failed(
     """Create a failed job with error."""
     error_msg = '{"type": "error", "error": {"type": "api_error", "message": "API request failed: Rate limit exceeded"}}'
 
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=webapp_user.id,
-            title="Test failing question",
-            status="failed",
-            max_iterations=10,
-            current_iteration=1,
-            error_message=error_msg,
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=webapp_user.id,
+        title="Test failing question",
+        status="failed",
+        max_iterations=10,
+        current_iteration=1,
+        error_message=error_msg,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     job_dir = temp_jobs_dir / str(job.id)
 
@@ -402,17 +395,16 @@ async def webapp_job_awaiting_feedback(
     db_session: AsyncSession, webapp_user: User, temp_jobs_dir: Path
 ) -> tuple[Job, JobInfo, Path]:
     """Create a job awaiting user feedback (coinvestigate mode)."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=webapp_user.id,
-            title="How do neurons communicate?",
-            status="awaiting_feedback",
-            max_iterations=10,
-            current_iteration=1,
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=webapp_user.id,
+        title="How do neurons communicate?",
+        status="awaiting_feedback",
+        max_iterations=10,
+        current_iteration=1,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
 
     job_dir = temp_jobs_dir / str(job.id)
 

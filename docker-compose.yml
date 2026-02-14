@@ -20,6 +20,8 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+      # Init script creates shandy_admin role for RLS bypass
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shandy} -d ${POSTGRES_DB:-shandy}"]
       interval: 10s

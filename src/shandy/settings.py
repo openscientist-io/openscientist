@@ -169,6 +169,10 @@ class DatabaseSettings(BaseSettings):
 
     database_url: Optional[str] = Field(default=None, alias="DATABASE_URL")
 
+    # Admin database URL for elevated operations (bypasses RLS via DB role)
+    # If not set, defaults to DATABASE_URL (same role for all operations)
+    admin_database_url: Optional[str] = Field(default=None, alias="ADMIN_DATABASE_URL")
+
     # Individual components (used if DATABASE_URL not set)
     postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
@@ -200,6 +204,25 @@ class DatabaseSettings(BaseSettings):
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @property
+    def effective_admin_database_url(self) -> str:
+        """Get the admin database URL for elevated operations.
+
+        The admin database URL is used for operations that need to bypass
+        Row-Level Security (RLS), such as:
+        - Background schedulers (no user context)
+        - Admin-authenticated endpoints
+        - Migrations and schema changes
+
+        If ADMIN_DATABASE_URL is not set, falls back to the regular database URL.
+        In production, ADMIN_DATABASE_URL should connect with a PostgreSQL role
+        that has elevated privileges (e.g., table owner or superuser).
+        """
+        if self.admin_database_url:
+            return self.admin_database_url
+        # Fall back to regular database URL
+        return self.effective_database_url
 
 
 class AuthSettings(BaseSettings):

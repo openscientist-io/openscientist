@@ -422,6 +422,10 @@ def render_navigator(
         show_new_job: Whether to show the New Job button (disable on config error)
         extra_buttons: List of (label, icon, on_click, props) tuples for page-specific buttons
     """
+    from nicegui import app
+
+    # Check admin status from session storage (set by require_auth decorator)
+    show_admin = app.storage.user.get("is_admin", False)
     # Add responsive CSS for mobile/desktop navigation toggle
     ui.add_css(
         """
@@ -448,9 +452,10 @@ def render_navigator(
         [
             ("Billing", "payments", "/billing", active_page == "billing"),
             ("Docs", "description", "/docs", active_page == "docs"),
-            ("Admin", "admin_panel_settings", "/admin", active_page == "admin"),
         ]
     )
+    if show_admin:
+        nav_items.append(("Admin", "admin_panel_settings", "/admin", active_page == "admin"))
 
     # Mobile drawer for navigation
     with ui.right_drawer(value=False).props("overlay behavior=mobile bordered") as drawer:
@@ -723,8 +728,7 @@ async def render_user_search(
     from sqlalchemy import select
 
     from shandy.database.models import User
-    from shandy.database.rls import bypass_rls
-    from shandy.database.session import get_session
+    from shandy.database.session import get_admin_session
 
     search_input = ui.input(
         label=placeholder,
@@ -741,15 +745,15 @@ async def render_user_search(
             return
 
         try:
-            async with get_session() as session:
-                async with bypass_rls(session):
-                    stmt = (
-                        select(User)
-                        .where(User.email.ilike(f"%{query}%") | User.name.ilike(f"%{query}%"))
-                        .limit(10)
-                    )
-                    result = await session.execute(stmt)
-                    users = result.scalars().all()
+            # Use admin session to search all users
+            async with get_admin_session() as session:
+                stmt = (
+                    select(User)
+                    .where(User.email.ilike(f"%{query}%") | User.name.ilike(f"%{query}%"))
+                    .limit(10)
+                )
+                result = await session.execute(stmt)
+                users = result.scalars().all()
 
             results_container.clear()
             with results_container:

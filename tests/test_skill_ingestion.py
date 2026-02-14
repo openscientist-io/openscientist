@@ -10,10 +10,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Skill, SkillSource
-from shandy.database.rls import bypass_rls
 from shandy.skill_ingestion import (
     GitHubSkillIngester,
     LocalSkillIngester,
@@ -251,17 +251,16 @@ class TestLocalSkillIngester:
             (skills_dir / "test-skill.md").write_text(sample_skill_markdown)
 
             # Create source
-            async with bypass_rls(db_session):
-                source = SkillSource(
-                    name="Local Test",
-                    source_type="local",
-                    path=tmpdir,
-                    skills_path="skills",
-                    is_enabled=True,
-                )
-                db_session.add(source)
-                await db_session.commit()
-                await db_session.refresh(source)
+            source = SkillSource(
+                name="Local Test",
+                source_type="local",
+                path=tmpdir,
+                skills_path="skills",
+                is_enabled=True,
+            )
+            db_session.add(source)
+            await db_session.commit()
+            await db_session.refresh(source)
 
             # Sync
             ingester = LocalSkillIngester()
@@ -273,12 +272,9 @@ class TestLocalSkillIngester:
             assert stats["errors"] == 0
 
             # Verify skill was created
-            async with bypass_rls(db_session):
-                from sqlalchemy import select
-
-                stmt = select(Skill).where(Skill.source_id == source.id)
-                result = await db_session.execute(stmt)
-                skills = list(result.scalars().all())
+            stmt = select(Skill).where(Skill.source_id == source.id)
+            result = await db_session.execute(stmt)
+            skills = list(result.scalars().all())
 
             assert len(skills) == 1
             assert skills[0].name == "Test Skill"
@@ -298,17 +294,16 @@ class TestLocalSkillIngester:
             skill_file.write_text(sample_skill_markdown)
 
             # Create source
-            async with bypass_rls(db_session):
-                source = SkillSource(
-                    name="Local Test",
-                    source_type="local",
-                    path=tmpdir,
-                    skills_path="skills",
-                    is_enabled=True,
-                )
-                db_session.add(source)
-                await db_session.commit()
-                await db_session.refresh(source)
+            source = SkillSource(
+                name="Local Test",
+                source_type="local",
+                path=tmpdir,
+                skills_path="skills",
+                is_enabled=True,
+            )
+            db_session.add(source)
+            await db_session.commit()
+            await db_session.refresh(source)
 
             # Initial sync
             ingester = LocalSkillIngester()
@@ -332,16 +327,15 @@ class TestLocalSkillIngester:
     @pytest.mark.asyncio
     async def test_sync_invalid_source_type(self, db_session: AsyncSession):
         """Test that syncing with wrong source type raises error."""
-        async with bypass_rls(db_session):
-            source = SkillSource(
-                name="GitHub Source",
-                source_type="github",  # Wrong type for LocalSkillIngester
-                url="https://github.com/test/repo",
-                is_enabled=True,
-            )
-            db_session.add(source)
-            await db_session.commit()
-            await db_session.refresh(source)
+        source = SkillSource(
+            name="GitHub Source",
+            source_type="github",  # Wrong type for LocalSkillIngester
+            url="https://github.com/test/repo",
+            is_enabled=True,
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
 
         ingester = LocalSkillIngester()
 

@@ -45,12 +45,6 @@ uv run pytest
 
 # Run with coverage
 uv run pytest --cov=shandy
-
-# Run E2E tests only
-uv run pytest tests/zz_e2e/ -v
-
-# Run E2E tests with visible browser
-uv run pytest tests/zz_e2e/ -v --headed
 ```
 
 ### Testing Conventions

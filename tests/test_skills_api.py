@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.endpoints.skills import router
 from shandy.database.models import Skill, SkillSource, User
-from shandy.database.rls import bypass_rls
+from tests.helpers import enable_rls
 
 
 @pytest.fixture
@@ -437,12 +437,11 @@ class TestSkillSourcesEndpoints:
         )
 
         # Verify deleted
-        async with bypass_rls(db_session):
-            from uuid import UUID
+        from uuid import UUID
 
-            stmt = select(SkillSource).where(SkillSource.id == UUID(created.id))
-            result = await db_session.execute(stmt)
-            source = result.scalar_one_or_none()
+        stmt = select(SkillSource).where(SkillSource.id == UUID(created.id))
+        result = await db_session.execute(stmt)
+        source = result.scalar_one_or_none()
 
         assert source is None
 
@@ -497,6 +496,9 @@ class TestSkillSourcesEndpoints:
         from shandy.api.endpoints.skills import list_skill_sources
         from shandy.database.rls import set_current_user
 
+        # Enable RLS before setting user context (superuser bypasses RLS)
+        await enable_rls(db_session)
+
         # test_user is NOT an admin
         await set_current_user(db_session, test_user.id)
 
@@ -521,6 +523,9 @@ class TestSkillSourcesEndpoints:
 
         from shandy.api.endpoints.skills import delete_skill_source
         from shandy.database.rls import set_current_user
+
+        # Enable RLS before setting user context (superuser bypasses RLS)
+        await enable_rls(db_session)
 
         # test_user is NOT an admin
         await set_current_user(db_session, test_user.id)
@@ -547,6 +552,9 @@ class TestSkillSourcesEndpoints:
 
         from shandy.api.endpoints.skills import sync_skill_source_endpoint
         from shandy.database.rls import set_current_user
+
+        # Enable RLS before setting user context (superuser bypasses RLS)
+        await enable_rls(db_session)
 
         # test_user is NOT an admin
         await set_current_user(db_session, test_user.id)

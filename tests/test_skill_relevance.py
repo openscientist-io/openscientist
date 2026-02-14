@@ -8,7 +8,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Skill
-from shandy.database.rls import bypass_rls
 from shandy.skill_relevance import (
     get_all_categories,
     get_skills_by_category,
@@ -23,8 +22,7 @@ async def test_get_all_categories(
     test_skill2: Skill,
 ):
     """Test getting all unique categories."""
-    async with bypass_rls(db_session):
-        categories = await get_all_categories(db_session)
+    categories = await get_all_categories(db_session)
 
     assert "metabolomics" in categories
     assert "genomics" in categories
@@ -38,10 +36,9 @@ async def test_get_skills_by_category(
     test_skill2: Skill,
 ):
     """Test getting skills by category."""
-    async with bypass_rls(db_session):
-        metabolomics_skills = await get_skills_by_category(db_session, "metabolomics")
-        genomics_skills = await get_skills_by_category(db_session, "genomics")
-        empty_skills = await get_skills_by_category(db_session, "nonexistent")
+    metabolomics_skills = await get_skills_by_category(db_session, "metabolomics")
+    genomics_skills = await get_skills_by_category(db_session, "genomics")
+    empty_skills = await get_skills_by_category(db_session, "nonexistent")
 
     assert len(metabolomics_skills) == 1
     assert metabolomics_skills[0].name == "Metabolomics Analysis"
@@ -59,9 +56,8 @@ async def test_search_skills_full_text(
     test_skill2: Skill,
 ):
     """Test full-text search on skills."""
-    async with bypass_rls(db_session):
-        # Search for "metabolomics"
-        results = await search_skills(db_session, "metabolomics analysis")
+    # Search for "metabolomics"
+    results = await search_skills(db_session, "metabolomics analysis")
 
     assert len(results) >= 1
     assert any(s.name == "Metabolomics Analysis" for s in results)
@@ -74,13 +70,12 @@ async def test_search_skills_with_category_filter(
     test_skill2: Skill,
 ):
     """Test search with category filter."""
-    async with bypass_rls(db_session):
-        # Search in metabolomics category only
-        results = await search_skills(
-            db_session,
-            "analysis pipeline",
-            category="metabolomics",
-        )
+    # Search in metabolomics category only
+    results = await search_skills(
+        db_session,
+        "analysis pipeline",
+        category="metabolomics",
+    )
 
     # Should only find metabolomics skills
     for result in results:
@@ -93,13 +88,12 @@ async def test_search_skills_with_tags_filter(
     test_skill: Skill,
 ):
     """Test search with tags filter."""
-    async with bypass_rls(db_session):
-        # Search with tag filter
-        results = await search_skills(
-            db_session,
-            "analysis",
-            tags=["statistics"],
-        )
+    # Search with tag filter
+    results = await search_skills(
+        db_session,
+        "analysis",
+        tags=["statistics"],
+    )
 
     # Should only find skills with "statistics" tag
     assert len(results) >= 1

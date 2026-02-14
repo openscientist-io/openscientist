@@ -69,56 +69,6 @@ async def get_current_user(session: AsyncSession) -> UUID | None:
 
 
 @asynccontextmanager
-async def bypass_rls(session: AsyncSession) -> AsyncGenerator[None, None]:
-    """
-    Temporarily bypass Row-Level Security for administrative operations.
-
-    This context manager sets the `app.bypass_rls` session variable to 'true',
-    which activates bypass policies on all tables, allowing access to all rows
-    regardless of ownership. Use with caution and only for legitimate
-    administrative tasks like migrations, bulk operations, or system maintenance.
-
-    WARNING: This grants full database access. Only use for:
-    - Data migration scripts
-    - Administrative tools
-    - System maintenance tasks
-    - Bulk operations by admins
-
-    Args:
-        session: SQLAlchemy async session
-
-    Example:
-        >>> async with get_session() as session:
-        ...     # Normal RLS applies here
-        ...     user_jobs = await session.execute(select(Job))
-        ...
-        ...     async with bypass_rls(session):
-        ...         # RLS bypassed - can see all jobs
-        ...         all_jobs = await session.execute(select(Job))
-        ...
-        ...     # RLS re-enabled automatically
-
-    Security Notes:
-    - Never expose this to user-facing APIs
-    - Always audit usage of this function
-    - Consider logging bypass operations
-    - Restore RLS state even on exceptions
-    """
-    try:
-        # Enable bypass via session variable (activates bypass policies)
-        await session.execute(text("SELECT set_config('app.bypass_rls', 'true', false)"))
-
-        yield
-    finally:
-        # Always clear the bypass flag, even on exceptions
-        try:
-            await session.execute(text("SELECT set_config('app.bypass_rls', '', false)"))
-        except Exception:
-            # Ignore errors during cleanup - session might be closing
-            pass
-
-
-@asynccontextmanager
 async def session_with_user(
     session: AsyncSession,
     user_id: UUID | None,

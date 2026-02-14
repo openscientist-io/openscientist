@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import hash_secret
 from shandy.database.models import APIKey, Job, User
-from shandy.database.rls import bypass_rls
+from tests.helpers import enable_rls
 
 
 @pytest.fixture
@@ -42,28 +42,26 @@ def mock_user2() -> User:
 @pytest_asyncio.fixture
 async def test_user_db(db_session: AsyncSession) -> User:
     """Create a real user in the test database."""
-    async with bypass_rls(db_session):
-        user = User(
-            email="apitest@example.com",
-            name="API Test User",
-        )
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    user = User(
+        email="apitest@example.com",
+        name="API Test User",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
 @pytest_asyncio.fixture
 async def test_user2_db(db_session: AsyncSession) -> User:
     """Create a second real user in the test database."""
-    async with bypass_rls(db_session):
-        user = User(
-            email="apitest2@example.com",
-            name="API Test User 2",
-        )
-        db_session.add(user)
-        await db_session.commit()
-        await db_session.refresh(user)
+    user = User(
+        email="apitest2@example.com",
+        name="API Test User 2",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
@@ -74,16 +72,15 @@ async def test_api_key_db(
 ) -> tuple[APIKey, str]:
     """Create a real API key in the test database."""
     secret = "test_secret_for_api_tests"
-    async with bypass_rls(db_session):
-        api_key = APIKey(
-            user_id=test_user_db.id,
-            name="test-api-key",
-            key_hash=hash_secret(secret),
-            is_active=True,
-        )
-        db_session.add(api_key)
-        await db_session.commit()
-        await db_session.refresh(api_key)
+    api_key = APIKey(
+        user_id=test_user_db.id,
+        name="test-api-key",
+        key_hash=hash_secret(secret),
+        is_active=True,
+    )
+    db_session.add(api_key)
+    await db_session.commit()
+    await db_session.refresh(api_key)
     return api_key, f"test-api-key:{secret}"
 
 
@@ -93,18 +90,17 @@ async def test_job_db(
     test_user_db: User,
 ) -> Job:
     """Create a real job in the test database."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=test_user_db.id,
-            title="Test API Job",
-            description="A job for API testing",
-            status="pending",
-            max_iterations=5,
-            current_iteration=0,
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=test_user_db.id,
+        title="Test API Job",
+        description="A job for API testing",
+        status="pending",
+        max_iterations=5,
+        current_iteration=0,
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
     return job
 
 
@@ -114,19 +110,18 @@ async def completed_job_db(
     test_user_db: User,
 ) -> Job:
     """Create a completed job in the test database."""
-    async with bypass_rls(db_session):
-        job = Job(
-            owner_id=test_user_db.id,
-            title="Completed Test Job",
-            description="A completed job for testing",
-            status="completed",
-            max_iterations=5,
-            current_iteration=5,
-            result_summary="Analysis complete.",
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
+    job = Job(
+        owner_id=test_user_db.id,
+        title="Completed Test Job",
+        description="A completed job for testing",
+        status="completed",
+        max_iterations=5,
+        current_iteration=5,
+        result_summary="Analysis complete.",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
     return job
 
 
@@ -290,16 +285,15 @@ class TestAPIKeyEndpoints:
         api_key, full_key = test_api_key_db
 
         # Create another key to revoke (can't revoke the one we're using)
-        async with bypass_rls(db_session):
-            key_to_revoke = APIKey(
-                user_id=test_user_db.id,
-                name="key-to-revoke",
-                key_hash=hash_secret("revoke-secret"),
-                is_active=True,
-            )
-            db_session.add(key_to_revoke)
-            await db_session.commit()
-            await db_session.refresh(key_to_revoke)
+        key_to_revoke = APIKey(
+            user_id=test_user_db.id,
+            name="key-to-revoke",
+            key_hash=hash_secret("revoke-secret"),
+            is_active=True,
+        )
+        db_session.add(key_to_revoke)
+        await db_session.commit()
+        await db_session.refresh(key_to_revoke)
 
         app = FastAPI()
 
@@ -576,16 +570,18 @@ class TestJobEndpoints:
         _, full_key = test_api_key_db
 
         # Create job for user2
-        async with bypass_rls(db_session):
-            other_job = Job(
-                owner_id=test_user2_db.id,
-                title="Other User's Job",
-                description="Belongs to user2",
-                status="pending",
-            )
-            db_session.add(other_job)
-            await db_session.commit()
-            await db_session.refresh(other_job)
+        other_job = Job(
+            owner_id=test_user2_db.id,
+            title="Other User's Job",
+            description="Belongs to user2",
+            status="pending",
+        )
+        db_session.add(other_job)
+        await db_session.commit()
+        await db_session.refresh(other_job)
+
+        # Enable RLS before setting user context (superuser bypasses RLS)
+        await enable_rls(db_session)
 
         app = FastAPI()
 
@@ -631,16 +627,15 @@ class TestJobEndpoints:
         _, full_key = test_api_key_db
 
         # Create a running job to cancel
-        async with bypass_rls(db_session):
-            running_job = Job(
-                owner_id=test_user_db.id,
-                title="Running Job",
-                description="Will be cancelled",
-                status="running",
-            )
-            db_session.add(running_job)
-            await db_session.commit()
-            await db_session.refresh(running_job)
+        running_job = Job(
+            owner_id=test_user_db.id,
+            title="Running Job",
+            description="Will be cancelled",
+            status="running",
+        )
+        db_session.add(running_job)
+        await db_session.commit()
+        await db_session.refresh(running_job)
 
         app = FastAPI()
 
@@ -834,6 +829,9 @@ class TestJobSharingEndpoints:
         test_job_db: Job,
     ):
         """Share a job with another user."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import patch
+
         from fastapi import FastAPI
 
         from shandy.api.auth import get_current_user_from_api_key
@@ -852,23 +850,29 @@ class TestJobSharingEndpoints:
         async def override_get_user():
             return test_user_db
 
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            """Mock admin session that uses test db_session."""
+            yield db_session
+
         app.dependency_overrides[get_session] = override_get_session
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.post(
-                "/api/v1/shares",
-                json={
-                    "job_id": str(test_job_db.id),
-                    "shared_with_email": test_user2_db.email,
-                    "permission_level": "view",
-                },
-                headers={"Authorization": f"Bearer {full_key}"},
-            )
+        with patch("shandy.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/shares",
+                    json={
+                        "job_id": str(test_job_db.id),
+                        "shared_with_email": test_user2_db.email,
+                        "permission_level": "view",
+                    },
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
 
         assert response.status_code == 201, (
             f"Expected 201, got {response.status_code}: {response.json()}"
@@ -886,6 +890,9 @@ class TestJobSharingEndpoints:
         test_api_key_db: tuple[APIKey, str],
     ):
         """Search for users to share with."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import patch
+
         from fastapi import FastAPI
 
         from shandy.api.auth import get_current_user_from_api_key
@@ -904,18 +911,24 @@ class TestJobSharingEndpoints:
         async def override_get_user():
             return test_user_db
 
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            """Mock admin session that uses test db_session."""
+            yield db_session
+
         app.dependency_overrides[get_session] = override_get_session
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.get(
-                f"/api/v1/shares/search/users?q={test_user2_db.email[:5]}",
-                headers={"Authorization": f"Bearer {full_key}"},
-            )
+        with patch("shandy.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/shares/search/users?q={test_user2_db.email[:5]}",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
 
         assert response.status_code == 200
         data = response.json()

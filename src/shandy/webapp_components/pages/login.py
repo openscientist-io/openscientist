@@ -62,7 +62,7 @@ def login_page():
                             )
                             ui.label("Continue with ORCID")
 
-                # Mock OAuth button (dev mode only)
+                # Mock OAuth buttons (dev mode only)
                 if mock_enabled:
                     ui.separator().classes("my-2")
                     ui.label("Development Mode").classes("text-xs text-gray-500")
@@ -74,6 +74,15 @@ def login_page():
                         with ui.row().classes("items-center gap-3"):
                             ui.icon("developer_mode", size="20px")
                             ui.label("Mock Login (Dev Only)")
+
+                    with (
+                        ui.button(on_click=lambda: ui.navigate.to("/auth/mock/admin-login"))
+                        .classes("w-full justify-start")
+                        .props("color=red")
+                    ):
+                        with ui.row().classes("items-center gap-3"):
+                            ui.icon("admin_panel_settings", size="20px")
+                            ui.label("Mock Admin Login")
 
             # No auth configured warning
             if not oauth_enabled:
