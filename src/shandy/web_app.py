@@ -13,6 +13,9 @@ from nicegui import app, ui
 
 from shandy.job_manager import JobManager
 
+# Path to assets directory (favicon, icons, etc.)
+ASSETS_DIR = Path(__file__).parent / "assets"
+
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
 # Use override=False so Docker/system env vars take precedence over .env
@@ -232,6 +235,9 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
     # Add static file serving for job plots
     app.add_static_files("/jobs", str(jobs_dir))
 
+    # Add static file serving for assets (icons, etc.)
+    app.add_static_files("/assets", str(ASSETS_DIR))
+
     logger.info("Web app initialized with jobs_dir=%s", jobs_dir)
 
 
@@ -268,6 +274,7 @@ def main(
             host=host,
             port=port,
             title="SHANDY - Server Error",
+            favicon=ASSETS_DIR / "favicon.ico",
             reload=False,  # No reload in error mode
             show=False,
             storage_secret=STORAGE_SECRET,
@@ -287,6 +294,7 @@ def main(
         host=host,
         port=port,
         title="SHANDY",
+        favicon=ASSETS_DIR / "favicon.ico",
         reload=reload,  # Enable auto-reload in development mode
         show=False,  # Don't auto-open browser in Docker
         storage_secret=STORAGE_SECRET,  # Required for app.storage.user

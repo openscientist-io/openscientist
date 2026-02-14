@@ -1,0 +1,21 @@
+{
+  "name": "SHANDY",
+  "short_name": "SHANDY",
+  "description": "Scientific Hypothesis Agent for Novel Discovery",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0891b2",
+  "icons": [
+    {
+      "src": "/assets/logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

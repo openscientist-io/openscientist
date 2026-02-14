@@ -1,0 +1,10 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Abstract S-shaped path representing flow of discovery -->
+  <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
+        fill="none" stroke="#0891b2" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Three nodes: hypothesis, analysis, discovery -->
+  <circle cx="22" cy="18" r="10" fill="#06b6d4"/>
+  <circle cx="78" cy="60" r="10" fill="#06b6d4"/>
+  <circle cx="22" cy="60" r="10" fill="#0e7490"/>
+</svg>

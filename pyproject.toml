@@ -190,4 +190,5 @@ dev = [
     "types-docker>=7.0.0",
     "pre-commit>=3.5.0",
     "testcontainers[postgres]>=4.0.0",
+    "cairosvg>=2.8.2",
 ]

@@ -424,6 +424,13 @@ def render_navigator(
     """
     from nicegui import app
 
+    # Add mobile icon meta tags to page head
+    ui.add_head_html(
+        '<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">'
+    )
+    ui.add_head_html('<link rel="manifest" href="/assets/manifest.json">')
+    ui.add_head_html('<meta name="theme-color" content="#0891b2">')
+
     # Check admin status from session storage (set by require_auth decorator)
     show_admin = app.storage.user.get("is_admin", False)
     # Add responsive CSS for mobile/desktop navigation toggle
@@ -508,12 +515,15 @@ def render_navigator(
 
     with ui.header().classes("items-center justify-between"):
         # Title section - clickable to go home
-        with ui.row().classes("items-center gap-2"):
-            ui.button(
-                "SHANDY",
-                on_click=lambda: ui.navigate.to("/jobs"),
-                icon="home",
-            ).props("unelevated color=white text-color=primary").classes("text-h5 font-bold")
+        with ui.link(target="/jobs").classes("no-underline"):
+            with ui.row().classes("items-center gap-2 cursor-pointer"):
+                # Logo in white circle
+                with ui.element("div").classes(
+                    "w-10 h-10 rounded-full bg-white flex items-center justify-center"
+                ):
+                    ui.image("/assets/logo.svg").classes("w-8 h-8")
+                # SHANDY text in white
+                ui.label("SHANDY").classes("text-white text-h5 font-bold")
 
         # Mobile hamburger menu button (visible on small screens only)
         hamburger = ui.button(
