@@ -402,6 +402,53 @@ VIEW_BUTTON_SLOT = r"""
 """
 
 
+def render_actions_slot_with_delete() -> str:
+    """
+    Generate Quasar table slot template for actions column with view and delete buttons.
+
+    Returns slot template string with:
+    - View icon button (always visible) - uses visibility icon
+    - Delete icon button (conditionally shown via v-if="props.row.can_delete") - uses delete icon
+    - Both buttons use round style for a compact, badge-like appearance
+    - Tooltips for clarity
+
+    Returns:
+        Quasar slot template string
+    """
+    return r"""
+        <q-td :props="props">
+            <div class="row items-center gap-1 justify-center">
+                <!-- View button - always visible -->
+                <q-btn
+                    round
+                    flat
+                    dense
+                    size="sm"
+                    color="primary"
+                    icon="visibility"
+                    @click="$parent.$emit('view-job', props.row.job_id)"
+                >
+                    <q-tooltip>View job details</q-tooltip>
+                </q-btn>
+
+                <!-- Delete button - conditionally shown based on can_delete -->
+                <q-btn
+                    v-if="props.row.can_delete"
+                    round
+                    flat
+                    dense
+                    size="sm"
+                    color="negative"
+                    icon="delete"
+                    @click="$parent.$emit('delete-job', props.row.job_id)"
+                >
+                    <q-tooltip>Delete job</q-tooltip>
+                </q-btn>
+            </div>
+        </q-td>
+    """
+
+
 def render_navigator(
     active_page: str | None = None,
     show_new_job: bool = True,

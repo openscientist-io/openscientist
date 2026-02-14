@@ -4,11 +4,12 @@ import logging
 
 from nicegui import ui
 
-from shandy.auth import get_current_user_id, require_auth
+from shandy.auth import get_current_user_id, is_current_user_admin, require_auth
 from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import (
-    VIEW_BUTTON_SLOT,
+    render_actions_slot_with_delete,
     render_config_error_banner,
+    render_dialog_actions,
     render_navigator,
     render_stat_row,
     render_status_cell_slot,
@@ -29,11 +30,14 @@ def jobs_page():
     # Check provider configuration
     is_configured, provider_name, config_errors = check_provider_config()
 
+    # Capture admin status for delete permissions
+    current_user_is_admin = is_current_user_admin()
+
     def refresh_jobs(table_to_update):
         """Refresh jobs table."""
         jobs = job_manager.list_jobs()
 
-        # Update table
+        # Update table - users can always delete their own jobs
         table_to_update.rows = [
             {
                 "job_id": job.job_id,
@@ -47,6 +51,7 @@ def jobs_page():
                 "iterations": f"{job.iterations_completed}/{job.max_iterations}",
                 "findings": job.findings_count,
                 "created": job.created_at[:19],  # Remove milliseconds
+                "can_delete": True,  # Users can always delete their own jobs
             }
             for job in jobs
         ]
@@ -102,6 +107,8 @@ def jobs_page():
                                     "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
                                     "findings": job_info.findings_count,
                                     "created": job_info.created_at[:19],
+                                    # Only admins can delete shared jobs
+                                    "can_delete": current_user_is_admin,
                                 }
                             )
 
@@ -114,6 +121,40 @@ def jobs_page():
                     break  # Exit the async generator
         except Exception as e:
             logger.error("Failed to get database session: %s", e)
+
+    def show_delete_dialog(job_id: str, table_to_refresh, is_shared: bool = False):
+        """Show confirmation dialog for deleting a job."""
+        with ui.dialog() as dialog, ui.card().classes("w-96"):
+            ui.label("Delete Job").classes("text-h6 font-bold")
+            ui.label(f"Are you sure you want to delete job {job_id}?").classes("text-body1 my-2")
+            ui.label(
+                "This action cannot be undone. All job data and findings will be permanently deleted."
+            ).classes("text-caption text-red-600")
+
+            async def on_confirm():
+                dialog.close()
+                try:
+                    job_manager.delete_job(job_id)
+                    ui.notify(f"Job {job_id} deleted successfully", type="positive")
+                    # Refresh the appropriate table
+                    if is_shared:
+                        await refresh_shared_jobs(table_to_refresh)
+                    else:
+                        refresh_jobs(table_to_refresh)
+                except ValueError as e:
+                    ui.notify(str(e), type="negative")
+                except Exception as e:
+                    logger.error("Failed to delete job %s: %s", job_id, e)
+                    ui.notify(f"Failed to delete job: {e}", type="negative")
+
+            render_dialog_actions(
+                on_confirm=on_confirm,
+                on_cancel=dialog.close,
+                confirm_label="Delete",
+                confirm_props="color=negative",
+            )
+
+        dialog.open()
 
     # Page header with navigation
     render_navigator(active_page="jobs", show_new_job=is_configured)
@@ -205,10 +246,14 @@ def jobs_page():
             # Add status column slot with enhanced styling for failed jobs
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
 
-            # Add action buttons using slot template
-            my_jobs_table.add_slot("body-cell-actions", VIEW_BUTTON_SLOT)
+            # Add action buttons with view and delete icons
+            my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
 
             my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+            my_jobs_table.on(
+                "delete-job",
+                lambda e: show_delete_dialog(e.args, my_jobs_table, is_shared=False),
+            )
 
             # Initial load
             refresh_jobs(my_jobs_table)
@@ -294,10 +339,14 @@ def jobs_page():
             """,
             )
 
-            # Add action buttons
-            shared_jobs_table.add_slot("body-cell-actions", VIEW_BUTTON_SLOT)
+            # Add action buttons with view and delete icons
+            shared_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
 
             shared_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+            shared_jobs_table.on(
+                "delete-job",
+                lambda e: show_delete_dialog(e.args, shared_jobs_table, is_shared=True),
+            )
 
             # Initial load
             ui.timer(0.1, lambda: refresh_shared_jobs(shared_jobs_table), once=True)
