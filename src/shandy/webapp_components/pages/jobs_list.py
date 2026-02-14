@@ -9,9 +9,10 @@ from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import (
     render_actions_slot_with_delete,
     render_config_error_banner,
-    render_dialog_actions,
+    render_delete_dialog,
     render_navigator,
-    render_stat_row,
+    render_share_dialog,
+    render_stat_badges,
     render_status_cell_slot,
 )
 
@@ -51,6 +52,7 @@ def jobs_page():
                 "iterations": f"{job.iterations_completed}/{job.max_iterations}",
                 "findings": job.findings_count,
                 "created": job.created_at[:19],  # Remove milliseconds
+                "can_share": True,  # Users can always share their own jobs
                 "can_delete": True,  # Users can always delete their own jobs
             }
             for job in jobs
@@ -107,6 +109,8 @@ def jobs_page():
                                     "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
                                     "findings": job_info.findings_count,
                                     "created": job_info.created_at[:19],
+                                    # Users cannot share jobs they don't own
+                                    "can_share": False,
                                     # Only admins can delete shared jobs
                                     "can_delete": current_user_is_admin,
                                 }
@@ -124,36 +128,19 @@ def jobs_page():
 
     def show_delete_dialog(job_id: str, table_to_refresh, is_shared: bool = False):
         """Show confirmation dialog for deleting a job."""
-        with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label("Delete Job").classes("text-h6 font-bold")
-            ui.label(f"Are you sure you want to delete job {job_id}?").classes("text-body1 my-2")
-            ui.label(
-                "This action cannot be undone. All job data and findings will be permanently deleted."
-            ).classes("text-caption text-red-600")
 
-            async def on_confirm():
-                dialog.close()
-                try:
-                    job_manager.delete_job(job_id)
-                    ui.notify(f"Job {job_id} deleted successfully", type="positive")
-                    # Refresh the appropriate table
-                    if is_shared:
-                        await refresh_shared_jobs(table_to_refresh)
-                    else:
-                        refresh_jobs(table_to_refresh)
-                except ValueError as e:
-                    ui.notify(str(e), type="negative")
-                except Exception as e:
-                    logger.error("Failed to delete job %s: %s", job_id, e)
-                    ui.notify(f"Failed to delete job: {e}", type="negative")
+        async def on_deleted():
+            if is_shared:
+                await refresh_shared_jobs(table_to_refresh)
+            else:
+                refresh_jobs(table_to_refresh)
 
-            render_dialog_actions(
-                on_confirm=on_confirm,
-                on_cancel=dialog.close,
-                confirm_label="Delete",
-                confirm_props="color=negative",
-            )
+        dialog = render_delete_dialog(job_id, job_manager, on_deleted=on_deleted)
+        dialog.open()
 
+    def show_share_dialog(job_id: str):
+        """Show dialog for sharing a job with other users."""
+        dialog = render_share_dialog(job_id)
         dialog.open()
 
     # Page header with navigation
@@ -163,17 +150,13 @@ def jobs_page():
     if not is_configured:
         render_config_error_banner(provider_name, config_errors)
 
-    # Summary cards
+    # Summary badges (compact, mobile-friendly)
     summary = job_manager.get_job_summary()
-    render_stat_row(
+    render_stat_badges(
         [
             ("Total Jobs", summary["total_jobs"], ""),
-            ("Running", summary["status_counts"].get("running", 0), "text-blue-600"),
-            (
-                "Completed",
-                summary["status_counts"].get("completed", 0),
-                "text-green-600",
-            ),
+            ("Running", summary["status_counts"].get("running", 0), "blue"),
+            ("Completed", summary["status_counts"].get("completed", 0), "green"),
         ]
     )
 
@@ -250,6 +233,7 @@ def jobs_page():
             my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
 
             my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+            my_jobs_table.on("share-job", lambda e: show_share_dialog(e.args))
             my_jobs_table.on(
                 "delete-job",
                 lambda e: show_delete_dialog(e.args, my_jobs_table, is_shared=False),

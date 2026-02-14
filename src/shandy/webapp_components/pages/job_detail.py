@@ -11,11 +11,13 @@ from shandy.job_manager import JobStatus
 from shandy.webapp_components.error_handler import get_user_friendly_error
 from shandy.webapp_components.ui_components import (
     STATUS_COLORS,
+    render_delete_dialog,
     render_error_card,
-    render_metric_card,
+    render_job_action_buttons,
     render_navigator,
+    render_share_dialog,
+    render_stat_badges,
 )
-from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
 from shandy.webapp_components.utils.transcript_parser import parse_transcript_actions
 
 logger = logging.getLogger(__name__)
@@ -53,180 +55,16 @@ def job_detail_page(job_id: str):
             logger.warning("Failed to parse knowledge_state.json for %s: %s", job_id, e)
             ks_load_error = "Knowledge state is being updated. Please refresh the page."
 
-    # Page header with navigation
-    render_navigator(
-        extra_buttons=[
-            ("Share", "share", lambda: share_dialog.open(), "outline"),  # type: ignore[has-type]
-        ],
+    # Create reusable dialogs for Share and Delete actions
+    share_dialog = render_share_dialog(job_id)
+    delete_dialog = render_delete_dialog(
+        job_id,
+        job_manager,
+        on_deleted=lambda: ui.navigate.to("/jobs"),
     )
 
-    # Share dialog (defined here but opened later)
-    with ui.dialog() as share_dialog, ui.card().classes("w-[600px]"):
-        ui.label("Share Job").classes("text-h6 mb-4")
-
-        # Container for current shares
-        shares_container = ui.column().classes("w-full mb-4")
-
-        # Function to refresh shares list
-        async def refresh_shares():
-            """Load and display current shares."""
-            shares_container.clear()
-
-            try:
-                response = await api_get(f"/web/shares/job/{job_id}")
-
-                if response.status_code == 200:
-                    shares = response.json()
-
-                    if shares:
-                        with shares_container:
-                            ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
-                            for share in shares:
-                                with ui.card().classes("w-full p-2"):
-                                    with ui.row().classes("items-center justify-between w-full"):
-                                        with ui.column():
-                                            ui.label(share["shared_with_name"]).classes("font-bold")
-                                            ui.label(share["shared_with_email"]).classes(
-                                                "text-sm text-gray-600"
-                                            )
-                                        with ui.row().classes("items-center gap-2"):
-                                            ui.badge(
-                                                share["permission_level"],
-                                                color="blue",
-                                            )
-                                            ui.button(
-                                                icon="delete",
-                                                on_click=lambda s=share: revoke_share(s["id"]),
-                                            ).props("flat dense color=red")
-                    else:
-                        with shares_container:
-                            ui.label("No shares yet").classes("text-gray-500 italic")
-                elif response.status_code == 403:
-                    with shares_container:
-                        ui.label("You can only view shares for jobs you own").classes(
-                            "text-red-600"
-                        )
-            except Exception as e:
-                logger.error("Failed to load shares: %s", e)
-                with shares_container:
-                    ui.label("Failed to load shares").classes("text-red-600")
-
-        # Function to revoke a share
-        async def revoke_share(share_id: str):
-            """Revoke a job share."""
-            try:
-                response = await api_delete(f"/web/shares/{share_id}")
-
-                if response.status_code == 200:
-                    ui.notify("Share revoked successfully", type="positive")
-                    await refresh_shares()
-                else:
-                    ui.notify("Failed to revoke share", type="negative")
-            except Exception as e:
-                logger.error("Failed to revoke share: %s", e)
-                ui.notify("Error revoking share", type="negative")
-
-        ui.separator()
-
-        # Add new share section
-        ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
-
-        # User search
-        search_input = ui.input(
-            "Search by email or name",
-            placeholder="user@example.com",
-        ).classes("w-full")
-
-        # Search results container
-        search_results = ui.column().classes("w-full mb-4")
-
-        # Permission level selector
-        permission_select = ui.select(
-            ["view", "edit"],
-            value="view",
-            label="Permission Level",
-        ).classes("w-full")
-
-        # Function to search users
-        async def search_users(search_query: str):
-            """Search for users by email or name."""
-            search_results.clear()
-
-            if not search_query or len(search_query) < 2:
-                return
-
-            try:
-                response = await api_get(f"/web/shares/search/users?q={search_query}")
-
-                if response.status_code == 200:
-                    users = response.json()
-
-                    if users:
-                        with search_results:
-                            ui.label(f"Found {len(users)} user(s)").classes(
-                                "text-sm text-gray-600 mb-2"
-                            )
-                            for user in users:
-                                with ui.card().classes(
-                                    "w-full p-2 cursor-pointer hover:bg-gray-100"
-                                ):
-                                    with (
-                                        ui.row()
-                                        .classes("items-center justify-between w-full")
-                                        .on(
-                                            "click",
-                                            lambda u=user: share_with_user(u["email"]),
-                                        )
-                                    ):
-                                        with ui.column():
-                                            ui.label(user["name"]).classes("font-bold")
-                                            ui.label(user["email"]).classes("text-sm text-gray-600")
-                                        ui.button(icon="person_add").props(
-                                            "flat dense color=primary"
-                                        )
-                    else:
-                        with search_results:
-                            ui.label("No users found").classes("text-gray-500 italic")
-            except Exception as e:
-                logger.error("Failed to search users: %s", e)
-                with search_results:
-                    ui.label("Search failed").classes("text-red-600")
-
-        # Function to share with a user
-        async def share_with_user(email: str):
-            """Share job with a user."""
-            try:
-                response = await api_post(
-                    f"/web/shares/job/{job_id}",
-                    json={
-                        "shared_with_email": email,
-                        "permission_level": permission_select.value,
-                    },
-                )
-
-                if response.status_code == 200:
-                    ui.notify(f"Shared with {email}", type="positive")
-                    search_input.value = ""
-                    search_results.clear()
-                    await refresh_shares()
-                elif response.status_code == 400:
-                    error = response.json()
-                    ui.notify(error.get("detail", "Failed to share"), type="warning")
-                else:
-                    ui.notify("Failed to share job", type="negative")
-            except Exception as e:
-                logger.error("Failed to share job: %s", e)
-                ui.notify("Error sharing job", type="negative")
-
-        # Bind search input to trigger search
-        search_input.on("input", lambda e: search_users(e.value))
-
-        # Dialog actions
-        with ui.row().classes("w-full justify-end gap-2 mt-4"):
-            ui.button("Close", on_click=share_dialog.close)
-
-        # Load shares when dialog opens
-        share_dialog.on("open", lambda: refresh_shares())
+    # Page header with navigation
+    render_navigator()
 
     # Error message if failed (show prominently at top)
     if job_info.status == JobStatus.FAILED and job_info.error:
@@ -247,39 +85,32 @@ def job_detail_page(job_id: str):
     with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
         # ===== TIMELINE TAB (Primary View) =====
         with ui.tab_panel(timeline_tab):
-            # Status cards row (moved from Summary)
-            with ui.row().classes("w-full gap-4 mb-4"):
-                color = STATUS_COLORS.get(job_info.status, "gray")
-                render_metric_card(
-                    label="Status",
-                    value=job_info.status.value,
-                    badge_color=color,
-                )
+            # Status badges (compact, mobile-friendly)
+            status_color = STATUS_COLORS.get(job_info.status, "gray")
+            lit_count = len(ks_data.get("literature", [])) if ks_data else 0
+            render_stat_badges(
+                [
+                    ("Status", job_info.status.value, status_color),
+                    (
+                        "Progress",
+                        f"{job_info.iterations_completed}/{job_info.max_iterations}",
+                        "blue",
+                    ),
+                    ("Findings", job_info.findings_count, "green"),
+                    ("Papers", lit_count, "purple"),
+                ]
+            )
 
-                progress = job_info.iterations_completed / max(job_info.max_iterations, 1)
-                render_metric_card(
-                    label="Progress",
-                    value=f"{job_info.iterations_completed} / {job_info.max_iterations}",
-                    progress=progress,
-                )
-
-                render_metric_card(
-                    label="Findings",
-                    value=job_info.findings_count,
-                    color_class="text-green-600",
-                )
-
-                lit_count = len(ks_data.get("literature", [])) if ks_data else 0
-                render_metric_card(
-                    label="Papers Reviewed",
-                    value=lit_count,
-                    color_class="text-blue-600",
-                )
-
-            # Research question
+            # Research question with action buttons
             with ui.card().classes("w-full mb-4"):
-                ui.label("Research Question").classes("text-subtitle2 font-bold")
-                ui.label(job_info.research_question).classes("text-lg")
+                with ui.row().classes("w-full items-start justify-between"):
+                    with ui.column().classes("flex-1"):
+                        ui.label("Research Question").classes("text-subtitle2 font-bold")
+                        ui.label(job_info.research_question).classes("text-lg")
+                    render_job_action_buttons(
+                        on_share=share_dialog.open,
+                        on_delete=delete_dialog.open,
+                    )
 
             # Investigation Timeline
             ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
@@ -900,17 +731,10 @@ def job_detail_page(job_id: str):
                         "text-gray-500 italic"
                     )
 
-    # Action buttons
-    with ui.row().classes("mt-4 p-4"):
-        if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED]:
+    # Action buttons (Cancel only - Delete is in the Research Question card)
+    if job_info.status in [JobStatus.RUNNING, JobStatus.QUEUED]:
+        with ui.row().classes("mt-4 p-4"):
             ui.button("Cancel Job", on_click=lambda: cancel_job(job_id), color="red")
-
-        if job_info.status in [
-            JobStatus.COMPLETED,
-            JobStatus.FAILED,
-            JobStatus.CANCELLED,
-        ]:
-            ui.button("Delete Job", on_click=lambda: delete_job(job_id), color="red")
 
     def cancel_job(jid):
         """Cancel the job."""
@@ -920,12 +744,3 @@ def job_detail_page(job_id: str):
             ui.navigate.to("/jobs")
         except (ValueError, OSError) as e:
             ui.notify(f"Error cancelling job: {e}", type="negative")
-
-    def delete_job(jid):
-        """Delete the job."""
-        try:
-            job_manager.delete_job(jid)
-            ui.notify(f"Job {jid} deleted", type="positive")
-            ui.navigate.to("/jobs")
-        except (ValueError, OSError) as e:
-            ui.notify(f"Error deleting job: {e}", type="negative")

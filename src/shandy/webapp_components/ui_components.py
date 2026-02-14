@@ -404,12 +404,13 @@ VIEW_BUTTON_SLOT = r"""
 
 def render_actions_slot_with_delete() -> str:
     """
-    Generate Quasar table slot template for actions column with view and delete buttons.
+    Generate Quasar table slot template for actions column with view, share, and delete buttons.
 
     Returns slot template string with:
     - View icon button (always visible) - uses visibility icon
+    - Share icon button (conditionally shown via v-if="props.row.can_share") - uses share icon
     - Delete icon button (conditionally shown via v-if="props.row.can_delete") - uses delete icon
-    - Both buttons use round style for a compact, badge-like appearance
+    - All buttons use round style for a compact, badge-like appearance
     - Tooltips for clarity
 
     Returns:
@@ -431,6 +432,20 @@ def render_actions_slot_with_delete() -> str:
                     <q-tooltip>View job details</q-tooltip>
                 </q-btn>
 
+                <!-- Share button - conditionally shown based on can_share (owners only) -->
+                <q-btn
+                    v-if="props.row.can_share"
+                    round
+                    flat
+                    dense
+                    size="sm"
+                    color="secondary"
+                    icon="share"
+                    @click="$parent.$emit('share-job', props.row.job_id)"
+                >
+                    <q-tooltip>Share job</q-tooltip>
+                </q-btn>
+
                 <!-- Delete button - conditionally shown based on can_delete -->
                 <q-btn
                     v-if="props.row.can_delete"
@@ -447,6 +462,34 @@ def render_actions_slot_with_delete() -> str:
             </div>
         </q-td>
     """
+
+
+def render_job_action_buttons(
+    on_share: Callable[[], None] | None = None,
+    on_delete: Callable[[], None] | None = None,
+) -> None:
+    """
+    Render job action buttons (share, delete) in the same style as table actions.
+
+    Uses round, flat, dense icon buttons with tooltips - same visual style as
+    the table action column buttons from render_actions_slot_with_delete().
+
+    Args:
+        on_share: Callback for share button click. If None, share button is hidden.
+        on_delete: Callback for delete button click. If None, delete button is hidden.
+    """
+    with ui.row().classes("gap-1 items-center"):
+        if on_share:
+            with ui.button(icon="share", on_click=on_share).props(
+                "round flat dense size=sm color=secondary"
+            ):
+                ui.tooltip("Share job")
+
+        if on_delete:
+            with ui.button(icon="delete", on_click=on_delete).props(
+                "round flat dense size=sm color=negative"
+            ):
+                ui.tooltip("Delete job")
 
 
 def render_navigator(
@@ -608,39 +651,50 @@ def render_navigator(
             ).props(inactive_style)
 
 
-def render_stat_card(
-    label: str,
-    value: str | int,
-    color_class: str = "",
-) -> None:
-    """
-    Render a single stat card.
-
-    Args:
-        label: Label text shown above the value
-        value: The stat value (string or int)
-        color_class: Optional Tailwind color class for the value (e.g., "text-blue-600")
-    """
-    with ui.card():
-        ui.label(label).classes("text-subtitle2")
-        value_classes = "text-h4"
-        if color_class:
-            value_classes = f"{value_classes} {color_class}"
-        ui.label(str(value)).classes(value_classes)
-
-
-def render_stat_row(
+def render_stat_badges(
     stats: list[tuple[str, str | int, str]],
+    icon_map: dict[str, str] | None = None,
 ) -> None:
     """
-    Render a row of stat cards.
+    Render a compact row of stat badges - mobile-friendly inline display.
+
+    Creates a responsive row of badges with icons, labels, and values.
+    Wraps gracefully on mobile screens.
 
     Args:
-        stats: List of (label, value, color_class) tuples
+        stats: List of (label, value, color) tuples where color is a Quasar color name
+               (e.g., "blue", "green", "red") or empty string for default gray
+        icon_map: Optional mapping of label to Material icon name
+
+    Example:
+        render_stat_badges([
+            ("Total", 42, ""),
+            ("Running", 3, "blue"),
+            ("Completed", 39, "green"),
+        ])
     """
-    with ui.row().classes("w-full gap-4 p-4"):
-        for label, value, color_class in stats:
-            render_stat_card(label, value, color_class)
+    default_icons = {
+        "Total": "list",
+        "Total Jobs": "list",
+        "Running": "play_circle",
+        "Completed": "check_circle",
+        "Failed": "error",
+        "Status": "info",
+        "Progress": "trending_up",
+        "Findings": "lightbulb",
+        "Papers": "article",
+        "Papers Reviewed": "article",
+    }
+    icons = {**default_icons, **(icon_map or {})}
+
+    with ui.row().classes("w-full gap-2 flex-wrap items-center mb-2"):
+        for label, value, color in stats:
+            badge_color = color if color else "gray"
+            icon = icons.get(label, "tag")
+            with ui.badge(color=badge_color).props("outline").classes("px-3 py-1 text-sm"):
+                with ui.row().classes("items-center gap-1"):
+                    ui.icon(icon, size="xs")
+                    ui.label(f"{label}: {value}").classes("font-medium")
 
 
 def render_empty_state(message: str) -> None:
@@ -721,43 +775,6 @@ def make_action_button_slot(
     />
 </q-td>
 """
-
-
-def render_metric_card(
-    label: str,
-    value: str | int,
-    color_class: str = "",
-    progress: float | None = None,
-    badge_color: str | None = None,
-    subtitle: str | None = None,
-) -> None:
-    """
-    Render a metric card with optional progress bar and badge.
-
-    More feature-rich than render_stat_card() - supports progress bars,
-    colored badges, and subtitles for displaying job status metrics.
-
-    Args:
-        label: Label text shown above the value
-        value: The metric value (string or int)
-        color_class: Optional Tailwind color class for the value (e.g., "text-blue-600")
-        progress: Optional progress value (0.0 to 1.0) to show a linear progress bar
-        badge_color: If set, renders value as a colored badge instead of plain text
-        subtitle: Optional subtitle shown below the value
-    """
-    with ui.card().classes("flex-1"):
-        ui.label(label).classes("text-subtitle2")
-        if badge_color:
-            ui.badge(str(value), color=badge_color).classes("text-h6")
-        else:
-            value_classes = "text-h5"
-            if color_class:
-                value_classes = f"{value_classes} {color_class}"
-            ui.label(str(value)).classes(value_classes)
-        if progress is not None:
-            ui.linear_progress(progress)
-        if subtitle:
-            ui.label(subtitle).classes("text-sm text-gray-600")
 
 
 async def render_user_search(
@@ -845,3 +862,254 @@ async def render_user_search(
     search_input.on("input", search_users)
 
     return search_input, results_container
+
+
+def render_share_dialog(job_id: str) -> ui.dialog:
+    """
+    Create and return a share dialog for a job.
+
+    This is a reusable component for sharing jobs with other users.
+    The dialog includes:
+    - List of current shares with revoke buttons
+    - User search to find users by email/name
+    - Permission level selector (view/edit)
+
+    Args:
+        job_id: The job ID to share
+
+    Returns:
+        The dialog element (call .open() to show it)
+
+    Example:
+        share_dialog = render_share_dialog(job_id)
+        ui.button("Share", on_click=share_dialog.open)
+    """
+    import logging
+
+    from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
+
+    logger = logging.getLogger(__name__)
+
+    with ui.dialog() as dialog, ui.card().classes("w-[600px]"):
+        ui.label("Share Job").classes("text-h6 mb-4")
+
+        # Container for current shares
+        shares_container = ui.column().classes("w-full mb-4")
+
+        async def refresh_shares():
+            """Load and display current shares."""
+            shares_container.clear()
+
+            try:
+                response = await api_get(f"/web/shares/job/{job_id}")
+
+                if response.status_code == 200:
+                    shares = response.json()
+
+                    if shares:
+                        with shares_container:
+                            ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
+                            for share in shares:
+                                with ui.card().classes("w-full p-2"):
+                                    with ui.row().classes("items-center justify-between w-full"):
+                                        with ui.column():
+                                            ui.label(share["shared_with_name"]).classes("font-bold")
+                                            ui.label(share["shared_with_email"]).classes(
+                                                "text-sm text-gray-600"
+                                            )
+                                        with ui.row().classes("items-center gap-2"):
+                                            ui.badge(
+                                                share["permission_level"],
+                                                color="blue",
+                                            )
+                                            ui.button(
+                                                icon="delete",
+                                                on_click=lambda s=share: revoke_share(s["id"]),
+                                            ).props("flat dense color=red")
+                    else:
+                        with shares_container:
+                            ui.label("No shares yet").classes("text-gray-500 italic")
+                elif response.status_code == 403:
+                    with shares_container:
+                        ui.label("You can only view shares for jobs you own").classes(
+                            "text-red-600"
+                        )
+            except Exception as e:
+                logger.error("Failed to load shares: %s", e)
+                with shares_container:
+                    ui.label("Failed to load shares").classes("text-red-600")
+
+        async def revoke_share(share_id: str):
+            """Revoke a job share."""
+            try:
+                response = await api_delete(f"/web/shares/{share_id}")
+
+                if response.status_code == 200:
+                    ui.notify("Share revoked successfully", type="positive")
+                    await refresh_shares()
+                else:
+                    ui.notify("Failed to revoke share", type="negative")
+            except Exception as e:
+                logger.error("Failed to revoke share: %s", e)
+                ui.notify("Error revoking share", type="negative")
+
+        ui.separator()
+
+        # Add new share section
+        ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
+
+        # User search
+        search_input = ui.input(
+            "Search by email or name",
+            placeholder="user@example.com",
+        ).classes("w-full")
+
+        # Search results container
+        search_results = ui.column().classes("w-full mb-4")
+
+        # Permission level selector
+        permission_select = ui.select(
+            ["view", "edit"],
+            value="view",
+            label="Permission Level",
+        ).classes("w-full")
+
+        async def search_users(search_query: str):
+            """Search for users by email or name."""
+            search_results.clear()
+
+            if not search_query or len(search_query) < 2:
+                return
+
+            try:
+                response = await api_get(f"/web/shares/search/users?q={search_query}")
+
+                if response.status_code == 200:
+                    users = response.json()
+
+                    if users:
+                        with search_results:
+                            ui.label(f"Found {len(users)} user(s)").classes(
+                                "text-sm text-gray-600 mb-2"
+                            )
+                            for user in users:
+                                with ui.card().classes(
+                                    "w-full p-2 cursor-pointer hover:bg-gray-100"
+                                ):
+                                    with (
+                                        ui.row()
+                                        .classes("items-center justify-between w-full")
+                                        .on(
+                                            "click",
+                                            lambda u=user: share_with_user(u["email"]),
+                                        )
+                                    ):
+                                        with ui.column():
+                                            ui.label(user["name"]).classes("font-bold")
+                                            ui.label(user["email"]).classes("text-sm text-gray-600")
+                                        ui.button(icon="person_add").props(
+                                            "flat dense color=primary"
+                                        )
+                    else:
+                        with search_results:
+                            ui.label("No users found").classes("text-gray-500 italic")
+            except Exception as e:
+                logger.error("Failed to search users: %s", e)
+                with search_results:
+                    ui.label("Search failed").classes("text-red-600")
+
+        async def share_with_user(email: str):
+            """Share job with a user."""
+            try:
+                response = await api_post(
+                    f"/web/shares/job/{job_id}",
+                    json={
+                        "shared_with_email": email,
+                        "permission_level": permission_select.value,
+                    },
+                )
+
+                if response.status_code == 200:
+                    ui.notify(f"Shared with {email}", type="positive")
+                    search_input.value = ""
+                    search_results.clear()
+                    await refresh_shares()
+                elif response.status_code == 400:
+                    error = response.json()
+                    ui.notify(error.get("detail", "Failed to share"), type="warning")
+                else:
+                    ui.notify("Failed to share job", type="negative")
+            except Exception as e:
+                logger.error("Failed to share job: %s", e)
+                ui.notify("Error sharing job", type="negative")
+
+        # Bind search input to trigger search
+        search_input.on("input", lambda e: search_users(e.value))
+
+        # Dialog actions
+        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+            ui.button("Close", on_click=dialog.close)
+
+        # Load shares when dialog opens
+        dialog.on("open", lambda: refresh_shares())
+
+    return dialog
+
+
+def render_delete_dialog(
+    job_id: str,
+    job_manager: "JobManager",  # type: ignore[name-defined]  # noqa: F821
+    on_deleted: Callable[[], None] | None = None,
+) -> ui.dialog:
+    """
+    Create and return a delete confirmation dialog for a job.
+
+    This is a reusable component for deleting jobs with confirmation.
+
+    Args:
+        job_id: The job ID to delete
+        job_manager: The job manager instance
+        on_deleted: Optional callback to run after successful deletion
+
+    Returns:
+        The dialog element (call .open() to show it)
+
+    Example:
+        delete_dialog = render_delete_dialog(job_id, job_manager, on_deleted=refresh_table)
+        ui.button("Delete", on_click=delete_dialog.open)
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    with ui.dialog() as dialog, ui.card().classes("w-96"):
+        ui.label("Delete Job").classes("text-h6 font-bold")
+        ui.label(f"Are you sure you want to delete job {job_id}?").classes("text-body1 my-2")
+        ui.label(
+            "This action cannot be undone. All job data and findings will be permanently deleted."
+        ).classes("text-caption text-red-600")
+
+        async def on_confirm():
+            dialog.close()
+            try:
+                job_manager.delete_job(job_id)
+                ui.notify(f"Job {job_id} deleted successfully", type="positive")
+                if on_deleted:
+                    result = on_deleted()
+                    # Support async callbacks
+                    if hasattr(result, "__await__"):
+                        await result
+            except ValueError as e:
+                ui.notify(str(e), type="negative")
+            except Exception as e:
+                logger.error("Failed to delete job %s: %s", job_id, e)
+                ui.notify(f"Failed to delete job: {e}", type="negative")
+
+        render_dialog_actions(
+            on_confirm=on_confirm,
+            on_cancel=dialog.close,
+            confirm_label="Delete",
+            confirm_props="color=negative",
+        )
+
+    return dialog
