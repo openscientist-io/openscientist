@@ -7,7 +7,7 @@ Cost tracking via Azure Cost Management API.
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List
 
 from shandy.providers.base import BaseProvider, CostInfo
@@ -149,51 +149,27 @@ class FoundryProvider(BaseProvider):
 
         # Azure Cost Management API requires authentication and proper permissions
         # For now, return unavailable status with instructions
-        # Full implementation would use Azure SDK cost management client
-        try:
-            from azure.identity import DefaultAzureCredential  # type: ignore[import-untyped]
-            from azure.mgmt.costmanagement import (  # type: ignore[import-untyped]
-                CostManagementClient,
-            )
+        # Full implementation would use Azure SDK cost management client:
+        #   from azure.identity import DefaultAzureCredential
+        #   from azure.mgmt.costmanagement import CostManagementClient
+        #   credential = DefaultAzureCredential()
+        #   cost_client = CostManagementClient(credential, subscription_id)
+        #   # Then query cost management API with proper filters for Foundry resource
 
-            # Get subscription ID from environment or Azure context
-            subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID")
-            if not subscription_id:
-                raise ValueError(
-                    "AZURE_SUBSCRIPTION_ID not set. Required for cost tracking. "
-                    "Find your subscription ID in Azure Portal."
-                )
+        subscription_id = os.getenv("AZURE_SUBSCRIPTION_ID")
+        if subscription_id:
+            logger.info(f"Azure subscription ID configured: {subscription_id[:8]}...")
 
-            # Full implementation would:
-            # 1. Initialize: credential = DefaultAzureCredential()
-            # 2. Create client: cost_client = CostManagementClient(credential, subscription_id)
-            # 3. Calculate time windows based on lookback_hours
-            # 4. Query cost management API with proper filters for Foundry resource
-            logger.warning(
-                "Azure Cost Management API integration not fully implemented. "
-                "Cost data unavailable."
-            )
-            total_spend = None
-            recent_spend = None
-            data_lag_note = (
-                "Azure cost tracking not yet implemented. "
-                "View costs in Azure Portal > Cost Management"
-            )
-
-        except ImportError:
-            logger.warning(
-                "Azure SDK not installed. Cannot fetch cost data. "
-                "Install with: pip install azure-identity azure-mgmt-costmanagement"
-            )
-            total_spend = None
-            recent_spend = None
-            data_lag_note = "Azure SDK not installed"
-
-        except Exception as e:
-            logger.warning(f"Could not fetch Azure cost data: {e}")
-            total_spend = None
-            recent_spend = None
-            data_lag_note = f"Cost data unavailable: {e}"
+        logger.warning(
+            "Azure Cost Management API integration not fully implemented. "
+            "Cost data unavailable."
+        )
+        total_spend = None
+        recent_spend = None
+        data_lag_note = (
+            "Azure cost tracking not yet implemented. "
+            "View costs in Azure Portal > Cost Management"
+        )
 
         resource_name = (
             os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"
