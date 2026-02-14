@@ -181,7 +181,9 @@ class FoundryProvider(BaseProvider):
                 "View costs in Azure Portal > Cost Management"
             )
 
-        resource_name = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"  # noqa: env-ok
+        resource_name = (
+            os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"  # noqa: env-ok
+        )
 
         return CostInfo(
             provider_name="Azure AI Foundry",
