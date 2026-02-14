@@ -122,8 +122,13 @@ Add these to your `.env` file:
 # Provider selection
 CLAUDE_PROVIDER=foundry
 
+# REQUIRED: Enable Claude Code Foundry mode
+CLAUDE_CODE_USE_FOUNDRY=1
+
 # Azure Foundry resource configuration
+# IMPORTANT: Set EITHER resource name OR base URL, NOT both (they're mutually exclusive)
 ANTHROPIC_FOUNDRY_RESOURCE=your-resource-name  # Just the name, not full URL
+# ANTHROPIC_FOUNDRY_BASE_URL=https://your-resource.services.ai.azure.com/anthropic  # Don't set if using RESOURCE
 ANTHROPIC_FOUNDRY_API_KEY=your-api-key-here
 
 # Model deployment names (must match what you created in Azure)
@@ -131,8 +136,9 @@ ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6
 ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-5
 ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
 
-# Optional: For cost tracking (if you want to implement it)
-# AZURE_SUBSCRIPTION_ID=your-subscription-id
+# For cost tracking via Azure Cost Management API (recommended)
+# Find your subscription ID in Azure Portal > Subscriptions
+AZURE_SUBSCRIPTION_ID=your-subscription-id
 ```
 
 ### Docker Configuration
@@ -208,12 +214,23 @@ Azure Foundry cost tracking via Azure Cost Management API is planned but not yet
 
 ## Troubleshooting
 
+### "baseURL and resource are mutually exclusive" Error
+
+**Symptom**: Job fails with "API Error: baseURL and resource are mutually exclusive"
+
+**Solution**:
+1. Check your `.env` file - you have BOTH `ANTHROPIC_FOUNDRY_RESOURCE` and `ANTHROPIC_FOUNDRY_BASE_URL` set
+2. Comment out `ANTHROPIC_FOUNDRY_BASE_URL` and only use `ANTHROPIC_FOUNDRY_RESOURCE`
+3. Restart: `docker compose down && docker compose up -d`
+
+**Note**: Claude Code requires you to set EITHER the resource name OR the base URL, not both.
+
 ### "No Authentication Configured" Error
 
 **Symptom**: SHANDY shows "No Authentication Configured"
 
 **Solution**:
-1. Check `.env` has `CLAUDE_PROVIDER=foundry`
+1. Check `.env` has `CLAUDE_PROVIDER=foundry` and `CLAUDE_CODE_USE_FOUNDRY=1`
 2. Verify `ANTHROPIC_FOUNDRY_RESOURCE` and `ANTHROPIC_FOUNDRY_API_KEY` are set
 3. Restart SHANDY: `docker compose restart` or `uv run python -m shandy.web_app`
 

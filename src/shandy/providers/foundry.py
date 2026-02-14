@@ -83,13 +83,9 @@ class FoundryProvider(BaseProvider):
         # Enable Foundry mode for Claude Code
         os.environ["CLAUDE_CODE_USE_FOUNDRY"] = "1"  # noqa: env-ok
 
-        # If resource name is provided, construct base URL
-        resource = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE")  # noqa: env-ok
-        if resource and not os.getenv("ANTHROPIC_FOUNDRY_BASE_URL"):  # noqa: env-ok
-            os.environ["ANTHROPIC_FOUNDRY_BASE_URL"] = (  # noqa: env-ok
-                f"https://{resource}.services.ai.azure.com/anthropic"
-            )
-            logger.info(f"Set ANTHROPIC_FOUNDRY_BASE_URL from resource: {resource}")
+        # Note: Claude Code 2.1.42+ will construct the base URL from ANTHROPIC_FOUNDRY_RESOURCE
+        # automatically, so we don't need to set ANTHROPIC_FOUNDRY_BASE_URL here.
+        # In fact, setting both causes an error: "baseURL and resource are mutually exclusive"
 
         # Unset Vertex-related vars to avoid conflicts
         vertex_vars = [
