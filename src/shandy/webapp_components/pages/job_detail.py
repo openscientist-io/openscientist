@@ -14,6 +14,7 @@ from shandy.webapp_components.ui_components import (
     render_delete_dialog,
     render_error_card,
     render_job_action_buttons,
+    render_justified_text,
     render_navigator,
     render_pmid_badge,
     render_share_dialog,
@@ -284,8 +285,9 @@ def job_detail_page(job_id: str):
                                                             "biological_interpretation"
                                                         ) or finding.get("interpretation", "")
                                                         if interpretation:
-                                                            ui.label(interpretation).classes(
-                                                                "text-sm text-gray-600 italic mt-1"
+                                                            render_justified_text(
+                                                                interpretation,
+                                                                text_classes="text-sm text-gray-600 italic mt-1",
                                                             )
 
                                         # Load transcript lazily (this is the heavy part)

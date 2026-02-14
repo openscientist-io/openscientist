@@ -323,17 +323,46 @@ def render_text_with_pmid_links(
     if last_end < len(text):
         result_parts.append(html.escape(text[last_end:]))
 
-    # If no PMIDs found, render as plain label
+    # If no PMIDs found, render as justified paragraph
     if not result_parts:
-        ui.label(text).classes(text_classes)
+        ui.html(
+            f'<p class="{text_classes}" style="text-align:justify;hyphens:auto;'
+            f'text-justify:inter-word;margin:0;">{html.escape(text)}</p>'
+        )
         return
 
     # Inject CSS/JS for badges into page head
     _inject_pubmed_badge_styles()
 
-    # Render as HTML to support inline badges
+    # Render as HTML to support inline badges with justified text
     html_content = "".join(result_parts)
-    ui.html(f'<span class="{text_classes}">{html_content}</span>')
+    ui.html(
+        f'<p class="{text_classes}" style="text-align:justify;hyphens:auto;'
+        f'text-justify:inter-word;margin:0;">{html_content}</p>'
+    )
+
+
+def render_justified_text(
+    text: str,
+    text_classes: str = "text-sm text-gray-700",
+) -> None:
+    """
+    Render text as a justified paragraph for better readability.
+
+    Uses text-align: justify with automatic hyphenation for clean
+    paragraph formatting in large text blocks.
+
+    Args:
+        text: The text to render
+        text_classes: CSS classes for styling (color, size, etc.)
+    """
+    if not text:
+        return
+
+    ui.html(
+        f'<p class="{text_classes}" style="text-align:justify;hyphens:auto;'
+        f'text-justify:inter-word;margin:0;">{html.escape(text)}</p>'
+    )
 
 
 def render_error_card(error_info: Dict, job_info: JobInfo, job_dir: Path) -> None:
