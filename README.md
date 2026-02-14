@@ -18,7 +18,7 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 - **Autonomous Discovery**: Runs iterative hypothesis-testing loop using an agentic coding assistant
 - **Domain-Agnostic**: Works with genomics, transcriptomics, proteomics, metabolomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
-- **Multi-Provider Support**: Works with Google Vertex AI, CBORG, or AWS Bedrock for model access
+- **Multi-Provider Support**: Works with Google Vertex AI, CBORG, AWS Bedrock, or Azure AI Foundry for model access
 - **Cost Tracking**: Project-level budget monitoring with provider-specific cost APIs
 - **Sandboxed Execution**: Safe Python code execution for data analysis
 
@@ -58,6 +58,7 @@ SHANDY supports **Phenix integration** for protein structure analysis:
   - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
   - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
   - **AWS Bedrock**: AWS account with Bedrock access (see below)
+  - **Azure AI Foundry**: Azure subscription with Foundry resource (see below)
 
 ### Installation
 
@@ -102,7 +103,8 @@ shandy/
 │   │   ├── base.py        # Base provider interface
 │   │   ├── cborg.py       # CBORG provider
 │   │   ├── vertex.py      # Google Vertex AI provider
-│   │   └── bedrock.py     # AWS Bedrock provider
+│   │   ├── bedrock.py     # AWS Bedrock provider
+│   │   └── foundry.py     # Azure AI Foundry provider
 │   └── mcp_server/        # MCP tools server
 ├── .claude/               # Claude Code configuration
 │   ├── skills/            # Discovery skills
@@ -177,6 +179,38 @@ AWS_SECRET_ACCESS_KEY=your-secret-access-key
 
 **Cost Tracking**: Via AWS Cost Explorer (24-48 hour lag)
 **Note**: Requires IAM permissions for `bedrock:InvokeModel` and `ce:GetCostAndUsage`
+
+#### Option 4: Azure AI Foundry (Microsoft Foundry)
+
+```bash
+# Provider selection
+CLAUDE_PROVIDER=foundry
+
+# Azure resource configuration
+ANTHROPIC_FOUNDRY_RESOURCE=your-resource-name
+# Or use full URL:
+# ANTHROPIC_FOUNDRY_BASE_URL=https://your-resource.services.ai.azure.com/anthropic
+
+# Authentication (choose one):
+# Option A: API key (recommended for testing)
+ANTHROPIC_FOUNDRY_API_KEY=your-azure-api-key
+
+# Option B: Azure Entra ID (automatic - no API key needed)
+# Run: az login
+# Or configure managed identity for production
+
+# Model deployment names (optional - defaults shown)
+ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-5
+ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6
+
+# For cost tracking (optional):
+AZURE_SUBSCRIPTION_ID=your-subscription-id
+```
+
+**Cost Tracking**: Via Azure Cost Management API (implementation in progress)
+**Setup Guide**: See [Claude Code Foundry docs](https://code.claude.com/docs/en/microsoft-foundry)
+**Note**: Requires Azure RBAC permissions (`Azure AI User` or `Cognitive Services User` role)
 
 ### Budget Controls
 

@@ -68,9 +68,11 @@ dependencies = [
     # Type hints
     "typing-extensions>=4.8.0",
 
-    # Cloud providers (for cost tracking)
+    # Cloud providers (for cost tracking and authentication)
     "google-cloud-bigquery>=3.11.0",  # Vertex AI
     "boto3>=1.34.0",  # AWS Bedrock
+    "azure-identity>=1.15.0",  # Azure Foundry authentication
+    "azure-mgmt-costmanagement>=4.0.0",  # Azure Foundry cost tracking
 
     # PDF generation (lightweight, pure Python)
     "fpdf2>=2.7.0",
