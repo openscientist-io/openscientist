@@ -488,13 +488,19 @@ Start your investigation by using these tools to analyze the data.
         logger.info("Iteration 1/%d: Starting session", max_iterations)
         logger.info("Running command: %s", " ".join(cmd))
         logger.info("Prompt length: %d characters", len(initial_prompt))
+
+        # Set up provider environment for Claude CLI
+        provider = get_provider()
+        provider.setup_environment()
+        env = os.environ.copy()
+
         result = subprocess.run(
             cmd,
             input=initial_prompt,
             capture_output=True,
             text=True,
             cwd=str(Path.cwd()),
-            env=os.environ.copy(),
+            env=env,
             check=False,
         )
 
@@ -689,7 +695,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                 capture_output=True,
                 text=True,
                 cwd=str(Path.cwd()),
-                env=os.environ.copy(),
+                env=env,  # Use provider environment from earlier
                 check=False,
             )
 
@@ -796,7 +802,7 @@ Format as professional scientific markdown."""
             capture_output=True,
             text=True,
             cwd=str(Path.cwd()),
-            env=os.environ.copy(),
+            env=env,  # Use provider environment from earlier
             check=False,
         )
 
