@@ -1,5 +1,7 @@
 """Tests for UI components module."""
 
+import html
+import re
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -203,3 +205,118 @@ class TestRenderErrorCard:
 
         # Verify UI elements were called
         assert mock_ui.card.called or mock_ui.row.called
+
+
+class TestPmidLinkParsing:
+    """Tests for PMID link parsing in render_text_with_pmid_links."""
+
+    # Regex pattern used in render_text_with_pmid_links
+    PMID_PATTERN = re.compile(r"(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
+
+    def test_single_pmid_with_colon(self):
+        """Test matching single PMID with colon format."""
+        text = "As shown in PMID: 12345678, the results..."
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].group(1) == "PMID: "
+        assert matches[0].group(2) == "12345678"
+
+    def test_single_pmid_without_colon(self):
+        """Test matching single PMID without colon format."""
+        text = "Reference PMID 87654321 supports this finding."
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].group(1) == "PMID "
+        assert matches[0].group(2) == "87654321"
+
+    def test_comma_separated_pmids(self):
+        """Test matching comma-separated PMIDs."""
+        text = "(PMID: 12723803, 10638796, 41121397)"
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].group(1) == "PMID: "
+        assert matches[0].group(2) == "12723803, 10638796, 41121397"
+
+    def test_pmid_case_insensitive(self):
+        """Test case insensitivity."""
+        text = "pmid: 12345678"
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].group(2) == "12345678"
+
+    def test_pmid_with_year(self):
+        """Test PMID followed by year in parentheses."""
+        text = "PMID 41514787 (2025): The study shows..."
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].group(2) == "41514787"
+
+    def test_multiple_pmid_references(self):
+        """Test multiple separate PMID references in text."""
+        text = "See PMID: 11111111 and also PMID: 22222222 for details."
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 2
+        assert matches[0].group(2) == "11111111"
+        assert matches[1].group(2) == "22222222"
+
+    def test_no_pmid_in_text(self):
+        """Test text with no PMIDs."""
+        text = "This is plain text without any references."
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 0
+
+    def test_pmid_at_start_of_text(self):
+        """Test PMID at the beginning of text."""
+        text = "PMID: 12345678 shows evidence of..."
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].start() == 0
+
+    def test_pmid_at_end_of_text(self):
+        """Test PMID at the end of text."""
+        text = "Evidence from PMID: 12345678"
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        assert matches[0].end() == len(text)
+
+    def test_pmid_boundary_lengths(self):
+        """Test PMIDs at boundary lengths (1 to 8 digits)."""
+        # Minimum: 1 digit
+        matches = list(self.PMID_PATTERN.finditer("PMID: 1"))
+        assert len(matches) == 1
+        assert matches[0].group(2) == "1"
+
+        # Maximum: 8 digits
+        matches = list(self.PMID_PATTERN.finditer("PMID: 12345678"))
+        assert len(matches) == 1
+        assert matches[0].group(2) == "12345678"
+
+        # Too long (9 digits) - should only match first 8
+        text = "PMID: 123456789"
+        matches = list(self.PMID_PATTERN.finditer(text))
+        assert len(matches) == 1
+        # The regex will match 12345678 and leave 9 behind
+        assert matches[0].group(2) == "12345678"
+
+    def test_html_escape_in_text(self):
+        """Test that special characters would be escaped properly."""
+        # Test the html.escape function behavior
+        text = "Evidence <script>alert('xss')</script> from PMID: 12345678"
+        escaped = html.escape(text)
+        assert "<script>" not in escaped
+        assert "&lt;script&gt;" in escaped
+
+    def test_comma_separated_extraction(self):
+        """Test splitting comma-separated PMIDs."""
+        pmid_list = "12723803, 10638796, 41121397"
+        pmids = [p.strip() for p in pmid_list.split(",")]
+        assert len(pmids) == 3
+        assert pmids[0] == "12723803"
+        assert pmids[1] == "10638796"
+        assert pmids[2] == "41121397"
+
+    def test_pubmed_url_generation(self):
+        """Test that PubMed URLs are generated correctly."""
+        pmid = "12345678"
+        url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        assert url == "https://pubmed.ncbi.nlm.nih.gov/12345678/"

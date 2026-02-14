@@ -5,6 +5,8 @@ Provides UI rendering functions for error displays, status badges,
 page headers, and other common interface elements.
 """
 
+import html
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Dict
@@ -37,6 +39,175 @@ STATUS_ICONS = {
     JobStatus.CANCELLED: "⊗",
     JobStatus.AWAITING_FEEDBACK: "⏸",
 }
+
+
+def _get_pubmed_badge_html(pmid: str) -> str:
+    """
+    Generate HTML for a PubMed badge with logo and PMID.
+
+    Creates an inline badge element with:
+    - PubMed logo (inline SVG)
+    - PMID number
+    - Tooltip explaining the link
+    - Opens in new tab (via CSS class, handled by injected script)
+
+    Args:
+        pmid: The PubMed ID number
+
+    Returns:
+        HTML string for the badge element
+    """
+    url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+    tooltip = f"Visit PubMed page for PMID {pmid}"
+
+    # PubMed-style icon: stylized "P" in a rounded square
+    # Using a simple, clean design that's recognizable at small sizes
+    pubmed_icon = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" '
+        'class="pubmed-icon">'
+        '<rect x="1" y="1" width="14" height="14" rx="2" fill="#326599"/>'
+        '<text x="8" y="12" text-anchor="middle" '
+        'style="font-size:11px;font-weight:bold;font-family:Arial,sans-serif;fill:white;">'
+        "P</text></svg>"
+    )
+
+    return (
+        f'<a href="{url}" rel="noopener noreferrer" '
+        f'title="{tooltip}" class="pubmed-badge">'
+        f"{pubmed_icon}{html.escape(pmid)}</a>"
+    )
+
+
+def _inject_pubmed_badge_styles() -> None:
+    """Inject CSS and JS for PubMed badges into page head (idempotent)."""
+    # Using add_head_html with shared=True ensures this is only added once per client
+    ui.add_head_html(
+        """
+        <style>
+        .pubmed-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 1px 6px 1px 4px;
+            margin: 0 2px;
+            background-color: #e8f4f8;
+            border: 1px solid #326599;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #326599;
+            font-size: 0.85em;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        .pubmed-badge:hover {
+            background-color: #cce5ed;
+        }
+        .pubmed-icon {
+            width: 14px;
+            height: 14px;
+            vertical-align: middle;
+            margin-right: 3px;
+        }
+        </style>
+        <script>
+        // Make all PubMed links open in new tab (event delegation)
+        if (!window._pubmedClickHandlerAdded) {
+            window._pubmedClickHandlerAdded = true;
+            document.addEventListener('click', function(e) {
+                var link = e.target.closest('.pubmed-badge');
+                if (link) {
+                    e.preventDefault();
+                    window.open(link.href, '_blank', 'noopener,noreferrer');
+                }
+            });
+        }
+        </script>
+        """,
+        shared=True,
+    )
+
+
+def render_pmid_badge(pmid: str) -> None:
+    """
+    Render a single PMID as a clickable PubMed badge.
+
+    Creates an inline badge element with PubMed logo, PMID number,
+    tooltip, and link that opens in a new tab.
+
+    Use this for standalone PMID display (e.g., in literature lists).
+    For PMIDs embedded in text, use render_text_with_pmid_links() instead.
+
+    Args:
+        pmid: The PubMed ID number (just the numeric part)
+    """
+    # Inject CSS/JS for badges into page head
+    _inject_pubmed_badge_styles()
+
+    # Render badge as inline HTML
+    badge_html = _get_pubmed_badge_html(pmid)
+    ui.html(badge_html)
+
+
+def render_text_with_pmid_links(
+    text: str,
+    text_classes: str = "text-sm text-gray-700",
+) -> None:
+    """
+    Render text with PMID references converted to clickable badges.
+
+    Parses text for PMID patterns and renders them as clickable PubMed badges
+    with logo, tooltip, and link to PubMed. Supports both single PMIDs and
+    comma-separated lists.
+
+    Patterns matched:
+    - "PMID: 12345678"
+    - "PMID 12345678"
+    - "PMID: 12345678, 87654321, 11111111"
+
+    Args:
+        text: The text containing PMID references
+        text_classes: CSS classes for the text container
+    """
+    if not text:
+        return
+
+    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers
+    # Case-insensitive, captures the prefix and the number list separately
+    pattern = re.compile(r"(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
+
+    # Build HTML with text segments and badges
+    result_parts = []
+    last_end = 0
+
+    for match in pattern.finditer(text):
+        # Add text before this match (escaped)
+        if match.start() > last_end:
+            result_parts.append(html.escape(text[last_end : match.start()]))
+
+        # Extract PMIDs (skip the prefix like "PMID: " since badges are self-explanatory)
+        pmid_list = match.group(2)
+
+        # Split and create badges for each PMID
+        pmids = [p.strip() for p in pmid_list.split(",")]
+        pmid_badges = [_get_pubmed_badge_html(pmid) for pmid in pmids]
+        result_parts.append(" ".join(pmid_badges))
+
+        last_end = match.end()
+
+    # Add remaining text after last match (escaped)
+    if last_end < len(text):
+        result_parts.append(html.escape(text[last_end:]))
+
+    # If no PMIDs found, render as plain label
+    if not result_parts:
+        ui.label(text).classes(text_classes)
+        return
+
+    # Inject CSS/JS for badges into page head
+    _inject_pubmed_badge_styles()
+
+    # Render as HTML to support inline badges
+    html_content = "".join(result_parts)
+    ui.html(f'<span class="{text_classes}">{html_content}</span>')
 
 
 def render_error_card(error_info: Dict, job_info: JobInfo, job_dir: Path) -> None:

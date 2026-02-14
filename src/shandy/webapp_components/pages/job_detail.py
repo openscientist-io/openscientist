@@ -15,8 +15,10 @@ from shandy.webapp_components.ui_components import (
     render_error_card,
     render_job_action_buttons,
     render_navigator,
+    render_pmid_badge,
     render_share_dialog,
     render_stat_badges,
+    render_text_with_pmid_links,
 )
 from shandy.webapp_components.utils.transcript_parser import parse_transcript_actions
 
@@ -251,8 +253,9 @@ def job_detail_page(job_id: str):
                                             with ui.expansion(
                                                 "Summary", icon="summarize", value=True
                                             ).classes("w-full mt-2"):
-                                                ui.label(iter_summary_text).classes(
-                                                    "text-sm text-gray-700"
+                                                render_text_with_pmid_links(
+                                                    iter_summary_text,
+                                                    text_classes="text-sm text-gray-700",
                                                 )
 
                                         # Show findings recorded
@@ -273,8 +276,9 @@ def job_detail_page(job_id: str):
                                                         ui.label(finding["title"]).classes(
                                                             "font-bold text-green-800"
                                                         )
-                                                        ui.label(finding["evidence"]).classes(
-                                                            "text-sm text-gray-700"
+                                                        render_text_with_pmid_links(
+                                                            finding["evidence"],
+                                                            text_classes="text-sm text-gray-700",
                                                         )
                                                         interpretation = finding.get(
                                                             "biological_interpretation"
@@ -506,13 +510,7 @@ def job_detail_page(job_id: str):
                                                                     ).classes("text-sm font-bold")
                                                                     pmid = paper.get("pmid", "")
                                                                     if pmid:
-                                                                        ui.link(
-                                                                            f"PMID: {pmid}",
-                                                                            f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                                                                            new_tab=True,
-                                                                        ).classes(
-                                                                            "text-xs text-blue-600"
-                                                                        )
+                                                                        render_pmid_badge(pmid)
                                                                     abstract = paper.get(
                                                                         "abstract",
                                                                         "",
