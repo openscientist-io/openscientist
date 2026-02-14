@@ -161,19 +161,15 @@ class FoundryProvider(BaseProvider):
             logger.info(f"Azure subscription ID configured: {subscription_id[:8]}...")
 
         logger.warning(
-            "Azure Cost Management API integration not fully implemented. "
-            "Cost data unavailable."
+            "Azure Cost Management API integration not fully implemented. Cost data unavailable."
         )
         total_spend = None
         recent_spend = None
         data_lag_note = (
-            "Azure cost tracking not yet implemented. "
-            "View costs in Azure Portal > Cost Management"
+            "Azure cost tracking not yet implemented. View costs in Azure Portal > Cost Management"
         )
 
-        resource_name = (
-            os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"
-        )
+        resource_name = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"
 
         return CostInfo(
             provider_name="Azure AI Foundry",
