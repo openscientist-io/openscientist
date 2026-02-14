@@ -16,8 +16,8 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI via npm
-RUN npm install -g @anthropic-ai/claude-code@2.0.37
+# Install Claude Code CLI via npm (latest version for Azure Foundry support)
+RUN npm install -g @anthropic-ai/claude-code
 
 # Optionally install Phenix for structural biology
 # Requires data/phenix-installer-*.tar.gz to be present
