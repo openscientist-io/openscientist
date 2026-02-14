@@ -97,6 +97,7 @@ def _inject_pubmed_badge_styles() -> None:
             font-size: 0.85em;
             font-weight: 500;
             transition: background-color 0.2s;
+            white-space: nowrap;
         }
         .pubmed-badge:hover {
             background-color: #cce5ed;
@@ -124,6 +125,131 @@ def _inject_pubmed_badge_styles() -> None:
         """,
         shared=True,
     )
+
+
+def _inject_job_id_badge_styles() -> None:
+    """Inject CSS and JS for job ID badges into page head (idempotent)."""
+    ui.add_head_html(
+        """
+        <style>
+        .job-id-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 2px 8px;
+            background-color: #f3f4f6;
+            border: 1px solid #9ca3af;
+            border-radius: 4px;
+            text-decoration: none;
+            color: #374151;
+            font-size: 0.8em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-weight: 500;
+            transition: background-color 0.2s, border-color 0.2s;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .job-id-badge:hover {
+            background-color: #e5e7eb;
+            border-color: #6b7280;
+            color: #111827;
+        }
+        .job-id-badge .job-icon {
+            width: 14px;
+            height: 14px;
+            margin-right: 4px;
+            fill: currentColor;
+        }
+        </style>
+        <script>
+        // Make job ID badges navigate on click (event delegation)
+        if (!window._jobIdClickHandlerAdded) {
+            window._jobIdClickHandlerAdded = true;
+            document.addEventListener('click', function(e) {
+                var badge = e.target.closest('.job-id-badge');
+                if (badge && badge.dataset.jobId) {
+                    e.preventDefault();
+                    window.location.href = '/job/' + badge.dataset.jobId;
+                }
+            });
+        }
+        </script>
+        """,
+        shared=True,
+    )
+
+
+def _get_job_id_badge_html(job_id: str, truncate: bool = True) -> str:
+    """
+    Generate HTML for a job ID badge.
+
+    Args:
+        job_id: The job UUID
+        truncate: If True, show only first 8 characters of UUID
+
+    Returns:
+        HTML string for the badge element
+    """
+    display_id = job_id[:8] if truncate and len(job_id) > 8 else job_id
+    tooltip = f"View job {job_id}"
+
+    # Simple work/document icon
+    job_icon = (
+        '<svg class="job-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+        '<path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>'
+        "</svg>"
+    )
+
+    return (
+        f'<span class="job-id-badge" data-job-id="{html.escape(job_id)}" '
+        f'title="{tooltip}">{job_icon}{html.escape(display_id)}</span>'
+    )
+
+
+def render_job_id_badge(job_id: str, truncate: bool = True) -> None:
+    """
+    Render a job ID as a clickable badge.
+
+    Creates an inline badge element with work icon, truncated job ID,
+    tooltip, and click handler that navigates to the job detail page.
+
+    Args:
+        job_id: The job UUID
+        truncate: If True, show only first 8 characters of UUID (default True)
+    """
+    _inject_job_id_badge_styles()
+    badge_html = _get_job_id_badge_html(job_id, truncate)
+    ui.html(badge_html)
+
+
+def render_job_id_slot(field_name: str = "job_id") -> str:
+    """
+    Generate Quasar table slot template for job ID column with clickable badges.
+
+    Returns slot template string that renders job IDs as clickable badges
+    linking to the job detail page.
+
+    Args:
+        field_name: The row field containing the job ID (default: "job_id")
+
+    Returns:
+        Quasar slot template string
+    """
+    return f"""
+        <q-td :props="props">
+            <span
+                class="job-id-badge"
+                :data-job-id="props.row.{field_name}"
+                :title="'View job ' + props.row.{field_name}"
+                style="display:inline-flex;align-items:center;padding:2px 8px;background-color:#f3f4f6;border:1px solid #9ca3af;border-radius:4px;text-decoration:none;color:#374151;font-size:0.8em;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-weight:500;cursor:pointer;white-space:nowrap;"
+                @click="$parent.$emit('view-job', props.row.{field_name})"
+            >
+                <svg style="width:14px;height:14px;margin-right:4px;fill:currentColor;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>
+                </svg>
+                {{{{ props.row.{field_name}.substring(0, 8) }}}}
+            </span>
+        </q-td>
+    """
 
 
 def render_pmid_badge(pmid: str) -> None:
@@ -470,10 +596,7 @@ def render_status_cell_slot() -> str:
                     text-color="white"
                     class="px-3 py-1 font-bold cursor-pointer"
                 >
-                    <div class="row items-center gap-1">
-                        <span>✗</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">✗&nbsp;{{ props.row.status }}</span>
                     <q-tooltip
                         v-if="props.row.error"
                         class="bg-red-800 text-white text-sm"
@@ -493,10 +616,7 @@ def render_status_cell_slot() -> str:
                     color="green"
                     class="px-2 py-1"
                 >
-                    <div class="row items-center gap-1">
-                        <span>✓</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">✓&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
                 <!-- Running status: Yellow badge with animation -->
@@ -506,10 +626,7 @@ def render_status_cell_slot() -> str:
                     text-color="black"
                     class="px-2 py-1"
                 >
-                    <div class="row items-center gap-1">
-                        <span>▶</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">▶&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
                 <!-- Queued status: Blue badge -->
@@ -518,10 +635,7 @@ def render_status_cell_slot() -> str:
                     color="blue"
                     class="px-2 py-1"
                 >
-                    <div class="row items-center gap-1">
-                        <span>⟳</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">⟳&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
                 <!-- Awaiting feedback: Orange badge -->
@@ -530,10 +644,7 @@ def render_status_cell_slot() -> str:
                     color="orange"
                     class="px-2 py-1"
                 >
-                    <div class="row items-center gap-1">
-                        <span>⏸</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">⏸&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
                 <!-- Cancelled status: Gray badge -->
@@ -542,10 +653,7 @@ def render_status_cell_slot() -> str:
                     color="grey"
                     class="px-2 py-1"
                 >
-                    <div class="row items-center gap-1">
-                        <span>⊗</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">⊗&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
                 <!-- Default: Gray badge -->
@@ -554,10 +662,7 @@ def render_status_cell_slot() -> str:
                     color="grey"
                     class="px-2 py-1"
                 >
-                    <div class="row items-center gap-1">
-                        <span>○</span>
-                        <span>{{ props.row.status }}</span>
-                    </div>
+                    <span class="row items-center" style="white-space:nowrap;">○&nbsp;{{ props.row.status }}</span>
                 </q-badge>
             </div>
         </q-td>
@@ -575,14 +680,15 @@ VIEW_BUTTON_SLOT = r"""
 
 def render_actions_slot_with_delete() -> str:
     """
-    Generate Quasar table slot template for actions column with view, share, and delete buttons.
+    Generate Quasar table slot template for actions column with share and delete buttons.
 
     Returns slot template string with:
-    - View icon button (always visible) - uses visibility icon
     - Share icon button (conditionally shown via v-if="props.row.can_share") - uses share icon
     - Delete icon button (conditionally shown via v-if="props.row.can_delete") - uses delete icon
     - All buttons use round style for a compact, badge-like appearance
     - Tooltips for clarity
+
+    Note: View functionality is handled by clicking the job ID badge.
 
     Returns:
         Quasar slot template string
@@ -590,19 +696,6 @@ def render_actions_slot_with_delete() -> str:
     return r"""
         <q-td :props="props">
             <div class="row items-center gap-1 justify-center">
-                <!-- View button - always visible -->
-                <q-btn
-                    round
-                    flat
-                    dense
-                    size="sm"
-                    color="primary"
-                    icon="visibility"
-                    @click="$parent.$emit('view-job', props.row.job_id)"
-                >
-                    <q-tooltip>View job details</q-tooltip>
-                </q-btn>
-
                 <!-- Share button - conditionally shown based on can_share (owners only) -->
                 <q-btn
                     v-if="props.row.can_share"

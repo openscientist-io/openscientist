@@ -13,6 +13,8 @@ from shandy.webapp_components.ui_components import (
     make_action_button_slot,
     render_dialog_actions,
     render_empty_state,
+    render_job_id_badge,
+    render_job_id_slot,
     render_navigator,
     render_user_search,
 )
@@ -148,6 +150,9 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
 
         with container:
             table = ui.table(columns=columns, rows=rows, row_key="full_id").classes("w-full")
+            # Add job ID column slot with clickable badges
+            table.add_slot("body-cell-id", render_job_id_slot(field_name="full_id"))
+
             table.add_slot(
                 "body-cell-actions",
                 make_action_button_slot(
@@ -157,6 +162,9 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
                     row_id_field="full_id",
                 ),
             )
+
+            # Handle job ID badge clicks
+            table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
 
             # Handle assign button clicks
             async def handle_assign(e):
@@ -177,7 +185,9 @@ async def show_assign_dialog(job_id: str):
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Assign Job to User").classes("text-lg font-bold mb-4")
-        ui.label(f"Job ID: {job_id}").classes("text-sm text-gray-600 mb-4")
+        with ui.row().classes("items-center gap-2 mb-4"):
+            ui.label("Job:").classes("text-sm text-gray-600")
+            render_job_id_badge(job_id)
 
         # User search using shared component
         async def on_user_select(user_data: dict):

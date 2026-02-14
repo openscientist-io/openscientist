@@ -10,6 +10,7 @@ from shandy.webapp_components.ui_components import (
     render_actions_slot_with_delete,
     render_config_error_banner,
     render_delete_dialog,
+    render_job_id_slot,
     render_navigator,
     render_share_dialog,
     render_stat_badges,
@@ -226,12 +227,16 @@ def jobs_page():
                 pagination=10,
             ).classes("w-full")
 
+            # Add job ID column slot with clickable badges
+            my_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
+
             # Add status column slot with enhanced styling for failed jobs
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
 
-            # Add action buttons with view and delete icons
+            # Add action buttons with share and delete icons
             my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
 
+            # Handle job ID badge clicks
             my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
             my_jobs_table.on("share-job", lambda e: show_share_dialog(e.args))
             my_jobs_table.on(
@@ -308,6 +313,9 @@ def jobs_page():
                 pagination=10,
             ).classes("w-full")
 
+            # Add job ID column slot with clickable badges
+            shared_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
+
             # Add status column slot
             shared_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
 
@@ -323,9 +331,10 @@ def jobs_page():
             """,
             )
 
-            # Add action buttons with view and delete icons
+            # Add action buttons with share and delete icons
             shared_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
 
+            # Handle job ID badge clicks
             shared_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
             shared_jobs_table.on(
                 "delete-job",
