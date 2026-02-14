@@ -62,9 +62,12 @@ def _get_pubmed_badge_html(pmid: str) -> str:
 
     # PubMed-style icon: stylized "P" in a rounded square
     # Using a simple, clean design that's recognizable at small sizes
+    # Note: Explicit width/height/style attributes ensure proper sizing even if CSS not loaded
     pubmed_icon = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" '
-        'class="pubmed-icon">'
+        'width="14" height="14" class="pubmed-icon" '
+        'style="width:14px;height:14px;min-width:14px;min-height:14px;flex-shrink:0;'
+        'vertical-align:middle;margin-right:3px;">'
         '<rect x="1" y="1" width="14" height="14" rx="2" fill="#326599"/>'
         '<text x="8" y="12" text-anchor="middle" '
         'style="font-size:11px;font-weight:bold;font-family:Arial,sans-serif;fill:white;">'
