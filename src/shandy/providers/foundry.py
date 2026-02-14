@@ -164,19 +164,11 @@ class FoundryProvider(BaseProvider):
                     "Find your subscription ID in Azure Portal."
                 )
 
-            # Initialize Cost Management client
-            credential = DefaultAzureCredential()
-            cost_client = CostManagementClient(credential, subscription_id)
-
-            # Calculate time windows
-            end_date = now.strftime("%Y-%m-%d")
-            start_date_recent = (now - timedelta(hours=lookback_hours)).strftime("%Y-%m-%d")
-            # For total, go back 90 days (reasonable default for Azure)
-            start_date_total = (now - timedelta(days=90)).strftime("%Y-%m-%d")
-
-            # Query for Azure AI Foundry costs
-            # Note: This is a simplified example - actual implementation would need
-            # to filter by the specific Foundry resource and use proper query structure
+            # Full implementation would:
+            # 1. Initialize: credential = DefaultAzureCredential()
+            # 2. Create client: cost_client = CostManagementClient(credential, subscription_id)
+            # 3. Calculate time windows based on lookback_hours
+            # 4. Query cost management API with proper filters for Foundry resource
             logger.warning(
                 "Azure Cost Management API integration not fully implemented. "
                 "Cost data unavailable."
