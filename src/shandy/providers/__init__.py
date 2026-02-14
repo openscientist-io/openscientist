@@ -1,5 +1,5 @@
 """
-Provider abstraction for model access (Anthropic, CBORG, Vertex AI, Bedrock).
+Provider abstraction for model access (Anthropic, CBORG, Vertex AI, Bedrock, Azure Foundry).
 
 Providers handle:
 - Environment configuration for Claude CLI
@@ -17,13 +17,13 @@ def get_provider() -> BaseProvider:
     Get the configured provider based on environment.
 
     Returns:
-        Provider instance (CborgProvider, VertexProvider, or BedrockProvider)
+        Provider instance (CborgProvider, VertexProvider, BedrockProvider, or FoundryProvider)
 
     Raises:
         ValueError: If provider is unknown or misconfigured
 
     Environment:
-        CLAUDE_PROVIDER: Provider name ("cborg", "vertex", "bedrock")
+        CLAUDE_PROVIDER: Provider name ("cborg", "vertex", "bedrock", "foundry")
                         Defaults to "cborg" if not set
     """
     provider_name = os.getenv("CLAUDE_PROVIDER", "cborg").lower()
@@ -44,9 +44,13 @@ def get_provider() -> BaseProvider:
         from shandy.providers.bedrock import BedrockProvider
 
         return BedrockProvider()
+    elif provider_name == "foundry":
+        from shandy.providers.foundry import FoundryProvider
+
+        return FoundryProvider()
     else:
         raise ValueError(
-            f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock"
+            f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock, foundry"
         )
 
 
