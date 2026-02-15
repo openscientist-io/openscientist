@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from .job_data_file import JobDataFile
     from .job_share import JobShare
     from .job_skill import JobSkill
-    from .skill import Skill
     from .user import User
 
 
@@ -66,9 +65,15 @@ class Job(UUIDv7Mixin, Base):
     )
 
     title: Mapped[str] = mapped_column(
-        String(255),
+        Text,
         nullable=False,
-        comment="User-provided job title",
+        comment="Research question / job title",
+    )
+
+    short_title: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Brief model-generated title (e.g., 'Kinase inhibitor analysis')",
     )
 
     description: Mapped[str | None] = mapped_column(
@@ -136,10 +141,22 @@ class Job(UUIDv7Mixin, Base):
         comment="Error message if job failed",
     )
 
+    cancellation_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Reason why the job was cancelled",
+    )
+
     result_summary: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         comment="Final analysis summary",
+    )
+
+    consensus_answer: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Consensus answer to the research question if one was reached",
     )
 
     # Relationships
@@ -174,17 +191,6 @@ class Job(UUIDv7Mixin, Base):
         back_populates="job",
         cascade="all, delete-orphan",
     )
-
-    # Convenience property to access skills via junction table
-    @property
-    def skills(self) -> list["Skill"]:
-        """Get all skills associated with this job."""
-        return [js.skill for js in self.job_skills if js.is_enabled]
-
-    @property
-    def enabled_skills(self) -> list["Skill"]:
-        """Get only enabled skills for this job."""
-        return [js.skill for js in self.job_skills if js.is_enabled]
 
     def __repr__(self) -> str:
         return (

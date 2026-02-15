@@ -21,11 +21,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
-from shandy.database.models import Job, JobSkill, Skill, User
+from shandy.database.models import Job, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
 from shandy.job_manager import JobManager
-from shandy.skill_relevance import SkillRelevanceService
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +61,7 @@ class JobCreate(BaseModel):
     )
     use_skills: bool = Field(
         True,
-        description="Whether to use specialized analysis skills",
-    )
-    skill_ids: Optional[List[str]] = Field(
-        None,
-        description="Specific skill IDs to use (manual selection)",
-    )
-    auto_match_skills: bool = Field(
-        True,
-        description="Automatically match relevant skills based on research question",
+        description="Whether to use specialized analysis skills (all enabled skills are available)",
     )
     investigation_mode: str = Field(
         "autonomous",
@@ -159,78 +150,6 @@ def _get_job_manager() -> JobManager:
     return get_job_manager()
 
 
-async def _attach_skills_to_job(
-    session: AsyncSession,
-    job_id: UUID,
-    skill_ids: Optional[List[str]],
-    auto_match: bool,
-    research_question: str,
-) -> None:
-    """
-    Attach skills to a job.
-
-    If skill_ids provided, uses those specific skills.
-    If auto_match is True and no skill_ids, auto-matches based on research question.
-
-    Args:
-        session: Database session
-        job_id: Job ID to attach skills to
-        skill_ids: Optional list of specific skill IDs
-        auto_match: Whether to auto-match skills
-        research_question: Research question for auto-matching
-    """
-    skills_to_attach: List[tuple[UUID, float | None, str | None]] = []
-
-    if skill_ids:
-        # Manual selection - attach specific skills
-        for skill_id_str in skill_ids:
-            try:
-                skill_uuid = UUID(skill_id_str)
-                # Verify skill exists and is enabled
-                stmt = select(Skill).where(
-                    Skill.id == skill_uuid,
-                    Skill.is_enabled == True,  # noqa: E712
-                )
-                result = await session.execute(stmt)
-                skill = result.scalar_one_or_none()
-                if skill:
-                    skills_to_attach.append((skill.id, None, None))
-            except ValueError:
-                logger.warning("Invalid skill ID: %s", skill_id_str)
-                continue
-
-    elif auto_match and research_question:
-        # Auto-match skills based on research question
-        service = SkillRelevanceService()
-        scored_skills = await service.find_relevant_skills(
-            session=session,
-            prompt=research_question,
-            score_threshold=0.3,
-            max_results=5,
-        )
-        for scored in scored_skills:
-            skills_to_attach.append((scored.skill_id, scored.score, scored.match_reason))
-
-    # Create JobSkill records
-    for skill_id, score, reason in skills_to_attach:
-        job_skill = JobSkill(
-            job_id=job_id,
-            skill_id=skill_id,
-            is_enabled=True,
-            relevance_score=score,
-            match_reason=reason,
-        )
-        session.add(job_skill)
-
-    if skills_to_attach:
-        await session.commit()
-        logger.info(
-            "Attached %d skills to job %s",
-            len(skills_to_attach),
-            job_id,
-        )
-
-
 def _job_to_response(job: Job) -> JobResponse:
     """Convert Job model to JobResponse."""
     return JobResponse(
@@ -314,20 +233,6 @@ async def create_job(
     session.add(job)
     await session.commit()
     await session.refresh(job)
-
-    # Attach skills to the job
-    if job_data.use_skills:
-        try:
-            await _attach_skills_to_job(
-                session=session,
-                job_id=job.id,
-                skill_ids=job_data.skill_ids,
-                auto_match=job_data.auto_match_skills,
-                research_question=job_data.research_question,
-            )
-        except Exception as e:
-            logger.warning("Failed to attach skills to job %s: %s", job.id, e)
-            # Don't fail job creation if skill attachment fails
 
     # Create job via JobManager (creates filesystem structure)
     job_manager = _get_job_manager()

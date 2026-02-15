@@ -35,6 +35,9 @@ from .job_data_file import JobDataFile
 from .job_share import JobShare
 from .job_skill import JobSkill
 from .literature import Literature
+
+# MCP models
+from .mcp_server import MCPServer
 from .oauth_account import OAuthAccount
 from .plot import Plot
 from .session import Session
@@ -60,6 +63,8 @@ __all__ = [
     # Skills
     "Skill",
     "SkillSource",
+    # MCP
+    "MCPServer",
     # Knowledge state
     "Hypothesis",
     "Finding",

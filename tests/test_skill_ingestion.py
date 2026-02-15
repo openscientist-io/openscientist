@@ -28,14 +28,14 @@ class TestSkillParser:
     def test_parse_valid_skill(self, sample_skill_markdown: str):
         """Test parsing a valid skill markdown file."""
         parser = SkillParser()
-        parsed = parser.parse_content(sample_skill_markdown, "test/skill.md")
+        parsed = parser.parse_content(sample_skill_markdown, "skills/testing/test-skill.md")
 
         assert parsed.name == "Test Skill"
         assert parsed.category == "testing"
         assert parsed.description == "A skill for testing purposes"
         assert parsed.tags == ["test", "example"]
         assert "# Test Skill" in parsed.content
-        assert parsed.slug == "skill"  # Derived from filename
+        assert parsed.slug == "test-skill"  # Derived from filename
         assert len(parsed.content_hash) == 64  # SHA256 hex
 
     def test_parse_missing_frontmatter(self):
@@ -59,8 +59,8 @@ category: testing
         with pytest.raises(SkillParseError, match="Missing 'name'"):
             parser.parse_content(content, "test.md")
 
-    def test_parse_missing_category(self):
-        """Test parsing fails without category field."""
+    def test_parse_missing_category_no_path(self):
+        """Test parsing fails without category when path has no parent directory."""
         parser = SkillParser()
         content = """---
 name: Test Skill
@@ -68,9 +68,44 @@ name: Test Skill
 
 # Content
 """
-
-        with pytest.raises(SkillParseError, match="Missing 'category'"):
+        # Single-component path can't derive category from parent directory
+        with pytest.raises(SkillParseError, match="cannot derive from path"):
             parser.parse_content(content, "test.md")
+
+    def test_derive_category_from_path(self):
+        """Test category is derived from parent directory when not in frontmatter."""
+        parser = SkillParser()
+        content = """---
+name: BioPython Analysis
+---
+
+# BioPython Analysis
+
+Skill content here.
+"""
+        # Path: scientific-skills/biopython/SKILL.md -> category = "biopython"
+        parsed = parser.parse_content(content, "scientific-skills/biopython/SKILL.md")
+        assert parsed.category == "biopython"
+
+    def test_derive_slug_from_directory_for_skill_md(self):
+        """Test slug is derived from parent directory for SKILL.md files."""
+        parser = SkillParser()
+        content = """---
+name: PubChem Tools
+category: pubchem
+---
+
+# PubChem Tools
+
+Skill content.
+"""
+        # For SKILL.md files, slug should come from parent directory
+        parsed = parser.parse_content(content, "scientific-skills/pubchem/SKILL.md")
+        assert parsed.slug == "pubchem"
+
+        # For regular filenames, slug should come from filename
+        parsed2 = parser.parse_content(content, "scientific-skills/pubchem/analysis.md")
+        assert parsed2.slug == "analysis"
 
     def test_parse_invalid_yaml(self):
         """Test parsing fails with invalid YAML."""
@@ -203,16 +238,39 @@ class TestGitHubSkillIngester:
 
     @pytest.mark.asyncio
     async def test_list_skill_files(self):
-        """Test listing skill files from a repo."""
+        """Test listing skill files from a repo (only SKILL.md files)."""
         ingester = GitHubSkillIngester()
 
+        # Simulate K-Dense-style repo structure where each skill is in
+        # its own directory with a SKILL.md file
         mock_tree = {
             "tree": [
-                {"path": "skills/analysis.md", "type": "blob", "sha": "sha1"},
-                {"path": "skills/pipeline.md", "type": "blob", "sha": "sha2"},
-                {"path": "skills/readme.txt", "type": "blob", "sha": "sha3"},  # Not .md
-                {"path": "other/file.md", "type": "blob", "sha": "sha4"},  # Wrong path
-                {"path": "skills", "type": "tree", "sha": "sha5"},  # Not a blob
+                # Valid SKILL.md files in skill directories
+                {
+                    "path": "scientific-skills/biopython/SKILL.md",
+                    "type": "blob",
+                    "sha": "sha1",
+                },
+                {
+                    "path": "scientific-skills/pubchem/SKILL.md",
+                    "type": "blob",
+                    "sha": "sha2",
+                },
+                # Reference files that should be filtered out
+                {
+                    "path": "scientific-skills/biopython/examples.md",
+                    "type": "blob",
+                    "sha": "sha3",
+                },
+                {
+                    "path": "scientific-skills/README.md",
+                    "type": "blob",
+                    "sha": "sha4",
+                },
+                # Wrong directory
+                {"path": "other/tool/SKILL.md", "type": "blob", "sha": "sha5"},
+                # Directory entry, not a blob
+                {"path": "scientific-skills", "type": "tree", "sha": "sha6"},
             ]
         }
 
@@ -224,11 +282,141 @@ class TestGitHubSkillIngester:
             mock_client.get.return_value = mock_response
             mock_get_client.return_value = mock_client
 
-            files = await ingester.list_skill_files("owner", "repo", "main", "skills")
+            files = await ingester.list_skill_files("owner", "repo", "main", "scientific-skills")
 
+            # Should only include SKILL.md files in the correct path
             assert len(files) == 2
-            assert files[0]["path"] == "skills/analysis.md"
-            assert files[1]["path"] == "skills/pipeline.md"
+            assert files[0]["path"] == "scientific-skills/biopython/SKILL.md"
+            assert files[1]["path"] == "scientific-skills/pubchem/SKILL.md"
+
+        await ingester.close()
+
+    @pytest.mark.asyncio
+    async def test_github_ingester_end_to_end_with_kdense_format(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Test end-to-end GitHub skill ingestion with K-Dense format.
+
+        Verifies that:
+        - Mocked GitHub API returns tree with SKILL.md files
+        - Parser correctly derives category and slug from directory structure
+        - Skills are created in database with correct fields
+        - Reference files (non-SKILL.md) are filtered out
+        """
+        ingester = GitHubSkillIngester()
+
+        # Mock tree response (simulating K-Dense repo structure)
+        mock_tree = {
+            "tree": [
+                {
+                    "path": "scientific-skills/biopython/SKILL.md",
+                    "type": "blob",
+                    "sha": "sha1",
+                },
+                {
+                    "path": "scientific-skills/pubchem/SKILL.md",
+                    "type": "blob",
+                    "sha": "sha2",
+                },
+                # Reference file that should be filtered out
+                {
+                    "path": "scientific-skills/biopython/examples.md",
+                    "type": "blob",
+                    "sha": "sha3",
+                },
+            ]
+        }
+
+        # Mock skill file contents (K-Dense format: no category in frontmatter)
+        biopython_content = """---
+name: BioPython Analysis
+description: Analyze biological sequences with BioPython
+tags:
+  - biology
+  - sequences
+---
+
+# BioPython Analysis
+
+Use BioPython for sequence analysis.
+"""
+        pubchem_content = """---
+name: PubChem Tools
+description: Query chemical compound data from PubChem
+tags:
+  - chemistry
+  - compounds
+---
+
+# PubChem Tools
+
+Access PubChem compound data.
+"""
+
+        def mock_get_response(url, **kwargs):
+            """Return appropriate mock response based on URL."""
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+
+            if "commits" in url:
+                response.json.return_value = {"sha": "abc123def456"}
+            elif "trees" in url:
+                response.json.return_value = mock_tree
+            elif "biopython/SKILL.md" in url:
+                response.text = biopython_content
+            elif "pubchem/SKILL.md" in url:
+                response.text = pubchem_content
+            else:
+                response.text = ""
+
+            return response
+
+        # Create source
+        source = SkillSource(
+            name="K-Dense Scientific Skills",
+            source_type="github",
+            url="https://github.com/K-Dense-AI/claude-scientific-skills",
+            branch="main",
+            skills_path="scientific-skills",
+            is_enabled=True,
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        with patch.object(ingester, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = mock_get_response
+            mock_get_client.return_value = mock_client
+
+            stats = await ingester.sync_source(db_session, source)
+
+            # Verify stats
+            assert stats["created"] == 2
+            assert stats["errors"] == 0
+
+            # Verify skills were created with correct fields
+            stmt = select(Skill).where(Skill.source_id == source.id)
+            result = await db_session.execute(stmt)
+            skills = {s.slug: s for s in result.scalars().all()}
+
+            assert len(skills) == 2
+
+            # Check biopython skill
+            assert "biopython" in skills
+            biopython = skills["biopython"]
+            assert biopython.name == "BioPython Analysis"
+            assert biopython.category == "biopython"  # Derived from directory
+            assert biopython.description == "Analyze biological sequences with BioPython"
+            assert "biology" in biopython.tags
+
+            # Check pubchem skill
+            assert "pubchem" in skills
+            pubchem = skills["pubchem"]
+            assert pubchem.name == "PubChem Tools"
+            assert pubchem.category == "pubchem"  # Derived from directory
+            assert pubchem.description == "Query chemical compound data from PubChem"
 
         await ingester.close()
 
@@ -244,11 +432,12 @@ class TestLocalSkillIngester:
     ):
         """Test syncing skills from local directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Create skill files
+            # Create skill files (must be SKILL.md in subdirectory)
             skills_dir = Path(tmpdir) / "skills"
-            skills_dir.mkdir()
+            skill_subdir = skills_dir / "testing"
+            skill_subdir.mkdir(parents=True)
 
-            (skills_dir / "test-skill.md").write_text(sample_skill_markdown)
+            (skill_subdir / "SKILL.md").write_text(sample_skill_markdown)
 
             # Create source
             source = SkillSource(
@@ -289,8 +478,9 @@ class TestLocalSkillIngester:
         """Test updating skills on re-sync."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir) / "skills"
-            skills_dir.mkdir()
-            skill_file = skills_dir / "test-skill.md"
+            skill_subdir = skills_dir / "testing"
+            skill_subdir.mkdir(parents=True)
+            skill_file = skill_subdir / "SKILL.md"
             skill_file.write_text(sample_skill_markdown)
 
             # Create source

@@ -44,9 +44,6 @@ class ProviderSettings(BaseSettings):
         description="Provider: anthropic, cborg, vertex, bedrock, codex",
     )
 
-    # Claude CLI path
-    claude_cli_path: str = Field(default="claude", alias="CLAUDE_CLI_PATH")
-
     # GitHub token for skill syncing
     github_token: Optional[str] = Field(default=None, alias="GITHUB_TOKEN")
 
@@ -76,6 +73,10 @@ class ProviderSettings(BaseSettings):
     )
     google_application_credentials: Optional[str] = Field(
         default=None, alias="GOOGLE_APPLICATION_CREDENTIALS"
+    )
+    # Host path for GCP credentials (for agent container mounts when running in Docker)
+    gcp_credentials_host_path: Optional[str] = Field(
+        default=None, alias="GCP_CREDENTIALS_HOST_PATH"
     )
     gcp_billing_account_id: Optional[str] = Field(default=None, alias="GCP_BILLING_ACCOUNT_ID")
     cloud_ml_region: Optional[str] = Field(default=None, alias="CLOUD_ML_REGION")
@@ -156,6 +157,80 @@ class ProviderSettings(BaseSettings):
             )
 
         return self
+
+    def get_container_env_vars(
+        self,
+        gcp_credentials_container_path: str | None = None,
+    ) -> dict[str, str]:
+        """
+        Get environment variables to pass to agent containers.
+
+        Args:
+            gcp_credentials_container_path: Container path for GCP credentials file.
+
+        Returns:
+            Dict of env var names to values (only includes set values).
+        """
+        env_vars: dict[str, str] = {}
+
+        # Provider selection
+        env_vars["CLAUDE_PROVIDER"] = self.claude_provider
+
+        # Model settings
+        if self.anthropic_model:
+            env_vars["ANTHROPIC_MODEL"] = self.anthropic_model
+        if self.anthropic_small_fast_model:
+            env_vars["ANTHROPIC_SMALL_FAST_MODEL"] = self.anthropic_small_fast_model
+
+        # Anthropic direct
+        if self.anthropic_api_key:
+            env_vars["ANTHROPIC_API_KEY"] = self.anthropic_api_key
+
+        # CBORG
+        if self.anthropic_auth_token:
+            env_vars["ANTHROPIC_AUTH_TOKEN"] = self.anthropic_auth_token
+        if self.anthropic_base_url:
+            env_vars["ANTHROPIC_BASE_URL"] = self.anthropic_base_url
+
+        # Vertex AI
+        # CLAUDE_CODE_USE_VERTEX is what Claude CLI checks for Vertex AI mode
+        if self.claude_provider.lower() == "vertex":
+            env_vars["CLAUDE_CODE_USE_VERTEX"] = "1"
+        if self.anthropic_vertex_project_id:
+            env_vars["ANTHROPIC_VERTEX_PROJECT_ID"] = self.anthropic_vertex_project_id
+        if self.gcp_billing_account_id:
+            env_vars["GCP_BILLING_ACCOUNT_ID"] = self.gcp_billing_account_id
+        if self.cloud_ml_region:
+            env_vars["CLOUD_ML_REGION"] = self.cloud_ml_region
+        if self.vertex_region_claude_4_5_sonnet:
+            env_vars["VERTEX_REGION_CLAUDE_4_5_SONNET"] = self.vertex_region_claude_4_5_sonnet
+        if self.vertex_region_claude_4_5_haiku:
+            env_vars["VERTEX_REGION_CLAUDE_4_5_HAIKU"] = self.vertex_region_claude_4_5_haiku
+        if self.google_application_credentials:
+            env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = (
+                gcp_credentials_container_path or self.google_application_credentials
+            )
+
+        # AWS Bedrock
+        # CLAUDE_CODE_USE_BEDROCK is what Claude CLI checks for Bedrock mode
+        if self.claude_provider.lower() == "bedrock":
+            env_vars["CLAUDE_CODE_USE_BEDROCK"] = "1"
+        if self.aws_region:
+            env_vars["AWS_REGION"] = self.aws_region
+        if self.aws_access_key_id:
+            env_vars["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
+        if self.aws_secret_access_key:
+            env_vars["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
+        if self.aws_profile:
+            env_vars["AWS_PROFILE"] = self.aws_profile
+        if self.aws_bearer_token_bedrock:
+            env_vars["AWS_BEARER_TOKEN_BEDROCK"] = self.aws_bearer_token_bedrock
+
+        # GitHub token
+        if self.github_token:
+            env_vars["GITHUB_TOKEN"] = self.github_token
+
+        return env_vars
 
 
 class DatabaseSettings(BaseSettings):
@@ -246,6 +321,10 @@ class AuthSettings(BaseSettings):
     session_max_age: int = Field(default=86400, alias="SESSION_MAX_AGE")
     session_duration_days: int = Field(default=30, alias="SESSION_DURATION_DAYS")
 
+    # Google OAuth
+    google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
+
     # GitHub OAuth
     github_client_id: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_ID")
     github_client_secret: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_SECRET")
@@ -265,6 +344,11 @@ class AuthSettings(BaseSettings):
     def validate_oauth_pairs(self) -> "AuthSettings":
         """Validate that OAuth client ID and secret are paired."""
         errors = []
+
+        if self.google_client_id and not self.google_client_secret:
+            errors.append("GOOGLE_CLIENT_SECRET is required when GOOGLE_CLIENT_ID is set")
+        if self.google_client_secret and not self.google_client_id:
+            errors.append("GOOGLE_CLIENT_ID is required when GOOGLE_CLIENT_SECRET is set")
 
         if self.github_client_id and not self.github_client_secret:
             errors.append("GITHUB_CLIENT_SECRET is required when GITHUB_CLIENT_ID is set")
@@ -286,7 +370,12 @@ class AuthSettings(BaseSettings):
     @property
     def is_oauth_configured(self) -> bool:
         """Check if at least one OAuth provider is configured."""
-        return bool(self.github_client_id or self.orcid_client_id or self.enable_mock_auth)
+        return bool(
+            self.google_client_id
+            or self.github_client_id
+            or self.orcid_client_id
+            or self.enable_mock_auth
+        )
 
 
 class BudgetSettings(BaseSettings):
@@ -363,6 +452,17 @@ class ContainerSettings(BaseSettings):
     executor_cpu: float = Field(default=0.5, alias="SHANDY_EXECUTOR_CPU")
     executor_timeout: int = Field(default=120, alias="SHANDY_EXECUTOR_TIMEOUT")
 
+    # Host path mapping for sibling container volume mounts (executor containers)
+    # When the main container runs inside Docker and spawns sibling containers,
+    # paths need to be translated from container paths to host paths.
+    # Example: /app inside container maps to /home/user/shandy on host
+    container_app_dir: str = Field(default="/app", alias="SHANDY_CONTAINER_APP_DIR")
+    host_project_dir: Optional[str] = Field(
+        default=None,
+        alias="SHANDY_HOST_PROJECT_DIR",
+        description="Host path for project directory. Required when using agent containers.",
+    )
+
 
 class PhenixSettings(BaseSettings):
     """Phenix structural biology tools configuration."""
@@ -427,9 +527,32 @@ class BerkeleyLabSettings(BaseSettings):
         extra="ignore",
     )
 
-    kbase_token: Optional[str] = Field(default=None, alias="KBASE_TOKEN")
     dremio_user: Optional[str] = Field(default=None, alias="DREMIO_USER")
     dremio_password: Optional[str] = Field(default=None, alias="DREMIO_PASSWORD")
+
+
+class AgentSettings(BaseSettings):
+    """Agent behavior configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    max_agent_skills: int = Field(
+        default=10,
+        alias="MAX_AGENT_SKILLS",
+        description="Maximum number of skills an agent can use per job",
+    )
+
+    @field_validator("max_agent_skills")
+    @classmethod
+    def validate_max_agent_skills(cls, v: int) -> int:
+        """Validate that max_agent_skills is positive."""
+        if v <= 0:
+            raise ValueError(f"MAX_AGENT_SKILLS must be positive, got {v}")
+        return v
 
 
 class Settings(BaseSettings):
@@ -443,6 +566,11 @@ class Settings(BaseSettings):
 
     # Server settings
     port: int = Field(default=8080, alias="PORT")
+    base_url: str = Field(
+        default="http://localhost:8080",
+        alias="SHANDY_BASE_URL",
+        description="Base URL for SHANDY (used in notifications and share links)",
+    )
 
     # Nested settings
     dev: DevSettings = Field(default_factory=DevSettings)
@@ -454,6 +582,7 @@ class Settings(BaseSettings):
     container: ContainerSettings = Field(default_factory=ContainerSettings)
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
 
 
 @lru_cache(maxsize=1)

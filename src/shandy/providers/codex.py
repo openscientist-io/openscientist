@@ -5,7 +5,7 @@ This provider is a placeholder for future OpenAI Codex support.
 """
 
 import logging
-from typing import List
+from typing import Any, List
 
 from shandy.providers.base import BaseProvider, CostInfo
 
@@ -35,6 +35,33 @@ class CodexProvider(BaseProvider):
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """Codex cost tracking - not implemented."""
+        raise NotImplementedError(
+            "OpenAI Codex provider coming soon. "
+            "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."
+        )
+
+    async def send_message(
+        self,
+        messages: list[dict[str, str]],
+        system: str | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str:
+        """Codex messaging - not implemented."""
+        raise NotImplementedError(
+            "OpenAI Codex provider coming soon. "
+            "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."
+        )
+
+    async def send_message_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system: str | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        """Codex messaging with tools - not implemented."""
         raise NotImplementedError(
             "OpenAI Codex provider coming soon. "
             "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."

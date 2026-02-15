@@ -1,7 +1,25 @@
 """Transcript parsing utilities for the web application."""
 
 import json
+from dataclasses import dataclass, field
 from typing import Any, Dict, List
+
+
+@dataclass
+class UsageSummary:
+    """Summary of tools and skills used in a transcript."""
+
+    tool_counts: Dict[str, int] = field(default_factory=dict)
+    skill_invocations: List[str] = field(default_factory=list)
+    mcp_tool_calls: int = 0
+    code_executions: int = 0
+    pubmed_searches: int = 0
+    findings_recorded: int = 0
+
+    @property
+    def skills_used(self) -> List[str]:
+        """Deduplicated list of skills invoked."""
+        return list(dict.fromkeys(self.skill_invocations))
 
 
 def get_action_description(tool_use: Dict[str, Any]) -> str:
@@ -30,6 +48,9 @@ def get_action_description(tool_use: Dict[str, Any]) -> str:
         return f"Summary: {inp.get('summary', '')[:50]}..."
     if "execute_code" in name:
         return "Code execution"
+    if name == "Skill":
+        skill_name = inp.get("skill", "unknown")
+        return f"Skill: {skill_name}"
 
     # 3. Just the tool name
     return str(name.split("__")[-1] if "__" in name else name)
@@ -109,3 +130,66 @@ def parse_transcript_actions(transcript: List[Dict[str, Any]]) -> List[Dict[str,
                     )
 
     return actions
+
+
+def extract_usage_summary(transcript: List[Dict[str, Any]]) -> UsageSummary:
+    """
+    Extract a summary of tool and skill usage from a transcript.
+
+    Args:
+        transcript: List of transcript entries
+
+    Returns:
+        UsageSummary with counts and skill names
+    """
+    summary = UsageSummary()
+
+    for entry in transcript:
+        if entry.get("type") == "assistant":
+            content = entry.get("message", {}).get("content", [])
+            for item in content:
+                if item.get("type") == "tool_use":
+                    tool_name = item.get("name", "")
+                    inp = item.get("input", {})
+
+                    # Track tool usage
+                    short_name = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+                    summary.tool_counts[short_name] = summary.tool_counts.get(short_name, 0) + 1
+
+                    # Track specific tool types
+                    if "execute_code" in tool_name:
+                        summary.code_executions += 1
+                        summary.mcp_tool_calls += 1
+                    elif "search_pubmed" in tool_name:
+                        summary.pubmed_searches += 1
+                        summary.mcp_tool_calls += 1
+                    elif "update_knowledge_state" in tool_name:
+                        summary.findings_recorded += 1
+                        summary.mcp_tool_calls += 1
+                    elif "shandy" in tool_name.lower():
+                        summary.mcp_tool_calls += 1
+
+                    # Track Skill invocations
+                    if tool_name == "Skill":
+                        skill_name = inp.get("skill", "")
+                        if skill_name:
+                            summary.skill_invocations.append(skill_name)
+
+    return summary
+
+
+def parse_transcript_with_usage(
+    transcript: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], UsageSummary]:
+    """
+    Parse transcript and extract both actions and usage summary.
+
+    Args:
+        transcript: List of transcript entries
+
+    Returns:
+        Tuple of (actions list, usage summary)
+    """
+    actions = parse_transcript_actions(transcript)
+    usage = extract_usage_summary(transcript)
+    return actions, usage

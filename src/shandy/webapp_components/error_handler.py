@@ -1,7 +1,7 @@
 """
 Error parsing and user-friendly message generation for SHANDY web interface.
 
-Parses raw error messages (especially Claude CLI JSON output) and provides
+Parses raw error messages (API responses, JSON output, etc.) and provides
 categorized, actionable error information for display to users.
 """
 
@@ -18,9 +18,9 @@ CATEGORY_UNKNOWN = "unknown"
 
 def extract_error_message(raw_error: str) -> str:
     """
-    Extract the actual error message from Claude CLI JSON output.
+    Extract the actual error message from raw error output.
 
-    Claude CLI errors often contain JSON blobs with nested content arrays.
+    API errors often contain JSON blobs with nested content arrays.
     This function extracts the meaningful error text from those structures.
 
     Args:
@@ -33,7 +33,7 @@ def extract_error_message(raw_error: str) -> str:
         return "Unknown error"
 
     # Pattern 1: Look for "text": "API Error: ..." in JSON content
-    # This handles the nested JSON structure from Claude CLI
+    # This handles nested JSON structure from API responses
     text_pattern = r'"text"\s*:\s*"([^"]+)"'
     matches = re.findall(text_pattern, raw_error)
 

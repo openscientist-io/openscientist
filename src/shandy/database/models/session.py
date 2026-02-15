@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -58,7 +58,7 @@ class Session(UUIDv7Mixin, Base):
     )
 
     user_agent: Mapped[str | None] = mapped_column(
-        String(500),
+        Text,
         nullable=True,
         comment="Browser user agent string",
     )

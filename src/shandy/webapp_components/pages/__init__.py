@@ -10,6 +10,8 @@ from shandy.webapp_components.pages.jobs_list import jobs_page
 from shandy.webapp_components.pages.login import login_page
 from shandy.webapp_components.pages.mock_login import mock_login_form
 from shandy.webapp_components.pages.new_job import new_job_page
+from shandy.webapp_components.pages.skill_detail import skill_detail_page
+from shandy.webapp_components.pages.skills_list import skills_page
 
 __all__ = [
     "login_page",
@@ -21,4 +23,6 @@ __all__ = [
     "billing_page",
     "docs_page",
     "admin_page",
+    "skills_page",
+    "skill_detail_page",
 ]

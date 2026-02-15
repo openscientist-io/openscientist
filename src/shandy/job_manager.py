@@ -12,12 +12,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Coroutine, Dict, List, Optional, TypeVar
 from uuid import UUID
 
 from sqlalchemy import select
 
 from shandy.database.models.job import Job as JobModel
+from shandy.database.models.job_skill import JobSkill
 from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ProviderError
@@ -40,6 +41,14 @@ class JobStatus(str, Enum):
 
 
 @dataclass
+class JobStatusUpdateResult:
+    """Result of updating job status, includes data needed for notifications."""
+
+    ntfy_enabled: bool = False
+    ntfy_topic: str | None = None
+
+
+@dataclass
 class JobInfo:
     """Job information for API/UI responses."""
 
@@ -54,9 +63,11 @@ class JobInfo:
     iterations_completed: int = 0
     findings_count: int = 0
     error: Optional[str] = None
+    cancellation_reason: Optional[str] = None  # Reason why job was cancelled
     use_skills: bool = True
     investigation_mode: str = "autonomous"  # "autonomous" or "coinvestigate"
     owner_id: Optional[str] = None  # UUID of owner, None for orphaned jobs
+    short_title: Optional[str] = None  # Brief model-generated title
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -92,9 +103,11 @@ class JobInfo:
             iterations_completed=iterations_completed,
             findings_count=findings_count,
             error=job.error_message,
+            cancellation_reason=job.cancellation_reason,
             use_skills=True,  # Default for legacy compatibility
             investigation_mode="autonomous",  # Default for legacy compatibility
             owner_id=str(job.owner_id) if job.owner_id else None,
+            short_title=job.short_title,
         )
 
 
@@ -153,21 +166,45 @@ async def _db_update_job_status(
     status: JobStatus,
     error_message: Optional[str] = None,
     user_id: Optional[UUID] = None,
-) -> None:
-    """Update job status in the database (thread-safe for worker threads)."""
+    cancellation_reason: Optional[str] = None,
+) -> JobStatusUpdateResult:
+    """Update job status in the database (thread-safe for worker threads).
+
+    Returns:
+        JobStatusUpdateResult with the job owner's ntfy settings for notifications.
+    """
+    from shandy.database.models import User
+
+    result = JobStatusUpdateResult()
+
     async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
             await set_current_user(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
-        result = await session.execute(stmt)
-        job = result.scalar_one_or_none()
+        db_result = await session.execute(stmt)
+        job = db_result.scalar_one_or_none()
 
         if job:
             job.status = status.value
             if error_message:
                 job.error_message = error_message
+            if cancellation_reason:
+                job.cancellation_reason = cancellation_reason
             await session.commit()
+
+            # Fetch owner's ntfy settings for notifications
+            if job.owner_id:
+                user_stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
+                    User.id == job.owner_id
+                )
+                user_result = await session.execute(user_stmt)
+                user_row = user_result.first()
+                if user_row:
+                    result.ntfy_enabled = user_row.ntfy_enabled
+                    result.ntfy_topic = user_row.ntfy_topic
+
+    return result
 
 
 async def _db_list_jobs(
@@ -207,7 +244,44 @@ async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
             await session.commit()
 
 
-def _run_async(coro):
+async def _db_get_job_skills(job_id: str) -> List[JobSkill]:
+    """Get all skills associated with a job (thread-safe for worker threads).
+
+    Eager-loads the skill relationship so that job_skill.skill can be
+    accessed to get the skill's slug for URL construction.
+    """
+    from sqlalchemy.orm import selectinload
+
+    async with AsyncSessionLocal(thread_safe=True) as session:
+        stmt = (
+            select(JobSkill)
+            .options(selectinload(JobSkill.skill))
+            .where(JobSkill.job_id == UUID(job_id))
+            .order_by(JobSkill.created_at)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+
+def get_job_skills(job_id: str) -> List[JobSkill]:
+    """
+    Get all skills associated with a job.
+
+    Returns skills in order they were added, with initial skills first.
+
+    Args:
+        job_id: Job UUID string
+
+    Returns:
+        List of JobSkill objects
+    """
+    return _run_async(_db_get_job_skills(job_id))
+
+
+_T = TypeVar("_T")
+
+
+def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     """Helper to run async code from sync context.
 
     When called from within a running event loop (e.g., NiceGUI handlers),
@@ -226,7 +300,7 @@ def _run_async(coro):
         # We're inside a running event loop - run in a separate thread
         # with a fresh event loop. The coroutine will create its own
         # database session via AsyncSessionLocal context manager.
-        def run_in_thread():
+        def run_in_thread() -> _T:
             return asyncio.run(coro)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -304,7 +378,11 @@ class JobManager:
                     logger.error("Failed to update job %s in database: %s", job_id, e)
 
                 # Also update config.json for backward compatibility
-                self._update_job_status_file(job_id, JobStatus.CANCELLED)
+                self._update_job_status_file(
+                    job_id,
+                    JobStatus.CANCELLED,
+                    cancellation_reason="Server restarted while job was running",
+                )
                 stale_count += 1
 
         if stale_count > 0:
@@ -359,12 +437,26 @@ class JobManager:
 
         # Create job in database
         logger.info("Creating job %s in database", job_id)
+        owner_uuid = UUID(owner_id) if owner_id else None
         try:
-            owner_uuid = UUID(owner_id) if owner_id else None
             _run_async(_db_create_job(job_id, research_question, max_iterations, owner_uuid))
         except Exception as e:
             logger.error("Failed to create job in database: %s", e)
             raise ValueError(f"Failed to create job in database: {e}") from e
+
+        # Get ntfy settings for the owner (for push notifications)
+        ntfy_enabled = False
+        ntfy_topic: Optional[str] = None
+        if owner_uuid:
+            try:
+                from shandy.ntfy import ensure_user_has_topic, get_user_ntfy_settings
+
+                ntfy_enabled, ntfy_topic = _run_async(get_user_ntfy_settings(owner_uuid))
+                # Ensure user has a topic if ntfy is enabled
+                if ntfy_enabled and not ntfy_topic:
+                    ntfy_topic = _run_async(ensure_user_has_topic(owner_uuid))
+            except Exception as e:
+                logger.warning("Failed to get ntfy settings for user: %s", e)
 
         # Create job directory and files (for backward compatibility)
         logger.info("Creating job %s filesystem structure", job_id)
@@ -376,6 +468,9 @@ class JobManager:
             use_skills=use_skills,
             jobs_dir=self.jobs_dir,
             investigation_mode=investigation_mode,
+            owner_id=owner_id,
+            ntfy_enabled=ntfy_enabled,
+            ntfy_topic=ntfy_topic,
         )
 
         # Load job info
@@ -441,8 +536,17 @@ class JobManager:
 
             logger.info("Job %s completed: %s", job_id, result)
 
+            # Update database status based on result
+            final_status = result.get("status", "completed")
+            if final_status == "completed":
+                self._update_job_status(job_id, JobStatus.COMPLETED)
+            elif final_status == "failed":
+                self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
+
         except Exception as e:  # noqa: BLE001 — thread-level safety net
-            logger.error("Job %s failed: %s", job_id, e, exc_info=True)
+            from shandy.version import get_version_string
+
+            logger.error("Job %s failed [%s]: %s", job_id, get_version_string(), e, exc_info=True)
             # Error already recorded in orchestrator
 
         finally:
@@ -486,8 +590,10 @@ class JobManager:
         if job_info.status not in [JobStatus.RUNNING, JobStatus.QUEUED]:
             raise ValueError(f"Job {job_id} is not running or queued")
 
-        # Update status
-        self._update_job_status(job_id, JobStatus.CANCELLED)
+        # Update status with reason
+        self._update_job_status(
+            job_id, JobStatus.CANCELLED, cancellation_reason="Cancelled by user"
+        )
 
         # Remove from running jobs if present
         with self._lock:
@@ -746,22 +852,31 @@ class JobManager:
                 iterations_completed = job_model.current_iteration
                 findings_count = 0
 
-                if job_model.status in ("running", "awaiting_feedback"):
-                    ks_path = self.jobs_dir / job_id / "knowledge_state.json"
-                    if ks_path.exists():
-                        try:
-                            with open(ks_path, encoding="utf-8") as f:
-                                ks = json.load(f)
-                            ks_iteration = ks.get("iteration", 1)
+                # Load progress from knowledge_state.json for all jobs
+                # (database sync may be async and not yet committed)
+                ks_path = self.jobs_dir / job_id / "knowledge_state.json"
+                if ks_path.exists():
+                    try:
+                        with open(ks_path, encoding="utf-8") as f:
+                            ks = json.load(f)
+                        findings_count = len(ks.get("findings", []))
+                        ks_iteration = ks.get("iteration", 1)
+
+                        # For running jobs, iteration is the current (in-progress) iteration
+                        # so completed = iteration - 1
+                        # For completed/failed/cancelled jobs, iteration is the final count
+                        if job_model.status in ("running", "awaiting_feedback"):
                             iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-                            findings_count = len(ks.get("findings", []))
-                        except (
-                            OSError,
-                            json.JSONDecodeError,
-                            KeyError,
-                            ValueError,
-                        ) as e:
-                            logger.warning("Failed to load KS for running job %s: %s", job_id, e)
+                        else:
+                            # Completed/failed/cancelled: use the iteration value directly
+                            iterations_completed = ks_iteration
+                    except (
+                        OSError,
+                        json.JSONDecodeError,
+                        KeyError,
+                        ValueError,
+                    ) as e:
+                        logger.warning("Failed to load KS for job %s: %s", job_id, e)
 
                 return JobInfo.from_db_model(job_model, iterations_completed, findings_count)
         except Exception as e:
@@ -781,26 +896,34 @@ class JobManager:
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
-            # For running jobs, get real-time progress from knowledge_state.json
+            # Get progress from config, then override with knowledge_state.json if available
             iterations_completed = config.get("iterations_completed", 0)
             findings_count = config.get("findings_count", 0)
 
-            if config["status"] in ("running", "awaiting_feedback"):
-                ks_path = self.jobs_dir / job_id / "knowledge_state.json"
-                if ks_path.exists():
-                    try:
-                        with open(ks_path, encoding="utf-8") as f:
-                            ks = json.load(f)
-                        # KS iteration is the NEXT iteration to run, so completed = iteration - 1
-                        ks_iteration = ks.get("iteration", 1)
+            # Load progress from knowledge_state.json for all jobs
+            ks_path = self.jobs_dir / job_id / "knowledge_state.json"
+            if ks_path.exists():
+                try:
+                    with open(ks_path, encoding="utf-8") as f:
+                        ks = json.load(f)
+                    # Always get findings count from KS (more accurate than config)
+                    findings_count = len(ks.get("findings", []))
+                    ks_iteration = ks.get("iteration", 1)
+
+                    # For running jobs, iteration is the current (in-progress) iteration
+                    # so completed = iteration - 1
+                    # For completed/failed/cancelled jobs, iteration is the final count
+                    if config["status"] in ("running", "awaiting_feedback"):
                         iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-                        findings_count = len(ks.get("findings", []))
-                    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
-                        logger.warning(
-                            "Failed to load KS for running job %s: %s",
-                            job_id,
-                            e,
-                        )
+                    else:
+                        # Completed/failed/cancelled: use the iteration value directly
+                        iterations_completed = ks_iteration
+                except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+                    logger.warning(
+                        "Failed to load KS for job %s: %s",
+                        job_id,
+                        e,
+                    )
 
             return JobInfo(
                 job_id=config["job_id"],
@@ -814,15 +937,23 @@ class JobManager:
                 iterations_completed=iterations_completed,
                 findings_count=findings_count,
                 error=config.get("error"),
+                cancellation_reason=config.get("cancellation_reason"),
                 use_skills=config.get("use_skills", True),
                 investigation_mode=config.get("investigation_mode", "autonomous"),
+                owner_id=config.get("owner_id"),
+                short_title=config.get("short_title"),
             )
 
         except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error("Failed to load job info for %s: %s", job_id, e)
             return None
 
-    def _update_job_status_file(self, job_id: str, status: JobStatus) -> None:
+    def _update_job_status_file(
+        self,
+        job_id: str,
+        status: JobStatus,
+        cancellation_reason: Optional[str] = None,
+    ) -> None:
         """Update job status in config.json (for backward compatibility)."""
         config_path = self.jobs_dir / job_id / "config.json"
 
@@ -844,6 +975,8 @@ class JobManager:
                 config["failed_at"] = datetime.now().isoformat()
             elif status == JobStatus.CANCELLED:
                 config["cancelled_at"] = datetime.now().isoformat()
+                if cancellation_reason:
+                    config["cancellation_reason"] = cancellation_reason
 
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2)
@@ -852,21 +985,49 @@ class JobManager:
             logger.error("Failed to update job status file for %s: %s", job_id, e)
 
     def _update_job_status(
-        self, job_id: str, status: JobStatus, error_message: Optional[str] = None
+        self,
+        job_id: str,
+        status: JobStatus,
+        error_message: Optional[str] = None,
+        cancellation_reason: Optional[str] = None,
     ) -> None:
         """Update job status in database and config.json."""
         # Get job to find owner
         job_info = self._load_job_info(job_id)
         owner_id = UUID(job_info.owner_id) if job_info and job_info.owner_id else None
 
-        # Update database
+        # Update database and get ntfy settings
+        ntfy_result: Optional[JobStatusUpdateResult] = None
         try:
-            _run_async(_db_update_job_status(job_id, status, error_message, owner_id))
+            ntfy_result = _run_async(
+                _db_update_job_status(job_id, status, error_message, owner_id, cancellation_reason)
+            )
         except Exception as e:
             logger.error("Failed to update job status in database: %s", e)
 
         # Update file for backward compatibility
-        self._update_job_status_file(job_id, status)
+        self._update_job_status_file(job_id, status, cancellation_reason)
+
+        # Send push notification if user has ntfy enabled
+        # Note: notify_job_status_change will create topic if not exists
+        if owner_id and job_info and ntfy_result and ntfy_result.ntfy_enabled:
+            try:
+                from shandy.ntfy import notify_job_status_change
+
+                _run_async(
+                    notify_job_status_change(
+                        user_id=owner_id,
+                        job_id=job_id,
+                        job_title=job_info.research_question,
+                        new_status=status.value,
+                        error_message=error_message,
+                        cancellation_reason=cancellation_reason,
+                        iteration=job_info.iterations_completed,
+                        ntfy_topic=ntfy_result.ntfy_topic,
+                    )
+                )
+            except Exception as e:
+                logger.warning("Failed to send ntfy notification: %s", e)
 
 
 def main():

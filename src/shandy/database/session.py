@@ -12,9 +12,8 @@ with an elevated PostgreSQL role. This is the recommended approach for productio
 as it enforces RLS at the database level, not just application code.
 """
 
-import threading
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional, cast
+from typing import AsyncGenerator, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -26,9 +25,6 @@ from .engine import get_admin_engine, get_engine
 # Lazy session factories (initialized on first use)
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 _admin_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
-
-# Thread-local storage for per-thread engines (used when running in worker threads)
-_thread_local = threading.local()
 
 
 def _get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -63,45 +59,48 @@ def _get_admin_session_factory() -> async_sessionmaker[AsyncSession]:
     return _admin_session_factory
 
 
-def _get_thread_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Get or create a session factory for the current thread.
+def _create_fresh_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Create a fresh session factory for the current event loop.
 
-    This creates a separate engine with NullPool (no connection pooling)
-    for use in worker threads, avoiding event loop conflicts with asyncpg.
+    This creates a new engine with NullPool (no connection pooling)
+    for use in worker threads or contexts with different event loops.
+    The engine and factory are NOT cached because asyncpg connections
+    are bound to the event loop they were created in, and asyncio.run()
+    creates a new event loop each time.
     """
-    if not hasattr(_thread_local, "session_factory"):
-        settings = get_settings()
-        database_url = settings.database.effective_database_url
+    settings = get_settings()
+    database_url = settings.database.effective_database_url
 
-        # Create a thread-local engine with NullPool to avoid event loop issues
-        thread_engine = create_async_engine(
-            database_url,
-            poolclass=NullPool,  # No pooling - each connection is fresh
-            echo=settings.database.sql_echo,
-        )
-        _thread_local.session_factory = async_sessionmaker(
-            thread_engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-            autocommit=False,
-            autoflush=False,
-        )
-    return cast(async_sessionmaker[AsyncSession], _thread_local.session_factory)
+    # Create a fresh engine with NullPool - no caching since each
+    # asyncio.run() creates a new event loop and connections are loop-bound
+    thread_engine = create_async_engine(
+        database_url,
+        poolclass=NullPool,  # No pooling - each connection is fresh
+        echo=settings.database.sql_echo,
+    )
+    return async_sessionmaker(
+        thread_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
+    )
 
 
 def AsyncSessionLocal(thread_safe: bool = False) -> AsyncSession:  # noqa: N802
     """Create a new async session.
 
     Args:
-        thread_safe: If True, creates a session using a thread-local engine
-                     with NullPool, safe for use in worker threads with their
-                     own event loops. Default False uses the shared engine.
+        thread_safe: If True, creates a fresh session factory with NullPool,
+                     safe for use in worker threads or separate event loops.
+                     Each call creates a new engine to avoid event loop conflicts.
+                     Default False uses the shared engine (main event loop only).
 
     Returns:
         A new AsyncSession instance.
     """
     if thread_safe:
-        return _get_thread_session_factory()()
+        return _create_fresh_session_factory()()
     return _get_session_factory()()
 
 
@@ -142,8 +141,8 @@ async def get_admin_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency to provide a database session with admin privileges.
 
-    Sessions from this factory bypass RLS policies by switching to the
-    shandy_admin PostgreSQL role which has BYPASSRLS privilege.
+    Sessions from this factory bypass RLS policies by connecting with
+    the shandy_admin PostgreSQL role which has BYPASSRLS privilege.
 
     The role is created by docker/postgres/init.sql in production or by
     the test setup in tests/conftest.py.
@@ -165,23 +164,13 @@ async def get_admin_session() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         AsyncSession: A SQLAlchemy async session with admin privileges.
     """
-    from sqlalchemy import text
-
-    # Use the regular session factory to avoid event loop issues
-    # Then SET ROLE to shandy_admin which has BYPASSRLS
-    factory = _get_session_factory()
+    # Use the admin session factory which connects with elevated privileges
+    factory = _get_admin_session_factory()
     async with factory() as session:
         try:
-            # Switch to admin role with BYPASSRLS privilege
-            await session.execute(text("SET ROLE shandy_admin"))
             yield session
         except Exception:
             await session.rollback()
             raise
         finally:
-            # Reset role before closing
-            try:
-                await session.execute(text("RESET ROLE"))
-            except Exception:
-                pass
             await session.close()

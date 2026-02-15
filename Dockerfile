@@ -1,35 +1,27 @@
 # Dockerfile for SHANDY
-FROM python:3.12-slim
+# Builds on shandy-base which includes Python, Node.js, uv, and Claude CLI
+FROM shandy-base:latest
 
 # Build args
 ARG SHANDY_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
-# Install system dependencies including Node.js and fonts
-RUN apt-get update && apt-get install -y \
-    curl \
-    git \
-    jq \
+# Install additional system dependencies (fonts for matplotlib)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
-    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
-
-# Install Claude Code CLI via npm
-RUN npm install -g @anthropic-ai/claude-code@2.0.37
 
 # Set working directory
 WORKDIR /app
 
 # Copy package metadata files first
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md alembic.ini uv.lock ./
 
 # Copy source code (needed for editable install)
 COPY src/ src/
 
-# Install dependencies
-RUN pip install --no-cache-dir uv && \
-    uv pip install --system -e .
+# Install dependencies using uv
+RUN uv pip install --system -e .
 
 # Create jobs directory
 RUN mkdir -p jobs

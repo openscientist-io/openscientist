@@ -71,6 +71,9 @@ class KnowledgeState:
             "analysis_log": [],
             "iteration_summaries": [],  # Agent-generated summaries per iteration
             "feedback_history": [],  # Scientist feedback: [{after_iteration, text, submitted_at}]
+            "agent_status": None,  # Current agent status message (set by agent)
+            "agent_status_updated_at": None,  # When status was last updated
+            "consensus_answer": None,  # Consensus answer to research question (if reached)
         }
 
     @classmethod
@@ -285,6 +288,29 @@ class KnowledgeState:
             }
         )
 
+    def set_agent_status(self, status: str) -> None:
+        """
+        Set the current agent status message.
+
+        This is displayed in the UI to show what the agent is currently doing.
+        The agent should call this with a brief, human-readable description
+        of its current activity (e.g., "Searching for caffeine-ADHD studies").
+
+        Args:
+            status: Brief status message (recommended: under 80 chars)
+        """
+        self.data["agent_status"] = status
+        self.data["agent_status_updated_at"] = datetime.now().isoformat()
+
+    def clear_agent_status(self) -> None:
+        """Clear the agent status (e.g., when job completes)."""
+        self.data["agent_status"] = None
+        self.data["agent_status_updated_at"] = None
+
+    def get_agent_status(self) -> Optional[str]:
+        """Get the current agent status message."""
+        return self.data.get("agent_status")
+
     def get_iteration_summary(self, iteration: int) -> Optional[str]:
         """
         Get the summary for a specific iteration.
@@ -428,28 +454,32 @@ class KnowledgeState:
             job_id: Job ID (UUID string)
             user_id: User ID for RLS context (optional)
         """
-        async with AsyncSessionLocal() as session:
+        async with AsyncSessionLocal(thread_safe=True) as session:
             if user_id:
                 await set_current_user(session, user_id)
 
             job_uuid = UUID(job_id)
 
-            # Update job's current iteration
+            # Update job's current iteration and consensus answer
             job_stmt = select(JobModel).where(JobModel.id == job_uuid)
             job_result = await session.execute(job_stmt)
             job = job_result.scalar_one_or_none()
             if job:
                 job.current_iteration = self.data["iteration"]
+                # Save consensus answer if available
+                if self.data.get("consensus_answer"):
+                    job.consensus_answer = self.data["consensus_answer"]
 
             # Save hypotheses
             for hyp_data in self.data["hypotheses"]:
-                # Check if hypothesis already exists (by looking for external_id match)
+                # Check if hypothesis already exists (by looking for text match)
+                # Use .first() in case of duplicate statements
                 hyp_stmt = select(Hypothesis).where(
                     Hypothesis.job_id == job_uuid,
                     Hypothesis.text == hyp_data["statement"],
                 )
                 hyp_result = await session.execute(hyp_stmt)
-                existing_hyp = hyp_result.scalar_one_or_none()
+                existing_hyp = hyp_result.scalars().first()
 
                 if not existing_hyp:
                     hypothesis = Hypothesis(
@@ -473,11 +503,12 @@ class KnowledgeState:
             # Save findings
             for finding_data in self.data["findings"]:
                 # Check if finding already exists
+                # Use .first() in case of duplicate titles
                 finding_stmt = select(Finding).where(
                     Finding.job_id == job_uuid, Finding.text == finding_data["title"]
                 )
                 finding_result = await session.execute(finding_stmt)
-                existing_finding = finding_result.scalar_one_or_none()
+                existing_finding = finding_result.scalars().first()
 
                 if not existing_finding:
                     finding = Finding(
@@ -501,11 +532,12 @@ class KnowledgeState:
             # Save literature
             for lit_data in self.data["literature"]:
                 # Check if literature already exists (by title match since no pmid field)
+                # Use .first() since the same paper might appear multiple times
                 lit_stmt = select(Literature).where(
                     Literature.job_id == job_uuid, Literature.title == lit_data["title"]
                 )
                 lit_result = await session.execute(lit_stmt)
-                existing_lit = lit_result.scalar_one_or_none()
+                existing_lit = lit_result.scalars().first()
 
                 if not existing_lit:
                     lit_record = Literature(
@@ -526,7 +558,8 @@ class KnowledgeState:
 
             # Save analysis log entries
             for log_entry in self.data["analysis_log"]:
-                # Check if log entry already exists (by iteration + step)
+                # Check if log entry already exists (by iteration + description + timestamp)
+                # Use .first() since the created_at >= check may match multiple rows
                 log_stmt = select(AnalysisLog).where(
                     AnalysisLog.job_id == job_uuid,
                     AnalysisLog.iteration == log_entry["iteration"],
@@ -534,7 +567,7 @@ class KnowledgeState:
                     AnalysisLog.created_at >= datetime.fromisoformat(log_entry["timestamp"]),
                 )
                 log_result = await session.execute(log_stmt)
-                existing_log = log_result.scalar_one_or_none()
+                existing_log = log_result.scalars().first()
 
                 if not existing_log:
                     analysis_log = AnalysisLog(
@@ -556,12 +589,13 @@ class KnowledgeState:
             # Save iteration summaries
             for summary_data in self.data.get("iteration_summaries", []):
                 # Check if summary already exists
+                # Use .first() in case iteration constraint isn't enforced
                 summ_stmt = select(IterationSummary).where(
                     IterationSummary.job_id == job_uuid,
                     IterationSummary.iteration == summary_data["iteration"],
                 )
                 summ_result = await session.execute(summ_stmt)
-                existing_summ = summ_result.scalar_one_or_none()
+                existing_summ = summ_result.scalars().first()
 
                 if not existing_summ:
                     iteration_summary = IterationSummary(
@@ -576,12 +610,13 @@ class KnowledgeState:
             # Save feedback history
             for feedback_data in self.data.get("feedback_history", []):
                 # Check if feedback already exists
+                # Use .first() to handle potential duplicates
                 fb_stmt = select(FeedbackHistory).where(
                     FeedbackHistory.job_id == job_uuid,
                     FeedbackHistory.iteration == feedback_data["after_iteration"],
                 )
                 fb_result = await session.execute(fb_stmt)
-                existing_fb = fb_result.scalar_one_or_none()
+                existing_fb = fb_result.scalars().first()
 
                 if not existing_fb:
                     feedback = FeedbackHistory(
@@ -608,7 +643,7 @@ class KnowledgeState:
         Returns:
             KnowledgeState instance populated from database
         """
-        async with AsyncSessionLocal() as session:
+        async with AsyncSessionLocal(thread_safe=True) as session:
             if user_id:
                 await set_current_user(session, user_id)
 

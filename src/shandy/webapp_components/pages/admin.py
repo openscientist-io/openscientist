@@ -74,7 +74,6 @@ async def render_orphaned_jobs_panel():
             )
 
         ui.button("Search", icon="search", on_click=refresh_jobs).props("color=primary")
-        ui.button("Refresh", icon="refresh", on_click=refresh_jobs).props("color=secondary")
 
     # Jobs table container
     jobs_container = ui.column().classes("w-full mt-4")
@@ -319,8 +318,6 @@ async def render_users_panel():
                     ui.label(f"Error loading users: {str(e)}").classes("text-red-500")
 
         await load_users()
-
-        ui.button("Refresh", icon="refresh", on_click=load_users).props("color=secondary")
 
 
 async def render_legacy_user_panel():

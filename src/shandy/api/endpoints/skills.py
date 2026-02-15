@@ -19,11 +19,6 @@ from shandy.api.auth import get_current_user_from_api_key
 from shandy.database.models import Skill, SkillSource, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
-from shandy.skill_relevance import (
-    SkillRelevanceService,
-    get_all_categories,
-    search_skills,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -58,48 +53,6 @@ class SkillListResponse(BaseModel):
 
     skills: List[SkillResponse] = Field(..., description="List of skills")
     total: int = Field(..., description="Total number of skills")
-
-
-class SkillMatchRequest(BaseModel):
-    """Request body for matching skills to a prompt."""
-
-    prompt: str = Field(
-        ...,
-        min_length=10,
-        description="Research question or job description",
-        examples=["Analyze metabolomics data from hypothermic samples"],
-    )
-    max_results: int = Field(
-        5,
-        ge=1,
-        le=20,
-        description="Maximum number of skills to return",
-    )
-    score_threshold: float = Field(
-        0.3,
-        ge=0.0,
-        le=1.0,
-        description="Minimum relevance score",
-    )
-
-
-class ScoredSkillResponse(BaseModel):
-    """Response for a scored skill match."""
-
-    skill_id: str = Field(..., description="Skill ID")
-    name: str = Field(..., description="Skill name")
-    category: str = Field(..., description="Skill category")
-    slug: str = Field(..., description="URL-friendly identifier")
-    description: Optional[str] = Field(None, description="Brief description")
-    score: float = Field(..., description="Relevance score (0.0-1.0)")
-    match_reason: str = Field(..., description="Explanation of match")
-
-
-class SkillMatchResponse(BaseModel):
-    """Response for skill matching."""
-
-    prompt: str = Field(..., description="Original prompt")
-    matches: List[ScoredSkillResponse] = Field(..., description="Matched skills")
 
 
 class CategoryListResponse(BaseModel):
@@ -183,14 +136,26 @@ async def list_skills(
     await set_current_user(session, user.id)
 
     if search:
-        # Use full-text search
-        skills = await search_skills(
-            session,
-            query=search,
-            category=category,
-            tags=tags,
-            limit=limit,
+        # Use full-text search with PostgreSQL
+        conditions = [Skill.is_enabled == True]  # noqa: E712
+        if category:
+            conditions.append(Skill.category == category)
+        if tags:
+            for tag in tags:
+                conditions.append(Skill.tags.contains([tag]))
+
+        # Create tsquery from search terms
+        tsquery = func.plainto_tsquery("english", search)
+        conditions.append(Skill.search_vector.op("@@")(tsquery))
+
+        stmt = (
+            select(Skill)
+            .where(*conditions)
+            .order_by(func.ts_rank(Skill.search_vector, tsquery).desc())
+            .limit(limit)
         )
+        result = await session.execute(stmt)
+        skills = list(result.scalars().all())
         total = len(skills)
     else:
         # Regular query with filters
@@ -236,52 +201,18 @@ async def list_categories(
     Returns a list of unique category names from all enabled skills.
     """
     await set_current_user(session, user.id)
-    categories = await get_all_categories(session)
+
+    # Get unique categories from enabled skills
+    stmt = (
+        select(Skill.category)
+        .where(Skill.is_enabled == True)  # noqa: E712
+        .distinct()
+        .order_by(Skill.category)
+    )
+    result = await session.execute(stmt)
+    categories = [row[0] for row in result.all()]
+
     return CategoryListResponse(categories=categories)
-
-
-@router.post("/match", response_model=SkillMatchResponse)
-async def match_skills(
-    request: SkillMatchRequest,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
-) -> SkillMatchResponse:
-    """
-    Find skills relevant to a research prompt.
-
-    Uses a two-stage approach:
-    1. Pre-filter using PostgreSQL full-text search
-    2. Score candidates using Anthropic API for semantic relevance
-
-    Returns skills sorted by relevance score.
-    """
-    await set_current_user(session, user.id)
-
-    service = SkillRelevanceService()
-    scored_skills = await service.find_relevant_skills(
-        session=session,
-        prompt=request.prompt,
-        score_threshold=request.score_threshold,
-        max_results=request.max_results,
-    )
-
-    matches = [
-        ScoredSkillResponse(
-            skill_id=str(s.skill_id),
-            name=s.name,
-            category=s.category,
-            slug=s.slug,
-            description=s.description,
-            score=s.score,
-            match_reason=s.match_reason,
-        )
-        for s in scored_skills
-    ]
-
-    return SkillMatchResponse(
-        prompt=request.prompt,
-        matches=matches,
-    )
 
 
 @router.get("/{skill_id}", response_model=SkillDetailResponse)

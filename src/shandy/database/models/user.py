@@ -60,6 +60,20 @@ class User(UUIDv7Mixin, Base):
         comment="Whether user account is active",
     )
 
+    ntfy_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="true",
+        comment="Whether push notifications via ntfy.sh are enabled",
+    )
+
+    ntfy_topic: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        unique=True,
+        comment="Unique ntfy.sh topic for this user's notifications",
+    )
+
     # Relationships
     oauth_accounts: Mapped[list["OAuthAccount"]] = relationship(
         back_populates="user",

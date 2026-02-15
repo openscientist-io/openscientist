@@ -5,6 +5,7 @@ Manages the lifecycle of executor containers for isolated code execution.
 Each job's code runs in a separate Docker container with strict resource limits.
 """
 
+import base64
 import json
 import logging
 import os
@@ -90,10 +91,11 @@ class ContainerManager:
         import docker.errors
 
         timeout = timeout or self.timeout
-        output_dir = Path(output_dir) if output_dir else Path(tempfile.mkdtemp())
+        output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Prepare input JSON
+        # Prepare input JSON and encode as base64 to avoid shell quoting issues
+        # (JSON may contain single quotes in Python code that break shell escaping)
         input_data = {
             "code": code,
             "data_path": data_path,
@@ -104,6 +106,7 @@ class ContainerManager:
             "data_files": data_files or [],
         }
         input_json = json.dumps(input_data)
+        input_b64 = base64.b64encode(input_json.encode()).decode()
 
         # Container name includes job_id for cleanup
         container_name = f"shandy-exec-{job_id}-{os.urandom(4).hex()}"
@@ -116,7 +119,7 @@ class ContainerManager:
         # Add data directory mount if data files exist
         if data_files:
             for file_info in data_files:
-                file_path = Path(file_info.get("path", ""))
+                file_path = Path(file_info.get("path", "")).resolve()
                 if file_path.exists():
                     parent = file_path.parent
                     volumes[str(parent)] = {"bind": "/data", "mode": "ro"}
@@ -155,11 +158,13 @@ class ContainerManager:
                 volumes=volumes,
                 # Timeout
                 stop_signal="SIGKILL",
-                # Input via stdin-like mechanism
+                # Clear the entrypoint so we can use shell piping
+                entrypoint=[],
+                # Input via base64-encoded stdin to avoid shell quoting issues
                 command=[
                     "sh",
                     "-c",
-                    f"echo '{input_json}' | python -m shandy_executor",
+                    f"echo {input_b64} | base64 -d | python -m shandy_executor",
                 ],
             )
 

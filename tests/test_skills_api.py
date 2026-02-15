@@ -254,39 +254,6 @@ class TestSkillsBySlugEndpoint:
         assert exc_info.value.status_code == 404
 
 
-class TestSkillsMatchEndpoint:
-    """Tests for POST /skills/match endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_match_skills(
-        self,
-        db_session: AsyncSession,
-        test_user: User,
-        test_skill: Skill,
-        test_skill2: Skill,
-    ):
-        """Test matching skills to a prompt."""
-        from shandy.api.endpoints.skills import SkillMatchRequest, match_skills
-        from shandy.database.rls import set_current_user
-
-        await set_current_user(db_session, test_user.id)
-
-        request = SkillMatchRequest(
-            prompt="metabolomics analysis",
-            max_results=5,
-            score_threshold=0.0,
-        )
-
-        response = await match_skills(
-            request=request,
-            user=test_user,
-            session=db_session,
-        )
-
-        assert response.prompt == request.prompt
-        assert len(response.matches) >= 1
-
-
 class TestSkillsCategoriesEndpoint:
     """Tests for GET /skills/categories endpoint."""
 

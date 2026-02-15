@@ -58,7 +58,6 @@ from shandy.database.models import (  # noqa: E402
     Administrator,
     APIKey,
     Job,
-    JobSkill,
     Skill,
     SkillSource,
     User,
@@ -574,26 +573,6 @@ async def test_skill2(db_session: AsyncSession, test_skill_source: SkillSource) 
     await db_session.commit()
     await db_session.refresh(skill)
     return skill
-
-
-@pytest_asyncio.fixture
-async def test_job_skill(
-    db_session: AsyncSession,
-    test_job: Job,
-    test_skill: Skill,
-) -> JobSkill:
-    """Create a test job-skill association."""
-    job_skill = JobSkill(
-        job_id=test_job.id,
-        skill_id=test_skill.id,
-        is_enabled=True,
-        relevance_score=0.85,
-        match_reason="High relevance to metabolomics research",
-    )
-    db_session.add(job_skill)
-    await db_session.commit()
-    await db_session.refresh(job_skill)
-    return job_skill
 
 
 @pytest.fixture

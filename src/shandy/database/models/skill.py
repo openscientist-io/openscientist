@@ -16,7 +16,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..base import Base, UUIDv7Mixin
 
 if TYPE_CHECKING:
-    from .job_skill import JobSkill
     from .skill_source import SkillSource
 
 
@@ -43,7 +42,6 @@ class Skill(UUIDv7Mixin, Base):
         is_enabled: Whether this skill is available for use
         version: Version number for tracking updates
         source: Related SkillSource object
-        job_skills: Junction records linking to jobs
     """
 
     __tablename__ = "skills"
@@ -136,11 +134,6 @@ class Skill(UUIDv7Mixin, Base):
 
     # Relationships
     source: Mapped["SkillSource | None"] = relationship(back_populates="skills")
-
-    job_skills: Mapped[list["JobSkill"]] = relationship(
-        back_populates="skill",
-        cascade="all, delete-orphan",
-    )
 
     def __repr__(self) -> str:
         return (

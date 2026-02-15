@@ -200,9 +200,60 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
                 logger.error("Database connection failed: %s", e)
                 logger.warning("Application will continue but database features may not work")
 
+        async def ensure_default_skill_sources():
+            """Ensure default skill sources exist in the database."""
+            from sqlalchemy import select
+
+            from shandy.database.models import SkillSource
+            from shandy.database.session import get_admin_session
+
+            # Default skill sources to seed
+            default_sources = [
+                {
+                    "source_type": "github",
+                    "name": "Claude Scientific Skills",
+                    "url": "https://github.com/K-Dense-AI/claude-scientific-skills",
+                    "branch": "main",
+                    "skills_path": "scientific-skills",
+                    "is_enabled": True,
+                },
+                {
+                    "source_type": "local",
+                    "name": "SHANDY Built-in Skills",
+                    "path": "skills",
+                    "is_enabled": True,
+                },
+            ]
+
+            try:
+                async with get_admin_session() as session:
+                    for source_data in default_sources:
+                        # Check if source already exists by URL or path
+                        if source_data.get("url"):
+                            stmt = select(SkillSource).where(SkillSource.url == source_data["url"])
+                        else:
+                            stmt = select(SkillSource).where(
+                                SkillSource.path == source_data.get("path")
+                            )
+                        result = await session.execute(stmt)
+                        existing = result.scalar_one_or_none()
+
+                        if not existing:
+                            source = SkillSource(**source_data)
+                            session.add(source)
+                            logger.info("Added default skill source: %s", source_data["name"])
+
+                    await session.commit()
+            except Exception as e:
+                logger.warning("Failed to seed default skill sources: %s", e)
+
         async def start_background_tasks():
             """Start background tasks after database verification."""
             await verify_db()
+
+            # Ensure default skill sources exist
+            await ensure_default_skill_sources()
+
             # Start skill sync scheduler
             try:
                 from shandy.skill_scheduler import start_skill_scheduler
@@ -262,6 +313,13 @@ def main(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+    # Log version info at startup
+    from shandy.version import get_version_string
+
+    logger.info("=" * 60)
+    logger.info(get_version_string())
+    logger.info("=" * 60)
+
     # Check for configuration errors
     if _settings_error is not None:
         logger.error("Configuration error: %s", _settings_error)
@@ -296,6 +354,7 @@ def main(
         title="SHANDY",
         favicon=ASSETS_DIR / "favicon.ico",
         reload=reload,  # Enable auto-reload in development mode
+        uvicorn_reload_excludes=".nicegui,jobs",  # Don't reload on storage/job changes
         show=False,  # Don't auto-open browser in Docker
         storage_secret=STORAGE_SECRET,  # Required for app.storage.user
     )

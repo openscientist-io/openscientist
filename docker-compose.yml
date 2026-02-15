@@ -49,6 +49,8 @@ services:
 
       # Database
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shandy}:${POSTGRES_PASSWORD:-shandy_dev_password}@postgres:5432/${POSTGRES_DB:-shandy}
+      # Admin database URL for RLS bypass (background tasks, skill sync, etc.)
+      ADMIN_DATABASE_URL: postgresql+asyncpg://shandy_admin:${POSTGRES_PASSWORD:-shandy_dev_password}@postgres:5432/${POSTGRES_DB:-shandy}
       PORT: ${PORT:-8080}
 
       # Provider selection
@@ -66,6 +68,8 @@ services:
       ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID}
       # GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile to /app/gcp-credentials.json
       # The file is mounted from GCP_CREDENTIALS_FILE (set in .env)
+      # GCP_CREDENTIALS_HOST_PATH passes the host path for agent container mounts
+      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
       CLOUD_ML_REGION: ${CLOUD_ML_REGION}
       VERTEX_REGION_CLAUDE_4_5_SONNET: ${VERTEX_REGION_CLAUDE_4_5_SONNET}
       VERTEX_REGION_CLAUDE_4_5_HAIKU: ${VERTEX_REGION_CLAUDE_4_5_HAIKU}
@@ -104,11 +108,14 @@ services:
       DREMIO_USER: ${DREMIO_USER}
       DREMIO_PASSWORD: ${DREMIO_PASSWORD}
 
-      # Container isolation (disabled in dev mode by default)
+      # Container isolation for code execution (executor containers)
       SHANDY_USE_CONTAINER_ISOLATION: ${SHANDY_USE_CONTAINER_ISOLATION:-true}
       SHANDY_EXECUTOR_IMAGE: ${SHANDY_EXECUTOR_IMAGE:-shandy-executor:latest}
       SHANDY_EXECUTOR_MEMORY: ${SHANDY_EXECUTOR_MEMORY:-2g}
       SHANDY_EXECUTOR_CPU: ${SHANDY_EXECUTOR_CPU:-0.5}
+
+      # Host path mapping for executor container volume mounts
+      SHANDY_HOST_PROJECT_DIR: ${SHANDY_HOST_PROJECT_DIR:-}
 
       # Prevent .pyc files in dev mode
       PYTHONDONTWRITEBYTECODE: ${SHANDY_DEV_MODE:+1}
@@ -123,6 +130,9 @@ services:
 
       # Mount Phenix installation if available (set PHENIX_PATH in .env)
       - ${PHENIX_PATH:-/dev/null}:/opt/phenix:ro
+
+      # Mount built-in skills directory
+      - ./skills:/app/skills:ro
 
       # Mount Docker socket for sibling container execution
       - /var/run/docker.sock:/var/run/docker.sock:ro

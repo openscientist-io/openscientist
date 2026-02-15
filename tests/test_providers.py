@@ -1,7 +1,7 @@
 """Tests for providers factory and base provider."""
 
 import os
-from typing import List, Optional
+from typing import Any, List, Optional
 from unittest.mock import patch
 
 import pytest
@@ -45,6 +45,30 @@ class StubProvider(BaseProvider):
     @property
     def name(self) -> str:
         return "StubProvider"
+
+    async def send_message(
+        self,
+        messages: List[dict[str, str]],
+        system: str | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> str:
+        return "stub response"
+
+    async def send_message_with_tools(
+        self,
+        messages: List[dict[str, Any]],
+        tools: List[dict[str, Any]],
+        system: str | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+    ) -> dict[str, Any]:
+        return {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "stub response"}],
+            "model": "stub-model",
+            "usage": {"input_tokens": 0, "output_tokens": 0},
+        }
 
 
 # ─── Tests ────────────────────────────────────────────────────────────

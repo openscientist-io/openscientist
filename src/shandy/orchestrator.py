@@ -1,14 +1,14 @@
 """
 Orchestrator for SHANDY autonomous discovery.
 
-Spawns Claude Code CLI to run autonomous discovery loop.
+Uses the Anthropic SDK with MCP tools for autonomous discovery.
 """
 
+import asyncio
 import fcntl
 import json
 import logging
 import os
-import re
 import subprocess
 import time
 from datetime import datetime
@@ -18,13 +18,18 @@ from uuid import UUID
 
 from dotenv import load_dotenv
 
+from shandy.agent_loop import create_agent_loop
 from shandy.exceptions import ShandyError
 from shandy.file_loader import get_file_info
 from shandy.knowledge_state import KnowledgeState
+from shandy.prompts import (
+    format_skills_content,
+    get_relevant_skills_with_scores,
+    get_system_prompt,
+)
 from shandy.providers import get_provider
-from shandy.settings import get_settings
 
-# Load environment variables (important for Claude CLI subprocess)
+# Load environment variables
 if not load_dotenv("/app/.env", override=True):
     load_dotenv(".env", override=True)
 
@@ -65,8 +70,23 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: Optional[KnowledgeState] = Non
                 if owner_id_str:
                     owner_id = UUID(owner_id_str)
 
-        # Save to database (synchronous wrapper)
-        ks.save_to_database_sync(job_id, owner_id)
+        # Check if we're in an async context (event loop already running)
+        try:
+            loop = asyncio.get_running_loop()
+
+            # We're in an async context - schedule as a background task
+            # Add error callback to prevent "Future exception was never retrieved"
+            async def _save_with_error_handling():
+                try:
+                    await ks.save_to_database(job_id, owner_id)
+                except Exception as e:
+                    logger.warning("Background database sync failed for job %s: %s", job_id, e)
+
+            loop.create_task(_save_with_error_handling())
+        except RuntimeError:
+            # No running loop - use sync wrapper (creates new loop)
+            ks.save_to_database_sync(job_id, owner_id)
+
         logger.debug("Synced knowledge state to database for job %s", job_id)
 
     except Exception as e:
@@ -119,31 +139,6 @@ def get_version_metadata() -> Dict[str, str]:
         pass
 
     return metadata
-
-
-def extract_claude_info_from_transcript(transcript: list) -> Dict[str, str]:
-    """
-    Extract Claude model and version info from stream-json transcript.
-
-    The init message contains model and claude_code_version fields.
-
-    Args:
-        transcript: List of parsed JSON objects from stream-json output
-
-    Returns:
-        Dict with claude_model and claude_code_version
-    """
-    info = {}
-
-    for msg in transcript:
-        if msg.get("type") == "system" and msg.get("subtype") == "init":
-            if "model" in msg:
-                info["claude_model"] = msg["model"]
-            if "claude_code_version" in msg:
-                info["claude_code_version"] = msg["claude_code_version"]
-            break
-
-    return info
 
 
 def wait_for_feedback_or_timeout(
@@ -215,55 +210,139 @@ def wait_for_feedback_or_timeout(
         time.sleep(2)
 
 
+def _send_iteration_notification(job_dir: Path, config: Dict[str, Any]) -> None:
+    """Send ntfy notification when an iteration completes.
+
+    Args:
+        job_dir: Path to job directory
+        config: Job configuration dictionary containing ntfy settings
+    """
+    if not config.get("ntfy_enabled") or not config.get("ntfy_topic"):
+        return
+
+    try:
+        import httpx
+
+        from shandy.settings import get_settings
+
+        settings = get_settings()
+        topic = config["ntfy_topic"]
+        job_id = config["job_id"]
+
+        # Use short_title if available, otherwise truncate research question
+        short_title = config.get("short_title")
+        if not short_title:
+            research_q = config.get("research_question", "Unknown job")
+            short_title = research_q[:50] + "..." if len(research_q) > 50 else research_q
+
+        # Get current iteration from knowledge state
+        ks_path = job_dir / "knowledge_state.json"
+        iteration = 1
+        if ks_path.exists():
+            ks = KnowledgeState.load(ks_path)
+            iteration = ks.data.get("iteration", 1)
+
+        url = f"https://ntfy.sh/{topic}"
+        headers = {
+            "Title": f"Iteration {iteration} Complete",
+            "Priority": "default",
+            "Tags": "white_check_mark",
+            "Click": f"{settings.base_url}/job/{job_id}",
+        }
+        message = f"'{short_title}' has completed iteration {iteration}."
+
+        # Use synchronous request (orchestrator runs in subprocess)
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(url, content=message, headers=headers)
+            response.raise_for_status()
+            logger.info("Sent iteration notification to topic %s", topic)
+    except Exception as e:
+        logger.warning("Failed to send ntfy notification: %s", e)
+
+
+async def _load_skills_for_job(job_id: str, research_question: str, use_skills: bool) -> str:
+    """
+    Load relevant skills for a job's research question and persist to database.
+
+    Uses full-text search to find skills matching the research question,
+    stores them in the job_skills junction table, then formats them for
+    injection into the system prompt.
+
+    Args:
+        job_id: The job's UUID string
+        research_question: The job's research question
+        use_skills: Whether skills are enabled for this job
+
+    Returns:
+        Formatted skills content string (empty if skills disabled or none found)
+    """
+    if not use_skills:
+        return ""
+
+    try:
+        from shandy.database.models import JobSkill
+        from shandy.database.session import AsyncSessionLocal
+
+        # Use thread_safe=True since this is called via asyncio.run()
+        # which creates a new event loop separate from the main app loop
+        async with AsyncSessionLocal(thread_safe=True) as session:
+            skills_with_scores = await get_relevant_skills_with_scores(
+                session, research_question, limit=5
+            )
+            if skills_with_scores:
+                skills = [s for s, _ in skills_with_scores]
+                logger.info(
+                    "Loaded %d skills for job: %s",
+                    len(skills),
+                    ", ".join(s.name for s in skills),
+                )
+
+                # Persist skills to job_skills table with source="initial"
+                for skill, score in skills_with_scores:
+                    job_skill = JobSkill(
+                        job_id=UUID(job_id),
+                        skill_id=skill.id,
+                        skill_name=skill.name,
+                        skill_category=skill.category,
+                        skill_content=skill.content,
+                        source="initial",
+                        similarity_score=score,
+                    )
+                    session.add(job_skill)
+
+                await session.commit()
+                logger.info("Persisted %d initial skills for job %s", len(skills), job_id)
+
+                return format_skills_content(skills)
+            else:
+                logger.info("No skills found for job")
+                return ""
+    except Exception as e:
+        logger.warning("Failed to load skills: %s", e)
+        return ""
+
+
 def update_job_status(job_dir: Path, status: str) -> None:
-    """Update job status in config.json."""
+    """Update job status in config.json and send ntfy notification if applicable."""
     config_path = job_dir / "config.json"
     with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
+
+    old_status = config.get("status")
     config["status"] = status
+
     # Track when we started awaiting feedback (for countdown timer)
     if status == "awaiting_feedback":
         config["awaiting_feedback_since"] = datetime.now().isoformat()
     elif "awaiting_feedback_since" in config:
         del config["awaiting_feedback_since"]
+
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 
-
-def parse_stream_json(stdout: str) -> list:
-    """
-    Parse stream-json output (one JSON object per line).
-
-    Strips large data fields (images, file contents) from each line BEFORE
-    parsing to avoid JSON parse errors and keep transcripts small.
-
-    Args:
-        stdout: Raw stdout from Claude CLI with --output-format stream-json
-
-    Returns:
-        List of parsed JSON objects (the transcript)
-    """
-    transcript = []
-    for line in stdout.strip().split("\n"):
-        if not line:
-            continue
-
-        # Strip "data" fields with long content (images, file contents)
-        # These are raw file bytes we don't need in the transcript.
-        # Pattern: "data": "..." where string is >1000 chars
-        sanitized_line = re.sub(r'"data":\s*"[^"]{1000,}"', '"data": "[CONTENT REMOVED]"', line)
-
-        try:
-            obj = json.loads(sanitized_line)
-            transcript.append(obj)
-        except json.JSONDecodeError as e:
-            logger.warning(
-                "Skipping unparseable JSON line (error at pos %s): %s...",
-                e.pos,
-                line[:100],
-            )
-
-    return transcript
+    # Send ntfy notification when iteration completes (entering awaiting_feedback)
+    if status == "awaiting_feedback" and old_status != "awaiting_feedback":
+        _send_iteration_notification(job_dir, config)
 
 
 def increment_ks_iteration(ks_path: Path) -> None:
@@ -302,6 +381,9 @@ def create_job(
     use_skills: bool = True,
     jobs_dir: Path = Path("jobs"),
     investigation_mode: str = "autonomous",
+    owner_id: Optional[str] = None,
+    ntfy_enabled: bool = False,
+    ntfy_topic: Optional[str] = None,
 ) -> Path:
     """
     Create a new discovery job.
@@ -314,6 +396,9 @@ def create_job(
         use_skills: Whether to use skills
         jobs_dir: Base directory for jobs
         investigation_mode: "autonomous" (default) or "coinvestigate"
+        owner_id: UUID string of the job owner (for notifications)
+        ntfy_enabled: Whether ntfy notifications are enabled for the owner
+        ntfy_topic: The ntfy topic for push notifications
 
     Returns:
         Path to job directory
@@ -381,6 +466,9 @@ def create_job(
         "investigation_mode": investigation_mode,
         "created_at": datetime.now().isoformat(),
         "status": "created",
+        "owner_id": owner_id,
+        "ntfy_enabled": ntfy_enabled,
+        "ntfy_topic": ntfy_topic,
     }
 
     with open(job_dir / "config.json", "w", encoding="utf-8") as f:
@@ -392,7 +480,7 @@ def create_job(
 
 def run_discovery(job_dir: Path) -> Dict[str, Any]:
     """
-    Run autonomous discovery using Claude Code CLI.
+    Run autonomous discovery using the Anthropic SDK agent loop.
 
     Args:
         job_dir: Path to job directory
@@ -423,31 +511,22 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     provider = get_provider()
     provider.setup_environment()
 
-    # Create job-specific MCP config
-    # Note: Add generous timeout for MCP server startup to handle large data files
-    # Large Excel files (>30MB) can take 30-40 seconds to load into pandas
-    mcp_args = [
-        "-m",
-        "shandy.mcp_server",
-        "--job-dir",
-        str(job_dir.absolute()),
+    # Allowed tools for agent (MCP tool names without prefix for filtering)
+    allowed_tools = [
+        "execute_code",
+        "search_pubmed",
+        "search_skills",
+        "update_knowledge_state",
+        "save_iteration_summary",
+        "set_status",
+        "set_job_title",
+        "read_document",
+        "add_hypothesis",
+        "update_hypothesis",
+        "run_phenix_tool",
+        "compare_structures",
+        "parse_alphafold_confidence",
     ]
-    if data_file:
-        mcp_args.extend(["--data-file", str(data_file.absolute())])
-
-    mcp_config = {
-        "mcpServers": {
-            "shandy-tools": {
-                "command": "python",
-                "args": mcp_args,
-                "timeout": 120,  # 2 minute timeout for server startup (handles large file loading)
-            }
-        }
-    }
-
-    mcp_config_path = job_dir / "mcp_config.json"
-    with open(mcp_config_path, "w", encoding="utf-8") as f:
-        json.dump(mcp_config, f, indent=2)
 
     # Update job status
     config["status"] = "running"
@@ -455,11 +534,31 @@ def run_discovery(job_dir: Path) -> Dict[str, Any]:
     with open(job_dir / "config.json", "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 
-    # Run autonomous discovery loop using Claude Code CLI headless mode
-    try:
-        # Get Claude Code path
-        claude_cli = get_settings().provider.claude_cli_path
+    # Load skills and build system prompt
+    use_skills = config.get("use_skills", True)
+    skills_content = asyncio.run(
+        _load_skills_for_job(job_id, config["research_question"], use_skills)
+    )
 
+    # Build system prompt with skills
+    base_prompt = get_system_prompt(skills_enabled=use_skills)
+    if skills_content:
+        system_prompt = f"{base_prompt}\n\n{skills_content}"
+        logger.info("Built system prompt with skills (%d chars)", len(system_prompt))
+    else:
+        system_prompt = base_prompt
+        logger.info("Built system prompt without skills (%d chars)", len(system_prompt))
+
+    # Create agent loop with MCP configuration
+    agent = create_agent_loop(
+        job_dir=job_dir,
+        data_file=data_file,
+        allowed_tools=allowed_tools,
+        system_prompt=system_prompt,
+    )
+    logger.info("Created agent loop for job %s", job_id)
+
+    try:
         # Prepare initial prompt
         ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
@@ -488,113 +587,63 @@ Examples include (there may be others - explore what's available):
 - search_pubmed: Search for relevant papers
 - update_knowledge_state: Record confirmed findings with statistical evidence
 - save_iteration_summary: Record a summary of what you investigated and learned
+- set_status: Update your status to let users know what you're working on
 
-IMPORTANT: At the end of each iteration, call save_iteration_summary with a 1-2 sentence
+IMPORTANT: Call set_status at the START of each significant action to update your status.
+At the end of each iteration, call save_iteration_summary with a 1-2 sentence
 plain-language summary of what you investigated and what you learned. This helps users
 understand your investigation progress.
 
 Start your investigation by using these tools to analyze the data.
 """
 
-        logger.info("Starting discovery loop with Claude CLI headless mode")
+        logger.info("Starting discovery loop with agent SDK")
+
+        # Create provenance directory for transcripts
+        provenance_dir = job_dir / "provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True)
+        log_file = job_dir / "claude_iterations.log"
 
         # Iteration 1: Start session
-        # Note: Pass prompt via stdin to avoid ARG_MAX limits with large prompts
-        cmd = [
-            claude_cli,
-            "-p",
-            "--verbose",
-            "--output-format",
-            "stream-json",
-            "--mcp-config",
-            str(mcp_config_path.absolute()),
-            "--allowedTools",
-            "Skill",  # Enable skill invocation for domain-specific workflows
-            "--allowedTools",
-            "mcp__shandy-tools__execute_code",
-            "--allowedTools",
-            "mcp__shandy-tools__search_pubmed",
-            "--allowedTools",
-            "mcp__shandy-tools__update_knowledge_state",
-            "--allowedTools",
-            "mcp__shandy-tools__save_iteration_summary",
-            "--allowedTools",
-            "mcp__shandy-tools__read_document",
-            "--allowedTools",
-            "mcp__shandy-tools__run_phenix_tool",
-            "--allowedTools",
-            "mcp__shandy-tools__compare_structures",
-            "--allowedTools",
-            "mcp__shandy-tools__parse_alphafold_confidence",
-        ]
-
         logger.info("Iteration 1/%d: Starting session", max_iterations)
-        logger.info("Running command: %s", " ".join(cmd))
         logger.info("Prompt length: %d characters", len(initial_prompt))
-        result = subprocess.run(
-            cmd,
-            input=initial_prompt,
-            capture_output=True,
-            text=True,
-            cwd=str(Path.cwd()),
-            env=os.environ.copy(),  # noqa: env-ok
-            check=False,
+        result = asyncio.run(agent.run_iteration(initial_prompt, reset_session=True))
+
+        if not result["success"]:
+            logger.error("Iteration 1 failed: %s", result["error"])
+            raise RuntimeError(f"Agent loop failed: {result['error']}")
+
+        logger.info(
+            "Iteration 1 completed successfully (tool_calls=%d)",
+            result.get("tool_calls", 0),
         )
 
-        logger.info("Claude CLI return code: %s", result.returncode)
-        logger.info("Claude CLI stdout length: %d", len(result.stdout))
-        logger.info("Claude CLI stderr length: %d", len(result.stderr))
-
-        # Log stderr to diagnose MCP server issues (always log, not just on failure)
-        if result.stderr:
-            # Log first 2000 chars to capture MCP server startup messages
-            logger.info(
-                "Claude CLI stderr (first 2000 chars):\n%s",
-                result.stderr[:2000],
-            )
-
-        if result.returncode != 0:
-            logger.error("Claude CLI stdout: %s", result.stdout[:500])
-            logger.error("Claude CLI stderr (full): %s", result.stderr)
-            raise RuntimeError(
-                f"Claude CLI failed (rc={result.returncode}): {result.stderr or result.stdout}"
-            )
-
-        # Parse stream-json output (one JSON object per line)
-        # This sanitizes base64 image data during parsing to avoid corruption issues
-        transcript = parse_stream_json(result.stdout)
-
-        # Find the result item to get session_id
-        result_item = next((item for item in transcript if item.get("type") == "result"), None)
-        session_id = result_item.get("session_id") if result_item else None
-        logger.info("Iteration 1 completed successfully (session: %s)", session_id)
+        # Get transcript and output
+        transcript = result["transcript"]
+        output_text = result.get("output", "")
 
         # Extract and save version metadata for reproducibility
         version_info = get_version_metadata()
-        claude_info = extract_claude_info_from_transcript(transcript)
-        version_info.update(claude_info)
+        # Note: Without CLI, we don't have claude_code_version, but we have model info
         if version_info:
             ks = KnowledgeState.load(job_dir / "knowledge_state.json")
             ks.set_version_info(version_info)
             ks.save(job_dir / "knowledge_state.json")
-            sync_knowledge_state_to_db(job_dir, ks)  # Sync to database
+            sync_knowledge_state_to_db(job_dir, ks)
             logger.info("Saved version info: %s", version_info)
 
-        # Save full transcript to provenance/ for scientific reproducibility
-        # (base64 image data already stripped during parsing)
-        provenance_dir = job_dir / "provenance"
-        provenance_dir.mkdir(parents=True, exist_ok=True)
+        # Save transcript to provenance/
         transcript_file = provenance_dir / "iter1_transcript.json"
         with open(transcript_file, "w", encoding="utf-8") as f:
             json.dump(transcript, f, indent=2)
         logger.info("Saved transcript to %s", transcript_file)
 
         # Log iteration (human-readable summary)
-        log_file = job_dir / "claude_iterations.log"
         with open(log_file, "w", encoding="utf-8") as f:
             f.write("=== Iteration 1 ===\n")
             f.write(f"Prompt: {initial_prompt}\n\n")
-            f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
+            f.write(f"Output: {output_text}\n\n")
+            f.write(f"Tool calls: {result.get('tool_calls', 0)}\n\n")
 
         # Increment iteration counter with file locking to prevent race conditions
         # Only increment if there are more iterations to come
@@ -647,12 +696,13 @@ the scientist's suggestions with your own analysis of what will be most producti
 ---
 
 Continue your investigation using the available MCP tools.
-Examples: execute_code, search_pubmed, update_knowledge_state, save_iteration_summary.
+Examples: execute_code, search_pubmed, update_knowledge_state, save_iteration_summary, set_status.
 Think step by step about what will provide the most insight, then actively use the tools to execute your investigation.
 
-Remember: At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
+Remember: Call set_status at the START of each significant action.
+At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
 
-            # Decide whether to resume or start fresh
+            # Decide whether to reset session (clears conversation history)
             should_reset = iteration % reset_interval == 1
 
             if should_reset:
@@ -661,112 +711,31 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
                     iteration,
                     max_iterations,
                 )
-                cmd = [
-                    claude_cli,
-                    "-p",
-                    "--verbose",
-                    "--output-format",
-                    "stream-json",
-                    "--mcp-config",
-                    str(mcp_config_path.absolute()),
-                    "--allowedTools",
-                    "Skill",  # Enable skill invocation for domain-specific workflows
-                    "--allowedTools",
-                    "mcp__shandy-tools__execute_code",
-                    "--allowedTools",
-                    "mcp__shandy-tools__search_pubmed",
-                    "--allowedTools",
-                    "mcp__shandy-tools__update_knowledge_state",
-                    "--allowedTools",
-                    "mcp__shandy-tools__save_iteration_summary",
-                    "--allowedTools",
-                    "mcp__shandy-tools__read_document",
-                    "--allowedTools",
-                    "mcp__shandy-tools__run_phenix_tool",
-                    "--allowedTools",
-                    "mcp__shandy-tools__compare_structures",
-                    "--allowedTools",
-                    "mcp__shandy-tools__parse_alphafold_confidence",
-                ]
             else:
                 logger.info(
-                    "Iteration %d/%d: Resuming session %s",
+                    "Iteration %d/%d: Continuing session",
                     iteration,
                     max_iterations,
-                    session_id,
                 )
-                assert session_id is not None, "session_id must be set for resume"
-                cmd = [
-                    claude_cli,
-                    "-p",
-                    "--resume",
-                    session_id,
-                    "--verbose",
-                    "--output-format",
-                    "stream-json",
-                    "--mcp-config",
-                    str(mcp_config_path.absolute()),
-                    "--allowedTools",
-                    "Skill",  # Enable skill invocation for domain-specific workflows
-                    "--allowedTools",
-                    "mcp__shandy-tools__execute_code",
-                    "--allowedTools",
-                    "mcp__shandy-tools__search_pubmed",
-                    "--allowedTools",
-                    "mcp__shandy-tools__update_knowledge_state",
-                    "--allowedTools",
-                    "mcp__shandy-tools__save_iteration_summary",
-                    "--allowedTools",
-                    "mcp__shandy-tools__read_document",
-                    "--allowedTools",
-                    "mcp__shandy-tools__run_phenix_tool",
-                    "--allowedTools",
-                    "mcp__shandy-tools__compare_structures",
-                    "--allowedTools",
-                    "mcp__shandy-tools__parse_alphafold_confidence",
-                ]
 
             logger.info("Prompt length: %d characters", len(iteration_prompt))
-            result = subprocess.run(
-                cmd,
-                input=iteration_prompt,
-                capture_output=True,
-                text=True,
-                cwd=str(Path.cwd()),
-                env=os.environ.copy(),  # noqa: env-ok
-                check=False,
-            )
+            result = asyncio.run(agent.run_iteration(iteration_prompt, reset_session=should_reset))
 
-            # Log stderr to diagnose MCP server issues (even on success)
-            if result.stderr:
-                logger.info(
-                    "Iteration %d Claude CLI stderr (first 2000 chars):\n%s",
-                    iteration,
-                    result.stderr[:2000],
-                )
-
-            if result.returncode != 0:
-                logger.error("Iteration %d failed (rc=%s)", iteration, result.returncode)
-                logger.error("  stderr (full): %s", result.stderr)
-                logger.error("  stdout: %s", result.stdout[:1000])
+            if not result["success"]:
+                logger.error("Iteration %d failed: %s", iteration, result["error"])
                 break
 
-            # Parse stream-json output (one JSON object per line)
-            # This sanitizes base64 image data during parsing to avoid corruption issues
-            transcript = parse_stream_json(result.stdout)
+            # Get transcript and output
+            transcript = result["transcript"]
+            output_text = result.get("output", "")
 
-            # Find the result item to get session_id
-            result_item = next((item for item in transcript if item.get("type") == "result"), None)
+            logger.info(
+                "Iteration %d completed (tool_calls=%d)",
+                iteration,
+                result.get("tool_calls", 0),
+            )
 
-            # Update session_id if we started a fresh session
-            if should_reset:
-                new_session_id = result_item.get("session_id") if result_item else None
-                if new_session_id:
-                    session_id = new_session_id
-                    logger.info("New session started: %s", session_id)
-
-            # Save full transcript to provenance/ for scientific reproducibility
-            # (base64 image data already stripped during parsing)
+            # Save full transcript to provenance/
             transcript_file = provenance_dir / f"iter{iteration}_transcript.json"
             with open(transcript_file, "w", encoding="utf-8") as f:
                 json.dump(transcript, f, indent=2)
@@ -776,7 +745,8 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"=== Iteration {iteration} ===\n")
                 f.write(f"Prompt: {iteration_prompt}\n\n")
-                f.write(f"Response: {json.dumps(result_item, indent=2)}\n\n")
+                f.write(f"Output: {output_text}\n\n")
+                f.write(f"Tool calls: {result.get('tool_calls', 0)}\n\n")
 
             # Increment iteration counter with file locking to prevent race conditions
             # Only increment if this is not the last iteration
@@ -791,7 +761,7 @@ Remember: At the end of this iteration, call save_iteration_summary with a brief
 
         logger.info("Discovery loop completed")
 
-        # Generate final report using Claude
+        # Generate final report using SDK directly
         logger.info("Generating final report...")
         ks = KnowledgeState.load(job_dir / "knowledge_state.json")
 
@@ -820,35 +790,58 @@ Research Question: {config["research_question"]}
 
 ## Analysis Log: {len(ks.data["analysis_log"])} actions performed across {ks.data["iteration"]} iterations
 
-Please create a comprehensive markdown report with:
-1. Executive Summary (2-3 paragraphs)
-2. Key Findings (with statistical evidence)
-3. Mechanistic Model/Interpretation
-4. Knowledge Gaps Identified
-5. Proposed Follow-up Experiments
+Create a comprehensive, accessible markdown report following these guidelines:
 
-Format as professional scientific markdown."""
+## Report Structure
+1. **Executive Summary** (2-3 paragraphs) - Key takeaways for busy readers
+2. **Key Findings** (with statistical evidence in tables)
+3. **Mechanistic Model/Interpretation** - Use diagrams where helpful
+4. **Knowledge Gaps Identified**
+5. **Proposed Follow-up Experiments**
 
-        # Generate report (single call, no session needed)
-        # Note: Pass prompt via stdin to avoid ARG_MAX limits with large knowledge graphs
-        cmd = [claude_cli, "-p", "--output-format", "text"]
+## Formatting Best Practices
+- **Tables**: Use markdown tables to present comparative data, study results, and recommendations. Tables make numerical data scannable.
+- **Citations**: Include PMID links as `[PMID: 12345678](https://pubmed.ncbi.nlm.nih.gov/12345678/)` for every referenced paper.
+- **Headers**: Use proper heading hierarchy (h2 for sections, h3 for subsections) for screen reader navigation.
+- **Lists**: Use bullet points for discrete items, numbered lists only for sequential steps.
+- **Emphasis**: Use **bold** for key terms and conclusions, *italic* for paper titles.
+- **Diagrams**: For processes or relationships, use ASCII art diagrams in code blocks.
 
+## Accessibility Guidelines
+- Write alt-text descriptions for any ASCII diagrams (as a comment before the diagram)
+- Avoid conveying information through color alone
+- Use descriptive link text (not "click here")
+- Keep sentences concise for readability
+
+## Psychology of Effective Reports
+- Lead with the answer, then provide evidence (inverted pyramid)
+- Anticipate reader questions and answer them proactively
+- Quantify findings where possible (e.g., "3 of 5 studies found...")
+- Acknowledge limitations and uncertainty clearly
+- End with actionable next steps
+
+Format as professional scientific markdown suitable for researchers."""
+
+        # Generate report using SDK directly (no CLI needed)
         logger.info("Report prompt length: %d characters", len(report_prompt))
-        result = subprocess.run(
-            cmd,
-            input=report_prompt,
-            capture_output=True,
-            text=True,
-            cwd=str(Path.cwd()),
-            env=os.environ.copy(),  # noqa: env-ok
-            check=False,
-        )
 
         report_generated = False
         report_error = None
 
-        if result.returncode == 0:
-            report_content = result.stdout
+        try:
+            report_content = asyncio.run(
+                provider.send_message(
+                    messages=[{"role": "user", "content": report_prompt}],
+                    max_tokens=8192,
+                )
+            )
+            report_generated = True
+        except Exception as e:  # noqa: BLE001 — catch all API errors
+            report_error = str(e)
+            logger.error("Report generation failed: %s", e)
+            report_content = ""
+
+        if report_generated:
             # Save Markdown report
             markdown_path = job_dir / "final_report.md"
             with open(markdown_path, "w", encoding="utf-8") as f:
@@ -864,17 +857,32 @@ Format as professional scientific markdown."""
                 logger.info("Final report (PDF) generated: %s", pdf_path)
             except (ValueError, OSError, ShandyError) as e:
                 logger.warning("PDF generation failed (Markdown still available): %s", e)
-        else:
-            report_error = (
-                result.stdout[:1000]
-                if result.stdout
-                else result.stderr[:1000]
-                if result.stderr
-                else "Unknown error"
-            )
-            logger.error("Report generation failed (rc=%s)", result.returncode)
-            logger.error("  stderr: %s", result.stderr)
-            logger.error("  stdout: %s", result.stdout[:1000])
+
+            # Generate consensus answer (brief summary answering research question)
+            consensus_prompt = f"""Based on the following research report, provide a brief consensus answer to the research question.
+
+Research Question: {config["research_question"]}
+
+Report:
+{report_content[:8000]}
+
+Provide a 1-3 sentence answer that directly addresses the research question based on the findings. If no clear consensus exists, state that the evidence is mixed and briefly explain why. Do not include citations or hedging language - be direct."""
+
+            try:
+                consensus_answer = asyncio.run(
+                    provider.send_message(
+                        messages=[{"role": "user", "content": consensus_prompt}],
+                        max_tokens=1024,
+                    )
+                )
+                consensus_answer = consensus_answer.strip()
+                # Save to knowledge state
+                ks_reload = KnowledgeState.load(job_dir / "knowledge_state.json")
+                ks_reload.data["consensus_answer"] = consensus_answer
+                ks_reload.save(job_dir / "knowledge_state.json")
+                logger.info("Consensus answer generated")
+            except Exception as e:  # noqa: BLE001 — catch all API errors
+                logger.warning("Failed to generate consensus answer: %s", e)
 
         # Load final knowledge graph
         ks = KnowledgeState.load(job_dir / "knowledge_state.json")
@@ -906,7 +914,9 @@ Format as professional scientific markdown."""
         }
 
     except Exception as e:  # noqa: BLE001 — top-level safety net for entire discovery run
-        logger.error("Discovery failed: %s", e, exc_info=True)
+        from shandy.version import get_version_string
+
+        logger.error("Discovery failed [%s]: %s", get_version_string(), e, exc_info=True)
 
         # Update job status
         config["status"] = "failed"
@@ -917,6 +927,15 @@ Format as professional scientific markdown."""
             json.dump(config, f, indent=2)
 
         raise
+
+    finally:
+        # Log final token usage from agent loop
+        tokens = agent.total_tokens
+        logger.info(
+            "Agent loop completed: %d input tokens, %d output tokens",
+            tokens["input_tokens"],
+            tokens["output_tokens"],
+        )
 
 
 def main():

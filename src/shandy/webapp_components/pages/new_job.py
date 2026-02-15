@@ -72,7 +72,7 @@ def new_job_page():
                 research_question=research_question.value,
                 data_files=data_files,
                 max_iterations=int(max_iterations.value),
-                use_skills=True,
+                use_skills=use_skills_toggle.value,
                 auto_start=True,
                 investigation_mode=mode,
                 owner_id=user_id,  # Associate job with current user
@@ -80,12 +80,10 @@ def new_job_page():
 
             ui.notify(f"Job {job_id} created and started!", type="positive")
 
-            # Clear form
-            research_question.value = ""
+            # Clear session-stored uploaded files
             clear_uploaded_files(session_id)
-            upload.reset()
 
-            # Redirect to job detail page
+            # Redirect to job detail page (no need to clear form since we're navigating away)
             ui.navigate.to(f"/job/{job_id}")
 
         except Exception as e:
@@ -147,7 +145,7 @@ def new_job_page():
 
         # File upload
         # Supported: Tabular (CSV, TSV, Excel, Parquet, JSON), Structures (PDB, mmCIF), Sequences (FASTA), Images (PNG, JPG)
-        upload = ui.upload(
+        ui.upload(
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
             multiple=True,
             auto_upload=True,
@@ -162,6 +160,15 @@ def new_job_page():
         # Advanced options (collapsed by default)
         with ui.expansion("Advanced Options (Experimental)", icon="science").classes("w-full mt-4"):
             with ui.card().classes("w-full"):
+                # Skills toggle
+                use_skills_toggle = ui.switch("Enable Skills", value=True)
+                ui.label(
+                    "Skills provide domain-specific guidance (e.g., statistical methods, analysis workflows)."
+                ).classes("text-sm text-gray-700 mt-1")
+
+                ui.separator().classes("my-4")
+
+                # Coinvestigate mode toggle
                 coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
                 ui.label(
                     "Requires your active participation. After each iteration, I will pause to receive your feedback."

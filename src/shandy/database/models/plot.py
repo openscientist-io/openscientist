@@ -53,7 +53,7 @@ class Plot(UUIDv7Mixin, Base):
     )
 
     title: Mapped[str] = mapped_column(
-        String(255),
+        Text,
         nullable=False,
         comment="Plot title",
     )

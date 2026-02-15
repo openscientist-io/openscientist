@@ -168,13 +168,29 @@ class SkillParser:
 
         category = frontmatter.get("category")
         if not category:
-            raise SkillParseError(f"Missing 'category' in frontmatter: {source_path}")
+            # Derive category from path structure
+            # Use immediate parent directory as category (e.g., "biopython" from "skills/biopython/SKILL.md")
+            path_parts = Path(source_path).parts
+            if len(path_parts) >= 2:
+                category = path_parts[-2]
+            else:
+                raise SkillParseError(
+                    f"Missing 'category' in frontmatter and cannot derive from path: {source_path}"
+                )
 
         # Generate slug from filename or name
         slug = frontmatter.get("slug")
         if not slug:
-            # Use filename without extension as slug
-            slug = Path(source_path).stem
+            filename_stem = Path(source_path).stem
+            # For generic filenames (SKILL.md, README.md, INDEX.md), use parent directory
+            if filename_stem.upper() in ("SKILL", "README", "INDEX"):
+                path_parts = Path(source_path).parts
+                if len(path_parts) >= 2:
+                    slug = path_parts[-2]
+                else:
+                    slug = filename_stem
+            else:
+                slug = filename_stem
             # Sanitize slug
             slug = re.sub(r"[^a-z0-9-]", "-", slug.lower())
             slug = re.sub(r"-+", "-", slug).strip("-")
@@ -328,7 +344,7 @@ class GitHubSkillIngester(BaseSkillIngester):
             path = item.get("path", "")
             if item.get("type") != "blob":
                 continue
-            if not path.endswith(".md"):
+            if not path.lower().endswith("/skill.md"):
                 continue
             if prefix and not path.startswith(prefix):
                 continue
@@ -507,12 +523,13 @@ class LocalSkillIngester(BaseSkillIngester):
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
 
         # Session is expected to be an admin session (bypasses RLS)
-        for md_file in base_path.rglob("*.md"):
+        # Only process SKILL.md files (skip reference docs, READMEs, etc.)
+        for md_file in base_path.rglob("**/SKILL.md"):
             try:
                 relative_path = str(md_file.relative_to(Path(source.path)))
                 parsed = self.parser.parse_file(md_file)
 
-                # Check if skill exists
+                # Check if skill exists from this source
                 stmt = select(Skill).where(
                     Skill.source_id == source.id,
                     Skill.source_path == relative_path,
@@ -536,6 +553,25 @@ class LocalSkillIngester(BaseSkillIngester):
                     existing.version = existing.version + 1
                     stats["updated"] += 1
                 else:
+                    # Check if skill with same category/slug exists globally
+                    stmt_global = select(Skill).where(
+                        Skill.category == parsed.category,
+                        Skill.slug == parsed.slug,
+                    )
+                    result_global = await session.execute(stmt_global)
+                    existing_global = result_global.scalar_one_or_none()
+
+                    if existing_global:
+                        # Skip - skill already exists from another source
+                        import logging
+
+                        logging.getLogger(__name__).info(
+                            f"Skipping {relative_path}: skill {parsed.category}/{parsed.slug} "
+                            f"already exists from source {existing_global.source_id}"
+                        )
+                        stats["unchanged"] += 1
+                        continue
+
                     # Create new skill
                     skill = Skill(
                         name=parsed.name,

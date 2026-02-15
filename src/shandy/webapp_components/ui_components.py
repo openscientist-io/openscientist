@@ -8,12 +8,83 @@ page headers, and other common interface elements.
 import html
 import re
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 from nicegui import ui
 
 from shandy.job_manager import JobInfo, JobStatus
+
+
+def format_relative_time(dt: datetime | None) -> str:
+    """
+    Format datetime as relative time (e.g., '2 hours ago').
+
+    Args:
+        dt: Datetime to format, or None
+
+    Returns:
+        Human-readable relative time string, or '-' if dt is None
+    """
+    if dt is None:
+        return "-"
+
+    # Ensure dt is timezone-aware (assume UTC if naive)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    now = datetime.now(timezone.utc)
+    delta = now - dt
+
+    seconds = delta.total_seconds()
+
+    if seconds < 0:
+        return "just now"
+    elif seconds < 60:
+        return "just now"
+    elif seconds < 3600:
+        minutes = int(seconds / 60)
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    elif seconds < 86400:
+        hours = int(seconds / 3600)
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    elif seconds < 604800:
+        days = int(seconds / 86400)
+        return f"{days} day{'s' if days != 1 else ''} ago"
+    elif seconds < 2592000:
+        weeks = int(seconds / 604800)
+        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+    else:
+        months = int(seconds / 2592000)
+        return f"{months} month{'s' if months != 1 else ''} ago"
+
+
+def render_skill_name_slot() -> str:
+    """
+    Generate Quasar table slot template for skill name column with clickable link.
+
+    Returns slot template string that renders skill names as clickable links
+    navigating to the skill detail page.
+
+    Returns:
+        Quasar slot template string
+    """
+    return r"""
+        <q-td :props="props">
+            <span
+                class="skill-name-link"
+                style="color:#0891b2;cursor:pointer;font-weight:500;"
+                @click="$parent.$emit('view-skill', {category: props.row.category, slug: props.row.slug})"
+            >
+                {{ props.row.name }}
+            </span>
+            <div v-if="props.row.description" class="text-caption text-grey-7" style="max-width:400px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                {{ props.row.description }}
+            </div>
+        </q-td>
+    """
+
 
 # Type alias for async callbacks
 AsyncCallback = Callable[[dict], Awaitable[None]]
@@ -343,6 +414,42 @@ def render_text_with_pmid_links(
         f'<p class="{text_classes}" style="text-align:justify;hyphens:auto;'
         f'text-justify:inter-word;margin:0;">{html_content}</p>'
     )
+
+
+def transform_pmid_references(text: str) -> str:
+    """
+    Transform PMID references in text to clickable badge HTML.
+
+    Useful for post-processing markdown content before rendering.
+    Does NOT HTML-escape the surrounding text (assumes it will be
+    rendered as markdown/HTML).
+
+    Patterns matched:
+    - "PMID: 12345678"
+    - "PMID 12345678"
+    - "PMID: 12345678, 87654321"
+    - Markdown links like [PMID: 12345678](url)
+
+    Args:
+        text: The text containing PMID references
+
+    Returns:
+        Text with PMID references replaced by badge HTML
+    """
+    if not text:
+        return text
+
+    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers
+    # But NOT when inside a markdown link [text](url)
+    pattern = re.compile(r"(?<!\[)(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
+
+    def replace_pmid(match: re.Match) -> str:
+        pmid_list = match.group(2)
+        pmids = [p.strip() for p in pmid_list.split(",")]
+        badges = [_get_pubmed_badge_html(pmid) for pmid in pmids]
+        return " ".join(badges)
+
+    return pattern.sub(replace_pmid, text)
 
 
 def render_justified_text(
@@ -712,7 +819,7 @@ VIEW_BUTTON_SLOT = r"""
 
 def render_actions_slot_with_delete() -> str:
     """
-    Generate Quasar table slot template for actions column with share and delete buttons.
+    Generate Quasar table slot template for actions column with share and delete.
 
     Returns slot template string with:
     - Share icon button (conditionally shown via v-if="props.row.can_share") - uses share icon
@@ -721,6 +828,7 @@ def render_actions_slot_with_delete() -> str:
     - Tooltips for clarity
 
     Note: View functionality is handled by clicking the job ID badge.
+    Note: Notifications are configured on the job detail page.
 
     Returns:
         Quasar slot template string
@@ -763,9 +871,10 @@ def render_actions_slot_with_delete() -> str:
 def render_job_action_buttons(
     on_share: Callable[[], None] | None = None,
     on_delete: Callable[[], None] | None = None,
+    on_notifications: Callable[[], None] | None = None,
 ) -> None:
     """
-    Render job action buttons (share, delete) in the same style as table actions.
+    Render job action buttons (share, delete, notifications) in the same style as table actions.
 
     Uses round, flat, dense icon buttons with tooltips - same visual style as
     the table action column buttons from render_actions_slot_with_delete().
@@ -773,8 +882,15 @@ def render_job_action_buttons(
     Args:
         on_share: Callback for share button click. If None, share button is hidden.
         on_delete: Callback for delete button click. If None, delete button is hidden.
+        on_notifications: Callback for notifications button click. If None, button is hidden.
     """
     with ui.row().classes("gap-1 items-center"):
+        if on_notifications:
+            with ui.button(icon="notifications", on_click=on_notifications).props(
+                "round flat dense size=sm color=primary"
+            ):
+                ui.tooltip("Configure push notifications")
+
         if on_share:
             with ui.button(icon="share", on_click=on_share).props(
                 "round flat dense size=sm color=secondary"
@@ -843,6 +959,7 @@ def render_navigator(
         nav_items.append(("New", "add", "/new", active_page == "new"))
     nav_items.extend(
         [
+            ("Skills", "school", "/skills", active_page == "skills"),
             ("Billing", "payments", "/billing", active_page == "billing"),
             ("Docs", "description", "/docs", active_page == "docs"),
         ]
@@ -980,6 +1097,7 @@ def render_stat_badges(
         "Findings": "lightbulb",
         "Papers": "article",
         "Papers Reviewed": "article",
+        "Skills": "school",
     }
     icons = {**default_icons, **(icon_map or {})}
 
@@ -1187,7 +1305,9 @@ def render_share_dialog(job_id: str) -> ui.dialog:
     logger = logging.getLogger(__name__)
 
     with ui.dialog() as dialog, ui.card().classes("w-[600px]"):
-        ui.label("Share Job").classes("text-h6 mb-4")
+        with ui.row().classes("items-center gap-2 mb-4"):
+            ui.label("Share Job").classes("text-h6")
+            render_job_id_badge(job_id)
 
         # Container for current shares
         shares_container = ui.column().classes("w-full mb-4")
@@ -1352,6 +1472,196 @@ def render_share_dialog(job_id: str) -> ui.dialog:
     return dialog
 
 
+def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.dialog:
+    """
+    Create and return a notifications dialog for a job.
+
+    Shows the user's ntfy.sh subscription info and allows toggling notifications.
+    Fetches the real ntfy topic from the database when the dialog opens.
+
+    Args:
+        job_id: The job ID for context
+        user_id: The current user's ID (must be passed from page context)
+
+    Returns:
+        The dialog element (call .open() to show it)
+    """
+    from shandy.ntfy import get_subscription_url, send_notification
+
+    with ui.dialog() as dialog, ui.card().classes("w-[500px]"):
+        with ui.row().classes("items-center gap-2 mb-4"):
+            ui.label("Push Notifications").classes("text-h6")
+            # Only show job badge if it's a real job ID
+            if job_id and job_id != "notifications" and len(job_id) > 10:
+                render_job_id_badge(job_id)
+
+        if not user_id:
+            ui.label("Not logged in").classes("text-red-500")
+            content_container = None
+        else:
+            # Container for dynamic content - will be populated when dialog opens
+            content_container = ui.column().classes("w-full")
+            with content_container:
+                ui.label("Loading...").classes("text-gray-500")
+
+        # Dialog actions
+        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+            ui.button("Close", on_click=dialog.close)
+
+        # Load content when dialog is shown
+        if content_container and user_id:
+
+            async def load_content() -> None:
+                """Load ntfy settings and render the dialog content."""
+                from uuid import UUID
+
+                from sqlalchemy import select, update
+
+                from shandy.database.models import User
+                from shandy.database.session import AsyncSessionLocal
+                from shandy.ntfy import ensure_user_has_topic
+
+                content_container.clear()
+
+                try:
+                    # Fetch current settings from database
+                    async with AsyncSessionLocal() as session:
+                        stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
+                            User.id == UUID(user_id)
+                        )
+                        result = await session.execute(stmt)
+                        row = result.first()
+                        if not row:
+                            with content_container:
+                                ui.label("User not found").classes("text-red-500")
+                            return
+                        ntfy_enabled = row.ntfy_enabled
+                        ntfy_topic = row.ntfy_topic
+
+                    # Ensure topic exists if enabled but missing
+                    if ntfy_enabled and not ntfy_topic:
+                        ntfy_topic = await ensure_user_has_topic(UUID(user_id))
+
+                except Exception as e:
+                    with content_container:
+                        ui.label(f"Error loading settings: {e}").classes("text-red-500")
+                    return
+
+                # Render the content
+                with content_container:
+
+                    async def toggle_notifications(e: Any) -> None:
+                        """Toggle ntfy_enabled in the database."""
+                        new_value = e.value
+                        try:
+                            async with AsyncSessionLocal() as sess:
+                                stmt = (
+                                    update(User)
+                                    .where(User.id == UUID(user_id))
+                                    .values(ntfy_enabled=new_value)
+                                )
+                                await sess.execute(stmt)
+                                await sess.commit()
+                                ui.notify(
+                                    (
+                                        "Notifications enabled"
+                                        if new_value
+                                        else "Notifications disabled"
+                                    ),
+                                    type="positive",
+                                )
+                                # Reload the content
+                                await load_content()
+                        except Exception as ex:
+                            ui.notify(f"Failed to update: {ex}", type="negative")
+
+                    # Enable/disable toggle
+                    ui.switch(
+                        "Enable push notifications",
+                        value=ntfy_enabled,
+                        on_change=toggle_notifications,
+                    ).classes("mb-4")
+
+                    if not ntfy_enabled:
+                        ui.label(
+                            "Enable notifications to receive alerts when jobs "
+                            "complete, fail, or need feedback."
+                        ).classes("text-gray-500")
+                    elif not ntfy_topic:
+                        ui.label("Setting up your notification topic...").classes("text-gray-500")
+                    else:
+                        subscription_url = get_subscription_url(ntfy_topic)
+
+                        ui.separator().classes("my-2")
+                        ui.label("Subscribe to your notifications").classes(
+                            "text-subtitle2 font-bold mb-2"
+                        )
+
+                        with ui.column().classes("gap-2"):
+                            # Web/Browser
+                            with ui.row().classes("items-center gap-2"):
+                                ui.icon("computer", size="sm").classes("text-blue-500")
+                                ui.link(
+                                    "Open in browser",
+                                    target=subscription_url,
+                                    new_tab=True,
+                                ).classes("text-blue-600 underline")
+
+                            # Mobile app
+                            with ui.row().classes("items-center gap-2"):
+                                ui.icon("phone_android", size="sm").classes("text-green-500")
+                                ui.markdown(
+                                    f"**Mobile**: Install [ntfy app](https://ntfy.sh/app) "
+                                    f"and subscribe to `{ntfy_topic}`"
+                                )
+
+                            # Topic with copy
+                            topic_for_copy = ntfy_topic  # Capture for closure
+
+                            def copy_topic() -> None:
+                                ui.run_javascript(
+                                    f'navigator.clipboard.writeText("{topic_for_copy}")'
+                                )
+                                ui.notify("Copied!", type="positive")
+
+                            with ui.row().classes("items-center gap-2 mt-2"):
+                                topic_input = ui.input(
+                                    value=ntfy_topic, label="Your topic"
+                                ).classes("flex-grow")
+                                topic_input.props("readonly outlined dense")
+                                ui.button(
+                                    icon="content_copy",
+                                    on_click=copy_topic,
+                                ).props("flat round").tooltip("Copy topic")
+
+                        ui.separator().classes("my-2")
+
+                        # Test button
+                        topic_for_test = ntfy_topic  # Capture for closure
+
+                        async def send_test() -> None:
+                            success = await send_notification(
+                                topic=topic_for_test,
+                                title="SHANDY Test",
+                                message="Test notification - if you see this, it works!",
+                                tags=["white_check_mark"],
+                            )
+                            if success:
+                                ui.notify("Test sent!", type="positive")
+                            else:
+                                ui.notify("Failed to send", type="negative")
+
+                        ui.button(
+                            "Send Test Notification",
+                            on_click=send_test,
+                            icon="notifications_active",
+                        ).props("color=primary")
+
+            dialog.on("show", load_content)
+
+    return dialog
+
+
 def render_delete_dialog(
     job_id: str,
     job_manager: "JobManager",  # type: ignore[name-defined]  # noqa: F821
@@ -1361,6 +1671,7 @@ def render_delete_dialog(
     Create and return a delete confirmation dialog for a job.
 
     This is a reusable component for deleting jobs with confirmation.
+    If the job is running or queued, it will be cancelled first before deletion.
 
     Args:
         job_id: The job ID to delete
@@ -1376,20 +1687,54 @@ def render_delete_dialog(
     """
     import logging
 
+    from shandy.job_manager import JobStatus
+
     logger = logging.getLogger(__name__)
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
-        ui.label("Delete Job").classes("text-h6 font-bold")
-        ui.label(f"Are you sure you want to delete job {job_id}?").classes("text-body1 my-2")
-        ui.label(
-            "This action cannot be undone. All job data and findings will be permanently deleted."
-        ).classes("text-caption text-red-600")
+        content_container = ui.column().classes("w-full")
+
+        @ui.refreshable
+        def render_dialog_content():
+            content_container.clear()
+            job_info = job_manager.get_job(job_id)
+            is_active = job_info and job_info.status in [
+                JobStatus.RUNNING,
+                JobStatus.QUEUED,
+            ]
+
+            with content_container:
+                ui.label("Delete Job").classes("text-h6 font-bold")
+                with ui.row().classes("items-center gap-1 my-2"):
+                    ui.label("Are you sure you want to delete job")
+                    render_job_id_badge(job_id)
+                    ui.label("?")
+
+                if is_active:
+                    ui.label(
+                        "This job is currently active and will be cancelled before deletion."
+                    ).classes("text-caption text-orange-600 mb-1")
+
+                ui.label(
+                    "This action cannot be undone. All job data and findings will be permanently deleted."
+                ).classes("text-caption text-red-600")
+
+        render_dialog_content()
 
         async def on_confirm():
             dialog.close()
             try:
+                # Check if job needs to be cancelled first
+                job_info = job_manager.get_job(job_id)
+                if job_info and job_info.status in [
+                    JobStatus.RUNNING,
+                    JobStatus.QUEUED,
+                ]:
+                    job_manager.cancel_job(job_id)
+
                 job_manager.delete_job(job_id)
-                ui.notify(f"Job {job_id} deleted successfully", type="positive")
+                short_id = job_id[:8] if len(job_id) > 8 else job_id
+                ui.notify(f"Job {short_id} deleted successfully", type="positive")
                 if on_deleted:
                     result = on_deleted()
                     # Support async callbacks
@@ -1408,4 +1753,237 @@ def render_delete_dialog(
             confirm_props="color=negative",
         )
 
+        # Refresh content when dialog opens to show current job status
+        dialog.on_value_change(lambda e: render_dialog_content.refresh() if e.value else None)
+
     return dialog
+
+
+def _inject_thinking_status_styles() -> None:
+    """Inject CSS for thinking status indicator into page head (idempotent)."""
+    ui.add_head_html(
+        """
+        <style>
+        .thinking-label {
+            color: #0891b2;
+            font-size: 12px;
+            font-weight: 500;
+            animation: shandy-pulse-text 1.5s ease-in-out infinite;
+        }
+        @keyframes shandy-pulse-text {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+        </style>
+        """,
+        shared=True,
+    )
+
+
+# Animated SHANDY logo SVG for thinking/status indicators
+SHANDY_THINKING_SVG = """
+<svg class="shandy-thinking" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <!-- Orbital paths for circles (radius 5) -->
+        <path id="shandy-orbit1" d="M22,18 m-5,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0" fill="none"/>
+        <path id="shandy-orbit2" d="M78,60 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" fill="none"/>
+        <path id="shandy-orbit3" d="M22,60 m-5,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0" fill="none"/>
+        <!-- Subtle glow filter -->
+        <filter id="shandy-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1" result="blur"/>
+            <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </defs>
+    <!-- Main S-curve with breathing opacity -->
+    <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
+          fill="none" stroke="#0891b2" stroke-width="8" stroke-linecap="round"
+          filter="url(#shandy-glow)">
+        <animate attributeName="stroke-opacity"
+                 values="0.6;1;0.6"
+                 dur="2s"
+                 calcMode="spline"
+                 keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+                 repeatCount="indefinite"/>
+    </path>
+    <!-- Orbiting circles with smooth continuous motion -->
+    <circle r="7" fill="#06b6d4" filter="url(#shandy-glow)">
+        <animateMotion dur="1.5s" repeatCount="indefinite" calcMode="linear">
+            <mpath href="#shandy-orbit1"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="7" fill="#22d3ee" filter="url(#shandy-glow)">
+        <animateMotion dur="1.8s" repeatCount="indefinite" begin="0.3s" calcMode="linear">
+            <mpath href="#shandy-orbit2"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.8s" repeatCount="indefinite" begin="0.3s"/>
+    </circle>
+    <circle r="7" fill="#0e7490" filter="url(#shandy-glow)">
+        <animateMotion dur="2.1s" repeatCount="indefinite" begin="0.6s" calcMode="linear">
+            <mpath href="#shandy-orbit3"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="2.1s" repeatCount="indefinite" begin="0.6s"/>
+    </circle>
+</svg>
+"""
+
+
+def render_job_skills(
+    skills: list["JobSkill"],  # type: ignore[name-defined]  # noqa: F821
+    show_content: bool = True,
+) -> None:
+    """
+    Render skill badges for a job with expandable content and clickable names.
+
+    Displays skills grouped by source (initial vs agent-added) with category
+    badges, similarity scores, and expandable content sections. Skill names
+    are clickable and navigate to the skill detail page.
+
+    Args:
+        skills: List of JobSkill objects from get_job_skills()
+        show_content: If True, show expandable content sections (default True)
+
+    Example:
+        from shandy.job_manager import get_job_skills
+
+        skills = get_job_skills(job_id)
+        if skills:
+            render_job_skills(skills)
+    """
+    if not skills:
+        return
+
+    # Group skills by source
+    initial_skills = [s for s in skills if s.source == "initial"]
+    agent_skills = [s for s in skills if s.source == "agent"]
+
+    # Category color mapping
+    category_colors: dict[str, str] = {
+        "analysis": "blue",
+        "methodology": "purple",
+        "statistics": "green",
+        "biology": "teal",
+        "chemistry": "orange",
+        "bioinformatics": "cyan",
+        "machine-learning": "indigo",
+        "data-science": "violet",
+        "default": "gray",
+    }
+
+    def get_category_color(category: str) -> str:
+        return category_colors.get(category.lower(), category_colors["default"])
+
+    def render_skill_badge(job_skill: Any) -> None:
+        """Render a single skill badge with optional expansion and clickable name."""
+        color = get_category_color(job_skill.skill_category)
+        skill_obj = job_skill.skill  # May be None if skill was deleted
+
+        if show_content:
+            with ui.expansion(icon="school").classes(
+                f"w-full border-l-4 border-{color}-500 mb-1"
+            ) as expansion:
+                with expansion.add_slot("header"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.badge(job_skill.skill_category, color=color).props("outline")
+
+                        # Clickable skill name if skill still exists
+                        if skill_obj is not None:
+                            skill_url = f"/skill/{skill_obj.category}/{skill_obj.slug}"
+                            ui.label(job_skill.skill_name).classes(
+                                "font-medium text-sm text-cyan-600 cursor-pointer hover:underline"
+                            ).on("click", lambda _, url=skill_url: ui.navigate.to(url))
+                        else:
+                            # Skill was deleted - show muted non-clickable name
+                            with ui.row().classes("items-center gap-1"):
+                                ui.label(job_skill.skill_name).classes(
+                                    "font-medium text-sm text-gray-400"
+                                )
+                                ui.tooltip("Skill no longer available")
+
+                        # Show similarity score as percentage badge (hide if 0%)
+                        if (
+                            job_skill.similarity_score is not None
+                            and job_skill.similarity_score > 0
+                        ):
+                            pct = int(job_skill.similarity_score * 100)
+                            ui.badge(f"{pct}%", color="gray").props("dense outline").classes(
+                                "text-xs"
+                            )
+
+                # Skill content in expansion
+                with ui.column().classes("p-2 bg-gray-50 rounded"):
+                    ui.markdown(job_skill.skill_content).classes("text-sm text-gray-700")
+        else:
+            # Compact badge-only display
+            with ui.row().classes("items-center gap-2 mb-1"):
+                ui.badge(job_skill.skill_category, color=color).props("outline")
+
+                # Clickable skill name if skill still exists
+                if skill_obj is not None:
+                    skill_url = f"/skill/{skill_obj.category}/{skill_obj.slug}"
+                    ui.label(job_skill.skill_name).classes(
+                        "text-sm text-cyan-600 cursor-pointer hover:underline"
+                    ).on("click", lambda _, url=skill_url: ui.navigate.to(url))
+                else:
+                    ui.label(job_skill.skill_name).classes("text-sm text-gray-400")
+
+                # Show similarity score as percentage badge (hide if 0%)
+                if job_skill.similarity_score is not None and job_skill.similarity_score > 0:
+                    pct = int(job_skill.similarity_score * 100)
+                    ui.badge(f"{pct}%", color="gray").props("dense outline").classes("text-xs")
+
+    with ui.column().classes("w-full gap-2"):
+        # Initial skills section
+        if initial_skills:
+            ui.label("Initial Skills").classes(
+                "text-xs font-bold text-gray-500 uppercase tracking-wide"
+            )
+            for skill in initial_skills:
+                render_skill_badge(skill)
+
+        # Agent-added skills section
+        if agent_skills:
+            with ui.row().classes("items-center gap-2 mt-2"):
+                ui.label("Agent-Added Skills").classes(
+                    "text-xs font-bold text-gray-500 uppercase tracking-wide"
+                )
+                ui.badge(f"+{len(agent_skills)}", color="green").props("dense").classes("text-xs")
+            for skill in agent_skills:
+                render_skill_badge(skill)
+
+
+def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
+    """
+    Render an animated SHANDY thinking/status indicator.
+
+    Creates a visually distinctive status display with:
+    - Animated SHANDY logo with orbiting circles
+    - Status text describing what the model is doing
+    - Cyan-themed styling consistent with SHANDY branding
+
+    Args:
+        status_text: Text to display (e.g., "Analyzing literature...",
+                    "Searching PubMed...", "Generating report...")
+
+    Returns:
+        The container element (can be used to show/hide with .classes())
+
+    Example:
+        status = render_thinking_status("Searching databases...")
+        status.classes(remove="hidden")  # Show
+        status.classes(add="hidden")  # Hide
+    """
+    _inject_thinking_status_styles()
+
+    with ui.row().classes(
+        "items-center gap-3 py-3 px-4 bg-cyan-50 rounded-lg border border-cyan-200"
+    ) as container:
+        # Animated SHANDY logo (compact size)
+        ui.html(SHANDY_THINKING_SVG).classes("w-6 h-6")
+        # Status text
+        ui.label(status_text).classes("text-cyan-700 italic thinking-label")
+
+    return container

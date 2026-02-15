@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
@@ -471,6 +472,264 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
 
 
 @mcp.tool()
+def set_status(message: str) -> str:
+    """
+    Update your current status to show what you're working on.
+
+    Call this tool whenever you start a new activity to keep the user informed
+    of your progress. The status message appears in the job detail page.
+
+    Examples of good status messages:
+    - "Searching for caffeine-ADHD interaction studies"
+    - "Analyzing gene expression correlation with treatment"
+    - "Reviewing literature on dopamine receptor mechanisms"
+    - "Running statistical tests on metabolite data"
+    - "Preparing iteration summary"
+
+    Keep messages brief (under 80 characters) and descriptive of the current task.
+
+    Args:
+        message: Brief description of what you're currently doing
+
+    Returns:
+        Confirmation message
+    """
+    global KS
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
+
+    # Reload knowledge graph to get latest state
+    KS = KnowledgeState.load(JOB_DIR / "knowledge_state.json")
+
+    # Set the status
+    KS.set_agent_status(message)
+    KS.save(JOB_DIR / "knowledge_state.json")
+
+    return "✓ Status updated"
+
+
+@mcp.tool()
+def set_job_title(title: str) -> str:
+    """
+    Set a brief, descriptive title for this job.
+
+    Call this early in your investigation to give the job a meaningful title
+    that summarizes its focus. The title should be concise (under 100 characters)
+    and capture the essence of the research question.
+
+    Good examples:
+    - "Kinase inhibitor binding analysis"
+    - "Metabolomic response to hypoxia"
+    - "Structural basis of enzyme specificity"
+
+    Bad examples (too long/vague):
+    - "Analysis of the data" (too vague)
+    - "Investigation into the mechanisms..." (too long)
+
+    Args:
+        title: Brief title for the job (max 100 characters)
+
+    Returns:
+        Confirmation message
+    """
+    import json
+
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
+
+    # Validate title length
+    if len(title) > 100:
+        return f"❌ Title too long ({len(title)} chars). Please keep it under 100 characters."
+
+    if len(title) < 3:
+        return "❌ Title too short. Please provide a meaningful title."
+
+    # Update config.json
+    config_path = JOB_DIR / "config.json"
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+        config["short_title"] = title
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+
+    # Update database asynchronously
+    try:
+        from uuid import UUID
+
+        from shandy.database.session import AsyncSessionLocal
+
+        job_id = JOB_DIR.name
+
+        async def update_db():
+            from sqlalchemy import update
+
+            from shandy.database.models import Job
+
+            async with AsyncSessionLocal(thread_safe=True) as session:
+                stmt = update(Job).where(Job.id == UUID(job_id)).values(short_title=title)
+                await session.execute(stmt)
+                await session.commit()
+
+        async def update_db_with_error_handling():
+            try:
+                await update_db()
+            except Exception as e:
+                print(f"Warning: Background database update failed: {e}", file=sys.stderr)
+
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(update_db_with_error_handling())
+        else:
+            asyncio.run(update_db())
+    except Exception as e:
+        # Log but don't fail - config.json is the primary source
+        print(f"Warning: Failed to update database with title: {e}", file=sys.stderr)
+
+    return f"✓ Job title set to: {title}"
+
+
+@mcp.tool()
+def search_skills(query: str, add_to_job: bool = False, max_results: int = 3) -> str:
+    """
+    Search for domain-specific skills to guide your analysis.
+
+    Skills are curated knowledge documents containing best practices,
+    methodologies, and domain expertise. Use this tool when you need
+    guidance on specific analysis techniques or domains you're less
+    familiar with.
+
+    Args:
+        query: Search query describing what kind of guidance you need
+               (e.g., "metabolomics pathway analysis", "statistical testing")
+        add_to_job: If True, add matching skills to this job for future reference.
+                    Added skills persist and appear in the job's skills list.
+        max_results: Maximum number of skills to return (default: 3, max: 5)
+
+    Returns:
+        Formatted list of matching skills with their content, or a message
+        if no skills match the query or skill limit is reached.
+    """
+    import asyncio
+
+    from shandy.database.models import JobSkill
+    from shandy.database.session import AsyncSessionLocal
+    from shandy.prompts import format_skills_content, get_relevant_skills_with_scores
+    from shandy.settings import get_settings
+
+    assert JOB_DIR is not None, "JOB_DIR not initialized"
+
+    # Limit max_results to prevent abuse
+    max_results = min(max_results, 5)
+
+    job_id = JOB_DIR.name
+
+    async def _search_and_add() -> str:
+        settings = get_settings()
+        max_skills = settings.agent.max_agent_skills
+
+        async with AsyncSessionLocal(thread_safe=True) as session:
+            # Check current skill count for this job
+            from sqlalchemy import func, select
+
+            count_stmt = (
+                select(func.count()).select_from(JobSkill).where(JobSkill.job_id == UUID(job_id))
+            )
+            result = await session.execute(count_stmt)
+            current_count = result.scalar() or 0
+
+            if add_to_job and current_count >= max_skills:
+                return (
+                    f"❌ Cannot add more skills: Job has reached the maximum of "
+                    f"{max_skills} skills. Consider reviewing existing skills instead."
+                )
+
+            # Search for relevant skills with scores
+            skills_with_scores = await get_relevant_skills_with_scores(
+                session, query, limit=max_results
+            )
+
+            if not skills_with_scores:
+                return f"No skills found matching '{query}'. Try a different search query."
+
+            skills = [s for s, _ in skills_with_scores]
+
+            # If add_to_job, persist new skills (avoiding duplicates)
+            added_count = 0
+            if add_to_job:
+                # Get existing skill IDs for this job
+                existing_stmt = select(JobSkill.skill_id).where(JobSkill.job_id == UUID(job_id))
+                existing_result = await session.execute(existing_stmt)
+                existing_skill_ids = {row[0] for row in existing_result.fetchall()}
+
+                for skill, score in skills_with_scores:
+                    if current_count + added_count >= max_skills:
+                        break
+                    if skill.id not in existing_skill_ids:
+                        job_skill = JobSkill(
+                            job_id=UUID(job_id),
+                            skill_id=skill.id,
+                            skill_name=skill.name,
+                            skill_category=skill.category,
+                            skill_content=skill.content,
+                            source="agent",
+                            similarity_score=score,
+                        )
+                        session.add(job_skill)
+                        added_count += 1
+
+                if added_count > 0:
+                    await session.commit()
+
+            # Format skills for display
+            formatted = format_skills_content(skills)
+
+            if add_to_job:
+                if added_count > 0:
+                    header = f"✅ Added {added_count} skill(s) to this job:\n\n"
+                else:
+                    header = "ℹ️ Skills found (already added to this job):\n\n"
+            else:
+                header = f"Found {len(skills)} skill(s) matching '{query}':\n\n"
+
+            return header + formatted
+
+    # Run async function using the same pattern as job_manager._run_async
+    # This properly handles running async code from sync contexts,
+    # including cases where we might be inside an existing event loop
+    def _run_async_safely(coro: Any) -> str:
+        """Run async coroutine safely from any sync context."""
+        import concurrent.futures
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None:
+            # We're inside a running event loop - run in a separate thread
+            # with its own event loop. The coroutine will create its own
+            # database session via AsyncSessionLocal(thread_safe=True).
+            def run_in_thread() -> str:
+                result: str = asyncio.run(coro)
+                return result
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(run_in_thread)
+                result: str = future.result(timeout=30)
+                return result
+        else:
+            # No running loop - create one
+            result = asyncio.run(coro)
+            return result
+
+    try:
+        return _run_async_safely(_search_and_add())
+    except Exception as e:
+        return f"❌ Error searching skills: {e}"
+
+
+@mcp.tool()
 def read_document(file_path: str) -> str:
     """
     Read and extract text from a document file (PDF, DOCX, XLSX).
@@ -525,6 +784,13 @@ def read_document(file_path: str) -> str:
 def main():
     """Main entry point for MCP server."""
     import argparse
+
+    from shandy.version import get_version_string
+
+    # Log version info at startup
+    print("=" * 60, file=sys.stderr)
+    print(get_version_string(), file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
 
     # Validate settings at startup
     try:

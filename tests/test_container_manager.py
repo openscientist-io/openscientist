@@ -360,4 +360,4 @@ class TestContainerManagerIntegration:
 
         # Should fail due to timeout
         assert result["success"] is False
-        assert "timeout" in result["error"].lower()
+        assert "timed out" in result["error"].lower()

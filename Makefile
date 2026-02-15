@@ -1,4 +1,4 @@
-.PHONY: start stop restart build build-no-cache rebuild rebuild-no-cache logs shell clean clean-jobs test help deploy dev-start dev-stop dev-restart dev-rebuild lint format typecheck diagrams build-executor
+.PHONY: start stop restart build build-base rebuild logs shell clean clean-jobs reset-db help deploy status
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -9,37 +9,20 @@ COMPOSE_FILE ?= docker-compose.yml
 help:
 	@echo "SHANDY - Makefile commands"
 	@echo ""
-	@echo "Production:"
-	@echo "  make start            - Start the Docker container"
-	@echo "  make stop             - Stop the Docker container"
-	@echo "  make restart          - Restart the Docker container (without rebuilding)"
-	@echo "  make build            - Build the Docker image (with cache)"
-	@echo "  make build-no-cache   - Build the Docker image (without cache, for dependency updates)"
-	@echo "  make rebuild          - Rebuild image and restart (use after code changes, with cache)"
-	@echo "  make rebuild-no-cache - Rebuild image and restart (without cache)"
-	@echo "  make build-executor   - Build executor image for container isolation"
-	@echo "  make logs             - Tail container logs"
-	@echo "  make shell            - Open a shell in the running container"
-	@echo "  make clean            - Remove container and volumes"
-	@echo "  make clean-jobs       - Clean up old job directories"
-	@echo "  make test             - Run tests in container"
-	@echo "  make deploy           - Deploy to production server (default: gassh, with cache)"
+	@echo "Docker:"
+	@echo "  make build      - Build all Docker images (base, main, agent, executor)"
+	@echo "  make build-base - Build only the base image (Node.js, uv, Claude CLI)"
+	@echo "  make start      - Start containers"
+	@echo "  make stop       - Stop containers"
+	@echo "  make restart    - Restart containers (no rebuild)"
+	@echo "  make rebuild    - Rebuild images and restart"
+	@echo "  make logs       - Tail container logs"
+	@echo "  make shell      - Open shell in main container"
+	@echo "  make clean      - Remove containers and volumes"
+	@echo "  make reset-db   - Flush database and run migrations"
 	@echo ""
-	@echo "Development (with live code reload):"
-	@echo "  make dev-start        - Start in development mode (source mounted, auto-reload)"
-	@echo "  make dev-stop         - Stop development container"
-	@echo "  make dev-restart      - Restart development container"
-	@echo "  make dev-rebuild      - Rebuild and restart in development mode"
-	@echo ""
-	@echo "Local development:"
-	@echo "  make dev-test         - Run tests locally with coverage"
-	@echo "  make lint             - Lint src/ and tests/ with ruff"
-	@echo "  make format           - Format src/ and tests/ with ruff"
-	@echo "  make typecheck        - Type check with mypy"
-	@echo "  make diagrams         - Regenerate database schema diagrams"
-	@echo ""
-	@echo "Jobs are stored in: ./jobs/"
-	@echo "Web interface at: http://localhost:8080"
+	@echo "Deployment:"
+	@echo "  make deploy     - Deploy to production server"
 
 start:
 	@echo "Starting SHANDY..."
@@ -53,30 +36,19 @@ stop:
 
 restart: stop start
 
+build-base:
+	@echo "Building base image (Node.js, uv, Claude CLI)..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t shandy-base:latest .
+
 build:
-	@echo "Building SHANDY Docker image (with cache)..."
+	@echo "Building SHANDY images..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
 		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-build-executor:
-	@echo "Building SHANDY executor image for container isolation..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t shandy-executor:latest .
-
-build-no-cache:
-	@echo "Building SHANDY Docker image (without cache)..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build --no-cache \
-		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
-		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	@echo "All images built: shandy-base, shandy, shandy-executor"
 
 rebuild: build
-	@echo "Restarting with new build..."
-	docker compose -f $(COMPOSE_FILE) down
-	docker compose -f $(COMPOSE_FILE) up -d
-	@echo "SHANDY rebuilt and started at http://localhost:8080"
-
-rebuild-no-cache: build-no-cache
-	@echo "Restarting with new build (no cache)..."
 	docker compose -f $(COMPOSE_FILE) down
 	docker compose -f $(COMPOSE_FILE) up -d
 	@echo "SHANDY rebuilt and started at http://localhost:8080"
@@ -101,35 +73,24 @@ clean-jobs:
 	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager cleanup --days $$days
 	@echo "Job cleanup complete"
 
-test:
-	@echo "Running tests in container..."
-	docker compose -f $(COMPOSE_FILE) exec shandy pytest
-
-# Development helpers
-dev-install:
-	@echo "Installing development dependencies locally..."
-	uv sync
-
-dev-test:
-	@echo "Running tests locally..."
-	uv run pytest --cov=src/shandy --cov-report=term-missing
-
-lint:
-	@echo "Linting code..."
-	uv run ruff check src/ tests/
-
-format:
-	@echo "Formatting code..."
-	uv run ruff format src/ tests/
-
-typecheck:
-	@echo "Type checking..."
-	uv run mypy src/shandy/ tests/
-
-diagrams:
-	@echo "Generating database schema diagrams..."
-	uv run python generate_diagrams.py
-	@echo "Diagrams written to docs/diagrams/"
+reset-db:
+	@echo "WARNING: This will delete all database data!"
+	@read -p "Are you sure? [y/N]: " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		echo "Stopping containers..."; \
+		docker compose -f $(COMPOSE_FILE) down; \
+		echo "Removing postgres volume..."; \
+		docker volume rm shandy_postgres_data 2>/dev/null || true; \
+		echo "Starting containers..."; \
+		docker compose -f $(COMPOSE_FILE) up -d; \
+		echo "Waiting for postgres to be ready..."; \
+		sleep 5; \
+		echo "Running migrations..."; \
+		docker compose -f $(COMPOSE_FILE) exec shandy alembic upgrade head; \
+		echo "Database reset complete!"; \
+	else \
+		echo "Aborted."; \
+	fi
 
 # Show job status
 status:

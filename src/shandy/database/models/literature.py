@@ -63,7 +63,7 @@ class Literature(UUIDv7Mixin, Base):
     )
 
     title: Mapped[str] = mapped_column(
-        String(500),
+        Text,
         nullable=False,
         comment="Title of the paper/document",
     )
@@ -75,7 +75,7 @@ class Literature(UUIDv7Mixin, Base):
     )
 
     journal: Mapped[str | None] = mapped_column(
-        String(255),
+        Text,
         nullable=True,
         comment="Journal or publication venue",
     )

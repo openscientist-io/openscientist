@@ -1,7 +1,7 @@
 """Tests for orchestrator helper functions.
 
 Only tests pure/helper functions that don't spawn subprocesses or require
-the full Claude CLI. The run_discovery integration is too heavyweight for
+the full agent loop. The run_discovery integration is too heavyweight for
 unit testing.
 """
 
@@ -10,10 +10,8 @@ import os
 from unittest.mock import MagicMock, patch
 
 from shandy.orchestrator import (
-    extract_claude_info_from_transcript,
     get_version_metadata,
     increment_ks_iteration,
-    parse_stream_json,
     update_job_status,
 )
 
@@ -48,81 +46,6 @@ class TestGetVersionMetadata:
         mock_path_cls.return_value.exists.return_value = False
         info = get_version_metadata()
         assert isinstance(info, dict)
-
-
-# ─── extract_claude_info_from_transcript ──────────────────────────────
-
-
-class TestExtractClaudeInfo:
-    """Tests for extracting model/version info from transcript."""
-
-    def test_extracts_model_and_version(self):
-        transcript = [
-            {
-                "type": "system",
-                "subtype": "init",
-                "model": "claude-sonnet-4-20250514",
-                "claude_code_version": "1.0.32",
-            },
-            {"type": "assistant", "content": "Hello"},
-        ]
-        info = extract_claude_info_from_transcript(transcript)
-        assert info["claude_model"] == "claude-sonnet-4-20250514"
-        assert info["claude_code_version"] == "1.0.32"
-
-    def test_no_init_message(self):
-        transcript = [{"type": "assistant", "content": "Hello"}]
-        info = extract_claude_info_from_transcript(transcript)
-        assert info == {}
-
-    def test_empty_transcript(self):
-        info = extract_claude_info_from_transcript([])
-        assert info == {}
-
-    def test_init_without_model(self):
-        transcript = [{"type": "system", "subtype": "init"}]
-        info = extract_claude_info_from_transcript(transcript)
-        assert "claude_model" not in info
-
-
-# ─── parse_stream_json ────────────────────────────────────────────────
-
-
-class TestParseStreamJson:
-    """Tests for stream-json output parsing."""
-
-    def test_parses_valid_lines(self):
-        stdout = '{"type":"a"}\n{"type":"b"}\n'
-        result = parse_stream_json(stdout)
-        assert len(result) == 2
-        assert result[0]["type"] == "a"
-
-    def test_skips_empty_lines(self):
-        stdout = '{"type":"a"}\n\n\n{"type":"b"}\n'
-        result = parse_stream_json(stdout)
-        assert len(result) == 2
-
-    def test_skips_malformed_json(self):
-        stdout = '{"valid":true}\nnot json\n{"also_valid":true}\n'
-        result = parse_stream_json(stdout)
-        assert len(result) == 2
-
-    def test_sanitises_large_data_fields(self):
-        # Create a line with a data field >1000 chars
-        big_data = "A" * 2000
-        stdout = json.dumps({"type": "result", "data": big_data}) + "\n"
-        result = parse_stream_json(stdout)
-        assert len(result) == 1
-        assert result[0]["data"] == "[CONTENT REMOVED]"
-
-    def test_preserves_small_data_fields(self):
-        small_data = "ABC"
-        stdout = json.dumps({"type": "result", "data": small_data}) + "\n"
-        result = parse_stream_json(stdout)
-        assert result[0]["data"] == "ABC"
-
-    def test_empty_stdout(self):
-        assert parse_stream_json("") == []
 
 
 # ─── update_job_status ────────────────────────────────────────────────
