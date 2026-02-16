@@ -21,7 +21,8 @@ from shandy.database.session import get_session
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/web/shares")
+# Web UI routes use session auth - exclude from API docs
+router = APIRouter(prefix="/web/shares", include_in_schema=False)
 
 
 # Pydantic models for request/response

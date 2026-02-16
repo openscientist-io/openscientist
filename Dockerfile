@@ -11,9 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI via npm (latest version for Azure Foundry support)
-RUN npm install -g @anthropic-ai/claude-code
-
 # Optionally install Phenix for structural biology
 # Requires data/phenix-installer-*.tar.gz to be present
 RUN if [ "$INSTALL_PHENIX" = "true" ]; then \

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -35,6 +35,7 @@ class APIKey(UUIDv7Mixin, Base):
         key_hash: Hashed secret portion of the API key
         last_used_at: Timestamp when key was last used (UTC)
         is_active: Whether the key is active (for revocation)
+        usage_count: Number of times this API key has been used
         user: Related User object
     """
 
@@ -72,6 +73,13 @@ class APIKey(UUIDv7Mixin, Base):
         nullable=False,
         server_default="true",
         comment="Whether the key is active (for revocation)",
+    )
+
+    usage_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="Number of times this API key has been used",
     )
 
     # Relationships

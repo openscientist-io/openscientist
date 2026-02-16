@@ -141,6 +141,13 @@ def upgrade() -> None:
             comment="Whether the key is active (for revocation)",
         ),
         sa.Column(
+            "usage_count",
+            sa.Integer(),
+            server_default="0",
+            nullable=False,
+            comment="Number of times this API key has been used",
+        ),
+        sa.Column(
             "id",
             sa.UUID(),
             server_default=sa.text("uuidv7()"),
@@ -1731,6 +1738,13 @@ def upgrade() -> None:
                 current_setting('app.current_user_id', TRUE) IS NOT NULL
                 AND user_id::text = current_setting('app.current_user_id', TRUE)
             )
+    """
+    )
+    # Admins can view all API keys (read-only for security)
+    op.execute(
+        """
+        CREATE POLICY api_keys_select_admin ON api_keys FOR SELECT
+            USING (current_user_is_admin())
     """
     )
 

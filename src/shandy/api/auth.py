@@ -133,18 +133,21 @@ async def get_current_user_from_api_key(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Update last_used_at timestamp
+    # Update last_used_at timestamp and increment usage count
     try:
         update_stmt = (
             update(APIKey)
             .where(APIKey.id == api_key.id)
-            .values(last_used_at=datetime.now(timezone.utc))
+            .values(
+                last_used_at=datetime.now(timezone.utc),
+                usage_count=APIKey.usage_count + 1,
+            )
         )
         await session.execute(update_stmt)
         await session.commit()
     except Exception as e:
         # Non-critical, log and continue
-        logger.warning("Failed to update API key last_used_at: %s", e)
+        logger.warning("Failed to update API key usage stats: %s", e)
 
     # Load user
     user_stmt = select(User).where(User.id == api_key.user_id)

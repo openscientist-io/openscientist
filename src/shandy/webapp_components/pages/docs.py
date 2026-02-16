@@ -9,12 +9,13 @@ from shandy.webapp_components.ui_components import render_navigator
 @ui.page("/docs")
 @require_auth
 def docs_page():
-    """Documentation page."""
+    """Documentation page with user guide."""
     render_navigator(active_page="docs")
 
-    with ui.card().classes("w-full max-w-4xl mx-auto mt-8"):
-        ui.markdown(
-            """
+    with ui.column().classes("w-full max-w-4xl mx-auto mt-8 gap-4"):
+        with ui.card().classes("w-full"):
+            ui.markdown(
+                """
 # SHANDY Documentation
 
 **Scientific Hypothesis Agent for Novel Discovery**
@@ -69,6 +70,16 @@ The final scientific report with:
 
 Download as Markdown or PDF.
 
+## API Documentation
+
+SHANDY provides a REST API for programmatic access. Create an API key from the
+[API Keys](/api-keys) page, then use it with the `Authorization: Bearer <name>:<secret>` header.
+
+**Interactive API documentation:**
+
+- [Swagger UI](/api-docs) - Try API calls interactively
+- [ReDoc](/api-redoc) - Detailed endpoint reference
+
 ## Tips for Success
 
 1. **Clear Research Question**: Be specific about what you want to discover
@@ -81,5 +92,5 @@ complicated questions.
 ## Support
 
 For issues or questions, contact your system administrator.
-        """
-        )
+                """
+            )

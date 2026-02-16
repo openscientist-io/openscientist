@@ -23,7 +23,8 @@ from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth", tags=["authentication"])
+# Auth routes are internal (OAuth callbacks, etc.) - exclude from API docs
+router = APIRouter(prefix="/auth", tags=["authentication"], include_in_schema=False)
 
 
 # =============================================================================

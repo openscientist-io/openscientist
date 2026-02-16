@@ -140,6 +140,52 @@ def _register_share_routes():
         logger.warning("Failed to register share routes: %s", e)
 
 
+# Configure OpenAPI metadata
+app.title = "SHANDY API"
+app.version = "1.0.0"
+app.description = "REST API for Scientific Hypothesis Agent for Novel Discovery"
+
+
+def _register_openapi_docs():
+    """Register OpenAPI documentation routes (Swagger UI and ReDoc).
+
+    NiceGUI disables FastAPI's built-in docs, so we add them manually.
+    """
+    from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+    from fastapi.responses import JSONResponse
+
+    @app.get("/api-docs", include_in_schema=False)
+    async def swagger_ui_html():
+        """Swagger UI documentation."""
+        return get_swagger_ui_html(
+            openapi_url="/openapi.json",
+            title=f"{app.title} - Swagger UI",
+        )
+
+    @app.get("/api-redoc", include_in_schema=False)
+    async def redoc_html():
+        """ReDoc documentation."""
+        return get_redoc_html(
+            openapi_url="/openapi.json",
+            title=f"{app.title} - ReDoc",
+        )
+
+    @app.get("/openapi.json", include_in_schema=False)
+    async def openapi_json():
+        """OpenAPI schema as JSON, filtered to only include /api/v1/* paths."""
+        schema = app.openapi()
+        # Filter to only include API paths
+        filtered_paths = {
+            path: ops for path, ops in schema.get("paths", {}).items() if path.startswith("/api/")
+        }
+        filtered_schema = {**schema, "paths": filtered_paths}
+        return JSONResponse(filtered_schema)
+
+    logger.info("OpenAPI documentation registered at /api-docs and /api-redoc")
+
+
+_register_openapi_docs()
+
 # Import page modules to register routes
 # Must be imported after _state is defined so pages can access it
 # Import auth routes first

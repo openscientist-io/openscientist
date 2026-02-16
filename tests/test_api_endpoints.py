@@ -815,6 +815,203 @@ class TestJobEndpoints:
         for job in data["jobs"]:
             assert job["status"] == "completed"
 
+    @pytest.mark.asyncio
+    async def test_get_job_report_requires_completed_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Report endpoint requires a completed job."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{test_job_db.id}/report",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        # Pending job should not have a report
+        assert response.status_code == 400
+        assert "completed" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_job_report_completed_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        completed_job_db: Job,
+        tmp_path,
+    ):
+        """Report endpoint returns report for completed job."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create job directory with report file
+        job_dir = tmp_path / "jobs" / str(completed_job_db.id)
+        job_dir.mkdir(parents=True)
+        report_file = job_dir / "final_report.md"
+        report_file.write_text("# Test Report\n\nThis is a test report.")
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.jobs.Path") as mock_path:
+            # Make Path("jobs") / job_id return our tmp_path
+            mock_path.return_value.__truediv__ = lambda self, x: tmp_path / "jobs" / x
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/jobs/{completed_job_db.id}/report",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_get_job_artifacts_not_found(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Artifacts endpoint returns 404 if job directory doesn't exist."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{test_job_db.id}/artifacts",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        # Job directory doesn't exist
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_job_artifacts_success(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+        tmp_path,
+    ):
+        """Artifacts endpoint returns ZIP archive."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create job directory with some files
+        job_dir = tmp_path / "jobs" / str(test_job_db.id)
+        job_dir.mkdir(parents=True)
+        (job_dir / "plot.png").write_bytes(b"fake png data")
+        (job_dir / "data.csv").write_text("a,b,c\n1,2,3\n")
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.jobs.Path") as mock_path:
+            # Make Path("jobs") / job_id return our tmp_path structure
+            def mock_truediv(self, x):
+                return tmp_path / "jobs" / x
+
+            mock_path.return_value.__truediv__ = mock_truediv
+
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/jobs/{test_job_db.id}/artifacts",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+
 
 class TestJobSharingEndpoints:
     """Tests for job sharing endpoints."""
@@ -933,6 +1130,241 @@ class TestJobSharingEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "users" in data
+
+    @pytest.mark.asyncio
+    async def test_list_job_shares(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """List shares for a job."""
+
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.models import JobShare
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create a share first
+        share = JobShare(
+            job_id=test_job_db.id,
+            shared_with_user_id=test_user2_db.id,
+            permission_level="view",
+        )
+        db_session.add(share)
+        await db_session.commit()
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/shares/job/{test_job_db.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "shares" in data
+        assert data["total"] >= 1
+        # Verify the share we created is in the list
+        share_emails = [s["shared_with_email"] for s in data["shares"]]
+        assert test_user2_db.email in share_emails
+
+    @pytest.mark.asyncio
+    async def test_list_job_shares_not_owner_forbidden(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Non-owner cannot list shares for a job."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create a job owned by user2
+        other_job = Job(
+            owner_id=test_user2_db.id,
+            title="Other User's Job",
+            status="pending",
+        )
+        db_session.add(other_job)
+        await db_session.commit()
+        await db_session.refresh(other_job)
+
+        # Enable RLS
+        await enable_rls(db_session)
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db  # Authenticated as user1
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/shares/job/{other_job.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        # Should be 403 or 404 (can't see job or forbidden to list shares)
+        assert response.status_code in [403, 404]
+
+    @pytest.mark.asyncio
+    async def test_revoke_share(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Revoke a job share."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.models import JobShare
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create a share to revoke
+        share = JobShare(
+            job_id=test_job_db.id,
+            shared_with_user_id=test_user2_db.id,
+            permission_level="view",
+        )
+        db_session.add(share)
+        await db_session.commit()
+        await db_session.refresh(share)
+        share_id = share.id
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.delete(
+                f"/api/v1/shares/{share_id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_revoke_share_not_owner_forbidden(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Non-owner cannot revoke a share."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.models import JobShare
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        # Create a job owned by user2
+        other_job = Job(
+            owner_id=test_user2_db.id,
+            title="Other User's Job",
+            status="pending",
+        )
+        db_session.add(other_job)
+        await db_session.commit()
+        await db_session.refresh(other_job)
+
+        # Create a share on that job
+        share = JobShare(
+            job_id=other_job.id,
+            shared_with_user_id=test_user_db.id,  # Shared with user1
+            permission_level="view",
+        )
+        db_session.add(share)
+        await db_session.commit()
+        await db_session.refresh(share)
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db  # User1 trying to revoke
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.delete(
+                f"/api/v1/shares/{share.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        # Should be 403 forbidden (can see the share but can't revoke it)
+        assert response.status_code == 403
 
 
 class TestAuthenticationFlow:
