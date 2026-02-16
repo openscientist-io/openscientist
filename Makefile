@@ -1,4 +1,4 @@
-.PHONY: start stop restart build build-base rebuild logs shell clean clean-jobs reset-db help deploy status
+.PHONY: start stop restart build rebuild logs shell clean clean-jobs reset-db help deploy status
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -11,7 +11,6 @@ help:
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build      - Build all Docker images (base, main, agent, executor)"
-	@echo "  make build-base - Build only the base image (Node.js, uv, Claude CLI)"
 	@echo "  make start      - Start containers"
 	@echo "  make stop       - Stop containers"
 	@echo "  make restart    - Restart containers (no rebuild)"
@@ -36,11 +35,9 @@ stop:
 
 restart: stop start
 
-build-base:
+build:
 	@echo "Building base image (Node.js, uv, Claude CLI)..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t shandy-base:latest .
-
-build:
 	@echo "Building SHANDY images..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
 		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
