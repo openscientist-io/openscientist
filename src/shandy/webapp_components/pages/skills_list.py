@@ -12,6 +12,7 @@ from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.webapp_components.ui_components import (
     format_relative_time,
+    get_category_color,
     render_empty_state,
     render_navigator,
     render_skill_name_slot,
@@ -199,21 +200,6 @@ async def skills_page():
                 result = await session.execute(stmt)
                 rows_data = result.all()
 
-                # Category color mapping
-                category_colors = {
-                    "analysis": "blue",
-                    "methodology": "purple",
-                    "statistics": "green",
-                    "biology": "teal",
-                    "chemistry": "orange",
-                    "bioinformatics": "cyan",
-                    "machine-learning": "indigo",
-                    "data-science": "violet",
-                    "genomics": "pink",
-                    "metabolomics": "amber",
-                    "proteomics": "lime",
-                }
-
                 # Build table rows
                 rows = []
                 for skill, source in rows_data:
@@ -233,7 +219,7 @@ async def skills_page():
                             "name": skill.name,
                             "slug": skill.slug,
                             "category": skill.category,
-                            "category_color": category_colors.get(skill.category.lower(), "gray"),
+                            "category_color": get_category_color(skill.category),
                             "description": skill.description or "",
                             "source": f"{source_name} {source_type}".strip(),
                             "last_synced": last_synced,

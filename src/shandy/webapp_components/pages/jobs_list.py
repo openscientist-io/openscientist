@@ -12,6 +12,7 @@ from shandy.webapp_components.ui_components import (
     render_delete_dialog,
     render_job_id_slot,
     render_navigator,
+    render_permission_badge_slot,
     render_share_dialog,
     render_stat_badges,
     render_status_cell_slot,
@@ -310,13 +311,7 @@ def jobs_page():
             # Add permission badge slot
             shared_jobs_table.add_slot(
                 "body-cell-permission",
-                r"""
-                <q-td :props="props">
-                    <q-badge :color="props.row.permission === 'edit' ? 'orange' : 'blue'">
-                        {{ props.row.permission }}
-                    </q-badge>
-                </q-td>
-            """,
+                render_permission_badge_slot(),
             )
 
             # Add action buttons with share and delete icons

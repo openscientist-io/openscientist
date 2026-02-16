@@ -12,7 +12,11 @@ from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.webapp_components.ui_components import (
     format_relative_time,
+    get_category_color,
+    render_error_state,
+    render_loading_spinner,
     render_navigator,
+    render_not_found_state,
 )
 from shandy.webapp_components.utils import setup_timer_cleanup
 
@@ -58,7 +62,12 @@ async def skill_detail_page(category: str, slug: str):
                 if not row:
                     # 404 - skill not found
                     with content_container:
-                        render_not_found(category, slug)
+                        render_not_found_state(
+                            title="Skill not found",
+                            message=f"The skill '{category}/{slug}' does not exist or has been disabled.",
+                            back_label="Back to Skills",
+                            back_url="/skills",
+                        )
                     return
 
                 skill, source = row
@@ -66,21 +75,7 @@ async def skill_detail_page(category: str, slug: str):
                 # Set page title
                 ui.page_title(f"{skill.name} - SHANDY")
 
-                # Category color mapping
-                category_colors = {
-                    "analysis": "blue",
-                    "methodology": "purple",
-                    "statistics": "green",
-                    "biology": "teal",
-                    "chemistry": "orange",
-                    "bioinformatics": "cyan",
-                    "machine-learning": "indigo",
-                    "data-science": "violet",
-                    "genomics": "pink",
-                    "metabolomics": "amber",
-                    "proteomics": "lime",
-                }
-                cat_color = category_colors.get(skill.category.lower(), "gray")
+                cat_color = get_category_color(skill.category)
 
                 with content_container:
                     # Breadcrumb navigation
@@ -161,39 +156,16 @@ async def skill_detail_page(category: str, slug: str):
             logger.error("Failed to load skill %s/%s: %s", category, slug, e)
             content_container.clear()
             with content_container:
-                render_error(str(e))
-
-    def render_not_found(cat: str, s: str):
-        """Render 404 message."""
-        with ui.column().classes("w-full items-center py-16"):
-            ui.icon("search_off", size="xl").classes("text-gray-300 mb-4")
-            ui.label("Skill not found").classes("text-h5 font-bold text-gray-600 mb-2")
-            ui.label(f"The skill '{cat}/{s}' does not exist or has been disabled.").classes(
-                "text-gray-500 mb-4"
-            )
-            ui.button(
-                "Back to Skills",
-                on_click=lambda: ui.navigate.to("/skills"),
-                icon="arrow_back",
-            ).props("color=primary")
-
-    def render_error(error_msg: str):
-        """Render error message."""
-        with ui.column().classes("w-full items-center py-16"):
-            ui.icon("error", size="xl").classes("text-red-300 mb-4")
-            ui.label("Failed to load skill").classes("text-h5 font-bold text-red-600 mb-2")
-            ui.label(error_msg).classes("text-gray-500 mb-4")
-            ui.button(
-                "Back to Skills",
-                on_click=lambda: ui.navigate.to("/skills"),
-                icon="arrow_back",
-            ).props("color=primary")
+                render_error_state(
+                    title="Failed to load skill",
+                    message=str(e),
+                    back_label="Back to Skills",
+                    back_url="/skills",
+                )
 
     # Show loading state initially
     with content_container:
-        with ui.row().classes("w-full justify-center py-16"):
-            ui.spinner(size="lg")
-            ui.label("Loading skill...").classes("ml-4 text-gray-500")
+        render_loading_spinner("Loading skill...")
 
     # Load skill data
     init_timer = ui.timer(0.1, load_skill, once=True)

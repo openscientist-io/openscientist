@@ -111,6 +111,34 @@ STATUS_ICONS = {
     JobStatus.AWAITING_FEEDBACK: "⏸",
 }
 
+# Category color mappings for skills
+CATEGORY_COLORS: dict[str, str] = {
+    "analysis": "blue",
+    "methodology": "purple",
+    "statistics": "green",
+    "biology": "teal",
+    "chemistry": "orange",
+    "bioinformatics": "cyan",
+    "machine-learning": "indigo",
+    "data-science": "violet",
+    "genomics": "pink",
+    "metabolomics": "amber",
+    "proteomics": "lime",
+}
+
+
+def get_category_color(category: str) -> str:
+    """
+    Get the color for a skill category.
+
+    Args:
+        category: The category name (case-insensitive)
+
+    Returns:
+        Color string for use with Quasar/Tailwind (e.g., "blue", "purple")
+    """
+    return CATEGORY_COLORS.get(category.lower(), "gray")
+
 
 def _get_pubmed_badge_html(pmid: str) -> str:
     """
@@ -1121,6 +1149,105 @@ def render_empty_state(message: str) -> None:
     ui.label(message).classes("text-gray-500 text-center p-8")
 
 
+def render_permission_badge_slot() -> str:
+    """
+    Generate Quasar table slot template for permission level column.
+
+    Returns slot template string that renders permission level as a colored badge
+    (orange for 'edit', blue for 'view').
+
+    Returns:
+        Quasar slot template string
+    """
+    return r"""
+        <q-td :props="props">
+            <q-badge :color="props.row.permission === 'edit' ? 'orange' : 'blue'">
+                {{ props.row.permission }}
+            </q-badge>
+        </q-td>
+    """
+
+
+def render_not_found_state(
+    title: str,
+    message: str,
+    back_label: str = "Go Back",
+    back_url: str | None = None,
+    icon: str = "search_off",
+) -> None:
+    """
+    Render a styled 404/not found state.
+
+    Creates a centered column with an icon, title, message, and optional back button.
+
+    Args:
+        title: The main heading (e.g., "Skill not found")
+        message: Detailed message explaining what wasn't found
+        back_label: Text for the back button
+        back_url: URL to navigate to when back button is clicked.
+                  If None, no back button is shown.
+        icon: Material icon name to display (default: "search_off")
+    """
+    with ui.column().classes("w-full items-center py-16"):
+        ui.icon(icon, size="xl").classes("text-gray-300 mb-4")
+        ui.label(title).classes("text-h5 font-bold text-gray-600 mb-2")
+        ui.label(message).classes("text-gray-500 mb-4")
+        if back_url:
+            ui.button(
+                back_label,
+                on_click=lambda: ui.navigate.to(back_url),
+                icon="arrow_back",
+            ).props("color=primary")
+
+
+def render_error_state(
+    title: str,
+    message: str,
+    back_label: str = "Go Back",
+    back_url: str | None = None,
+    icon: str = "error",
+) -> None:
+    """
+    Render a styled error state.
+
+    Creates a centered column with an error icon, title, message, and optional back button.
+
+    Args:
+        title: The main heading (e.g., "Failed to load skill")
+        message: Detailed error message
+        back_label: Text for the back button
+        back_url: URL to navigate to when back button is clicked.
+                  If None, no back button is shown.
+        icon: Material icon name to display (default: "error")
+    """
+    with ui.column().classes("w-full items-center py-16"):
+        ui.icon(icon, size="xl").classes("text-red-300 mb-4")
+        ui.label(title).classes("text-h5 font-bold text-red-600 mb-2")
+        ui.label(message).classes("text-gray-500 mb-4")
+        if back_url:
+            ui.button(
+                back_label,
+                on_click=lambda: ui.navigate.to(back_url),
+                icon="arrow_back",
+            ).props("color=primary")
+
+
+def render_loading_spinner(message: str = "Loading...") -> ui.element:
+    """
+    Render a centered loading spinner with message.
+
+    Args:
+        message: Text to display next to spinner
+
+    Returns:
+        The row container element (can be used to show/hide)
+    """
+    with ui.row().classes("w-full justify-center py-16") as container:
+        ui.spinner(size="lg")
+        ui.label(message).classes("ml-4 text-gray-500")
+    return container
+
+
 def render_dialog_actions(
     on_confirm: Callable[[], None | Awaitable[None]],
     on_cancel: Callable[[], None],
@@ -1859,22 +1986,6 @@ def render_job_skills(
     # Group skills by source
     initial_skills = [s for s in skills if s.source == "initial"]
     agent_skills = [s for s in skills if s.source == "agent"]
-
-    # Category color mapping
-    category_colors: dict[str, str] = {
-        "analysis": "blue",
-        "methodology": "purple",
-        "statistics": "green",
-        "biology": "teal",
-        "chemistry": "orange",
-        "bioinformatics": "cyan",
-        "machine-learning": "indigo",
-        "data-science": "violet",
-        "default": "gray",
-    }
-
-    def get_category_color(category: str) -> str:
-        return category_colors.get(category.lower(), category_colors["default"])
 
     def render_skill_badge(job_skill: Any) -> None:
         """Render a single skill badge with optional expansion and clickable name."""
