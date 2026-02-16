@@ -33,7 +33,13 @@ from shandy.webapp_components.ui_components import (
     render_thinking_status,
     transform_pmid_references,
 )
-from shandy.webapp_components.utils.transcript_parser import parse_transcript_actions
+from shandy.webapp_components.utils import (
+    ClientGuard,
+    guard_client,
+    parse_transcript_actions,
+    safe_run_javascript,
+    setup_timer_cleanup,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,17 +99,7 @@ def job_detail_page(job_id: str):
     }
 
     # Track active timers for cleanup on disconnect
-    _active_timers: list[ui.timer] = []
-
-    def _cleanup_timers():
-        """Deactivate all timers when client disconnects."""
-        for timer in _active_timers:
-            try:
-                timer.deactivate()
-            except Exception:
-                pass  # Timer may already be deactivated
-
-    ui.context.client.on_disconnect(_cleanup_timers)
+    _active_timers = setup_timer_cleanup()
 
     # Create reusable dialogs for Share, Delete, and Notifications actions
     share_dialog = render_share_dialog(job_id)
@@ -149,6 +145,11 @@ def job_detail_page(job_id: str):
             @ui.refreshable
             def render_job_stats():
                 """Render job stats badges - refreshable for real-time updates."""
+                from shandy.webapp_components.utils import is_client_connected
+
+                if not is_client_connected():
+                    return
+
                 latest_job = job_manager.get_job(job_id)
                 if latest_job is None:
                     return
@@ -226,6 +227,11 @@ def job_detail_page(job_id: str):
             @ui.refreshable
             def render_skills_section():
                 """Render skills used section - refreshable for real-time updates."""
+                from shandy.webapp_components.utils import is_client_connected
+
+                if not is_client_connected():
+                    return
+
                 job_skills = get_job_skills(job_id)
                 if job_skills:
                     with ui.expansion("Skills Used", icon="school").classes(
@@ -241,6 +247,11 @@ def job_detail_page(job_id: str):
             @ui.refreshable
             def render_timeline():
                 """Render the investigation timeline - refreshable for real-time updates."""
+                from shandy.webapp_components.utils import is_client_connected
+
+                if not is_client_connected():
+                    return
+
                 # Reload knowledge state for latest data
                 timeline_ks, _ = _load_knowledge_state(ks_path)
                 latest_job = job_manager.get_job(job_id)
@@ -363,6 +374,13 @@ def job_detail_page(job_id: str):
                                 iter_provenance_dir=provenance_dir,
                             ):
                                 """Lazy load iteration content when expansion is opened."""
+                                from shandy.webapp_components.utils import (
+                                    is_client_connected,
+                                )
+
+                                if not is_client_connected():
+                                    return
+
                                 if loaded_flag["value"]:
                                     return
                                 loaded_flag["value"] = True
@@ -739,6 +757,7 @@ def job_detail_page(job_id: str):
                                     # Container for timer reference (allows closure access)
                                     timer_ref: list[ui.timer | None] = [None]
 
+                                    @guard_client
                                     def update_countdown():
                                         now = datetime.now()
                                         elapsed = (now - started).total_seconds()
@@ -769,6 +788,7 @@ def job_detail_page(job_id: str):
             build_feedback_panel()
 
             # Poll for changes and refresh stats/timeline in real-time
+            @guard_client
             def check_and_refresh():
                 latest_job = job_manager.get_job(job_id)
                 if latest_job is None:
@@ -980,7 +1000,7 @@ def job_detail_page(job_id: str):
                 # Helper to play smooth sounds using Web Audio API
                 def play_sound(sound_type: str):
                     # Generate smooth sine-wave sounds programmatically
-                    ui.run_javascript(
+                    safe_run_javascript(
                         f"""
                         (function() {{
                             try {{
@@ -1078,7 +1098,7 @@ def job_detail_page(job_id: str):
 
                     def scroll_chat_to_bottom():
                         """Scroll chat to bottom after new messages are added."""
-                        ui.run_javascript(
+                        safe_run_javascript(
                             """
                             setTimeout(() => {
                                 const el = document.querySelector('.chat-messages-scroll .q-scrollarea__container');
@@ -1121,9 +1141,17 @@ def job_detail_page(job_id: str):
                 # Display welcome or existing messages
                 async def render_messages():
                     """Render chat messages."""
+                    guard = ClientGuard()
+                    if not guard.is_connected:
+                        return
+
                     try:
                         async with AsyncSessionLocal() as session:
                             messages = await get_chat_history(session, job_uuid)
+
+                        # Re-check after await - client may have disconnected
+                        if not guard.is_connected:
+                            return
 
                         chat_scroll.clear()
                         with chat_scroll:
@@ -1189,13 +1217,14 @@ def job_detail_page(job_id: str):
                             with ui.element("div").classes("chat-bubble-assistant"):
                                 ui.markdown(content).classes("text-sm")
 
+                @guard_client
                 async def quick_send(message: str):
                     """Send a quick suggestion message."""
                     chat_input.value = message
                     await send_message()
 
                 # Load messages on page load
-                ui.timer(0.1, render_messages, once=True)
+                _active_timers.append(ui.timer(0.1, render_messages, once=True))
 
                 # Input area
                 with ui.row().classes("w-full max-w-3xl mx-auto gap-3 mt-4 chat-input-row"):
@@ -1218,6 +1247,10 @@ def job_detail_page(job_id: str):
                     """Send chat message to LLM."""
                     nonlocal status_container
 
+                    guard = ClientGuard()
+                    if not guard.is_connected:
+                        return
+
                     message = chat_input.value
                     if not message or not message.strip():
                         return
@@ -1227,7 +1260,7 @@ def job_detail_page(job_id: str):
 
                     # Clear input and disable - use JavaScript to ensure DOM is updated
                     chat_input.value = ""
-                    ui.run_javascript(
+                    guard.run_javascript(
                         "document.querySelector('textarea[placeholder=\"Ask about your research...\"]').value = ''"
                     )
                     send_btn.disable()
@@ -1246,6 +1279,10 @@ def job_detail_page(job_id: str):
                         async with AsyncSessionLocal() as session:
                             await send_chat_message(session, job_uuid, message.strip(), job_dir)
 
+                        # Re-check after await - client may have disconnected
+                        if not guard.is_connected:
+                            return
+
                         # Hide typing indicator
                         status_container.classes(add="hidden")
 
@@ -1257,12 +1294,14 @@ def job_detail_page(job_id: str):
 
                     except Exception as e:
                         logger.error("Chat error: %s", e)
-                        status_container.classes(add="hidden")
-                        play_sound("sound-error")
-                        ui.notify(f"Error: {e}", type="negative")
+                        if guard.is_connected:
+                            status_container.classes(add="hidden")
+                            play_sound("sound-error")
+                            ui.notify(f"Error: {e}", type="negative")
                     finally:
-                        send_btn.enable()
-                        chat_input.run_method("focus")
+                        if guard.is_connected:
+                            send_btn.enable()
+                            chat_input.run_method("focus")
 
                 send_btn.on_click(send_message)
 

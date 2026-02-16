@@ -181,8 +181,6 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
 
     # Initialize database connection
     try:
-        import asyncio
-
         from shandy.database.engine import get_engine
 
         engine = get_engine()
@@ -263,19 +261,11 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
             except Exception as e:
                 logger.warning("Failed to start skill sync scheduler: %s", e)
 
-        # Run verification and background tasks
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If loop is already running (NiceGUI context), schedule as task
-                asyncio.create_task(start_background_tasks())
-            else:
-                loop.run_until_complete(start_background_tasks())
-        except RuntimeError:
-            # Create new event loop if none exists
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(start_background_tasks())
+        # Defer background tasks to NiceGUI's startup event to ensure they run
+        # in the correct event loop. Running them before ui.run() causes connections
+        # to be bound to a temporary event loop, leading to "Future attached to a
+        # different loop" errors when NiceGUI's Uvicorn loop tries to close them.
+        app.on_startup(start_background_tasks)
 
     except Exception as e:
         logger.error("Failed to initialize database: %s", e)

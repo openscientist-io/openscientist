@@ -14,6 +14,7 @@ from shandy.webapp_components.ui_components import (
     format_relative_time,
     render_navigator,
 )
+from shandy.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +24,7 @@ logger = logging.getLogger(__name__)
 async def skill_detail_page(category: str, slug: str):
     """Skill detail page."""
     # Track active timers for cleanup on disconnect
-    _active_timers: list[ui.timer] = []
-
-    def _cleanup_timers():
-        """Deactivate all timers when client disconnects."""
-        for timer in _active_timers:
-            try:
-                timer.deactivate()
-            except Exception:
-                pass  # Timer may already be deactivated
-
-    ui.context.client.on_disconnect(_cleanup_timers)
+    _active_timers = setup_timer_cleanup()
 
     # Page header with navigation
     render_navigator(active_page="skills")

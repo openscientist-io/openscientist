@@ -19,6 +19,7 @@ from uuid import UUID
 from dotenv import load_dotenv
 
 from shandy.agent_loop import create_agent_loop
+from shandy.database.models import JobDataFile
 from shandy.exceptions import ShandyError
 from shandy.file_loader import get_file_info
 from shandy.knowledge_state import KnowledgeState
@@ -92,6 +93,71 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: Optional[KnowledgeState] = Non
     except Exception as e:
         # Log but don't fail - database sync is supplementary to file storage
         logger.warning("Failed to sync knowledge state to database: %s", e)
+
+
+def _persist_data_files_to_db(
+    job_id: str,
+    job_dir: Path,
+    data_paths: list[Path],
+    owner_id: Optional[UUID] = None,
+) -> None:
+    """
+    Persist uploaded data files to job_data_files table.
+
+    Args:
+        job_id: Job UUID string
+        job_dir: Path to job directory
+        data_paths: List of absolute paths to data files
+        owner_id: Optional owner UUID for the job
+    """
+    try:
+        from shandy.database.session import AsyncSessionLocal
+
+        async def _save_data_files() -> None:
+            async with AsyncSessionLocal(thread_safe=True) as session:
+                for data_path in data_paths:
+                    # Get file metadata
+                    file_info = get_file_info(data_path)
+
+                    # Store relative path (e.g., "data/filename.csv")
+                    relative_path = f"data/{data_path.name}"
+
+                    data_file = JobDataFile(
+                        job_id=UUID(job_id),
+                        filename=data_path.name,
+                        file_path=relative_path,
+                        file_type=file_info["file_type"],
+                        file_size=file_info["size"],
+                        mime_type=file_info["mime_type"],
+                    )
+                    session.add(data_file)
+
+                await session.commit()
+                logger.info(
+                    "Persisted %d data files to database for job %s",
+                    len(data_paths),
+                    job_id,
+                )
+
+        # Check if we're in an async context
+        try:
+            loop = asyncio.get_running_loop()
+
+            # We're in an async context - schedule as a background task
+            async def _save_with_error_handling() -> None:
+                try:
+                    await _save_data_files()
+                except Exception as e:
+                    logger.warning("Background data file persist failed for job %s: %s", job_id, e)
+
+            loop.create_task(_save_with_error_handling())
+        except RuntimeError:
+            # No running loop - run synchronously
+            asyncio.run(_save_data_files())
+
+    except Exception as e:
+        # Log but don't fail job creation - database record is supplementary
+        logger.warning("Failed to persist data files to database: %s", e)
 
 
 def get_version_metadata() -> Dict[str, str]:
@@ -423,6 +489,11 @@ def create_job(
 
             shutil.copy(data_file, dest)
             data_paths.append(dest)
+
+    # Persist data file records to database
+    if data_paths:
+        owner_uuid = UUID(owner_id) if owner_id else None
+        _persist_data_files_to_db(job_id, job_dir, data_paths, owner_uuid)
 
     # Initialize knowledge graph
     ks = KnowledgeState(

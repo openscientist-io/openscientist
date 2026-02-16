@@ -16,6 +16,7 @@ from shandy.webapp_components.ui_components import (
     render_stat_badges,
     render_status_cell_slot,
 )
+from shandy.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -33,17 +34,7 @@ def jobs_page():
     is_configured, provider_name, config_errors = check_provider_config()
 
     # Track active timers for cleanup on disconnect
-    _active_timers: list[ui.timer] = []
-
-    def _cleanup_timers():
-        """Deactivate all timers when client disconnects."""
-        for timer in _active_timers:
-            try:
-                timer.deactivate()
-            except Exception:
-                pass  # Timer may already be deactivated
-
-    ui.context.client.on_disconnect(_cleanup_timers)
+    _active_timers = setup_timer_cleanup()
 
     # Capture admin status for delete permissions
     current_user_is_admin = is_current_user_admin()
