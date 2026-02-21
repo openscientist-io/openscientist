@@ -6,9 +6,7 @@ session management, and user context for RLS.
 """
 
 from shandy.auth.middleware import (
-    get_current_user_email,
     get_current_user_id,
-    get_current_user_name,
     is_current_user_admin,
     require_admin,
     require_auth,
@@ -21,7 +19,5 @@ __all__ = [
     "get_oauth_client",
     "is_oauth_configured",
     "get_current_user_id",
-    "get_current_user_email",
-    "get_current_user_name",
     "is_current_user_admin",
 ]

@@ -2,7 +2,7 @@
 Mock OAuth provider for development and testing.
 
 This provider simulates OAuth flow without requiring external OAuth configuration.
-Only enabled when ENABLE_MOCK_AUTH environment variable is set.
+Only enabled when SHANDY_DEV_MODE=true.
 
 SECURITY WARNING: Never enable this in production!
 """

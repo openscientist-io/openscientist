@@ -7,14 +7,13 @@ Handles OAuth callback flows and session creation for authenticated users.
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from uuid import UUID as _UUID
 
-from nicegui import app, ui
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from shandy.auth.oauth import get_oauth_client, is_oauth_configured
 from shandy.database.models import OAuthAccount, Session, User
-from shandy.database.session import get_session
 from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -47,10 +46,14 @@ async def create_or_update_user(
     Returns:
         User object (created or existing)
     """
-    # Check if OAuth account exists
-    oauth_stmt = select(OAuthAccount).where(
-        OAuthAccount.provider == provider,
-        OAuthAccount.provider_user_id == provider_user_id,
+    # Check if OAuth account exists (eager load user to avoid lazy load in async)
+    oauth_stmt = (
+        select(OAuthAccount)
+        .options(selectinload(OAuthAccount.user))
+        .where(
+            OAuthAccount.provider == provider,
+            OAuthAccount.provider_user_id == provider_user_id,
+        )
     )
     oauth_result = await db.execute(oauth_stmt)
     oauth_account = oauth_result.scalar_one_or_none()
@@ -61,6 +64,7 @@ async def create_or_update_user(
         oauth_account.refresh_token = refresh_token
         oauth_account.email = email
         oauth_account.name = name
+        await db.flush()
         user = oauth_account.user
         logger.info("Updated OAuth account for user %s (provider=%s)", user.id, provider)
     else:
@@ -95,6 +99,7 @@ async def create_or_update_user(
         logger.info("Linked %s OAuth account to user %s", provider, user.id)
 
     await db.commit()
+    await db.refresh(user)
     return user
 
 
@@ -109,8 +114,6 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
     Returns:
         New Session object
     """
-    from uuid import UUID as _UUID
-
     settings = get_settings()
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.auth.session_duration_days)
 
@@ -123,142 +126,3 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
 
     logger.info("Created session for user %s, expires %s", user_id, expires_at)
     return session
-
-
-@ui.page("/auth/{provider}/login")
-async def oauth_login(provider: str):
-    """
-    Initiate OAuth login flow.
-
-    Args:
-        provider: OAuth provider name (github, orcid)
-    """
-    if not is_oauth_configured():
-        ui.notify("OAuth is not configured", color="negative")
-        ui.navigate.to("/login")
-        return
-
-    oauth = get_oauth_client()
-
-    if provider not in ["github", "orcid"]:
-        ui.notify("Unknown OAuth provider", color="negative")
-        ui.navigate.to("/login")
-        return
-
-    try:
-        # Get the OAuth client for the provider
-        client = getattr(oauth, provider, None)
-        if not client:
-            ui.notify(f"{provider.title()} OAuth is not configured", color="negative")
-            ui.navigate.to("/login")
-            return
-
-        # Store return URL in session
-        return_to = app.storage.user.get("return_to", "/")
-        app.storage.user["oauth_return_to"] = return_to
-
-        # Redirect to OAuth provider
-        # Note: This is a placeholder - actual implementation depends on
-        # NiceGUI's request handling. May need to use Starlette directly.
-        settings = get_settings()
-        redirect_uri = f"{settings.auth.app_url}/auth/{provider}/callback"
-
-        # For NiceGUI, we'll need to handle this differently
-        # This is a template for the actual implementation
-        ui.markdown(f"Redirecting to {provider.title()}...")
-        ui.markdown(
-            f"**Manual step needed:** Navigate to OAuth flow with redirect_uri={redirect_uri}"
-        )
-
-    except Exception as e:
-        logger.error("OAuth login error: %s", e, exc_info=True)
-        ui.notify("Login failed", color="negative")
-        ui.navigate.to("/login")
-
-
-@ui.page("/auth/{provider}/callback")
-async def oauth_callback(provider: str):
-    """
-    Handle OAuth callback.
-
-    Args:
-        provider: OAuth provider name (github, orcid)
-    """
-    # This is a template - actual implementation will need request access
-    # May need to use Starlette/FastAPI directly for OAuth callbacks
-
-    try:
-        oauth = get_oauth_client()
-        client = getattr(oauth, provider, None)
-
-        if not client:
-            raise ValueError(f"Unknown provider: {provider}")
-
-        # Get OAuth token (placeholder - need actual request)
-        # token = await client.authorize_access_token(request)
-
-        # Get user info from provider
-        if provider == "github":
-            # user_info = await GitHubProvider.get_user_info(token)
-            pass
-        elif provider == "orcid":
-            # user_info = await ORCIDProvider.get_user_info(token)
-            pass
-        else:
-            raise ValueError(f"Unknown provider: {provider}")
-
-        # Create/update user and create session
-        # async with get_session() as db:
-        #     user = await create_or_update_user(
-        #         db,
-        #         provider=provider,
-        #         provider_user_id=user_info["provider_user_id"],
-        #         email=user_info["email"],
-        #         name=user_info["name"],
-        #         access_token=token["access_token"],
-        #         refresh_token=token.get("refresh_token"),
-        #     )
-        #     session = await create_session(db, user.id)
-
-        # Store session in browser
-        # app.storage.user["session_token"] = session.session_token
-        # app.storage.user["user_id"] = str(user.id)
-        # app.storage.user["authenticated"] = True
-
-        # Redirect to original destination
-        # return_to = app.storage.user.pop("oauth_return_to", "/")
-        # ui.navigate.to(return_to)
-
-        ui.markdown("OAuth callback received - implementation in progress")
-
-    except Exception as e:
-        logger.error("OAuth callback error: %s", e, exc_info=True)
-        ui.notify("Login failed", color="negative")
-        ui.navigate.to("/login")
-
-
-@ui.page("/logout")
-async def logout():
-    """Handle logout."""
-    session_token = app.storage.user.get("session_token")
-
-    if session_token:
-        # Invalidate session in database
-        try:
-            async with get_session() as db:
-                stmt = select(Session).where(Session.session_token == session_token)
-                result = await db.execute(stmt)
-                session = result.scalar_one_or_none()
-
-                if session:
-                    await db.delete(session)
-                    await db.commit()
-                    logger.info("Deleted session: %s", session_token)
-        except Exception as e:
-            logger.error("Error deleting session: %s", e)
-
-    # Clear browser storage
-    app.storage.user.clear()
-
-    ui.notify("Logged out successfully")
-    ui.navigate.to("/login")

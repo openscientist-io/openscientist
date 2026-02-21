@@ -5,10 +5,12 @@ Provides authentication decorators and user context management.
 Supports both cookie-based sessions (OAuth) and legacy auth.
 """
 
+import inspect
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Callable, Optional
+from typing import Optional
 
 from nicegui import app, ui
 from sqlalchemy import select
@@ -94,7 +96,7 @@ def _get_session_token() -> Optional[str]:
             if session_token:
                 return session_token
     except Exception:
-        pass
+        logger.debug("Could not read session cookie", exc_info=True)
 
     # Fall back to app.storage.user (legacy auth or already validated)
     return app.storage.user.get("session_token")
@@ -124,7 +126,7 @@ def require_auth(func: Callable) -> Callable:
             try:
                 app.storage.user["return_to"] = str(ui.context.client.page.path)
             except Exception:
-                pass
+                logger.debug("Could not save return_to path", exc_info=True)
             ui.navigate.to("/login")
             return
 
@@ -136,7 +138,7 @@ def require_auth(func: Callable) -> Callable:
             try:
                 app.storage.user["return_to"] = str(ui.context.client.page.path)
             except Exception:
-                pass
+                logger.debug("Could not save return_to path", exc_info=True)
             ui.navigate.to("/login")
             return
 
@@ -160,7 +162,7 @@ def require_auth(func: Callable) -> Callable:
             if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
                 session_token_from_cookie = ui.context.client.request.cookies.get("session_token")
         except Exception:
-            pass
+            logger.debug("Could not read session cookie in sync path", exc_info=True)
 
         if not session_token_from_cookie:
             # No cookie = not authenticated, clear any stale storage
@@ -184,12 +186,9 @@ def require_auth(func: Callable) -> Callable:
         return func(*args, **kwargs)
 
     # Return appropriate wrapper based on function type
-    import inspect
-
     if inspect.iscoroutinefunction(func):
         return async_wrapper
-    else:
-        return sync_wrapper
+    return sync_wrapper
 
 
 def get_current_user_id() -> Optional[str]:
@@ -200,26 +199,6 @@ def get_current_user_id() -> Optional[str]:
         User ID if authenticated, None otherwise
     """
     return app.storage.user.get("user_id")
-
-
-def get_current_user_email() -> Optional[str]:
-    """
-    Get the current authenticated user's email.
-
-    Returns:
-        User email if authenticated, None otherwise
-    """
-    return app.storage.user.get("email")
-
-
-def get_current_user_name() -> Optional[str]:
-    """
-    Get the current authenticated user's name.
-
-    Returns:
-        User name if authenticated, None otherwise
-    """
-    return app.storage.user.get("name")
 
 
 def is_current_user_admin() -> bool:
@@ -270,9 +249,6 @@ def require_admin(func: Callable) -> Callable:
             return
         return func(*args, **kwargs)
 
-    import inspect
-
     if inspect.iscoroutinefunction(func):
         return async_wrapper
-    else:
-        return sync_wrapper
+    return sync_wrapper

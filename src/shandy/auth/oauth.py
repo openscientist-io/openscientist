@@ -95,18 +95,18 @@ def is_oauth_configured() -> bool:
     Check if at least one OAuth provider is configured.
 
     Returns:
-        True if GitHub, ORCID, or Mock OAuth is configured
+        True if GitHub, ORCID, or mock auth (dev mode) is configured
     """
     settings = get_settings()
-    return settings.auth.is_oauth_configured
+    return settings.auth.is_oauth_configured or settings.dev.dev_mode
 
 
 def is_mock_auth_enabled() -> bool:
     """
-    Check if mock authentication is enabled (development only).
+    Check if mock authentication is enabled (dev mode only).
 
     Returns:
-        True if ENABLE_MOCK_AUTH environment variable is set
+        True if SHANDY_DEV_MODE is enabled
     """
     settings = get_settings()
-    return settings.auth.enable_mock_auth
+    return settings.dev.dev_mode
