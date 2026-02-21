@@ -10,10 +10,14 @@ See: https://github.com/zauberzeug/nicegui/issues/3028
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Callable
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from nicegui import ui
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nicegui import Client
@@ -114,7 +118,7 @@ class ClientGuard:
             try:
                 ui.run_javascript(code)
             except Exception:
-                pass  # Client may have disconnected during the call
+                logger.debug("JS execution failed (client likely disconnected)", exc_info=True)
 
 
 def safe_run_javascript(code: str) -> None:
@@ -129,7 +133,7 @@ def safe_run_javascript(code: str) -> None:
         try:
             ui.run_javascript(code)
         except Exception:
-            pass  # Client disconnected, ignore
+            logger.debug("JS execution failed (client likely disconnected)", exc_info=True)
 
 
 def setup_timer_cleanup() -> list[ui.timer]:
@@ -154,7 +158,7 @@ def setup_timer_cleanup() -> list[ui.timer]:
             try:
                 timer.deactivate()
             except Exception:
-                pass  # Timer may already be deactivated
+                logger.debug("Timer deactivation failed (may already be inactive)", exc_info=True)
 
     ui.context.client.on_disconnect(cleanup)
     return active_timers

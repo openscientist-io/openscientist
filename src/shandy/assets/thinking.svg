@@ -1,0 +1,52 @@
+<svg class="shandy-thinking" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <!-- Orbit path shapes defined relative to (0,0).
+             animateMotion adds a translation offset starting at (0,0), so each
+             circle's cx,cy is set to its orbit start position — the resting position
+             before begin fires equals the animation's t=0 position: no jump on start.
+             CW  (sweep=1): left → above-centre → right → below-centre → left
+             CCW (sweep=0): left → below-centre → right → above-centre → left -->
+        <path id="shandy-orbit-cw"  fill="none" d="M0,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0"/>
+        <path id="shandy-orbit-ccw" fill="none" d="M0,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"/>
+        <!-- Subtle glow filter -->
+        <filter id="shandy-glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="1" result="blur"/>
+            <feMerge>
+                <feMergeNode in="blur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        </filter>
+    </defs>
+    <!-- Main S-curve with breathing opacity -->
+    <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
+          fill="none" stroke="#0891b2" stroke-width="8" stroke-linecap="round"
+          filter="url(#shandy-glow)">
+        <animate attributeName="stroke-opacity"
+                 values="0.6;1;0.6"
+                 dur="2s"
+                 calcMode="spline"
+                 keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+                 repeatCount="indefinite"/>
+    </path>
+    <!-- Circle 1: node (22,18), CW — cx=17,cy=18 is the orbit start (left of node) -->
+    <circle cx="17" cy="18" r="7" fill="#06b6d4" filter="url(#shandy-glow)">
+        <animateMotion dur="1.5s" repeatCount="indefinite" calcMode="linear">
+            <mpath href="#shandy-orbit-cw"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Circle 2: node (78,60), CCW — cx=73,cy=60 is the orbit start (left of node) -->
+    <circle cx="73" cy="60" r="7" fill="#22d3ee" filter="url(#shandy-glow)">
+        <animateMotion dur="1.5s" repeatCount="indefinite" begin="0.5s" calcMode="linear">
+            <mpath href="#shandy-orbit-ccw"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.5s" repeatCount="indefinite" begin="0.5s"/>
+    </circle>
+    <!-- Circle 3: node (22,60), CW — cx=17,cy=60 is the orbit start (left of node) -->
+    <circle cx="17" cy="60" r="7" fill="#0e7490" filter="url(#shandy-glow)">
+        <animateMotion dur="1.5s" repeatCount="indefinite" begin="1.0s" calcMode="linear">
+            <mpath href="#shandy-orbit-cw"/>
+        </animateMotion>
+        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.5s" repeatCount="indefinite" begin="1.0s"/>
+    </circle>
+</svg>

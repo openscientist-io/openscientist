@@ -14,7 +14,7 @@ from nicegui import ui
 from shandy.artifact_packager import create_artifacts_zip
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.session import AsyncSessionLocal
-from shandy.job_manager import JobStatus, get_job_skills
+from shandy.job_manager import JobStatus
 from shandy.webapp_components.error_handler import get_user_friendly_error
 from shandy.webapp_components.ui_components import (
     STATUS_COLORS,
@@ -22,7 +22,6 @@ from shandy.webapp_components.ui_components import (
     render_delete_dialog,
     render_error_card,
     render_job_action_buttons,
-    render_job_skills,
     render_justified_text,
     render_navigator,
     render_notifications_dialog,
@@ -83,10 +82,6 @@ def job_detail_page(job_id: str):
     # Load initial knowledge state data
     ks_data, ks_load_error = _load_knowledge_state(ks_path)
 
-    # Load initial skills count
-    initial_skills = get_job_skills(job_id)
-    initial_skills_count = len(initial_skills) if initial_skills else 0
-
     # State tracking for real-time updates
     _state = {
         "status": job_info.status,
@@ -95,7 +90,6 @@ def job_detail_page(job_id: str):
         "papers_count": len(ks_data.get("literature", [])) if ks_data else 0,
         "log_entries": len(ks_data.get("analysis_log", [])) if ks_data else 0,
         "agent_status": ks_data.get("agent_status") if ks_data else None,
-        "skills_count": initial_skills_count,
     }
 
     # Track active timers for cleanup on disconnect
@@ -155,12 +149,11 @@ def job_detail_page(job_id: str):
                     return
                 latest_ks, _ = _load_knowledge_state(ks_path)
                 lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
-                skills_count = len(get_job_skills(job_id))
                 status_color = STATUS_COLORS.get(latest_job.status, "gray")
 
                 # Build badge list - only show progress for active jobs
                 badges = [
-                    ("Status", latest_job.status.value, status_color),
+                    ("Status", latest_job.status.value.replace("_", " "), status_color),
                 ]
 
                 # Only show progress badge for non-terminal states
@@ -183,10 +176,6 @@ def job_detail_page(job_id: str):
                         ("Papers", lit_count, "purple"),
                     ]
                 )
-
-                # Only show skills badge if there are skills
-                if skills_count > 0:
-                    badges.append(("Skills", skills_count, "cyan"))
 
                 render_stat_badges(badges)
 
@@ -222,24 +211,6 @@ def job_detail_page(job_id: str):
                         on_delete=delete_dialog.open,
                         on_notifications=notifications_dialog.open,
                     )
-
-            # Skills section (refreshable for real-time updates)
-            @ui.refreshable
-            def render_skills_section():
-                """Render skills used section - refreshable for real-time updates."""
-                from shandy.webapp_components.utils import is_client_connected
-
-                if not is_client_connected():
-                    return
-
-                job_skills = get_job_skills(job_id)
-                if job_skills:
-                    with ui.expansion("Skills Used", icon="school").classes(
-                        "w-full mb-4 border border-gray-200"
-                    ):
-                        render_job_skills(job_skills, show_content=True)
-
-            render_skills_section()
 
             # Investigation Timeline (refreshable for real-time updates)
             ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
@@ -746,10 +717,12 @@ def job_detail_page(job_id: str):
 
                             # Countdown timer
                             if awaiting_since:
-                                from datetime import datetime
+                                from datetime import datetime, timezone
 
                                 try:
                                     started = datetime.fromisoformat(awaiting_since)
+                                    if started.tzinfo is None:
+                                        started = started.replace(tzinfo=timezone.utc)
                                     timeout_minutes = 15
                                     countdown_label = ui.label("").classes(
                                         "text-xs text-gray-500 mt-2"
@@ -759,7 +732,7 @@ def job_detail_page(job_id: str):
 
                                     @guard_client
                                     def update_countdown():
-                                        now = datetime.now()
+                                        now = datetime.now(timezone.utc)
                                         elapsed = (now - started).total_seconds()
                                         remaining = (timeout_minutes * 60) - elapsed
                                         if remaining <= 0:
@@ -799,18 +772,15 @@ def job_detail_page(job_id: str):
                 new_papers = len(latest_ks.get("literature", [])) if latest_ks else 0
                 new_iter = latest_ks.get("iteration", 0) if latest_ks else 0
                 new_log_entries = len(latest_ks.get("analysis_log", [])) if latest_ks else 0
-                new_skills_count = len(get_job_skills(job_id))
-
                 # Get agent status
                 new_agent_status = latest_ks.get("agent_status") if latest_ks else None
 
-                # Check if any stats changed (including agent status and skills)
+                # Check if any stats changed
                 stats_changed = (
                     _state["findings_count"] != latest_job.findings_count
                     or _state["papers_count"] != new_papers
                     or _state["iteration"] != new_iter
                     or _state["agent_status"] != new_agent_status
-                    or _state["skills_count"] != new_skills_count
                 )
 
                 # Refresh stats badges if changed
@@ -819,12 +789,6 @@ def job_detail_page(job_id: str):
                     _state["papers_count"] = new_papers
                     _state["iteration"] = new_iter
                     _state["agent_status"] = new_agent_status
-                    # Refresh skills section if skills count changed
-                    if _state["skills_count"] != new_skills_count:
-                        _state["skills_count"] = new_skills_count
-                        render_skills_section.refresh()
-                    else:
-                        _state["skills_count"] = new_skills_count
                     render_job_stats.refresh()
 
                 # Check if timeline needs refresh (new log entries)
@@ -856,6 +820,7 @@ def job_detail_page(job_id: str):
                 JobStatus.RUNNING,
                 JobStatus.QUEUED,
                 JobStatus.AWAITING_FEEDBACK,
+                JobStatus.GENERATING_REPORT,
             ]:
                 stats_timer = ui.timer(2.0, check_and_refresh)  # Poll every 2 seconds
                 _active_timers.append(stats_timer)
@@ -864,6 +829,10 @@ def job_detail_page(job_id: str):
         with ui.tab_panel(report_tab):
             report_path = job_dir / "final_report.md"
             pdf_path = job_dir / "final_report.pdf"
+
+            # Show thinking status when report is being regenerated
+            if job_info.status == JobStatus.GENERATING_REPORT:
+                render_thinking_status("Regenerating report...")
 
             if report_path.exists():
 
@@ -876,11 +845,31 @@ def job_detail_page(job_id: str):
                             filename=f"{job_id}_artifacts.zip",
                         )
                     except Exception as e:
-                        logger.error("Failed to create artifacts ZIP: %s", e)
-                        ui.notify(f"Failed to create ZIP: {e}", type="negative")
+                        logger.error("Failed to create artifacts ZIP: %s", e, exc_info=True)
+                        ui.notify("Failed to create ZIP. Please try again.", type="negative")
 
                 # Download buttons at top
                 with ui.row().classes("w-full justify-end mb-4 gap-2"):
+                    # Regenerate Report button (shown for completed/failed jobs with KS)
+                    if (
+                        job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]
+                        and ks_path.exists()
+                    ):
+
+                        def on_regenerate():
+                            try:
+                                job_manager.regenerate_report(job_id)
+                                ui.notify("Report regeneration started", type="positive")
+                                ui.navigate.to(f"/job/{job_id}")
+                            except ValueError as e:
+                                ui.notify(str(e), type="negative")
+
+                        ui.button(
+                            "Regenerate Report",
+                            on_click=on_regenerate,
+                            icon="refresh",
+                        ).props("color=secondary outline")
+
                     ui.button(
                         "Download Markdown",
                         on_click=lambda: ui.download(
@@ -889,12 +878,28 @@ def job_detail_page(job_id: str):
                         icon="download",
                     ).props("color=secondary outline")
 
-                    if pdf_path.exists():
+                    if pdf_path.exists() or report_path.exists():
+
+                        def download_pdf():
+                            """Regenerate PDF from markdown and download."""
+                            try:
+                                from shandy.pdf_generator import markdown_to_pdf
+
+                                markdown_to_pdf(report_path, pdf_path)
+                                ui.download(
+                                    pdf_path.read_bytes(),
+                                    filename=f"{job_id}_report.pdf",
+                                )
+                            except Exception as e:
+                                logger.error("PDF generation failed: %s", e, exc_info=True)
+                                ui.notify(
+                                    "Failed to generate PDF. Please try again.",
+                                    type="negative",
+                                )
+
                         ui.button(
                             "Download PDF",
-                            on_click=lambda: ui.download(
-                                pdf_path.read_bytes(), filename=f"{job_id}_report.pdf"
-                            ),
+                            on_click=download_pdf,
                             icon="picture_as_pdf",
                         ).props("color=primary")
                     else:
@@ -920,8 +925,26 @@ def job_detail_page(job_id: str):
                 report_with_badges = transform_pmid_references(report_content)
                 ui.markdown(report_with_badges).classes("w-full")
             else:
-                if job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
-                    ui.label("Report generation failed").classes("text-red-500")
+                if job_info.status == JobStatus.GENERATING_REPORT:
+                    ui.label("Report is being generated...").classes("text-gray-500 italic")
+                elif job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+                    with ui.column().classes("gap-2"):
+                        ui.label("Report generation failed").classes("text-red-500")
+                        if ks_path.exists():
+
+                            def on_regenerate_no_report():
+                                try:
+                                    job_manager.regenerate_report(job_id)
+                                    ui.notify("Report regeneration started", type="positive")
+                                    ui.navigate.to(f"/job/{job_id}")
+                                except ValueError as e:
+                                    ui.notify(str(e), type="negative")
+
+                            ui.button(
+                                "Regenerate Report",
+                                on_click=on_regenerate_no_report,
+                                icon="refresh",
+                            ).props("color=secondary outline")
                 else:
                     ui.label("Report will be available when job completes").classes(
                         "text-gray-500 italic"
@@ -1293,11 +1316,11 @@ def job_detail_page(job_id: str):
                         await render_messages()
 
                     except Exception as e:
-                        logger.error("Chat error: %s", e)
+                        logger.error("Chat error: %s", e, exc_info=True)
                         if guard.is_connected:
                             status_container.classes(add="hidden")
                             play_sound("sound-error")
-                            ui.notify(f"Error: {e}", type="negative")
+                            ui.notify("An error occurred. Please try again.", type="negative")
                     finally:
                         if guard.is_connected:
                             send_btn.enable()

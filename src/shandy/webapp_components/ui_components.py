@@ -6,15 +6,18 @@ page headers, and other common interface elements.
 """
 
 import html
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from nicegui import ui
 
 from shandy.job_manager import JobInfo, JobStatus
+
+logger = logging.getLogger(__name__)
 
 
 def format_relative_time(dt: datetime | None) -> str:
@@ -41,23 +44,22 @@ def format_relative_time(dt: datetime | None) -> str:
 
     if seconds < 0:
         return "just now"
-    elif seconds < 60:
+    if seconds < 60:
         return "just now"
-    elif seconds < 3600:
+    if seconds < 3600:
         minutes = int(seconds / 60)
         return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
-    elif seconds < 86400:
+    if seconds < 86400:
         hours = int(seconds / 3600)
         return f"{hours} hour{'s' if hours != 1 else ''} ago"
-    elif seconds < 604800:
+    if seconds < 604800:
         days = int(seconds / 86400)
         return f"{days} day{'s' if days != 1 else ''} ago"
-    elif seconds < 2592000:
+    if seconds < 2592000:
         weeks = int(seconds / 604800)
         return f"{weeks} week{'s' if weeks != 1 else ''} ago"
-    else:
-        months = int(seconds / 2592000)
-        return f"{months} month{'s' if months != 1 else ''} ago"
+    months = int(seconds / 2592000)
+    return f"{months} month{'s' if months != 1 else ''} ago"
 
 
 def render_skill_name_slot() -> str:
@@ -93,7 +95,8 @@ AsyncCallback = Callable[[dict], Awaitable[None]]
 STATUS_COLORS = {
     JobStatus.PENDING: "gray",
     JobStatus.QUEUED: "blue",
-    JobStatus.RUNNING: "yellow",
+    JobStatus.RUNNING: "teal",
+    JobStatus.GENERATING_REPORT: "teal",
     JobStatus.COMPLETED: "green",
     JobStatus.FAILED: "red",
     JobStatus.CANCELLED: "gray",
@@ -105,6 +108,7 @@ STATUS_ICONS = {
     JobStatus.PENDING: "○",
     JobStatus.QUEUED: "⟳",
     JobStatus.RUNNING: "▶",
+    JobStatus.GENERATING_REPORT: "⟳",
     JobStatus.COMPLETED: "✓",
     JobStatus.FAILED: "✗",
     JobStatus.CANCELLED: "⊗",
@@ -503,7 +507,7 @@ def render_justified_text(
     )
 
 
-def render_error_card(error_info: Dict, job_info: JobInfo, job_dir: Path) -> None:
+def render_error_card(error_info: dict, job_info: JobInfo, job_dir: Path) -> None:
     """
     Render a user-friendly error card with tiered disclosure.
 
@@ -719,7 +723,7 @@ def render_alert_banner(
                         )
 
 
-def get_status_badge_props(status: JobStatus) -> Dict:
+def get_status_badge_props(status: JobStatus) -> dict:
     """
     Get NiceGUI badge properties for a job status.
 
@@ -737,7 +741,12 @@ def get_status_badge_props(status: JobStatus) -> Dict:
     if status == JobStatus.FAILED:
         classes = "bg-red-600 text-white font-bold"
 
-    return {"color": color, "icon": icon, "text": status.value, "classes": classes}
+    return {
+        "color": color,
+        "icon": icon,
+        "text": status.value.replace("_", " "),
+        "classes": classes,
+    }
 
 
 def render_status_cell_slot() -> str:
@@ -786,11 +795,10 @@ def render_status_cell_slot() -> str:
                     <span class="row items-center" style="white-space:nowrap;">✓&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
-                <!-- Running status: Yellow badge with animation -->
+                <!-- Running status: Teal badge -->
                 <q-badge
                     v-else-if="props.row.status === 'running'"
-                    color="yellow"
-                    text-color="black"
+                    color="teal"
                     class="px-2 py-1"
                 >
                     <span class="row items-center" style="white-space:nowrap;">▶&nbsp;{{ props.row.status }}</span>
@@ -814,6 +822,15 @@ def render_status_cell_slot() -> str:
                     <span class="row items-center" style="white-space:nowrap;">⏸&nbsp;{{ props.row.status }}</span>
                 </q-badge>
 
+                <!-- Generating report status: Teal badge -->
+                <q-badge
+                    v-else-if="props.row.status === 'generating_report'"
+                    color="teal"
+                    class="px-2 py-1"
+                >
+                    <span class="row items-center" style="white-space:nowrap;">⟳&nbsp;generating report</span>
+                </q-badge>
+
                 <!-- Cancelled status: Gray badge -->
                 <q-badge
                     v-else-if="props.row.status === 'cancelled'"
@@ -834,15 +851,6 @@ def render_status_cell_slot() -> str:
             </div>
         </q-td>
     """
-
-
-# View button slot template for job tables
-VIEW_BUTTON_SLOT = r"""
-<q-td :props="props">
-    <q-btn flat dense color="primary" label="View"
-           @click="$parent.$emit('view-job', props.row.job_id)" />
-</q-td>
-"""
 
 
 def render_actions_slot_with_delete() -> str:
@@ -1671,8 +1679,11 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                         ntfy_topic = await ensure_user_has_topic(UUID(user_id))
 
                 except Exception as e:
+                    logger.error("Error loading settings: %s", e, exc_info=True)
                     with content_container:
-                        ui.label(f"Error loading settings: {e}").classes("text-red-500")
+                        ui.label("Error loading settings. Check server logs.").classes(
+                            "text-red-500"
+                        )
                     return
 
                 # Render the content
@@ -1868,11 +1879,13 @@ def render_delete_dialog(
                     # Support async callbacks
                     if hasattr(result, "__await__"):
                         await result
-            except ValueError as e:
-                ui.notify(str(e), type="negative")
+            except ValueError:
+                ui.notify(
+                    "Invalid job or job cannot be deleted in its current state.", type="negative"
+                )
             except Exception as e:
-                logger.error("Failed to delete job %s: %s", job_id, e)
-                ui.notify(f"Failed to delete job: {e}", type="negative")
+                logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
+                ui.notify("Failed to delete job. Please try again.", type="negative")
 
         render_dialog_actions(
             on_confirm=on_confirm,
@@ -1908,163 +1921,55 @@ def _inject_thinking_status_styles() -> None:
     )
 
 
-# Animated SHANDY logo SVG for thinking/status indicators
-SHANDY_THINKING_SVG = """
-<svg class="shandy-thinking" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-        <!-- Orbital paths for circles (radius 5) -->
-        <path id="shandy-orbit1" d="M22,18 m-5,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0" fill="none"/>
-        <path id="shandy-orbit2" d="M78,60 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" fill="none"/>
-        <path id="shandy-orbit3" d="M22,60 m-5,0 a5,5 0 1,1 10,0 a5,5 0 1,1 -10,0" fill="none"/>
-        <!-- Subtle glow filter -->
-        <filter id="shandy-glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="1" result="blur"/>
-            <feMerge>
-                <feMergeNode in="blur"/>
-                <feMergeNode in="SourceGraphic"/>
-            </feMerge>
-        </filter>
-    </defs>
-    <!-- Main S-curve with breathing opacity -->
-    <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
-          fill="none" stroke="#0891b2" stroke-width="8" stroke-linecap="round"
-          filter="url(#shandy-glow)">
-        <animate attributeName="stroke-opacity"
-                 values="0.6;1;0.6"
-                 dur="2s"
-                 calcMode="spline"
-                 keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
-                 repeatCount="indefinite"/>
-    </path>
-    <!-- Orbiting circles with smooth continuous motion -->
-    <circle r="7" fill="#06b6d4" filter="url(#shandy-glow)">
-        <animateMotion dur="1.5s" repeatCount="indefinite" calcMode="linear">
-            <mpath href="#shandy-orbit1"/>
-        </animateMotion>
-        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.5s" repeatCount="indefinite"/>
-    </circle>
-    <circle r="7" fill="#22d3ee" filter="url(#shandy-glow)">
-        <animateMotion dur="1.8s" repeatCount="indefinite" begin="0.3s" calcMode="linear">
-            <mpath href="#shandy-orbit2"/>
-        </animateMotion>
-        <animate attributeName="opacity" values="0.8;1;0.8" dur="1.8s" repeatCount="indefinite" begin="0.3s"/>
-    </circle>
-    <circle r="7" fill="#0e7490" filter="url(#shandy-glow)">
-        <animateMotion dur="2.1s" repeatCount="indefinite" begin="0.6s" calcMode="linear">
-            <mpath href="#shandy-orbit3"/>
-        </animateMotion>
-        <animate attributeName="opacity" values="0.8;1;0.8" dur="2.1s" repeatCount="indefinite" begin="0.6s"/>
-    </circle>
-</svg>
-"""
+_ASSETS_DIR = Path(__file__).parent.parent / "assets"
+
+# Animated SHANDY logo SVG — loaded from assets/thinking.svg at import time.
+# Rendered inline (via ui.html) so SMIL animations work; <img> tags disable them.
+SHANDY_THINKING_SVG = (_ASSETS_DIR / "thinking.svg").read_text(encoding="utf-8")
 
 
-def render_job_skills(
-    skills: list["JobSkill"],  # type: ignore[name-defined]  # noqa: F821
-    show_content: bool = True,
-) -> None:
-    """
-    Render skill badges for a job with expandable content and clickable names.
-
-    Displays skills grouped by source (initial vs agent-added) with category
-    badges, similarity scores, and expandable content sections. Skill names
-    are clickable and navigate to the skill detail page.
+def render_container_status_badge(status: str) -> None:
+    """Render a Docker container status as a colored Quasar badge.
 
     Args:
-        skills: List of JobSkill objects from get_job_skills()
-        show_content: If True, show expandable content sections (default True)
-
-    Example:
-        from shandy.job_manager import get_job_skills
-
-        skills = get_job_skills(job_id)
-        if skills:
-            render_job_skills(skills)
+        status: Docker container status string (running, exited, created, etc.)
     """
-    if not skills:
-        return
+    color_map = {
+        "running": "green",
+        "exited": "grey",
+        "created": "blue",
+        "restarting": "orange",
+        "dead": "red",
+        "removing": "red",
+        "paused": "grey",
+    }
+    color = color_map.get(status, "grey")
+    ui.badge(status, color=color).classes("px-2 py-1")
 
-    # Group skills by source
-    initial_skills = [s for s in skills if s.source == "initial"]
-    agent_skills = [s for s in skills if s.source == "agent"]
 
-    def render_skill_badge(job_skill: Any) -> None:
-        """Render a single skill badge with optional expansion and clickable name."""
-        color = get_category_color(job_skill.skill_category)
-        skill_obj = job_skill.skill  # May be None if skill was deleted
+def format_uptime(seconds: float) -> str:
+    """Format seconds as a human-readable uptime string.
 
-        if show_content:
-            with ui.expansion(icon="school").classes(
-                f"w-full border-l-4 border-{color}-500 mb-1"
-            ) as expansion:
-                with expansion.add_slot("header"):
-                    with ui.row().classes("items-center gap-2"):
-                        ui.badge(job_skill.skill_category, color=color).props("outline")
-
-                        # Clickable skill name if skill still exists
-                        if skill_obj is not None:
-                            skill_url = f"/skill/{skill_obj.category}/{skill_obj.slug}"
-                            ui.label(job_skill.skill_name).classes(
-                                "font-medium text-sm text-cyan-600 cursor-pointer hover:underline"
-                            ).on("click", lambda _, url=skill_url: ui.navigate.to(url))
-                        else:
-                            # Skill was deleted - show muted non-clickable name
-                            with ui.row().classes("items-center gap-1"):
-                                ui.label(job_skill.skill_name).classes(
-                                    "font-medium text-sm text-gray-400"
-                                )
-                                ui.tooltip("Skill no longer available")
-
-                        # Show similarity score as percentage badge (hide if 0%)
-                        if (
-                            job_skill.similarity_score is not None
-                            and job_skill.similarity_score > 0
-                        ):
-                            pct = int(job_skill.similarity_score * 100)
-                            ui.badge(f"{pct}%", color="gray").props("dense outline").classes(
-                                "text-xs"
-                            )
-
-                # Skill content in expansion
-                with ui.column().classes("p-2 bg-gray-50 rounded"):
-                    ui.markdown(job_skill.skill_content).classes("text-sm text-gray-700")
-        else:
-            # Compact badge-only display
-            with ui.row().classes("items-center gap-2 mb-1"):
-                ui.badge(job_skill.skill_category, color=color).props("outline")
-
-                # Clickable skill name if skill still exists
-                if skill_obj is not None:
-                    skill_url = f"/skill/{skill_obj.category}/{skill_obj.slug}"
-                    ui.label(job_skill.skill_name).classes(
-                        "text-sm text-cyan-600 cursor-pointer hover:underline"
-                    ).on("click", lambda _, url=skill_url: ui.navigate.to(url))
-                else:
-                    ui.label(job_skill.skill_name).classes("text-sm text-gray-400")
-
-                # Show similarity score as percentage badge (hide if 0%)
-                if job_skill.similarity_score is not None and job_skill.similarity_score > 0:
-                    pct = int(job_skill.similarity_score * 100)
-                    ui.badge(f"{pct}%", color="gray").props("dense outline").classes("text-xs")
-
-    with ui.column().classes("w-full gap-2"):
-        # Initial skills section
-        if initial_skills:
-            ui.label("Initial Skills").classes(
-                "text-xs font-bold text-gray-500 uppercase tracking-wide"
-            )
-            for skill in initial_skills:
-                render_skill_badge(skill)
-
-        # Agent-added skills section
-        if agent_skills:
-            with ui.row().classes("items-center gap-2 mt-2"):
-                ui.label("Agent-Added Skills").classes(
-                    "text-xs font-bold text-gray-500 uppercase tracking-wide"
-                )
-                ui.badge(f"+{len(agent_skills)}", color="green").props("dense").classes("text-xs")
-            for skill in agent_skills:
-                render_skill_badge(skill)
+    Examples:
+        >>> format_uptime(30)
+        '30s'
+        >>> format_uptime(90)
+        '1m 30s'
+        >>> format_uptime(8100)
+        '2h 15m'
+    """
+    if seconds < 0:
+        return "0s"
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes = seconds // 60
+    secs = seconds % 60
+    if minutes < 60:
+        return f"{minutes}m {secs}s" if secs else f"{minutes}m"
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}h {mins}m" if mins else f"{hours}h"
 
 
 def render_thinking_status(status_text: str = "Thinking...") -> ui.element:

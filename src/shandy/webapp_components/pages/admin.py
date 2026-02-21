@@ -1,6 +1,9 @@
-"""Admin page for orphaned job management."""
+"""Admin page for orphaned job management and container dashboard."""
+
+from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from nicegui import app, ui
@@ -10,14 +13,22 @@ from shandy.auth.middleware import require_admin, require_auth
 from shandy.database.models import Job, User
 from shandy.database.session import get_admin_session
 from shandy.webapp_components.ui_components import (
+    format_uptime,
     make_action_button_slot,
+    render_alert_banner,
+    render_container_status_badge,
     render_dialog_actions,
     render_empty_state,
     render_job_id_badge,
     render_job_id_slot,
     render_navigator,
+    render_stat_badges,
     render_user_search,
 )
+from shandy.webapp_components.utils import guard_client, setup_timer_cleanup
+
+if TYPE_CHECKING:
+    from shandy.webapp_components.utils.container_dashboard import ContainerInfo
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +52,7 @@ async def admin_page():
             orphaned_tab = ui.tab("Orphaned Jobs", icon="work_off")
             users_tab = ui.tab("Users", icon="people")
             legacy_user_tab = ui.tab("Legacy User", icon="person_add")
+            containers_tab = ui.tab("Containers", icon="dns")
 
         with ui.tab_panels(tabs, value=orphaned_tab).classes("w-full"):
             # Orphaned Jobs Panel
@@ -54,6 +66,10 @@ async def admin_page():
             # Legacy User Panel
             with ui.tab_panel(legacy_user_tab):
                 await render_legacy_user_panel()
+
+            # Containers Panel
+            with ui.tab_panel(containers_tab):
+                await render_containers_panel()
 
 
 async def render_orphaned_jobs_panel():
@@ -175,7 +191,7 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
     except Exception as e:
         logger.error("Error loading orphaned jobs: %s", e, exc_info=True)
         with container:
-            ui.label(f"Error loading jobs: {str(e)}").classes("text-red-500")
+            ui.label("Error loading jobs. Check server logs for details.").classes("text-red-500")
 
 
 async def show_assign_dialog(job_id: str):
@@ -225,7 +241,7 @@ async def show_assign_dialog(job_id: str):
 
             except Exception as e:
                 logger.error("Error assigning job: %s", e, exc_info=True)
-                ui.notify(f"Error: {str(e)}", color="negative")
+                ui.notify("Failed to assign job. Check server logs.", color="negative")
 
         render_dialog_actions(
             on_confirm=do_assign,
@@ -315,7 +331,9 @@ async def render_users_panel():
             except Exception as e:
                 logger.error("Error loading users: %s", e, exc_info=True)
                 with users_container:
-                    ui.label(f"Error loading users: {str(e)}").classes("text-red-500")
+                    ui.label("Error loading users. Check server logs for details.").classes(
+                        "text-red-500"
+                    )
 
         await load_users()
 
@@ -377,7 +395,7 @@ async def render_legacy_user_panel():
 
                 except Exception as e:
                     logger.error("Error creating legacy user: %s", e, exc_info=True)
-                    ui.notify(f"Error: {str(e)}", color="negative")
+                    ui.notify("Failed to create legacy user. Check server logs.", color="negative")
 
             ui.button(
                 "Create Legacy User",
@@ -443,10 +461,162 @@ async def render_legacy_user_panel():
                     ui.notify("Invalid job ID format", color="negative")
                 except Exception as e:
                     logger.error("Error claiming job: %s", e, exc_info=True)
-                    ui.notify(f"Error: {str(e)}", color="negative")
+                    ui.notify("Failed to claim job. Check server logs.", color="negative")
 
             ui.button(
                 "Claim Job",
                 icon="add_circle",
                 on_click=claim_job,
             ).props("color=primary").classes("mt-4")
+
+
+async def render_containers_panel():
+    """Render the real-time container dashboard panel."""
+    from shandy.webapp_components.utils.container_dashboard import collect_dashboard_data
+
+    _active_timers = setup_timer_cleanup()
+
+    @ui.refreshable
+    async def render_dashboard():
+        data = await collect_dashboard_data()
+
+        # Container isolation disabled
+        if not data.container_isolation_enabled:
+            render_alert_banner(
+                title="Container Isolation Disabled",
+                message=(
+                    "Container isolation is not enabled. Set "
+                    "SHANDY_USE_CONTAINER_ISOLATION=true to use per-job containers."
+                ),
+                severity="info",
+            )
+            return
+
+        # Docker unavailable
+        if not data.docker_available:
+            render_alert_banner(
+                title="Docker Unavailable",
+                message=data.error_message or "Docker daemon is not reachable.",
+                severity="warning",
+            )
+            return
+
+        # General error
+        if data.error_message:
+            render_alert_banner(
+                title="Dashboard Error",
+                message=data.error_message,
+                severity="error",
+            )
+            return
+
+        # Summary stats row
+        totals = data.totals
+        render_stat_badges(
+            [
+                ("Jobs", totals.running_jobs, "blue"),
+                ("Agents", totals.agent_containers, "green"),
+                ("Executors", totals.executor_containers, "orange"),
+                ("Memory", f"{totals.total_memory_mb:.0f} MB", ""),
+                ("CPU", f"{totals.total_cpu_percent:.1f}%", ""),
+            ],
+            icon_map={
+                "Jobs": "work",
+                "Agents": "smart_toy",
+                "Executors": "code",
+                "Memory": "memory",
+                "CPU": "speed",
+            },
+        )
+
+        # No containers running
+        if not data.job_groups and not data.orphan_containers:
+            render_empty_state("No SHANDY containers are currently running.")
+            return
+
+        # Job container groups
+        for group in data.job_groups:
+            with ui.card().classes("w-full mb-3"):
+                # Header row
+                with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                    render_job_id_badge(group.job_id)
+                    ui.label(group.title[:60] + ("..." if len(group.title) > 60 else "")).classes(
+                        "font-medium text-sm flex-grow"
+                    )
+                    ui.badge(group.status, color=_job_status_color(group.status)).classes("px-2")
+                    ui.label(f"Iteration {group.current_iteration}/{group.max_iterations}").classes(
+                        "text-xs text-gray-500"
+                    )
+                    ui.label(group.owner_email).classes("text-xs text-gray-400")
+
+                ui.separator()
+
+                # Agent container
+                if group.agent_container:
+                    _render_container_row(group.agent_container, icon="smart_toy")
+
+                # Executor containers
+                for ec in group.executor_containers:
+                    _render_container_row(ec, icon="code")
+
+                if not group.agent_container and not group.executor_containers:
+                    ui.label("No containers").classes("text-gray-400 text-sm px-2 py-1")
+
+        # Orphan containers — persist expansion state across timer refreshes
+        if data.orphan_containers:
+            key = "admin_orphan_containers_expanded"
+            expanded = app.storage.client.get(key, False)
+            exp = ui.expansion(
+                f"Orphan Containers ({len(data.orphan_containers)})",
+                icon="warning",
+                value=expanded,
+            ).classes("w-full mt-4 border border-orange-200 rounded")
+            exp.on_value_change(lambda e: app.storage.client.update({key: e.value}))
+            with exp:
+                for oc in data.orphan_containers:
+                    _render_container_row(oc, icon="help_outline")
+
+    await render_dashboard()
+
+    @guard_client
+    async def guarded_refresh():
+        await render_dashboard.refresh()
+
+    timer = ui.timer(3.0, guarded_refresh)
+    _active_timers.append(timer)
+
+
+def _job_status_color(status: str) -> str:
+    """Map a job status string to a Quasar badge color."""
+    return {
+        "running": "yellow",
+        "queued": "blue",
+        "pending": "grey",
+        "completed": "green",
+        "failed": "red",
+        "cancelled": "grey",
+    }.get(status, "grey")
+
+
+def _render_container_row(ci: ContainerInfo, icon: str = "dns") -> None:
+    """Render a single container as a compact row."""
+    with ui.row().classes("w-full items-center gap-3 px-2 py-1"):
+        ui.icon(icon, size="sm").classes("text-gray-500")
+        ui.label(ci.name).classes("text-xs font-mono text-gray-700").style("min-width: 180px")
+        render_container_status_badge(ci.status)
+
+        if ci.status == "running":
+            ui.label(format_uptime(ci.uptime_seconds)).classes("text-xs text-gray-500")
+
+            # Memory bar
+            if ci.memory_limit_mb > 0:
+                pct = ci.memory_mb / ci.memory_limit_mb
+                with ui.column().classes("gap-0").style("min-width: 100px"):
+                    ui.linear_progress(value=pct, size="8px").props(
+                        f"color={'red' if pct > 0.8 else 'green'}"
+                    )
+                    ui.label(f"{ci.memory_mb:.0f}/{ci.memory_limit_mb:.0f} MB").classes(
+                        "text-xs text-gray-400"
+                    )
+
+            ui.label(f"CPU {ci.cpu_percent:.1f}%").classes("text-xs text-gray-500")

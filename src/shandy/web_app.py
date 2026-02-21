@@ -4,17 +4,50 @@ NiceGUI web interface for SHANDY.
 Provides web UI for job submission, monitoring, and results viewing.
 """
 
+import argparse
 import logging
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+from fastapi import Response
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import JSONResponse
 from nicegui import app, ui
 
 from shandy.job_manager import JobManager
+from shandy.version import get_version_string
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
+
+
+# ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
+# When a container (e.g. feedback_container) is .clear()-ed, child timers
+# lose their parent slot but keep firing until on_disconnect cleanup runs.
+# The base timer's inner try/except only covers the *callback*, not the
+# `with self._get_context():` call at line 90 of timer.py, so the error
+# propagates to the background task handler and fills the log.
+# Patch: return nullcontext() and deactivate the timer instead of raising.
+def _patch_nicegui_timer() -> None:
+    from contextlib import nullcontext
+
+    from nicegui.elements.timer import Timer as _NiceGUITimer
+
+    _orig = _NiceGUITimer._get_context
+
+    def _safe_get_context(self):  # type: ignore[no-untyped-def]
+        try:
+            return _orig(self)
+        except RuntimeError:
+            self.deactivate()
+            return nullcontext()
+
+    _NiceGUITimer._get_context = _safe_get_context  # type: ignore[method-assign]
+
+
+_patch_nicegui_timer()
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
@@ -33,8 +66,8 @@ try:
     STORAGE_SECRET = _loaded_settings.auth.storage_secret
 except Exception as e:
     _settings_error = str(e)
-    # Fallback for import-time usage - use a sentinel value
-    STORAGE_SECRET = "change-this-to-a-random-secret-string-in-production"
+    # Fallback for import-time usage — app will show config error page
+    STORAGE_SECRET = "unconfigured-fallback"
 
 
 def _create_config_error_page(error_message: str):
@@ -82,8 +115,6 @@ Administrators can find detailed error information in the server logs.
             ui.label("HTTP 500 - Internal Server Error").classes("text-gray-400 text-sm mt-4")
 
     # Also add a health check endpoint that returns 500
-    from fastapi import Response
-
     @app.get("/health")
     def health_check():
         return Response(
@@ -151,8 +182,6 @@ def _register_openapi_docs():
 
     NiceGUI disables FastAPI's built-in docs, so we add them manually.
     """
-    from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-    from fastapi.responses import JSONResponse
 
     @app.get("/api-docs", include_in_schema=False)
     async def swagger_ui_html():
@@ -185,6 +214,14 @@ def _register_openapi_docs():
 
 
 _register_openapi_docs()
+
+
+# Lightweight health endpoint — returns JSON without touching NiceGUI storage,
+# so the Docker health check doesn't trigger watchfiles reload events.
+@app.get("/health", include_in_schema=False)
+def health_check():
+    return JSONResponse({"status": "ok"})
+
 
 # Import page modules to register routes
 # Must be imported after _state is defined so pages can access it
@@ -350,8 +387,6 @@ def main(
     )
 
     # Log version info at startup
-    from shandy.version import get_version_string
-
     logger.info("=" * 60)
     logger.info(get_version_string())
     logger.info("=" * 60)
@@ -397,8 +432,6 @@ def main(
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    import argparse
-
     from shandy.settings import get_settings
 
     # Auto-detect dev mode from environment
