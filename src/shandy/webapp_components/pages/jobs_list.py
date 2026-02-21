@@ -1,10 +1,16 @@
 """Jobs list page."""
 
 import logging
+from uuid import UUID
 
 from nicegui import ui
+from sqlalchemy import select
 
 from shandy.auth import get_current_user_id, is_current_user_admin, require_auth
+from shandy.database.models import Job, JobShare, User
+from shandy.database.rls import set_current_user
+from shandy.database.session import get_session
+from shandy.job.types import JobStatus
 from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import (
     render_actions_slot_with_delete,
@@ -37,89 +43,104 @@ def jobs_page():
     # Track active timers for cleanup on disconnect
     _active_timers = setup_timer_cleanup()
 
-    # Capture admin status for delete permissions
+    # Capture admin status and user ID for access control
     current_user_is_admin = is_current_user_admin()
+    current_user_id = get_current_user_id()
 
-    def refresh_jobs(table_to_update):
-        """Refresh jobs table."""
-        jobs = job_manager.list_jobs()
+    async def refresh_jobs(table_to_update):
+        """Refresh jobs table from database with RLS."""
+        try:
+            async with get_session() as session:
+                await set_current_user(session, UUID(current_user_id))
 
-        # Update table - users can always delete their own jobs
-        table_to_update.rows = [
-            {
-                "job_id": job.job_id,
-                "question": (
-                    job.research_question[:50] + "..."
-                    if len(job.research_question) > 50
-                    else job.research_question
-                ),
-                "status": job.status.value,
-                "error": job.error or "",  # Include error for tooltip
-                "iterations": f"{job.iterations_completed}/{job.max_iterations}",
-                "findings": job.findings_count,
-                "created": job.created_at[:19],  # Remove milliseconds
-                "can_share": True,  # Users can always share their own jobs
-                "can_delete": True,  # Users can always delete their own jobs
-            }
-            for job in jobs
-        ]
-        table_to_update.update()
+                stmt = select(Job).order_by(Job.created_at.desc())
+                result = await session.execute(stmt)
+                db_jobs = result.scalars().all()
+
+            # Augment with real-time progress from knowledge_state.json
+            jobs = [job_manager._db_model_to_job_info(m) for m in db_jobs]
+
+            # Update summary badges
+            status_counts: dict[str, int] = {}
+            for s in JobStatus:
+                status_counts[s.value] = sum(1 for j in jobs if j.status == s)
+
+            badges_container.clear()
+            with badges_container:
+                render_stat_badges(
+                    [
+                        ("Total Jobs", len(jobs), ""),
+                        ("Running", status_counts.get("running", 0), "blue"),
+                        ("Completed", status_counts.get("completed", 0), "green"),
+                    ]
+                )
+
+            # Update table
+            table_to_update.rows = [
+                {
+                    "job_id": job.job_id,
+                    "question": (
+                        job.research_question[:50] + "..."
+                        if len(job.research_question) > 50
+                        else job.research_question
+                    ),
+                    "status": job.status.value,
+                    "error": job.error or "",  # Include error for tooltip
+                    "iterations": f"{job.iterations_completed}/{job.max_iterations}",
+                    "findings": job.findings_count,
+                    "created": job.created_at[:19],  # Remove milliseconds
+                    "can_share": True,  # Users can always share their own jobs
+                    "can_delete": True,  # Users can always delete their own jobs
+                }
+                for job in jobs
+            ]
+            table_to_update.update()
+        except Exception as e:
+            logger.error("Failed to load jobs: %s", e)
 
     async def refresh_shared_jobs(table_to_update):
         """Refresh shared jobs table from database."""
-        from uuid import UUID
-
-        from sqlalchemy import select
-
-        from shandy.database.models import Job, JobShare, User
-        from shandy.database.rls import set_current_user
-        from shandy.database.session import get_session
-
         try:
-            # Get current user ID
-            user_id = get_current_user_id()
-
             # Query shared jobs from database
             async with get_session() as session:
-                await set_current_user(session, UUID(user_id))
+                await set_current_user(session, UUID(current_user_id))
 
                 # Get jobs shared with current user
                 stmt = (
                     select(Job, User, JobShare)
                     .join(JobShare, Job.id == JobShare.job_id)
                     .join(User, Job.owner_id == User.id)
-                    .where(JobShare.shared_with_user_id == UUID(user_id))
+                    .where(JobShare.shared_with_user_id == UUID(current_user_id))
                     .order_by(Job.updated_at.desc())
                 )
                 result = await session.execute(stmt)
                 shared_jobs = result.all()
 
-                # Get job info from job_manager for each shared job
+                # Augment with real-time progress from knowledge_state.json
                 rows = []
                 for job, owner, share in shared_jobs:
-                    job_info = job_manager.get_job(str(job.id))
-                    if job_info:
-                        rows.append(
-                            {
-                                "job_id": str(job.id),
-                                "question": (
-                                    job_info.research_question[:50] + "..."
-                                    if len(job_info.research_question) > 50
-                                    else job_info.research_question
-                                ),
-                                "owner": owner.name,
-                                "permission": share.permission_level,
-                                "status": job_info.status.value,
-                                "error": job_info.error or "",
-                                "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
-                                "findings": job_info.findings_count,
-                                "created": job_info.created_at[:19],
-                                # Users cannot share jobs they don't own
-                                "can_share": False,
-                                # Only admins can delete shared jobs
-                                "can_delete": current_user_is_admin,
-                            }
-                        )
+                    job_info = job_manager._db_model_to_job_info(job)
+                    rows.append(
+                        {
+                            "job_id": str(job.id),
+                            "question": (
+                                job_info.research_question[:50] + "..."
+                                if len(job_info.research_question) > 50
+                                else job_info.research_question
+                            ),
+                            "owner": owner.name,
+                            "permission": share.permission_level,
+                            "status": job_info.status.value,
+                            "error": job_info.error or "",
+                            "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
+                            "findings": job_info.findings_count,
+                            "created": job_info.created_at[:19],
+                            # Users cannot share jobs they don't own
+                            "can_share": False,
+                            # Only admins can delete shared jobs
+                            "can_delete": current_user_is_admin,
+                        }
+                    )
 
                 table_to_update.rows = rows
                 table_to_update.update()
@@ -133,7 +154,7 @@ def jobs_page():
             if is_shared:
                 await refresh_shared_jobs(table_to_refresh)
             else:
-                refresh_jobs(table_to_refresh)
+                await refresh_jobs(table_to_refresh)
 
         dialog = render_delete_dialog(job_id, job_manager, on_deleted=on_deleted)
         dialog.open()
@@ -150,15 +171,8 @@ def jobs_page():
     if not is_configured:
         render_config_error_banner(provider_name, config_errors)
 
-    # Summary badges
-    summary = job_manager.get_job_summary()
-    render_stat_badges(
-        [
-            ("Total Jobs", summary["total_jobs"], ""),
-            ("Running", summary["status_counts"].get("running", 0), "blue"),
-            ("Completed", summary["status_counts"].get("completed", 0), "green"),
-        ]
-    )
+    # Summary badges (populated async by refresh_jobs)
+    badges_container = ui.row().classes("w-full")
 
     # Tabs for My Jobs vs Shared with me
     with ui.tabs().classes("w-full") as tabs:
@@ -236,11 +250,16 @@ def jobs_page():
                 lambda e: show_delete_dialog(e.args, my_jobs_table, is_shared=False),
             )
 
+            # Async wrapper for timer
+            async def refresh_my_jobs_table():
+                await refresh_jobs(my_jobs_table)
+
             # Initial load
-            refresh_jobs(my_jobs_table)
+            my_jobs_init_timer = ui.timer(0.1, refresh_my_jobs_table, once=True)
+            _active_timers.append(my_jobs_init_timer)
 
             # Auto-refresh via websocket (no page reload)
-            my_jobs_timer = ui.timer(5.0, lambda: refresh_jobs(my_jobs_table))
+            my_jobs_timer = ui.timer(5.0, refresh_my_jobs_table)
             _active_timers.append(my_jobs_timer)
 
         # ===== SHARED WITH ME TAB =====

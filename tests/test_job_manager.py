@@ -3,6 +3,9 @@
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -124,46 +127,77 @@ class TestJobManagerInit:
             assert json.load(f)["status"] == "completed"
 
 
+def _make_db_job(status: str, created_at: str, **overrides) -> SimpleNamespace:
+    """Helper: create a fake DB job model for list_jobs tests."""
+    defaults = {
+        "id": uuid4(),
+        "title": "Test?",
+        "status": status,
+        "created_at": datetime.fromisoformat(created_at).replace(tzinfo=timezone.utc),
+        "updated_at": datetime.fromisoformat(created_at).replace(tzinfo=timezone.utc),
+        "max_iterations": 10,
+        "current_iteration": 0,
+        "error_message": None,
+        "cancellation_reason": None,
+        "owner_id": None,
+        "short_title": None,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
 class TestJobManagerListAndGet:
     """Tests for listing and getting jobs."""
 
     @pytest.fixture
+    def db_jobs(self):
+        """Fake DB models returned by _db_list_jobs (newest first)."""
+        return [
+            _make_db_job("completed", "2026-02-03T00:00:00"),
+            _make_db_job("failed", "2026-02-02T00:00:00"),
+            _make_db_job("completed", "2026-02-01T00:00:00"),
+        ]
+
+    @pytest.fixture
     def manager(self, tmp_path) -> JobManager:
-        _write_config(
-            tmp_path,
-            "j1",
-            status="completed",
-            created_at="2026-02-01T00:00:00",
-        )
-        _write_config(
-            tmp_path,
-            "j2",
-            status="failed",
-            created_at="2026-02-02T00:00:00",
-        )
-        _write_config(
-            tmp_path,
-            "j3",
-            status="completed",
-            created_at="2026-02-03T00:00:00",
-        )
+        # Config files for get_job fallback
+        _write_config(tmp_path, "j1", status="completed", created_at="2026-02-01T00:00:00")
+        _write_config(tmp_path, "j2", status="failed", created_at="2026-02-02T00:00:00")
+        _write_config(tmp_path, "j3", status="completed", created_at="2026-02-03T00:00:00")
         return JobManager(jobs_dir=tmp_path)
 
-    def test_list_all_jobs(self, manager):
-        jobs = manager.list_jobs()
+    def test_list_all_jobs(self, manager, db_jobs):
+        with patch(
+            "shandy.job_manager._db_list_jobs", new_callable=AsyncMock, return_value=db_jobs
+        ):
+            jobs = manager.list_jobs()
         assert len(jobs) == 3
 
-    def test_list_sorted_newest_first(self, manager):
-        jobs = manager.list_jobs()
-        assert jobs[0].job_id == "j3"
+    def test_list_sorted_newest_first(self, manager, db_jobs):
+        with patch(
+            "shandy.job_manager._db_list_jobs", new_callable=AsyncMock, return_value=db_jobs
+        ):
+            jobs = manager.list_jobs()
+        assert jobs[0].created_at > jobs[-1].created_at
 
-    def test_list_filter_by_status(self, manager):
-        jobs = manager.list_jobs(status=JobStatus.FAILED)
+    def test_list_passes_status_filter(self, manager, db_jobs):
+        with patch(
+            "shandy.job_manager._db_list_jobs",
+            new_callable=AsyncMock,
+            return_value=[db_jobs[1]],
+        ) as mock:
+            jobs = manager.list_jobs(status=JobStatus.FAILED)
+            mock.assert_called_once_with(status=JobStatus.FAILED, limit=None)
         assert len(jobs) == 1
-        assert jobs[0].job_id == "j2"
 
-    def test_list_with_limit(self, manager):
-        jobs = manager.list_jobs(limit=2)
+    def test_list_passes_limit(self, manager, db_jobs):
+        with patch(
+            "shandy.job_manager._db_list_jobs",
+            new_callable=AsyncMock,
+            return_value=db_jobs[:2],
+        ) as mock:
+            jobs = manager.list_jobs(limit=2)
+            mock.assert_called_once_with(status=None, limit=2)
         assert len(jobs) == 2
 
     def test_get_existing_job(self, manager):

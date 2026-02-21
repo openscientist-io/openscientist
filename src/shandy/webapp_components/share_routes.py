@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shandy.auth.middleware import get_current_user_id
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
+from shandy.database.session import get_admin_session, get_session
 
 logger = logging.getLogger(__name__)
 
@@ -255,25 +255,25 @@ async def search_users(
     q: str = Query(..., min_length=2, description="Search query"),
     limit: int = Query(10, ge=1, le=100),
     user: User = Depends(get_current_user_from_session),
-    session: AsyncSession = Depends(get_session),
 ) -> list[UserSearchResult]:
     """Search for users by email or name."""
-    # Search users by email or name (case-insensitive)
+    # Use admin session to bypass RLS (users table only allows SELECT of own record)
     search_pattern = f"%{q}%"
-    stmt = (
-        select(User)
-        .where(
-            or_(
-                User.email.ilike(search_pattern),
-                User.name.ilike(search_pattern),
+    async with get_admin_session() as admin_session:
+        stmt = (
+            select(User)
+            .where(
+                or_(
+                    User.email.ilike(search_pattern),
+                    User.name.ilike(search_pattern),
+                )
             )
+            .where(User.is_active == True)  # noqa: E712
+            .order_by(User.email)
+            .limit(limit)
         )
-        .where(User.is_active == True)  # noqa: E712
-        .order_by(User.email)
-        .limit(limit)
-    )
-    result = await session.execute(stmt)
-    users = result.scalars().all()
+        result = await admin_session.execute(stmt)
+        users = result.scalars().all()
 
     return [
         UserSearchResult(

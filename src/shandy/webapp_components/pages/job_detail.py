@@ -13,6 +13,7 @@ from nicegui import ui
 
 from shandy.artifact_packager import create_artifacts_zip
 from shandy.auth import get_current_user_id, require_auth
+from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.job_manager import JobStatus
 from shandy.webapp_components.error_handler import get_user_friendly_error
@@ -59,14 +60,29 @@ def _load_knowledge_state(ks_path):
 @require_auth
 def job_detail_page(job_id: str):
     """Job detail page with progressive disclosure UI."""
-    # Import module to access global job_manager at runtime
+    from uuid import UUID
+
     from shandy import web_app
+    from shandy.job_manager import _db_get_job, _run_async
 
     job_manager = web_app.get_job_manager()
+
+    # Verify access: query DB with RLS to check the current user can see this job
+    user_id = get_current_user_id()
+    try:
+        has_access = _run_async(_db_get_job(job_id, user_id=UUID(user_id))) is not None
+    except Exception:
+        has_access = False
+
+    if not has_access:
+        ui.label("Job not found").classes("text-h5")
+        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
+        return
+
     job_info = job_manager.get_job(job_id)
 
     if job_info is None:
-        ui.label(f"Job {job_id} not found").classes("text-h5")
+        ui.label("Job not found").classes("text-h5")
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
         return
 
@@ -1170,6 +1186,7 @@ def job_detail_page(job_id: str):
 
                     try:
                         async with AsyncSessionLocal() as session:
+                            await set_current_user(session, UUID(user_id))
                             messages = await get_chat_history(session, job_uuid)
 
                         # Re-check after await - client may have disconnected
@@ -1300,6 +1317,7 @@ def job_detail_page(job_id: str):
 
                     try:
                         async with AsyncSessionLocal() as session:
+                            await set_current_user(session, UUID(user_id))
                             await send_chat_message(session, job_uuid, message.strip(), job_dir)
 
                         # Re-check after await - client may have disconnected

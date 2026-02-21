@@ -577,10 +577,14 @@ class JobManager:
         return self._load_job_info(job_id)
 
     def list_jobs(
-        self, status: Optional[JobStatus] = None, limit: Optional[int] = None
+        self,
+        status: Optional[JobStatus] = None,
+        limit: Optional[int] = None,
     ) -> list[JobInfo]:
         """
-        List jobs.
+        List all jobs from the database (no user filtering).
+
+        For user-facing queries, use a database session with RLS instead.
 
         Args:
             status: Filter by status
@@ -589,27 +593,8 @@ class JobManager:
         Returns:
             List of JobInfo objects, sorted by created_at (newest first)
         """
-        jobs = []
-
-        for job_id in self._list_job_ids():
-            job_info = self._load_job_info(job_id)
-            if job_info is None:
-                continue
-
-            # Filter by status
-            if status is not None and job_info.status != status:
-                continue
-
-            jobs.append(job_info)
-
-        # Sort by created_at (newest first)
-        jobs.sort(key=lambda j: j.created_at, reverse=True)
-
-        # Limit
-        if limit is not None:
-            jobs = jobs[:limit]
-
-        return jobs
+        db_jobs = _run_async(_db_list_jobs(status=status, limit=limit))
+        return [self._db_model_to_job_info(m) for m in db_jobs]
 
     def delete_job(self, job_id: str) -> None:
         """
@@ -748,7 +733,7 @@ class JobManager:
 
     def get_job_summary(self) -> dict[str, Any]:
         """
-        Get summary of all jobs.
+        Get summary of all jobs (no user filtering).
 
         Returns:
             Dictionary with job counts and budget info
@@ -788,6 +773,38 @@ class JobManager:
 
         return job_ids
 
+    def _db_model_to_job_info(self, job_model: JobModel) -> JobInfo:
+        """Convert a database JobModel to JobInfo with real-time progress from KS."""
+        iterations_completed = job_model.current_iteration
+        findings_count = 0
+
+        # Load progress from knowledge_state.json for all jobs
+        # (database sync may be async and not yet committed)
+        ks_path = self.jobs_dir / str(job_model.id) / "knowledge_state.json"
+        if ks_path.exists():
+            try:
+                with open(ks_path, encoding="utf-8") as f:
+                    ks = json.load(f)
+                findings_count = len(ks.get("findings", []))
+                ks_iteration = ks.get("iteration", 1)
+
+                # For running jobs, iteration is the current (in-progress) iteration
+                # so completed = iteration - 1
+                # For completed/failed/cancelled jobs, iteration is the final count
+                if job_model.status in ("running", "awaiting_feedback"):
+                    iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
+                else:
+                    iterations_completed = ks_iteration
+            except (
+                OSError,
+                json.JSONDecodeError,
+                KeyError,
+                ValueError,
+            ) as e:
+                logger.warning("Failed to load KS for job %s: %s", job_model.id, e)
+
+        return JobInfo.from_db_model(job_model, iterations_completed, findings_count)
+
     def _load_job_info(self, job_id: str) -> Optional[JobInfo]:
         """
         Load job info from database, falling back to config.json if needed.
@@ -798,37 +815,7 @@ class JobManager:
         try:
             job_model = _run_async(_db_get_job(job_id))
             if job_model:
-                # Get real-time progress from knowledge_state.json
-                iterations_completed = job_model.current_iteration
-                findings_count = 0
-
-                # Load progress from knowledge_state.json for all jobs
-                # (database sync may be async and not yet committed)
-                ks_path = self.jobs_dir / job_id / "knowledge_state.json"
-                if ks_path.exists():
-                    try:
-                        with open(ks_path, encoding="utf-8") as f:
-                            ks = json.load(f)
-                        findings_count = len(ks.get("findings", []))
-                        ks_iteration = ks.get("iteration", 1)
-
-                        # For running jobs, iteration is the current (in-progress) iteration
-                        # so completed = iteration - 1
-                        # For completed/failed/cancelled jobs, iteration is the final count
-                        if job_model.status in ("running", "awaiting_feedback"):
-                            iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-                        else:
-                            # Completed/failed/cancelled: use the iteration value directly
-                            iterations_completed = ks_iteration
-                    except (
-                        OSError,
-                        json.JSONDecodeError,
-                        KeyError,
-                        ValueError,
-                    ) as e:
-                        logger.warning("Failed to load KS for job %s: %s", job_id, e)
-
-                return JobInfo.from_db_model(job_model, iterations_completed, findings_count)
+                return self._db_model_to_job_info(job_model)
         except Exception as e:
             logger.warning("Failed to load job %s from database: %s", job_id, e)
 

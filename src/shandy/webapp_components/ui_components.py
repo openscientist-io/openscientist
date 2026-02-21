@@ -1654,6 +1654,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                 from sqlalchemy import select, update
 
                 from shandy.database.models import User
+                from shandy.database.rls import set_current_user
                 from shandy.database.session import AsyncSessionLocal
                 from shandy.ntfy import ensure_user_has_topic
 
@@ -1662,6 +1663,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                 try:
                     # Fetch current settings from database
                     async with AsyncSessionLocal() as session:
+                        await set_current_user(session, UUID(user_id))
                         stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
                             User.id == UUID(user_id)
                         )
@@ -1694,6 +1696,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                         new_value = e.value
                         try:
                             async with AsyncSessionLocal() as sess:
+                                await set_current_user(sess, UUID(user_id))
                                 stmt = (
                                     update(User)
                                     .where(User.id == UUID(user_id))
