@@ -13,7 +13,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from shandy.auth.oauth import get_oauth_client
-from shandy.auth.providers import GitHubProvider, MockProvider, ORCIDProvider
+from shandy.auth.providers import GitHubProvider, GoogleProvider, MockProvider, ORCIDProvider
 from shandy.auth.routes import create_or_update_user, create_session
 from shandy.database.models import Administrator, Session
 from shandy.database.session import get_admin_session, get_session
@@ -229,7 +229,7 @@ async def oauth_login(provider: str, request: Request):
         provider: OAuth provider name (github, orcid)
         request: FastAPI request object
     """
-    if provider not in ["github", "orcid"]:
+    if provider not in ["google", "github", "orcid"]:
         raise HTTPException(status_code=400, detail="Unknown OAuth provider")
 
     try:
@@ -262,7 +262,7 @@ async def oauth_callback(provider: str, request: Request):
         provider: OAuth provider name (github, orcid)
         request: FastAPI request object
     """
-    if provider not in ["github", "orcid"]:
+    if provider not in ["google", "github", "orcid"]:
         raise HTTPException(status_code=400, detail="Unknown OAuth provider")
 
     try:
@@ -278,7 +278,9 @@ async def oauth_callback(provider: str, request: Request):
         token = await client.authorize_access_token(request)
 
         # Get user info from provider
-        if provider == "github":
+        if provider == "google":
+            user_info = await GoogleProvider.get_user_info(token)
+        elif provider == "github":
             user_info = await GitHubProvider.get_user_info(token)
         elif provider == "orcid":
             user_info = await ORCIDProvider.get_user_info(token)

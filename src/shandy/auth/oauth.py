@@ -28,6 +28,8 @@ def get_oauth_config() -> Config:
     settings = get_settings()
     return Config(
         environ={
+            "GOOGLE_CLIENT_ID": settings.auth.google_client_id or "",
+            "GOOGLE_CLIENT_SECRET": settings.auth.google_client_secret or "",
             "GITHUB_CLIENT_ID": settings.auth.github_client_id or "",
             "GITHUB_CLIENT_SECRET": settings.auth.github_client_secret or "",
             "ORCID_CLIENT_ID": settings.auth.orcid_client_id or "",
@@ -48,6 +50,20 @@ def get_oauth_client() -> OAuth:
         config = get_oauth_config()
         _oauth = OAuth(config)
         settings = get_settings()
+
+        # Register Google provider
+        google_client_id = settings.auth.google_client_id
+        if google_client_id:
+            _oauth.register(
+                name="google",
+                client_id=google_client_id,
+                client_secret=settings.auth.google_client_secret,
+                server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+                client_kwargs={"scope": "openid email profile"},
+            )
+            logger.info("Google OAuth provider registered")
+        else:
+            logger.info("Google OAuth not configured (GOOGLE_CLIENT_ID not set)")
 
         # Register GitHub provider
         github_client_id = settings.auth.github_client_id
