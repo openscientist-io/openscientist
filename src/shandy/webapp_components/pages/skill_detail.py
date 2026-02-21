@@ -9,7 +9,7 @@ from sqlalchemy import select
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.models import Skill, SkillSource
 from shandy.database.rls import set_current_user
-from shandy.database.session import AsyncSessionLocal
+from shandy.database.session import get_session
 from shandy.webapp_components.ui_components import (
     format_relative_time,
     get_category_color,
@@ -40,7 +40,7 @@ async def skill_detail_page(category: str, slug: str):
         """Load skill from database."""
         try:
             user_id = get_current_user_id()
-            async with AsyncSessionLocal() as session:
+            async with get_session() as session:
                 # Set RLS context
                 await set_current_user(session, UUID(user_id))
 

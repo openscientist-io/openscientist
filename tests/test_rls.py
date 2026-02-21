@@ -497,3 +497,69 @@ def test_set_app_role_must_not_swallow_errors():
         "superuser bypasses all RLS policies. If SET ROLE shandy_app fails, "
         "the error must propagate so the request fails loudly."
     )
+
+
+def test_user_facing_pages_use_get_session():
+    """User-facing pages must use get_session(), not bare AsyncSessionLocal().
+
+    AsyncSessionLocal() (without thread_safe=True) creates sessions on the
+    main engine as the database superuser. Without SET ROLE shandy_app, the
+    superuser bypasses all RLS policies. Pages must use get_session() which
+    automatically drops privileges.
+
+    Note: AsyncSessionLocal(thread_safe=True) in job_manager._db_* functions
+    is acceptable because those functions manually call SET ROLE shandy_app
+    when a user_id is provided.
+    """
+    import ast
+    from pathlib import Path
+
+    # Files to inspect: all webapp_components pages + ui_components
+    pages_dir = Path("src/shandy/webapp_components/pages")
+    ui_components = Path("src/shandy/webapp_components/ui_components.py")
+
+    files_to_check = list(pages_dir.glob("*.py")) + [ui_components]
+    violations = []
+
+    for filepath in files_to_check:
+        if filepath.name == "__init__.py":
+            continue
+
+        source = filepath.read_text()
+
+        # Parse the AST to find AsyncSessionLocal() calls without thread_safe=True
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+
+            # Check for AsyncSessionLocal() calls
+            func = node.func
+            func_name = None
+            if isinstance(func, ast.Name):
+                func_name = func.id
+            elif isinstance(func, ast.Attribute):
+                func_name = func.attr
+
+            if func_name != "AsyncSessionLocal":
+                continue
+
+            # Check if thread_safe=True is passed (which is acceptable)
+            has_thread_safe = any(
+                kw.arg == "thread_safe"
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True
+                for kw in node.keywords
+            )
+            if not has_thread_safe:
+                violations.append(f"{filepath.relative_to('src')}:{node.lineno}")
+
+    assert not violations, (
+        "AsyncSessionLocal() (without thread_safe=True) found in user-facing code. "
+        "Use get_session() instead to enforce RLS via SET ROLE shandy_app.\n"
+        "Violations:\n" + "\n".join(f"  - {v}" for v in violations)
+    )

@@ -16,7 +16,7 @@ from nicegui import ui
 from shandy.artifact_packager import create_artifacts_zip
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.rls import set_current_user
-from shandy.database.session import AsyncSessionLocal
+from shandy.database.session import get_session
 from shandy.job_chat import get_chat_history, send_chat_message
 from shandy.job_manager import JobStatus, _db_get_job, _run_async
 from shandy.knowledge_state import KnowledgeState
@@ -74,7 +74,12 @@ def job_detail_page(job_id: str):
     user_id = get_current_user_id()
     try:
         has_access = _run_async(_db_get_job(job_id, user_id=UUID(user_id))) is not None
+    except ValueError:
+        has_access = False
     except Exception:
+        logger.error(
+            "Failed to check job access: job_id=%s user_id=%s", job_id, user_id, exc_info=True
+        )
         has_access = False
 
     if not has_access:
@@ -1167,7 +1172,7 @@ def job_detail_page(job_id: str):
                         return
 
                     try:
-                        async with AsyncSessionLocal() as session:
+                        async with get_session() as session:
                             await set_current_user(session, UUID(user_id))
                             messages = await get_chat_history(session, job_uuid)
 
@@ -1298,7 +1303,7 @@ def job_detail_page(job_id: str):
                     scroll_chat_to_bottom()
 
                     try:
-                        async with AsyncSessionLocal() as session:
+                        async with get_session() as session:
                             await set_current_user(session, UUID(user_id))
                             await send_chat_message(session, job_uuid, message.strip(), job_dir)
 

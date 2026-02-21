@@ -19,7 +19,7 @@ from sqlalchemy import select, update
 
 from shandy.database.models import User
 from shandy.database.rls import set_current_user
-from shandy.database.session import AsyncSessionLocal, get_admin_session
+from shandy.database.session import get_admin_session, get_session
 from shandy.job_manager import JobInfo, JobStatus
 from shandy.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
 from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
@@ -1404,7 +1404,8 @@ async def render_user_search(
                                 on_click=select_user,
                             ).props("size=sm flat")
 
-        except Exception:
+        except Exception as e:
+            logger.error("Failed to search users: %s", e, exc_info=True)
             results_container.clear()
             with results_container:
                 ui.label("Search failed").classes("text-red-500 text-sm")
@@ -1645,7 +1646,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
 
                 try:
                     # Fetch current settings from database
-                    async with AsyncSessionLocal() as session:
+                    async with get_session() as session:
                         await set_current_user(session, UUID(user_id))
                         stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
                             User.id == UUID(user_id)
@@ -1678,7 +1679,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                         """Toggle ntfy_enabled in the database."""
                         new_value = e.value
                         try:
-                            async with AsyncSessionLocal() as sess:
+                            async with get_session() as sess:
                                 await set_current_user(sess, UUID(user_id))
                                 stmt = (
                                     update(User)
@@ -1698,6 +1699,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                                 # Reload the content
                                 await load_content()
                         except Exception as ex:
+                            logger.error("Failed to toggle notifications: %s", ex, exc_info=True)
                             ui.notify(f"Failed to update: {ex}", type="negative")
 
                     # Enable/disable toggle
