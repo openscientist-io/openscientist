@@ -15,14 +15,14 @@ from typing import Any
 from uuid import UUID
 
 from nicegui import app, ui
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
-from shandy.database.models import User
+from shandy.auth import get_current_user_id
+from shandy.database.models import JobShare, User
 from shandy.database.rls import set_current_user
-from shandy.database.session import get_admin_session, get_session
+from shandy.database.session import get_admin_session, get_session_ctx
 from shandy.job_manager import JobInfo, JobStatus
 from shandy.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
-from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
 
 logger = logging.getLogger(__name__)
 
@@ -886,7 +886,7 @@ def render_actions_slot_with_delete() -> str:
                     flat
                     dense
                     size="sm"
-                    color="secondary"
+                    color="primary"
                     icon="share"
                     @click="$parent.$emit('share-job', props.row.job_id)"
                 >
@@ -936,7 +936,7 @@ def render_job_action_buttons(
 
         if on_share:
             with ui.button(icon="share", on_click=on_share).props(
-                "round flat dense size=sm color=secondary"
+                "round flat dense size=sm color=primary"
             ):
                 ui.tooltip("Share job")
 
@@ -1410,7 +1410,10 @@ async def render_user_search(
             with results_container:
                 ui.label("Search failed").classes("text-red-500 text-sm")
 
-    search_input.on("input", search_users)
+    async def _on_search_change(_e):
+        await search_users()
+
+    search_input.on_value_change(_on_search_change)
 
     return search_input, results_container
 
@@ -1444,58 +1447,60 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         shares_container = ui.column().classes("w-full mb-4")
 
         async def refresh_shares():
-            """Load and display current shares."""
+            """Load and display current shares via direct DB query."""
             shares_container.clear()
 
             try:
-                response = await api_get(f"/web/shares/job/{job_id}")
+                async with get_admin_session() as session:
+                    stmt = (
+                        select(JobShare, User)
+                        .join(User, JobShare.shared_with_user_id == User.id)
+                        .where(JobShare.job_id == UUID(job_id))
+                        .order_by(User.email)
+                    )
+                    result = await session.execute(stmt)
+                    shares = result.all()
 
-                if response.status_code == 200:
-                    shares = response.json()
-
-                    if shares:
-                        with shares_container:
-                            ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
-                            for share in shares:
-                                with ui.card().classes("w-full p-2"):
-                                    with ui.row().classes("items-center justify-between w-full"):
-                                        with ui.column():
-                                            ui.label(share["shared_with_name"]).classes("font-bold")
-                                            ui.label(share["shared_with_email"]).classes(
-                                                "text-sm text-gray-600"
-                                            )
-                                        with ui.row().classes("items-center gap-2"):
-                                            ui.badge(
-                                                share["permission_level"],
-                                                color="blue",
-                                            )
-                                            ui.button(
-                                                icon="delete",
-                                                on_click=lambda s=share: revoke_share(s["id"]),
-                                            ).props("flat dense color=red")
-                    else:
-                        with shares_container:
-                            ui.label("No shares yet").classes("text-gray-500 italic")
-                elif response.status_code == 403:
+                if shares:
                     with shares_container:
-                        ui.label("You can only view shares for jobs you own").classes(
-                            "text-red-600"
-                        )
+                        ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
+                        for share, target_user in shares:
+                            with ui.card().classes("w-full p-2"):
+                                with ui.row().classes("items-center justify-between w-full"):
+                                    with ui.column():
+                                        ui.label(target_user.name).classes("font-bold")
+                                        ui.label(target_user.email).classes("text-sm text-gray-600")
+                                    with ui.row().classes("items-center gap-2"):
+                                        ui.badge(
+                                            share.permission_level,
+                                            color="blue",
+                                        )
+                                        ui.button(
+                                            icon="delete",
+                                            on_click=lambda s=share: revoke_share(str(s.id)),
+                                        ).props("flat dense color=red")
+                else:
+                    with shares_container:
+                        ui.label("No shares yet").classes("text-gray-500 italic")
             except Exception as e:
                 logger.error("Failed to load shares: %s", e)
                 with shares_container:
                     ui.label("Failed to load shares").classes("text-red-600")
 
         async def revoke_share(share_id: str):
-            """Revoke a job share."""
+            """Revoke a job share via direct DB delete."""
             try:
-                response = await api_delete(f"/web/shares/{share_id}")
-
-                if response.status_code == 200:
-                    ui.notify("Share revoked successfully", type="positive")
-                    await refresh_shares()
-                else:
-                    ui.notify("Failed to revoke share", type="negative")
+                async with get_admin_session() as session:
+                    stmt = select(JobShare).where(JobShare.id == UUID(share_id))
+                    result = await session.execute(stmt)
+                    share = result.scalar_one_or_none()
+                    if share:
+                        await session.delete(share)
+                        await session.commit()
+                        ui.notify("Share revoked successfully", type="positive")
+                        await refresh_shares()
+                    else:
+                        ui.notify("Share not found", type="negative")
             except Exception as e:
                 logger.error("Failed to revoke share: %s", e)
                 ui.notify("Error revoking share", type="negative")
@@ -1505,6 +1510,12 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         # Add new share section
         ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
 
+        # State for selected user
+        selected_user_state: dict[str, str | None] = {
+            "email": None,
+            "name": None,
+        }
+
         # User search
         search_input = ui.input(
             "Search by email or name",
@@ -1512,93 +1523,185 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         ).classes("w-full")
 
         # Search results container
-        search_results = ui.column().classes("w-full mb-4")
+        search_results = ui.column().classes("w-full")
 
-        # Permission level selector
-        permission_select = ui.select(
-            ["view", "edit"],
-            value="view",
-            label="Permission Level",
-        ).classes("w-full")
+        # Selected user display (hidden until a user is selected)
+        selected_user_container = ui.column().classes("w-full")
+
+        # Permission + Share button row (hidden until a user is selected)
+        share_action_row = ui.row().classes("w-full gap-4 items-end hidden")
+        with share_action_row:
+            permission_select = ui.select(
+                ["view", "edit"],
+                value="view",
+                label="Permission Level",
+            ).classes("min-w-32")
+            permission_select.props("outlined dense")
+
+            ui.button(
+                "Share",
+                icon="person_add",
+                on_click=lambda: do_share(),
+            ).props("color=primary")
+
+        # Counter for debouncing concurrent search calls
+        search_counter = {"value": 0}
+
+        def select_user(email: str, name: str):
+            """Select a user from search results."""
+            selected_user_state["email"] = email
+            selected_user_state["name"] = name
+
+            # Hide search results, show selected user
+            search_results.clear()
+            search_input.visible = False
+
+            selected_user_container.clear()
+            with selected_user_container:
+                with ui.row().classes("items-center gap-2 p-2 bg-blue-50 rounded"):
+                    ui.icon("person", color="primary")
+                    with ui.column().classes("gap-0"):
+                        ui.label(name).classes("font-bold text-sm")
+                        ui.label(email).classes("text-xs text-gray-600")
+                    ui.button(
+                        icon="close",
+                        on_click=clear_selection,
+                    ).props("flat dense round size=xs")
+
+            # Show permission + share button
+            share_action_row.classes(remove="hidden")
+
+        def clear_selection():
+            """Clear selected user and show search again."""
+            selected_user_state["email"] = None
+            selected_user_state["name"] = None
+            selected_user_container.clear()
+            share_action_row.classes(add="hidden")
+            search_input.visible = True
+            search_input.value = ""
 
         async def search_users(search_query: str):
-            """Search for users by email or name."""
+            """Search for users by email or name via direct DB query."""
+            search_counter["value"] += 1
+            my_counter = search_counter["value"]
+
             search_results.clear()
 
             if not search_query or len(search_query) < 2:
                 return
 
             try:
-                response = await api_get(f"/web/shares/search/users?q={search_query}")
-
-                if response.status_code == 200:
-                    users = response.json()
-
-                    if users:
-                        with search_results:
-                            ui.label(f"Found {len(users)} user(s)").classes(
-                                "text-sm text-gray-600 mb-2"
+                async with get_admin_session() as session:
+                    search_pattern = f"%{search_query}%"
+                    stmt = (
+                        select(User)
+                        .where(
+                            or_(
+                                User.email.ilike(search_pattern),
+                                User.name.ilike(search_pattern),
                             )
-                            for user in users:
-                                with ui.card().classes(
-                                    "w-full p-2 cursor-pointer hover:bg-gray-100"
-                                ):
-                                    with (
-                                        ui.row()
-                                        .classes("items-center justify-between w-full")
-                                        .on(
-                                            "click",
-                                            lambda u=user: share_with_user(u["email"]),
+                        )
+                        .where(User.is_active == True)  # noqa: E712
+                        .order_by(User.email)
+                        .limit(10)
+                    )
+                    result = await session.execute(stmt)
+                    users = result.scalars().all()
+
+                # Skip rendering if a newer search has started
+                if my_counter != search_counter["value"]:
+                    return
+
+                if users:
+                    with search_results:
+                        for user in users:
+                            with (
+                                ui.card()
+                                .classes("w-full p-2 cursor-pointer hover:bg-blue-50")
+                                .on(
+                                    "click",
+                                    lambda u=user: select_user(u.email, u.name or u.email),
+                                )
+                            ):
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.icon("person_outline", size="sm").classes("text-gray-400")
+                                    with ui.column().classes("gap-0"):
+                                        ui.label(user.name or user.email).classes(
+                                            "font-bold text-sm"
                                         )
-                                    ):
-                                        with ui.column():
-                                            ui.label(user["name"]).classes("font-bold")
-                                            ui.label(user["email"]).classes("text-sm text-gray-600")
-                                        ui.button(icon="person_add").props(
-                                            "flat dense color=primary"
-                                        )
-                    else:
-                        with search_results:
-                            ui.label("No users found").classes("text-gray-500 italic")
+                                        if user.name:
+                                            ui.label(user.email).classes("text-xs text-gray-600")
+                else:
+                    with search_results:
+                        ui.label("No users found").classes("text-gray-500 italic")
             except Exception as e:
-                logger.error("Failed to search users: %s", e)
+                logger.error("Failed to search users: %s", e, exc_info=True)
                 with search_results:
                     ui.label("Search failed").classes("text-red-600")
 
-        async def share_with_user(email: str):
-            """Share job with a user."""
-            try:
-                response = await api_post(
-                    f"/web/shares/job/{job_id}",
-                    json={
-                        "shared_with_email": email,
-                        "permission_level": permission_select.value,
-                    },
-                )
+        async def do_share():
+            """Share job with the selected user."""
+            email = selected_user_state["email"]
+            if not email:
+                ui.notify("Select a user first", type="warning")
+                return
 
-                if response.status_code == 200:
-                    ui.notify(f"Shared with {email}", type="positive")
-                    search_input.value = ""
-                    search_results.clear()
-                    await refresh_shares()
-                elif response.status_code == 400:
-                    error = response.json()
-                    ui.notify(error.get("detail", "Failed to share"), type="warning")
-                else:
-                    ui.notify("Failed to share job", type="negative")
+            try:
+                current_user_id = get_current_user_id()
+                async with get_admin_session() as session:
+                    # Find target user
+                    target = await session.execute(select(User).where(User.email == email))
+                    target_user = target.scalar_one_or_none()
+                    if not target_user:
+                        ui.notify(f"User '{email}' not found", type="negative")
+                        return
+
+                    # Prevent self-share
+                    if str(target_user.id) == current_user_id:
+                        ui.notify("Cannot share with yourself", type="warning")
+                        return
+
+                    # Check for existing share
+                    existing = await session.execute(
+                        select(JobShare).where(
+                            JobShare.job_id == UUID(job_id),
+                            JobShare.shared_with_user_id == target_user.id,
+                        )
+                    )
+                    existing_share = existing.scalar_one_or_none()
+
+                    if existing_share:
+                        existing_share.permission_level = permission_select.value
+                    else:
+                        session.add(
+                            JobShare(
+                                job_id=UUID(job_id),
+                                shared_with_user_id=target_user.id,
+                                permission_level=permission_select.value,
+                            )
+                        )
+                    await session.commit()
+
+                ui.notify(f"Shared with {email}", type="positive")
+                clear_selection()
+                await refresh_shares()
             except Exception as e:
-                logger.error("Failed to share job: %s", e)
+                logger.error("Failed to share job: %s", e, exc_info=True)
                 ui.notify("Error sharing job", type="negative")
 
-        # Bind search input to trigger search
-        search_input.on("input", lambda e: search_users(e.value))
+        # Bind search input to trigger search.
+        # Must be an actual async def (not a lambda wrapping async) so NiceGUI awaits it.
+        async def _on_search_change(e):
+            await search_users(e.value)
+
+        search_input.on_value_change(_on_search_change)
 
         # Dialog actions
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
             ui.button("Close", on_click=dialog.close)
 
         # Load shares when dialog opens
-        dialog.on("open", lambda: refresh_shares())
+        dialog.on("open", refresh_shares)
 
     return dialog
 
@@ -1646,7 +1749,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
 
                 try:
                     # Fetch current settings from database
-                    async with get_session() as session:
+                    async with get_session_ctx() as session:
                         await set_current_user(session, UUID(user_id))
                         stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
                             User.id == UUID(user_id)
@@ -1679,7 +1782,7 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
                         """Toggle ntfy_enabled in the database."""
                         new_value = e.value
                         try:
-                            async with get_session() as sess:
+                            async with get_session_ctx() as sess:
                                 await set_current_user(sess, UUID(user_id))
                                 stmt = (
                                     update(User)

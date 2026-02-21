@@ -16,7 +16,7 @@ from nicegui import ui
 from shandy.artifact_packager import create_artifacts_zip
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
+from shandy.database.session import get_session_ctx
 from shandy.job_chat import get_chat_history, send_chat_message
 from shandy.job_manager import JobStatus, _db_get_job, _run_async
 from shandy.knowledge_state import KnowledgeState
@@ -1172,7 +1172,7 @@ def job_detail_page(job_id: str):
                         return
 
                     try:
-                        async with get_session() as session:
+                        async with get_session_ctx() as session:
                             await set_current_user(session, UUID(user_id))
                             messages = await get_chat_history(session, job_uuid)
 
@@ -1303,7 +1303,7 @@ def job_detail_page(job_id: str):
                     scroll_chat_to_bottom()
 
                     try:
-                        async with get_session() as session:
+                        async with get_session_ctx() as session:
                             await set_current_user(session, UUID(user_id))
                             await send_chat_message(session, job_uuid, message.strip(), job_dir)
 

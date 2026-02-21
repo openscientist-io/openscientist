@@ -28,7 +28,7 @@ async def set_current_user(session: AsyncSession, user_id: UUID | None) -> None:
         user_id: UUID of the current user, or None to clear
 
     Example:
-        >>> async with get_session() as session:
+        >>> async with get_session_ctx() as session:
         ...     await set_current_user(session, user.id)
         ...     # All queries in this session now respect RLS for this user
         ...     jobs = await session.execute(select(Job))
@@ -55,7 +55,7 @@ async def get_current_user(session: AsyncSession) -> UUID | None:
         UUID of the current user, or None if not set
 
     Example:
-        >>> async with get_session() as session:
+        >>> async with get_session_ctx() as session:
         ...     user_id = await get_current_user(session)
         ...     print(f"Current user: {user_id}")
     """
@@ -88,7 +88,7 @@ async def session_with_user(
         The same session with user context applied
 
     Example:
-        >>> async with get_session() as session:
+        >>> async with get_session_ctx() as session:
         ...     async with session_with_user(session, user.id) as user_session:
         ...         jobs = await user_session.execute(select(Job))
         ...         # Only sees jobs visible to user
@@ -119,7 +119,7 @@ async def verify_rls_enabled(session: AsyncSession, table_name: str) -> bool:
         True if RLS is enabled on the table, False otherwise
 
     Example:
-        >>> async with get_session() as session:
+        >>> async with get_session_ctx() as session:
         ...     is_protected = await verify_rls_enabled(session, "jobs")
         ...     print(f"Jobs table RLS: {is_protected}")
     """
@@ -152,7 +152,7 @@ async def list_rls_policies(session: AsyncSession, table_name: str) -> list[dict
         List of dictionaries containing policy information
 
     Example:
-        >>> async with get_session() as session:
+        >>> async with get_session_ctx() as session:
         ...     policies = await list_rls_policies(session, "jobs")
         ...     for policy in policies:
         ...         print(f"{policy['name']}: {policy['cmd']}")

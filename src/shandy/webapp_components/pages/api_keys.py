@@ -11,7 +11,7 @@ from shandy.api.auth import generate_api_key_secret, hash_secret
 from shandy.auth import get_current_user_id, is_current_user_admin, require_auth
 from shandy.database.models import APIKey, User
 from shandy.database.rls import set_current_user
-from shandy.database.session import get_admin_session, get_session
+from shandy.database.session import get_admin_session, get_session_ctx
 from shandy.webapp_components.ui_components import (
     format_relative_time,
     render_dialog_actions,
@@ -95,7 +95,7 @@ async def api_keys_page():
 
                     try:
                         user_id = get_current_user_id()
-                        async with get_session() as session:
+                        async with get_session_ctx() as session:
                             await set_current_user(session, UUID(user_id))
 
                             # Check key limit
@@ -230,7 +230,7 @@ async def api_keys_page():
                             api_key.is_active = False
                             await session.commit()
                     else:
-                        async with get_session() as session:
+                        async with get_session_ctx() as session:
                             await set_current_user(session, UUID(user_id))
 
                             stmt = select(APIKey).where(
@@ -313,7 +313,7 @@ async def api_keys_page():
                         api_keys = result.scalars().all()
                 else:
                     # Regular user: only their keys
-                    async with get_session() as session:
+                    async with get_session_ctx() as session:
                         await set_current_user(session, UUID(user_id))
 
                         stmt = (

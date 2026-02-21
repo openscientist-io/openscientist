@@ -20,7 +20,7 @@ from .rls import (
     set_current_user,
     verify_rls_enabled,
 )
-from .session import AsyncSessionLocal, get_admin_session, get_session
+from .session import AsyncSessionLocal, get_admin_session, get_session, get_session_ctx
 
 __all__ = [
     "Base",
@@ -30,6 +30,7 @@ __all__ = [
     "get_admin_engine",
     # Sessions
     "get_session",
+    "get_session_ctx",
     "get_admin_session",
     "AsyncSessionLocal",
     # RLS utilities

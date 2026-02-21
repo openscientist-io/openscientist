@@ -138,7 +138,6 @@ async def _reset_role(session: AsyncSession) -> None:
         pass  # Connection may already be closed/invalid
 
 
-@asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency to provide a database session with RLS enforced.
@@ -150,13 +149,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     Callers must still call set_current_user(session, user_id) to set the
     RLS context for the specific user.
 
-    Usage in FastAPI:
+    Usage in FastAPI (as dependency):
         @app.get("/items")
         async def get_items(session: AsyncSession = Depends(get_session)):
             ...
 
-    Usage in NiceGUI or standalone:
-        async with get_session() as session:
+    Usage in NiceGUI or standalone (as context manager):
+        async with get_session_ctx() as session:
             await set_current_user(session, user.id)
             ...
 
@@ -175,6 +174,11 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         finally:
             await _reset_role(session)
             await session.close()
+
+
+# Context manager wrapper for get_session (for NiceGUI/standalone use).
+# FastAPI Depends uses get_session directly (plain async generator).
+get_session_ctx = asynccontextmanager(get_session)
 
 
 @asynccontextmanager

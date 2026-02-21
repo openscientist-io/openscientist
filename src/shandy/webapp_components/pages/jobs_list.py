@@ -9,7 +9,7 @@ from sqlalchemy import select
 from shandy.auth import get_current_user_id, is_current_user_admin, require_auth
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
+from shandy.database.session import get_admin_session, get_session_ctx
 from shandy.job.types import JobStatus
 from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import (
@@ -50,7 +50,7 @@ def jobs_page():
     async def refresh_jobs(table_to_update):
         """Refresh jobs table from database with RLS."""
         try:
-            async with get_session() as session:
+            async with get_session_ctx() as session:
                 await set_current_user(session, UUID(current_user_id))
 
                 stmt = select(Job).order_by(Job.created_at.desc())
@@ -101,10 +101,11 @@ def jobs_page():
     async def refresh_shared_jobs(table_to_update):
         """Refresh shared jobs table from database."""
         try:
-            # Query shared jobs from database
-            async with get_session() as session:
-                await set_current_user(session, UUID(current_user_id))
-
+            # Use admin session to bypass RLS on the users table join
+            # (RLS on users only allows seeing own record, but we need
+            # to see the job owner's name). Authorization is handled by
+            # the WHERE clause filtering on current_user_id.
+            async with get_admin_session() as session:
                 # Get jobs shared with current user
                 stmt = (
                     select(Job, User, JobShare)
