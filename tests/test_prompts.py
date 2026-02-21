@@ -1,17 +1,8 @@
 """Tests for prompts module."""
 
-import hashlib
-from unittest.mock import MagicMock
-
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from shandy.database.models import Skill
 from shandy.prompts import (
     build_discovery_prompt,
-    format_skills_content,
     format_skills_list,
-    get_relevant_skills,
     get_system_prompt,
 )
 
@@ -19,15 +10,13 @@ from shandy.prompts import (
 class TestGetSystemPrompt:
     """Tests for system prompt generation."""
 
-    def test_skills_enabled_mentions_search_skills(self):
+    def test_skills_enabled_mentions_claude_skills_dir(self):
         prompt = get_system_prompt(skills_enabled=True)
-        assert "search_skills" in prompt
-        assert "hypothesis-generation" in prompt
+        assert ".claude/skills/" in prompt
 
-    def test_skills_disabled_no_search_skills(self):
+    def test_skills_disabled_no_claude_skills_dir(self):
         prompt = get_system_prompt(skills_enabled=False)
-        assert "search_skills" not in prompt
-        assert "hypothesis-generation" not in prompt
+        assert ".claude/skills/" not in prompt
 
     def test_both_prompts_mention_execute_code(self):
         for skills in (True, False):
@@ -139,136 +128,3 @@ class TestFormatSkillsList:
         skills = {"my-skill": {}}
         result = format_skills_list(skills)
         assert "No description" in result
-
-
-class TestFormatSkillsContent:
-    """Tests for format_skills_content function."""
-
-    def test_empty_skills(self):
-        result = format_skills_content([])
-        assert result == ""
-
-    def test_single_skill(self):
-        skill = MagicMock(spec=Skill)
-        skill.name = "Test Skill"
-        skill.category = "test-category"
-        skill.description = "A test skill"
-        skill.content = "# Skill Content\nThis is the content."
-
-        result = format_skills_content([skill])
-        assert "Domain-Specific Skills" in result
-        assert "Test Skill" in result
-        assert "test-category" in result.lower()
-        assert "A test skill" in result
-        assert "Skill Content" in result
-
-    def test_multiple_categories(self):
-        skill1 = MagicMock(spec=Skill)
-        skill1.name = "Skill A"
-        skill1.category = "alpha"
-        skill1.description = "Skill A desc"
-        skill1.content = "Content A"
-
-        skill2 = MagicMock(spec=Skill)
-        skill2.name = "Skill B"
-        skill2.category = "beta"
-        skill2.description = "Skill B desc"
-        skill2.content = "Content B"
-
-        result = format_skills_content([skill1, skill2])
-        assert "Alpha Skills" in result
-        assert "Beta Skills" in result
-        assert "Skill A" in result
-        assert "Skill B" in result
-
-
-class TestGetRelevantSkills:
-    """Tests for get_relevant_skills function (requires database)."""
-
-    @pytest.fixture
-    async def skill_fixture(self, db_session: AsyncSession) -> Skill:
-        """Create a test skill with search vector."""
-        from sqlalchemy import text
-
-        skill = Skill(
-            name="Metabolomics Analysis",
-            slug="metabolomics-analysis",
-            category="data-science",
-            description="Statistical analysis of metabolomics data",
-            content="# Metabolomics Analysis\n\nGuide for analyzing metabolomics data.",
-            tags=["metabolomics", "statistics"],
-            content_hash=hashlib.sha256(b"test").hexdigest(),
-            is_enabled=True,
-        )
-        db_session.add(skill)
-        await db_session.commit()
-
-        # Update search vector manually (normally done by trigger)
-        await db_session.execute(
-            text(
-                """
-                UPDATE skills SET search_vector = to_tsvector('english',
-                    coalesce(name, '') || ' ' || coalesce(description, '') || ' ' || coalesce(content, ''))
-                WHERE id = :id
-                """
-            ),
-            {"id": str(skill.id)},
-        )
-        await db_session.commit()
-        await db_session.refresh(skill)
-        return skill
-
-    async def test_finds_matching_skill(self, db_session: AsyncSession, skill_fixture: Skill):
-        """Test that full-text search finds matching skills."""
-        skills = await get_relevant_skills(
-            db_session,
-            "metabolomics statistical analysis",
-            limit=5,
-        )
-        assert len(skills) >= 1
-        assert any(s.name == "Metabolomics Analysis" for s in skills)
-
-    async def test_falls_back_to_all_enabled(self, db_session: AsyncSession):
-        """Test fallback when no search matches."""
-        # Create a skill with no matching search terms
-        skill = Skill(
-            name="Unrelated Skill",
-            slug="unrelated",
-            category="misc",
-            description="Something unrelated",
-            content="Content here",
-            tags=[],
-            content_hash=hashlib.sha256(b"unrelated").hexdigest(),
-            is_enabled=True,
-        )
-        db_session.add(skill)
-        await db_session.commit()
-
-        # Search for something that won't match
-        skills = await get_relevant_skills(
-            db_session,
-            "xyzzy quantum flux capacitor",
-            limit=5,
-        )
-        # Should fall back to enabled skills
-        assert len(skills) >= 1
-
-    async def test_respects_limit(self, db_session: AsyncSession):
-        """Test that limit parameter is respected."""
-        # Create multiple skills
-        for i in range(10):
-            skill = Skill(
-                name=f"Test Skill {i}",
-                slug=f"test-skill-{i}",
-                category="test",
-                description=f"Test description {i}",
-                content=f"Test content {i}",
-                tags=[],
-                content_hash=hashlib.sha256(f"test{i}".encode()).hexdigest(),
-                is_enabled=True,
-            )
-            db_session.add(skill)
-        await db_session.commit()
-
-        skills = await get_relevant_skills(db_session, "test", limit=3)
-        assert len(skills) <= 3

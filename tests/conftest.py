@@ -7,18 +7,8 @@ import tempfile
 from pathlib import Path
 from typing import AsyncGenerator, Generator
 
-# Set up test environment variables BEFORE any shandy imports
-# This prevents settings validation errors during test collection
-if "CLAUDE_PROVIDER" not in os.environ or os.environ.get("CLAUDE_PROVIDER") == "cborg":
-    os.environ["CLAUDE_PROVIDER"] = "anthropic"
-if "ANTHROPIC_API_KEY" not in os.environ:
-    os.environ["ANTHROPIC_API_KEY"] = "test-api-key-for-testing"
-
 import pytest
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
-
-# Re-export enable_rls from helpers for backward compatibility
-from tests.helpers import enable_rls as enable_rls  # noqa: F401
 
 
 @pytest.fixture
@@ -63,14 +53,12 @@ from shandy.database.models import (  # noqa: E402
     User,
 )
 
-# Set up encryption key for tests (required for EncryptedText columns)
-# This must be done before any database operations that use encrypted fields
-if "TOKEN_ENCRYPTION_KEY" not in os.environ:
-    from shandy.database import crypto
-
-    os.environ["TOKEN_ENCRYPTION_KEY"] = crypto.generate_key()
-    # Clear the cached Fernet instance so it picks up the new key
-    crypto._get_fernet.cache_clear()
+# Set up required env vars for Settings validation at import time.
+# The real DATABASE_URL comes from the testcontainer later.
+if "SHANDY_SECRET_KEY" not in os.environ:
+    os.environ["SHANDY_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
+if "DATABASE_URL" not in os.environ:
+    os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
 
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()
@@ -162,20 +150,6 @@ def _apply_migrations_once(test_database_url: str) -> None:
 
     # Create app and admin roles
     asyncio.run(_setup_roles())
-
-
-@pytest.fixture
-def clear_settings():
-    """Fixture to clear settings cache before and after test.
-
-    Use this fixture in tests that need to patch environment variables
-    and have the settings reload with new values.
-    """
-    from shandy.settings import clear_settings_cache
-
-    clear_settings_cache()
-    yield
-    clear_settings_cache()
 
 
 def _apply_alembic_migrations(database_url: str) -> None:
@@ -451,34 +425,6 @@ def temp_jobs_dir(temp_dir: Path) -> Path:
     jobs_dir = temp_dir / "jobs"
     jobs_dir.mkdir()
     return jobs_dir
-
-
-@pytest.fixture
-def sample_job_config() -> dict:
-    """Sample job configuration for testing."""
-    return {
-        "job_id": "test_job_123",
-        "research_question": "Test research question",
-        "provider": "mock",
-        "model": "mock-model",
-        "coinvestigate": False,
-        "status": "pending",
-        "created_at": "2026-02-05T10:00:00",
-    }
-
-
-@pytest.fixture
-def sample_knowledge_state() -> dict:
-    """Sample knowledge state for testing."""
-    return {
-        "research_question": "Test research question",
-        "iterations": [],
-        "current_iteration": 0,
-        "status": "pending",
-        "plots": [],
-        "literature": [],
-        "datasets": [],
-    }
 
 
 # =============================================================================

@@ -1,7 +1,6 @@
 """Tests for database encryption utilities."""
 
-import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +11,16 @@ from shandy.database.crypto import (
     encryption_available,
     generate_key,
 )
-from shandy.settings import clear_settings_cache
+
+
+def _patch_encryption_key(key: str | None):
+    """Return a context manager that patches the token_encryption_key setting."""
+    from shandy.database import crypto
+
+    crypto._get_fernet.cache_clear()
+    mock_settings = MagicMock()
+    mock_settings.auth.token_encryption_key = key
+    return patch("shandy.database.crypto.get_settings", return_value=mock_settings)
 
 
 class TestEncryptionAvailable:
@@ -20,13 +28,15 @@ class TestEncryptionAvailable:
 
     def test_available_when_key_set(self):
         """Encryption is available when key is configured."""
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": generate_key()}):
-            # Clear both settings and Fernet caches
-            clear_settings_cache()
-            from shandy.database import crypto
+        from shandy.database import crypto
 
-            crypto._get_fernet.cache_clear()
-            assert encryption_available() is True
+        crypto._get_fernet.cache_clear()
+        assert encryption_available() is True
+
+    def test_unavailable_when_no_key(self):
+        """Encryption is unavailable when key is None."""
+        with _patch_encryption_key(None):
+            assert encryption_available() is False
 
 
 class TestEncryptDecrypt:
@@ -35,15 +45,11 @@ class TestEncryptDecrypt:
     @pytest.fixture(autouse=True)
     def setup_encryption_key(self):
         """Set up a test encryption key for each test."""
-        test_key = generate_key()
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": test_key}):
-            clear_settings_cache()
-            from shandy.database import crypto
+        from shandy.database import crypto
 
-            crypto._get_fernet.cache_clear()
-            yield
-            crypto._get_fernet.cache_clear()
-        clear_settings_cache()
+        crypto._get_fernet.cache_clear()
+        yield
+        crypto._get_fernet.cache_clear()
 
     def test_encrypt_decrypt_roundtrip(self):
         """Encrypted data can be decrypted back to original."""
@@ -75,13 +81,8 @@ class TestEncryptDecrypt:
         plaintext = "secret-token"
         encrypted = encrypt(plaintext)
 
-        # Change to different key
-        from shandy.database import crypto
-
-        crypto._get_fernet.cache_clear()
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": generate_key()}):
-            clear_settings_cache()
-            crypto._get_fernet.cache_clear()
+        # Switch to a different key
+        with _patch_encryption_key(generate_key()):
             with pytest.raises(EncryptionError, match="invalid token"):
                 decrypt(encrypted)
 
@@ -124,10 +125,7 @@ class TestGenerateKey:
     def test_generated_key_works_for_encryption(self):
         """Generated key can be used for encryption."""
         key = generate_key()
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": key}):
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
+        with _patch_encryption_key(key):
             encrypted = encrypt("test-data")
             decrypted = decrypt(encrypted)
             assert decrypted == "test-data"
@@ -138,11 +136,7 @@ class TestDerivedKey:
 
     def test_arbitrary_string_as_key(self):
         """Arbitrary string is derived into valid key."""
-        # Use a passphrase instead of proper Fernet key
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": "my-secret-passphrase-123"}):
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
+        with _patch_encryption_key("my-secret-passphrase-123"):
             assert encryption_available() is True
             encrypted = encrypt("test-token")
             decrypted = decrypt(encrypted)
@@ -152,16 +146,9 @@ class TestDerivedKey:
         """Same passphrase derives to same key (deterministic)."""
         passphrase = "consistent-passphrase"
 
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": passphrase}):
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
+        with _patch_encryption_key(passphrase):
             encrypted = encrypt("data")
 
-        # Clear and re-derive with same passphrase
-        with patch.dict(os.environ, {"TOKEN_ENCRYPTION_KEY": passphrase}):
-            from shandy.database import crypto
-
-            crypto._get_fernet.cache_clear()
+        with _patch_encryption_key(passphrase):
             decrypted = decrypt(encrypted)
             assert decrypted == "data"

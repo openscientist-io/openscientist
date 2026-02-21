@@ -611,6 +611,22 @@ wheels = [
 ]
 
 [[package]]
+name = "claude-agent-sdk"
+version = "0.1.37"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "mcp" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/12/c5b09c7fe50cc54bf3a4316059c0e2fb7653fb739f6fb35c9a2e8a363493/claude_agent_sdk-0.1.37.tar.gz", hash = "sha256:5a021582b8b44ca735415b85a2dd8732490f22bc3d51452ede82d7f2db4ee592", size = 61610, upload-time = "2026-02-16T21:50:42.115Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/51/61/fdc15695a89cc1f3c4b0e0d714593e00a89094b95fc5dcbec6972a602197/claude_agent_sdk-0.1.37-py3-none-macosx_11_0_arm64.whl", hash = "sha256:c810592bfb2927ba619d01c5588ead0c052452a51052a548fda885ca0dbca7ab", size = 54799463, upload-time = "2026-02-16T21:50:28.258Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/3f/8057bd6f2dc6a077c32b9065336ced45c18aff602575c656b492b95b2428/claude_agent_sdk-0.1.37-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:61e821ba330ffc66fe9870c1ae3a76b05f69ac47da4446928ca6fe0569e1d42e", size = 69543239, upload-time = "2026-02-16T21:50:31.642Z" },
+    { url = "https://files.pythonhosted.org/packages/d0/7f/d13c843edea7418747127dc5d511968c5f83709737e296e54be40098299e/claude_agent_sdk-0.1.37-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:9814fbf52dd6a3aa070da023187184cf6fc679e88d8b3fd69d72dac55f8cc319", size = 70142154, upload-time = "2026-02-16T21:50:35.353Z" },
+    { url = "https://files.pythonhosted.org/packages/62/37/4ef55c5202246ac7c9319bc0b11896be5fd976051eff35109b95a039b76f/claude_agent_sdk-0.1.37-py3-none-win_amd64.whl", hash = "sha256:0934f5eba7598b613ce386cc57b985c7a9f6f1c4a1fba94e587ad84130374258", size = 72673142, upload-time = "2026-02-16T21:50:39.531Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3956,6 +3972,7 @@ dependencies = [
     { name = "azure-mgmt-costmanagement" },
     { name = "bcrypt" },
     { name = "boto3" },
+    { name = "claude-agent-sdk" },
     { name = "docker" },
     { name = "fpdf2" },
     { name = "google-cloud-bigquery" },
@@ -3983,6 +4000,7 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "slowapi" },
+    { name = "sparqlwrapper" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "statsmodels" },
     { name = "typing-extensions" },
@@ -4034,6 +4052,7 @@ requires-dist = [
     { name = "azure-mgmt-costmanagement", specifier = ">=4.0.0" },
     { name = "bcrypt", specifier = ">=4.0.0" },
     { name = "boto3", specifier = ">=1.34.0" },
+    { name = "claude-agent-sdk", specifier = ">=0.1.37" },
     { name = "docker", specifier = ">=7.0.0" },
     { name = "fpdf2", specifier = ">=2.7.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.11.0" },
@@ -4068,6 +4087,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.0" },
     { name = "seaborn", specifier = ">=0.12.0" },
     { name = "slowapi", specifier = ">=0.1.9" },
+    { name = "sparqlwrapper", specifier = ">=2.0.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
     { name = "statsmodels", specifier = ">=0.14.0" },
     { name = "types-fpdf2", marker = "extra == 'dev'", specifier = ">=2.7.0" },
@@ -4147,6 +4167,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a2/87/a6771e1546d97e7e041b6ae58d80074f81b7d5121207425c964ddf5cfdbd/sniffio-1.3.1.tar.gz", hash = "sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc", size = 20372, upload-time = "2024-02-25T23:20:04.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e9/44/75a9c9421471a6c4805dbf2356f7c181a29c1879239abab1ea2cc8f38b40/sniffio-1.3.1-py3-none-any.whl", hash = "sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2", size = 10235, upload-time = "2024-02-25T23:20:01.196Z" },
+]
+
+[[package]]
+name = "sparqlwrapper"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "rdflib" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4e/cc/453752fffa759ef41a3ceadb3f167e13dae1a74c1db057d9f6a7affa9240/SPARQLWrapper-2.0.0.tar.gz", hash = "sha256:3fed3ebcc77617a4a74d2644b86fd88e0f32e7f7003ac7b2b334c026201731f1", size = 98429, upload-time = "2022-03-13T23:14:00.671Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/89/176e3db96e31e795d7dfd91dd67749d3d1f0316bb30c6931a6140e1a0477/SPARQLWrapper-2.0.0-py3-none-any.whl", hash = "sha256:c99a7204fff676ee28e6acef327dc1ff8451c6f7217dcd8d49e8872f324a8a20", size = 28620, upload-time = "2022-03-13T23:13:58.969Z" },
 ]
 
 [[package]]

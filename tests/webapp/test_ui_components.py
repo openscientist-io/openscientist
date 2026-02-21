@@ -50,7 +50,7 @@ class TestGetStatusBadgeProps:
     def test_running_status(self):
         """Test badge props for running status."""
         props = get_status_badge_props(JobStatus.RUNNING)
-        assert props["color"] == "yellow"
+        assert props["color"] == "teal"
         assert props["icon"] == "▶"
         assert props["text"] == "running"
 
@@ -82,7 +82,7 @@ class TestGetStatusBadgeProps:
         props = get_status_badge_props(JobStatus.AWAITING_FEEDBACK)
         assert props["color"] == "orange"
         assert props["icon"] == "⏸"
-        assert props["text"] == "awaiting_feedback"
+        assert props["text"] == "awaiting feedback"
 
     def test_props_structure(self):
         """Test that props dict has all required keys."""
@@ -141,7 +141,7 @@ class TestRenderStatusCellSlot:
         template = render_status_cell_slot()
         assert 'color="red"' in template  # Failed
         assert 'color="green"' in template  # Completed
-        assert 'color="yellow"' in template  # Running
+        assert 'color="teal"' in template  # Running
         assert 'color="blue"' in template  # Queued
         assert 'color="orange"' in template  # Awaiting feedback
         assert 'color="grey"' in template  # Cancelled/default

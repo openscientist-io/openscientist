@@ -48,27 +48,22 @@ class StubProvider(BaseProvider):
 
     async def send_message(
         self,
-        messages: List[dict[str, str]],
+        messages: list[dict[str, str]],
         system: str | None = None,
         model: str | None = None,
         max_tokens: int = 4096,
     ) -> str:
-        return "stub response"
+        raise NotImplementedError("StubProvider does not send messages")
 
     async def send_message_with_tools(
         self,
-        messages: List[dict[str, Any]],
-        tools: List[dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         system: str | None = None,
         model: str | None = None,
         max_tokens: int = 4096,
     ) -> dict[str, Any]:
-        return {
-            "stop_reason": "end_turn",
-            "content": [{"type": "text", "text": "stub response"}],
-            "model": "stub-model",
-            "usage": {"input_tokens": 0, "output_tokens": 0},
-        }
+        raise NotImplementedError("StubProvider does not send messages")
 
 
 # ─── Tests ────────────────────────────────────────────────────────────
@@ -138,8 +133,8 @@ class TestGetProvider:
         with pytest.raises(ValueError, match="Unknown provider"):
             get_provider()
 
-    def test_defaults_to_cborg(self, monkeypatch, tmp_path):
-        """Without CLAUDE_PROVIDER, defaults to cborg (which may fail validation)."""
+    def test_defaults_to_anthropic(self, monkeypatch, tmp_path):
+        """Without CLAUDE_PROVIDER, defaults to anthropic (which may fail validation)."""
         # Change to temp dir to avoid .env file
         monkeypatch.chdir(tmp_path)
 
@@ -148,9 +143,8 @@ class TestGetProvider:
             if key.startswith(("CLAUDE_", "ANTHROPIC_", "AWS_", "GOOGLE_", "GCP_", "VERTEX_")):
                 monkeypatch.delenv(key, raising=False)
 
-        # We don't set ANTHROPIC_AUTH_TOKEN, so cborg validation will fail—
-        # but the factory still routes to cborg.
-        with pytest.raises(ValueError, match="cborg|ANTHROPIC_AUTH_TOKEN"):
+        # No ANTHROPIC_API_KEY → AnthropicProvider.__init__ raises.
+        with pytest.raises(ValueError, match="Anthropic|ANTHROPIC_API_KEY"):
             get_provider()
 
 
@@ -283,3 +277,130 @@ class TestCheckBudgetLimits:
         result = provider.check_budget_limits()
         assert result["can_proceed"] is True
         assert any("Could not check" in w for w in result["warnings"])
+
+
+# ─── check_provider_config ────────────────────────────────────────────
+
+
+class TestCheckProviderConfig:
+    """Tests for check_provider_config()."""
+
+    def setup_method(self):
+        clear_settings_cache()
+
+    def teardown_method(self):
+        clear_settings_cache()
+
+    @patch.dict(os.environ, {"SIMULATE_PROVIDER_ERROR": "true"})
+    def test_simulate_error(self):
+        from shandy.providers import check_provider_config
+
+        ok, name, errors = check_provider_config()
+        assert ok is False
+        assert name == "anthropic"
+        assert len(errors) == 2
+        assert any("ANTHROPIC_API_KEY" in e for e in errors)
+
+    @patch.dict(os.environ, {"CLAUDE_PROVIDER": "totally_bogus"})
+    def test_unknown_provider(self):
+        from shandy.providers import check_provider_config
+
+        ok, name, errors = check_provider_config()
+        assert ok is False
+        assert name == "totally_bogus"
+        assert any("Unknown provider" in e for e in errors)
+
+    @patch.dict(
+        os.environ,
+        {
+            "CLAUDE_PROVIDER": "anthropic",
+            "ANTHROPIC_API_KEY": "sk-test-valid",
+        },
+    )
+    def test_valid_anthropic(self):
+        from shandy.providers import check_provider_config
+
+        ok, name, errors = check_provider_config()
+        assert ok is True
+        assert name == "anthropic"
+        assert errors == []
+
+    @patch.dict(
+        os.environ,
+        {
+            "CLAUDE_PROVIDER": "cborg",
+            "ANTHROPIC_AUTH_TOKEN": "tok",
+            "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+        },
+    )
+    def test_valid_cborg(self):
+        from shandy.providers import check_provider_config
+
+        ok, name, errors = check_provider_config()
+        assert ok is True
+        assert name == "cborg"
+        assert errors == []
+
+
+class TestGetProviderAllNames:
+    """Tests for get_provider() with each valid provider name."""
+
+    def setup_method(self):
+        clear_settings_cache()
+
+    def teardown_method(self):
+        clear_settings_cache()
+
+    @patch.dict(
+        os.environ,
+        {"CLAUDE_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "sk-test"},
+    )
+    def test_anthropic(self):
+        provider = get_provider()
+        assert provider.name == "Anthropic"
+
+    @patch.dict(
+        os.environ,
+        {
+            "CLAUDE_PROVIDER": "cborg",
+            "ANTHROPIC_AUTH_TOKEN": "tok",
+            "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+        },
+    )
+    def test_cborg(self):
+        provider = get_provider()
+        assert provider.name == "CBORG"
+
+    @patch.dict(
+        os.environ,
+        {
+            "CLAUDE_PROVIDER": "bedrock",
+            "AWS_REGION": "us-east-1",
+            "AWS_ACCESS_KEY_ID": "test",
+            "AWS_SECRET_ACCESS_KEY": "secret",
+        },
+    )
+    def test_bedrock(self):
+        provider = get_provider()
+        assert provider.name == "AWS Bedrock"
+
+    def test_vertex(self, tmp_path):
+        creds = tmp_path / "creds.json"
+        creds.write_text('{"type": "service_account"}')
+        with patch.dict(
+            os.environ,
+            {
+                "CLAUDE_PROVIDER": "vertex",
+                "ANTHROPIC_VERTEX_PROJECT_ID": "proj",
+                "GOOGLE_APPLICATION_CREDENTIALS": str(creds),
+                "GCP_BILLING_ACCOUNT_ID": "012345-ABCDEF",
+                "CLOUD_ML_REGION": "us-east5",
+            },
+        ):
+            provider = get_provider()
+            assert provider.name == "Vertex AI"
+
+    @patch.dict(os.environ, {"CLAUDE_PROVIDER": "unknown_xyz"})
+    def test_unknown_raises_with_valid_options(self):
+        with pytest.raises(ValueError, match="Valid options"):
+            get_provider()

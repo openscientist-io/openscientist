@@ -1,7 +1,7 @@
 """
 Tests for skill database models.
 
-Tests Skill, SkillSource, and JobSkill models including relationships and constraints.
+Tests Skill and SkillSource models including relationships and constraints.
 """
 
 import pytest
@@ -51,12 +51,11 @@ async def test_skill_unique_category_slug(
         content_hash="different_hash",
         is_enabled=True,
     )
-    db_session.add(duplicate_skill)
 
     with pytest.raises(IntegrityError):
-        await db_session.commit()
-
-    await db_session.rollback()
+        async with db_session.begin_nested():
+            db_session.add(duplicate_skill)
+            await db_session.flush()
 
 
 @pytest.mark.asyncio

@@ -65,13 +65,9 @@ class TestSetupPhenixEnv:
     """Tests for Phenix environment setup."""
 
     def test_no_phenix_path_returns_none(self):
-        # Need to keep CLAUDE_PROVIDER and ANTHROPIC_API_KEY for settings validation
         with patch.dict(
             os.environ,
-            {
-                "CLAUDE_PROVIDER": "anthropic",
-                "ANTHROPIC_API_KEY": "test-key",
-            },
+            {"SHANDY_SECRET_KEY": "test", "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x"},
             clear=True,
         ):
             clear_settings_cache()
@@ -90,7 +86,7 @@ class TestSetupPhenixEnv:
         # So we test that without PHENIX_PATH set, setup returns None
         with patch.dict(
             os.environ,
-            {"CLAUDE_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "test"},
+            {"SHANDY_SECRET_KEY": "test", "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x"},
             clear=True,
         ):
             clear_settings_cache()
@@ -203,9 +199,6 @@ class TestCheckPhenixAvailable:
         clear_settings_cache()
         monkeypatch.chdir(tmp_path)  # Avoid picking up .env
         monkeypatch.setenv("PHENIX_PATH", str(phenix_dir))
-        # Set minimal provider config to avoid validation errors
-        monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
         assert check_phenix_available() is True
 
@@ -218,9 +211,6 @@ class TestCheckPhenixAvailable:
         clear_settings_cache()
         monkeypatch.chdir(tmp_path)  # Avoid picking up .env
         monkeypatch.delenv("PHENIX_PATH", raising=False)
-        # Set minimal provider config to avoid validation errors
-        monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
         assert check_phenix_available() is False
 

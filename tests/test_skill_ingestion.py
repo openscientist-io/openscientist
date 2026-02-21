@@ -420,6 +420,135 @@ Access PubChem compound data.
 
         await ingester.close()
 
+    @pytest.mark.asyncio
+    async def test_sync_skips_when_commit_sha_unchanged(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Test that sync short-circuits when commit SHA is unchanged."""
+        ingester = GitHubSkillIngester()
+
+        source = SkillSource(
+            name="Cached Source",
+            source_type="github",
+            url="https://github.com/owner/repo",
+            branch="main",
+            skills_path="skills",
+            is_enabled=True,
+            last_commit_sha="abc123def456",
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        with patch.object(ingester, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"sha": "abc123def456"}
+            mock_response.raise_for_status = MagicMock()
+            mock_client.get.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            stats = await ingester.sync_source(db_session, source)
+
+            assert stats["skipped_reason"] == "commit_unchanged"
+            assert stats["created"] == 0
+            assert stats["updated"] == 0
+            # Only 1 API call (commit check), no tree listing or file downloads
+            assert mock_client.get.call_count == 1
+
+        await ingester.close()
+
+    @pytest.mark.asyncio
+    async def test_sync_force_bypasses_sha_check(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Test that force=True bypasses the commit SHA short-circuit."""
+        ingester = GitHubSkillIngester()
+
+        source = SkillSource(
+            name="Forced Source",
+            source_type="github",
+            url="https://github.com/owner/repo",
+            branch="main",
+            skills_path="skills",
+            is_enabled=True,
+            last_commit_sha="abc123def456",
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        mock_tree: dict[str, list[str]] = {"tree": []}  # Empty tree, no skill files
+
+        def mock_get_response(url, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            if "commits" in url:
+                response.json.return_value = {"sha": "abc123def456"}
+            elif "trees" in url:
+                response.json.return_value = mock_tree
+            return response
+
+        with patch.object(ingester, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = mock_get_response
+            mock_get_client.return_value = mock_client
+
+            stats = await ingester.sync_source(db_session, source, force=True)
+
+            assert "skipped_reason" not in stats
+            # 2 API calls: commit check + tree listing
+            assert mock_client.get.call_count == 2
+
+        await ingester.close()
+
+    @pytest.mark.asyncio
+    async def test_sync_proceeds_when_commit_sha_changed(
+        self,
+        db_session: AsyncSession,
+    ):
+        """Test that sync proceeds when commit SHA differs from stored."""
+        ingester = GitHubSkillIngester()
+
+        source = SkillSource(
+            name="Changed Source",
+            source_type="github",
+            url="https://github.com/owner/repo",
+            branch="main",
+            skills_path="skills",
+            is_enabled=True,
+            last_commit_sha="old_sha_000",
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        mock_tree: dict[str, list[str]] = {"tree": []}  # Empty tree, no skill files
+
+        def mock_get_response(url, **kwargs):
+            response = MagicMock()
+            response.raise_for_status = MagicMock()
+            if "commits" in url:
+                response.json.return_value = {"sha": "new_sha_999"}
+            elif "trees" in url:
+                response.json.return_value = mock_tree
+            return response
+
+        with patch.object(ingester, "_get_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = mock_get_response
+            mock_get_client.return_value = mock_client
+
+            stats = await ingester.sync_source(db_session, source)
+
+            assert "skipped_reason" not in stats
+            # 2 API calls: commit check + tree listing
+            assert mock_client.get.call_count == 2
+
+        await ingester.close()
+
 
 class TestLocalSkillIngester:
     """Tests for LocalSkillIngester."""

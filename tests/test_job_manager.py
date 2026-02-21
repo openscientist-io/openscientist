@@ -1,7 +1,7 @@
 """Tests for job_manager module."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,7 @@ class TestJobStatus:
             "queued",
             "running",
             "awaiting_feedback",
+            "generating_report",
             "completed",
             "failed",
             "cancelled",
@@ -89,7 +90,7 @@ def _write_config(jobs_dir: Path, job_id: str, **overrides):
         "job_id": job_id,
         "research_question": "Test?",
         "status": "created",
-        "created_at": datetime.now().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "max_iterations": 10,
         "use_skills": True,
         "investigation_mode": "autonomous",
@@ -287,7 +288,7 @@ class TestJobManagerCleanup:
     """Tests for old job cleanup."""
 
     def test_cleanup_old_jobs(self, tmp_path):
-        old_date = (datetime.now() - timedelta(days=30)).isoformat()
+        old_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         _write_config(tmp_path, "old", status="failed", created_at=old_date)
         _write_config(tmp_path, "new", status="failed")
 
@@ -298,7 +299,7 @@ class TestJobManagerCleanup:
         assert (tmp_path / "new").exists()
 
     def test_cleanup_keeps_completed(self, tmp_path):
-        old_date = (datetime.now() - timedelta(days=30)).isoformat()
+        old_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         _write_config(tmp_path, "old_done", status="completed", created_at=old_date)
 
         manager = JobManager(jobs_dir=tmp_path)

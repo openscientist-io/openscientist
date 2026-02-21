@@ -383,12 +383,11 @@ async def test_cannot_share_same_job_twice_to_same_user(
         shared_with_user_id=test_user2.id,
         permission_level="edit",
     )
-    db_session.add(share2)
 
-    with pytest.raises(Exception):  # IntegrityError or similar
-        await db_session.commit()
-
-    await db_session.rollback()
+    with pytest.raises(Exception):  # IntegrityError from unique constraint
+        async with db_session.begin_nested():
+            db_session.add(share2)
+            await db_session.flush()
 
 
 @pytest.mark.asyncio

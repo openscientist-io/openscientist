@@ -27,25 +27,22 @@ class TestCborgProviderValidation:
             assert provider.name == "CBORG"
 
     def test_missing_token_raises(self):
-        with patch.dict(
-            os.environ,
-            {
-                "CLAUDE_PROVIDER": "cborg",
-                "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
-            },
-            clear=True,
-        ):
-            clear_settings_cache()
+        # Mock get_settings so .env file values don't leak in
+        mock_settings = MagicMock()
+        mock_settings.provider.anthropic_auth_token = None
+        mock_settings.provider.anthropic_base_url = "https://api.cborg.lbl.gov"
+        mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
+        with patch("shandy.providers.cborg.get_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="ANTHROPIC_AUTH_TOKEN"):
                 CborgProvider()
 
     def test_missing_base_url_raises(self):
-        with patch.dict(
-            os.environ,
-            {"CLAUDE_PROVIDER": "cborg", "ANTHROPIC_AUTH_TOKEN": "tok"},
-            clear=True,
-        ):
-            clear_settings_cache()
+        # Mock get_settings so .env file values don't leak in
+        mock_settings = MagicMock()
+        mock_settings.provider.anthropic_auth_token = "tok"
+        mock_settings.provider.anthropic_base_url = None
+        mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
+        with patch("shandy.providers.cborg.get_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="ANTHROPIC_BASE_URL"):
                 CborgProvider()
 

@@ -75,16 +75,10 @@ class TestGetCborgSpend:
     """Tests for CBORG API spend query."""
 
     def test_no_token_raises(self):
-        # Remove ANTHROPIC_AUTH_TOKEN but keep basic config
-        with patch.dict(
-            os.environ,
-            {
-                "CLAUDE_PROVIDER": "cborg",
-                "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
-            },
-            clear=True,
-        ):
-            clear_settings_cache()
+        # Mock get_settings so .env file values don't leak in
+        mock_settings = MagicMock()
+        mock_settings.provider.anthropic_auth_token = None
+        with patch("shandy.cost_tracker.get_settings", return_value=mock_settings):
             with pytest.raises(ValueError, match="ANTHROPIC_AUTH_TOKEN"):
                 get_cborg_spend()
 

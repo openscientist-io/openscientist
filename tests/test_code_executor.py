@@ -1,6 +1,8 @@
 """Tests for code_executor module."""
 
+import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -8,9 +10,13 @@ import pytest
 from shandy.code_executor import (
     ForbiddenImportError,
     execute_code,
+    execute_rust_code,
+    execute_sparql_code,
     format_execution_result,
     validate_imports,
 )
+
+rustc_available = pytest.mark.skipif(shutil.which("rustc") is None, reason="rustc not installed")
 
 # ─── validate_imports ─────────────────────────────────────────────────
 
@@ -168,6 +174,141 @@ plt.show()
         assert result["success"] is True
         # New plot should be plot_6.png, not plot_1.png
         assert (plots_dir / "plot_6.png").exists()
+
+
+# ─── execute_rust_code ────────────────────────────────────────────────
+
+
+class TestExecuteRustCode:
+    """Tests for Rust code compilation and execution."""
+
+    @pytest.fixture
+    def plots_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "plots"
+        d.mkdir()
+        return d
+
+    def test_rustc_not_found_returns_error(self, plots_dir):
+        with patch("subprocess.run", side_effect=FileNotFoundError):
+            result = execute_rust_code('fn main() { println!("hi"); }', plots_dir)
+        assert result["success"] is False
+        assert "not found" in result["error"]
+        assert result["plots"] == []
+
+    @rustc_available
+    def test_hello_world(self, plots_dir):
+        code = 'fn main() { println!("hello from rust"); }'
+        result = execute_rust_code(code, plots_dir)
+        assert result["success"] is True
+        assert "hello from rust" in result["output"]
+        assert result["plots"] == []
+
+    @rustc_available
+    def test_compilation_error_captured(self, plots_dir):
+        result = execute_rust_code("fn main() { this is not rust }", plots_dir)
+        assert result["success"] is False
+        assert "Compilation error" in result["error"]
+
+    @rustc_available
+    def test_runtime_exit_code_nonzero(self, plots_dir):
+        code = "fn main() { std::process::exit(1); }"
+        result = execute_rust_code(code, plots_dir)
+        assert result["success"] is False
+        assert "exit" in result["error"].lower() or "1" in result["error"]
+
+    @rustc_available
+    def test_execution_time_tracked(self, plots_dir):
+        code = 'fn main() { println!("done"); }'
+        result = execute_rust_code(code, plots_dir)
+        assert result["success"] is True
+        assert result["execution_time"] >= 0.0
+
+    @rustc_available
+    def test_no_plots_produced(self, plots_dir):
+        code = 'fn main() { println!("no plots here"); }'
+        result = execute_rust_code(code, plots_dir)
+        assert result["plots"] == []
+
+
+# ─── execute_sparql_code ──────────────────────────────────────────────
+
+
+class TestExecuteSparqlCode:
+    """Tests for SPARQL query execution against remote endpoints."""
+
+    @pytest.fixture
+    def plots_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "plots"
+        d.mkdir()
+        return d
+
+    def test_missing_endpoint_returns_error(self, plots_dir):
+        query = "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1"
+        result = execute_sparql_code(query, plots_dir)
+        assert result["success"] is False
+        assert "ENDPOINT" in result["error"]
+        assert result["plots"] == []
+
+    def test_endpoint_parsed_case_insensitive(self, plots_dir):
+        """# endpoint: (lowercase) should also be accepted."""
+        sparql_json = {"head": {"vars": ["s"]}, "results": {"bindings": []}}
+        query = "# endpoint: https://example.org/sparql\nSELECT ?s WHERE { ?s ?p ?o }"
+        with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query.return_value.convert.return_value = sparql_json
+            result = execute_sparql_code(query, plots_dir)
+        assert result["success"] is True
+
+    def test_zero_results_message(self, plots_dir):
+        sparql_json = {"head": {"vars": ["item"]}, "results": {"bindings": []}}
+        query = "# ENDPOINT: https://example.org/sparql\nSELECT ?item WHERE { }"
+        with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query.return_value.convert.return_value = sparql_json
+            result = execute_sparql_code(query, plots_dir)
+        assert result["success"] is True
+        assert "0 results" in result["output"]
+
+    def test_results_formatted_as_table(self, plots_dir):
+        sparql_json = {
+            "head": {"vars": ["name", "value"]},
+            "results": {
+                "bindings": [
+                    {"name": {"value": "Alice"}, "value": {"value": "42"}},
+                    {"name": {"value": "Bob"}, "value": {"value": "7"}},
+                ]
+            },
+        }
+        query = "# ENDPOINT: https://example.org/sparql\nSELECT ?name ?value WHERE { }"
+        with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query.return_value.convert.return_value = sparql_json
+            result = execute_sparql_code(query, plots_dir)
+        assert result["success"] is True
+        assert "Alice" in result["output"]
+        assert "Bob" in result["output"]
+        assert "2 result(s)" in result["output"]
+        assert result["plots"] == []
+
+    def test_sparqlwrapper_exception_returns_error(self, plots_dir):
+        from SPARQLWrapper.SPARQLExceptions import SPARQLWrapperException
+
+        query = "# ENDPOINT: https://example.org/sparql\nSELECT ?s WHERE { }"
+        with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query.side_effect = SPARQLWrapperException("bad query")
+            result = execute_sparql_code(query, plots_dir)
+        assert result["success"] is False
+        assert "SPARQL query error" in result["error"]
+
+    def test_execution_time_tracked(self, plots_dir):
+        sparql_json = {"head": {"vars": []}, "results": {"bindings": []}}
+        query = "# ENDPOINT: https://example.org/sparql\nSELECT * WHERE { }"
+        with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
+            mock_instance = mock_cls.return_value
+            mock_instance.query.return_value.convert.return_value = sparql_json
+            result = execute_sparql_code(query, plots_dir)
+        assert result["execution_time"] >= 0.0
 
 
 # ─── format_execution_result ──────────────────────────────────────────

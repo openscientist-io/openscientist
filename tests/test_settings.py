@@ -1,5 +1,6 @@
 """Tests for centralized settings module."""
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -19,16 +20,23 @@ from shandy.settings import (
 
 
 class TestProviderSettings:
-    """Tests for provider configuration validation."""
+    """Tests for provider configuration validation.
 
-    def test_anthropic_requires_api_key(self):
-        """Anthropic provider requires ANTHROPIC_API_KEY."""
-        with pytest.raises(ValidationError) as exc_info:
-            ProviderSettings(
+    The provider validator is warn-only — missing credentials log a warning
+    but do not prevent the settings object from being constructed.  The
+    authoritative validation lives in each provider's ``__init__``.
+    """
+
+    def test_anthropic_missing_api_key_warns(self, caplog):
+        """Anthropic provider warns when no credentials are set."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(
                 CLAUDE_PROVIDER="anthropic",
                 ANTHROPIC_API_KEY=None,
+                CLAUDE_CODE_OAUTH_TOKEN=None,
             )
-        assert "ANTHROPIC_API_KEY" in str(exc_info.value)
+        assert settings.claude_provider == "anthropic"
+        assert "ANTHROPIC_API_KEY" in caplog.text
 
     def test_anthropic_valid_config(self):
         """Valid Anthropic configuration passes validation."""
@@ -39,24 +47,37 @@ class TestProviderSettings:
         assert settings.claude_provider == "anthropic"
         assert settings.anthropic_api_key == "sk-ant-test-key"
 
-    def test_cborg_requires_auth_token(self):
-        """CBORG provider requires ANTHROPIC_AUTH_TOKEN."""
-        with pytest.raises(ValidationError) as exc_info:
-            ProviderSettings(
+    def test_anthropic_valid_with_oauth_token(self, caplog):
+        """Anthropic provider accepts CLAUDE_CODE_OAUTH_TOKEN as alternative."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(
+                CLAUDE_PROVIDER="anthropic",
+                ANTHROPIC_API_KEY=None,
+                CLAUDE_CODE_OAUTH_TOKEN="oauth-token-value",
+            )
+        assert settings.claude_provider == "anthropic"
+        assert "ANTHROPIC_API_KEY" not in caplog.text
+
+    def test_cborg_missing_auth_token_warns(self, caplog):
+        """CBORG provider warns when ANTHROPIC_AUTH_TOKEN is missing."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(
                 CLAUDE_PROVIDER="cborg",
                 ANTHROPIC_AUTH_TOKEN=None,
             )
-        assert "ANTHROPIC_AUTH_TOKEN" in str(exc_info.value)
+        assert settings.claude_provider == "cborg"
+        assert "ANTHROPIC_AUTH_TOKEN" in caplog.text
 
-    def test_cborg_requires_base_url(self):
-        """CBORG provider requires ANTHROPIC_BASE_URL."""
-        with pytest.raises(ValidationError) as exc_info:
-            ProviderSettings(
+    def test_cborg_missing_base_url_warns(self, caplog):
+        """CBORG provider warns when ANTHROPIC_BASE_URL is missing."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(
                 CLAUDE_PROVIDER="cborg",
                 ANTHROPIC_AUTH_TOKEN="test-token",
                 ANTHROPIC_BASE_URL=None,
             )
-        assert "ANTHROPIC_BASE_URL" in str(exc_info.value)
+        assert settings.claude_provider == "cborg"
+        assert "ANTHROPIC_BASE_URL" in caplog.text
 
     def test_cborg_valid_config(self):
         """Valid CBORG configuration passes validation."""
@@ -67,47 +88,50 @@ class TestProviderSettings:
         )
         assert settings.claude_provider == "cborg"
 
-    def test_vertex_requires_project_id(self):
-        """Vertex AI provider requires project ID."""
+    def test_vertex_missing_project_id_warns(self, caplog):
+        """Vertex AI provider warns when project ID is missing."""
         with patch("os.path.exists", return_value=True):
-            with pytest.raises(ValidationError) as exc_info:
-                ProviderSettings(
+            with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+                settings = ProviderSettings(
                     CLAUDE_PROVIDER="vertex",
                     ANTHROPIC_VERTEX_PROJECT_ID=None,
                     GOOGLE_APPLICATION_CREDENTIALS="/path/to/creds.json",
                     GCP_BILLING_ACCOUNT_ID="123-456-789",
                     CLOUD_ML_REGION="us-east5",
                 )
-        assert "ANTHROPIC_VERTEX_PROJECT_ID" in str(exc_info.value)
+        assert settings.claude_provider == "vertex"
+        assert "ANTHROPIC_VERTEX_PROJECT_ID" in caplog.text
 
-    def test_vertex_requires_credentials_file(self):
-        """Vertex AI provider requires credentials file to exist."""
+    def test_vertex_missing_credentials_file_warns(self, caplog):
+        """Vertex AI provider warns when credentials file is missing."""
         with patch("os.path.exists", return_value=False):
-            with pytest.raises(ValidationError) as exc_info:
-                ProviderSettings(
+            with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+                settings = ProviderSettings(
                     CLAUDE_PROVIDER="vertex",
                     ANTHROPIC_VERTEX_PROJECT_ID="my-project",
                     GOOGLE_APPLICATION_CREDENTIALS="/nonexistent/creds.json",
                     GCP_BILLING_ACCOUNT_ID="123-456-789",
                     CLOUD_ML_REGION="us-east5",
                 )
-        assert "not found" in str(exc_info.value)
+        assert settings.claude_provider == "vertex"
+        assert "not found" in caplog.text
 
-    def test_bedrock_requires_region(self):
-        """Bedrock provider requires AWS_REGION."""
-        with pytest.raises(ValidationError) as exc_info:
-            ProviderSettings(
+    def test_bedrock_missing_region_warns(self, caplog):
+        """Bedrock provider warns when AWS_REGION is missing."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(
                 CLAUDE_PROVIDER="bedrock",
                 AWS_REGION=None,
                 AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE",
                 AWS_SECRET_ACCESS_KEY="secret",
             )
-        assert "AWS_REGION" in str(exc_info.value)
+        assert settings.claude_provider == "bedrock"
+        assert "AWS_REGION" in caplog.text
 
-    def test_bedrock_requires_credentials(self):
-        """Bedrock provider requires at least one credential method."""
-        with pytest.raises(ValidationError) as exc_info:
-            ProviderSettings(
+    def test_bedrock_missing_credentials_warns(self, caplog):
+        """Bedrock provider warns when no credential method is set."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(
                 CLAUDE_PROVIDER="bedrock",
                 AWS_REGION="us-east-1",
                 AWS_ACCESS_KEY_ID=None,
@@ -115,7 +139,8 @@ class TestProviderSettings:
                 AWS_PROFILE=None,
                 AWS_BEARER_TOKEN_BEDROCK=None,
             )
-        assert "credentials" in str(exc_info.value).lower()
+        assert settings.claude_provider == "bedrock"
+        assert "credentials" in caplog.text.lower()
 
     def test_bedrock_valid_with_access_key(self):
         """Bedrock with access key/secret is valid."""
@@ -136,52 +161,62 @@ class TestProviderSettings:
         )
         assert settings.claude_provider == "bedrock"
 
-    def test_unknown_provider_rejected(self):
-        """Unknown provider is rejected."""
-        with pytest.raises(ValidationError) as exc_info:
-            ProviderSettings(CLAUDE_PROVIDER="unknown-provider")
-        assert "Unknown provider" in str(exc_info.value)
+    def test_unknown_provider_warns(self, caplog):
+        """Unknown provider logs a warning (does not raise)."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(CLAUDE_PROVIDER="unknown-provider")
+        assert settings.claude_provider == "unknown-provider"
+        assert "Unknown provider" in caplog.text
 
     def test_codex_minimal_config(self):
         """Codex provider has minimal requirements."""
         settings = ProviderSettings(CLAUDE_PROVIDER="codex")
         assert settings.claude_provider == "codex"
 
+    def test_foundry_accepted_as_valid_provider(self, caplog):
+        """Foundry is a recognized provider with no warnings."""
+        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+            settings = ProviderSettings(CLAUDE_PROVIDER="foundry")
+        assert settings.claude_provider == "foundry"
+        assert caplog.text == ""
+
 
 class TestDatabaseSettings:
     """Tests for database configuration."""
 
-    def test_database_url_used_directly(self):
-        """DATABASE_URL is used directly if provided."""
+    def test_database_url_required(self, monkeypatch, tmp_path):
+        """DATABASE_URL is required."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("DATABASE_URL", raising=False)
+        with pytest.raises(ValidationError, match="DATABASE_URL"):
+            DatabaseSettings()
+
+    def test_effective_database_url(self):
+        """effective_database_url returns DATABASE_URL."""
         settings = DatabaseSettings(DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/db")
         assert settings.effective_database_url == "postgresql+asyncpg://user:pass@host:5432/db"
 
-    def test_database_url_constructed_from_components(self):
-        """Database URL is constructed from components when DATABASE_URL not set."""
-        settings = DatabaseSettings(
-            DATABASE_URL=None,
-            POSTGRES_HOST="localhost",
-            POSTGRES_PORT=5432,
-            POSTGRES_USER="shandy",
-            POSTGRES_PASSWORD="secret",
-            POSTGRES_DB="shandy_db",
-        )
-        expected = "postgresql+asyncpg://shandy:secret@localhost:5432/shandy_db"
-        assert settings.effective_database_url == expected
+    def test_admin_url_falls_back_to_database_url(self, monkeypatch, tmp_path):
+        """Admin URL falls back to DATABASE_URL when not set."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("ADMIN_DATABASE_URL", raising=False)
+        settings = DatabaseSettings(DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/db")
+        assert settings.effective_admin_database_url == settings.database_url
 
-    def test_database_requires_password_or_url(self):
-        """Either DATABASE_URL or POSTGRES_PASSWORD must be set."""
+    def test_admin_url_used_when_set(self, monkeypatch, tmp_path):
+        """Admin URL is used when explicitly set."""
+        monkeypatch.chdir(tmp_path)
         settings = DatabaseSettings(
-            DATABASE_URL=None,
-            POSTGRES_PASSWORD="",
+            DATABASE_URL="postgresql+asyncpg://user:pass@host:5432/db",
+            ADMIN_DATABASE_URL="postgresql+asyncpg://admin:pass@host:5432/db",
         )
-        with pytest.raises(ValueError) as exc_info:
-            _ = settings.effective_database_url
-        assert "DATABASE_URL" in str(exc_info.value)
+        assert (
+            settings.effective_admin_database_url == "postgresql+asyncpg://admin:pass@host:5432/db"
+        )
 
     def test_sql_echo_default_false(self):
         """SQL_ECHO defaults to False."""
-        settings = DatabaseSettings()
+        settings = DatabaseSettings(DATABASE_URL="postgresql+asyncpg://x:x@localhost/x")
         assert settings.sql_echo is False
 
 
@@ -222,11 +257,6 @@ class TestAuthSettings:
             GITHUB_CLIENT_SECRET="test-secret",
         )
         assert settings.github_client_id == "test-id"
-        assert settings.is_oauth_configured is True
-
-    def test_is_oauth_configured_with_mock_auth(self):
-        """Mock auth counts as OAuth configured."""
-        settings = AuthSettings(ENABLE_MOCK_AUTH=True)
         assert settings.is_oauth_configured is True
 
     def test_is_oauth_configured_false_when_none_set(self):
@@ -382,13 +412,7 @@ class TestGetSettings:
         """get_settings returns the same instance on multiple calls."""
         # Change to temp directory without .env file to avoid picking up project .env
         monkeypatch.chdir(tmp_path)
-
-        # Clear any env vars that might cause validation errors
         monkeypatch.delenv("PHENIX_PATH", raising=False)
-
-        # Set minimal valid config for anthropic provider
-        monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
         settings1 = get_settings()
         settings2 = get_settings()
@@ -398,13 +422,7 @@ class TestGetSettings:
         """clear_settings_cache allows settings to be reloaded."""
         # Change to temp directory without .env file to avoid picking up project .env
         monkeypatch.chdir(tmp_path)
-
-        # Clear any env vars that might cause validation errors
         monkeypatch.delenv("PHENIX_PATH", raising=False)
-
-        # Set minimal valid config for anthropic provider
-        monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
         settings1 = get_settings()
         clear_settings_cache()

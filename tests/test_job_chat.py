@@ -1,21 +1,24 @@
 """
 Tests for job chat functionality.
 
-Tests chat message creation, conversation history, and context loading.
+Tests chat message creation, conversation history, context loading,
+and executor error handling.
 """
 
 import json
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shandy.agent.protocol import IterationResult
 from shandy.database.models import Job, JobChatMessage, User
 from shandy.database.rls import set_current_user
-from shandy.job_chat import get_chat_history, load_job_context
+from shandy.job_chat import get_chat_history, load_job_context, send_chat_message
 from tests.helpers import enable_rls
 
 
@@ -408,3 +411,158 @@ async def test_chat_access_with_rls(
     # RLS should prevent access (assuming chat messages inherit job access)
     # Actual behavior depends on RLS policy implementation
     assert len(messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_success(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    """Test that send_chat_message stores messages and returns response."""
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+
+    mock_executor = AsyncMock()
+    mock_executor.run_iteration.return_value = IterationResult(
+        success=True,
+        output="The main findings indicate...",
+        tool_calls=0,
+        transcript=[],
+    )
+
+    with (
+        patch("shandy.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("shandy.providers.get_provider") as mock_get_provider,
+    ):
+        mock_get_provider.return_value.setup_environment.return_value = None
+
+        response = await send_chat_message(
+            db_session, test_job.id, "What are the main findings?", job_dir
+        )
+
+    assert response == "The main findings indicate..."
+
+    # Verify both messages were stored
+    history = await get_chat_history(db_session, test_job.id)
+    assert len(history) == 2
+    assert history[0].role == "user"
+    assert history[0].content == "What are the main findings?"
+    assert history[1].role == "assistant"
+    assert history[1].content == "The main findings indicate..."
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_raises_on_executor_failure(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    """Test that executor failure raises RuntimeError instead of returning empty string."""
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+
+    mock_executor = AsyncMock()
+    mock_executor.run_iteration.return_value = IterationResult(
+        success=False,
+        output="",
+        tool_calls=0,
+        transcript=[],
+        error="Process exited with code 1",
+    )
+
+    with (
+        patch("shandy.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("shandy.providers.get_provider") as mock_get_provider,
+    ):
+        mock_get_provider.return_value.setup_environment.return_value = None
+
+        with pytest.raises(RuntimeError, match="Process exited with code 1"):
+            await send_chat_message(db_session, test_job.id, "What are the main findings?", job_dir)
+
+    # Verify no messages were stored (commit never reached)
+    history = await get_chat_history(db_session, test_job.id)
+    assert len(history) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_raises_generic_on_empty_error(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    """Test that executor failure with no error message still raises."""
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+
+    mock_executor = AsyncMock()
+    mock_executor.run_iteration.return_value = IterationResult(
+        success=False,
+        output="",
+        tool_calls=0,
+        transcript=[],
+    )
+
+    with (
+        patch("shandy.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("shandy.providers.get_provider") as mock_get_provider,
+    ):
+        mock_get_provider.return_value.setup_environment.return_value = None
+
+        with pytest.raises(RuntimeError, match="Chat executor returned no output"):
+            await send_chat_message(db_session, test_job.id, "Hello", job_dir)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_does_not_include_job_context(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    """Test that the system prompt is small and doesn't embed job context."""
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+
+    # Write a large knowledge state that would blow up ARG_MAX if embedded
+    large_ks = {"findings": [{"content": "x" * 50000}]}
+    with open(job_dir / "knowledge_state.json", "w") as f:
+        json.dump(large_ks, f)
+
+    captured_system_prompt = None
+
+    class FakeExecutor:
+        def __init__(self, *, job_dir, data_file, system_prompt):
+            nonlocal captured_system_prompt
+            captured_system_prompt = system_prompt
+
+        async def run_iteration(self, prompt, *, reset_session=False):
+            return IterationResult(
+                success=True,
+                output="Response",
+                tool_calls=0,
+                transcript=[],
+            )
+
+        async def shutdown(self):
+            pass
+
+    with (
+        patch("shandy.agent.sdk_executor.SDKAgentExecutor", FakeExecutor),
+        patch("shandy.providers.get_provider") as mock_get_provider,
+    ):
+        mock_get_provider.return_value.setup_environment.return_value = None
+
+        await send_chat_message(db_session, test_job.id, "Summarize findings", job_dir)
+
+    # System prompt should be small — just instructions, not embedded context
+    assert captured_system_prompt is not None
+    assert len(captured_system_prompt) < 2000
+    # Should reference files, not embed them
+    assert "config.json" in captured_system_prompt
+    assert "knowledge_state.json" in captured_system_prompt
+    # Should NOT contain the large content
+    assert "x" * 1000 not in captured_system_prompt
