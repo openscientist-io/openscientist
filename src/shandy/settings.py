@@ -533,6 +533,7 @@ class Settings(BaseSettings):
 
     # Server settings
     port: int = Field(default=8080, alias="PORT")
+    max_concurrent_jobs: int = Field(default=1, alias="SHANDY_MAX_CONCURRENT_JOBS")
     base_url: str = Field(
         default="http://localhost:8080",
         alias="SHANDY_BASE_URL",

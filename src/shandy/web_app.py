@@ -245,7 +245,10 @@ def get_job_manager() -> JobManager:
     """
     if _state.job_manager is None:
         logger.warning("Job manager was None, initializing now (likely due to module reload)")
-        _state.job_manager = JobManager(jobs_dir=_state.jobs_dir, max_concurrent=1)
+        _state.job_manager = JobManager(
+            jobs_dir=_state.jobs_dir,
+            max_concurrent=get_settings().max_concurrent_jobs,
+        )
         # Add static file serving
         try:
             app.add_static_files("/jobs", str(_state.jobs_dir))
@@ -254,7 +257,7 @@ def get_job_manager() -> JobManager:
     return _state.job_manager
 
 
-def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
+def init_app(jobs_dir: Path = Path("jobs")):
     """Initialize the web application."""
     _state.jobs_dir = jobs_dir
 
@@ -354,7 +357,9 @@ def init_app(jobs_dir: Path = Path("jobs"), max_concurrent: int = 1):
         logger.error("Failed to initialize database: %s", e)
         logger.warning("Application will continue but database features may not work")
 
-    _state.job_manager = JobManager(jobs_dir=jobs_dir, max_concurrent=max_concurrent)
+    _state.job_manager = JobManager(
+        jobs_dir=jobs_dir, max_concurrent=get_settings().max_concurrent_jobs
+    )
 
     # Add static file serving for job plots
     app.add_static_files("/jobs", str(jobs_dir))

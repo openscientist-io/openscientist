@@ -187,6 +187,7 @@ uv run python tools/tile_screenshots.py \
 | `SHANDY_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
 | `CLAUDE_PROVIDER`      | No       | Provider name (default: anthropic)  |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
+| `SHANDY_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
 | `SHANDY_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
 
 ## Related Documentation
