@@ -272,14 +272,63 @@ def init_app(jobs_dir: Path = Path("jobs")):
         engine = get_engine()
 
         async def verify_db():
-            """Verify database connection and tables exist."""
+            """Verify database connection, tables, and RLS configuration."""
             from sqlalchemy import text
 
             try:
                 async with engine.begin() as conn:
                     # Simple query to verify connection
                     await conn.execute(text("SELECT 1"))
-                logger.info("Database connection verified")
+                    logger.info("Database connection verified")
+
+                    # Verify RLS is properly configured
+                    rls_result = await conn.execute(
+                        text(
+                            "SELECT relrowsecurity, relforcerowsecurity "
+                            "FROM pg_class WHERE relname = 'jobs'"
+                        )
+                    )
+                    rls_row = rls_result.first()
+                    if rls_row is None:
+                        logger.warning(
+                            "RLS CHECK: 'jobs' table not found — migrations may not have run"
+                        )
+                    elif not rls_row[0] or not rls_row[1]:
+                        logger.error(
+                            "RLS CHECK FAILED: jobs table has "
+                            "rowsecurity=%s, forcerowsecurity=%s — "
+                            "run 'alembic upgrade head' to fix",
+                            rls_row[0],
+                            rls_row[1],
+                        )
+                    else:
+                        logger.info("RLS CHECK: jobs table has RLS enabled and forced")
+
+                    # Verify shandy_app role exists and is not superuser
+                    role_result = await conn.execute(
+                        text(
+                            "SELECT rolsuper, rolbypassrls FROM pg_roles "
+                            "WHERE rolname = 'shandy_app'"
+                        )
+                    )
+                    role_row = role_result.first()
+                    if role_row is None:
+                        logger.error(
+                            "RLS CHECK FAILED: 'shandy_app' role does not exist — "
+                            "run 'alembic upgrade head' to create it"
+                        )
+                    elif role_row[0]:
+                        logger.error(
+                            "RLS CHECK FAILED: 'shandy_app' role is a SUPERUSER — "
+                            "this bypasses all RLS policies"
+                        )
+                    elif role_row[1]:
+                        logger.error(
+                            "RLS CHECK FAILED: 'shandy_app' role has BYPASSRLS — "
+                            "this bypasses all RLS policies"
+                        )
+                    else:
+                        logger.info("RLS CHECK: shandy_app role is correctly configured")
             except Exception as e:
                 logger.error("Database connection failed: %s", e)
                 logger.warning("Application will continue but database features may not work")
