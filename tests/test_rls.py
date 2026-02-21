@@ -478,3 +478,22 @@ def test_logout_uses_admin_session():
         "logout must use get_admin_session(), not get_session(). "
         "Session deletion requires cross-tenant access."
     )
+
+
+def test_set_app_role_must_not_swallow_errors():
+    """_set_app_role must raise if SET ROLE fails, never silently continue.
+
+    If _set_app_role catches exceptions (e.g. missing shandy_app role) and
+    continues, the session stays as superuser and ALL RLS is bypassed.
+    This is the exact bug that let users see each other's jobs.
+    """
+    import inspect
+
+    from shandy.database.session import _set_app_role
+
+    source = inspect.getsource(_set_app_role)
+    assert "except" not in source, (
+        "_set_app_role must NOT catch exceptions. A silent fallback to "
+        "superuser bypasses all RLS policies. If SET ROLE shandy_app fails, "
+        "the error must propagate so the request fails loudly."
+    )

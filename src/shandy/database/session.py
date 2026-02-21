@@ -124,22 +124,10 @@ async def _set_app_role(session: AsyncSession) -> None:
     the session becomes subject to RLS policies.
 
     This must be called on every new session before user-facing queries.
-
-    If the shandy_app role does not exist (e.g. database not yet migrated),
-    logs a warning and continues without RLS enforcement.
+    If the shandy_app role does not exist, this will raise — that's intentional.
+    A silent fallback to superuser would bypass all RLS.
     """
-    try:
-        await session.execute(text("SET ROLE shandy_app"))
-    except Exception as e:
-        logger.warning(
-            "Failed to SET ROLE shandy_app — RLS will NOT be enforced. "
-            "Create the role with: CREATE ROLE shandy_app NOLOGIN; "
-            "GRANT ALL ON ALL TABLES IN SCHEMA public TO shandy_app; "
-            "Error: %s",
-            e,
-        )
-        # Rollback the failed SET ROLE so the session is still usable
-        await session.rollback()
+    await session.execute(text("SET ROLE shandy_app"))
 
 
 async def _reset_role(session: AsyncSession) -> None:

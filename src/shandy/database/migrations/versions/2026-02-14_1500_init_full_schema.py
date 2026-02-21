@@ -1612,6 +1612,38 @@ def upgrade() -> None:
     )
 
     # =========================================================================
+    # CREATE SHANDY_APP ROLE (subject to RLS)
+    # =========================================================================
+    # get_session() does SET ROLE shandy_app to drop superuser privileges.
+    # Without this role, RLS policies are silently bypassed.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'shandy_app') THEN
+                CREATE ROLE shandy_app NOLOGIN;
+            END IF;
+        END
+        $$
+        """
+    )
+    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO shandy_app")
+    op.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO shandy_app")
+    op.execute("GRANT USAGE ON SCHEMA public TO shandy_app")
+    op.execute(
+        """
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT ALL PRIVILEGES ON TABLES TO shandy_app
+        """
+    )
+    op.execute(
+        """
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public
+            GRANT ALL PRIVILEGES ON SEQUENCES TO shandy_app
+        """
+    )
+
+    # =========================================================================
     # CREATE SHANDY_ADMIN ROLE WITH BYPASSRLS
     # =========================================================================
     op.execute(
