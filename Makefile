@@ -77,10 +77,8 @@ reset-db:
 	@echo "WARNING: This will delete all database data!"
 	@read -p "Are you sure? [y/N]: " confirm; \
 	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-		echo "Stopping containers..."; \
-		docker compose -f $(COMPOSE_FILE) down; \
-		echo "Removing postgres volume..."; \
-		docker volume rm shandy_postgres_data 2>/dev/null || true; \
+		echo "Stopping containers and removing volumes..."; \
+		docker compose -f $(COMPOSE_FILE) down -v; \
 		echo "Starting containers..."; \
 		docker compose -f $(COMPOSE_FILE) up -d; \
 		echo "Waiting for postgres to be ready..."; \
