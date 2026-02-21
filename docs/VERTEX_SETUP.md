@@ -184,8 +184,8 @@ GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
 MAX_PROJECT_SPEND_TOTAL_USD=1000
 MAX_PROJECT_SPEND_24H_USD=50
 
-# Web app settings - use mock auth for development
-ENABLE_MOCK_AUTH=true
+# Dev mode - enables mock OAuth login for development
+SHANDY_DEV_MODE=true
 ```
 
 ### Environment Variable Reference

@@ -6,15 +6,19 @@ SHANDY (Scientific Hypothesis Agent for Novel Discovery) is a web application th
 
 ```text
 src/shandy/
+├── agent/            # AgentExecutor protocol and SDKAgentExecutor
 ├── api/              # FastAPI REST endpoints
 ├── auth/             # Authentication (OAuth, sessions, middleware)
 ├── database/         # SQLAlchemy models and migrations
+├── job/              # Job lifecycle, scheduling, and types
+├── job_container/    # Container-per-job isolation
 ├── mcp_server/       # MCP server for agent tools
+├── orchestrator/     # Discovery orchestration (setup, iteration, report)
 ├── providers/        # LLM provider abstractions (Anthropic, Vertex, etc.)
+├── tools/            # @tool-decorated callables for SDK agent path
 ├── webapp_components/# NiceGUI pages and components
-├── job_manager.py    # Job lifecycle management
-├── orchestrator.py   # Agent orchestration loop
 ├── prompts.py        # Agent system prompts
+├── settings.py       # Pydantic settings with TOML support
 └── web_app.py        # Main application entry point
 ```
 
@@ -26,8 +30,7 @@ uv sync
 
 # Set up environment variables (see .env.example)
 export DATABASE_URL="postgresql+asyncpg://..."
-export TOKEN_ENCRYPTION_KEY="..."
-export AUTH_STORAGE_SECRET="..."
+export SHANDY_SECRET_KEY="$(openssl rand -hex 32)"
 export ANTHROPIC_API_KEY="..."  # or other provider credentials
 
 # Run database migrations
@@ -96,7 +99,7 @@ async with user_simulation(root=some_page) as browser:
 
 ## Code Conventions
 
-- **Python 3.10+** with type hints
+- **Python 3.12+** with type hints
 - **Formatting**: `ruff format`
 - **Linting**: `ruff check`
 - **Type checking**: `mypy --strict`
@@ -152,7 +155,7 @@ When you need a new UI pattern used in multiple places:
 ### Providers (`src/shandy/providers/`)
 
 - `check_provider_config()` - Validates LLM provider setup
-- Supports: Anthropic, CBORG, Vertex AI, Bedrock
+- Supports: Anthropic, CBORG, Vertex AI, Bedrock, Foundry, Codex
 
 ### Web App (`src/shandy/webapp_components/`)
 
@@ -181,11 +184,10 @@ uv run python tools/tile_screenshots.py \
 | Variable               | Required | Description                         |
 | ---------------------- | -------- | ----------------------------------- |
 | `DATABASE_URL`         | Yes      | PostgreSQL connection string        |
-| `TOKEN_ENCRYPTION_KEY` | Yes      | 32+ char encryption key             |
-| `AUTH_STORAGE_SECRET`  | Yes      | NiceGUI storage secret              |
+| `SHANDY_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
 | `CLAUDE_PROVIDER`      | No       | Provider name (default: anthropic)  |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
-| `ENABLE_MOCK_AUTH`     | No       | Enable mock OAuth for development   |
+| `SHANDY_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
 
 ## Related Documentation
 

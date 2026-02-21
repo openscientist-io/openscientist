@@ -51,7 +51,7 @@ SHANDY supports **Phenix integration** for protein structure analysis:
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.12+
 - Docker (for containerized deployment)
 - `uv` package manager
 - One of the following for model access:
@@ -93,24 +93,23 @@ Open your browser to `http://localhost:8080`
 ```
 shandy/
 ├── src/shandy/            # Core Python package
-│   ├── orchestrator.py    # Discovery loop orchestrator
-│   ├── job_manager.py     # Job lifecycle management
-│   ├── web_app.py         # NiceGUI web interface
-│   ├── knowledge_state.py # JSON-based state storage
-│   ├── code_executor.py   # Sandboxed Python execution
-│   ├── literature.py      # PubMed search
+│   ├── agent/             # AgentExecutor protocol and SDKAgentExecutor
+│   ├── job/               # Job lifecycle, scheduling, and types
+│   ├── orchestrator/      # Discovery orchestration (setup, iteration, report)
 │   ├── providers/         # Model provider integrations
 │   │   ├── base.py        # Base provider interface
+│   │   ├── messaging.py   # Consolidated send_message / client factory
 │   │   ├── cborg.py       # CBORG provider
 │   │   ├── vertex.py      # Google Vertex AI provider
 │   │   ├── bedrock.py     # AWS Bedrock provider
 │   │   └── foundry.py     # Azure AI Foundry provider
-│   └── mcp_server/        # MCP tools server
-├── .claude/               # Claude Code configuration
-│   ├── skills/            # Discovery skills
-│   │   ├── workflow/      # Generic workflow skills
-│   │   └── domain/        # Domain-specific skills
-│   └── CLAUDE.md          # System prompt
+│   ├── tools/             # @tool-decorated callables for agent
+│   ├── mcp_server/        # MCP tools server
+│   ├── web_app.py         # NiceGUI web interface
+│   ├── knowledge_state.py # JSON-based state storage
+│   ├── code_executor.py   # Sandboxed Python execution
+│   └── literature.py      # PubMed search
+├── CLAUDE.md              # Development guide and system prompt
 ├── jobs/                  # Job results (created at runtime)
 ├── Dockerfile             # Docker image definition
 ├── docker-compose.yml     # Container orchestration
@@ -233,11 +232,8 @@ Budget limits are checked before job creation. The web UI displays:
 ### Other Settings
 
 ```bash
-# Claude Code CLI path (optional, default: claude)
-CLAUDE_CLI_PATH=claude
-
-# Web app authentication - use mock auth for development
-ENABLE_MOCK_AUTH=true
+# Dev mode - enables mock OAuth login for development
+SHANDY_DEV_MODE=true
 ```
 
 ### Job Manager Settings

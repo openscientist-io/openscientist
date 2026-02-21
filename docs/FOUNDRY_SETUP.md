@@ -147,17 +147,10 @@ The `docker-compose.yml` automatically passes these environment variables to the
 
 ### Verify Configuration
 
-Run the test script to verify everything is set up correctly:
+Start the application and check the provider status on the admin page, or run:
 
 ```bash
-uv run python test_foundry.py
-```
-
-Expected output:
-```
-✅ Provider loaded: Azure AI Foundry
-✅ Configuration validated successfully!
-🎉 Azure Foundry provider is configured correctly!
+uv run python -c "from shandy.providers import get_provider; p = get_provider(); print(p.provider_name, p._validate_required_config())"
 ```
 
 ## Rate Limits and Quotas

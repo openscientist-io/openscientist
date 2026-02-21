@@ -135,7 +135,7 @@
   </g>
 
   <!-- connector -->
-  <line x1="700" y1="213" x2="700" y2="231" stroke="#D97706" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
+  <line x1="700" y1="213" x2="700" y2="231" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
 
   <!-- ============ 2 · AUTHENTICATION ============ -->
   <g id="s2">
@@ -143,26 +143,26 @@
     <text x="52" y="270" class="sec-num" fill="#6366F1">2</text>
     <text x="80" y="251" class="sec-title">Authentication &amp; Authorization</text>
 
-    <!-- GitHub OAuth - PLANNED -->
-    <rect x="80" y="261" width="145" height="38" rx="6" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
-    <rect x="80" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
-    <use href="#icon-clock" x="208" y="265" width="10" height="10" fill="#D97706"/>
-    <text x="94" y="277" class="card-title" style="fill:#92400E">GitHub OAuth</text>
-    <text x="94" y="290" class="card-tech" style="fill:#D97706">PLANNED</text>
+    <!-- GitHub OAuth - COMPLETED -->
+    <rect x="80" y="261" width="145" height="38" rx="6" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="80" y="261" width="3" height="38" rx="1.5" fill="#059669"/>
+    <use href="#icon-check" x="208" y="265" width="10" height="10" fill="#059669"/>
+    <text x="94" y="277" class="card-title" style="fill:#166534">GitHub OAuth</text>
+    <text x="94" y="290" class="card-tech">authlib · OAuth2</text>
 
-    <!-- Google OAuth - PLANNED -->
-    <rect x="235" y="261" width="145" height="38" rx="6" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
-    <rect x="235" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
-    <use href="#icon-clock" x="363" y="265" width="10" height="10" fill="#D97706"/>
-    <text x="249" y="277" class="card-title" style="fill:#92400E">Google OAuth</text>
-    <text x="249" y="290" class="card-tech" style="fill:#D97706">PLANNED</text>
+    <!-- Google OAuth - COMPLETED -->
+    <rect x="235" y="261" width="145" height="38" rx="6" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="235" y="261" width="3" height="38" rx="1.5" fill="#059669"/>
+    <use href="#icon-check" x="363" y="265" width="10" height="10" fill="#059669"/>
+    <text x="249" y="277" class="card-title" style="fill:#166534">Google OAuth</text>
+    <text x="249" y="290" class="card-tech">authlib · OAuth2</text>
 
-    <!-- ORCID OAuth - PLANNED -->
-    <rect x="390" y="261" width="145" height="38" rx="6" fill="#FFFBEB" stroke="#FDE68A" stroke-width="1"/>
-    <rect x="390" y="261" width="3" height="38" rx="1.5" fill="#D97706"/>
-    <use href="#icon-clock" x="518" y="265" width="10" height="10" fill="#D97706"/>
-    <text x="404" y="277" class="card-title" style="fill:#92400E">ORCID OAuth</text>
-    <text x="404" y="290" class="card-tech" style="fill:#D97706">PLANNED</text>
+    <!-- ORCID OAuth - COMPLETED -->
+    <rect x="390" y="261" width="145" height="38" rx="6" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
+    <rect x="390" y="261" width="3" height="38" rx="1.5" fill="#059669"/>
+    <use href="#icon-check" x="518" y="265" width="10" height="10" fill="#059669"/>
+    <text x="404" y="277" class="card-title" style="fill:#166534">ORCID OAuth</text>
+    <text x="404" y="290" class="card-tech">authlib · OAuth2</text>
 
     <!-- Session Management - COMPLETED (green) -->
     <rect x="545" y="261" width="155" height="38" rx="6" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
@@ -268,13 +268,13 @@
     <rect x="80" y="526" width="4" height="50" rx="2" fill="#6366F1"/>
     <text x="96" y="543" class="card-title">Job Manager</text>
     <text x="96" y="556" class="card-sub">Lifecycle · queue · threading · max concurrent</text>
-    <text x="96" y="568" class="card-tech">JobStatus enum  ·  JobInfo dataclass</text>
+    <text x="96" y="568" class="card-tech">job/ subpackage  ·  JobStatus · JobInfo</text>
 
     <rect x="400" y="526" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
     <rect x="400" y="526" width="4" height="50" rx="2" fill="#6366F1"/>
     <text x="416" y="543" class="card-title">Orchestrator</text>
-    <text x="416" y="556" class="card-sub">Discovery loop · CLI subprocess · session mgmt</text>
-    <text x="416" y="568" class="card-tech">reset_interval=5  ·  stream-json parsing</text>
+    <text x="416" y="556" class="card-sub">Discovery loop · AgentExecutor protocol</text>
+    <text x="416" y="568" class="card-tech">orchestrator/ subpackage  ·  SDKAgentExecutor</text>
 
     <rect x="720" y="526" width="300" height="50" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
     <rect x="720" y="526" width="4" height="50" rx="2" fill="#6366F1"/>
@@ -313,9 +313,7 @@
     <rect x="1040" y="586" width="4" height="50" rx="2" fill="#059669"/>
     <text x="1056" y="603" class="card-title" style="fill:#166534">Container Export Services</text>
     <text x="1056" y="616" class="card-sub" style="fill:#059669">NEW — Skills &amp; MCP export</text>
-    <text x="1056" y="628" class="card-tech">skill_export.py · mcp_export.py</text>
-
-    <text x="700" y="652" text-anchor="middle" class="card-tech">job_manager.py · orchestrator.py · knowledge_state.py · agent_loop.py · skill_export.py</text>
+    <text x="700" y="652" text-anchor="middle" class="card-tech">job/ · orchestrator/ · agent/ · tools/ · knowledge_state.py</text>
   </g>
 
   <!-- connector -->
@@ -327,13 +325,13 @@
     <text x="52" y="717" class="sec-num" fill="#6366F1">5</text>
     <text x="80" y="698" class="sec-title">Agent Execution (Per-Job Docker Isolation)</text>
 
-    <!-- Agent Loop - SDK-based (green) -->
+    <!-- AgentExecutor Protocol (green) -->
     <rect x="80" y="709" width="300" height="56" rx="7" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
     <rect x="80" y="709" width="4" height="56" rx="2" fill="#059669"/>
     <use href="#icon-robot" x="354" y="715" width="16" height="16" fill="#059669"/>
-    <text x="96" y="726" class="card-title" style="fill:#166534">Agent Loop (SDK-based)</text>
-    <text x="96" y="739" class="card-sub" style="fill:#059669">NEW — Direct Anthropic SDK with MCP</text>
-    <text x="96" y="752" class="card-sub">Prompt caching · Skills injection</text>
+    <text x="96" y="726" class="card-title" style="fill:#166534">AgentExecutor Protocol</text>
+    <text x="96" y="739" class="card-sub" style="fill:#059669">SDKAgentExecutor (claude-agent-sdk)</text>
+    <text x="96" y="752" class="card-sub">Prompt caching · container-per-job</text>
 
     <!-- MCP Server - existing (indigo) -->
     <rect x="400" y="709" width="300" height="56" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
@@ -373,11 +371,11 @@
     <line x1="235" y1="831" x2="270" y2="831" stroke="#0D9488" stroke-width="1.5" marker-end="url(#arr)"/>
     <text x="252" y="823" class="card-tech" style="fill:#0D9488; font-size:7px">spawns</text>
 
-    <!-- Spawned sibling containers and in-process agents -->
+    <!-- Spawned sibling containers -->
     <rect x="280" y="806" width="245" height="50" rx="5" fill="#DCFCE7" stroke="#059669" stroke-width="1.5"/>
     <use href="#icon-robot" x="295" y="816" width="14" height="14" fill="#059669"/>
-    <text x="315" y="828" class="tbl" style="font-size:9px; fill:#059669">SDK Agent Loop</text>
-    <text x="315" y="840" class="card-tech" style="fill:#059669; font-size:7px">in-process · Anthropic SDK + MCP</text>
+    <text x="315" y="828" class="tbl" style="font-size:9px; fill:#059669">shandy-agent Container</text>
+    <text x="315" y="840" class="card-tech" style="fill:#059669; font-size:7px">per-job · SDKAgentExecutor</text>
 
     <rect x="540" y="806" width="180" height="50" rx="5" fill="#DCFCE7" stroke="#059669" stroke-width="1.5"/>
     <use href="#icon-robot" x="555" y="816" width="14" height="14" fill="#059669"/>
@@ -644,15 +642,15 @@
     <rect x="875" y="1407" width="225" height="44" rx="7" fill="#DCFCE7" stroke="#86EFAC" stroke-width="1"/>
     <rect x="875" y="1407" width="4" height="44" rx="2" fill="#059669"/>
     <use href="#icon-cube" x="1074" y="1413" width="14" height="14" fill="#059669"/>
-    <text x="891" y="1424" class="card-title" style="fill:#166534">Executor Containers</text>
-    <text x="891" y="1437" class="card-sub" style="fill:#059669">Per-code sandboxed execution</text>
+    <text x="891" y="1424" class="card-title" style="fill:#166534">Agent &amp; Executor Containers</text>
+    <text x="891" y="1437" class="card-sub" style="fill:#059669">shandy-agent (per-job) · executor (per-code)</text>
 
     <rect x="1115" y="1407" width="210" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
     <rect x="1115" y="1407" width="4" height="44" rx="2" fill="#6B7280"/>
     <text x="1131" y="1424" class="card-title">Environment &amp; Secrets</text>
-    <text x="1131" y="1437" class="card-sub">.env · provider keys · encryption keys</text>
+    <text x="1131" y="1437" class="card-sub">shandy.toml · .env · SHANDY_SECRET_KEY</text>
 
-    <text x="700" y="1481" text-anchor="middle" class="card-tech">docker-compose.yml · docker-compose.dev.yml · /var/run/docker.sock mount · Makefile</text>
+    <text x="700" y="1481" text-anchor="middle" class="card-tech">docker-compose.yml · shandy.toml · /var/run/docker.sock mount · Makefile · Dockerfile.agent</text>
   </g>
 
   <!-- ============ LEGEND ============ -->
@@ -685,13 +683,13 @@
     <!-- Column 3: Status summary (left half) -->
     <text x="480" y="1551" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">NEW IN THIS RELEASE</text>
     <use href="#icon-check" x="480" y="1560" width="10" height="10" fill="#059669"/>
-    <text x="495" y="1570" class="legend-t" style="fill:#059669">SDK Agent Loop + Prompt Caching</text>
+    <text x="495" y="1570" class="legend-t" style="fill:#059669">SDKAgentExecutor + Container-per-Job</text>
     <use href="#icon-check" x="480" y="1575" width="10" height="10" fill="#059669"/>
-    <text x="495" y="1585" class="legend-t" style="fill:#059669">Skills &amp; MCP Export System</text>
+    <text x="495" y="1585" class="legend-t" style="fill:#059669">shandy.toml Config + SHANDY_SECRET_KEY</text>
     <use href="#icon-check" x="480" y="1590" width="10" height="10" fill="#059669"/>
-    <text x="495" y="1600" class="legend-t" style="fill:#059669">Full REST API with Rate Limiting</text>
+    <text x="495" y="1600" class="legend-t" style="fill:#059669">OAuth (GitHub, Google, ORCID)</text>
     <use href="#icon-check" x="480" y="1605" width="10" height="10" fill="#059669"/>
-    <text x="495" y="1615" class="legend-t" style="fill:#059669">ntfy.sh Push Notifications</text>
+    <text x="495" y="1615" class="legend-t" style="fill:#059669">Skills &amp; MCP Export System</text>
 
     <!-- Column 4: Status summary (right half) -->
     <use href="#icon-check" x="700" y="1560" width="10" height="10" fill="#059669"/>
@@ -700,8 +698,8 @@
     <text x="715" y="1585" class="legend-t" style="fill:#059669">Job Sharing &amp; Permissions</text>
     <use href="#icon-check" x="700" y="1590" width="10" height="10" fill="#059669"/>
     <text x="715" y="1600" class="legend-t" style="fill:#059669">Job Chat with Agentic Mode</text>
-    <use href="#icon-clock" x="700" y="1605" width="10" height="10" fill="#D97706"/>
-    <text x="715" y="1615" class="legend-t" style="fill:#D97706">OAuth (GitHub, Google, ORCID)</text>
+    <use href="#icon-check" x="700" y="1605" width="10" height="10" fill="#059669"/>
+    <text x="715" y="1615" class="legend-t" style="fill:#059669">Full REST API + ntfy.sh Notifications</text>
 
     <!-- Column 5: Tech stack -->
     <text x="920" y="1551" class="card-tech" style="font-style:normal; font-weight:600; fill:#64748B;">TECH STACK</text>
@@ -724,8 +722,8 @@
     <line x1="1025" y1="1699" x2="1025" y2="1774" stroke="#CBD5E1" stroke-width="1"/>
 
     <!-- Column 1: x=50 to x=375 (width 325) -->
-    <text x="60" y="1714" class="tbl" style="font-size:8.5px; fill:#1E293B">SDK Agent Loop</text>
-    <text x="60" y="1726" class="card-tech" style="font-size:8px">In-process Anthropic SDK with MCP tools.</text>
+    <text x="60" y="1714" class="tbl" style="font-size:8.5px; fill:#1E293B">AgentExecutor Protocol</text>
+    <text x="60" y="1726" class="card-tech" style="font-size:8px">Protocol routing jobs to SDK or direct executor.</text>
     <text x="60" y="1744" class="tbl" style="font-size:8.5px; fill:#1E293B">FastMCP / MCP</text>
     <text x="60" y="1756" class="card-tech" style="font-size:8px">Model Context Protocol — AI tools interface.</text>
 
@@ -751,6 +749,6 @@
   <!-- ============ FOOTER ============ -->
   <g id="footer">
     <rect x="0" y="1794" width="1400" height="26" fill="#F1F5F9"/>
-    <text x="700" y="1811" text-anchor="middle" class="card-tech" style="fill:#64748B; font-size:9px">SHANDY · Lawrence Berkeley National Laboratory · Commit 09b5e2f · Generated 2026-02-15T09:17:14Z</text>
+    <text x="700" y="1811" text-anchor="middle" class="card-tech" style="fill:#64748B; font-size:9px">SHANDY · Lawrence Berkeley National Laboratory · Commit a834f70 · Generated 2026-02-17T00:00:00Z</text>
   </g>
 </svg>

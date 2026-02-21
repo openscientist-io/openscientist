@@ -5,8 +5,7 @@ This guide explains how to deploy SHANDY using Docker.
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- CBORG API token (Anthropic API key via CBORG proxy)
-- Claude Code CLI installed (in Docker container)
+- LLM provider credentials (see `.env.example` for options)
 
 ## Quick Start
 
@@ -15,18 +14,16 @@ This guide explains how to deploy SHANDY using Docker.
 Create a `.env` file in the project root:
 
 ```bash
-ANTHROPIC_AUTH_TOKEN=your-cborg-token-here
-CLAUDE_CLI_PATH=claude
+cp .env.example .env
+# Edit .env with your provider credentials
 ```
 
 ### 2. Build and run with Docker Compose
 
 ```bash
-# Production mode
-docker-compose up -d
-
-# Development mode (with code hot-reloading)
-docker-compose -f docker-compose.dev.yml up
+# Build and start
+make build
+make start
 ```
 
 ### 3. Access the web interface
@@ -40,8 +37,7 @@ http://localhost:8080
 
 ### Environment Variables
 
-- `ANTHROPIC_AUTH_TOKEN`: CBORG API token (required)
-- `CLAUDE_CLI_PATH`: Path to Claude Code CLI executable (default: `claude`)
+See `.env.example` for the full list of configuration options.
 
 ### Volumes
 
@@ -54,31 +50,6 @@ The Docker setup mounts the following directories:
 ### Ports
 
 - `8080`: Web interface (NiceGUI)
-
-## Claude Code CLI Installation
-
-The Dockerfile attempts to install Claude Code CLI automatically. If this fails, you'll need to install it manually:
-
-1. Stop the container:
-   ```bash
-   docker-compose down
-   ```
-
-2. Update the Dockerfile with the correct installation method
-
-3. Rebuild:
-   ```bash
-   docker-compose build
-   docker-compose up -d
-   ```
-
-Alternatively, mount a host-installed Claude Code CLI:
-
-```yaml
-# In docker-compose.yml
-volumes:
-  - /usr/local/bin/claude:/usr/local/bin/claude
-```
 
 ## Managing Jobs
 
@@ -179,18 +150,9 @@ docker cp ./jobs shandy-shandy-1:/app/
    docker-compose up -d
    ```
 
-### Claude Code CLI not found
-
-1. Check if Claude CLI is installed in the container:
-   ```bash
-   docker-compose exec shandy which claude
-   ```
-
-2. If not found, install manually (see Claude Code CLI Installation above)
-
 ### Budget exceeded
 
-Check your CBORG budget:
+Check your budget:
 
 ```bash
 docker-compose exec shandy python -c "from shandy.cost_tracker import get_budget_info; print(get_budget_info())"

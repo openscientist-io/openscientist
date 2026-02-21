@@ -1011,9 +1011,6 @@ WARN_COST_THRESHOLD_USD=5.00     # Warn user at this threshold
 SKILLS_ENABLED=true              # Global default for using skills
 ALLOW_SKILLS_TOGGLE=true         # Let users override per-job
 
-# Optional: Authentication (use mock auth for development)
-ENABLE_MOCK_AUTH=true
-
 # Data paths (if not using Docker volumes)
 DATA_DIR=/data
 JOBS_DIR=/jobs
