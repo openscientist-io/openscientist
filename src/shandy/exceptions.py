@@ -56,10 +56,3 @@ class ProviderError(ShandyError):
 
 class PDFGenerationError(ShandyError):
     """Raised when PDF report generation fails."""
-
-
-# ── Job lifecycle ─────────────────────────────────────────────────────
-
-
-class JobError(ShandyError):
-    """Raised for job-lifecycle problems (creation, state changes, deletion)."""

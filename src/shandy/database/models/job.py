@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from .job_chat_message import JobChatMessage
     from .job_data_file import JobDataFile
     from .job_share import JobShare
-    from .job_skill import JobSkill
     from .user import User
 
 
@@ -183,11 +182,6 @@ class Job(UUIDv7Mixin, Base):
     )
 
     cost_records: Mapped[list["CostRecord"]] = relationship(
-        back_populates="job",
-        cascade="all, delete-orphan",
-    )
-
-    job_skills: Mapped[list["JobSkill"]] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
     )
