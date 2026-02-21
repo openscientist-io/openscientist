@@ -5,7 +5,7 @@ This provider is a placeholder for future OpenAI Codex support.
 """
 
 import logging
-from typing import Any, List
+from typing import Any
 
 from shandy.providers.base import BaseProvider, CostInfo
 
@@ -19,25 +19,25 @@ class CodexProvider(BaseProvider):
     def name(self) -> str:
         return "OpenAI Codex"
 
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         """Codex validation - not implemented."""
         return [
             "OpenAI Codex provider is not yet implemented.",
-            "Please use 'cborg', 'anthropic', or 'vertex' as CLAUDE_PROVIDER.",
+            "Please use 'anthropic', 'cborg', 'vertex', 'bedrock', or 'foundry' as CLAUDE_PROVIDER.",
         ]
 
     def setup_environment(self) -> None:
         """Codex environment setup - not implemented."""
         raise NotImplementedError(
             "OpenAI Codex provider coming soon. "
-            "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."
+            "Use CLAUDE_PROVIDER=anthropic, vertex, bedrock, or foundry instead."
         )
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """Codex cost tracking - not implemented."""
         raise NotImplementedError(
             "OpenAI Codex provider coming soon. "
-            "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."
+            "Use CLAUDE_PROVIDER=anthropic, vertex, bedrock, or foundry instead."
         )
 
     async def send_message(
@@ -47,11 +47,7 @@ class CodexProvider(BaseProvider):
         model: str | None = None,
         max_tokens: int = 4096,
     ) -> str:
-        """Codex messaging - not implemented."""
-        raise NotImplementedError(
-            "OpenAI Codex provider coming soon. "
-            "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."
-        )
+        raise NotImplementedError("OpenAI Codex provider is not yet implemented.")
 
     async def send_message_with_tools(
         self,
@@ -61,8 +57,4 @@ class CodexProvider(BaseProvider):
         model: str | None = None,
         max_tokens: int = 4096,
     ) -> dict[str, Any]:
-        """Codex messaging with tools - not implemented."""
-        raise NotImplementedError(
-            "OpenAI Codex provider coming soon. "
-            "Use CLAUDE_PROVIDER=cborg or CLAUDE_PROVIDER=vertex instead."
-        )
+        raise NotImplementedError("OpenAI Codex provider is not yet implemented.")

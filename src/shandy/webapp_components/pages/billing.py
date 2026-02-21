@@ -1,5 +1,7 @@
 """Billing and cost tracking page."""
 
+import logging
+
 from nicegui import ui
 
 from shandy.auth import require_auth
@@ -79,9 +81,9 @@ def billing_page():
                         ui.label(f"⚠️ {warning}").classes("text-sm text-yellow-600")
 
         except (ValueError, OSError) as e:
+            logging.getLogger(__name__).warning("Cost tracking unavailable: %s", e)
             with ui.card().classes("w-full bg-yellow-50 border border-yellow-300 p-4"):
                 ui.label("Cost Tracking Unavailable").classes(
                     "text-subtitle2 font-bold text-yellow-800 mb-2"
                 )
                 ui.label("Check provider configuration in .env").classes("text-sm text-gray-600")
-                ui.label(f"Error: {e}").classes("text-xs text-gray-400 mt-2")

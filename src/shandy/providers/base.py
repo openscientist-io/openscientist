@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from shandy.exceptions import ProviderError
 from shandy.settings import get_settings
@@ -39,7 +39,7 @@ class CostInfo:
 
     # Provider-specific extras
     key_expires: Optional[str] = None  # CBORG only
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseProvider(ABC):
@@ -63,16 +63,15 @@ class BaseProvider(ABC):
             )
 
     @abstractmethod
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         """
         Validate required configuration.
 
         Returns:
             List of error messages (empty if valid)
         """
-        pass
 
-    def _validate_optional_config(self) -> List[str]:
+    def _validate_optional_config(self) -> list[str]:
         """
         Validate optional configuration.
 
@@ -84,7 +83,6 @@ class BaseProvider(ABC):
     @abstractmethod
     def setup_environment(self) -> None:
         """Configure environment variables for Claude CLI."""
-        pass
 
     @abstractmethod
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
@@ -97,9 +95,8 @@ class BaseProvider(ABC):
         Returns:
             CostInfo with total and recent spend
         """
-        pass
 
-    def check_budget_limits(self, lookback_hours: int = 24) -> Dict[str, Any]:
+    def check_budget_limits(self, lookback_hours: int = 24) -> dict[str, Any]:
         """
         Check if budget limits are exceeded.
 
@@ -175,12 +172,11 @@ class BaseProvider(ABC):
     @abstractmethod
     def name(self) -> str:
         """Provider name for logging/display."""
-        pass
 
     @abstractmethod
     async def send_message(
         self,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         system: Optional[str] = None,
         model: Optional[str] = None,
         max_tokens: int = 4096,
@@ -204,17 +200,16 @@ class BaseProvider(ABC):
         Raises:
             Exception: If the API call fails
         """
-        pass
 
     @abstractmethod
     async def send_message_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         system: Optional[str] = None,
         model: Optional[str] = None,
         max_tokens: int = 4096,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Send a message with tool definitions and return full response.
 
@@ -240,4 +235,3 @@ class BaseProvider(ABC):
         Raises:
             Exception: If the API call fails
         """
-        pass

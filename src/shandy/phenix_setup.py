@@ -11,8 +11,6 @@ from shandy.settings import get_settings
 class PhenixConfigError(ValueError):
     """Raised when Phenix configuration is invalid."""
 
-    pass
-
 
 def validate_phenix_path(phenix_path: str) -> list[str]:
     """
@@ -111,7 +109,7 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> Optional[dict]:
         )
 
         # Parse environment variables
-        phenix_env = os.environ.copy()  # noqa: env-ok
+        phenix_env = os.environ.copy()  # env-ok
         for line in proc.stdout.split("\n"):
             if "=" in line:
                 key, _, value = line.partition("=")

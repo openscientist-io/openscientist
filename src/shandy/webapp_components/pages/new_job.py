@@ -100,7 +100,9 @@ def new_job_page():
                     type="negative",
                 )
             else:
-                ui.notify(f"Error creating job: {e}", type="negative")
+                ui.notify(
+                    "Error creating job. Please try again or contact support.", type="negative"
+                )
             logger.error("Error creating job: %s", e, exc_info=True)
 
     async def handle_upload(e):

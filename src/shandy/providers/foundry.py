@@ -8,7 +8,7 @@ Cost tracking via Azure Cost Management API.
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, List
+from typing import Any
 
 from shandy.providers.base import BaseProvider, CostInfo
 
@@ -22,13 +22,13 @@ class FoundryProvider(BaseProvider):
     def name(self) -> str:
         return "Azure AI Foundry"
 
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         """Check required Foundry configuration."""
         errors = []
 
         # Resource name or base URL is required
-        has_resource = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE")  # noqa: env-ok
-        has_base_url = os.getenv("ANTHROPIC_FOUNDRY_BASE_URL")  # noqa: env-ok
+        has_resource = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE")  # env-ok
+        has_base_url = os.getenv("ANTHROPIC_FOUNDRY_BASE_URL")  # env-ok
 
         if not (has_resource or has_base_url):
             errors.append(
@@ -39,7 +39,7 @@ class FoundryProvider(BaseProvider):
 
         # Check authentication - either API key or Azure credentials
         # If API key is not set, we assume Azure default credential chain is available
-        has_api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY")  # noqa: env-ok
+        has_api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY")  # env-ok
         if not has_api_key:
             logger.info(
                 "ANTHROPIC_FOUNDRY_API_KEY not set. "
@@ -48,24 +48,24 @@ class FoundryProvider(BaseProvider):
 
         return errors
 
-    def _validate_optional_config(self) -> List[str]:
+    def _validate_optional_config(self) -> list[str]:
         """Check optional Foundry configuration."""
         warnings = []
 
         # Model deployment names (optional - Claude Code has defaults)
-        if not os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL"):  # noqa: env-ok
+        if not os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL"):  # env-ok
             warnings.append(
                 "ANTHROPIC_DEFAULT_SONNET_MODEL not set "
                 "(will use default deployment name 'claude-sonnet-4-5')"
             )
 
-        if not os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL"):  # noqa: env-ok
+        if not os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL"):  # env-ok
             warnings.append(
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL not set "
                 "(will use default deployment name 'claude-haiku-4-5')"
             )
 
-        if not os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL"):  # noqa: env-ok
+        if not os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL"):  # env-ok
             warnings.append(
                 "ANTHROPIC_DEFAULT_OPUS_MODEL not set "
                 "(will use default deployment name 'claude-opus-4-6')"
@@ -81,7 +81,7 @@ class FoundryProvider(BaseProvider):
         environment variables from other providers.
         """
         # Enable Foundry mode for Claude Code
-        os.environ["CLAUDE_CODE_USE_FOUNDRY"] = "1"  # noqa: env-ok
+        os.environ["CLAUDE_CODE_USE_FOUNDRY"] = "1"  # env-ok
 
         # Note: Claude Code 2.1.42+ will construct the base URL from ANTHROPIC_FOUNDRY_RESOURCE
         # automatically, so we don't need to set ANTHROPIC_FOUNDRY_BASE_URL here.
@@ -95,9 +95,9 @@ class FoundryProvider(BaseProvider):
             "VERTEX_REGION_CLAUDE_4_5_HAIKU",
         ]
         for var in vertex_vars:
-            if var in os.environ:  # noqa: env-ok
+            if var in os.environ:  # env-ok
                 logger.debug(f"Removing conflicting {var}")
-                del os.environ[var]  # noqa: env-ok
+                del os.environ[var]  # env-ok
 
         # Unset Bedrock vars to avoid conflicts
         bedrock_vars = [
@@ -105,13 +105,13 @@ class FoundryProvider(BaseProvider):
             "AWS_BEARER_TOKEN_BEDROCK",
         ]
         for var in bedrock_vars:
-            if var in os.environ:  # noqa: env-ok
+            if var in os.environ:  # env-ok
                 logger.debug(f"Removing conflicting {var}")
-                del os.environ[var]  # noqa: env-ok
+                del os.environ[var]  # env-ok
 
         # Unset direct Anthropic API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
-        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)  # env-ok
 
         # Unset empty vars that interfere with auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -123,14 +123,12 @@ class FoundryProvider(BaseProvider):
             "AWS_SESSION_TOKEN",
         ]
         for var in empty_vars_to_clear:
-            val = os.environ.get(var)  # noqa: env-ok
+            val = os.environ.get(var)  # env-ok
             if val == "":
-                os.environ.pop(var, None)  # noqa: env-ok
+                os.environ.pop(var, None)  # env-ok
                 logger.debug(f"Unset empty {var}")
 
-        auth_method = (
-            "API key" if os.getenv("ANTHROPIC_FOUNDRY_API_KEY") else "Entra ID"  # noqa: env-ok
-        )
+        auth_method = "API key" if os.getenv("ANTHROPIC_FOUNDRY_API_KEY") else "Entra ID"  # env-ok
         logger.info(f"Azure Foundry provider initialized (using {auth_method} authentication)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
@@ -181,9 +179,7 @@ class FoundryProvider(BaseProvider):
                 "View costs in Azure Portal > Cost Management"
             )
 
-        resource_name = (
-            os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"  # noqa: env-ok
-        )
+        resource_name = os.getenv("ANTHROPIC_FOUNDRY_RESOURCE") or "unknown-resource"  # env-ok
 
         return CostInfo(
             provider_name="Azure AI Foundry",
@@ -194,13 +190,13 @@ class FoundryProvider(BaseProvider):
             data_lag_note=data_lag_note,
             metadata={
                 "resource": resource_name,
-                "base_url": os.getenv("ANTHROPIC_FOUNDRY_BASE_URL"),  # noqa: env-ok
+                "base_url": os.getenv("ANTHROPIC_FOUNDRY_BASE_URL"),  # env-ok
             },
         )
 
     async def send_message(
         self,
-        messages: List[dict[str, str]],
+        messages: list[dict[str, str]],
         system: str | None = None,
         model: str | None = None,
         max_tokens: int = 4096,
@@ -214,8 +210,8 @@ class FoundryProvider(BaseProvider):
         from anthropic.types import MessageParam, TextBlock
 
         # Get base URL from environment
-        base_url = os.getenv("ANTHROPIC_FOUNDRY_BASE_URL")  # noqa: env-ok
-        api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY")  # noqa: env-ok
+        base_url = os.getenv("ANTHROPIC_FOUNDRY_BASE_URL")  # env-ok
+        api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY")  # env-ok
 
         client = anthropic.Anthropic(
             base_url=base_url,
@@ -224,9 +220,7 @@ class FoundryProvider(BaseProvider):
 
         # Use configured model or default
         effective_model = (
-            model
-            or os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL")  # noqa: env-ok
-            or "claude-sonnet-4-5"
+            model or os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL") or "claude-sonnet-4-5"  # env-ok
         )
 
         # Convert to MessageParam type
@@ -266,8 +260,8 @@ class FoundryProvider(BaseProvider):
         from anthropic.types import ToolParam, ToolUseBlock
 
         # Get base URL from environment
-        base_url = os.getenv("ANTHROPIC_FOUNDRY_BASE_URL")  # noqa: env-ok
-        api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY")  # noqa: env-ok
+        base_url = os.getenv("ANTHROPIC_FOUNDRY_BASE_URL")  # env-ok
+        api_key = os.getenv("ANTHROPIC_FOUNDRY_API_KEY")  # env-ok
 
         client = anthropic.Anthropic(
             base_url=base_url,
@@ -276,9 +270,7 @@ class FoundryProvider(BaseProvider):
 
         # Use configured model or default
         effective_model = (
-            model
-            or os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL")  # noqa: env-ok
-            or "claude-sonnet-4-5"
+            model or os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL") or "claude-sonnet-4-5"  # env-ok
         )
 
         # Convert tools to ToolParam format

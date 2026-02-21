@@ -6,7 +6,6 @@ categorized, actionable error information for display to users.
 """
 
 import re
-from typing import Dict, List
 
 # Error category constants
 CATEGORY_CONFIGURATION = "configuration"
@@ -178,7 +177,7 @@ def categorize_error(error_msg: str) -> str:
     return CATEGORY_UNKNOWN
 
 
-def get_actionable_steps(category: str, error_msg: str) -> List[str]:
+def get_actionable_steps(category: str, error_msg: str) -> list[str]:
     """
     Get actionable steps based on error category and specific error message.
 
@@ -198,72 +197,69 @@ def get_actionable_steps(category: str, error_msg: str) -> List[str]:
                 "Ensure GCP credentials file is mounted at /app/gcp-credentials.json",
                 "Check the DEPLOYMENT.md documentation for setup instructions",
             ]
-        elif ".env" in error_lower:
+        if ".env" in error_lower:
             return [
                 "Check that the .env file exists and contains required configuration",
                 "Verify environment variables are properly set",
                 "See README.md for required environment variables",
             ]
-        elif "permission denied" in error_lower:
+        if "permission denied" in error_lower:
             return [
                 "Check file and directory permissions in the container",
                 "Verify the application has write access to the jobs directory",
                 "Contact your system administrator if running in restricted environment",
             ]
-        else:
-            return [
-                "Verify all required configuration files are present",
-                "Check the documentation for setup requirements",
-                "Contact your system administrator for assistance",
-            ]
+        return [
+            "Verify all required configuration files are present",
+            "Check the documentation for setup requirements",
+            "Contact your system administrator for assistance",
+        ]
 
-    elif category == CATEGORY_PROVIDER:
+    if category == CATEGORY_PROVIDER:
         if "budget" in error_lower or "quota" in error_lower:
             return [
                 "Check the billing page to see your current usage",
                 "Contact your administrator to increase budget limits",
                 "Consider optimizing your research questions to use fewer resources",
             ]
-        elif "api key" in error_lower or "authentication" in error_lower:
+        if "api key" in error_lower or "authentication" in error_lower:
             return [
                 "Verify your API credentials are correctly configured",
                 "Check that your API key has not expired",
                 "Contact your administrator to update credentials",
             ]
-        elif "rate limit" in error_lower:
+        if "rate limit" in error_lower:
             return [
                 "Wait a few minutes before retrying the job",
                 "Consider reducing max_iterations to lower API usage",
                 "Contact your administrator about rate limit increases",
             ]
-        else:
-            return [
-                "Check your cloud provider configuration",
-                "Verify API credentials and billing status",
-                "Contact your system administrator",
-            ]
+        return [
+            "Check your cloud provider configuration",
+            "Verify API credentials and billing status",
+            "Contact your system administrator",
+        ]
 
-    elif category == CATEGORY_RUNTIME:
+    if category == CATEGORY_RUNTIME:
         if "mcp" in error_lower:
             return [
                 "This is likely a temporary issue with the MCP server",
                 "Try restarting the job",
                 "If the problem persists, contact your administrator",
             ]
-        elif "timeout" in error_lower:
+        if "timeout" in error_lower:
             return [
                 "The operation took too long to complete",
                 "Try with a simpler research question or fewer iterations",
                 "Check your network connection if using remote services",
             ]
-        else:
-            return [
-                "This appears to be a runtime issue",
-                "Try restarting the job",
-                "If the problem persists, contact your administrator with the error details below",
-            ]
+        return [
+            "This appears to be a runtime issue",
+            "Try restarting the job",
+            "If the problem persists, contact your administrator with the error details below",
+        ]
 
-    elif category == CATEGORY_RESEARCH:
+    if category == CATEGORY_RESEARCH:
         return [
             "Check that your uploaded data files are properly formatted",
             "Ensure data files match the expected format (CSV, Excel, etc.)",
@@ -271,15 +267,15 @@ def get_actionable_steps(category: str, error_msg: str) -> List[str]:
             "See the documentation for supported data formats",
         ]
 
-    else:  # CATEGORY_UNKNOWN
-        return [
-            "An unexpected error occurred",
-            "Try restarting the job",
-            "If the problem persists, contact your administrator with the error details below",
-        ]
+    # CATEGORY_UNKNOWN
+    return [
+        "An unexpected error occurred",
+        "Try restarting the job",
+        "If the problem persists, contact your administrator with the error details below",
+    ]
 
 
-def get_user_friendly_error(raw_error: str) -> Dict:
+def get_user_friendly_error(raw_error: str) -> dict:
     """
     Parse a raw error and return user-friendly error information.
 

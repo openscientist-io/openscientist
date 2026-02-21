@@ -7,7 +7,7 @@ be read directly by Claude's Read tool without returning garbled content.
 
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import fitz  # type: ignore[import-untyped]  # PyMuPDF
 import openpyxl
@@ -56,7 +56,7 @@ def is_text_file(file_path: Path) -> bool:
     return file_path.suffix.lower() in TEXT_EXTENSIONS
 
 
-def extract_text_from_pdf(file_path: Path, max_pages: Optional[int] = None) -> Tuple[str, dict]:
+def extract_text_from_pdf(file_path: Path, max_pages: Optional[int] = None) -> tuple[str, dict]:
     """
     Extract text from a PDF file using PyMuPDF.
 
@@ -96,7 +96,7 @@ def extract_text_from_pdf(file_path: Path, max_pages: Optional[int] = None) -> T
     return extracted_text, metadata
 
 
-def extract_text_from_docx(file_path: Path) -> Tuple[str, dict]:
+def extract_text_from_docx(file_path: Path) -> tuple[str, dict]:
     """
     Extract text from a Word document using python-docx.
 
@@ -139,7 +139,7 @@ def extract_text_from_docx(file_path: Path) -> Tuple[str, dict]:
     return "\n\n".join(text_parts), metadata
 
 
-def extract_text_from_xlsx(file_path: Path, max_rows: int = 1000) -> Tuple[str, dict]:
+def extract_text_from_xlsx(file_path: Path, max_rows: int = 1000) -> tuple[str, dict]:
     """
     Extract text summary from an Excel file using openpyxl.
 
@@ -229,7 +229,7 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
         else:
             # Try to read as plain text
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     text = f.read()
                 header = f"[TEXT: {file_path.name} | {file_size_kb:.1f} KB]"
             except UnicodeDecodeError:

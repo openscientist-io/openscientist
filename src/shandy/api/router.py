@@ -6,7 +6,6 @@ CORS, and error handling.
 """
 
 import logging
-from typing import Dict
 
 from fastapi import APIRouter, Request
 from slowapi import Limiter
@@ -32,7 +31,7 @@ api_router.include_router(skills_router)
 # Health check endpoint (no auth required)
 @api_router.get("/health", tags=["Health"])
 @limiter.limit("10/minute")
-async def health_check(request: Request) -> Dict[str, str]:
+async def health_check(request: Request) -> dict[str, str]:
     """
     Health check endpoint.
 

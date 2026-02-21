@@ -97,8 +97,3 @@ def get_admin_engine() -> AsyncEngine:
         )
 
     return _admin_engine
-
-
-def get_async_engine() -> AsyncEngine:
-    """Alias for get_engine() used by migration scripts."""
-    return get_engine()

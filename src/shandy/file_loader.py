@@ -6,7 +6,7 @@ Handles multiple file formats with validation and magic number detection.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -82,7 +82,7 @@ IMAGE_EXTENSIONS = {
 __all__ = ["FileTooBigError", "UnsupportedFileTypeError"]
 
 
-def get_file_info(file_path: Path) -> Dict[str, Any]:
+def get_file_info(file_path: Path) -> dict[str, Any]:
     """
     Get comprehensive file information.
 
@@ -169,19 +169,19 @@ def load_tabular_file(file_path: Path) -> pd.DataFrame:
         # CSV and TSV - use auto-detection for delimiter
         if extension in [".csv", ".txt"]:
             return pd.read_csv(file_path, sep=None, engine="python")
-        elif extension == ".tsv":
+        if extension == ".tsv":
             return pd.read_csv(file_path, sep="\t")
 
         # Excel
-        elif extension in [".xlsx", ".xls"]:
+        if extension in [".xlsx", ".xls"]:
             return pd.read_excel(file_path)
 
         # Parquet
-        elif extension in [".parquet", ".pq"]:
+        if extension in [".parquet", ".pq"]:
             return pd.read_parquet(file_path)
 
         # JSON
-        elif extension == ".json":
+        if extension == ".json":
             # Try reading as records first (common for data), fallback to lines
             try:
                 return pd.read_json(file_path, orient="records")
@@ -228,7 +228,7 @@ def load_data_file(file_path: Path) -> Optional[pd.DataFrame]:
         logger.info("Loading tabular file: %s (%s)", file_path.name, info["extension"])
         return load_tabular_file(file_path)
 
-    elif info["file_type"] in ["structure", "sequence"]:
+    if info["file_type"] in ["structure", "sequence"]:
         logger.info(
             "Non-tabular file detected: %s (%s). Agent will access file directly.",
             file_path.name,
@@ -236,14 +236,13 @@ def load_data_file(file_path: Path) -> Optional[pd.DataFrame]:
         )
         return None
 
-    else:
-        logger.warning(
-            "Unknown file type: %s (%s, %s). Agent will attempt to handle it.",
-            file_path.name,
-            info["extension"],
-            info["mime_type"],
-        )
-        return None
+    logger.warning(
+        "Unknown file type: %s (%s, %s). Agent will attempt to handle it.",
+        file_path.name,
+        info["extension"],
+        info["mime_type"],
+    )
+    return None
 
 
 def validate_uploaded_file(file_path: Path, content: bytes) -> None:

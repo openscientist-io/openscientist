@@ -12,8 +12,9 @@ with an elevated PostgreSQL role. This is the recommended approach for productio
 as it enforces RLS at the database level, not just application code.
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional
+from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool

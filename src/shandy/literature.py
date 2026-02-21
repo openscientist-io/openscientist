@@ -5,14 +5,14 @@ Proactive literature integration to inform hypothesis generation.
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import requests
 
 
 def search_pubmed(
     query: str, max_results: int = 10, email: Optional[str] = None
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Search PubMed and return relevant papers.
 
@@ -37,7 +37,7 @@ def search_pubmed(
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
     # Step 1: Search for PMIDs
-    search_params: Dict[str, str | int] = {
+    search_params: dict[str, str | int] = {
         "db": "pubmed",
         "term": query,
         "retmax": max_results,
@@ -72,7 +72,7 @@ def search_pubmed(
     return papers
 
 
-def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
+def _parse_pubmed_xml(xml_text: str, pmids: list[str]) -> list[dict[str, Any]]:
     """
     Parse PubMed XML response.
 
@@ -145,7 +145,7 @@ def _parse_pubmed_xml(xml_text: str, pmids: List[str]) -> List[Dict[str, Any]]:
         ]
 
 
-def format_literature_for_prompt(papers: List[Dict[str, Any]], max_papers: int = 5) -> str:
+def format_literature_for_prompt(papers: list[dict[str, Any]], max_papers: int = 5) -> str:
     """
     Format literature references for inclusion in prompts.
 

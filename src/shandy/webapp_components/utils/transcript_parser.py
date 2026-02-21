@@ -2,27 +2,27 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any
 
 
 @dataclass
 class UsageSummary:
     """Summary of tools and skills used in a transcript."""
 
-    tool_counts: Dict[str, int] = field(default_factory=dict)
-    skill_invocations: List[str] = field(default_factory=list)
+    tool_counts: dict[str, int] = field(default_factory=dict)
+    skill_invocations: list[str] = field(default_factory=list)
     mcp_tool_calls: int = 0
     code_executions: int = 0
     pubmed_searches: int = 0
     findings_recorded: int = 0
 
     @property
-    def skills_used(self) -> List[str]:
+    def skills_used(self) -> list[str]:
         """Deduplicated list of skills invoked."""
         return list(dict.fromkeys(self.skill_invocations))
 
 
-def get_action_description(tool_use: Dict[str, Any]) -> str:
+def get_action_description(tool_use: dict[str, Any]) -> str:
     """
     Get description for a tool use action with fallback logic.
 
@@ -56,7 +56,7 @@ def get_action_description(tool_use: Dict[str, Any]) -> str:
     return str(name.split("__")[-1] if "__" in name else name)
 
 
-def parse_transcript_actions(transcript: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def parse_transcript_actions(transcript: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Parse a transcript to extract actions with their reasoning and results.
 
@@ -132,7 +132,7 @@ def parse_transcript_actions(transcript: List[Dict[str, Any]]) -> List[Dict[str,
     return actions
 
 
-def extract_usage_summary(transcript: List[Dict[str, Any]]) -> UsageSummary:
+def extract_usage_summary(transcript: list[dict[str, Any]]) -> UsageSummary:
     """
     Extract a summary of tool and skill usage from a transcript.
 
@@ -176,20 +176,3 @@ def extract_usage_summary(transcript: List[Dict[str, Any]]) -> UsageSummary:
                             summary.skill_invocations.append(skill_name)
 
     return summary
-
-
-def parse_transcript_with_usage(
-    transcript: List[Dict[str, Any]],
-) -> tuple[List[Dict[str, Any]], UsageSummary]:
-    """
-    Parse transcript and extract both actions and usage summary.
-
-    Args:
-        transcript: List of transcript entries
-
-    Returns:
-        Tuple of (actions list, usage summary)
-    """
-    actions = parse_transcript_actions(transcript)
-    usage = extract_usage_summary(transcript)
-    return actions, usage

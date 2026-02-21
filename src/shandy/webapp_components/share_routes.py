@@ -6,7 +6,6 @@ These routes use session-based authentication instead of API keys.
 """
 
 import logging
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -168,7 +167,7 @@ async def list_job_shares(
     job_id: str,
     user: User = Depends(get_current_user_from_session),
     session: AsyncSession = Depends(get_session),
-) -> List[ShareResponse]:
+) -> list[ShareResponse]:
     """List all shares for a specific job."""
     # Set RLS context
     await set_current_user(session, user.id)
@@ -257,7 +256,7 @@ async def search_users(
     limit: int = Query(10, ge=1, le=100),
     user: User = Depends(get_current_user_from_session),
     session: AsyncSession = Depends(get_session),
-) -> List[UserSearchResult]:
+) -> list[UserSearchResult]:
     """Search for users by email or name."""
     # Search users by email or name (case-insensitive)
     search_pattern = f"%{q}%"

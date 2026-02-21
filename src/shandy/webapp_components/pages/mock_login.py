@@ -13,7 +13,7 @@ def mock_login_form():
 
     # Security check - only show in development mode
     settings = get_settings()
-    if not settings.auth.enable_mock_auth:
+    if not settings.dev.dev_mode:
         ui.label("Mock authentication is not enabled").classes("text-center mt-8")
         ui.button("Back to Login", on_click=lambda: ui.navigate.to("/login")).classes("mt-4")
         return

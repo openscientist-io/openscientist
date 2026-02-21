@@ -20,8 +20,6 @@ class Base(DeclarativeBase):
     Provides the declarative base that all models inherit from.
     """
 
-    pass
-
 
 class UUIDv7Mixin:
     """

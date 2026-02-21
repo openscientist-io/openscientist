@@ -1,12 +1,12 @@
 """Session management utilities for the web application."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 # Global dict to store uploaded files per session
-_uploaded_files: Dict[str, List[Dict[str, Any]]] = {}
+_uploaded_files: dict[str, list[dict[str, Any]]] = {}
 
 
-def get_uploaded_files(session_id: str) -> List[Dict[str, Any]]:
+def get_uploaded_files(session_id: str) -> list[dict[str, Any]]:
     """
     Get uploaded files for a session.
 

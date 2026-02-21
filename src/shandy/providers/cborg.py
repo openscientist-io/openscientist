@@ -7,7 +7,7 @@ Uses CBORG API for model access and cost tracking.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, List
+from typing import Any
 
 import requests
 
@@ -32,7 +32,7 @@ class CborgProvider(BaseProvider):
     def name(self) -> str:
         return "CBORG"
 
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         """Check required CBORG configuration."""
         errors = []
         settings = get_settings()
@@ -45,7 +45,7 @@ class CborgProvider(BaseProvider):
 
         return errors
 
-    def _validate_optional_config(self) -> List[str]:
+    def _validate_optional_config(self) -> list[str]:
         """Check optional CBORG configuration."""
         warnings = []
         settings = get_settings()
@@ -58,10 +58,9 @@ class CborgProvider(BaseProvider):
     def setup_environment(self) -> None:
         """CBORG environment should be configured via .env and docker-compose.yml."""
         # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # noqa: env-ok
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # noqa: env-ok
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
-
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
+        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
         logger.info("CBORG provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:

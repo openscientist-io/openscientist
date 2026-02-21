@@ -253,8 +253,8 @@ async def skills_page():
                     empty_container.classes(add="hidden")
 
         except Exception as e:
-            logger.error("Failed to load skills: %s", e)
-            ui.notify(f"Failed to load skills: {e}", type="negative")
+            logger.error("Failed to load skills: %s", e, exc_info=True)
+            ui.notify("Failed to load skills. Please try again.", type="negative")
 
     def clear_search():
         """Clear search input and reload."""

@@ -145,8 +145,8 @@ async def api_keys_page():
                         await load_keys()
 
                     except Exception as e:
-                        logger.error("Failed to create API key: %s", e)
-                        ui.notify(f"Failed to create key: {e}", type="negative")
+                        logger.error("Failed to create API key: %s", e, exc_info=True)
+                        ui.notify("Failed to create key. Please try again.", type="negative")
 
                 ui.button(
                     "Create Key",
@@ -253,8 +253,8 @@ async def api_keys_page():
                     await load_keys()
 
                 except Exception as e:
-                    logger.error("Failed to revoke API key: %s", e)
-                    ui.notify(f"Failed to revoke key: {e}", type="negative")
+                    logger.error("Failed to revoke API key: %s", e, exc_info=True)
+                    ui.notify("Failed to revoke key. Please try again.", type="negative")
 
             with ui.dialog() as dialog, ui.card().classes("w-96"):
                 ui.label("Revoke API Key").classes("text-lg font-bold mb-2")
@@ -475,9 +475,9 @@ async def api_keys_page():
                     table.on("revoke", handle_revoke)
 
             except Exception as e:
-                logger.error("Failed to load API keys: %s", e)
+                logger.error("Failed to load API keys: %s", e, exc_info=True)
                 with keys_table_container:
-                    ui.label(f"Failed to load keys: {e}").classes("text-red-500")
+                    ui.label("Failed to load API keys. Check server logs.").classes("text-red-500")
 
         # Initial load
         async def initial_load():

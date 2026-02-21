@@ -153,12 +153,12 @@ async def skill_detail_page(category: str, slug: str):
                         ).props("flat color=primary")
 
         except Exception as e:
-            logger.error("Failed to load skill %s/%s: %s", category, slug, e)
+            logger.error("Failed to load skill %s/%s: %s", category, slug, e, exc_info=True)
             content_container.clear()
             with content_container:
                 render_error_state(
                     title="Failed to load skill",
-                    message=str(e),
+                    message="An unexpected error occurred. Please try again.",
                     back_label="Back to Skills",
                     back_url="/skills",
                 )

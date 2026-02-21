@@ -5,8 +5,8 @@ Provides middleware and utilities for PostgreSQL Row-Level Security enforcement.
 RLS policies control access to database rows based on the current user context.
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 from uuid import UUID
 
 from sqlalchemy import text

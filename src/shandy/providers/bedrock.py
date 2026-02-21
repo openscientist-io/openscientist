@@ -7,7 +7,7 @@ Uses AWS Bedrock for model access. Cost tracking via AWS Cost Explorer.
 import logging
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Any, List
+from typing import Any
 
 from shandy.providers.base import BaseProvider, CostInfo
 from shandy.settings import get_settings
@@ -22,7 +22,7 @@ class BedrockProvider(BaseProvider):
     def name(self) -> str:
         return "AWS Bedrock"
 
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         """Check required Bedrock configuration."""
         errors = []
         settings = get_settings()
@@ -45,7 +45,7 @@ class BedrockProvider(BaseProvider):
 
         return errors
 
-    def _validate_optional_config(self) -> List[str]:
+    def _validate_optional_config(self) -> list[str]:
         """Check optional Bedrock configuration."""
         warnings = []
         settings = get_settings()
@@ -70,7 +70,7 @@ class BedrockProvider(BaseProvider):
         environment variables from other providers.
         """
         # Enable Bedrock mode for Claude Code
-        os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # noqa: env-ok
+        os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # env-ok
 
         # Unset Vertex-related vars to avoid conflicts
         vertex_vars = [
@@ -80,12 +80,12 @@ class BedrockProvider(BaseProvider):
             "VERTEX_REGION_CLAUDE_4_5_HAIKU",
         ]
         for var in vertex_vars:
-            if var in os.environ:  # noqa: env-ok
+            if var in os.environ:  # env-ok
                 logger.debug(f"Removing conflicting {var}")
-                del os.environ[var]  # noqa: env-ok
+                del os.environ[var]  # env-ok
 
         # Unset direct API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
 
         # Unset empty vars that interfere with Bedrock auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -98,9 +98,9 @@ class BedrockProvider(BaseProvider):
             "ANTHROPIC_BASE_URL",
         ]
         for var in empty_vars_to_clear:
-            val = os.environ.get(var)  # noqa: env-ok
+            val = os.environ.get(var)  # env-ok
             if val == "":
-                os.environ.pop(var, None)  # noqa: env-ok
+                os.environ.pop(var, None)  # env-ok
                 logger.debug(f"Unset empty {var}")
 
         logger.info("Bedrock provider initialized (using AWS credentials)")
