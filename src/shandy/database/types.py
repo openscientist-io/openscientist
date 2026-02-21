@@ -31,7 +31,7 @@ class EncryptedText(TypeDecorator):
             nullable=True,
         )
 
-    Requires TOKEN_ENCRYPTION_KEY environment variable to be set.
+    Requires SHANDY_SECRET_KEY environment variable to be set.
     If encryption is not available:
     - Reads will attempt decryption, falling back to plaintext for migration
     - Writes will raise an error (encryption required for new data)
@@ -47,7 +47,7 @@ class EncryptedText(TypeDecorator):
 
         if not encryption_available():
             raise ValueError(
-                "Cannot store sensitive data: TOKEN_ENCRYPTION_KEY not configured. "
+                "Cannot store sensitive data: SHANDY_SECRET_KEY not configured. "
                 "Set this environment variable to enable encryption."
             )
 
@@ -60,7 +60,7 @@ class EncryptedText(TypeDecorator):
 
         if not encryption_available():
             # No encryption key - return as-is (might be plaintext from before migration)
-            logger.warning("TOKEN_ENCRYPTION_KEY not set - returning potentially unencrypted value")
+            logger.warning("SHANDY_SECRET_KEY not set - returning potentially unencrypted value")
             return value
 
         try:

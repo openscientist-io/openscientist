@@ -20,8 +20,6 @@ logger = logging.getLogger(__name__)
 class EncryptionError(Exception):
     """Raised when encryption or decryption fails."""
 
-    pass
-
 
 @lru_cache(maxsize=1)
 def _get_fernet() -> Fernet | None:
@@ -73,7 +71,7 @@ def encrypt(plaintext: str) -> str:
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
-            "Encryption key not configured. Set TOKEN_ENCRYPTION_KEY environment variable."
+            "Encryption key not configured. Set SHANDY_SECRET_KEY environment variable."
         )
 
     encrypted = fernet.encrypt(plaintext.encode())
@@ -96,7 +94,7 @@ def decrypt(ciphertext: str) -> str:
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
-            "Encryption key not configured. Set TOKEN_ENCRYPTION_KEY environment variable."
+            "Encryption key not configured. Set SHANDY_SECRET_KEY environment variable."
         )
 
     try:
@@ -111,6 +109,6 @@ def generate_key() -> str:
     Generate a new Fernet encryption key.
 
     Returns:
-        URL-safe base64-encoded 32-byte key suitable for TOKEN_ENCRYPTION_KEY
+        URL-safe base64-encoded 32-byte Fernet key
     """
     return Fernet.generate_key().decode()

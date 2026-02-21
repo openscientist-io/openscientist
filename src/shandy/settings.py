@@ -5,6 +5,8 @@ Validates all environment variables at startup using Pydantic v2 BaseSettings.
 Provides clear error messages when configuration is invalid.
 """
 
+import hashlib
+import hmac
 import logging
 import os
 from functools import lru_cache
@@ -39,9 +41,9 @@ class ProviderSettings(BaseSettings):
 
     # Provider selection
     claude_provider: str = Field(
-        default="cborg",
+        default="anthropic",
         alias="CLAUDE_PROVIDER",
-        description="Provider: anthropic, cborg, vertex, bedrock, codex",
+        description="Provider: anthropic, cborg, vertex, bedrock, codex, foundry",
     )
 
     # GitHub token for skill syncing
@@ -50,8 +52,9 @@ class ProviderSettings(BaseSettings):
     # Anthropic direct API
     anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
 
-    # CBORG (Berkeley Lab)
+    # CBORG (Berkeley Lab) / OAuth tokens
     anthropic_auth_token: Optional[str] = Field(default=None, alias="ANTHROPIC_AUTH_TOKEN")
+    claude_code_oauth_token: Optional[str] = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")
     anthropic_base_url: Optional[str] = Field(default=None, alias="ANTHROPIC_BASE_URL")
 
     # Model settings
@@ -89,72 +92,79 @@ class ProviderSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_provider_requirements(self) -> "ProviderSettings":
-        """Validate that required vars are set for the selected provider."""
+        """Warn about missing provider config.
+
+        This is intentionally warn-only so that settings can always be
+        constructed (e.g. during testing or when only a subset of env vars
+        is available).  The authoritative validation lives in each
+        provider's ``_validate_required_config``.
+        """
         provider = self.claude_provider.lower()
-        errors = []
+        warnings: list[str] = []
 
         if provider == "anthropic":
-            if not self.anthropic_api_key:
-                errors.append(
-                    "ANTHROPIC_API_KEY is required when CLAUDE_PROVIDER=anthropic. "
-                    "Get your API key from https://console.anthropic.com"
+            if not self.anthropic_api_key and not self.claude_code_oauth_token:
+                warnings.append(
+                    "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is required "
+                    "when CLAUDE_PROVIDER=anthropic. "
+                    "Get your API key from https://console.anthropic.com "
+                    "or run 'claude login' for OAuth."
                 )
 
         elif provider == "cborg":
             if not self.anthropic_auth_token:
-                errors.append("ANTHROPIC_AUTH_TOKEN is required when CLAUDE_PROVIDER=cborg")
+                warnings.append("ANTHROPIC_AUTH_TOKEN is required when CLAUDE_PROVIDER=cborg")
             if not self.anthropic_base_url:
-                errors.append(
+                warnings.append(
                     "ANTHROPIC_BASE_URL is required when CLAUDE_PROVIDER=cborg "
                     "(should be https://api.cborg.lbl.gov)"
                 )
 
         elif provider == "vertex":
             if not self.anthropic_vertex_project_id:
-                errors.append("ANTHROPIC_VERTEX_PROJECT_ID is required for Vertex AI")
+                warnings.append("ANTHROPIC_VERTEX_PROJECT_ID is required for Vertex AI")
             if not self.google_application_credentials:
-                errors.append(
+                warnings.append(
                     "GOOGLE_APPLICATION_CREDENTIALS is required for Vertex AI "
                     "(path to service account JSON)"
                 )
             elif not os.path.exists(os.path.expanduser(self.google_application_credentials)):
-                errors.append(
+                warnings.append(
                     f"GOOGLE_APPLICATION_CREDENTIALS file not found: "
                     f"{self.google_application_credentials}"
                 )
             if not self.gcp_billing_account_id:
-                errors.append("GCP_BILLING_ACCOUNT_ID is required for Vertex AI cost tracking")
+                warnings.append("GCP_BILLING_ACCOUNT_ID is required for Vertex AI cost tracking")
             if not self.cloud_ml_region:
-                errors.append("CLOUD_ML_REGION is required for Vertex AI (e.g., us-east5)")
+                warnings.append("CLOUD_ML_REGION is required for Vertex AI (e.g., us-east5)")
 
         elif provider == "bedrock":
             if not self.aws_region:
-                errors.append("AWS_REGION is required for Bedrock (e.g., us-east-1)")
+                warnings.append("AWS_REGION is required for Bedrock (e.g., us-east-1)")
 
             has_access_key = self.aws_access_key_id and self.aws_secret_access_key
             has_profile = bool(self.aws_profile)
             has_bearer = bool(self.aws_bearer_token_bedrock)
 
             if not (has_access_key or has_profile or has_bearer):
-                errors.append(
+                warnings.append(
                     "AWS credentials required for Bedrock. Set one of: "
                     "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, "
                     "or AWS_BEARER_TOKEN_BEDROCK"
                 )
 
-        elif provider == "codex":
-            pass  # Codex provider has minimal requirements
+        elif provider in ("codex", "foundry"):
+            pass  # Minimal requirements
 
         else:
-            errors.append(
+            warnings.append(
                 f"Unknown provider '{provider}'. "
-                "Valid options: anthropic, cborg, vertex, bedrock, codex"
+                "Valid options: anthropic, cborg, vertex, bedrock, codex, foundry"
             )
 
-        if errors:
-            raise ValueError(
-                "Provider configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
-            )
+        if warnings:
+            for w in warnings:
+                logger.warning("Provider config: %s", w)
 
         return self
 
@@ -186,9 +196,12 @@ class ProviderSettings(BaseSettings):
         if self.anthropic_api_key:
             env_vars["ANTHROPIC_API_KEY"] = self.anthropic_api_key
 
-        # CBORG
+        # CBORG / OAuth token
         if self.anthropic_auth_token:
             env_vars["ANTHROPIC_AUTH_TOKEN"] = self.anthropic_auth_token
+        # Claude Code CLI expects CLAUDE_CODE_OAUTH_TOKEN for OAuth auth
+        if self.claude_code_oauth_token:
+            env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = self.claude_code_oauth_token
         if self.anthropic_base_url:
             env_vars["ANTHROPIC_BASE_URL"] = self.anthropic_base_url
 
@@ -242,62 +255,24 @@ class DatabaseSettings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: Optional[str] = Field(default=None, alias="DATABASE_URL")
+    database_url: str = Field(alias="DATABASE_URL")
 
-    # Admin database URL for elevated operations (bypasses RLS via DB role)
-    # If not set, defaults to DATABASE_URL (same role for all operations)
+    # Admin database URL for elevated operations (bypasses RLS via DB role).
+    # If not set, falls back to DATABASE_URL.
     admin_database_url: Optional[str] = Field(default=None, alias="ADMIN_DATABASE_URL")
-
-    # Individual components (used if DATABASE_URL not set)
-    postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
-    postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
-    postgres_user: str = Field(default="shandy", alias="POSTGRES_USER")
-    postgres_password: str = Field(default="", alias="POSTGRES_PASSWORD")
-    postgres_db: str = Field(default="shandy", alias="POSTGRES_DB")
 
     # Debug settings
     sql_echo: bool = Field(default=False, alias="SQL_ECHO")
 
     @property
     def effective_database_url(self) -> str:
-        """Get the database URL, constructing from components if needed."""
-        if self.database_url:
-            return self.database_url
-
-        if not self.postgres_password:
-            raise ValueError(
-                "DATABASE_URL or POSTGRES_PASSWORD must be set.\n\n"
-                "To fix this:\n"
-                "1. Copy .env.example to .env: cp .env.example .env\n"
-                "2. Configure DATABASE_URL or POSTGRES_* variables in .env\n"
-                "   For local development: DATABASE_URL=postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy\n"
-                "3. Make sure PostgreSQL is running (use 'make dev-start' for Docker setup)\n\n"
-                "See CONTRIBUTING.md for complete setup instructions."
-            )
-
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+        """Get the database URL."""
+        return self.database_url
 
     @property
     def effective_admin_database_url(self) -> str:
-        """Get the admin database URL for elevated operations.
-
-        The admin database URL is used for operations that need to bypass
-        Row-Level Security (RLS), such as:
-        - Background schedulers (no user context)
-        - Admin-authenticated endpoints
-        - Migrations and schema changes
-
-        If ADMIN_DATABASE_URL is not set, falls back to the regular database URL.
-        In production, ADMIN_DATABASE_URL should connect with a PostgreSQL role
-        that has elevated privileges (e.g., table owner or superuser).
-        """
-        if self.admin_database_url:
-            return self.admin_database_url
-        # Fall back to regular database URL
-        return self.effective_database_url
+        """Get the admin database URL for elevated operations (bypasses RLS)."""
+        return self.admin_database_url or self.database_url
 
 
 class AuthSettings(BaseSettings):
@@ -311,15 +286,11 @@ class AuthSettings(BaseSettings):
 
     # General auth settings
     app_url: str = Field(default="http://localhost:8080", alias="APP_URL")
-    storage_secret: str = Field(
-        default="change-this-to-a-random-secret-string-in-production",
-        alias="STORAGE_SECRET",
-    )
-
-    # Session settings
-    session_secret: Optional[str] = Field(default=None, alias="SESSION_SECRET")
-    session_max_age: int = Field(default=86400, alias="SESSION_MAX_AGE")
     session_duration_days: int = Field(default=30, alias="SESSION_DURATION_DAYS")
+
+    # Derived from SHANDY_SECRET_KEY (populated by Settings.derive_secrets)
+    storage_secret: str = Field(default="")
+    token_encryption_key: Optional[str] = Field(default=None)
 
     # Google OAuth
     google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID")
@@ -333,12 +304,6 @@ class AuthSettings(BaseSettings):
     orcid_client_id: Optional[str] = Field(default=None, alias="ORCID_CLIENT_ID")
     orcid_client_secret: Optional[str] = Field(default=None, alias="ORCID_CLIENT_SECRET")
     orcid_api_base: str = Field(default="https://orcid.org", alias="ORCID_API_BASE")
-
-    # Development/testing
-    enable_mock_auth: bool = Field(default=False, alias="ENABLE_MOCK_AUTH")
-
-    # Encryption
-    token_encryption_key: Optional[str] = Field(default=None, alias="TOKEN_ENCRYPTION_KEY")
 
     @model_validator(mode="after")
     def validate_oauth_pairs(self) -> "AuthSettings":
@@ -370,12 +335,7 @@ class AuthSettings(BaseSettings):
     @property
     def is_oauth_configured(self) -> bool:
         """Check if at least one OAuth provider is configured."""
-        return bool(
-            self.google_client_id
-            or self.github_client_id
-            or self.orcid_client_id
-            or self.enable_mock_auth
-        )
+        return bool(self.google_client_id or self.github_client_id or self.orcid_client_id)
 
 
 class BudgetSettings(BaseSettings):
@@ -451,6 +411,10 @@ class ContainerSettings(BaseSettings):
     executor_memory: str = Field(default="2g", alias="SHANDY_EXECUTOR_MEMORY")
     executor_cpu: float = Field(default=0.5, alias="SHANDY_EXECUTOR_CPU")
     executor_timeout: int = Field(default=120, alias="SHANDY_EXECUTOR_TIMEOUT")
+
+    # Agent container resource limits
+    agent_memory: str = Field(default="8g", alias="SHANDY_AGENT_MEMORY")
+    agent_cpu: float = Field(default=2.0, alias="SHANDY_AGENT_CPU")
 
     # Host path mapping for sibling container volume mounts (executor containers)
     # When the main container runs inside Docker and spawns sibling containers,
@@ -564,6 +528,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Master secret — all auth secrets are derived from this via HMAC-SHA256
+    secret_key: str = Field(alias="SHANDY_SECRET_KEY")
+
     # Server settings
     port: int = Field(default=8080, alias="PORT")
     base_url: str = Field(
@@ -583,6 +550,16 @@ class Settings(BaseSettings):
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+
+    @model_validator(mode="after")
+    def derive_secrets(self) -> "Settings":
+        """Derive auth secrets from the master SHANDY_SECRET_KEY via HMAC-SHA256."""
+        key = self.secret_key.encode()
+        self.auth.storage_secret = hmac.new(key, b"storage_secret", hashlib.sha256).hexdigest()
+        self.auth.token_encryption_key = hmac.new(
+            key, b"token_encryption_key", hashlib.sha256
+        ).hexdigest()
+        return self
 
 
 @lru_cache(maxsize=1)
