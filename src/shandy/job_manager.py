@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Optional, TypeVar
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from shandy.container_manager import get_container_manager
 from shandy.database.models import User
@@ -57,6 +57,7 @@ async def _db_create_job(
     """
     async with AsyncSessionLocal(thread_safe=True) as session:
         if owner_id:
+            await session.execute(text("SET ROLE shandy_app"))
             await set_current_user(session, owner_id)
 
         job = JobModel(
@@ -75,9 +76,15 @@ async def _db_create_job(
 
 
 async def _db_get_job(job_id: str, user_id: Optional[UUID] = None) -> Optional[JobModel]:
-    """Get a job from the database (thread-safe for worker threads)."""
+    """Get a job from the database (thread-safe for worker threads).
+
+    When user_id is provided, drops to shandy_app role so RLS policies
+    are enforced. Without user_id, runs as the connection user (superuser)
+    which bypasses RLS — use only for internal/system operations.
+    """
     async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
+            await session.execute(text("SET ROLE shandy_app"))
             await set_current_user(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
@@ -101,6 +108,7 @@ async def _db_update_job_status(
 
     async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
+            await session.execute(text("SET ROLE shandy_app"))
             await set_current_user(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
@@ -137,6 +145,7 @@ async def _db_list_jobs(
     """List jobs from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
+            await session.execute(text("SET ROLE shandy_app"))
             await set_current_user(session, user_id)
 
         stmt = select(JobModel).order_by(JobModel.created_at.desc())
@@ -155,6 +164,7 @@ async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
     """Delete a job from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
+            await session.execute(text("SET ROLE shandy_app"))
             await set_current_user(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))

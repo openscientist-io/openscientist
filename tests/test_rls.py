@@ -34,6 +34,125 @@ async def test_rls_enabled_on_tables(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
+async def test_users_cannot_see_each_others_jobs(db_session: AsyncSession):
+    """Two users should only see their own jobs, not each other's."""
+    # Create two users (admin role, bypasses RLS)
+    alice = User(email="alice@example.com", name="Alice")
+    bob = User(email="bob@example.com", name="Bob")
+    db_session.add_all([alice, bob])
+    await db_session.commit()
+
+    # Create jobs for each user
+    alice_job = Job(owner_id=alice.id, title="Alice's research")
+    bob_job = Job(owner_id=bob.id, title="Bob's research")
+    db_session.add_all([alice_job, bob_job])
+    await db_session.commit()
+
+    # Switch to app role (subject to RLS)
+    await enable_rls(db_session)
+
+    # Alice should only see her own job
+    await set_current_user(db_session, alice.id)
+    result = await db_session.execute(select(Job))
+    alice_visible = result.scalars().all()
+    assert len(alice_visible) == 1
+    assert alice_visible[0].title == "Alice's research"
+
+    # Bob should only see his own job
+    await set_current_user(db_session, bob.id)
+    result = await db_session.execute(select(Job))
+    bob_visible = result.scalars().all()
+    assert len(bob_visible) == 1
+    assert bob_visible[0].title == "Bob's research"
+
+    # Alice should not be able to fetch Bob's job by ID
+    await set_current_user(db_session, alice.id)
+    result = await db_session.execute(select(Job).where(Job.id == bob_job.id))
+    assert result.scalar_one_or_none() is None
+
+    # Bob should not be able to fetch Alice's job by ID
+    await set_current_user(db_session, bob.id)
+    result = await db_session.execute(select(Job).where(Job.id == alice_job.id))
+    assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_users_cannot_see_each_others_profiles(db_session: AsyncSession):
+    """Users should only see their own record in the users table."""
+    alice = User(email="alice2@example.com", name="Alice")
+    bob = User(email="bob2@example.com", name="Bob")
+    db_session.add_all([alice, bob])
+    await db_session.commit()
+
+    await enable_rls(db_session)
+
+    # Alice should only see herself
+    await set_current_user(db_session, alice.id)
+    result = await db_session.execute(select(User))
+    visible = result.scalars().all()
+    assert len(visible) == 1
+    assert visible[0].id == alice.id
+
+    # Bob should only see himself
+    await set_current_user(db_session, bob.id)
+    result = await db_session.execute(select(User))
+    visible = result.scalars().all()
+    assert len(visible) == 1
+    assert visible[0].id == bob.id
+
+
+@pytest.mark.asyncio
+async def test_no_rls_context_returns_no_jobs(db_session: AsyncSession):
+    """Without set_current_user, queries under RLS should return nothing."""
+    user = User(email="lonely@example.com", name="Lonely")
+    db_session.add(user)
+    await db_session.commit()
+
+    job = Job(owner_id=user.id, title="Hidden job")
+    db_session.add(job)
+    await db_session.commit()
+
+    # Switch to app role but DON'T set a user context
+    await enable_rls(db_session)
+
+    result = await db_session.execute(select(Job))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_sharing_grants_cross_user_visibility(db_session: AsyncSession):
+    """Sharing a job should make it visible to the recipient without exposing other jobs."""
+    alice = User(email="alice3@example.com", name="Alice")
+    bob = User(email="bob3@example.com", name="Bob")
+    db_session.add_all([alice, bob])
+    await db_session.commit()
+
+    shared_job = Job(owner_id=alice.id, title="Shared research")
+    private_job = Job(owner_id=alice.id, title="Private research")
+    db_session.add_all([shared_job, private_job])
+    await db_session.commit()
+
+    # Share only one of Alice's jobs with Bob
+    share = JobShare(
+        job_id=shared_job.id,
+        shared_with_user_id=bob.id,
+        permission_level="view",
+    )
+    db_session.add(share)
+    await db_session.commit()
+
+    await enable_rls(db_session)
+
+    # Bob should see the shared job but NOT Alice's private job
+    await set_current_user(db_session, bob.id)
+    result = await db_session.execute(select(Job))
+    bob_visible = result.scalars().all()
+    visible_titles = {j.title for j in bob_visible}
+    assert "Shared research" in visible_titles
+    assert "Private research" not in visible_titles
+
+
+@pytest.mark.asyncio
 async def test_job_sharing_view_permission(db_session: AsyncSession):
     """Test that view permission grants read-only access."""
     # Create two users and a job (tests run as superuser, bypassing RLS)
@@ -160,6 +279,98 @@ async def test_orphaned_jobs_visible(db_session: AsyncSession):
     jobs = result.scalars().all()
     assert len(jobs) == 1
     assert jobs[0].title == "Orphaned Job"
+
+
+@pytest.mark.asyncio
+async def test_get_session_enforces_rls(test_engine):
+    """get_session() must enforce RLS via SET ROLE shandy_app.
+
+    Verifies that the standard session factory (get_session) drops privileges
+    to shandy_app so that RLS policies are actually enforced. Without this,
+    a superuser or BYPASSRLS connection silently skips all RLS policies.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from shandy.database.session import _set_app_role
+
+    # Create test data using admin session (bypasses RLS)
+    session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_factory() as admin_session:
+        await admin_session.execute(text("SET ROLE shandy_admin"))
+
+        alice = User(email="alice_gs@example.com", name="Alice")
+        bob = User(email="bob_gs@example.com", name="Bob")
+        admin_session.add_all([alice, bob])
+        await admin_session.commit()
+
+        alice_job = Job(owner_id=alice.id, title="Alice get_session job")
+        bob_job = Job(owner_id=bob.id, title="Bob get_session job")
+        admin_session.add_all([alice_job, bob_job])
+        await admin_session.commit()
+
+        alice_id = alice.id
+
+    # Now simulate get_session() behavior: SET ROLE shandy_app + set_current_user
+    async with session_factory() as user_session:
+        await _set_app_role(user_session)  # This is what get_session() now does
+        await set_current_user(user_session, alice_id)
+
+        result = await user_session.execute(select(Job))
+        visible = result.scalars().all()
+
+        # With RLS enforced, Alice should only see her own job
+        assert len(visible) == 1, (
+            f"RLS NOT ENFORCED: Alice sees {len(visible)} jobs instead of 1. "
+            f"get_session() must SET ROLE shandy_app for RLS to work."
+        )
+        assert visible[0].title == "Alice get_session job"
+
+        # Also verify Bob's job is NOT visible by direct ID lookup
+        result = await user_session.execute(select(Job).where(Job.id == bob_job.id))
+        assert result.scalar_one_or_none() is None, (
+            "Alice can see Bob's job by direct ID — RLS is not enforced"
+        )
+
+
+@pytest.mark.asyncio
+async def test_bypassrls_role_sees_all_jobs(test_engine):
+    """Verify that admin/BYPASSRLS role can see all jobs (sanity check).
+
+    Without SET ROLE shandy_app, the session role bypasses RLS even when
+    set_current_user() is called. This test documents that behavior.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with session_factory() as admin_session:
+        await admin_session.execute(text("SET ROLE shandy_admin"))
+
+        alice = User(email="alice_bypass@example.com", name="Alice")
+        bob = User(email="bob_bypass@example.com", name="Bob")
+        admin_session.add_all([alice, bob])
+        await admin_session.commit()
+
+        alice_job = Job(owner_id=alice.id, title="Alice bypass job")
+        bob_job = Job(owner_id=bob.id, title="Bob bypass job")
+        admin_session.add_all([alice_job, bob_job])
+        await admin_session.commit()
+
+        alice_id = alice.id
+
+    # Use admin role (BYPASSRLS) — RLS is NOT enforced
+    async with session_factory() as admin_session:
+        await admin_session.execute(text("SET ROLE shandy_admin"))
+        await set_current_user(admin_session, alice_id)
+
+        result = await admin_session.execute(select(Job))
+        visible = result.scalars().all()
+
+        # Admin bypasses RLS — sees all jobs regardless of set_current_user
+        assert len(visible) >= 2
 
 
 @pytest.mark.asyncio

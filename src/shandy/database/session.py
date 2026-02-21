@@ -4,24 +4,30 @@ Database session management for SHANDY.
 Provides async session factories and dependency injection for FastAPI/NiceGUI.
 
 Session Types:
-    - get_session(): Standard session with RLS enforced by PostgreSQL role
+    - get_session(): Standard session with RLS enforced via SET ROLE shandy_app
     - get_admin_session(): Admin session that bypasses RLS via elevated role
+    - AsyncSessionLocal(): Low-level session factory (also enforces RLS when used
+      without thread_safe, or via SET ROLE in thread-safe mode)
 
-For the dual-engine pattern, get_admin_session() uses a separate connection pool
-with an elevated PostgreSQL role. This is the recommended approach for production
-as it enforces RLS at the database level, not just application code.
+For the dual-engine pattern, get_session() connects as the main database user
+then immediately does SET ROLE shandy_app to drop privileges. The shandy_app
+role is a non-superuser NOLOGIN role that is subject to RLS policies.
 """
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from shandy.settings import get_settings
 
 from .engine import get_admin_engine, get_engine
+
+logger = logging.getLogger(__name__)
 
 # Lazy session factories (initialized on first use)
 _session_factory: Optional[async_sessionmaker[AsyncSession]] = None
@@ -99,19 +105,48 @@ def AsyncSessionLocal(thread_safe: bool = False) -> AsyncSession:  # noqa: N802
 
     Returns:
         A new AsyncSession instance.
+
+    Note:
+        The returned session does NOT automatically SET ROLE shandy_app.
+        Callers must use the session as a context manager and call
+        set_current_user() to set RLS context, or use get_session() instead.
     """
     if thread_safe:
         return _create_fresh_session_factory()()
     return _get_session_factory()()
 
 
+async def _set_app_role(session: AsyncSession) -> None:
+    """Drop privileges to shandy_app role for RLS enforcement.
+
+    The main database user (shandy) is typically a superuser that bypasses
+    all RLS policies. By switching to shandy_app (a non-superuser NOLOGIN role),
+    the session becomes subject to RLS policies.
+
+    This must be called on every new session before user-facing queries.
+    """
+    await session.execute(text("SET ROLE shandy_app"))
+
+
+async def _reset_role(session: AsyncSession) -> None:
+    """Restore the original database role after session use."""
+    try:
+        await session.execute(text("RESET ROLE"))
+    except Exception:
+        pass  # Connection may already be closed/invalid
+
+
 @asynccontextmanager
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
-    Dependency to provide a database session with standard privileges.
+    Dependency to provide a database session with RLS enforced.
 
-    Sessions from this factory are subject to RLS policies. Use this for
-    all user-facing operations where the user context is available.
+    Connects as the main database user, then drops privileges to shandy_app
+    via SET ROLE. The shandy_app role is subject to RLS policies, ensuring
+    that queries only return rows the current user is authorized to see.
+
+    Callers must still call set_current_user(session, user_id) to set the
+    RLS context for the specific user.
 
     Usage in FastAPI:
         @app.get("/items")
@@ -124,16 +159,19 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             ...
 
     Yields:
-        AsyncSession: A SQLAlchemy async session.
+        AsyncSession: A SQLAlchemy async session with RLS enforced.
     """
     factory = _get_session_factory()
     async with factory() as session:
         try:
+            # Drop to shandy_app role so RLS policies are enforced
+            await _set_app_role(session)
             yield session
         except Exception:
             await session.rollback()
             raise
         finally:
+            await _reset_role(session)
             await session.close()
 
 
