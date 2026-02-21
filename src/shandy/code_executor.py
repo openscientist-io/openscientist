@@ -12,7 +12,7 @@ import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import matplotlib
 import numpy as np
@@ -33,7 +33,7 @@ def timeout_handler(_signum, _frame):
     raise CodeExecutionTimeoutError("Code execution timed out")
 
 
-def validate_imports(code: str, allowed_imports: List[str]) -> None:
+def validate_imports(code: str, allowed_imports: list[str]) -> None:
     """
     Validate that code only imports allowed modules.
 
@@ -75,9 +75,9 @@ def execute_code(
     timeout: int = 60,
     description: str = "",
     iteration: int = 0,
-    data_files: Optional[List[Dict[str, Any]]] = None,
+    data_files: Optional[list[dict[str, Any]]] = None,
     save_code_with_plots: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Execute Python code in sandboxed environment.
 
@@ -152,7 +152,7 @@ def execute_code(
         }
 
     # Prepare namespace with allowed libraries
-    namespace: Dict[str, Any] = {
+    namespace: dict[str, Any] = {
         "data": data,
         "data_files": data_files or [],
         "pd": pd,
@@ -302,7 +302,222 @@ def execute_code(
         }
 
 
-def format_execution_result(result: Dict[str, Any]) -> str:
+def execute_sparql_code(
+    code: str,
+    plots_dir: Path,
+    timeout: int = 60,
+    description: str = "",
+    iteration: int = 0,
+    data_files: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """
+    Execute a SPARQL query against a remote endpoint.
+
+    The query must include an endpoint comment on its own line:
+        # ENDPOINT: https://query.wikidata.org/sparql
+
+    Args:
+        code: SPARQL query, with a ``# ENDPOINT: <url>`` comment
+        plots_dir: Unused, kept for API consistency
+        timeout: Query timeout in seconds (default: 60)
+        description: Optional description of what's being investigated
+        iteration: Current iteration number
+        data_files: Unused, kept for API consistency
+
+    Returns:
+        Dictionary with execution results (no plots for SPARQL)
+    """
+    start_time = time.time()
+
+    # Parse endpoint from query comments
+    endpoint: str | None = None
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("# endpoint:"):
+            endpoint = stripped[len("# endpoint:") :].strip()
+            break
+
+    if not endpoint:
+        return {
+            "success": False,
+            "error": (
+                "No SPARQL endpoint specified. "
+                "Add a comment to your query: # ENDPOINT: https://example.org/sparql"
+            ),
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+
+    try:
+        from SPARQLWrapper import JSON, SPARQLWrapper
+        from SPARQLWrapper.SPARQLExceptions import SPARQLWrapperException
+    except ImportError:
+        return {
+            "success": False,
+            "error": "SPARQLWrapper is not installed. Run: pip install SPARQLWrapper",
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+
+    try:
+        sparql = SPARQLWrapper(endpoint)
+        sparql.setQuery(code)
+        sparql.setReturnFormat(JSON)
+        sparql.setTimeout(timeout)
+
+        results = sparql.query().convert()
+    except SPARQLWrapperException as e:
+        return {
+            "success": False,
+            "error": f"SPARQL query error: {e}",
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "success": False,
+            "error": f"{type(e).__name__}: {e}",
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+
+    execution_time = time.time() - start_time
+
+    # Format results as a plain-text table
+    if not isinstance(results, dict):
+        results = {}
+    bindings = results.get("results", {}).get("bindings", [])
+    vars_ = results.get("head", {}).get("vars", [])
+
+    if not bindings:
+        output = "Query returned 0 results."
+    else:
+        # Build rows
+        rows = [[b.get(v, {}).get("value", "") for v in vars_] for b in bindings]
+        col_widths = [max(len(v), *(len(r[i]) for r in rows)) for i, v in enumerate(vars_)]
+        sep = "  ".join("-" * w for w in col_widths)
+        header = "  ".join(v.ljust(col_widths[i]) for i, v in enumerate(vars_))
+        lines = [header, sep] + [
+            "  ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(row)) for row in rows
+        ]
+        output = f"{len(bindings)} result(s):\n\n" + "\n".join(lines)
+
+    return {
+        "success": True,
+        "output": output,
+        "plots": [],
+        "error": None,
+        "execution_time": execution_time,
+    }
+
+
+def execute_rust_code(
+    code: str,
+    plots_dir: Path,
+    timeout: int = 60,
+    description: str = "",
+    iteration: int = 0,
+    data_files: Optional[list[dict[str, Any]]] = None,
+) -> dict[str, Any]:
+    """
+    Execute Rust code by compiling with rustc and running the binary.
+
+    Args:
+        code: Rust source code to compile and run
+        plots_dir: Directory for any output files (not used for Rust, for API consistency)
+        timeout: Max total time (compile + run) in seconds (default: 60)
+        description: Optional description of what's being investigated
+        iteration: Current iteration number
+        data_files: Unused, kept for API consistency with execute_code
+
+    Returns:
+        Dictionary with execution results (no plots for Rust)
+    """
+    import subprocess
+    import tempfile
+
+    start_time = time.time()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_path = Path(tmpdir) / "main.rs"
+        bin_path = Path(tmpdir) / "main"
+        src_path.write_text(code, encoding="utf-8")
+
+        # Compile
+        try:
+            compile_result = subprocess.run(
+                ["rustc", str(src_path), "-o", str(bin_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "error": "Rust compiler (rustc) not found. Install Rust to use Rust code execution.",
+                "output": "",
+                "plots": [],
+                "execution_time": time.time() - start_time,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": f"Rust compilation timed out after {timeout} seconds",
+                "output": "",
+                "plots": [],
+                "execution_time": float(timeout),
+            }
+
+        if compile_result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Compilation error:\n{compile_result.stderr}",
+                "output": compile_result.stdout,
+                "plots": [],
+                "execution_time": time.time() - start_time,
+            }
+
+        # Run with remaining budget
+        remaining = max(1, timeout - int(time.time() - start_time))
+        try:
+            run_result = subprocess.run(
+                [str(bin_path)],
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": f"Rust execution timed out after {timeout} seconds",
+                "output": "",
+                "plots": [],
+                "execution_time": float(timeout),
+            }
+
+        execution_time = time.time() - start_time
+        output = run_result.stdout
+        if run_result.stderr:
+            output += f"\nstderr:\n{run_result.stderr}"
+
+        return {
+            "success": run_result.returncode == 0,
+            "output": output,
+            "plots": [],
+            "error": (
+                None
+                if run_result.returncode == 0
+                else f"Process exited with code {run_result.returncode}\n{run_result.stderr}"
+            ),
+            "execution_time": execution_time,
+        }
+
+
+def format_execution_result(result: dict[str, Any]) -> str:
     """
     Format execution result for display to agent.
 
@@ -322,11 +537,10 @@ def format_execution_result(result: Dict[str, Any]) -> str:
                 parts.append(f"  - {plot}\n")
         parts.append(f"Execution time: {result['execution_time']:.2f}s")
         return "".join(parts)
-    else:
-        parts = ["L Code execution failed\n"]
-        parts.append(f"Error: {result['error']}\n")
-        if result.get("output"):
-            parts.append(f"\nPartial output:\n{result['output']}\n")
-        if result.get("traceback"):
-            parts.append(f"\nTraceback:\n{result['traceback']}")
-        return "".join(parts)
+    parts = ["L Code execution failed\n"]
+    parts.append(f"Error: {result['error']}\n")
+    if result.get("output"):
+        parts.append(f"\nPartial output:\n{result['output']}\n")
+    if result.get("traceback"):
+        parts.append(f"\nTraceback:\n{result['traceback']}")
+    return "".join(parts)

@@ -28,3 +28,6 @@ pyarrow>=14.0.0
 
 # HTTP requests (for KBase, external APIs)
 requests>=2.31.0
+
+# SPARQL queries against remote endpoints
+SPARQLWrapper>=2.0.0

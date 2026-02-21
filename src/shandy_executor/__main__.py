@@ -2,7 +2,8 @@
 SHANDY Executor main entry point.
 
 Reads JSON from stdin with:
-- code: Python code to execute
+- code: Code to execute
+- language: Programming language ("python" or "rust", default: "python")
 - data_path: Optional path to data file (CSV, Parquet, etc.)
 - output_dir: Directory to save plots and artifacts
 - timeout: Max execution time in seconds (default: 60)
@@ -240,6 +241,208 @@ def execute_code(
         }
 
 
+def execute_sparql_code(
+    code: str,
+    output_dir: Path,
+    timeout: int = 60,
+    description: str = "",
+    iteration: int = 0,
+    data_files: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    Execute a SPARQL query against a remote endpoint.
+
+    The query must include an endpoint comment:
+        # ENDPOINT: https://query.wikidata.org/sparql
+    """
+    start_time = time.time()
+
+    # Parse endpoint from query comments
+    endpoint: str | None = None
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped.lower().startswith("# endpoint:"):
+            endpoint = stripped[len("# endpoint:") :].strip()
+            break
+
+    if not endpoint:
+        return {
+            "success": False,
+            "error": (
+                "No SPARQL endpoint specified. "
+                "Add a comment to your query: # ENDPOINT: https://example.org/sparql"
+            ),
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+
+    try:
+        from SPARQLWrapper import JSON, SPARQLWrapper
+        from SPARQLWrapper.SPARQLExceptions import SPARQLWrapperException
+    except ImportError:
+        return {
+            "success": False,
+            "error": "SPARQLWrapper is not installed.",
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+
+    try:
+        sparql = SPARQLWrapper(endpoint)
+        sparql.setQuery(code)
+        sparql.setReturnFormat(JSON)
+        sparql.setTimeout(timeout)
+
+        results = sparql.query().convert()
+    except SPARQLWrapperException as e:
+        return {
+            "success": False,
+            "error": f"SPARQL query error: {e}",
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "success": False,
+            "error": f"{type(e).__name__}: {e}",
+            "output": "",
+            "plots": [],
+            "execution_time": time.time() - start_time,
+        }
+
+    execution_time = time.time() - start_time
+
+    if not isinstance(results, dict):
+        results = {}
+    bindings = results.get("results", {}).get("bindings", [])
+    vars_ = results.get("head", {}).get("vars", [])
+
+    if not bindings:
+        output = "Query returned 0 results."
+    else:
+        rows = [[b.get(v, {}).get("value", "") for v in vars_] for b in bindings]
+        col_widths = [max(len(v), *(len(r[i]) for r in rows)) for i, v in enumerate(vars_)]
+        sep = "  ".join("-" * w for w in col_widths)
+        header = "  ".join(v.ljust(col_widths[i]) for i, v in enumerate(vars_))
+        lines = [header, sep] + [
+            "  ".join(cell.ljust(col_widths[i]) for i, cell in enumerate(row)) for row in rows
+        ]
+        output = f"{len(bindings)} result(s):\n\n" + "\n".join(lines)
+
+    return {
+        "success": True,
+        "output": output,
+        "plots": [],
+        "error": None,
+        "execution_time": execution_time,
+    }
+
+
+def execute_rust_code(
+    code: str,
+    output_dir: Path,
+    timeout: int = 60,
+    description: str = "",
+    iteration: int = 0,
+    data_files: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    Execute Rust code by compiling with rustc and running the binary.
+
+    Args:
+        code: Rust source code to compile and run
+        output_dir: Directory for output files (unused for Rust, for API consistency)
+        timeout: Max total time (compile + run) in seconds
+        description: Optional description of what's being investigated
+        iteration: Current iteration number
+        data_files: Unused, kept for API consistency
+
+    Returns:
+        Dictionary with execution results (no plots for Rust)
+    """
+    import subprocess
+    import tempfile
+
+    start_time = time.time()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_path = Path(tmpdir) / "main.rs"
+        bin_path = Path(tmpdir) / "main"
+        src_path.write_text(code, encoding="utf-8")
+
+        # Compile
+        try:
+            compile_result = subprocess.run(
+                ["rustc", str(src_path), "-o", str(bin_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except FileNotFoundError:
+            return {
+                "success": False,
+                "error": "Rust compiler (rustc) not found.",
+                "output": "",
+                "plots": [],
+                "execution_time": time.time() - start_time,
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": f"Rust compilation timed out after {timeout} seconds",
+                "output": "",
+                "plots": [],
+                "execution_time": float(timeout),
+            }
+
+        if compile_result.returncode != 0:
+            return {
+                "success": False,
+                "error": f"Compilation error:\n{compile_result.stderr}",
+                "output": compile_result.stdout,
+                "plots": [],
+                "execution_time": time.time() - start_time,
+            }
+
+        # Run with remaining budget
+        remaining = max(1, timeout - int(time.time() - start_time))
+        try:
+            run_result = subprocess.run(
+                [str(bin_path)],
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": f"Rust execution timed out after {timeout} seconds",
+                "output": "",
+                "plots": [],
+                "execution_time": float(timeout),
+            }
+
+        execution_time = time.time() - start_time
+        output = run_result.stdout
+        if run_result.stderr:
+            output += f"\nstderr:\n{run_result.stderr}"
+
+        return {
+            "success": run_result.returncode == 0,
+            "output": output,
+            "plots": [],
+            "error": (
+                None
+                if run_result.returncode == 0
+                else f"Process exited with code {run_result.returncode}\n{run_result.stderr}"
+            ),
+            "execution_time": execution_time,
+        }
+
+
 def main():
     """Main entry point - reads from stdin, writes to stdout."""
     try:
@@ -247,6 +450,7 @@ def main():
         input_data = json.load(sys.stdin)
 
         code = input_data.get("code", "")
+        language = input_data.get("language", "python")
         data_path = input_data.get("data_path")
         output_dir = Path(input_data.get("output_dir", "/output"))
         timeout = input_data.get("timeout", 60)
@@ -254,19 +458,38 @@ def main():
         iteration = input_data.get("iteration", 0)
         data_files = input_data.get("data_files", [])
 
-        # Load data if path provided
-        data = load_data(data_path)
+        if language == "rust":
+            result = execute_rust_code(
+                code=code,
+                output_dir=output_dir,
+                timeout=timeout,
+                description=description,
+                iteration=iteration,
+                data_files=data_files,
+            )
+        elif language == "sparql":
+            result = execute_sparql_code(
+                code=code,
+                output_dir=output_dir,
+                timeout=timeout,
+                description=description,
+                iteration=iteration,
+                data_files=data_files,
+            )
+        else:
+            # Load data if path provided (only relevant for Python)
+            data = load_data(data_path)
 
-        # Execute code
-        result = execute_code(
-            code=code,
-            data=data,
-            output_dir=output_dir,
-            timeout=timeout,
-            description=description,
-            iteration=iteration,
-            data_files=data_files,
-        )
+            # Execute code
+            result = execute_code(
+                code=code,
+                data=data,
+                output_dir=output_dir,
+                timeout=timeout,
+                description=description,
+                iteration=iteration,
+                data_files=data_files,
+            )
 
         # Write result to stdout
         json.dump(result, sys.stdout)

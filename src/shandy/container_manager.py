@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -71,12 +72,13 @@ class ContainerManager:
         description: str = "",
         iteration: int = 0,
         data_files: list[dict[str, Any]] | None = None,
+        language: str = "python",
     ) -> dict[str, Any]:
         """
         Execute code in an isolated container.
 
         Args:
-            code: Python code to execute
+            code: Code to execute
             job_id: Job identifier for container labeling and cleanup
             data_path: Optional path to data file (inside container)
             output_dir: Directory to save plots (will be mounted)
@@ -84,6 +86,7 @@ class ContainerManager:
             description: Description of what's being investigated
             iteration: Current iteration number
             data_files: List of file metadata dicts
+            language: Programming language ("python" or "rust")
 
         Returns:
             Execution result dictionary with success, output, plots, error, etc.
@@ -98,6 +101,7 @@ class ContainerManager:
         # (JSON may contain single quotes in Python code that break shell escaping)
         input_data = {
             "code": code,
+            "language": language,
             "data_path": data_path,
             "output_dir": "/output",
             "timeout": timeout,
@@ -293,8 +297,6 @@ class ContainerManager:
         Returns:
             Number of containers removed
         """
-        from datetime import datetime, timezone
-
         import docker.errors
 
         removed = 0
