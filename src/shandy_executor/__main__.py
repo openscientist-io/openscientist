@@ -380,6 +380,7 @@ def execute_rust_code(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                check=False,
             )
         except FileNotFoundError:
             return {
@@ -415,6 +416,7 @@ def execute_rust_code(
                 capture_output=True,
                 text=True,
                 timeout=remaining,
+                check=False,
             )
         except subprocess.TimeoutExpired:
             return {

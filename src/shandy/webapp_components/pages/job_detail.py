@@ -8,6 +8,8 @@ without full page reloads.
 import json
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
+from uuid import UUID
 
 from nicegui import ui
 
@@ -15,7 +17,10 @@ from shandy.artifact_packager import create_artifacts_zip
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
-from shandy.job_manager import JobStatus
+from shandy.job_chat import get_chat_history, send_chat_message
+from shandy.job_manager import JobStatus, _db_get_job, _run_async
+from shandy.knowledge_state import KnowledgeState
+from shandy.pdf_generator import markdown_to_pdf
 from shandy.webapp_components.error_handler import get_user_friendly_error
 from shandy.webapp_components.ui_components import (
     STATUS_COLORS,
@@ -36,6 +41,7 @@ from shandy.webapp_components.ui_components import (
 from shandy.webapp_components.utils import (
     ClientGuard,
     guard_client,
+    is_client_connected,
     parse_transcript_actions,
     safe_run_javascript,
     setup_timer_cleanup,
@@ -60,10 +66,7 @@ def _load_knowledge_state(ks_path):
 @require_auth
 def job_detail_page(job_id: str):
     """Job detail page with progressive disclosure UI."""
-    from uuid import UUID
-
     from shandy import web_app
-    from shandy.job_manager import _db_get_job, _run_async
 
     job_manager = web_app.get_job_manager()
 
@@ -155,8 +158,6 @@ def job_detail_page(job_id: str):
             @ui.refreshable
             def render_job_stats():
                 """Render job stats badges - refreshable for real-time updates."""
-                from shandy.webapp_components.utils import is_client_connected
-
                 if not is_client_connected():
                     return
 
@@ -234,8 +235,6 @@ def job_detail_page(job_id: str):
             @ui.refreshable
             def render_timeline():
                 """Render the investigation timeline - refreshable for real-time updates."""
-                from shandy.webapp_components.utils import is_client_connected
-
                 if not is_client_connected():
                     return
 
@@ -361,10 +360,6 @@ def job_detail_page(job_id: str):
                                 iter_provenance_dir=provenance_dir,
                             ):
                                 """Lazy load iteration content when expansion is opened."""
-                                from shandy.webapp_components.utils import (
-                                    is_client_connected,
-                                )
-
                                 if not is_client_connected():
                                     return
 
@@ -696,10 +691,6 @@ def job_detail_page(job_id: str):
                             with ui.row().classes("w-full gap-2 mt-2"):
 
                                 def submit_feedback(fi=feedback_input, ci=completed_iter):
-                                    from shandy.knowledge_state import (
-                                        KnowledgeState,
-                                    )
-
                                     ks = KnowledgeState.load(job_dir / "knowledge_state.json")
                                     if fi.value.strip():
                                         ks.add_feedback(fi.value.strip(), ci)
@@ -733,8 +724,6 @@ def job_detail_page(job_id: str):
 
                             # Countdown timer
                             if awaiting_since:
-                                from datetime import datetime, timezone
-
                                 try:
                                     started = datetime.fromisoformat(awaiting_since)
                                     if started.tzinfo is None:
@@ -899,8 +888,6 @@ def job_detail_page(job_id: str):
                         def download_pdf():
                             """Regenerate PDF from markdown and download."""
                             try:
-                                from shandy.pdf_generator import markdown_to_pdf
-
                                 markdown_to_pdf(report_path, pdf_path)
                                 ui.download(
                                     pdf_path.read_bytes(),
@@ -973,11 +960,6 @@ def job_detail_page(job_id: str):
                     "text-gray-500 italic"
                 )
             else:
-                # Import chat functions
-                from uuid import UUID
-
-                from shandy.job_chat import get_chat_history, send_chat_message
-
                 job_uuid = UUID(job_id)
 
                 # Chat styles - inject into head for proper application

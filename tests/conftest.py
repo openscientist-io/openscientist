@@ -185,6 +185,7 @@ def _apply_alembic_migrations(database_url: str) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     if result.returncode != 0:

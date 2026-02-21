@@ -12,10 +12,17 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
-from nicegui import ui
+from nicegui import app, ui
+from sqlalchemy import select, update
 
+from shandy.database.models import User
+from shandy.database.rls import set_current_user
+from shandy.database.session import AsyncSessionLocal, get_admin_session
 from shandy.job_manager import JobInfo, JobStatus
+from shandy.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
+from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
 
 logger = logging.getLogger(__name__)
 
@@ -960,8 +967,6 @@ def render_navigator(
         show_new_job: Whether to show the New Job button (disable on config error)
         extra_buttons: List of (label, icon, on_click, props) tuples for page-specific buttons
     """
-    from nicegui import app
-
     # Add mobile icon meta tags to page head
     ui.add_head_html(
         '<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">'
@@ -1349,11 +1354,6 @@ async def render_user_search(
     Returns:
         Tuple of (search_input, results_container) for external reference
     """
-    from sqlalchemy import select
-
-    from shandy.database.models import User
-    from shandy.database.session import get_admin_session
-
     search_input = ui.input(
         label=placeholder,
         placeholder="Type to search...",
@@ -1434,12 +1434,6 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         share_dialog = render_share_dialog(job_id)
         ui.button("Share", on_click=share_dialog.open)
     """
-    import logging
-
-    from shandy.webapp_components.utils.http_client import api_delete, api_get, api_post
-
-    logger = logging.getLogger(__name__)
-
     with ui.dialog() as dialog, ui.card().classes("w-[600px]"):
         with ui.row().classes("items-center gap-2 mb-4"):
             ui.label("Share Job").classes("text-h6")
@@ -1622,8 +1616,6 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
     Returns:
         The dialog element (call .open() to show it)
     """
-    from shandy.ntfy import get_subscription_url, send_notification
-
     with ui.dialog() as dialog, ui.card().classes("w-[500px]"):
         with ui.row().classes("items-center gap-2 mb-4"):
             ui.label("Push Notifications").classes("text-h6")
@@ -1649,15 +1641,6 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
 
             async def load_content() -> None:
                 """Load ntfy settings and render the dialog content."""
-                from uuid import UUID
-
-                from sqlalchemy import select, update
-
-                from shandy.database.models import User
-                from shandy.database.rls import set_current_user
-                from shandy.database.session import AsyncSessionLocal
-                from shandy.ntfy import ensure_user_has_topic
-
                 content_container.clear()
 
                 try:
@@ -1827,12 +1810,6 @@ def render_delete_dialog(
         delete_dialog = render_delete_dialog(job_id, job_manager, on_deleted=refresh_table)
         ui.button("Delete", on_click=delete_dialog.open)
     """
-    import logging
-
-    from shandy.job_manager import JobStatus
-
-    logger = logging.getLogger(__name__)
-
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         content_container = ui.column().classes("w-full")
 
