@@ -84,7 +84,9 @@ reset-db:
 		echo "Starting containers..."; \
 		docker compose -f $(COMPOSE_FILE) up -d; \
 		echo "Waiting for postgres to be ready..."; \
-		sleep 5; \
+		until docker compose -f $(COMPOSE_FILE) exec postgres pg_isready -U shandy -d shandy 2>/dev/null; do \
+			sleep 1; \
+		done; \
 		echo "Running migrations..."; \
 		docker compose -f $(COMPOSE_FILE) exec shandy alembic upgrade head; \
 		echo "Database reset complete!"; \
