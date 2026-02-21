@@ -2,14 +2,13 @@
 Job chat service for interactive Q&A about SHANDY jobs.
 
 Allows users to ask questions about their job results, findings, and
-analysis process. The LLM is provided with comprehensive job context
-including knowledge state, findings, hypotheses, and literature.
+analysis process. Uses SDKAgentExecutor for responses, giving the agent
+access to tools (execute_code, search_pubmed, etc.) for follow-up analysis.
 """
 
 import json
 import logging
 from pathlib import Path
-from typing import List
 from uuid import UUID
 
 from sqlalchemy import select
@@ -129,7 +128,7 @@ async def get_chat_history(
     session: AsyncSession,
     job_id: UUID,
     limit: int = 50,
-) -> List[JobChatMessage]:
+) -> list[JobChatMessage]:
     """
     Get chat message history for a job.
 
@@ -158,7 +157,7 @@ async def send_chat_message(
     job_dir: Path,
 ) -> str:
     """
-    Send a chat message and get LLM response.
+    Send a chat message and get LLM response via SDKAgentExecutor.
 
     Args:
         session: Database session
@@ -170,13 +169,10 @@ async def send_chat_message(
         LLM's response text
 
     Raises:
-        Exception: If API call fails
+        Exception: If executor call fails
     """
-    # Load job context
-    context = await load_job_context(str(job_id), job_dir)
-
-    # Use SDK directly
-    assistant_message = await _send_message_via_sdk(session, job_id, message, context)
+    # Use executor (context is read on-demand by the agent from job_dir files)
+    assistant_message = await _send_message_via_executor(session, job_id, message, job_dir)
 
     # Store both messages in database
     user_msg = JobChatMessage(
@@ -198,27 +194,33 @@ async def send_chat_message(
     return assistant_message
 
 
-async def _send_message_via_sdk(
+async def _send_message_via_executor(
     session: AsyncSession,
     job_id: UUID,
     message: str,
-    context: str,
+    job_dir: Path,
 ) -> str:
     """
-    Send message using Anthropic SDK directly.
+    Send message using SDKAgentExecutor.
 
-    This bypasses the Claude Code CLI and its local pre-flight content filter,
-    which can produce false positives on legitimate scientific content.
+    Creates a short-lived executor with the chat system prompt and full
+    tool access, allowing the agent to re-analyze data or search literature
+    when answering follow-up questions.
     """
+    from shandy.agent.sdk_executor import SDKAgentExecutor
     from shandy.providers import get_provider
 
     # Get chat history for continuity
     history = await get_chat_history(session, job_id, limit=10)
 
-    # Build system prompt
-    system_prompt = f"""You are a research assistant helping a scientist analyze the results of their SHANDY literature review and hypothesis generation job.
+    # System prompt is kept small (it's passed as a CLI arg to the claude
+    # subprocess, so large payloads hit the OS ARG_MAX limit).  The agent
+    # can read job data files on demand via Claude Code's built-in Read tool.
+    system_prompt = """You are a research assistant helping a scientist discuss the results of their SHANDY literature review and hypothesis generation job.
 
-SHANDY is a scientific research tool that autonomously reviews published academic literature, generates hypotheses, and synthesizes findings. This is an academic research context where users are discussing published scientific papers and research methodology.
+Your working directory is the job folder.  The full research context is available in these files — read them when you need details:
+- config.json — research question and job configuration
+- knowledge_state.json — findings, hypotheses, literature, and iteration summaries
 
 Your role is to:
 1. Discuss the findings from the literature review and their academic significance
@@ -226,60 +228,42 @@ Your role is to:
 3. Clarify scientific concepts mentioned in the reviewed papers
 4. Help interpret the synthesized results in the context of the research question
 
-Important: You are discussing published research and scientific literature. You are not providing personal advice - you are helping analyze what the scientific literature says.
-
-Here is the complete job context with findings from published academic papers:
-
-{context}
+Important: You are discussing published research and scientific literature. You are not providing personal advice — you are helping analyze what the scientific literature says.
 
 Be concise, accurate, and cite specific papers or findings when relevant. Focus on what the research literature indicates."""
 
-    # Build messages from chat history
-    messages: list[dict[str, str]] = []
-    for msg in history:
-        messages.append({"role": msg.role, "content": msg.content})
+    # Build prompt with chat history
+    prompt_parts = []
+    if history:
+        prompt_parts.append("Previous conversation:")
+        for msg in history:
+            role_label = "User" if msg.role == "user" else "Assistant"
+            prompt_parts.append(f"{role_label}: {msg.content}")
+        prompt_parts.append("---")
+    prompt_parts.append(message)
 
-    # Add the current user message
-    messages.append({"role": "user", "content": message})
+    prompt = "\n".join(prompt_parts)
 
     logger.info(
-        "Chat SDK call: %d messages, system prompt %d chars",
-        len(messages),
+        "Chat executor call: %d history messages, system prompt %d chars",
+        len(history),
         len(system_prompt),
     )
 
-    # Call SDK via provider
+    # Set up provider environment
     provider = get_provider()
-    response = await provider.send_message(
-        messages=messages,
-        system=system_prompt,
+    provider.setup_environment()
+
+    executor = SDKAgentExecutor(
+        job_dir=job_dir,
+        data_file=None,
+        system_prompt=system_prompt,
     )
 
-    return response
-
-
-async def clear_chat_history(
-    session: AsyncSession,
-    job_id: UUID,
-) -> int:
-    """
-    Clear chat history for a job.
-
-    Args:
-        session: Database session
-        job_id: Job ID
-
-    Returns:
-        Number of messages deleted
-    """
-    stmt = select(JobChatMessage).where(JobChatMessage.job_id == job_id)
-    result = await session.execute(stmt)
-    messages = result.scalars().all()
-
-    count = len(messages)
-    for msg in messages:
-        await session.delete(msg)
-
-    await session.commit()
-
-    return count
+    try:
+        result = await executor.run_iteration(prompt, reset_session=True)
+        if not result.success:
+            raise RuntimeError(result.error or "Chat executor returned no output")
+        return result.output
+    finally:
+        await executor.shutdown()

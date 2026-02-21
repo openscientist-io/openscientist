@@ -139,6 +139,30 @@ class ReportPDF(FPDF):
             align="C",
         )
 
+    def add_table(self, rows: list[list[str]]):
+        """Add a table from parsed markdown rows."""
+        from fpdf.fonts import FontFace
+
+        headings_style = FontFace(emphasis="BOLD", color=(255, 255, 255), fill_color=(52, 73, 94))
+        self.set_font("DejaVu", "", 10)
+        self.set_text_color(51, 51, 51)
+        self.ln(2)
+        with self.table(
+            first_row_as_headings=True,
+            headings_style=headings_style,
+            borders_layout="HORIZONTAL_LINES",
+            cell_fill_mode="ROWS",
+            cell_fill_color=(245, 245, 250),
+            line_height=6,
+            padding=3,
+            markdown=True,
+        ) as table:
+            for row_data in rows:
+                row = table.row()
+                for cell_text in row_data:
+                    row.cell(cell_text)
+        self.ln(3)
+
     @staticmethod
     def _process_inline_formatting(text: str) -> str:
         """Process bold and italic markdown for fpdf2."""
@@ -179,7 +203,7 @@ def markdown_to_pdf(
 
     try:
         # Read Markdown content
-        with open(markdown_path, "r", encoding="utf-8") as f:
+        with open(markdown_path, encoding="utf-8") as f:
             markdown_content = f.read()
 
         # Create PDF
@@ -190,6 +214,8 @@ def markdown_to_pdf(
         code_buffer: list[str] = []
         in_list = False
         list_counter = 0
+        in_table = False
+        table_rows: list[list[str]] = []
 
         for line in markdown_content.split("\n"):
             # Code blocks
@@ -207,6 +233,28 @@ def markdown_to_pdf(
             if in_code_block:
                 code_buffer.append(line)
                 continue
+
+            # Table rows
+            if line.strip().startswith("|"):
+                in_table = True
+                # Skip separator rows like |---|---|
+                if re.match(r"^[|\s:\-]+$", line.strip()):
+                    continue
+                cells = [c.strip() for c in line.strip().split("|")]
+                # Drop empty strings from leading/trailing pipes
+                if cells and cells[0] == "":
+                    cells = cells[1:]
+                if cells and cells[-1] == "":
+                    cells = cells[:-1]
+                table_rows.append(cells)
+                continue
+
+            # Flush table if we were in one
+            if in_table:
+                if table_rows:
+                    pdf.add_table(table_rows)
+                    table_rows = []
+                in_table = False
 
             # Headings
             if line.startswith("# "):
@@ -250,6 +298,10 @@ def markdown_to_pdf(
             else:
                 in_list = False
                 pdf.add_paragraph(line)
+
+        # Flush any remaining table
+        if table_rows:
+            pdf.add_table(table_rows)
 
         # Add footer
         if add_footer:

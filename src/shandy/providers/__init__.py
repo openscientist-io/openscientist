@@ -24,7 +24,7 @@ def get_provider() -> BaseProvider:
 
     Environment:
         CLAUDE_PROVIDER: Provider name ("anthropic", "cborg", "vertex", "bedrock", "codex", "foundry")
-                        Defaults to "cborg" if not set
+                        Defaults to "anthropic" if not set
     """
     settings = get_settings()
     provider_name = settings.provider.claude_provider.lower()
@@ -33,30 +33,29 @@ def get_provider() -> BaseProvider:
         from shandy.providers.anthropic import AnthropicProvider
 
         return AnthropicProvider()
-    elif provider_name == "cborg":
+    if provider_name == "cborg":
         from shandy.providers.cborg import CborgProvider
 
         return CborgProvider()
-    elif provider_name == "vertex":
+    if provider_name == "vertex":
         from shandy.providers.vertex import VertexProvider
 
         return VertexProvider()
-    elif provider_name == "bedrock":
+    if provider_name == "bedrock":
         from shandy.providers.bedrock import BedrockProvider
 
         return BedrockProvider()
-    elif provider_name == "codex":
+    if provider_name == "codex":
         from shandy.providers.codex import CodexProvider
 
         return CodexProvider()
-    elif provider_name == "foundry":
+    if provider_name == "foundry":
         from shandy.providers.foundry import FoundryProvider
 
         return FoundryProvider()
-    else:
-        raise ValueError(
-            f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock, codex, foundry"
-        )
+    raise ValueError(
+        f"Unknown provider '{provider_name}'. Valid options: anthropic, cborg, vertex, bedrock, codex, foundry"
+    )
 
 
 def check_provider_config() -> tuple[bool, str, list[str]]:
@@ -75,7 +74,7 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
     import os
 
     # Testing hook: simulate provider misconfiguration for E2E tests
-    if os.environ.get("SIMULATE_PROVIDER_ERROR") == "true":  # noqa: env-ok
+    if os.environ.get("SIMULATE_PROVIDER_ERROR") == "true":  # env-ok
         return (
             False,
             "anthropic",

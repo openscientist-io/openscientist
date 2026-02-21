@@ -4,145 +4,12 @@ Prompt templates for SHANDY orchestrator.
 System prompts and discovery iteration prompts for the autonomous agent.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill
-
-
-async def get_relevant_skills(
-    session: AsyncSession,
-    research_question: str,
-    limit: int = 5,
-) -> List[Skill]:
-    """
-    Get skills relevant to research question using full-text search.
-
-    Uses PostgreSQL's tsvector search to find skills whose content
-    matches the research question. Falls back to returning all enabled
-    skills if no matches found via search.
-
-    Args:
-        session: Database session
-        research_question: The research question to match against
-        limit: Maximum number of skills to return
-
-    Returns:
-        List of relevant Skill objects, ordered by relevance
-    """
-    # Try full-text search first
-    search_query = func.plainto_tsquery("english", research_question)
-
-    stmt = (
-        select(Skill)
-        .where(Skill.is_enabled == True)  # noqa: E712
-        .where(Skill.search_vector.op("@@")(search_query))
-        .order_by(func.ts_rank(Skill.search_vector, search_query).desc())
-        .limit(limit)
-    )
-    result = await session.execute(stmt)
-    skills = list(result.scalars().all())
-
-    # If no matches, fall back to all enabled skills (up to limit)
-    if not skills:
-        stmt = (
-            select(Skill)
-            .where(Skill.is_enabled == True)  # noqa: E712
-            .order_by(Skill.category, Skill.name)
-            .limit(limit)
-        )
-        result = await session.execute(stmt)
-        skills = list(result.scalars().all())
-
-    return skills
-
-
-async def get_relevant_skills_with_scores(
-    session: AsyncSession,
-    research_question: str,
-    limit: int = 5,
-) -> List[tuple[Skill, float]]:
-    """
-    Get skills with their relevance scores using trigram similarity.
-
-    Uses PostgreSQL's pg_trgm extension for fuzzy matching against
-    skill name, description, and content. Returns skills ordered by
-    similarity score.
-
-    Args:
-        session: Database session
-        research_question: The research question to match against
-        limit: Maximum number of skills to return
-
-    Returns:
-        List of (Skill, score) tuples, ordered by similarity (highest first)
-    """
-    # Use word_similarity for better matching of phrases against longer text
-    # Combine similarities: name (highest weight), description, content
-    similarity_score = (
-        func.coalesce(func.word_similarity(research_question, Skill.name), 0) * 3
-        + func.coalesce(func.word_similarity(research_question, Skill.description), 0) * 2
-        + func.coalesce(func.word_similarity(research_question, Skill.content), 0)
-    ) / 6  # Normalize to 0-1 range
-
-    stmt = (
-        select(Skill, similarity_score.label("score"))
-        .where(Skill.is_enabled == True)  # noqa: E712
-        .order_by(similarity_score.desc())
-        .limit(limit)
-    )
-    result = await session.execute(stmt)
-    skills_with_scores = [(row.Skill, float(row.score)) for row in result]
-
-    return skills_with_scores
-
-
-def format_skills_content(skills: List[Skill]) -> str:
-    """
-    Format skills into content suitable for system prompt injection.
-
-    Creates a structured markdown document with skills grouped by category,
-    including descriptions and full content.
-
-    Args:
-        skills: List of Skill objects to format
-
-    Returns:
-        Formatted markdown string for system prompt
-    """
-    if not skills:
-        return ""
-
-    parts = [
-        "# Domain-Specific Skills",
-        "",
-        "The following skills have been matched to your research question.",
-        "Use these as guidance for analysis approaches and best practices.",
-        "",
-    ]
-
-    # Group skills by category
-    categories: Dict[str, List[Skill]] = {}
-    for skill in skills:
-        if skill.category not in categories:
-            categories[skill.category] = []
-        categories[skill.category].append(skill)
-
-    for category, category_skills in sorted(categories.items()):
-        parts.append(f"## {category.title()} Skills")
-        parts.append("")
-
-        for skill in category_skills:
-            parts.append(f"### {skill.name}")
-            if skill.description:
-                parts.append(f"*{skill.description}*")
-            parts.append("")
-            parts.append(skill.content)
-            parts.append("")
-
-    return "\n".join(parts)
 
 
 def get_system_prompt(skills_enabled: bool = True) -> str:
@@ -161,9 +28,8 @@ def get_system_prompt(skills_enabled: bool = True) -> str:
 **Your Capabilities:**
 
 You have access to tools:
-- `execute_code`: Run Python code to analyze data (pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx)
+- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx), `language="rust"` (compiled via rustc, useful for performance-critical computation), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query)
 - `search_pubmed`: Search scientific literature for relevant papers
-- `search_skills`: Search for additional domain-specific skills and guidance (e.g., "metabolomics analysis", "statistical testing")
 - `update_knowledge_state`: Record a confirmed finding
 - `set_status`: Update your current status message (e.g., "Analyzing correlation between X and Y")
 - `set_job_title`: Set a brief title for this job (e.g., "Kinase inhibitor binding analysis")
@@ -172,11 +38,7 @@ IMPORTANT:
 - Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title
 - Call `set_status` at the START of each significant action to let users know what you're working on
 
-You have access to skills that provide structured workflows:
-- hypothesis-generation: How to formulate testable hypotheses
-- result-interpretation: How to interpret statistical results
-- prioritization: How to decide what to investigate next
-- stopping-criteria: When to stop investigating
+Domain-specific analysis skills are in `.claude/skills/`. List the directory and read relevant skill files before starting your analysis.
 
 **Your Approach:**
 
@@ -198,14 +60,13 @@ You have access to skills that provide structured workflows:
 
 Think step by step. Be rigorous. Be creative."""
 
-    else:
-        # Skills disabled - pure LLM reasoning
-        return """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
+    # Skills disabled - pure LLM reasoning
+    return """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 
 **Your Capabilities:**
 
 You have access to tools:
-- `execute_code`: Run Python code to analyze data (pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx)
+- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx), `language="rust"` (compiled via rustc, useful for performance-critical computation), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query)
 - `search_pubmed`: Search scientific literature for relevant papers
 - `update_knowledge_state`: Record a confirmed finding
 - `set_status`: Update your current status message (e.g., "Analyzing correlation between X and Y")
@@ -361,7 +222,7 @@ def build_discovery_prompt(
     return "\n".join(prompt_parts)
 
 
-def format_skills_list(skills: Dict[str, Dict[str, Any]]) -> str:
+def format_skills_list(skills: dict[str, dict[str, Any]]) -> str:
     """
     Format available skills for prompt.
 
@@ -384,7 +245,7 @@ def format_skills_list(skills: Dict[str, Dict[str, Any]]) -> str:
 
 async def get_enabled_skills(
     session: AsyncSession,
-) -> List[Skill]:
+) -> list[Skill]:
     """
     Get all enabled skills.
 
@@ -404,75 +265,3 @@ async def get_enabled_skills(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
-
-
-async def format_skills_for_prompt(
-    session: AsyncSession,
-) -> str:
-    """
-    Format skills content for inclusion in an agent prompt.
-
-    Loads all enabled skills and formats them into a single
-    string suitable for the agent's context. All enabled skills
-    are available to every job.
-
-    Args:
-        session: Database session
-
-    Returns:
-        Formatted skills content string
-    """
-    skills = await get_enabled_skills(session)
-
-    if not skills:
-        return ""
-
-    parts = [
-        "# Domain-Specific Skills",
-        "",
-        "The following skills have been matched to your research question.",
-        "Use these as guidance for analysis approaches and best practices.",
-        "",
-    ]
-
-    # Group skills by category
-    categories: Dict[str, List[Skill]] = {}
-    for skill in skills:
-        if skill.category not in categories:
-            categories[skill.category] = []
-        categories[skill.category].append(skill)
-
-    for category, category_skills in sorted(categories.items()):
-        parts.append(f"## {category.title()} Skills")
-        parts.append("")
-
-        for skill in category_skills:
-            parts.append(f"### {skill.name}")
-            if skill.description:
-                parts.append(f"*{skill.description}*")
-            parts.append("")
-            parts.append(skill.content)
-            parts.append("")
-
-    return "\n".join(parts)
-
-
-def format_skills_summary(skills: List[Skill]) -> str:
-    """
-    Format a summary list of skills for prompt display.
-
-    Args:
-        skills: List of Skill objects
-
-    Returns:
-        Formatted summary string
-    """
-    if not skills:
-        return ""
-
-    lines = ["Available skills:"]
-    for skill in skills:
-        desc = skill.description or "No description"
-        lines.append(f"  - `{skill.category}/{skill.slug}`: {desc}")
-
-    return "\n".join(lines)

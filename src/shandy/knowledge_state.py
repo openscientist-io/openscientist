@@ -7,9 +7,11 @@ Stores agent's state including hypotheses, findings, literature, and analysis hi
 import asyncio
 import fcntl
 import json
-from datetime import datetime
+import os
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import select
@@ -55,13 +57,13 @@ class KnowledgeState:
             max_iterations: Maximum number of iterations
             use_skills: Whether skills are enabled for this job
         """
-        self.data: Dict[str, Any] = {
+        self.data: dict[str, Any] = {
             "config": {
                 "job_id": job_id,
                 "research_question": research_question,
                 "max_iterations": max_iterations,
                 "use_skills": use_skills,
-                "started_at": datetime.now().isoformat(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
             },
             "data_summary": {},
             "iteration": 1,
@@ -79,7 +81,7 @@ class KnowledgeState:
     @classmethod
     def load(cls, file_path: Path) -> "KnowledgeState":
         """Load knowledge graph from JSON file with shared lock."""
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             # Acquire shared lock - blocks while exclusive lock is held
             fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             try:
@@ -93,28 +95,32 @@ class KnowledgeState:
         return ks
 
     def save(self, file_path: Path) -> None:
-        """Save knowledge graph to JSON file with file locking."""
+        """Save knowledge graph to JSON file atomically.
+
+        Writes to a temporary file first, then renames. This ensures the
+        target file is always complete — a crash mid-write only corrupts
+        the temp file, leaving the previous version intact.
+        """
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Create file if it doesn't exist
-        if not file_path.exists():
-            with open(file_path, "w", encoding="utf-8") as f:
+        # Write to temp file in same directory (same filesystem = atomic rename)
+        fd, tmp_path = tempfile.mkstemp(dir=file_path.parent, suffix=".tmp", prefix=".ks_")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, indent=2)
-            return
-
-        # Open for read-write and acquire exclusive lock
-        with open(file_path, "r+", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                f.flush()
+                os.fsync(f.fileno())
+            # Atomic rename (POSIX guarantees this on same filesystem)
+            os.rename(tmp_path, file_path)
+        except BaseException:
+            # Clean up temp file on any failure
             try:
-                # Write the data
-                f.seek(0)
-                f.truncate()
-                json.dump(self.data, f, indent=2)
-            finally:
-                # Release lock
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
-    def set_data_summary(self, summary: Dict[str, Any]) -> None:
+    def set_data_summary(self, summary: dict[str, Any]) -> None:
         """Set data summary (files, samples, features, etc.)."""
         self.data["data_summary"] = summary
 
@@ -146,7 +152,7 @@ class KnowledgeState:
         self.data["hypotheses"].append(hypothesis)
         return hypothesis_id
 
-    def update_hypothesis(self, hypothesis_id: str, updates: Dict[str, Any]) -> None:
+    def update_hypothesis(self, hypothesis_id: str, updates: dict[str, Any]) -> None:
         """Update a hypothesis with test results."""
         for hyp in self.data["hypotheses"]:
             if hyp["id"] == hypothesis_id:
@@ -158,9 +164,9 @@ class KnowledgeState:
         self,
         title: str,
         evidence: str,
-        supporting_hypotheses: Optional[List[str]] = None,
-        literature_support: Optional[List[str]] = None,
-        plots: Optional[List[str]] = None,
+        supporting_hypotheses: Optional[list[str]] = None,
+        literature_support: Optional[list[str]] = None,
+        plots: Optional[list[str]] = None,
     ) -> str:
         """
         Add a confirmed finding.
@@ -196,7 +202,7 @@ class KnowledgeState:
         pmid: str,
         title: str,
         abstract: str,
-        relevance_to: Optional[List[str]] = None,
+        relevance_to: Optional[list[str]] = None,
         search_query: Optional[str] = None,
     ) -> str:
         """
@@ -246,7 +252,7 @@ class KnowledgeState:
         log_entry = {
             "iteration": self.data["iteration"],
             "action": action,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             **kwargs,
         }
 
@@ -275,7 +281,7 @@ class KnowledgeState:
             if existing["iteration"] == iteration:
                 existing["summary"] = summary
                 existing["strapline"] = strapline
-                existing["updated_at"] = datetime.now().isoformat()
+                existing["updated_at"] = datetime.now(timezone.utc).isoformat()
                 return
 
         # Add new summary
@@ -284,7 +290,7 @@ class KnowledgeState:
                 "iteration": iteration,
                 "summary": summary,
                 "strapline": strapline,
-                "created_at": datetime.now().isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
 
@@ -300,7 +306,7 @@ class KnowledgeState:
             status: Brief status message (recommended: under 80 chars)
         """
         self.data["agent_status"] = status
-        self.data["agent_status_updated_at"] = datetime.now().isoformat()
+        self.data["agent_status_updated_at"] = datetime.now(timezone.utc).isoformat()
 
     def clear_agent_status(self) -> None:
         """Clear the agent status (e.g., when job completes)."""
@@ -350,7 +356,7 @@ class KnowledgeState:
             {
                 "after_iteration": after_iteration,
                 "text": text,
-                "submitted_at": datetime.now().isoformat(),
+                "submitted_at": datetime.now(timezone.utc).isoformat(),
             }
         )
 
@@ -427,7 +433,203 @@ class KnowledgeState:
 
         return "\n".join(summary_parts)
 
-    def set_version_info(self, version_info: Dict[str, str]) -> None:
+    def get_report_summary(self) -> str:
+        """
+        Get a comprehensive summary of all accumulated knowledge for report generation.
+
+        Unlike get_summary() which is concise for iteration prompts, this includes
+        ALL findings, hypotheses, literature, and iteration timelines so the report
+        agent can write a thorough final report.
+
+        Returns:
+            Formatted comprehensive summary of KS state
+        """
+        parts: list[str] = [
+            f"# Comprehensive Knowledge Summary (After {self.data['iteration']} iterations)",
+            "",
+            "## Research Question",
+            self.data["config"]["research_question"],
+            "",
+        ]
+
+        # Data summary
+        ds = self.data.get("data_summary", {})
+        if ds:
+            parts.append("## Data Summary")
+            parts.append(f"- Files: {ds.get('files', [])}")
+            parts.append(f"- Samples: {ds.get('n_samples', 'Unknown')}")
+            parts.append(f"- Features: {ds.get('n_features', 'Unknown')}")
+            parts.append("")
+
+        # Progress overview with full counts
+        all_hyps = self.data["hypotheses"]
+        supported = [h for h in all_hyps if h["status"] == "supported"]
+        rejected = [h for h in all_hyps if h["status"] == "rejected"]
+        pending = [h for h in all_hyps if h["status"] == "pending"]
+        parts.append("## Progress Overview")
+        parts.append(f"- Total hypotheses proposed: {len(all_hyps)}")
+        parts.append(f"- Supported: {len(supported)}")
+        parts.append(f"- Rejected: {len(rejected)}")
+        parts.append(f"- Pending: {len(pending)}")
+        parts.append(f"- Findings confirmed: {len(self.data['findings'])}")
+        parts.append(f"- Literature reviewed: {len(self.data['literature'])}")
+        parts.append("")
+
+        # Investigation timeline — all iteration summaries in order
+        summaries = self.data.get("iteration_summaries", [])
+        if summaries:
+            parts.append("## Investigation Timeline")
+            for entry in sorted(summaries, key=lambda e: e["iteration"]):
+                strapline = entry.get("strapline", "")
+                label = f" — {strapline}" if strapline else ""
+                parts.append(f"- **Iteration {entry['iteration']}{label}:** {entry['summary']}")
+            parts.append("")
+
+        # All findings with full detail
+        if self.data["findings"]:
+            parts.append("## All Findings")
+            for finding in self.data["findings"]:
+                parts.append(f"### {finding['id']}: {finding['title']}")
+                parts.append(f"- **Evidence:** {finding['evidence']}")
+                if finding.get("biological_interpretation"):
+                    parts.append(f"- **Interpretation:** {finding['biological_interpretation']}")
+                if finding.get("supporting_hypotheses"):
+                    parts.append(
+                        f"- **Supporting hypotheses:** {', '.join(finding['supporting_hypotheses'])}"
+                    )
+                if finding.get("literature_support"):
+                    parts.append(
+                        f"- **Literature support:** {', '.join(finding['literature_support'])}"
+                    )
+                if finding.get("plots"):
+                    parts.append(f"- **Plots:** {', '.join(finding['plots'])}")
+                parts.append("")
+
+        # All supported hypotheses with test results
+        if supported:
+            parts.append("## Supported Hypotheses")
+            for hyp in supported:
+                parts.append(f"### {hyp['id']}: {hyp['statement']}")
+                result = hyp.get("result") or {}
+                if result.get("summary"):
+                    parts.append(f"- **Result:** {result['summary']}")
+                if result.get("p_value"):
+                    parts.append(f"- **P-value:** {result['p_value']}")
+                if result.get("effect_size"):
+                    parts.append(f"- **Effect size:** {result['effect_size']}")
+                if result.get("conclusion"):
+                    parts.append(f"- **Conclusion:** {result['conclusion']}")
+                parts.append("")
+
+        # All rejected hypotheses with conclusions
+        if rejected:
+            parts.append("## Rejected Hypotheses")
+            for hyp in rejected:
+                parts.append(f"### {hyp['id']}: {hyp['statement']}")
+                result = hyp.get("result") or {}
+                if result.get("conclusion"):
+                    parts.append(f"- **Conclusion:** {result['conclusion']}")
+                elif result.get("summary"):
+                    parts.append(f"- **Result:** {result['summary']}")
+                parts.append("")
+
+        # Pending hypotheses as knowledge gaps
+        if pending:
+            parts.append("## Knowledge Gaps (Pending Hypotheses)")
+            for hyp in pending:
+                parts.append(f"- {hyp['id']}: {hyp['statement']}")
+            parts.append("")
+
+        # Literature reviewed
+        if self.data["literature"]:
+            parts.append("## Literature Reviewed")
+            for lit in self.data["literature"]:
+                pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
+                parts.append(f"- **{lit['title']}**{pmid_str}")
+                abstract = lit.get("abstract", "")
+                if abstract:
+                    truncated = abstract[:200] + "..." if len(abstract) > 200 else abstract
+                    parts.append(f"  Abstract: {truncated}")
+                if lit.get("relevance_to"):
+                    parts.append(f"  Relevant to: {', '.join(lit['relevance_to'])}")
+            parts.append("")
+
+        # Previous consensus answer if one exists
+        if self.data.get("consensus_answer"):
+            parts.append("## Previous Consensus Answer")
+            parts.append(self.data["consensus_answer"])
+            parts.append("")
+
+        return "\n".join(parts)
+
+    def get_report_outline(self) -> str:
+        """Get a concise outline of accumulated knowledge for the report prompt.
+
+        Unlike get_report_summary() which includes full detail (abstracts, evidence
+        strings, etc.), this returns a compact overview: finding titles, hypothesis
+        outcomes, iteration straplines, and literature titles only.  The report agent
+        should read knowledge_state.json from disk for the full data.
+        """
+        parts: list[str] = [
+            f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
+            "",
+            "## Research Question",
+            self.data["config"]["research_question"],
+            "",
+        ]
+
+        # Progress counts
+        all_hyps = self.data["hypotheses"]
+        supported = [h for h in all_hyps if h["status"] == "supported"]
+        rejected = [h for h in all_hyps if h["status"] == "rejected"]
+        parts.append("## Progress")
+        parts.append(f"- {len(self.data['findings'])} findings confirmed")
+        parts.append(
+            f"- {len(all_hyps)} hypotheses ({len(supported)} supported, {len(rejected)} rejected)"
+        )
+        parts.append(f"- {len(self.data['literature'])} papers reviewed")
+        parts.append("")
+
+        # Investigation timeline — straplines only
+        summaries = self.data.get("iteration_summaries", [])
+        if summaries:
+            parts.append("## Investigation Timeline")
+            for entry in sorted(summaries, key=lambda e: e["iteration"]):
+                strapline = entry.get("strapline", entry.get("summary", "")[:120])
+                parts.append(f"- Iteration {entry['iteration']}: {strapline}")
+            parts.append("")
+
+        # Findings — titles only
+        if self.data["findings"]:
+            parts.append("## Findings")
+            for finding in self.data["findings"]:
+                parts.append(f"- {finding['id']}: {finding['title']}")
+            parts.append("")
+
+        # Hypotheses — one-line status
+        if all_hyps:
+            parts.append("## Hypotheses")
+            for hyp in all_hyps:
+                parts.append(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}")
+            parts.append("")
+
+        # Literature — titles only (no abstracts)
+        if self.data["literature"]:
+            parts.append(f"## Literature ({len(self.data['literature'])} papers)")
+            for lit in self.data["literature"]:
+                pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
+                parts.append(f"- {lit['title']}{pmid_str}")
+            parts.append("")
+
+        # Consensus answer if exists
+        if self.data.get("consensus_answer"):
+            parts.append("## Current Consensus Answer")
+            parts.append(self.data["consensus_answer"])
+            parts.append("")
+
+        return "\n".join(parts)
+
+    def set_version_info(self, version_info: dict[str, str]) -> None:
         """
         Set version/environment metadata in config.
 
@@ -437,7 +639,7 @@ class KnowledgeState:
         """
         self.data["config"]["version_info"] = version_info
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Return the raw data dictionary."""
         return self.data
 
@@ -762,7 +964,7 @@ class KnowledgeState:
             logs = log_result.scalars().all()
 
             for log in logs:
-                log_entry: Dict[str, Any] = {
+                log_entry: dict[str, Any] = {
                     "iteration": log.iteration,
                     "action": log.action_type,
                     "timestamp": log.created_at.isoformat(),

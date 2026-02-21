@@ -156,34 +156,49 @@ class SkillSyncScheduler:
         self,
         session: AsyncSession,
         source: SkillSource,
+        force: bool = False,
     ) -> Optional[SyncResult]:
         """
         Sync a source if it needs syncing.
 
         Checks:
-        1. Rate limiting (MIN_SYNC_INTERVAL_SECONDS)
-        2. Commit SHA cache (skip if unchanged for GitHub sources)
+        1. Rate limiting (MIN_SYNC_INTERVAL_SECONDS) — in-memory, then DB fallback
+        2. Commit SHA cache (skip if unchanged for GitHub sources, handled by ingester)
 
         Args:
             session: Database session
             source: SkillSource to sync
+            force: If True, bypass rate limiting and commit SHA check
 
         Returns:
             SyncResult if synced, None if skipped
         """
         source_id_str = str(source.id)
 
-        # Rate limiting check
-        last_sync = self._last_sync.get(source_id_str)
-        if last_sync:
-            elapsed = (datetime.now(timezone.utc) - last_sync).total_seconds()
-            if elapsed < MIN_SYNC_INTERVAL_SECONDS:
-                logger.debug(
-                    "Skipping %s (synced %d seconds ago)",
-                    source.name,
-                    int(elapsed),
-                )
-                return None
+        if not force:
+            # In-memory rate limiting check
+            last_sync = self._last_sync.get(source_id_str)
+            if last_sync:
+                elapsed = (datetime.now(timezone.utc) - last_sync).total_seconds()
+                if elapsed < MIN_SYNC_INTERVAL_SECONDS:
+                    logger.debug(
+                        "Skipping %s (synced %d seconds ago)",
+                        source.name,
+                        int(elapsed),
+                    )
+                    return None
+            elif source.last_synced_at:
+                # DB-based fallback: check persisted last_synced_at (covers restarts)
+                elapsed = (datetime.now(timezone.utc) - source.last_synced_at).total_seconds()
+                if elapsed < MIN_SYNC_INTERVAL_SECONDS:
+                    logger.debug(
+                        "Skipping %s (synced %d seconds ago per DB)",
+                        source.name,
+                        int(elapsed),
+                    )
+                    # Backfill in-memory cache so future checks are fast
+                    self._last_sync[source_id_str] = source.last_synced_at
+                    return None
 
         try:
             logger.info("Syncing skill source: %s", source.name)
@@ -192,6 +207,7 @@ class SkillSyncScheduler:
                 session=session,
                 source=source,
                 github_token=self.github_token,
+                force=force,
             )
 
             # Update last sync time
@@ -260,9 +276,8 @@ class SkillSyncScheduler:
                 logger.warning("Source not found: %s", source_id)
                 return None
 
-            # Force sync (bypass rate limiting)
-            self._last_sync.pop(source_id, None)
-            return await self._sync_source_if_needed(session, source)
+            # Force sync (bypass rate limiting and commit SHA check)
+            return await self._sync_source_if_needed(session, source, force=True)
 
 
 # Global scheduler instance

@@ -4,12 +4,36 @@ Cost tracking via CBORG API for SHANDY.
 Monitors API spending and enforces budget limits.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import requests
 
 from shandy.exceptions import BudgetExceededError
 from shandy.settings import get_settings
+
+
+def _fetch_cborg_key_info() -> dict[str, Any]:
+    """Fetch key info from the CBORG API.
+
+    Returns:
+        The ``info`` dict from the API response.
+
+    Raises:
+        ValueError: If ANTHROPIC_AUTH_TOKEN is not configured.
+        requests.RequestException: If the API call fails.
+    """
+    settings = get_settings()
+    api_token = settings.provider.anthropic_auth_token
+    if not api_token:
+        raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
+
+    response = requests.get(
+        "https://api.cborg.lbl.gov/key/info",
+        headers={"Authorization": f"Bearer {api_token}"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()["info"]
 
 
 def get_cborg_spend() -> float:
@@ -22,22 +46,10 @@ def get_cborg_spend() -> float:
     Raises:
         requests.RequestException: If API call fails
     """
-    settings = get_settings()
-    api_token = settings.provider.anthropic_auth_token
-    if not api_token:
-        raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
-
-    response = requests.get(
-        "https://api.cborg.lbl.gov/key/info",
-        headers={"Authorization": f"Bearer {api_token}"},
-        timeout=10,
-    )
-    response.raise_for_status()
-
-    return float(response.json()["info"]["spend"])
+    return float(_fetch_cborg_key_info()["spend"])
 
 
-def get_budget_info() -> Dict[str, Any]:
+def get_budget_info() -> dict[str, Any]:
     """
     Get budget information from CBORG and application settings.
 
@@ -50,23 +62,12 @@ def get_budget_info() -> Dict[str, Any]:
         - app_max_total_budget: Total app budget from .env (float)
         - key_expires: API key expiration date (str)
     """
-    settings = get_settings()
-    api_token = settings.provider.anthropic_auth_token
-    if not api_token:
-        raise ValueError("ANTHROPIC_AUTH_TOKEN not set in environment")
-
-    response = requests.get(
-        "https://api.cborg.lbl.gov/key/info",
-        headers={"Authorization": f"Bearer {api_token}"},
-        timeout=10,
-    )
-    response.raise_for_status()
-
-    info = response.json()["info"]
+    info = _fetch_cborg_key_info()
     current_spend = info["spend"]
     cborg_budget = info.get("max_budget")  # May be None
 
     # Application-level limits from settings
+    settings = get_settings()
     app_max_job = settings.budget.max_job_cost_usd
     app_max_total = settings.budget.app_max_budget_usd
 

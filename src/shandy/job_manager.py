@@ -4,111 +4,35 @@ Job manager for SHANDY discovery jobs.
 Handles job lifecycle, status tracking, and cleanup.
 """
 
+import argparse
+import asyncio
+import concurrent.futures
 import json
 import logging
 import shutil
 import threading
-from dataclasses import asdict, dataclass
-from datetime import datetime
-from enum import Enum
+from collections.abc import Coroutine
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Coroutine, Dict, List, Optional, TypeVar
+from typing import Any, Optional, TypeVar
 from uuid import UUID
 
 from sqlalchemy import select
 
+from shandy.container_manager import get_container_manager
+from shandy.database.models import User
 from shandy.database.models.job import Job as JobModel
-from shandy.database.models.job_skill import JobSkill
 from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ProviderError
+from shandy.job.types import JobInfo, JobStatus, JobStatusUpdateResult
+from shandy.ntfy import ensure_user_has_topic, get_user_ntfy_settings, notify_job_status_change
 from shandy.orchestrator import create_job, run_discovery
+from shandy.orchestrator import regenerate_report as _regenerate_report
 from shandy.providers import get_provider
+from shandy.version import get_version_string
 
 logger = logging.getLogger(__name__)
-
-
-class JobStatus(str, Enum):
-    """Job status enum matching database schema."""
-
-    PENDING = "pending"  # Job created but not yet started
-    QUEUED = "queued"  # Waiting for available slot
-    RUNNING = "running"  # Currently executing
-    AWAITING_FEEDBACK = "awaiting_feedback"  # Paused for scientist input (co-investigate mode)
-    COMPLETED = "completed"  # Successfully finished
-    FAILED = "failed"  # Failed with error
-    CANCELLED = "cancelled"  # Cancelled by user
-
-
-@dataclass
-class JobStatusUpdateResult:
-    """Result of updating job status, includes data needed for notifications."""
-
-    ntfy_enabled: bool = False
-    ntfy_topic: str | None = None
-
-
-@dataclass
-class JobInfo:
-    """Job information for API/UI responses."""
-
-    job_id: str
-    research_question: str  # Maps to Job.title in database
-    status: JobStatus
-    created_at: str
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    failed_at: Optional[str] = None
-    max_iterations: int = 10
-    iterations_completed: int = 0
-    findings_count: int = 0
-    error: Optional[str] = None
-    cancellation_reason: Optional[str] = None  # Reason why job was cancelled
-    use_skills: bool = True
-    investigation_mode: str = "autonomous"  # "autonomous" or "coinvestigate"
-    owner_id: Optional[str] = None  # UUID of owner, None for orphaned jobs
-    short_title: Optional[str] = None  # Brief model-generated title
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        d = asdict(self)
-        d["status"] = self.status.value
-        return d
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "JobInfo":
-        """Create from dictionary."""
-        data = data.copy()
-        data["status"] = JobStatus(data["status"])
-        return cls(**data)
-
-    @classmethod
-    def from_db_model(
-        cls, job: JobModel, iterations_completed: int = 0, findings_count: int = 0
-    ) -> "JobInfo":
-        """Create JobInfo from database Job model."""
-        return cls(
-            job_id=str(job.id),
-            research_question=job.title,
-            status=JobStatus(job.status),
-            created_at=job.created_at.isoformat(),
-            started_at=(
-                job.updated_at.isoformat()
-                if job.status in ["running", "completed", "failed"]
-                else None
-            ),
-            completed_at=(job.updated_at.isoformat() if job.status == "completed" else None),
-            failed_at=job.updated_at.isoformat() if job.status == "failed" else None,
-            max_iterations=job.max_iterations,
-            iterations_completed=iterations_completed,
-            findings_count=findings_count,
-            error=job.error_message,
-            cancellation_reason=job.cancellation_reason,
-            use_skills=True,  # Default for legacy compatibility
-            investigation_mode="autonomous",  # Default for legacy compatibility
-            owner_id=str(job.owner_id) if job.owner_id else None,
-            short_title=job.short_title,
-        )
 
 
 # Database helper functions for async operations
@@ -173,8 +97,6 @@ async def _db_update_job_status(
     Returns:
         JobStatusUpdateResult with the job owner's ntfy settings for notifications.
     """
-    from shandy.database.models import User
-
     result = JobStatusUpdateResult()
 
     async with AsyncSessionLocal(thread_safe=True) as session:
@@ -211,7 +133,7 @@ async def _db_list_jobs(
     status: Optional[JobStatus] = None,
     limit: Optional[int] = None,
     user_id: Optional[UUID] = None,
-) -> List[JobModel]:
+) -> list[JobModel]:
     """List jobs from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
         if user_id:
@@ -244,40 +166,6 @@ async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
             await session.commit()
 
 
-async def _db_get_job_skills(job_id: str) -> List[JobSkill]:
-    """Get all skills associated with a job (thread-safe for worker threads).
-
-    Eager-loads the skill relationship so that job_skill.skill can be
-    accessed to get the skill's slug for URL construction.
-    """
-    from sqlalchemy.orm import selectinload
-
-    async with AsyncSessionLocal(thread_safe=True) as session:
-        stmt = (
-            select(JobSkill)
-            .options(selectinload(JobSkill.skill))
-            .where(JobSkill.job_id == UUID(job_id))
-            .order_by(JobSkill.created_at)
-        )
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
-
-
-def get_job_skills(job_id: str) -> List[JobSkill]:
-    """
-    Get all skills associated with a job.
-
-    Returns skills in order they were added, with initial skills first.
-
-    Args:
-        job_id: Job UUID string
-
-    Returns:
-        List of JobSkill objects
-    """
-    return _run_async(_db_get_job_skills(job_id))
-
-
 _T = TypeVar("_T")
 
 
@@ -288,9 +176,6 @@ def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
     this runs the coroutine in a separate thread with its own event loop
     and a fresh database session to avoid connection pool conflicts.
     """
-    import asyncio
-    import concurrent.futures
-
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -335,7 +220,7 @@ class JobManager:
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
 
         self.max_concurrent = max_concurrent
-        self._running_jobs: Dict[str, threading.Thread] = {}
+        self._running_jobs: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
 
         # Clean up any stale running/queued jobs from previous restart
@@ -364,6 +249,7 @@ class JobManager:
                 JobStatus.RUNNING,
                 JobStatus.QUEUED,
                 JobStatus.AWAITING_FEEDBACK,
+                JobStatus.GENERATING_REPORT,
             ]:
                 logger.warning(
                     "Marking stale job %s as cancelled (was %s)",
@@ -392,7 +278,7 @@ class JobManager:
         self,
         job_id: str,
         research_question: str,
-        data_files: List[Path],
+        data_files: list[Path],
         max_iterations: int = 10,
         use_skills: bool = True,
         auto_start: bool = True,
@@ -449,8 +335,6 @@ class JobManager:
         ntfy_topic: Optional[str] = None
         if owner_uuid:
             try:
-                from shandy.ntfy import ensure_user_has_topic, get_user_ntfy_settings
-
                 ntfy_enabled, ntfy_topic = _run_async(get_user_ntfy_settings(owner_uuid))
                 # Ensure user has a topic if ntfy is enabled
                 if ntfy_enabled and not ntfy_topic:
@@ -544,10 +428,8 @@ class JobManager:
                 self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
 
         except Exception as e:  # noqa: BLE001 — thread-level safety net
-            from shandy.version import get_version_string
-
             logger.error("Job %s failed [%s]: %s", job_id, get_version_string(), e, exc_info=True)
-            # Error already recorded in orchestrator
+            self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
 
         finally:
             # Remove from running jobs
@@ -556,6 +438,82 @@ class JobManager:
 
             # Start next queued job if any
             self._start_next_queued_job()
+
+    def regenerate_report(self, job_id: str) -> None:
+        """
+        Re-run report generation for a completed or failed job.
+
+        Validates that the job exists, is in a terminal state, and has
+        a knowledge_state.json. Spawns a background thread.
+
+        Args:
+            job_id: Job ID
+
+        Raises:
+            ValueError: If job not found, not in valid state, or missing KS
+        """
+        job_info = self.get_job(job_id)
+        if job_info is None:
+            raise ValueError(f"Job {job_id} not found")
+
+        if job_info.status not in [JobStatus.COMPLETED, JobStatus.FAILED]:
+            raise ValueError(
+                f"Can only regenerate report for completed or failed jobs "
+                f"(current status: {job_info.status.value})"
+            )
+
+        ks_path = self.jobs_dir / job_id / "knowledge_state.json"
+        if not ks_path.exists():
+            raise ValueError(
+                f"Job {job_id} has no knowledge state — nothing to generate a report from"
+            )
+
+        with self._lock:
+            if job_id in self._running_jobs:
+                raise ValueError(f"Job {job_id} already has an operation in progress")
+
+            thread = threading.Thread(
+                target=self._run_regenerate_report, args=(job_id,), daemon=True
+            )
+            self._running_jobs[job_id] = thread
+            thread.start()
+
+    def _run_regenerate_report(self, job_id: str) -> None:
+        """
+        Run report regeneration (internal, called by thread).
+
+        Args:
+            job_id: Job ID
+        """
+        job_dir = self.jobs_dir / job_id
+
+        try:
+            self._update_job_status(job_id, JobStatus.GENERATING_REPORT)
+
+            logger.info("Regenerating report for job %s", job_id)
+            result = _regenerate_report(job_dir)
+
+            logger.info("Report regeneration for job %s completed: %s", job_id, result)
+
+            final_status = result.get("status", "completed")
+            if final_status == "completed":
+                self._update_job_status(job_id, JobStatus.COMPLETED)
+            elif final_status == "failed":
+                self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
+
+        except Exception as e:  # noqa: BLE001 — thread-level safety net
+            logger.error(
+                "Report regeneration for job %s failed [%s]: %s",
+                job_id,
+                get_version_string(),
+                e,
+                exc_info=True,
+            )
+            self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
+
+        finally:
+            with self._lock:
+                self._running_jobs.pop(job_id, None)
 
     def _start_next_queued_job(self) -> None:
         """Start the next queued job if slots available."""
@@ -620,7 +578,7 @@ class JobManager:
 
     def list_jobs(
         self, status: Optional[JobStatus] = None, limit: Optional[int] = None
-    ) -> List[JobInfo]:
+    ) -> list[JobInfo]:
         """
         List jobs.
 
@@ -679,8 +637,6 @@ class JobManager:
 
         # Clean up any executor containers for this job
         try:
-            from shandy.container_manager import get_container_manager
-
             container_manager = get_container_manager()
             if container_manager.is_available():
                 removed = container_manager.cleanup_job_containers(job_id)
@@ -706,9 +662,7 @@ class JobManager:
         Returns:
             Number of jobs deleted
         """
-        from datetime import timedelta
-
-        cutoff = datetime.now() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         deleted = 0
 
         for job_id in self._list_job_ids():
@@ -726,6 +680,8 @@ class JobManager:
 
             # Check age
             created_at = datetime.fromisoformat(job_info.created_at)
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
             if created_at < cutoff:
                 try:
                     self.delete_job(job_id)
@@ -735,8 +691,6 @@ class JobManager:
 
         # Also cleanup orphaned executor containers
         try:
-            from shandy.container_manager import get_container_manager
-
             container_manager = get_container_manager()
             if container_manager.is_available():
                 orphaned = container_manager.cleanup_orphaned_containers(max_age_hours=days * 24)
@@ -747,10 +701,6 @@ class JobManager:
 
         logger.info("Cleaned up %d old jobs", deleted)
         return deleted
-
-    def get_running_jobs(self) -> List[JobInfo]:
-        """Get list of currently running jobs."""
-        return self.list_jobs(status=JobStatus.RUNNING)
 
     def _get_active_job_count(self) -> int:
         """
@@ -796,7 +746,7 @@ class JobManager:
         """
         return self.get_coinvestigate_count() < max_coinvestigate
 
-    def get_job_summary(self) -> Dict[str, Any]:
+    def get_job_summary(self) -> dict[str, Any]:
         """
         Get summary of all jobs.
 
@@ -826,7 +776,7 @@ class JobManager:
             "budget_check": budget_check,
         }
 
-    def _list_job_ids(self) -> List[str]:
+    def _list_job_ids(self) -> list[str]:
         """List all job IDs."""
         if not self.jobs_dir.exists():
             return []
@@ -968,13 +918,13 @@ class JobManager:
 
             # Update timestamps
             if status == JobStatus.RUNNING and "started_at" not in config:
-                config["started_at"] = datetime.now().isoformat()
+                config["started_at"] = datetime.now(timezone.utc).isoformat()
             elif status == JobStatus.COMPLETED and "completed_at" not in config:
-                config["completed_at"] = datetime.now().isoformat()
+                config["completed_at"] = datetime.now(timezone.utc).isoformat()
             elif status == JobStatus.FAILED and "failed_at" not in config:
-                config["failed_at"] = datetime.now().isoformat()
+                config["failed_at"] = datetime.now(timezone.utc).isoformat()
             elif status == JobStatus.CANCELLED:
-                config["cancelled_at"] = datetime.now().isoformat()
+                config["cancelled_at"] = datetime.now(timezone.utc).isoformat()
                 if cancellation_reason:
                     config["cancellation_reason"] = cancellation_reason
 
@@ -1012,8 +962,6 @@ class JobManager:
         # Note: notify_job_status_change will create topic if not exists
         if owner_id and job_info and ntfy_result and ntfy_result.ntfy_enabled:
             try:
-                from shandy.ntfy import notify_job_status_change
-
                 _run_async(
                     notify_job_status_change(
                         user_id=owner_id,
@@ -1032,8 +980,6 @@ class JobManager:
 
 def main():
     """CLI entry point for job manager."""
-    import argparse
-
     parser = argparse.ArgumentParser(description="SHANDY Job Manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
 

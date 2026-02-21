@@ -13,6 +13,10 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 
+from shandy.database.models import User
+from shandy.database.session import AsyncSessionLocal
+from shandy.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 NTFY_BASE_URL = "https://ntfy.sh"
@@ -27,9 +31,6 @@ async def get_user_ntfy_settings(user_id: UUID) -> tuple[bool, str | None]:
     Returns:
         Tuple of (ntfy_enabled, ntfy_topic). If user not found, returns (False, None).
     """
-    from shandy.database.models import User
-    from shandy.database.session import AsyncSessionLocal
-
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
             stmt = select(User.ntfy_enabled, User.ntfy_topic).where(User.id == user_id)
@@ -52,9 +53,6 @@ async def ensure_user_has_topic(user_id: UUID) -> str | None:
     Returns:
         The user's ntfy topic, or None if unable to create/retrieve.
     """
-    from shandy.database.models import User
-    from shandy.database.session import AsyncSessionLocal
-
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
             stmt = select(User).where(User.id == user_id)
@@ -241,8 +239,6 @@ async def notify_job_status_change(
     Returns:
         True if notification was sent, False otherwise
     """
-    from shandy.settings import get_settings
-
     topic = ntfy_topic
 
     # Only query database if topic not provided (backward compatibility)
@@ -268,18 +264,17 @@ async def notify_job_status_change(
     # Send appropriate notification based on status
     if new_status == "running":
         return await notify_job_started(topic, job_id, short_title, base_url)
-    elif new_status == "completed":
+    if new_status == "completed":
         return await notify_job_completed(topic, job_id, short_title, base_url)
-    elif new_status == "failed":
+    if new_status == "failed":
         return await notify_job_failed(
             topic, job_id, short_title, error_message or "Unknown error", base_url
         )
-    elif new_status == "cancelled":
+    if new_status == "cancelled":
         return await notify_job_cancelled(topic, job_id, short_title, cancellation_reason, base_url)
-    elif new_status == "awaiting_feedback":
+    if new_status == "awaiting_feedback":
         return await notify_job_awaiting_feedback(
             topic, job_id, short_title, iteration or 1, base_url
         )
-    else:
-        logger.debug("No notification for status: %s", new_status)
-        return False
+    logger.debug("No notification for status: %s", new_status)
+    return False

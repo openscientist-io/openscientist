@@ -6,7 +6,7 @@ For users who want to use their own Anthropic API key.
 
 import logging
 import os
-from typing import Any, List
+from typing import Any
 
 from shandy.settings import get_settings
 
@@ -27,19 +27,24 @@ class AnthropicProvider(BaseProvider):
     def name(self) -> str:
         return "Anthropic"
 
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         """Check required Anthropic configuration."""
         errors = []
         settings = get_settings()
 
-        if not settings.provider.anthropic_api_key:
+        if (
+            not settings.provider.anthropic_api_key
+            and not settings.provider.claude_code_oauth_token
+        ):
             errors.append(
-                "ANTHROPIC_API_KEY not set. Get your API key from https://console.anthropic.com"
+                "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN not set. "
+                "Get your API key from https://console.anthropic.com "
+                "or run 'claude login' for OAuth."
             )
 
         return errors
 
-    def _validate_optional_config(self) -> List[str]:
+    def _validate_optional_config(self) -> list[str]:
         """Check optional configuration."""
         warnings = []
         settings = get_settings()
@@ -50,11 +55,23 @@ class AnthropicProvider(BaseProvider):
         return warnings
 
     def setup_environment(self) -> None:
-        """Anthropic environment is configured via ANTHROPIC_API_KEY in .env."""
-        # Unset Vertex-related vars to ensure Claude Code uses ANTHROPIC_API_KEY
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # noqa: env-ok
-        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)  # noqa: env-ok
-        logger.info("Anthropic provider initialized (using ANTHROPIC_API_KEY)")
+        """Set up environment for Anthropic direct API or OAuth token."""
+        settings = get_settings()
+
+        # Unset conflicting provider vars
+        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # env-ok
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
+        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)  # env-ok
+
+        # If using OAuth token (from claude login), set CLAUDE_CODE_OAUTH_TOKEN
+        # which is what the Claude Code CLI expects for OAuth authentication
+        if settings.provider.claude_code_oauth_token and not settings.provider.anthropic_api_key:
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = settings.provider.claude_code_oauth_token  # env-ok
+            auth_method = "OAuth token (CLAUDE_CODE_OAUTH_TOKEN)"
+        else:
+            auth_method = "API key (ANTHROPIC_API_KEY)"
+
+        logger.info("Anthropic provider initialized (using %s)", auth_method)
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """
@@ -73,7 +90,7 @@ class AnthropicProvider(BaseProvider):
 
     async def send_message(
         self,
-        messages: List[dict[str, str]],
+        messages: list[dict[str, str]],
         system: str | None = None,
         model: str | None = None,
         max_tokens: int = 4096,
@@ -88,7 +105,13 @@ class AnthropicProvider(BaseProvider):
         from anthropic.types import MessageParam, TextBlock
 
         settings = get_settings()
-        client = anthropic.Anthropic(api_key=settings.provider.anthropic_api_key)
+        api_key = settings.provider.anthropic_api_key
+        if not api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is required for direct SDK calls. "
+                "OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN) only work via the CLI path."
+            )
+        client = anthropic.Anthropic(api_key=api_key)
 
         # Use configured model or default
         effective_model = model or settings.provider.anthropic_model or "claude-sonnet-4-20250514"
@@ -131,7 +154,13 @@ class AnthropicProvider(BaseProvider):
         from anthropic.types import ToolParam, ToolUseBlock
 
         settings = get_settings()
-        client = anthropic.Anthropic(api_key=settings.provider.anthropic_api_key)
+        api_key = settings.provider.anthropic_api_key
+        if not api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is required for direct SDK calls. "
+                "OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN) only work via the CLI path."
+            )
+        client = anthropic.Anthropic(api_key=api_key)
 
         # Use configured model or default
         effective_model = model or settings.provider.anthropic_model or "claude-sonnet-4-20250514"

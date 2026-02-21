@@ -6,12 +6,13 @@ skills from external sources like GitHub repositories.
 """
 
 import hashlib
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Type
+from typing import Any
 
 import httpx
 import yaml  # type: ignore[import-untyped]
@@ -19,6 +20,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill, SkillSource
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Base Class for Extensible Ingesters
@@ -61,11 +64,9 @@ class BaseSkillIngester(ABC):
         Returns:
             Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
         """
-        pass
 
     async def close(self) -> None:
         """Optional cleanup method for ingesters with resources."""
-        pass
 
 
 @dataclass
@@ -84,8 +85,6 @@ class ParsedSkill:
 
 class SkillParseError(Exception):
     """Error parsing a skill file."""
-
-    pass
 
 
 class SkillParser:
@@ -401,9 +400,24 @@ class GitHubSkillIngester(BaseSkillIngester):
 
         owner, repo = self._parse_github_url(source.url)
         branch = source.branch
+        force = kwargs.get("force", False)
 
         # Get latest commit
         commit_sha = await self.get_latest_commit(owner, repo, branch)
+
+        # Short-circuit: skip if commit SHA unchanged (unless forced)
+        if not force and source.last_commit_sha == commit_sha:
+            logger.info("Skipping %s: commit unchanged (%s)", source.name, commit_sha[:12])
+            source.last_synced_at = datetime.now(timezone.utc)
+            source.sync_error = None
+            await session.commit()
+            return {
+                "created": 0,
+                "updated": 0,
+                "unchanged": 0,
+                "errors": 0,
+                "skipped_reason": "commit_unchanged",  # type: ignore[dict-item]
+            }
 
         # List skill files
         skill_files = await self.list_skill_files(owner, repo, branch, source.skills_path)
@@ -460,9 +474,7 @@ class GitHubSkillIngester(BaseSkillIngester):
             except (SkillParseError, httpx.HTTPError) as e:
                 stats["errors"] += 1
                 # Log error but continue
-                import logging
-
-                logging.getLogger(__name__).warning(f"Error processing {file_info['path']}: {e}")
+                logger.warning("Error processing %s: %s", file_info["path"], e)
 
         # Update source metadata
         source.last_synced_at = datetime.now(timezone.utc)
@@ -563,11 +575,12 @@ class LocalSkillIngester(BaseSkillIngester):
 
                     if existing_global:
                         # Skip - skill already exists from another source
-                        import logging
-
-                        logging.getLogger(__name__).info(
-                            f"Skipping {relative_path}: skill {parsed.category}/{parsed.slug} "
-                            f"already exists from source {existing_global.source_id}"
+                        logger.info(
+                            "Skipping %s: skill %s/%s already exists from source %s",
+                            relative_path,
+                            parsed.category,
+                            parsed.slug,
+                            existing_global.source_id,
                         )
                         stats["unchanged"] += 1
                         continue
@@ -589,9 +602,7 @@ class LocalSkillIngester(BaseSkillIngester):
 
             except SkillParseError as e:
                 stats["errors"] += 1
-                import logging
-
-                logging.getLogger(__name__).warning(f"Error processing {md_file}: {e}")
+                logger.warning("Error processing %s: %s", md_file, e)
 
         # Update source metadata
         source.last_synced_at = datetime.now(timezone.utc)
@@ -607,12 +618,12 @@ class LocalSkillIngester(BaseSkillIngester):
 # =============================================================================
 
 # Registry mapping source_type -> ingester class
-_INGESTER_REGISTRY: dict[str, Type[BaseSkillIngester]] = {}
+_INGESTER_REGISTRY: dict[str, type[BaseSkillIngester]] = {}
 
 
 def register_ingester(
     source_type: str,
-    ingester_class: Type[BaseSkillIngester],
+    ingester_class: type[BaseSkillIngester],
 ) -> None:
     """
     Register a skill ingester for a source type.
@@ -622,11 +633,6 @@ def register_ingester(
         ingester_class: Class that inherits from BaseSkillIngester
     """
     _INGESTER_REGISTRY[source_type] = ingester_class
-
-
-def get_registered_ingesters() -> list[str]:
-    """Get list of registered source types."""
-    return list(_INGESTER_REGISTRY.keys())
 
 
 # Register built-in ingesters
