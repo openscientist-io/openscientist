@@ -16,7 +16,7 @@ from shandy.auth.oauth import get_oauth_client
 from shandy.auth.providers import GitHubProvider, GoogleProvider, MockProvider, ORCIDProvider
 from shandy.auth.routes import create_or_update_user, create_session
 from shandy.database.models import Administrator, Session
-from shandy.database.session import get_admin_session, get_session
+from shandy.database.session import get_admin_session
 from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,8 @@ async def mock_oauth_login():
     )
 
     # Create/update user and create session
-    async with get_session() as db:
+    # Uses admin session because user creation is a cross-tenant operation
+    async with get_admin_session() as db:
         user = await create_or_update_user(
             db,
             provider="mock",
@@ -122,7 +123,8 @@ async def mock_admin_oauth_login():
     )
 
     # Create/update user and create session
-    async with get_session() as db:
+    # Uses admin session because user creation is a cross-tenant operation
+    async with get_admin_session() as db:
         user = await create_or_update_user(
             db,
             provider="mock",
@@ -191,7 +193,8 @@ async def mock_oauth_callback(request: Request):
         )
 
         # Create/update user and create session
-        async with get_session() as db:
+        # Uses admin session because user creation is a cross-tenant operation
+        async with get_admin_session() as db:
             user = await create_or_update_user(
                 db,
                 provider="mock",
@@ -288,7 +291,8 @@ async def oauth_callback(provider: str, request: Request):
             raise ValueError(f"Unknown provider: {provider}")
 
         # Create/update user and create session
-        async with get_session() as db:
+        # Uses admin session because user creation is a cross-tenant operation
+        async with get_admin_session() as db:
             user = await create_or_update_user(
                 db,
                 provider=provider,
@@ -320,7 +324,7 @@ async def logout(request: Request):
     if session_token:
         # Invalidate session in database
         try:
-            async with get_session() as db:
+            async with get_admin_session() as db:
                 stmt = select(Session).where(Session.id == session_token)
                 result = await db.execute(stmt)
                 session = result.scalar_one_or_none()

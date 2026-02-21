@@ -381,3 +381,100 @@ async def test_list_rls_policies(db_session: AsyncSession):
     # Should have policies for jobs table
     policy_names = [p["name"] for p in policies]
     assert any("jobs" in name for name in policy_names)
+
+
+# =============================================================================
+# Regression tests: ensure auth routes and middleware use admin sessions,
+# and that get_session() enforces RLS via SET ROLE.
+# =============================================================================
+
+
+def test_oauth_callback_uses_admin_session():
+    """OAuth callback must use get_admin_session, not get_session.
+
+    User creation/update during OAuth login is a cross-tenant operation
+    (no user context exists yet). Using get_session() would fail because
+    SET ROLE shandy_app + no set_current_user = zero rows visible.
+    """
+    import inspect
+
+    from shandy.auth.fastapi_routes import oauth_callback
+
+    source = inspect.getsource(oauth_callback)
+    assert "get_admin_session" in source, (
+        "oauth_callback must use get_admin_session(), not get_session(). "
+        "User creation during OAuth is a cross-tenant operation."
+    )
+    assert "get_session()" not in source, (
+        "oauth_callback must NOT use get_session() — it enforces RLS, "
+        "but there is no user context during login."
+    )
+
+
+def test_auth_middleware_uses_admin_session():
+    """Session validation middleware must use get_admin_session.
+
+    The validate_session function looks up sessions and users before any
+    user context is known. Using get_session() would enforce RLS with no
+    user set, returning zero rows and breaking all authentication.
+    """
+    import inspect
+
+    from shandy.auth.middleware import validate_session
+
+    source = inspect.getsource(validate_session)
+    assert "get_admin_session" in source, (
+        "validate_session must use get_admin_session(), not get_session(). "
+        "Session lookup happens before user context is established."
+    )
+
+
+def test_get_session_sets_app_role():
+    """get_session() must call _set_app_role to enforce RLS.
+
+    Without SET ROLE shandy_app, the main database user (typically a
+    superuser) bypasses all RLS policies silently.
+    """
+    import inspect
+
+    from shandy.database.session import get_session
+
+    source = inspect.getsource(get_session)
+    assert "_set_app_role" in source, (
+        "get_session() must call _set_app_role() to SET ROLE shandy_app. "
+        "Without this, superuser connections bypass all RLS policies."
+    )
+
+
+def test_mock_login_uses_admin_session():
+    """Mock login routes must use get_admin_session.
+
+    Same rationale as OAuth — user creation is cross-tenant.
+    """
+    import inspect
+
+    from shandy.auth.fastapi_routes import mock_admin_oauth_login, mock_oauth_login
+
+    for fn in [mock_oauth_login, mock_admin_oauth_login]:
+        source = inspect.getsource(fn)
+        assert "get_admin_session" in source, (
+            f"{fn.__name__} must use get_admin_session(), not get_session(). "
+            f"User creation during login is a cross-tenant operation."
+        )
+
+
+def test_logout_uses_admin_session():
+    """Logout must use get_admin_session to delete sessions.
+
+    Session deletion is a cross-tenant operation — the session record
+    needs to be found and deleted regardless of RLS context.
+    """
+    import inspect
+
+    from shandy.auth.fastapi_routes import logout
+
+    source = inspect.getsource(logout)
+    assert "get_admin_session" in source, (
+        "logout must use get_admin_session(), not get_session(). "
+        "Session deletion requires cross-tenant access."
+    )

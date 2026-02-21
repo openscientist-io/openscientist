@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from shandy.database.models import Session, User
-from shandy.database.session import get_session
+from shandy.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ async def validate_session(session_token: str) -> Optional[dict]:
         Dictionary with user_id, email, name, and is_admin if valid, None otherwise
     """
     try:
-        async with get_session() as db:
+        async with get_admin_session() as db:
             user = await get_current_user(db, session_token)
             if user:
                 return {
