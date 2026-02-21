@@ -55,7 +55,7 @@ if config.config_file_name is not None:
 # Set the SQLAlchemy URL from environment variable
 # Note: Alembic migrations must read DATABASE_URL directly from environment
 # because settings module may not be importable during migrations
-database_url: str = os.getenv("DATABASE_URL", "")  # env-ok
+database_url: str = os.getenv("DATABASE_URL", "")  # noqa: env-ok
 if not database_url:
     raise ValueError(
         "DATABASE_URL environment variable is required for migrations. "

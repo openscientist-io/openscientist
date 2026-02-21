@@ -67,8 +67,8 @@ class VertexProvider(BaseProvider):
     def setup_environment(self) -> None:
         """Vertex AI environment should be configured via .env and docker-compose.yml."""
         # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:

@@ -74,7 +74,7 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
     import os
 
     # Testing hook: simulate provider misconfiguration for E2E tests
-    if os.environ.get("SIMULATE_PROVIDER_ERROR") == "true":  # env-ok
+    if os.environ.get("SIMULATE_PROVIDER_ERROR") == "true":  # noqa: env-ok
         return (
             False,
             "anthropic",

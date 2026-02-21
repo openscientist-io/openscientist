@@ -22,7 +22,7 @@ def get_commit() -> str:
         return _commit
 
     # Try environment variable first (set during Docker build)
-    commit = os.environ.get("SHANDY_COMMIT", "")  # env-ok
+    commit = os.environ.get("SHANDY_COMMIT", "")  # noqa: env-ok
     if commit and commit != "unknown":
         _commit = commit[:12]
         return _commit
@@ -52,7 +52,7 @@ def get_build_time() -> str:
     if _build_time is not None:
         return _build_time
 
-    build_time = os.environ.get("SHANDY_BUILD_TIME", "")  # env-ok
+    build_time = os.environ.get("SHANDY_BUILD_TIME", "")  # noqa: env-ok
     if build_time and build_time != "unknown":
         _build_time = build_time
         return _build_time

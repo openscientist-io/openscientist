@@ -190,11 +190,11 @@ def get_version_metadata() -> dict[str, str]:
 
     metadata: dict[str, str] = {}
 
-    shandy_commit = os.environ.get("SHANDY_COMMIT")  # env-ok
+    shandy_commit = os.environ.get("SHANDY_COMMIT")  # noqa: env-ok
     if shandy_commit and shandy_commit != "unknown":
         metadata["shandy_commit"] = shandy_commit[:12]
 
-    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # env-ok
+    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # noqa: env-ok
     if shandy_build_time and shandy_build_time != "unknown":
         metadata["shandy_build_time"] = shandy_build_time
 

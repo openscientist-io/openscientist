@@ -70,7 +70,7 @@ class BedrockProvider(BaseProvider):
         environment variables from other providers.
         """
         # Enable Bedrock mode for Claude Code
-        os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # env-ok
+        os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # noqa: env-ok
 
         # Unset Vertex-related vars to avoid conflicts
         vertex_vars = [
@@ -80,12 +80,12 @@ class BedrockProvider(BaseProvider):
             "VERTEX_REGION_CLAUDE_4_5_HAIKU",
         ]
         for var in vertex_vars:
-            if var in os.environ:  # env-ok
+            if var in os.environ:  # noqa: env-ok
                 logger.debug(f"Removing conflicting {var}")
-                del os.environ[var]  # env-ok
+                del os.environ[var]  # noqa: env-ok
 
         # Unset direct API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
 
         # Unset empty vars that interfere with Bedrock auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -98,9 +98,9 @@ class BedrockProvider(BaseProvider):
             "ANTHROPIC_BASE_URL",
         ]
         for var in empty_vars_to_clear:
-            val = os.environ.get(var)  # env-ok
+            val = os.environ.get(var)  # noqa: env-ok
             if val == "":
-                os.environ.pop(var, None)  # env-ok
+                os.environ.pop(var, None)  # noqa: env-ok
                 logger.debug(f"Unset empty {var}")
 
         logger.info("Bedrock provider initialized (using AWS credentials)")

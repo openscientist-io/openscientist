@@ -109,7 +109,7 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> Optional[dict]:
         )
 
         # Parse environment variables
-        phenix_env = os.environ.copy()  # env-ok
+        phenix_env = os.environ.copy()  # noqa: env-ok
         for line in proc.stdout.split("\n"):
             if "=" in line:
                 key, _, value = line.partition("=")

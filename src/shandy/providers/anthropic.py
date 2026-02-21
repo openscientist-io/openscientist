@@ -59,14 +59,16 @@ class AnthropicProvider(BaseProvider):
         settings = get_settings()
 
         # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # env-ok
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
-        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)  # env-ok
+        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # noqa: env-ok
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)  # noqa: env-ok
 
         # If using OAuth token (from claude login), set CLAUDE_CODE_OAUTH_TOKEN
         # which is what the Claude Code CLI expects for OAuth authentication
         if settings.provider.claude_code_oauth_token and not settings.provider.anthropic_api_key:
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = settings.provider.claude_code_oauth_token  # env-ok
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = (  # noqa: env-ok
+                settings.provider.claude_code_oauth_token
+            )
             auth_method = "OAuth token (CLAUDE_CODE_OAUTH_TOKEN)"
         else:
             auth_method = "API key (ANTHROPIC_API_KEY)"

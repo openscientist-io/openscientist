@@ -33,7 +33,8 @@ def _fetch_cborg_key_info() -> dict[str, Any]:
         timeout=10,
     )
     response.raise_for_status()
-    return response.json()["info"]
+    data: dict[str, Any] = response.json()["info"]
+    return data
 
 
 def get_cborg_spend() -> float:
