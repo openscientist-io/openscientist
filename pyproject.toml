@@ -83,6 +83,12 @@ dependencies = [
 
     # Container isolation
     "docker>=7.0.0",
+
+    # Claude Agent SDK (required – powers the agent execution path)
+    "claude-agent-sdk>=0.1.37",
+
+    # SPARQL queries against remote endpoints
+    "SPARQLWrapper>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -106,7 +112,7 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
@@ -116,7 +122,7 @@ ignore = ["E501"]  # Line too long (handled by formatter)
 "src/shandy/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
