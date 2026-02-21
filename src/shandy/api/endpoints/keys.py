@@ -6,12 +6,11 @@ Provides REST API endpoints for creating, listing, and revoking API keys.
 
 import logging
 from datetime import datetime
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import (
@@ -65,7 +64,7 @@ class APIKeyCreateResponse(APIKeyResponse):
 class APIKeyListResponse(BaseModel):
     """Response for listing API keys."""
 
-    keys: List[APIKeyResponse] = Field(..., description="List of API keys")
+    keys: list[APIKeyResponse] = Field(..., description="List of API keys")
 
 
 @router.post("", response_model=APIKeyCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -98,9 +97,10 @@ async def create_api_key(
         )
 
     # Check key count limit
-    stmt = select(APIKey).where(APIKey.user_id == user.id)
-    result = await session.execute(stmt)
-    if len(result.scalars().all()) >= 10:
+    count_result = await session.execute(
+        select(func.count(APIKey.id)).where(APIKey.user_id == user.id)
+    )
+    if count_result.scalar_one() >= 10:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Maximum of 10 API keys per user",

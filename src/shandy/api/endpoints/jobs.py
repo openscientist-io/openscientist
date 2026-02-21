@@ -11,13 +11,13 @@ import logging
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
@@ -100,7 +100,7 @@ class JobResponse(BaseModel):
 class JobListResponse(BaseModel):
     """Response for listing jobs."""
 
-    jobs: List[JobResponse] = Field(..., description="List of jobs")
+    jobs: list[JobResponse] = Field(..., description="List of jobs")
     total: int = Field(..., description="Total number of jobs")
 
 
@@ -250,10 +250,11 @@ async def create_job(
     except Exception as e:
         # Rollback database if job creation fails
         await session.rollback()
+        logger.exception("Failed to create job for user %s", user.email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create job: {str(e)}",
-        )
+            detail="Failed to create job",
+        ) from e
 
     return _job_to_response(job)
 
@@ -297,10 +298,11 @@ async def list_jobs(
         stmt = stmt.where(Job.status == status_filter)
 
     # Get total count (for pagination)
-    count_result = await session.execute(
-        select(Job).where(Job.status == status_filter) if status_filter else select(Job)
-    )
-    total = len(count_result.scalars().all())
+    count_stmt = select(func.count(Job.id))
+    if status_filter:
+        count_stmt = count_stmt.where(Job.status == status_filter)
+    count_result = await session.execute(count_stmt)
+    total = count_result.scalar_one()
 
     # Apply pagination
     stmt = stmt.limit(limit).offset(offset)
@@ -401,10 +403,51 @@ async def cancel_job(
 
         logger.info("Cancelled job %s for user %s", job.id, user.email)
     except Exception as e:
+        logger.exception("Failed to cancel job %s", job.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to cancel job: {str(e)}",
+            detail="Failed to cancel job",
+        ) from e
+
+
+@router.post("/{job_id}/regenerate-report", status_code=status.HTTP_202_ACCEPTED)
+async def regenerate_report(
+    job_id: str,
+    user: User = Depends(get_current_user_from_api_key),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Regenerate the final report for a completed or failed job.
+
+    Re-runs only the report generation phase using the existing
+    knowledge state. The job status will change to 'generating_report'
+    while in progress.
+    """
+    job = await get_job_by_id(job_id, user, session)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found or access denied",
         )
+
+    if job.status not in ["completed", "failed"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Can only regenerate report for completed or failed jobs (current: '{job.status}')",
+        )
+
+    job_manager = _get_job_manager()
+    try:
+        job_manager.regenerate_report(str(job.id))
+        logger.info("Started report regeneration for job %s (user %s)", job.id, user.email)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+    return {"detail": "Report regeneration started", "job_id": str(job.id)}
 
 
 @router.get("/{job_id}/report")
@@ -434,6 +477,21 @@ async def download_report(
 
     # Look for report file
     job_dir = Path("jobs") / str(job.id)
+
+    # Regenerate PDF from markdown if markdown exists
+    for md_name, pdf_name in [
+        ("final_report.md", "final_report.pdf"),
+        ("report.md", "report.pdf"),
+    ]:
+        md_path = job_dir / md_name
+        pdf_path = job_dir / pdf_name
+        if md_path.exists():
+            try:
+                from shandy.pdf_generator import markdown_to_pdf
+
+                markdown_to_pdf(md_path, pdf_path)
+            except Exception:
+                logger.warning("Failed to regenerate %s", pdf_name, exc_info=True)
 
     # Try PDF first, then Markdown
     report_files = [

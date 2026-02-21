@@ -7,7 +7,7 @@ to research questions.
 
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -34,7 +34,7 @@ class SkillResponse(BaseModel):
     slug: str = Field(..., description="URL-friendly identifier")
     category: str = Field(..., description="Skill category")
     description: Optional[str] = Field(None, description="Brief description")
-    tags: List[str] = Field(default_factory=list, description="Skill tags")
+    tags: list[str] = Field(default_factory=list, description="Skill tags")
     is_enabled: bool = Field(..., description="Whether skill is enabled")
     version: int = Field(..., description="Skill version")
     created_at: datetime = Field(..., description="Creation timestamp (UTC)")
@@ -51,14 +51,14 @@ class SkillDetailResponse(SkillResponse):
 class SkillListResponse(BaseModel):
     """Response for listing skills."""
 
-    skills: List[SkillResponse] = Field(..., description="List of skills")
+    skills: list[SkillResponse] = Field(..., description="List of skills")
     total: int = Field(..., description="Total number of skills")
 
 
 class CategoryListResponse(BaseModel):
     """Response for listing categories."""
 
-    categories: List[str] = Field(..., description="List of category names")
+    categories: list[str] = Field(..., description="List of category names")
 
 
 class SkillSourceResponse(BaseModel):
@@ -120,7 +120,7 @@ async def list_skills(
         None,
         description="Full-text search query",
     ),
-    tags: Optional[List[str]] = Query(
+    tags: Optional[list[str]] = Query(
         None,
         description="Filter by tags (skills must have all specified tags)",
     ),
@@ -230,11 +230,11 @@ async def get_skill(
 
     try:
         skill_uuid = UUID(skill_id)
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid skill ID format",
-        )
+        ) from e
 
     stmt = select(Skill).where(
         Skill.id == skill_uuid,
@@ -318,7 +318,7 @@ class SkillSourceCreate(BaseModel):
 class SkillSourceListResponse(BaseModel):
     """Response for listing skill sources."""
 
-    sources: List[SkillSourceResponse] = Field(..., description="List of sources")
+    sources: list[SkillSourceResponse] = Field(..., description="List of sources")
     total: int = Field(..., description="Total number of sources")
 
 
@@ -431,11 +431,11 @@ async def sync_skill_source_endpoint(
     # Verify admin access by trying to read the source (RLS will block non-admins)
     try:
         source_uuid = UUID(source_id)
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid source ID format",
-        )
+        ) from e
 
     stmt = select(SkillSource).where(SkillSource.id == source_uuid)
     check_result = await session.execute(stmt)
@@ -483,11 +483,11 @@ async def delete_skill_source(
 
     try:
         source_uuid = UUID(source_id)
-    except ValueError:
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid source ID format",
-        )
+        ) from e
 
     # RLS policy enforces admin-only access
     stmt = select(SkillSource).where(SkillSource.id == source_uuid)

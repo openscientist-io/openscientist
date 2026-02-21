@@ -8,7 +8,6 @@ Provides REST API endpoints for managing job shares, including:
 """
 
 import logging
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,6 +23,39 @@ from shandy.database.session import get_admin_session, get_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/shares", tags=["Shares"])
+
+
+def _share_to_response(share: "JobShare", target_user: "User") -> "ShareResponse":
+    """Convert a JobShare + User pair to a ShareResponse."""
+    return ShareResponse(
+        id=str(share.id),
+        job_id=str(share.job_id),
+        shared_with_user_id=str(target_user.id),
+        shared_with_email=target_user.email,
+        shared_with_name=target_user.name,
+        permission_level=share.permission_level,
+    )
+
+
+async def _get_owned_job(session: "AsyncSession", user: "User", job_id: str) -> "Job":
+    """Get a job by ID, raising if not found or not owned by user."""
+    job_stmt = select(Job).where(Job.id == UUID(job_id))
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found or you don't have access",
+        )
+
+    if job.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only manage shares for jobs you own",
+        )
+
+    return job
 
 
 # Pydantic models for request/response
@@ -61,7 +93,7 @@ class ShareResponse(BaseModel):
 class ShareListResponse(BaseModel):
     """Response for listing shares."""
 
-    shares: List[ShareResponse] = Field(..., description="List of shares")
+    shares: list[ShareResponse] = Field(..., description="List of shares")
     total: int = Field(..., description="Total number of shares")
 
 
@@ -76,7 +108,7 @@ class UserSearchResult(BaseModel):
 class UserSearchResponse(BaseModel):
     """Response for user search."""
 
-    users: List[UserSearchResult] = Field(..., description="Matching users")
+    users: list[UserSearchResult] = Field(..., description="Matching users")
     total: int = Field(..., description="Total number of results")
 
 
@@ -101,21 +133,7 @@ async def create_share(
     await set_current_user(session, user.id)
 
     # Verify job exists and user owns it
-    job_stmt = select(Job).where(Job.id == UUID(share_data.job_id))
-    job_result = await session.execute(job_stmt)
-    job = job_result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or you don't have access",
-        )
-
-    if job.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only share jobs you own",
-        )
+    await _get_owned_job(session, user, share_data.job_id)
 
     # Find user to share with by email (use admin session to search all users)
     async with get_admin_session() as admin_session:
@@ -150,14 +168,7 @@ async def create_share(
         await session.commit()
         await session.refresh(existing_share)
 
-        return ShareResponse(
-            id=str(existing_share.id),
-            job_id=str(existing_share.job_id),
-            shared_with_user_id=str(target_user.id),
-            shared_with_email=target_user.email,
-            shared_with_name=target_user.name,
-            permission_level=existing_share.permission_level,
-        )
+        return _share_to_response(existing_share, target_user)
 
     # Create new share
     new_share = JobShare(
@@ -169,14 +180,7 @@ async def create_share(
     await session.commit()
     await session.refresh(new_share)
 
-    return ShareResponse(
-        id=str(new_share.id),
-        job_id=str(new_share.job_id),
-        shared_with_user_id=str(target_user.id),
-        shared_with_email=target_user.email,
-        shared_with_name=target_user.name,
-        permission_level=new_share.permission_level,
-    )
+    return _share_to_response(new_share, target_user)
 
 
 @router.get(
@@ -198,21 +202,7 @@ async def list_job_shares(
     await set_current_user(session, user.id)
 
     # Verify job exists and user owns it
-    job_stmt = select(Job).where(Job.id == UUID(job_id))
-    job_result = await session.execute(job_stmt)
-    job = job_result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or you don't have access",
-        )
-
-    if job.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view shares for jobs you own",
-        )
+    await _get_owned_job(session, user, job_id)
 
     # Get all shares for this job with user info
     shares_stmt = (
@@ -225,17 +215,7 @@ async def list_job_shares(
     shares = shares_result.all()
 
     return ShareListResponse(
-        shares=[
-            ShareResponse(
-                id=str(share.id),
-                job_id=str(share.job_id),
-                shared_with_user_id=str(target_user.id),
-                shared_with_email=target_user.email,
-                shared_with_name=target_user.name,
-                permission_level=share.permission_level,
-            )
-            for share, target_user in shares
-        ],
+        shares=[_share_to_response(share, target_user) for share, target_user in shares],
         total=len(shares),
     )
 
