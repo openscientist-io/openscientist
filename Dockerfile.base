@@ -11,8 +11,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     jq \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY pyproject.toml uv.lock README.md ./
+
+# Stub package so uv can do the editable install
+RUN mkdir -p src/shandy && touch src/shandy/__init__.py
+
+# Install all deps — cached until pyproject.toml or uv.lock changes
+RUN uv pip install --system -e .

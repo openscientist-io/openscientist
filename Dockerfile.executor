@@ -8,12 +8,13 @@ RUN useradd --create-home executor
 
 WORKDIR /app
 
-# Install system dependencies for scientific libraries
+# Install system dependencies for scientific libraries and Rust
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libhdf5-dev \
     pkg-config \
+    rustc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies using uv

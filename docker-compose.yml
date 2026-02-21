@@ -41,91 +41,33 @@ services:
       - "${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
     restart: ${SHANDY_RESTART_POLICY:-unless-stopped}
-    # Enable --reload in dev mode for live reloading
-    command: ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+    # All credentials and settings come from .env (ANTHROPIC_API_KEY, CLAUDE_PROVIDER, etc.)
+    env_file:
+      - path: .env
+        required: false
     environment:
-      # Mode flag (controls reload, mock auth, etc.)
-      SHANDY_DEV_MODE: ${SHANDY_DEV_MODE:-false}
-
-      # Database
+      # Database URLs use the 'postgres' service hostname — must override any .env value
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shandy}:${POSTGRES_PASSWORD:-shandy_dev_password}@postgres:5432/${POSTGRES_DB:-shandy}
-      # Admin database URL for RLS bypass (background tasks, skill sync, etc.)
       ADMIN_DATABASE_URL: postgresql+asyncpg://shandy_admin:${POSTGRES_PASSWORD:-shandy_dev_password}@postgres:5432/${POSTGRES_DB:-shandy}
       PORT: ${PORT:-8080}
 
-      # Provider selection
-      CLAUDE_PROVIDER: ${CLAUDE_PROVIDER:-cborg}
-
-      # CBORG settings
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
-
-      # Direct Anthropic API (if using anthropic provider)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-
-      # Vertex AI settings (if using Vertex provider)
-      CLAUDE_CODE_USE_VERTEX: ${CLAUDE_CODE_USE_VERTEX}
-      ANTHROPIC_VERTEX_PROJECT_ID: ${ANTHROPIC_VERTEX_PROJECT_ID}
-      # GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile to /app/gcp-credentials.json
-      # The file is mounted from GCP_CREDENTIALS_FILE (set in .env)
-      # GCP_CREDENTIALS_HOST_PATH passes the host path for agent container mounts
-      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
-      CLOUD_ML_REGION: ${CLOUD_ML_REGION}
-      VERTEX_REGION_CLAUDE_4_5_SONNET: ${VERTEX_REGION_CLAUDE_4_5_SONNET}
-      VERTEX_REGION_CLAUDE_4_5_HAIKU: ${VERTEX_REGION_CLAUDE_4_5_HAIKU}
-      GCP_BILLING_ACCOUNT_ID: ${GCP_BILLING_ACCOUNT_ID}
-
-      # AWS Bedrock settings (if using Bedrock provider)
-      CLAUDE_CODE_USE_BEDROCK: ${CLAUDE_CODE_USE_BEDROCK}
-      AWS_REGION: ${AWS_REGION}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
-      AWS_PROFILE: ${AWS_PROFILE}
-      AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK}
-
-      # Azure Foundry settings (if using Foundry provider)
-      CLAUDE_CODE_USE_FOUNDRY: ${CLAUDE_CODE_USE_FOUNDRY}
-      ANTHROPIC_FOUNDRY_RESOURCE: ${ANTHROPIC_FOUNDRY_RESOURCE}
-      ANTHROPIC_FOUNDRY_API_KEY: ${ANTHROPIC_FOUNDRY_API_KEY}
-      ANTHROPIC_FOUNDRY_BASE_URL: ${ANTHROPIC_FOUNDRY_BASE_URL}
-
-      # Model settings
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL}
-      ANTHROPIC_DEFAULT_OPUS_MODEL: ${ANTHROPIC_DEFAULT_OPUS_MODEL}
-      ANTHROPIC_DEFAULT_SONNET_MODEL: ${ANTHROPIC_DEFAULT_SONNET_MODEL}
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${ANTHROPIC_DEFAULT_HAIKU_MODEL:-${ANTHROPIC_SMALL_FAST_MODEL}}
-      ANTHROPIC_SMALL_FAST_MODEL: ${ANTHROPIC_SMALL_FAST_MODEL:-${ANTHROPIC_DEFAULT_HAIKU_MODEL}}
-
-      # Budget controls
-      MAX_PROJECT_SPEND_TOTAL_USD: ${MAX_PROJECT_SPEND_TOTAL_USD}
-      MAX_PROJECT_SPEND_24H_USD: ${MAX_PROJECT_SPEND_24H_USD}
-
-      # App settings
+      # Phenix: host path (from .env) is mounted at /opt/phenix inside the container
       PHENIX_PATH: ${PHENIX_PATH:+/opt/phenix}
-      STORAGE_SECRET: ${STORAGE_SECRET}
 
-      # Security: OAuth token encryption
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+      # GCP credentials: the host file path is passed separately so agent containers
+      # can mount it on the host side (GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile)
+      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
 
-      # Enable mock OAuth in dev mode (set explicitly to override)
-      ENABLE_MOCK_AUTH: ${ENABLE_MOCK_AUTH:-${SHANDY_DEV_MODE:-false}}
-
-      # Berkeley Lab Data Lakehouse
-      KBASE_TOKEN: ${KBASE_TOKEN}
-      DREMIO_USER: ${DREMIO_USER}
-      DREMIO_PASSWORD: ${DREMIO_PASSWORD}
-
-      # Container isolation for code execution (executor containers)
+      # Container isolation defaults
       SHANDY_USE_CONTAINER_ISOLATION: ${SHANDY_USE_CONTAINER_ISOLATION:-true}
       SHANDY_EXECUTOR_IMAGE: ${SHANDY_EXECUTOR_IMAGE:-shandy-executor:latest}
       SHANDY_EXECUTOR_MEMORY: ${SHANDY_EXECUTOR_MEMORY:-2g}
       SHANDY_EXECUTOR_CPU: ${SHANDY_EXECUTOR_CPU:-0.5}
-
-      # Host path mapping for executor container volume mounts
+      SHANDY_AGENT_MEMORY: ${SHANDY_AGENT_MEMORY:-8g}
+      SHANDY_AGENT_CPU: ${SHANDY_AGENT_CPU:-2.0}
       SHANDY_HOST_PROJECT_DIR: ${SHANDY_HOST_PROJECT_DIR:-}
 
-      # Prevent .pyc files in dev mode
+      # Derived settings not expressible in .env
       PYTHONDONTWRITEBYTECODE: ${SHANDY_DEV_MODE:+1}
 
     volumes:
@@ -149,7 +91,7 @@ services:
       - "${DOCKER_GID:-999}"
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -157,6 +99,22 @@ services:
 
     labels:
       - "shandy.mode=${SHANDY_DEV_MODE:-production}"
+
+  # shandy-agent: build-only service — never started by compose.
+  # Agent containers are spawned at runtime by JobContainerRunner.
+  # Build with:  docker compose build shandy-agent
+  #          or  docker build -f Dockerfile.agent -t shandy-agent:latest .
+  shandy-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: shandy-agent:latest
+    profiles: ["build-only"]  # Excluded from `docker compose up`
+    entrypoint: ["echo", "shandy-agent image built"]
+
+networks:
+  default:
+    name: shandy_default
 
 volumes:
   postgres_data:

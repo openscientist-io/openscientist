@@ -6,11 +6,6 @@ FROM shandy-base:latest
 ARG SHANDY_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
-# Install additional system dependencies (fonts for matplotlib)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    fonts-dejavu-core \
-    && rm -rf /var/lib/apt/lists/*
-
 # Optionally install Phenix for structural biology
 # Requires data/phenix-installer-*.tar.gz to be present
 RUN if [ "$INSTALL_PHENIX" = "true" ]; then \
@@ -25,14 +20,9 @@ RUN if [ "$INSTALL_PHENIX" = "true" ]; then \
 # Set working directory
 WORKDIR /app
 
-# Copy package metadata files first
+# Copy project files — deps already installed in base
 COPY pyproject.toml README.md alembic.ini uv.lock ./
-
-# Copy source code (needed for editable install)
 COPY src/ src/
-
-# Install dependencies using uv
-RUN uv pip install --system -e .
 
 # Create jobs directory
 RUN mkdir -p jobs
@@ -47,6 +37,5 @@ ENV SHANDY_BUILD_TIME=${BUILD_TIME}
 # Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
-# Run web app
-# Note: In development mode, override with --reload flag by setting command in docker-compose.override.yml
-CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+# Run web app (--reload only in dev mode)
+CMD python -m shandy.web_app --host 0.0.0.0 --port 8080 ${SHANDY_DEV_MODE:+--reload}

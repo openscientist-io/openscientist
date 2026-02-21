@@ -36,14 +36,17 @@ stop:
 restart: stop start
 
 build:
-	@echo "Building base image (Node.js, uv, Claude CLI)..."
+	@echo "Building base image (Python, uv)..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t shandy-base:latest .
-	@echo "Building SHANDY images..."
+	@echo "Building SHANDY main image..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
 		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	@echo "Building executor image..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t shandy-executor:latest .
-	@echo "All images built: shandy-base, shandy, shandy-executor"
+	@echo "Building agent image..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t shandy-agent:latest .
+	@echo "All images built: shandy-base, shandy, shandy-executor, shandy-agent"
 
 rebuild: build
 	docker compose -f $(COMPOSE_FILE) down
@@ -125,7 +128,7 @@ deploy:
 	fi"
 	@echo ""
 	@echo "Step 3: Building and restarting application on $(DEPLOY_HOST)..."
-	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && COMPOSE_FILE=docker-compose.gassh.yml make rebuild"
+	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && make rebuild"
 	@echo ""
 	@echo "========================================="
 	@echo "Deployment complete!"
