@@ -282,23 +282,24 @@ async def list_jobs(
     session: AsyncSession = Depends(get_session),
 ) -> JobListResponse:
     """
-    List jobs accessible to the authenticated user.
+    List jobs owned by the authenticated user.
 
-    Returns jobs owned by the user plus any jobs shared with them.
-    Uses Row-Level Security to enforce access control.
+    Returns only jobs where the user is the owner.
+    Shared jobs are available via the /shares endpoints.
+    Uses Row-Level Security as an additional access control layer.
     """
     # Set RLS context
     await set_current_user(session, user.id)
 
-    # Build query (RLS will filter to accessible jobs)
-    stmt = select(Job).order_by(Job.created_at.desc())
+    # Build query — explicit owner filter so shared jobs don't leak in
+    stmt = select(Job).where(Job.owner_id == user.id).order_by(Job.created_at.desc())
 
     # Apply status filter
     if status_filter:
         stmt = stmt.where(Job.status == status_filter)
 
     # Get total count (for pagination)
-    count_stmt = select(func.count(Job.id))
+    count_stmt = select(func.count(Job.id)).where(Job.owner_id == user.id)
     if status_filter:
         count_stmt = count_stmt.where(Job.status == status_filter)
     count_result = await session.execute(count_stmt)

@@ -53,7 +53,11 @@ def jobs_page():
             async with get_session_ctx() as session:
                 await set_current_user(session, UUID(current_user_id))
 
-                stmt = select(Job).order_by(Job.created_at.desc())
+                stmt = (
+                    select(Job)
+                    .where(Job.owner_id == UUID(current_user_id))
+                    .order_by(Job.created_at.desc())
+                )
                 result = await session.execute(stmt)
                 db_jobs = result.scalars().all()
 
