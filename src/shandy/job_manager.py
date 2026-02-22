@@ -22,6 +22,7 @@ from sqlalchemy import select, text
 from shandy.container_manager import get_container_manager
 from shandy.database.models import User
 from shandy.database.models.job import Job as JobModel
+from shandy.database.models.job_share import JobShare
 from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ProviderError
@@ -90,6 +91,24 @@ async def _db_get_job(job_id: str, user_id: Optional[UUID] = None) -> Optional[J
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+
+async def _db_get_share_permission(job_id: str, user_id: UUID) -> Optional[str]:
+    """Return the share permission level for a user on a job.
+
+    Returns 'view', 'edit', or None if the user has no share.
+    """
+    async with AsyncSessionLocal(thread_safe=True) as session:
+        await session.execute(text("SET ROLE shandy_app"))
+        await set_current_user(session, user_id)
+
+        stmt = select(JobShare.permission_level).where(
+            JobShare.job_id == UUID(job_id),
+            JobShare.shared_with_user_id == user_id,
+        )
+        result = await session.execute(stmt)
+        row = result.scalar_one_or_none()
+        return row
 
 
 async def _db_update_job_status(

@@ -18,7 +18,7 @@ from shandy.auth import get_current_user_id, require_auth
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session_ctx
 from shandy.job_chat import get_chat_history, send_chat_message
-from shandy.job_manager import JobStatus, _db_get_job, _run_async
+from shandy.job_manager import JobStatus, _db_get_job, _db_get_share_permission, _run_async
 from shandy.knowledge_state import KnowledgeState
 from shandy.pdf_generator import markdown_to_pdf
 from shandy.webapp_components.error_handler import get_user_friendly_error
@@ -73,19 +73,27 @@ def job_detail_page(job_id: str):
     # Verify access: query DB with RLS to check the current user can see this job
     user_id = get_current_user_id()
     try:
-        has_access = _run_async(_db_get_job(job_id, user_id=UUID(user_id))) is not None
+        db_job = _run_async(_db_get_job(job_id, user_id=UUID(user_id)))
     except ValueError:
-        has_access = False
+        db_job = None
     except Exception:
         logger.error(
             "Failed to check job access: job_id=%s user_id=%s", job_id, user_id, exc_info=True
         )
-        has_access = False
+        db_job = None
 
-    if not has_access:
+    if db_job is None:
         ui.label("Job not found").classes("text-h5")
         ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
         return
+
+    # Determine the user's permission level for this job
+    is_owner = db_job.owner_id == UUID(user_id)
+    if is_owner:
+        can_edit = True
+    else:
+        share_permission = _run_async(_db_get_share_permission(job_id, UUID(user_id)))
+        can_edit = share_permission == "edit"
 
     job_info = job_manager.get_job(job_id)
 
@@ -229,8 +237,8 @@ def job_detail_page(job_id: str):
                                 ui.label(consensus).classes("text-emerald-900 mt-1")
 
                     render_job_action_buttons(
-                        on_share=share_dialog.open,
-                        on_delete=delete_dialog.open,
+                        on_share=share_dialog.open if is_owner else None,
+                        on_delete=delete_dialog.open if is_owner else None,
                         on_notifications=notifications_dialog.open,
                     )
 
@@ -684,48 +692,54 @@ def job_detail_page(job_id: str):
                             ui.label(
                                 f"Iteration {completed_iter} Complete - Awaiting Your Input"
                             ).classes("text-h6 font-bold text-yellow-800")
-                            ui.label(
-                                "Provide guidance for the next iteration, or continue without feedback."
-                            ).classes("text-sm text-gray-700 mb-4")
 
-                            feedback_input = ui.textarea(
-                                label="Your Feedback (optional)",
-                                placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
-                            ).classes("w-full")
+                            if can_edit:
+                                ui.label(
+                                    "Provide guidance for the next iteration, or continue without feedback."
+                                ).classes("text-sm text-gray-700 mb-4")
 
-                            with ui.row().classes("w-full gap-2 mt-2"):
+                                feedback_input = ui.textarea(
+                                    label="Your Feedback (optional)",
+                                    placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
+                                ).classes("w-full")
 
-                                def submit_feedback(fi=feedback_input, ci=completed_iter):
-                                    ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-                                    if fi.value.strip():
-                                        ks.add_feedback(fi.value.strip(), ci)
-                                        ks.save(job_dir / "knowledge_state.json")
-                                    # Set status back to running to signal continue
-                                    with open(job_dir / "config.json", encoding="utf-8") as f:
-                                        cfg = json.load(f)
-                                    cfg["status"] = "running"
-                                    with open(
-                                        job_dir / "config.json",
-                                        "w",
-                                        encoding="utf-8",
-                                    ) as f:
-                                        json.dump(cfg, f, indent=2)
-                                    ui.notify(
-                                        "Continuing to next iteration",
-                                        type="positive",
-                                    )
-                                    ui.navigate.to(f"/job/{job_id}")
+                                with ui.row().classes("w-full gap-2 mt-2"):
 
-                                ui.button(
-                                    "Submit & Continue",
-                                    on_click=submit_feedback,
-                                    icon="send",
-                                ).props("color=primary")
-                                ui.button(
-                                    "Continue Without Feedback",
-                                    on_click=submit_feedback,
-                                    icon="arrow_forward",
-                                ).props("color=secondary outline")
+                                    def submit_feedback(fi=feedback_input, ci=completed_iter):
+                                        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+                                        if fi.value.strip():
+                                            ks.add_feedback(fi.value.strip(), ci)
+                                            ks.save(job_dir / "knowledge_state.json")
+                                        # Set status back to running to signal continue
+                                        with open(job_dir / "config.json", encoding="utf-8") as f:
+                                            cfg = json.load(f)
+                                        cfg["status"] = "running"
+                                        with open(
+                                            job_dir / "config.json",
+                                            "w",
+                                            encoding="utf-8",
+                                        ) as f:
+                                            json.dump(cfg, f, indent=2)
+                                        ui.notify(
+                                            "Continuing to next iteration",
+                                            type="positive",
+                                        )
+                                        ui.navigate.to(f"/job/{job_id}")
+
+                                    ui.button(
+                                        "Submit & Continue",
+                                        on_click=submit_feedback,
+                                        icon="send",
+                                    ).props("color=primary")
+                                    ui.button(
+                                        "Continue Without Feedback",
+                                        on_click=submit_feedback,
+                                        icon="arrow_forward",
+                                    ).props("color=secondary outline")
+                            else:
+                                ui.label("You have view-only access to this job.").classes(
+                                    "text-sm text-gray-500 italic mb-4"
+                                )
 
                             # Countdown timer
                             if awaiting_since:
@@ -860,9 +874,10 @@ def job_detail_page(job_id: str):
 
                 # Download buttons at top
                 with ui.row().classes("w-full justify-end mb-4 gap-2"):
-                    # Regenerate Report button (shown for completed/failed jobs with KS)
+                    # Regenerate Report button (shown for completed/failed jobs with KS, edit access only)
                     if (
-                        job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]
+                        can_edit
+                        and job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]
                         and ks_path.exists()
                     ):
 
@@ -938,7 +953,7 @@ def job_detail_page(job_id: str):
                 elif job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                     with ui.column().classes("gap-2"):
                         ui.label("Report generation failed").classes("text-red-500")
-                        if ks_path.exists():
+                        if can_edit and ks_path.exists():
 
                             def on_regenerate_no_report():
                                 try:
@@ -1188,27 +1203,35 @@ def job_detail_page(job_id: str):
                                     ui.icon("chat_bubble_outline", size="xl").classes(
                                         "text-gray-300 mb-4"
                                     )
-                                    ui.label("Start a conversation").classes(
-                                        "text-lg font-medium text-gray-600"
-                                    )
-                                    ui.label("Ask questions about your research findings").classes(
-                                        "text-sm text-gray-400 mb-4"
-                                    )
-                                    with ui.column().classes("gap-2"):
-                                        for suggestion in [
-                                            "What are the main findings?",
-                                            "How strong is the evidence?",
-                                            "What should I investigate next?",
-                                        ]:
-                                            with (
-                                                ui.button(
-                                                    suggestion,
-                                                    on_click=lambda s=suggestion: quick_send(s),
-                                                )
-                                                .props("flat dense")
-                                                .classes("text-indigo-600 normal-case")
-                                            ):
-                                                pass
+                                    if can_edit:
+                                        ui.label("Start a conversation").classes(
+                                            "text-lg font-medium text-gray-600"
+                                        )
+                                        ui.label(
+                                            "Ask questions about your research findings"
+                                        ).classes("text-sm text-gray-400 mb-4")
+                                        with ui.column().classes("gap-2"):
+                                            for suggestion in [
+                                                "What are the main findings?",
+                                                "How strong is the evidence?",
+                                                "What should I investigate next?",
+                                            ]:
+                                                with (
+                                                    ui.button(
+                                                        suggestion,
+                                                        on_click=lambda s=suggestion: quick_send(s),
+                                                    )
+                                                    .props("flat dense")
+                                                    .classes("text-indigo-600 normal-case")
+                                                ):
+                                                    pass
+                                    else:
+                                        ui.label("No messages yet").classes(
+                                            "text-lg font-medium text-gray-600"
+                                        )
+                                        ui.label("You have view-only access to this job.").classes(
+                                            "text-sm text-gray-400"
+                                        )
                             else:
                                 # Render message history
                                 for msg in messages:
@@ -1244,97 +1267,105 @@ def job_detail_page(job_id: str):
                             with ui.element("div").classes("chat-bubble-assistant"):
                                 ui.markdown(content).classes("text-sm")
 
-                @guard_client
-                async def quick_send(message: str):
-                    """Send a quick suggestion message."""
-                    chat_input.value = message
-                    await send_message()
-
                 # Load messages on page load
                 _active_timers.append(ui.timer(0.1, render_messages, once=True))
 
-                # Input area
-                with ui.row().classes("w-full max-w-3xl mx-auto gap-3 mt-4 chat-input-row"):
-                    with ui.element("div").classes(
-                        "flex-grow chat-input-container flex items-center px-4"
-                    ):
-                        chat_input = (
-                            ui.textarea(placeholder="Ask about your research...")
-                            .classes("flex-grow")
-                            .props("borderless dense rows=1 autogrow input-class='text-sm py-3'")
+                if can_edit:
+
+                    @guard_client
+                    async def quick_send(message: str):
+                        """Send a quick suggestion message."""
+                        chat_input.value = message
+                        await send_message()
+
+                    # Input area
+                    with ui.row().classes("w-full max-w-3xl mx-auto gap-3 mt-4 chat-input-row"):
+                        with ui.element("div").classes(
+                            "flex-grow chat-input-container flex items-center px-4"
+                        ):
+                            chat_input = (
+                                ui.textarea(placeholder="Ask about your research...")
+                                .classes("flex-grow")
+                                .props(
+                                    "borderless dense rows=1 autogrow input-class='text-sm py-3'"
+                                )
+                            )
+
+                        send_btn = (
+                            ui.button(icon="send")
+                            .props("round color=indigo size=md")
+                            .classes("shadow-lg chat-send-btn")
                         )
 
-                    send_btn = (
-                        ui.button(icon="send")
-                        .props("round color=indigo size=md")
-                        .classes("shadow-lg chat-send-btn")
-                    )
+                    async def send_message():
+                        """Send chat message to LLM."""
+                        nonlocal status_container
 
-                async def send_message():
-                    """Send chat message to LLM."""
-                    nonlocal status_container
-
-                    guard = ClientGuard()
-                    if not guard.is_connected:
-                        return
-
-                    message = chat_input.value
-                    if not message or not message.strip():
-                        return
-
-                    # Play send sound
-                    play_sound("sound-send")
-
-                    # Clear input and disable - use JavaScript to ensure DOM is updated
-                    chat_input.value = ""
-                    guard.run_javascript(
-                        "document.querySelector('textarea[placeholder=\"Ask about your research...\"]').value = ''"
-                    )
-                    send_btn.disable()
-
-                    # Show user message immediately
-                    with chat_scroll:
-                        render_message_bubble("user", message.strip())
-
-                    # Show typing indicator
-                    status_container.classes(remove="hidden")
-
-                    # Scroll to bottom after DOM has rendered
-                    scroll_chat_to_bottom()
-
-                    try:
-                        async with get_session_ctx() as session:
-                            await set_current_user(session, UUID(user_id))
-                            await send_chat_message(session, job_uuid, message.strip(), job_dir)
-
-                        # Re-check after await - client may have disconnected
+                        guard = ClientGuard()
                         if not guard.is_connected:
                             return
 
-                        # Hide typing indicator
-                        status_container.classes(add="hidden")
+                        message = chat_input.value
+                        if not message or not message.strip():
+                            return
 
-                        # Play receive sound
-                        play_sound("sound-receive")
+                        # Play send sound
+                        play_sound("sound-send")
 
-                        # Reload all messages to show response
-                        await render_messages()
+                        # Clear input and disable - use JavaScript to ensure DOM is updated
+                        chat_input.value = ""
+                        guard.run_javascript(
+                            "document.querySelector('textarea[placeholder=\"Ask about your research...\"]').value = ''"
+                        )
+                        send_btn.disable()
 
-                    except Exception as e:
-                        logger.error("Chat error: %s", e, exc_info=True)
-                        if guard.is_connected:
+                        # Show user message immediately
+                        with chat_scroll:
+                            render_message_bubble("user", message.strip())
+
+                        # Show typing indicator
+                        status_container.classes(remove="hidden")
+
+                        # Scroll to bottom after DOM has rendered
+                        scroll_chat_to_bottom()
+
+                        try:
+                            async with get_session_ctx() as session:
+                                await set_current_user(session, UUID(user_id))
+                                await send_chat_message(session, job_uuid, message.strip(), job_dir)
+
+                            # Re-check after await - client may have disconnected
+                            if not guard.is_connected:
+                                return
+
+                            # Hide typing indicator
                             status_container.classes(add="hidden")
-                            play_sound("sound-error")
-                            ui.notify("An error occurred. Please try again.", type="negative")
-                    finally:
-                        if guard.is_connected:
-                            send_btn.enable()
-                            chat_input.run_method("focus")
 
-                send_btn.on_click(send_message)
+                            # Play receive sound
+                            play_sound("sound-receive")
 
-                # Enter to send (Shift+Enter for newline)
-                chat_input.on(
-                    "keydown.enter",
-                    lambda e: send_message() if not e.args.get("shiftKey") else None,
-                )
+                            # Reload all messages to show response
+                            await render_messages()
+
+                        except Exception as e:
+                            logger.error("Chat error: %s", e, exc_info=True)
+                            if guard.is_connected:
+                                status_container.classes(add="hidden")
+                                play_sound("sound-error")
+                                ui.notify("An error occurred. Please try again.", type="negative")
+                        finally:
+                            if guard.is_connected:
+                                send_btn.enable()
+                                chat_input.run_method("focus")
+
+                    send_btn.on_click(send_message)
+
+                    # Enter to send (Shift+Enter for newline)
+                    chat_input.on(
+                        "keydown.enter",
+                        lambda e: send_message() if not e.args.get("shiftKey") else None,
+                    )
+                else:
+                    ui.label("You have view-only access to this job.").classes(
+                        "text-sm text-gray-500 italic mt-4 text-center"
+                    )

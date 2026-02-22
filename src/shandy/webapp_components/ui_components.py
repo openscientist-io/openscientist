@@ -18,7 +18,7 @@ from nicegui import app, ui
 from sqlalchemy import or_, select, update
 
 from shandy.auth import get_current_user_id
-from shandy.database.models import JobShare, User
+from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_admin_session, get_session_ctx
 from shandy.job_manager import JobInfo, JobStatus
@@ -1490,7 +1490,14 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         async def revoke_share(share_id: str):
             """Revoke a job share via direct DB delete."""
             try:
+                current_user_id = get_current_user_id()
                 async with get_admin_session() as session:
+                    # Verify caller is the job owner
+                    job_obj = await session.get(Job, UUID(job_id))
+                    if not job_obj or str(job_obj.owner_id) != current_user_id:
+                        ui.notify("Only the job owner can revoke shares", type="negative")
+                        return
+
                     stmt = select(JobShare).where(JobShare.id == UUID(share_id))
                     result = await session.execute(stmt)
                     share = result.scalar_one_or_none()
@@ -1649,6 +1656,12 @@ def render_share_dialog(job_id: str) -> ui.dialog:
             try:
                 current_user_id = get_current_user_id()
                 async with get_admin_session() as session:
+                    # Verify caller is the job owner
+                    job_obj = await session.get(Job, UUID(job_id))
+                    if not job_obj or str(job_obj.owner_id) != current_user_id:
+                        ui.notify("Only the job owner can share this job", type="negative")
+                        return
+
                     # Find target user
                     target = await session.execute(select(User).where(User.email == email))
                     target_user = target.scalar_one_or_none()
@@ -1948,6 +1961,14 @@ def render_delete_dialog(
         async def on_confirm():
             dialog.close()
             try:
+                # Verify caller is the job owner
+                current_user_id = get_current_user_id()
+                async with get_admin_session() as session:
+                    job_obj = await session.get(Job, UUID(job_id))
+                if not job_obj or str(job_obj.owner_id) != current_user_id:
+                    ui.notify("Only the job owner can delete this job", type="negative")
+                    return
+
                 # Check if job needs to be cancelled first
                 job_info = job_manager.get_job(job_id)
                 if job_info and job_info.status in [

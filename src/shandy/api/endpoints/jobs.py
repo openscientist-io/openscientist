@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
-from shandy.database.models import Job, User
+from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
 from shandy.job_manager import JobManager
@@ -387,6 +387,13 @@ async def cancel_job(
             detail="Job not found or access denied",
         )
 
+    # Cancel is owner-only
+    if job.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the job owner can cancel a job",
+        )
+
     if job.status not in ["pending", "running", "queued"]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -431,6 +438,20 @@ async def regenerate_report(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Job not found or access denied",
         )
+
+    # Regenerate requires owner or edit-level share
+    if job.owner_id != user.id:
+        share_stmt = select(JobShare.permission_level).where(
+            JobShare.job_id == job.id,
+            JobShare.shared_with_user_id == user.id,
+        )
+        share_result = await session.execute(share_stmt)
+        permission = share_result.scalar_one_or_none()
+        if permission != "edit":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You need edit permission to regenerate the report",
+            )
 
     if job.status not in ["completed", "failed"]:
         raise HTTPException(
