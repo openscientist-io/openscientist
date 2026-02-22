@@ -203,23 +203,40 @@ class SDKAgentExecutor:
                         final_output = message.result
                     continue
 
-                # Extract text content
+                # Extract text content and build transcript in the format
+                # expected by parse_transcript_actions():
+                #   {"type": "assistant", "message": {"content": [...]}}
                 raw_content = getattr(message, "content", None)
                 if isinstance(raw_content, list):
+                    content_items: list[dict[str, object]] = []
                     for block in raw_content:
                         if isinstance(block, TextBlock):
                             final_output = block.text
-                            transcript.append({"role": "assistant", "content": final_output})
+                            content_items.append({"type": "text", "text": block.text})
                         elif isinstance(block, ToolUseBlock):
                             tool_call_count += 1
                             logger.debug("Tool call: %s", block.name)
-                            transcript.append(
-                                {"role": "tool", "name": block.name, "content": "..."}
+                            content_items.append(
+                                {
+                                    "type": "tool_use",
+                                    "id": getattr(block, "id", f"tool_{tool_call_count}"),
+                                    "name": block.name,
+                                    "input": getattr(block, "input", {}),
+                                }
                             )
                         # ThinkingBlock and others are silently skipped
+                    if content_items:
+                        transcript.append(
+                            {"type": "assistant", "message": {"content": content_items}}
+                        )
                 elif isinstance(raw_content, str):
                     final_output = raw_content
-                    transcript.append({"role": "assistant", "content": raw_content})
+                    transcript.append(
+                        {
+                            "type": "assistant",
+                            "message": {"content": [{"type": "text", "text": raw_content}]},
+                        }
+                    )
 
         except Exception as e:  # noqa: BLE001
             # Include captured stderr in error for diagnostics

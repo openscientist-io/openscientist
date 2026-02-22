@@ -409,3 +409,80 @@ class TestParseTranscriptActions:
         # When there's no result, it defaults to empty dict stringified
         assert actions[0]["result"] in ("", "{}")
         assert actions[0]["success"] is True
+
+    def test_sdk_transcript_format_bare_tool_names(self):
+        """Test parsing SDK transcript format with bare tool names (no shandy prefix)."""
+        transcript = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Let me analyze the data."},
+                        {
+                            "type": "tool_use",
+                            "id": "tool_1",
+                            "name": "execute_code",
+                            "input": {"code": "print('hello')", "description": "Test run"},
+                        },
+                    ]
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool_2",
+                            "name": "search_pubmed",
+                            "input": {"query": "cancer therapy"},
+                        },
+                    ]
+                },
+            },
+        ]
+
+        actions = parse_transcript_actions(transcript)
+
+        assert len(actions) == 2
+        assert actions[0]["tool_name"] == "execute_code"
+        assert actions[0]["short_name"] == "execute_code"
+        assert actions[0]["description"] == "Test run"
+        assert actions[1]["tool_name"] == "search_pubmed"
+        assert actions[1]["description"] == "Search: cancer therapy"
+
+    def test_sdk_transcript_non_shandy_tools_still_filtered(self):
+        """Test that non-shandy tools are filtered even with bare names."""
+        transcript = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool_read",
+                            "name": "Read",
+                            "input": {"file": "test.txt"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "tool_bash",
+                            "name": "Bash",
+                            "input": {"command": "ls"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "tool_exec",
+                            "name": "execute_code",
+                            "input": {"code": "print(1)"},
+                        },
+                    ]
+                },
+            },
+        ]
+
+        actions = parse_transcript_actions(transcript)
+
+        # Only execute_code should be included (known SHANDY tool)
+        assert len(actions) == 1
+        assert actions[0]["tool_name"] == "execute_code"

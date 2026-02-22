@@ -4,6 +4,27 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+# Known SHANDY tool names (bare names, without MCP server prefix).
+# Used to identify shandy tools in SDK transcripts where names are not
+# prefixed with "shandy-tools__".
+_SHANDY_TOOL_NAMES = frozenset(
+    {
+        "execute_code",
+        "search_pubmed",
+        "update_knowledge_state",
+        "add_hypothesis",
+        "update_hypothesis",
+        "save_iteration_summary",
+        "read_document",
+        "set_status",
+        "set_job_title",
+        "set_consensus_answer",
+        "run_phenix_tool",
+        "compare_structures",
+        "parse_alphafold_confidence",
+    }
+)
+
 
 @dataclass
 class UsageSummary:
@@ -96,7 +117,10 @@ def parse_transcript_actions(transcript: list[dict[str, Any]]) -> list[dict[str,
                     inp = item.get("input", {})
 
                     # Skip non-shandy tools (like Read, Bash, etc.)
-                    if "shandy" not in tool_name.lower():
+                    # Check both MCP-prefixed names ("shandy-tools__execute_code")
+                    # and bare SDK tool names ("execute_code")
+                    short_name = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+                    if "shandy" not in tool_name.lower() and short_name not in _SHANDY_TOOL_NAMES:
                         continue
 
                     # Get the result
@@ -119,9 +143,7 @@ def parse_transcript_actions(transcript: list[dict[str, Any]]) -> list[dict[str,
                     actions.append(
                         {
                             "tool_name": tool_name,
-                            "short_name": (
-                                tool_name.split("__")[-1] if "__" in tool_name else tool_name
-                            ),
+                            "short_name": short_name,
                             "description": get_action_description(item),
                             "input": inp,
                             "result": result_text,
@@ -166,7 +188,7 @@ def extract_usage_summary(transcript: list[dict[str, Any]]) -> UsageSummary:
                     elif "update_knowledge_state" in tool_name:
                         summary.findings_recorded += 1
                         summary.mcp_tool_calls += 1
-                    elif "shandy" in tool_name.lower():
+                    elif "shandy" in tool_name.lower() or short_name in _SHANDY_TOOL_NAMES:
                         summary.mcp_tool_calls += 1
 
                     # Track Skill invocations
