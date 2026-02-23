@@ -33,6 +33,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bool, str]:
+    """
+    Update a user's approval flag.
+
+    Args:
+        user_id: User to update
+        is_approved: Desired approval state
+
+    Returns:
+        Tuple of (success, message)
+    """
+    async with get_admin_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            return False, "User not found"
+
+        if bool(user.is_approved) == is_approved:
+            state = "approved" if is_approved else "pending"
+            return False, f"User is already {state}"
+
+        user.is_approved = is_approved
+        await session.commit()
+
+    if is_approved:
+        return True, "User approved successfully"
+    return True, "User approval removed successfully"
+
+
 @ui.page("/admin")
 @require_auth
 @require_admin
@@ -366,48 +397,64 @@ async def render_users_panel():
                                     label="Approve"
                                     @click="$parent.$emit('approve-user', props.row)"
                                 />
-                                <span v-else class="text-grey-6">-</span>
+                                <q-btn
+                                    v-else
+                                    size="sm"
+                                    color="warning"
+                                    icon="remove_circle"
+                                    label="Unapprove"
+                                    @click="$parent.$emit('unapprove-user', props.row)"
+                                />
                             </q-td>
                             """,
                         )
 
-                        async def approve_user(e):
-                            """Approve a pending user account."""
+                        async def handle_approval_update(e, is_approved: bool):
+                            """Handle approval state updates for user accounts."""
                             user_id = e.args.get("id")
                             if not user_id:
                                 ui.notify("Invalid user selection", color="negative")
                                 return
 
                             try:
-                                async with get_admin_session() as session:
-                                    stmt = select(User).where(User.id == UUID(user_id))
-                                    result = await session.execute(stmt)
-                                    user = result.scalar_one_or_none()
-                                    if not user:
-                                        ui.notify("User not found", color="negative")
-                                        return
-
-                                    if user.is_approved:
-                                        ui.notify("User is already approved", color="info")
-                                        return
-
-                                    user.is_approved = True
-                                    await session.commit()
-
-                                ui.notify("User approved successfully", color="positive")
-                                await load_users()
+                                success, message = await set_user_approval_status(
+                                    UUID(user_id),
+                                    is_approved=is_approved,
+                                )
+                                ui.notify(message, color="positive" if success else "info")
+                                if success:
+                                    await load_users()
+                            except ValueError:
+                                ui.notify("Invalid user selection", color="negative")
                             except Exception as ex:
+                                action = "approve" if is_approved else "unapprove"
                                 logger.error(
-                                    "Error approving user %s: %s",
+                                    "Error trying to %s user %s: %s",
+                                    action,
                                     user_id,
                                     ex,
                                     exc_info=True,
                                 )
+                                error_message = (
+                                    "Failed to approve user. Check server logs."
+                                    if is_approved
+                                    else "Failed to remove user approval. Check server logs."
+                                )
                                 ui.notify(
-                                    "Failed to approve user. Check server logs.", color="negative"
+                                    error_message,
+                                    color="negative",
                                 )
 
+                        async def approve_user(e):
+                            """Approve a pending user account."""
+                            await handle_approval_update(e, is_approved=True)
+
+                        async def unapprove_user(e):
+                            """Remove approval from an approved user account."""
+                            await handle_approval_update(e, is_approved=False)
+
                         users_table.on("approve-user", approve_user)
+                        users_table.on("unapprove-user", unapprove_user)
 
             except Exception as e:
                 logger.error("Error loading users: %s", e, exc_info=True)
