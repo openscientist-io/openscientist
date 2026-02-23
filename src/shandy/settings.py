@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 from functools import lru_cache
 from typing import Optional
 
@@ -16,6 +17,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+_SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 
 
 class DevSettings(BaseSettings):
@@ -299,6 +301,33 @@ class AuthSettings(BaseSettings):
     # GitHub OAuth
     github_client_id: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_ID")
     github_client_secret: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_SECRET")
+    bootstrap_admin_emails: Optional[str] = Field(default=None, alias="BOOTSTRAP_ADMIN_EMAILS")
+
+    @staticmethod
+    def _parse_bootstrap_admin_emails(raw_value: Optional[str]) -> set[str]:
+        """Parse and validate BOOTSTRAP_ADMIN_EMAILS as normalized email set."""
+        if not raw_value:
+            return set()
+
+        emails: set[str] = set()
+        for token in raw_value.split(","):
+            normalized = token.strip().lower()
+            if not normalized:
+                continue
+            if not _SIMPLE_EMAIL_RE.fullmatch(normalized):
+                raise ValueError(
+                    "BOOTSTRAP_ADMIN_EMAILS must be a comma-separated list of email addresses; "
+                    f"invalid value: '{token.strip()}'"
+                )
+            emails.add(normalized)
+        return emails
+
+    @field_validator("bootstrap_admin_emails")
+    @classmethod
+    def validate_bootstrap_admin_emails(cls, value: Optional[str]) -> Optional[str]:
+        """Validate BOOTSTRAP_ADMIN_EMAILS format if set."""
+        cls._parse_bootstrap_admin_emails(value)
+        return value
 
     @model_validator(mode="after")
     def validate_oauth_pairs(self) -> "AuthSettings":
@@ -326,6 +355,11 @@ class AuthSettings(BaseSettings):
     def is_oauth_configured(self) -> bool:
         """Check if at least one OAuth provider is configured."""
         return bool(self.google_client_id or self.github_client_id)
+
+    @property
+    def bootstrap_admin_emails_set(self) -> set[str]:
+        """Get BOOTSTRAP_ADMIN_EMAILS as normalized email set."""
+        return self._parse_bootstrap_admin_emails(self.bootstrap_admin_emails)
 
 
 class BudgetSettings(BaseSettings):

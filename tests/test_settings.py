@@ -250,6 +250,27 @@ class TestAuthSettings:
             )
         assert "GOOGLE_CLIENT_SECRET" in str(exc_info.value)
 
+    def test_bootstrap_admin_emails_parses_and_normalizes(self):
+        """BOOTSTRAP_ADMIN_EMAILS parses comma-separated emails into normalized set."""
+        settings = AuthSettings(
+            BOOTSTRAP_ADMIN_EMAILS=" Admin@Example.com,other@example.com,admin@example.com ",
+        )
+        assert settings.bootstrap_admin_emails_set == {
+            "admin@example.com",
+            "other@example.com",
+        }
+
+    def test_bootstrap_admin_emails_rejects_invalid_entry(self):
+        """Invalid email entries in BOOTSTRAP_ADMIN_EMAILS should raise validation errors."""
+        with pytest.raises(ValidationError) as exc_info:
+            AuthSettings(BOOTSTRAP_ADMIN_EMAILS="valid@example.com,not-an-email")
+        assert "BOOTSTRAP_ADMIN_EMAILS" in str(exc_info.value)
+
+    def test_bootstrap_admin_emails_defaults_to_empty_set(self):
+        """BOOTSTRAP_ADMIN_EMAILS is empty when unset."""
+        settings = AuthSettings()
+        assert settings.bootstrap_admin_emails_set == set()
+
     def test_valid_github_oauth(self):
         """Valid GitHub OAuth configuration passes."""
         settings = AuthSettings(
