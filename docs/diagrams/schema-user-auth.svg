@@ -136,7 +136,7 @@
 <text x="60" y="948" font-size="9" fill="#616161" text-anchor="start">Central identity record. Stores display name, email and active status. Every authorisation decision in the system ultimately traces back to a row in this table.</text>
 <use href="#icon-shield" x="40" y="959" width="12" height="12" fill="#616161"/>
 <text x="60" y="968" font-size="9" fill="#212121" text-anchor="start" font-weight="600">OAUTH_ACCOUNTS</text>
-<text x="60" y="982" font-size="9" fill="#616161" text-anchor="start">Links a user to an external identity provider (GitHub, ORCID). A single user may connect several providers. Access and refresh tokens are stored here and rotated transparently on each login.</text>
+<text x="60" y="982" font-size="9" fill="#616161" text-anchor="start">Links a user to an external identity provider (GitHub, Google). A single user may connect several providers. Access and refresh tokens are stored here and rotated transparently on each login.</text>
 <use href="#icon-clock" x="40" y="993" width="12" height="12" fill="#616161"/>
 <text x="60" y="1002" font-size="9" fill="#212121" text-anchor="start" font-weight="600">SESSIONS</text>
 <text x="60" y="1016" font-size="9" fill="#616161" text-anchor="start">Represents an active browser session created after a successful OAuth handshake. Sessions carry a TTL, the originating IP address and user-agent string for audit purposes.</text>

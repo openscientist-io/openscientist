@@ -36,7 +36,7 @@ async def create_or_update_user(
 
     Args:
         db: Database session
-        provider: OAuth provider name (github, orcid)
+        provider: OAuth provider name (github, google)
         provider_user_id: User's ID on the provider
         email: User's email
         name: User's display name

@@ -2,7 +2,7 @@
 User model for authentication and authorization.
 
 The User model represents authenticated users in the system.
-Users can log in via OAuth providers (GitHub, ORCID) and own jobs.
+Users can log in via OAuth providers (GitHub, Google) and own jobs.
 """
 
 from typing import TYPE_CHECKING, Optional
@@ -25,7 +25,7 @@ class User(UUIDv7Mixin, Base):
     User account.
 
     Users authenticate via OAuth providers and own jobs. Multiple OAuth
-    accounts can be linked to a single user (e.g., both GitHub and ORCID).
+    accounts can be linked to a single user (e.g., both GitHub and Google).
 
     Attributes:
         email: User's primary email address (unique, indexed)

@@ -1,7 +1,7 @@
 """
 Authentication and authorization for SHANDY.
 
-Provides OAuth-based authentication with GitHub and ORCID providers,
+Provides OAuth-based authentication with GitHub and Google providers,
 session management, and user context for RLS.
 """
 
