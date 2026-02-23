@@ -97,13 +97,19 @@ class GitHubProvider:
 
             # Final fallback: first available email record from /user/emails.
             if not email and emails:
-                record = next(
-                    (item for item in emails if item.get("primary") and item.get("email")),
-                    None,
-                ) or next((item for item in emails if item.get("email")), None)
-                if record:
-                    email = str(record["email"])
-                    email_verified = bool(record.get("verified"))
+                fallback_record: dict[str, Any] | None = None
+                for item in emails:
+                    if item.get("primary") and item.get("email"):
+                        fallback_record = item
+                        break
+                if fallback_record is None:
+                    for item in emails:
+                        if item.get("email"):
+                            fallback_record = item
+                            break
+                if fallback_record:
+                    email = str(fallback_record["email"])
+                    email_verified = bool(fallback_record.get("verified"))
 
             if not email:
                 logger.warning("No email found for GitHub user %s", user_data.get("login"))
