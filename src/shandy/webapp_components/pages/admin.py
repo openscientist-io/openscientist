@@ -9,7 +9,7 @@ from uuid import UUID
 from nicegui import app, ui
 from sqlalchemy import String, select
 
-from shandy.auth.middleware import require_admin, require_auth
+from shandy.auth.middleware import get_current_user_id, require_admin, require_auth
 from shandy.database.models import Job, User
 from shandy.database.session import get_admin_session
 from shandy.webapp_components.ui_components import (
@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _filter_users_for_admin_table(users: list[User], current_user_id: str | None) -> list[User]:
+    """Exclude the current user from the admin users table."""
+    if not current_user_id:
+        return users
+    return [user for user in users if str(user.id) != current_user_id]
+
+
 async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bool, str]:
     """
     Update a user's approval flag.
@@ -51,6 +58,18 @@ async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bo
 
         if not user:
             return False, "User not found"
+
+        # Prevent admins from removing their own approval status.
+        current_user_id: str | None = None
+        if not is_approved:
+            try:
+                current_user_id = get_current_user_id()
+            except (RuntimeError, AssertionError, AttributeError):
+                # Not all call paths/tests have a request-scoped NiceGUI storage context.
+                logger.debug("Current user ID unavailable during approval update", exc_info=True)
+
+        if not is_approved and current_user_id == str(user.id):
+            return False, "You cannot remove your own approval"
 
         if bool(user.is_approved) == is_approved:
             state = "approved" if is_approved else "pending"
@@ -297,14 +316,27 @@ async def render_users_panel():
             users_container.clear()
 
             try:
+                current_user_id: str | None = None
+                try:
+                    current_user_id = get_current_user_id()
+                except (RuntimeError, AssertionError, AttributeError):
+                    logger.debug(
+                        "Current user ID unavailable while loading users table",
+                        exc_info=True,
+                    )
+
                 async with get_admin_session() as session:
                     stmt = select(User).order_by(User.created_at.desc())
                     result = await session.execute(stmt)
                     users = result.scalars().all()
+                    users = _filter_users_for_admin_table(users, current_user_id)
 
                     if not users:
+                        empty_message = (
+                            "No other users found." if current_user_id else "No users found."
+                        )
                         with users_container:
-                            render_empty_state("No users found.")
+                            render_empty_state(empty_message)
                         return
 
                     # Create table

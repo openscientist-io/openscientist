@@ -13,7 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Job, User
 from shandy.database.rls import set_current_user
-from shandy.webapp_components.pages.admin import set_user_approval_status
+from shandy.webapp_components.pages.admin import (
+    _filter_users_for_admin_table,
+    set_user_approval_status,
+)
 
 
 def _fake_admin_session(session_obj):
@@ -429,6 +432,39 @@ async def test_set_user_approval_status_can_remove_approval(
 
 
 @pytest.mark.asyncio
+async def test_set_user_approval_status_rejects_self_unapprove(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Admin helper should reject removing approval from the current user."""
+    monkeypatch.setattr(
+        "shandy.webapp_components.pages.admin.get_admin_session",
+        _fake_admin_session(db_session),
+    )
+
+    user = User(
+        email="self@example.com",
+        name="Self User",
+        is_approved=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    monkeypatch.setattr(
+        "shandy.webapp_components.pages.admin.get_current_user_id",
+        lambda: str(user.id),
+    )
+
+    success, message = await set_user_approval_status(user.id, is_approved=False)
+
+    assert success is False
+    assert message == "You cannot remove your own approval"
+
+    await db_session.refresh(user)
+    assert user.is_approved is True
+
+
+@pytest.mark.asyncio
 async def test_set_user_approval_status_noop_when_already_pending(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ):
@@ -467,3 +503,24 @@ async def test_set_user_approval_status_handles_missing_user(
 
     assert success is False
     assert message == "User not found"
+
+
+def test_filter_users_for_admin_table_hides_current_user():
+    """Users table data should not include the currently logged-in admin."""
+    current_user = User(
+        id=uuid4(),
+        email="current@example.com",
+        name="Current Admin",
+    )
+    other_user = User(
+        id=uuid4(),
+        email="other@example.com",
+        name="Other User",
+    )
+
+    filtered = _filter_users_for_admin_table(
+        [current_user, other_user],
+        current_user_id=str(current_user.id),
+    )
+
+    assert [user.id for user in filtered] == [other_user.id]
