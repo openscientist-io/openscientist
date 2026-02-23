@@ -241,14 +241,14 @@ class TestAuthSettings:
             )
         assert "GITHUB_CLIENT_ID" in str(exc_info.value)
 
-    def test_orcid_oauth_requires_both_id_and_secret(self):
-        """ORCID OAuth requires both client ID and secret."""
+    def test_google_oauth_requires_both_id_and_secret(self):
+        """Google OAuth requires both client ID and secret."""
         with pytest.raises(ValidationError) as exc_info:
             AuthSettings(
-                ORCID_CLIENT_ID="test-id",
-                ORCID_CLIENT_SECRET=None,
+                GOOGLE_CLIENT_ID="test-id",
+                GOOGLE_CLIENT_SECRET=None,
             )
-        assert "ORCID_CLIENT_SECRET" in str(exc_info.value)
+        assert "GOOGLE_CLIENT_SECRET" in str(exc_info.value)
 
     def test_valid_github_oauth(self):
         """Valid GitHub OAuth configuration passes."""

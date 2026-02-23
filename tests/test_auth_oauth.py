@@ -106,14 +106,14 @@ async def test_link_multiple_oauth_providers(db_session: AsyncSession):
         access_token="github_token",
     )
 
-    # Link ORCID to the same user (same email)
+    # Link Google to the same user (same email)
     await create_or_update_user(
         db_session,
-        provider="orcid",
-        provider_user_id="0000-0001-2345-6789",
+        provider="google",
+        provider_user_id="google_0001",
         email="multi@example.com",
         name="Multi Provider User",
-        access_token="orcid_token",
+        access_token="google_token",
     )
 
     # Verify only one user exists
@@ -129,7 +129,7 @@ async def test_link_multiple_oauth_providers(db_session: AsyncSession):
     assert len(oauth_accounts) == 2
 
     providers = {acc.provider for acc in oauth_accounts}
-    assert providers == {"github", "orcid"}
+    assert providers == {"github", "google"}
 
 
 @pytest.mark.asyncio
