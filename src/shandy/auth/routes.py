@@ -13,10 +13,69 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from shandy.database.models import OAuthAccount, Session, User
+from shandy.database.models import Administrator, OAuthAccount, Session, User
 from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_email(email: str) -> str:
+    """Normalize email for exact matching."""
+    return email.strip().lower()
+
+
+async def _maybe_bootstrap_admin(
+    db: AsyncSession,
+    user: User,
+    email: str,
+    email_verified: bool | None,
+    auth_provider: str | None,
+) -> bool:
+    """
+    Grant bootstrap admin privileges based on BOOTSTRAP_ADMIN_EMAILS.
+
+    Returns:
+        True if user is in the bootstrap allowlist (whether newly granted or already admin),
+        False otherwise.
+    """
+    allowlist = get_settings().auth.bootstrap_admin_emails_set
+    if not allowlist:
+        return False
+
+    normalized_email = _normalize_email(email)
+    if normalized_email not in allowlist:
+        return False
+
+    if email_verified is not True:
+        logger.warning(
+            "Bootstrap admin match denied for %s (provider=%s): email not verified",
+            normalized_email,
+            auth_provider or "unknown",
+        )
+        return False
+
+    stmt = select(Administrator).where(Administrator.user_id == user.id)
+    result = await db.execute(stmt)
+    existing_admin = result.scalar_one_or_none()
+
+    # Bootstrap admins are always approved to start jobs.
+    user.is_approved = True
+
+    if existing_admin:
+        logger.info(
+            "Bootstrap admin matched existing admin user %s (%s)",
+            user.id,
+            normalized_email,
+        )
+        return True
+
+    notes = (
+        "Auto-granted via BOOTSTRAP_ADMIN_EMAILS during OAuth login "
+        f"(provider={auth_provider or 'unknown'})"
+    )
+    db.add(Administrator(user_id=user.id, notes=notes))
+    logger.info("Bootstrap admin granted to user %s (%s)", user.id, normalized_email)
+    return True
 
 
 async def create_or_update_user(
@@ -27,6 +86,8 @@ async def create_or_update_user(
     name: str,
     access_token: str,
     refresh_token: Optional[str] = None,
+    email_verified: bool | None = None,
+    auth_provider: str | None = None,
 ) -> User:
     """
     Create or update user from OAuth data.
@@ -42,6 +103,8 @@ async def create_or_update_user(
         name: User's display name
         access_token: OAuth access token
         refresh_token: OAuth refresh token (optional)
+        email_verified: Whether provider confirmed email verification
+        auth_provider: Provider name for logging bootstrap grants
 
     Returns:
         User object (created or existing)
@@ -97,6 +160,14 @@ async def create_or_update_user(
         )
         db.add(oauth_account)
         logger.info("Linked %s OAuth account to user %s", provider, user.id)
+
+    await _maybe_bootstrap_admin(
+        db,
+        user=user,
+        email=email,
+        email_verified=email_verified,
+        auth_provider=auth_provider or provider,
+    )
 
     await db.commit()
     await db.refresh(user)

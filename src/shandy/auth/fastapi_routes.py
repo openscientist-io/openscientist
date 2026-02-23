@@ -300,6 +300,8 @@ async def oauth_callback(provider: str, request: Request):
                 name=user_info["name"],
                 access_token=token["access_token"],
                 refresh_token=token.get("refresh_token"),
+                email_verified=user_info.get("email_verified"),
+                auth_provider=provider,
             )
             session = await create_session(db, str(user.id))
 

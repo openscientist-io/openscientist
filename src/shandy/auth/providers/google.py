@@ -28,6 +28,7 @@ class GoogleProvider:
             - provider_user_id: Google user ID (sub)
             - email: Email address
             - name: Display name
+            - email_verified: Whether provider verified the email
 
         Raises:
             httpx.HTTPError: If API request fails
@@ -47,12 +48,15 @@ class GoogleProvider:
             data = resp.json()
 
             email = data.get("email")
+            email_verified = bool(data.get("email_verified"))
             if not email:
                 logger.warning("No email found for Google user %s", data.get("sub"))
                 email = f"{data['sub']}@google.invalid"
+                email_verified = False
 
             return {
                 "provider_user_id": data["sub"],
                 "email": email,
                 "name": data.get("name") or email,
+                "email_verified": email_verified,
             }

@@ -12,8 +12,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.auth.routes import create_or_update_user, create_session
-from shandy.database.models import OAuthAccount, User
+from shandy.database.models import Administrator, OAuthAccount, User
 from shandy.database.models import Session as DBSession
+from shandy.settings import clear_settings_cache
+
+
+@pytest.fixture(autouse=True)
+def _clear_cached_settings_between_tests():
+    """Ensure BOOTSTRAP_ADMIN_EMAILS changes are applied per test."""
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
 
 
 @pytest.mark.asyncio
@@ -130,6 +139,131 @@ async def test_link_multiple_oauth_providers(db_session: AsyncSession):
 
     providers = {acc.provider for acc in oauth_accounts}
     assert providers == {"github", "google"}
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_admin_granted_for_verified_allowlisted_login(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Allowlisted + verified login should auto-create Administrator and set approval."""
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", " Admin@Example.com ")
+    clear_settings_cache()
+
+    user = await create_or_update_user(
+        db_session,
+        provider="github",
+        provider_user_id="bootstrap_1",
+        email="admin@example.com",
+        name="Bootstrap Admin",
+        access_token="token",
+        email_verified=True,
+        auth_provider="github",
+    )
+
+    stmt = select(Administrator).where(Administrator.user_id == user.id)
+    result = await db_session.execute(stmt)
+    admin_record = result.scalar_one_or_none()
+
+    assert admin_record is not None
+    assert "BOOTSTRAP_ADMIN_EMAILS" in (admin_record.notes or "")
+    assert user.is_approved is True
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_admin_denied_for_unverified_allowlisted_login(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Allowlisted login without verified email should not grant admin."""
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "pending@example.com")
+    clear_settings_cache()
+
+    user = await create_or_update_user(
+        db_session,
+        provider="github",
+        provider_user_id="bootstrap_2",
+        email="pending@example.com",
+        name="Pending User",
+        access_token="token",
+        email_verified=False,
+        auth_provider="github",
+    )
+
+    stmt = select(Administrator).where(Administrator.user_id == user.id)
+    result = await db_session.execute(stmt)
+    admin_record = result.scalar_one_or_none()
+
+    assert admin_record is None
+    assert user.is_approved is False
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_admin_not_granted_when_email_not_allowlisted(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Verified login not in BOOTSTRAP_ADMIN_EMAILS should not grant admin."""
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "someone@example.com")
+    clear_settings_cache()
+
+    user = await create_or_update_user(
+        db_session,
+        provider="google",
+        provider_user_id="bootstrap_3",
+        email="not-allowlisted@example.com",
+        name="Regular User",
+        access_token="token",
+        email_verified=True,
+        auth_provider="google",
+    )
+
+    stmt = select(Administrator).where(Administrator.user_id == user.id)
+    result = await db_session.execute(stmt)
+    admin_record = result.scalar_one_or_none()
+
+    assert admin_record is None
+    assert user.is_approved is False
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_admin_grant_is_non_revoking(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Removing an email from BOOTSTRAP_ADMIN_EMAILS should not auto-revoke admin."""
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "carry@example.com")
+    clear_settings_cache()
+
+    user = await create_or_update_user(
+        db_session,
+        provider="github",
+        provider_user_id="bootstrap_4",
+        email="carry@example.com",
+        name="Carry Admin",
+        access_token="token",
+        email_verified=True,
+        auth_provider="github",
+    )
+    assert user.is_approved is True
+
+    monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "different@example.com")
+    clear_settings_cache()
+
+    # Re-login should keep admin status (no auto-revoke)
+    relogin_user = await create_or_update_user(
+        db_session,
+        provider="github",
+        provider_user_id="bootstrap_4",
+        email="carry@example.com",
+        name="Carry Admin",
+        access_token="new-token",
+        email_verified=True,
+        auth_provider="github",
+    )
+
+    stmt = select(Administrator).where(Administrator.user_id == user.id)
+    result = await db_session.execute(stmt)
+    admin_rows = result.scalars().all()
+
+    assert len(admin_rows) == 1
+    assert relogin_user.is_approved is True
 
 
 @pytest.mark.asyncio

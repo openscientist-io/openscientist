@@ -29,6 +29,7 @@ class GitHubProvider:
             - email: Primary email address
             - name: Display name
             - username: GitHub username
+            - email_verified: Whether provider verified the selected email
 
         Raises:
             httpx.HTTPError: If API request fails
@@ -48,30 +49,71 @@ class GitHubProvider:
             user_resp.raise_for_status()
             user_data = user_resp.json()
 
-            # Get primary email if not public
-            email = user_data.get("email")
-            if not email:
+            emails: list[dict[str, Any]] = []
+            try:
                 emails_resp = await client.get(
                     "https://api.github.com/user/emails", headers=headers
                 )
                 emails_resp.raise_for_status()
                 emails = emails_resp.json()
-                # Find primary email
-                for e in emails:
-                    if e.get("primary") and e.get("verified"):
-                        email = e["email"]
+            except httpx.HTTPError:
+                logger.warning(
+                    "Could not fetch GitHub email metadata for user %s",
+                    user_data.get("login"),
+                    exc_info=True,
+                )
+
+            email: str | None = None
+            email_verified = False
+
+            # Prefer verified emails from the dedicated emails endpoint.
+            for record in emails:
+                if record.get("primary") and record.get("verified") and record.get("email"):
+                    email = str(record["email"])
+                    email_verified = True
+                    break
+
+            if not email:
+                for record in emails:
+                    if record.get("verified") and record.get("email"):
+                        email = str(record["email"])
+                        email_verified = True
                         break
-                if not email and emails:
-                    # Fall back to first verified email
-                    email = next((e["email"] for e in emails if e.get("verified")), None)
+
+            # Fall back to public profile email when needed.
+            if not email:
+                public_email = user_data.get("email")
+                if public_email:
+                    email = str(public_email)
+                    matched = next(
+                        (
+                            record
+                            for record in emails
+                            if str(record.get("email", "")).lower() == email.lower()
+                        ),
+                        None,
+                    )
+                    email_verified = bool(matched and matched.get("verified"))
+
+            # Final fallback: first available email record from /user/emails.
+            if not email and emails:
+                record = next(
+                    (item for item in emails if item.get("primary") and item.get("email")),
+                    None,
+                ) or next((item for item in emails if item.get("email")), None)
+                if record:
+                    email = str(record["email"])
+                    email_verified = bool(record.get("verified"))
 
             if not email:
                 logger.warning("No email found for GitHub user %s", user_data.get("login"))
                 email = f"{user_data['login']}@users.noreply.github.com"
+                email_verified = False
 
             return {
                 "provider_user_id": str(user_data["id"]),
                 "email": email,
                 "name": user_data.get("name") or user_data.get("login"),
                 "username": user_data.get("login"),
+                "email_verified": email_verified,
             }
