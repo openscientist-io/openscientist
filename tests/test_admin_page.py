@@ -4,7 +4,8 @@ Tests for admin page functionality.
 Tests orphaned job management, user assignment, and job claiming.
 """
 
-from uuid import UUID
+from contextlib import asynccontextmanager
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -12,6 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Job, User
 from shandy.database.rls import set_current_user
+from shandy.webapp_components.pages.admin import set_user_approval_status
+
+
+def _fake_admin_session(session_obj):
+    """Build an async context manager yielding the provided session."""
+
+    @asynccontextmanager
+    async def _ctx():
+        yield session_obj
+
+    return _ctx
 
 
 @pytest.mark.asyncio
@@ -386,3 +398,72 @@ async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
     # Newest should be first
     assert sorted_jobs[0].title == "Job 2"
     assert sorted_jobs[-1].title == "Job 0"
+
+
+@pytest.mark.asyncio
+async def test_set_user_approval_status_can_remove_approval(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Admin helper can remove approval from an approved user."""
+    monkeypatch.setattr(
+        "shandy.webapp_components.pages.admin.get_admin_session",
+        _fake_admin_session(db_session),
+    )
+
+    user = User(
+        email="approved@example.com",
+        name="Approved User",
+        is_approved=True,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    success, message = await set_user_approval_status(user.id, is_approved=False)
+
+    assert success is True
+    assert message == "User approval removed successfully"
+
+    await db_session.refresh(user)
+    assert user.is_approved is False
+
+
+@pytest.mark.asyncio
+async def test_set_user_approval_status_noop_when_already_pending(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Admin helper should report noop when user is already pending."""
+    monkeypatch.setattr(
+        "shandy.webapp_components.pages.admin.get_admin_session",
+        _fake_admin_session(db_session),
+    )
+
+    user = User(
+        email="pending@example.com",
+        name="Pending User",
+        is_approved=False,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    success, message = await set_user_approval_status(user.id, is_approved=False)
+
+    assert success is False
+    assert message == "User is already pending"
+
+
+@pytest.mark.asyncio
+async def test_set_user_approval_status_handles_missing_user(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Admin helper should return not found for unknown user IDs."""
+    monkeypatch.setattr(
+        "shandy.webapp_components.pages.admin.get_admin_session",
+        _fake_admin_session(db_session),
+    )
+
+    success, message = await set_user_approval_status(uuid4(), is_approved=False)
+
+    assert success is False
+    assert message == "User not found"
