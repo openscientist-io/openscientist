@@ -974,8 +974,9 @@ def render_navigator(
     ui.add_head_html('<link rel="manifest" href="/assets/manifest.json">')
     ui.add_head_html('<meta name="theme-color" content="#0891b2">')
 
-    # Check admin status from session storage (set by require_auth decorator)
+    # Check role/approval status from session storage (set by require_auth decorator)
     show_admin = app.storage.user.get("is_admin", False)
+    can_start_jobs = app.storage.user.get("can_start_jobs", False)
     # Add responsive CSS for mobile/desktop navigation toggle
     ui.add_css(
         """
@@ -996,7 +997,7 @@ def render_navigator(
 
     # Define navigation items for reuse in both desktop and mobile views
     nav_items: list[tuple[str, str, str, bool]] = []
-    if show_new_job:
+    if show_new_job and can_start_jobs:
         nav_items.append(("New", "add", "/new", active_page == "new"))
     nav_items.extend(
         [
@@ -1104,6 +1105,20 @@ def render_navigator(
                 on_click=lambda: ui.navigate.to("/auth/logout"),
                 icon="logout",
             ).props(inactive_style)
+
+
+def render_pending_approval_notice() -> None:
+    """Render an informational notice for users awaiting administrator approval."""
+    with ui.card().classes("w-full border-l-4 border-amber-500 bg-amber-50"):
+        with ui.row().classes("items-start gap-3"):
+            ui.icon("hourglass_top", color="amber", size="md")
+            with ui.column().classes("gap-1"):
+                ui.label("Account Pending Approval").classes("text-amber-900 font-bold")
+                ui.label(
+                    "Your account is waiting for administrator approval. "
+                    "You can browse existing pages, but starting new jobs "
+                    "is disabled until approval."
+                ).classes("text-amber-800")
 
 
 def render_stat_badges(

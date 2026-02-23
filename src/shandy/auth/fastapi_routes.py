@@ -134,6 +134,7 @@ async def mock_admin_oauth_login():
             access_token="mock_access_token",
             refresh_token=None,
         )
+        user.is_approved = True
         user_id = user.id
         user_email = user.email
         login_session = await create_session(db, str(user_id))

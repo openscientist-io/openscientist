@@ -7,11 +7,12 @@ from pathlib import Path
 
 from nicegui import ui
 
-from shandy.auth import get_current_user_id, require_auth
+from shandy.auth import can_current_user_start_jobs, get_current_user_id, require_auth
 from shandy.providers import check_provider_config
 from shandy.webapp_components.ui_components import (
     render_config_error_banner,
     render_navigator,
+    render_pending_approval_notice,
 )
 from shandy.webapp_components.utils.session import (
     add_uploaded_file,
@@ -37,6 +38,7 @@ def new_job_page():
     from shandy import web_app
 
     job_manager = web_app.get_job_manager()
+    user_can_start_jobs = can_current_user_start_jobs()
 
     # Isolate uploads per connected client and authenticated user.
     user_id = get_current_user_id()
@@ -48,6 +50,10 @@ def new_job_page():
 
     def submit_job():
         """Handle job submission."""
+        if not user_can_start_jobs:
+            ui.notify("Your account is pending administrator approval.", type="warning")
+            return
+
         # Validate inputs
         if not research_question.value.strip():
             ui.notify("Please enter a research question", type="negative")
@@ -144,6 +150,13 @@ def new_job_page():
         active_page="new",
         show_new_job=is_configured,
     )
+
+    if not user_can_start_jobs:
+        render_pending_approval_notice()
+        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs")).props(
+            "outline color=primary"
+        ).classes("mt-4")
+        return
 
     # Show configuration error if provider is not set up
     if not is_configured:

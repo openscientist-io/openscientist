@@ -46,6 +46,7 @@ async def test_user_creation(db_session: AsyncSession):
     assert user.email == "newuser@example.com"
     assert user.name == "New User"
     assert user.is_active is True
+    assert user.is_approved is False
     assert isinstance(user.created_at, datetime)
 
 

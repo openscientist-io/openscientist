@@ -62,6 +62,8 @@ def test_require_auth_sync_accepts_valid_session_and_populates_storage(monkeypat
             "email": "valid@example.com",
             "name": "Valid User",
             "is_admin": True,
+            "is_approved": False,
+            "can_start_jobs": True,
         }
 
     monkeypatch.setattr(middleware, "validate_session", _fake_validate_session)
@@ -80,4 +82,16 @@ def test_require_auth_sync_accepts_valid_session_and_populates_storage(monkeypat
     assert storage["authenticated"] is True
     assert storage["user_id"] == "123e4567-e89b-12d3-a456-426614174000"
     assert storage["is_admin"] is True
+    assert storage["is_approved"] is False
+    assert storage["can_start_jobs"] is True
     fake_ui.navigate.to.assert_not_called()
+
+
+def test_can_current_user_start_jobs_uses_approval_or_admin_fallback(monkeypatch):
+    """Job-start capability should fall back to approval/admin flags."""
+    fake_app = SimpleNamespace(
+        storage=SimpleNamespace(user={"is_approved": False, "is_admin": True})
+    )
+    monkeypatch.setattr(middleware, "app", fake_app)
+
+    assert middleware.can_current_user_start_jobs() is True

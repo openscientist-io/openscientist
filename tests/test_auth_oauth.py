@@ -34,6 +34,7 @@ async def test_create_new_user_with_oauth(db_session: AsyncSession):
     assert user.email == "new@example.com"
     assert user.name == "New User"
     assert user.is_active is True
+    assert user.is_approved is False
 
     # Verify OAuth account was created
     stmt = select(OAuthAccount).where(

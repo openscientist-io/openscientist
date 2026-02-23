@@ -57,6 +57,13 @@ def upgrade() -> None:
             comment="Whether user account is active",
         ),
         sa.Column(
+            "is_approved",
+            sa.Boolean(),
+            server_default="false",
+            nullable=False,
+            comment="Whether user is approved by an administrator to start jobs",
+        ),
+        sa.Column(
             "ntfy_enabled",
             sa.Boolean(),
             server_default="true",

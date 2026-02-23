@@ -302,6 +302,18 @@ async def render_users_panel():
                             "field": "job_count",
                             "align": "center",
                         },
+                        {
+                            "name": "approval_status",
+                            "label": "Approval",
+                            "field": "approval_status",
+                            "align": "center",
+                        },
+                        {
+                            "name": "actions",
+                            "label": "Actions",
+                            "field": "actions",
+                            "align": "center",
+                        },
                     ]
 
                     rows = []
@@ -322,11 +334,80 @@ async def render_users_panel():
                                     else "N/A"
                                 ),
                                 "job_count": job_count,
+                                "approval_status": "Approved" if user.is_approved else "Pending",
+                                "is_approved": bool(user.is_approved),
                             }
                         )
 
                     with users_container:
-                        ui.table(columns=columns, rows=rows, row_key="id").classes("w-full")
+                        users_table = ui.table(columns=columns, rows=rows, row_key="id").classes(
+                            "w-full"
+                        )
+                        users_table.add_slot(
+                            "body-cell-approval_status",
+                            """
+                            <q-td :props="props">
+                                <q-badge
+                                    :color="props.row.is_approved ? 'positive' : 'warning'"
+                                    :label="props.row.approval_status"
+                                />
+                            </q-td>
+                            """,
+                        )
+                        users_table.add_slot(
+                            "body-cell-actions",
+                            """
+                            <q-td :props="props">
+                                <q-btn
+                                    v-if="!props.row.is_approved"
+                                    size="sm"
+                                    color="positive"
+                                    icon="check"
+                                    label="Approve"
+                                    @click="$parent.$emit('approve-user', props.row)"
+                                />
+                                <span v-else class="text-grey-6">-</span>
+                            </q-td>
+                            """,
+                        )
+
+                        async def approve_user(e):
+                            """Approve a pending user account."""
+                            user_id = e.args.get("id")
+                            if not user_id:
+                                ui.notify("Invalid user selection", color="negative")
+                                return
+
+                            try:
+                                async with get_admin_session() as session:
+                                    stmt = select(User).where(User.id == UUID(user_id))
+                                    result = await session.execute(stmt)
+                                    user = result.scalar_one_or_none()
+                                    if not user:
+                                        ui.notify("User not found", color="negative")
+                                        return
+
+                                    if user.is_approved:
+                                        ui.notify("User is already approved", color="info")
+                                        return
+
+                                    user.is_approved = True
+                                    await session.commit()
+
+                                ui.notify("User approved successfully", color="positive")
+                                await load_users()
+                            except Exception as ex:
+                                logger.error(
+                                    "Error approving user %s: %s",
+                                    user_id,
+                                    ex,
+                                    exc_info=True,
+                                )
+                                ui.notify(
+                                    "Failed to approve user. Check server logs.", color="negative"
+                                )
+
+                        users_table.on("approve-user", approve_user)
 
             except Exception as e:
                 logger.error("Error loading users: %s", e, exc_info=True)
@@ -387,6 +468,7 @@ async def render_legacy_user_panel():
                         user = User(
                             name=name_input.value,
                             email=email_input.value,
+                            is_approved=True,
                         )
                         session.add(user)
                         await session.commit()

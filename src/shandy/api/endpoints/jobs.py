@@ -233,6 +233,14 @@ async def create_job(
     Note: File uploads are not yet supported via the REST API. Use the web interface
     to upload data files, or provide a PDB code for analysis.
     """
+    if not user.is_approved:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Your account is pending administrator approval. You cannot start new jobs yet."
+            ),
+        )
+
     # Create job via JobManager (database + filesystem structure).
     job_uuid = uuid4()
     job_manager = _get_job_manager()

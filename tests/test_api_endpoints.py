@@ -46,6 +46,7 @@ async def test_user_db(db_session: AsyncSession) -> User:
     user = User(
         email="apitest@example.com",
         name="API Test User",
+        is_approved=True,
     )
     db_session.add(user)
     await db_session.commit()
@@ -59,6 +60,7 @@ async def test_user2_db(db_session: AsyncSession) -> User:
     user = User(
         email="apitest2@example.com",
         name="API Test User 2",
+        is_approved=True,
     )
     db_session.add(user)
     await db_session.commit()
@@ -831,6 +833,62 @@ class TestJobEndpoints:
         assert data["title"] == "API Created Job"
         assert data["status"] == "pending"
         mock_job_manager.create_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_job_rejected_for_unapproved_user(
+        self,
+        db_session: AsyncSession,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Unapproved users cannot start jobs via the API."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            yield db_session
+
+        unapproved_user = MagicMock(spec=User)
+        unapproved_user.id = uuid.uuid4()
+        unapproved_user.email = "pending@example.com"
+        unapproved_user.name = "Pending User"
+        unapproved_user.is_active = True
+        unapproved_user.is_approved = False
+
+        async def override_get_user():
+            return unapproved_user
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager") as mock_get_job_manager:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/jobs",
+                    json={
+                        "title": "Blocked Job",
+                        "description": "Should not be created",
+                        "research_question": "Will this run before approval?",
+                        "max_iterations": 5,
+                        "use_skills": True,
+                        "investigation_mode": "autonomous",
+                    },
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 403
+        assert "pending administrator approval" in response.json()["detail"]
+        mock_get_job_manager.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_filter_jobs_by_status(

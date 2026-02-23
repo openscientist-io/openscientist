@@ -31,6 +31,7 @@ class User(UUIDv7Mixin, Base):
         email: User's primary email address (unique, indexed)
         name: User's display name
         is_active: Whether the user account is active (for admin disable)
+        is_approved: Whether the user is approved to start new jobs
         oauth_accounts: OAuth provider accounts linked to this user
         sessions: Active login sessions for this user
         api_keys: API keys created by this user
@@ -58,6 +59,13 @@ class User(UUIDv7Mixin, Base):
         nullable=False,
         server_default="true",
         comment="Whether user account is active",
+    )
+
+    is_approved: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="Whether user is approved by an administrator to start jobs",
     )
 
     ntfy_enabled: Mapped[bool] = mapped_column(

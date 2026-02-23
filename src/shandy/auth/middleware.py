@@ -100,17 +100,21 @@ async def validate_session(session_token: str) -> Optional[dict]:
         session_token: Session token to validate
 
     Returns:
-        Dictionary with user_id, email, name, and is_admin if valid, None otherwise
+        Dictionary with user_id, email, name, admin/approval flags if valid, None otherwise
     """
     try:
         async with get_admin_session() as db:
             user = await get_current_user(db, session_token)
             if user:
+                is_admin = user.administrator is not None
+                can_start_jobs = bool(user.is_approved or is_admin)
                 return {
                     "user_id": str(user.id),
                     "email": user.email,
                     "name": user.name,
-                    "is_admin": user.administrator is not None,
+                    "is_admin": is_admin,
+                    "is_approved": bool(user.is_approved),
+                    "can_start_jobs": can_start_jobs,
                 }
     except Exception as e:
         logger.error("Session validation error: %s", e)
@@ -148,6 +152,8 @@ def _store_authenticated_user(session_token: str, user_info: dict) -> None:
     app.storage.user["email"] = user_info["email"]
     app.storage.user["name"] = user_info["name"]
     app.storage.user["is_admin"] = user_info.get("is_admin", False)
+    app.storage.user["is_approved"] = user_info.get("is_approved", False)
+    app.storage.user["can_start_jobs"] = user_info.get("can_start_jobs", False)
     app.storage.user["authenticated"] = True
 
 
@@ -268,6 +274,32 @@ def is_current_user_admin() -> bool:
         True if user is an admin, False otherwise
     """
     return bool(app.storage.user.get("is_admin", False))
+
+
+def is_current_user_approved() -> bool:
+    """
+    Check if the current authenticated user is approved to start jobs.
+
+    Returns:
+        True if approved, False otherwise
+    """
+    return bool(app.storage.user.get("is_approved", False))
+
+
+def can_current_user_start_jobs() -> bool:
+    """
+    Check if the current user can start jobs.
+
+    Administrators are allowed even if their explicit approval flag is false.
+
+    Returns:
+        True if user can start jobs, False otherwise
+    """
+    if "can_start_jobs" in app.storage.user:
+        return bool(app.storage.user.get("can_start_jobs"))
+    return bool(
+        app.storage.user.get("is_approved", False) or app.storage.user.get("is_admin", False)
+    )
 
 
 def require_admin(func: Callable) -> Callable:

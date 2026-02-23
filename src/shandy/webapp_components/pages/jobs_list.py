@@ -6,7 +6,12 @@ from uuid import UUID
 from nicegui import ui
 from sqlalchemy import select
 
-from shandy.auth import get_current_user_id, is_current_user_admin, require_auth
+from shandy.auth import (
+    can_current_user_start_jobs,
+    get_current_user_id,
+    is_current_user_admin,
+    require_auth,
+)
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_admin_session, get_session_ctx
@@ -18,6 +23,7 @@ from shandy.webapp_components.ui_components import (
     render_delete_dialog,
     render_job_id_slot,
     render_navigator,
+    render_pending_approval_notice,
     render_permission_badge_slot,
     render_share_dialog,
     render_stat_badges,
@@ -46,6 +52,7 @@ def jobs_page():
     # Capture admin status and user ID for access control
     current_user_is_admin = is_current_user_admin()
     current_user_id = get_current_user_id()
+    can_start_jobs = can_current_user_start_jobs()
 
     async def refresh_jobs(table_to_update):
         """Refresh jobs table from database with RLS."""
@@ -175,6 +182,9 @@ def jobs_page():
     # Show configuration error banner if provider is not configured
     if not is_configured:
         render_config_error_banner(provider_name, config_errors)
+
+    if not can_start_jobs:
+        render_pending_approval_notice()
 
     # Summary badges (populated async by refresh_jobs)
     badges_container = ui.row().classes("w-full")
