@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/web/shares", include_in_schema=False)
 
 
+def _parse_uuid(value: str, field_name: str) -> UUID:
+    """Parse UUID input and raise a client error on invalid format."""
+    try:
+        return UUID(value)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field_name} format",
+        ) from e
+
+
 # Pydantic models for request/response
 class ShareCreate(BaseModel):
     """Request body for creating a job share."""
@@ -57,6 +68,44 @@ class UserSearchResult(BaseModel):
     name: str
 
 
+def _share_to_response(share: JobShare, target_user: User) -> ShareResponse:
+    """Convert a JobShare + User pair to ShareResponse."""
+    return ShareResponse(
+        id=str(share.id),
+        job_id=str(share.job_id),
+        shared_with_email=target_user.email,
+        shared_with_name=target_user.name,
+        permission_level=share.permission_level,
+    )
+
+
+async def _get_owned_job(
+    session: AsyncSession,
+    user: User,
+    job_id: str,
+    forbidden_detail: str,
+) -> Job:
+    """Load a job and verify ownership by the current user."""
+    job_uuid = _parse_uuid(job_id, "job_id")
+    job_stmt = select(Job).where(Job.id == job_uuid)
+    job_result = await session.execute(job_stmt)
+    job = job_result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found or you don't have access",
+        )
+
+    if job.owner_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=forbidden_detail,
+        )
+
+    return job
+
+
 async def get_current_user_from_session(
     user_id: UUID = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_session),
@@ -87,21 +136,7 @@ async def create_share(
     await set_current_user(session, user.id)
 
     # Verify job exists and user owns it
-    job_stmt = select(Job).where(Job.id == UUID(job_id))
-    job_result = await session.execute(job_stmt)
-    job = job_result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or you don't have access",
-        )
-
-    if job.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only share jobs you own",
-        )
+    job = await _get_owned_job(session, user, job_id, "You can only share jobs you own")
 
     # Find user to share with by email
     target_stmt = select(User).where(User.email == share_data.shared_with_email)
@@ -123,7 +158,7 @@ async def create_share(
 
     # Check if share already exists
     share_check_stmt = select(JobShare).where(
-        JobShare.job_id == UUID(job_id),
+        JobShare.job_id == job.id,
         JobShare.shared_with_user_id == target_user.id,
     )
     share_check_result = await session.execute(share_check_stmt)
@@ -135,17 +170,11 @@ async def create_share(
         await session.commit()
         await session.refresh(existing_share)
 
-        return ShareResponse(
-            id=str(existing_share.id),
-            job_id=str(existing_share.job_id),
-            shared_with_email=target_user.email,
-            shared_with_name=target_user.name,
-            permission_level=existing_share.permission_level,
-        )
+        return _share_to_response(existing_share, target_user)
 
     # Create new share
     new_share = JobShare(
-        job_id=UUID(job_id),
+        job_id=job.id,
         shared_with_user_id=target_user.id,
         permission_level=share_data.permission_level,
     )
@@ -153,13 +182,7 @@ async def create_share(
     await session.commit()
     await session.refresh(new_share)
 
-    return ShareResponse(
-        id=str(new_share.id),
-        job_id=str(new_share.job_id),
-        shared_with_email=target_user.email,
-        shared_with_name=target_user.name,
-        permission_level=new_share.permission_level,
-    )
+    return _share_to_response(new_share, target_user)
 
 
 @router.get("/job/{job_id}")
@@ -173,42 +196,19 @@ async def list_job_shares(
     await set_current_user(session, user.id)
 
     # Verify job exists and user owns it
-    job_stmt = select(Job).where(Job.id == UUID(job_id))
-    job_result = await session.execute(job_stmt)
-    job = job_result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or you don't have access",
-        )
-
-    if job.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view shares for jobs you own",
-        )
+    job = await _get_owned_job(session, user, job_id, "You can only view shares for jobs you own")
 
     # Get all shares for this job with user info
     shares_stmt = (
         select(JobShare, User)
         .join(User, JobShare.shared_with_user_id == User.id)
-        .where(JobShare.job_id == UUID(job_id))
+        .where(JobShare.job_id == job.id)
         .order_by(User.email)
     )
     shares_result = await session.execute(shares_stmt)
     shares = shares_result.all()
 
-    return [
-        ShareResponse(
-            id=str(share.id),
-            job_id=str(share.job_id),
-            shared_with_email=target_user.email,
-            shared_with_name=target_user.name,
-            permission_level=share.permission_level,
-        )
-        for share, target_user in shares
-    ]
+    return [_share_to_response(share, target_user) for share, target_user in shares]
 
 
 @router.delete("/{share_id}")
@@ -222,7 +222,8 @@ async def revoke_share(
     await set_current_user(session, user.id)
 
     # Find the share
-    share_stmt = select(JobShare).where(JobShare.id == UUID(share_id))
+    share_uuid = _parse_uuid(share_id, "share_id")
+    share_stmt = select(JobShare).where(JobShare.id == share_uuid)
     share_result = await session.execute(share_stmt)
     share = share_result.scalar_one_or_none()
 

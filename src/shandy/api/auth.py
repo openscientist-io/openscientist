@@ -10,6 +10,7 @@ at creation time.
 """
 
 import hashlib
+import hmac
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import APIKey, User
-from shandy.database.session import get_session
+from shandy.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,8 @@ def verify_secret(secret: str, key_hash: str) -> bool:
     Returns:
         True if the secret matches, False otherwise
     """
-    return hash_secret(secret) == key_hash
+    candidate_hash = hash_secret(secret)
+    return hmac.compare_digest(candidate_hash, key_hash)
 
 
 def generate_api_key_secret(length: int = 32) -> str:
@@ -77,7 +79,6 @@ def generate_api_key_secret(length: int = 32) -> str:
 
 async def get_current_user_from_api_key(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    session: AsyncSession = Depends(get_session),
 ) -> User:
     """
     Dependency to extract and validate API key from Authorization header.
@@ -107,62 +108,73 @@ async def get_current_user_from_api_key(
 
     name, secret = api_key_full.split(":", 1)
 
-    # Look up API key by name
-    key_stmt = (
-        select(APIKey)
-        .where(APIKey.name == name, APIKey.is_active == True)  # noqa: E712
-        .limit(1)
-    )
-    key_result = await session.execute(key_stmt)
-    api_key = key_result.scalar_one_or_none()
+    secret_hash = hash_secret(secret)
 
-    if not api_key:
-        logger.warning("API key not found or inactive: %s", name)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "Bearer"},
+    async with get_admin_session() as session:
+        # Resolve API key by secret hash so lookup is deterministic even when names collide.
+        key_stmt = select(APIKey).where(
+            APIKey.key_hash == secret_hash,
+            APIKey.is_active == True,  # noqa: E712
         )
+        key_result = await session.execute(key_stmt)
+        api_key = key_result.scalar_one_or_none()
 
-    # Verify secret
-    if not verify_secret(secret, api_key.key_hash):
-        logger.warning("API key secret mismatch for: %s", name)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Update last_used_at timestamp and increment usage count
-    try:
-        update_stmt = (
-            update(APIKey)
-            .where(APIKey.id == api_key.id)
-            .values(
-                last_used_at=datetime.now(timezone.utc),
-                usage_count=APIKey.usage_count + 1,
+        if not api_key:
+            logger.warning("API key not found or inactive for name: %s", name)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
             )
-        )
-        await session.execute(update_stmt)
-        await session.commit()
-    except Exception as e:
-        # Non-critical, log and continue
-        logger.warning("Failed to update API key usage stats: %s", e)
 
-    # Load user
-    user_stmt = select(User).where(User.id == api_key.user_id)
-    user_result = await session.execute(user_stmt)
-    user = user_result.scalar_one_or_none()
+        # Keep the name component as part of the credential contract.
+        if not hmac.compare_digest(name, api_key.name):
+            logger.warning("API key name mismatch")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    if not user:
-        logger.error("User not found for API key: %s (user_id=%s)", name, api_key.user_id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        # Double-check hash using constant-time compare for defense in depth.
+        if not verify_secret(secret, api_key.key_hash):
+            logger.warning("API key secret mismatch for: %s", name)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    return user
+        # Update last_used_at timestamp and increment usage count
+        try:
+            update_stmt = (
+                update(APIKey)
+                .where(APIKey.id == api_key.id)
+                .values(
+                    last_used_at=datetime.now(timezone.utc),
+                    usage_count=APIKey.usage_count + 1,
+                )
+            )
+            await session.execute(update_stmt)
+            await session.commit()
+        except Exception as e:
+            # Non-critical, log and continue
+            logger.warning("Failed to update API key usage stats: %s", e)
+
+        # Load user
+        user_stmt = select(User).where(User.id == api_key.user_id, User.is_active == True)  # noqa: E712
+        user_result = await session.execute(user_stmt)
+        user = user_result.scalar_one_or_none()
+
+        if not user:
+            logger.error("User not found for API key: %s (user_id=%s)", name, api_key.user_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return user
 
 
 async def get_api_key_by_id(

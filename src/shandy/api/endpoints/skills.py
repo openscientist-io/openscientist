@@ -7,7 +7,7 @@ to research questions.
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional, TypedDict
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -74,38 +74,58 @@ class SkillSourceResponse(BaseModel):
     sync_error: Optional[str] = Field(None, description="Last sync error")
 
 
+class _SkillResponseFields(TypedDict):
+    id: str
+    name: str
+    slug: str
+    category: str
+    description: Optional[str]
+    tags: list[str]
+    is_enabled: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
 def _skill_to_response(skill: Skill) -> SkillResponse:
     """Convert a Skill model to a SkillResponse."""
-    return SkillResponse(
-        id=str(skill.id),
-        name=skill.name,
-        slug=skill.slug,
-        category=skill.category,
-        description=skill.description,
-        tags=skill.tags or [],
-        is_enabled=skill.is_enabled,
-        version=skill.version,
-        created_at=skill.created_at,
-        updated_at=skill.updated_at,
-    )
+    return SkillResponse(**_skill_response_fields(skill))
+
+
+def _skill_response_fields(skill: Skill) -> _SkillResponseFields:
+    """Return common response fields shared by skill response models."""
+    return {
+        "id": str(skill.id),
+        "name": skill.name,
+        "slug": skill.slug,
+        "category": skill.category,
+        "description": skill.description,
+        "tags": skill.tags or [],
+        "is_enabled": skill.is_enabled,
+        "version": skill.version,
+        "created_at": skill.created_at,
+        "updated_at": skill.updated_at,
+    }
 
 
 def _skill_to_detail_response(skill: Skill) -> SkillDetailResponse:
     """Convert a Skill model to a SkillDetailResponse."""
     return SkillDetailResponse(
-        id=str(skill.id),
-        name=skill.name,
-        slug=skill.slug,
-        category=skill.category,
-        description=skill.description,
-        tags=skill.tags or [],
-        is_enabled=skill.is_enabled,
-        version=skill.version,
-        created_at=skill.created_at,
-        updated_at=skill.updated_at,
+        **_skill_response_fields(skill),
         content=skill.content,
         source_path=skill.source_path,
     )
+
+
+def _build_skill_filters(category: Optional[str], tags: Optional[list[str]]) -> list[Any]:
+    """Build common WHERE conditions for skill list queries."""
+    conditions = [Skill.is_enabled == True]  # noqa: E712
+    if category:
+        conditions.append(Skill.category == category)
+    if tags:
+        for tag in tags:
+            conditions.append(Skill.tags.contains([tag]))
+    return conditions
 
 
 @router.get("", response_model=SkillListResponse)
@@ -137,12 +157,7 @@ async def list_skills(
 
     if search:
         # Use full-text search with PostgreSQL
-        conditions = [Skill.is_enabled == True]  # noqa: E712
-        if category:
-            conditions.append(Skill.category == category)
-        if tags:
-            for tag in tags:
-                conditions.append(Skill.tags.contains([tag]))
+        conditions = _build_skill_filters(category, tags)
 
         # Create tsquery from search terms
         tsquery = func.plainto_tsquery("english", search)
@@ -159,14 +174,7 @@ async def list_skills(
         total = len(skills)
     else:
         # Regular query with filters
-        conditions = [Skill.is_enabled == True]  # noqa: E712
-
-        if category:
-            conditions.append(Skill.category == category)
-
-        if tags:
-            for tag in tags:
-                conditions.append(Skill.tags.contains([tag]))
+        conditions = _build_skill_filters(category, tags)
 
         # Get total count
         count_stmt = select(func.count(Skill.id)).where(*conditions)
@@ -215,7 +223,7 @@ async def list_categories(
     return CategoryListResponse(categories=categories)
 
 
-@router.get("/{skill_id}", response_model=SkillDetailResponse)
+@router.get("/{skill_id:uuid}", response_model=SkillDetailResponse)
 async def get_skill(
     skill_id: str,
     user: User = Depends(get_current_user_from_api_key),

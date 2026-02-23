@@ -22,18 +22,29 @@ from shandy.webapp_components.utils.session import (
 logger = logging.getLogger(__name__)
 
 
+def _build_upload_session_id(user_id: str | None, client: object) -> str:
+    """Build an upload-session key scoped to user and websocket client."""
+    effective_user_id = user_id or "anonymous"
+    client_id = str(getattr(client, "id", id(client)))
+    return f"{effective_user_id}:{client_id}"
+
+
 @ui.page("/new")
 @require_auth
 def new_job_page():
     """Job submission form."""
     # Import module to access global job_manager at runtime
     from shandy import web_app
-    from shandy.webapp_components.pages.index import index_page
 
     job_manager = web_app.get_job_manager()
 
-    # Use client ID as key for this session's uploads
-    session_id = str(id(index_page))  # Simple session identifier
+    # Isolate uploads per connected client and authenticated user.
+    user_id = get_current_user_id()
+    client = ui.context.client
+    session_id = _build_upload_session_id(user_id, client)
+
+    # Ensure uploads are cleared when the websocket disconnects.
+    client.on_disconnect(lambda: clear_uploaded_files(session_id))
 
     def submit_job():
         """Handle job submission."""
@@ -62,7 +73,12 @@ def new_job_page():
         # Create job
         try:
             # Get current user ID
-            user_id = get_current_user_id()
+            current_user_id = get_current_user_id()
+
+            if not current_user_id:
+                ui.notify("Authentication required. Please log in again.", type="negative")
+                ui.navigate.to("/login")
+                return
 
             # Determine investigation mode
             mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
@@ -75,7 +91,7 @@ def new_job_page():
                 use_skills=use_skills_toggle.value,
                 auto_start=True,
                 investigation_mode=mode,
-                owner_id=user_id,  # Associate job with current user
+                owner_id=current_user_id,  # Associate job with current user
             )
 
             ui.notify(f"Job {job_id} created and started!", type="positive")

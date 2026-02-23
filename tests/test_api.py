@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import generate_api_key_secret, hash_secret, verify_secret
@@ -201,6 +202,29 @@ async def test_multiple_api_keys_same_user(db_session: AsyncSession, test_user: 
     key_names = {key.name for key in keys}
     assert "key1" in key_names
     assert "key2" in key_names
+
+
+@pytest.mark.asyncio
+async def test_duplicate_api_key_name_same_user_rejected(db_session: AsyncSession, test_user: User):
+    """The same user should not be able to create duplicate key names."""
+    db_session.add_all(
+        [
+            APIKey(
+                user_id=test_user.id,
+                name="duplicate-name",
+                key_hash=hash_secret("secret-1"),
+            ),
+            APIKey(
+                user_id=test_user.id,
+                name="duplicate-name",
+                key_hash=hash_secret("secret-2"),
+            ),
+        ]
+    )
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+    await db_session.rollback()
 
 
 @pytest.mark.asyncio

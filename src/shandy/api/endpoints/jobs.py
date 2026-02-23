@@ -11,8 +11,8 @@ import logging
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-from uuid import UUID
+from typing import Optional, TypedDict
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -123,6 +123,19 @@ class JobDetailResponse(JobResponse):
     error_message: Optional[str] = Field(None, description="Error message if failed")
 
 
+class _JobResponseFields(TypedDict):
+    id: str
+    title: str
+    description: Optional[str]
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    max_iterations: int
+    current_iteration: int
+    pdb_code: Optional[str]
+    space_group: Optional[str]
+
+
 async def get_job_by_id(
     job_id: str,
     user: User,
@@ -137,7 +150,15 @@ async def get_job_by_id(
     await set_current_user(session, user.id)
 
     # Query job (RLS policies will filter access)
-    stmt = select(Job).where(Job.id == UUID(job_id))
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid job ID format",
+        ) from e
+
+    stmt = select(Job).where(Job.id == job_uuid)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -150,20 +171,25 @@ def _get_job_manager() -> JobManager:
     return get_job_manager()
 
 
+def _job_response_fields(job: Job) -> _JobResponseFields:
+    """Return common response fields shared by job response models."""
+    return {
+        "id": str(job.id),
+        "title": job.title,
+        "description": job.description,
+        "status": job.status,
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "max_iterations": job.max_iterations,
+        "current_iteration": job.current_iteration,
+        "pdb_code": job.pdb_code,
+        "space_group": job.space_group,
+    }
+
+
 def _job_to_response(job: Job) -> JobResponse:
     """Convert Job model to JobResponse."""
-    return JobResponse(
-        id=str(job.id),
-        title=job.title,
-        description=job.description,
-        status=job.status,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        max_iterations=job.max_iterations,
-        current_iteration=job.current_iteration,
-        pdb_code=job.pdb_code,
-        space_group=job.space_group,
-    )
+    return JobResponse(**_job_response_fields(job))
 
 
 def _job_to_detail_response(job: Job) -> JobDetailResponse:
@@ -184,16 +210,7 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
         logger.warning("Failed to load config for job %s: %s", job.id, e)
 
     return JobDetailResponse(
-        id=str(job.id),
-        title=job.title,
-        description=job.description,
-        status=job.status,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        max_iterations=job.max_iterations,
-        current_iteration=job.current_iteration,
-        pdb_code=job.pdb_code,
-        space_group=job.space_group,
+        **_job_response_fields(job),
         research_question=research_question,
         investigation_mode=investigation_mode,
         result_summary=job.result_summary,
@@ -216,47 +233,41 @@ async def create_job(
     Note: File uploads are not yet supported via the REST API. Use the web interface
     to upload data files, or provide a PDB code for analysis.
     """
-    # Set RLS context
-    await set_current_user(session, user.id)
-
-    # Create job in database
-    job = Job(
-        owner_id=user.id,
-        title=job_data.title,
-        description=job_data.description,
-        status="pending",
-        max_iterations=job_data.max_iterations,
-        current_iteration=0,
-        pdb_code=job_data.pdb_code,
-        space_group=job_data.space_group,
-    )
-    session.add(job)
-    await session.commit()
-    await session.refresh(job)
-
-    # Create job via JobManager (creates filesystem structure)
+    # Create job via JobManager (database + filesystem structure).
+    job_uuid = uuid4()
     job_manager = _get_job_manager()
     try:
         job_manager.create_job(
-            job_id=str(job.id),  # Use UUID as job_id
+            job_id=str(job_uuid),
             research_question=job_data.research_question,
             data_files=[],  # TODO: Support file uploads in API
             max_iterations=job_data.max_iterations,
             use_skills=job_data.use_skills,
             auto_start=True,
             investigation_mode=job_data.investigation_mode,
+            owner_id=str(user.id),
+            title=job_data.title,
+            description=job_data.description,
+            pdb_code=job_data.pdb_code,
+            space_group=job_data.space_group,
         )
-        logger.info("Created job %s for user %s", job.id, user.email)
+        logger.info("Created job %s for user %s", job_uuid, user.email)
     except Exception as e:
-        # Rollback database if job creation fails
-        await session.rollback()
         logger.exception("Failed to create job for user %s", user.email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create job",
         ) from e
 
-    return _job_to_response(job)
+    # Load job via API session so response reflects RLS-visible persisted state.
+    created_job = await get_job_by_id(str(job_uuid), user, session)
+    if created_job is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Job created but could not be loaded",
+        )
+
+    return _job_to_response(created_job)
 
 
 @router.get("", response_model=JobListResponse)

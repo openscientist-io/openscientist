@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/shares", tags=["Shares"])
 
 
+def _parse_uuid(value: str, field_name: str) -> UUID:
+    """Parse UUID input and raise a client error on invalid format."""
+    try:
+        return UUID(value)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field_name} format",
+        ) from e
+
+
 def _share_to_response(share: "JobShare", target_user: "User") -> "ShareResponse":
     """Convert a JobShare + User pair to a ShareResponse."""
     return ShareResponse(
@@ -39,7 +50,8 @@ def _share_to_response(share: "JobShare", target_user: "User") -> "ShareResponse
 
 async def _get_owned_job(session: "AsyncSession", user: "User", job_id: str) -> "Job":
     """Get a job by ID, raising if not found or not owned by user."""
-    job_stmt = select(Job).where(Job.id == UUID(job_id))
+    job_uuid = _parse_uuid(job_id, "job_id")
+    job_stmt = select(Job).where(Job.id == job_uuid)
     job_result = await session.execute(job_stmt)
     job = job_result.scalar_one_or_none()
 
@@ -155,8 +167,10 @@ async def create_share(
         )
 
     # Check if share already exists
+    job_uuid = _parse_uuid(share_data.job_id, "job_id")
+
     share_stmt = select(JobShare).where(
-        JobShare.job_id == UUID(share_data.job_id),
+        JobShare.job_id == job_uuid,
         JobShare.shared_with_user_id == target_user.id,
     )
     share_result = await session.execute(share_stmt)
@@ -172,7 +186,7 @@ async def create_share(
 
     # Create new share
     new_share = JobShare(
-        job_id=UUID(share_data.job_id),
+        job_id=job_uuid,
         shared_with_user_id=target_user.id,
         permission_level=share_data.permission_level,
     )
@@ -203,12 +217,13 @@ async def list_job_shares(
 
     # Verify job exists and user owns it
     await _get_owned_job(session, user, job_id)
+    job_uuid = _parse_uuid(job_id, "job_id")
 
     # Get all shares for this job with user info
     shares_stmt = (
         select(JobShare, User)
         .join(User, JobShare.shared_with_user_id == User.id)
-        .where(JobShare.job_id == UUID(job_id))
+        .where(JobShare.job_id == job_uuid)
         .order_by(User.email)
     )
     shares_result = await session.execute(shares_stmt)
@@ -239,7 +254,8 @@ async def revoke_share(
     await set_current_user(session, user.id)
 
     # Find the share
-    share_stmt = select(JobShare).where(JobShare.id == UUID(share_id))
+    share_uuid = _parse_uuid(share_id, "share_id")
+    share_stmt = select(JobShare).where(JobShare.id == share_uuid)
     share_result = await session.execute(share_stmt)
     share = share_result.scalar_one_or_none()
 

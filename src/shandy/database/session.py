@@ -130,6 +130,14 @@ async def _set_app_role(session: AsyncSession) -> None:
     await session.execute(text("SET ROLE shandy_app"))
 
 
+async def _clear_rls_user_context(session: AsyncSession) -> None:
+    """Clear app.current_user_id to prevent context leakage across pooled connections."""
+    try:
+        await session.execute(text("SELECT set_config('app.current_user_id', NULL, false)"))
+    except Exception:
+        pass
+
+
 async def _reset_role(session: AsyncSession) -> None:
     """Restore the original database role after session use."""
     try:
@@ -167,11 +175,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         try:
             # Drop to shandy_app role so RLS policies are enforced
             await _set_app_role(session)
+            await _clear_rls_user_context(session)
             yield session
         except Exception:
             await session.rollback()
             raise
         finally:
+            await _clear_rls_user_context(session)
             await _reset_role(session)
             await session.close()
 
@@ -213,9 +223,11 @@ async def get_admin_session() -> AsyncGenerator[AsyncSession, None]:
     factory = _get_admin_session_factory()
     async with factory() as session:
         try:
+            await _clear_rls_user_context(session)
             yield session
         except Exception:
             await session.rollback()
             raise
         finally:
+            await _clear_rls_user_context(session)
             await session.close()

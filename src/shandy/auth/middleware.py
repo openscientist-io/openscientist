@@ -7,10 +7,11 @@ Supports both cookie-based sessions (OAuth) and legacy auth.
 
 import inspect
 import logging
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Optional
+from typing import Optional, TypeVar
 
 from nicegui import app, ui
 from sqlalchemy import select
@@ -21,6 +22,44 @@ from shandy.database.models import Session, User
 from shandy.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
+_T = TypeVar("_T")
+
+
+def _run_awaitable_sync(awaitable: Coroutine[object, object, _T]) -> _T:
+    """Run an awaitable safely from sync code.
+
+    NiceGUI page handlers may execute while an event loop is already running.
+    In that case we run in a short-lived thread to avoid nested-loop errors.
+    """
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+    except RuntimeError:
+        import asyncio
+
+        return asyncio.run(awaitable)
+
+    result: dict[str, _T] = {}
+    error: dict[str, Exception] = {}
+
+    def _runner() -> None:
+        try:
+            import asyncio
+
+            result["value"] = asyncio.run(awaitable)
+        except Exception as exc:  # noqa: BLE001
+            error["value"] = exc
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join(timeout=15)
+
+    if thread.is_alive():
+        raise TimeoutError("Timed out validating session in sync auth path")
+    if "value" in error:
+        raise error["value"]
+    return result["value"]
 
 
 async def get_current_user(db: AsyncSession, session_token: str) -> Optional[User]:
@@ -102,6 +141,48 @@ def _get_session_token() -> Optional[str]:
     return app.storage.user.get("session_token")
 
 
+def _store_authenticated_user(session_token: str, user_info: dict) -> None:
+    """Store authenticated user info in NiceGUI storage."""
+    app.storage.user["session_token"] = session_token
+    app.storage.user["user_id"] = user_info["user_id"]
+    app.storage.user["email"] = user_info["email"]
+    app.storage.user["name"] = user_info["name"]
+    app.storage.user["is_admin"] = user_info.get("is_admin", False)
+    app.storage.user["authenticated"] = True
+
+
+def _save_return_to_path() -> None:
+    """Save the current path to return to after login."""
+    try:
+        app.storage.user["return_to"] = str(ui.context.client.page.path)
+    except Exception:
+        logger.debug("Could not save return_to path", exc_info=True)
+
+
+def _clear_user_storage(tolerate_uninitialized: bool = False) -> None:
+    """Clear NiceGUI user storage with optional tolerance for test contexts."""
+    if tolerate_uninitialized:
+        try:
+            app.storage.user.clear()
+        except (AssertionError, AttributeError):
+            # Storage may not be initialized in some test environments.
+            pass
+        return
+    app.storage.user.clear()
+
+
+def _redirect_to_login(
+    *,
+    clear_storage: bool = False,
+    tolerate_uninitialized_storage: bool = False,
+) -> None:
+    """Persist return path and navigate to login."""
+    if clear_storage:
+        _clear_user_storage(tolerate_uninitialized=tolerate_uninitialized_storage)
+    _save_return_to_path()
+    ui.navigate.to("/login")
+
+
 def require_auth(func: Callable) -> Callable:
     """
     Decorator to require authentication for a page.
@@ -123,65 +204,43 @@ def require_auth(func: Callable) -> Callable:
         session_token = _get_session_token()
         if not session_token:
             logger.debug("No session token, redirecting to login")
-            try:
-                app.storage.user["return_to"] = str(ui.context.client.page.path)
-            except Exception:
-                logger.debug("Could not save return_to path", exc_info=True)
-            ui.navigate.to("/login")
+            _redirect_to_login()
             return
 
         # Validate session against database
         user_info = await validate_session(session_token)
         if not user_info:
             logger.debug("Invalid session token, redirecting to login")
-            app.storage.user.clear()
-            try:
-                app.storage.user["return_to"] = str(ui.context.client.page.path)
-            except Exception:
-                logger.debug("Could not save return_to path", exc_info=True)
-            ui.navigate.to("/login")
+            _redirect_to_login(clear_storage=True)
             return
 
         # Store user info in app.storage.user for easy access
-        app.storage.user["session_token"] = session_token
-        app.storage.user["user_id"] = user_info["user_id"]
-        app.storage.user["email"] = user_info["email"]
-        app.storage.user["name"] = user_info["name"]
-        app.storage.user["is_admin"] = user_info.get("is_admin", False)
-        app.storage.user["authenticated"] = True
+        _store_authenticated_user(session_token, user_info)
 
         # Call the decorated function
         return await func(*args, **kwargs)
 
     @wraps(func)
     def sync_wrapper(*args, **kwargs):
-        # Check for session token in cookie (the authoritative source)
-        # Don't trust app.storage.user as it persists in browser localStorage
-        session_token_from_cookie = None
-        try:
-            if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
-                session_token_from_cookie = ui.context.client.request.cookies.get("session_token")
-        except Exception:
-            logger.debug("Could not read session cookie in sync path", exc_info=True)
-
-        if not session_token_from_cookie:
-            # No cookie = not authenticated, clear any stale storage
+        # Strictly validate every protected sync page against the database.
+        session_token = _get_session_token()
+        if not session_token:
             logger.debug("No session cookie, redirecting to login")
-            try:
-                app.storage.user.clear()
-                app.storage.user["return_to"] = str(ui.context.client.page.path)
-            except (AssertionError, AttributeError):
-                # Storage may not be initialized in test environments
-                pass
-            ui.navigate.to("/login")
+            _redirect_to_login(clear_storage=True, tolerate_uninitialized_storage=True)
             return
 
-        # Cookie exists - check if storage is set up (may need to be validated by async)
-        if not app.storage.user.get("authenticated", False):
-            # Storage not set up yet - this will be handled by first async page visit
-            # For now, trust the cookie and allow access
-            # The session will be validated on next async page visit
-            pass
+        try:
+            user_info = _run_awaitable_sync(validate_session(session_token))
+        except Exception:
+            logger.error("Session validation failed in sync auth path", exc_info=True)
+            user_info = None
+
+        if not user_info:
+            logger.debug("Invalid session token in sync path, redirecting to login")
+            _redirect_to_login(clear_storage=True, tolerate_uninitialized_storage=True)
+            return
+
+        _store_authenticated_user(session_token, user_info)
 
         return func(*args, **kwargs)
 

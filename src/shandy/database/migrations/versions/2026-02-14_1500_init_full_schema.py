@@ -171,6 +171,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("key_hash"),
+        sa.UniqueConstraint("user_id", "name", name="uq_api_keys_user_name"),
     )
     op.create_index(op.f("ix_api_keys_user_id"), "api_keys", ["user_id"], unique=False)
 

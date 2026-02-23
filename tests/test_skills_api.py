@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.routing import Match
 
 from shandy.api.endpoints.skills import router
 from shandy.database.models import Skill, SkillSource, User
@@ -24,6 +25,20 @@ def app():
     app = FastAPI()
     app.include_router(router, prefix="/api/v1/skills")
     return app
+
+
+def test_sources_route_is_not_shadowed_by_skill_id_route():
+    """GET /skills/sources should resolve to the dedicated sources endpoint."""
+    scope = {"type": "http", "path": "/skills/sources", "method": "GET"}
+
+    full_matches = []
+    for route in router.routes:
+        match, _ = route.matches(scope)
+        if match == Match.FULL:
+            full_matches.append(route.path)
+
+    assert full_matches
+    assert full_matches[0] == "/skills/sources"
 
 
 @pytest.fixture

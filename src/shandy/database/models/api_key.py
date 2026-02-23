@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -40,6 +40,7 @@ class APIKey(UUIDv7Mixin, Base):
     """
 
     __tablename__ = "api_keys"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_api_keys_user_name"),)
 
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),

@@ -18,6 +18,7 @@ from typing import Any, Optional, TypeVar
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.container_manager import get_container_manager
 from shandy.database.models import User
@@ -39,11 +40,52 @@ logger = logging.getLogger(__name__)
 # Database helper functions for async operations
 
 
+async def _apply_rls_context(session: AsyncSession, user_id: Optional[UUID]) -> None:
+    """Apply user-scoped RLS context when a user id is provided."""
+    if user_id is None:
+        return
+    await session.execute(text("SET ROLE shandy_app"))
+    await set_current_user(session, user_id)
+
+
+def _load_progress_from_knowledge_state(
+    ks_path: Path,
+    status: str,
+    default_iterations: int,
+    default_findings: int,
+    job_id: str,
+) -> tuple[int, int]:
+    """Load iteration and findings progress from knowledge_state.json when available."""
+    if not ks_path.exists():
+        return default_iterations, default_findings
+
+    try:
+        with open(ks_path, encoding="utf-8") as f:
+            ks = json.load(f)
+
+        findings_count = len(ks.get("findings", []))
+        ks_iteration = ks.get("iteration", 1)
+
+        if status in ("running", "awaiting_feedback"):
+            iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
+        else:
+            iterations_completed = ks_iteration
+
+        return iterations_completed, findings_count
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+        logger.warning("Failed to load KS for job %s: %s", job_id, e)
+        return default_iterations, default_findings
+
+
 async def _db_create_job(
     job_id: str,
     research_question: str,
     max_iterations: int,
     owner_id: Optional[UUID] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    pdb_code: Optional[str] = None,
+    space_group: Optional[str] = None,
 ) -> JobModel:
     """Create a job in the database (thread-safe for worker threads).
 
@@ -52,23 +94,27 @@ async def _db_create_job(
         research_question: The research question/title
         max_iterations: Maximum iterations allowed
         owner_id: UUID of the job owner (optional)
+        title: Display title for the job (defaults to research_question)
+        description: Optional job description
+        pdb_code: Optional PDB code
+        space_group: Optional crystal space group
 
     Returns:
         The created JobModel instance
     """
     async with AsyncSessionLocal(thread_safe=True) as session:
-        if owner_id:
-            await session.execute(text("SET ROLE shandy_app"))
-            await set_current_user(session, owner_id)
+        await _apply_rls_context(session, owner_id)
 
         job = JobModel(
             id=UUID(job_id),
             owner_id=owner_id,
-            title=research_question,
-            description=None,
+            title=title or research_question,
+            description=description,
             status=JobStatus.PENDING.value,
             max_iterations=max_iterations,
             current_iteration=0,
+            pdb_code=pdb_code,
+            space_group=space_group,
         )
         session.add(job)
         await session.commit()
@@ -84,9 +130,7 @@ async def _db_get_job(job_id: str, user_id: Optional[UUID] = None) -> Optional[J
     which bypasses RLS — use only for internal/system operations.
     """
     async with AsyncSessionLocal(thread_safe=True) as session:
-        if user_id:
-            await session.execute(text("SET ROLE shandy_app"))
-            await set_current_user(session, user_id)
+        await _apply_rls_context(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
         result = await session.execute(stmt)
@@ -99,8 +143,7 @@ async def _db_get_share_permission(job_id: str, user_id: UUID) -> Optional[str]:
     Returns 'view', 'edit', or None if the user has no share.
     """
     async with AsyncSessionLocal(thread_safe=True) as session:
-        await session.execute(text("SET ROLE shandy_app"))
-        await set_current_user(session, user_id)
+        await _apply_rls_context(session, user_id)
 
         stmt = select(JobShare.permission_level).where(
             JobShare.job_id == UUID(job_id),
@@ -126,9 +169,7 @@ async def _db_update_job_status(
     result = JobStatusUpdateResult()
 
     async with AsyncSessionLocal(thread_safe=True) as session:
-        if user_id:
-            await session.execute(text("SET ROLE shandy_app"))
-            await set_current_user(session, user_id)
+        await _apply_rls_context(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
         db_result = await session.execute(stmt)
@@ -163,9 +204,7 @@ async def _db_list_jobs(
 ) -> list[JobModel]:
     """List jobs from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
-        if user_id:
-            await session.execute(text("SET ROLE shandy_app"))
-            await set_current_user(session, user_id)
+        await _apply_rls_context(session, user_id)
 
         stmt = select(JobModel).order_by(JobModel.created_at.desc())
 
@@ -182,9 +221,7 @@ async def _db_list_jobs(
 async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
     """Delete a job from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
-        if user_id:
-            await session.execute(text("SET ROLE shandy_app"))
-            await set_current_user(session, user_id)
+        await _apply_rls_context(session, user_id)
 
         stmt = select(JobModel).where(JobModel.id == UUID(job_id))
         result = await session.execute(stmt)
@@ -313,6 +350,10 @@ class JobManager:
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
         owner_id: Optional[str] = None,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        pdb_code: Optional[str] = None,
+        space_group: Optional[str] = None,
     ) -> JobInfo:
         """
         Create a new discovery job.
@@ -326,6 +367,10 @@ class JobManager:
             auto_start: Whether to start job immediately
             investigation_mode: "autonomous" (default) or "coinvestigate"
             owner_id: UUID of the job owner (optional, for orphaned jobs)
+            title: Display title for UI/API responses (defaults to research_question)
+            description: Optional job description
+            pdb_code: Optional PDB code metadata
+            space_group: Optional crystal space group metadata
 
         Returns:
             JobInfo object
@@ -342,19 +387,32 @@ class JobManager:
         try:
             provider = get_provider()
             budget_check = provider.check_budget_limits()
+        except ProviderError as e:
+            # Keep job creation available if provider cost endpoint is temporarily unavailable.
+            logger.warning("Budget check unavailable: %s", e)
+            budget_check = {"can_proceed": True}
 
-            if not budget_check["can_proceed"]:
-                errors = budget_check.get("errors", [])
-                error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
-                raise ValueError(f"Cannot create job: {error_msg}")
-        except (ValueError, ProviderError) as e:
-            logger.warning("Budget check failed: %s", e)
+        if not budget_check.get("can_proceed", True):
+            errors = budget_check.get("errors", [])
+            error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
+            raise ValueError(f"Cannot create job: {error_msg}")
 
         # Create job in database
         logger.info("Creating job %s in database", job_id)
         owner_uuid = UUID(owner_id) if owner_id else None
         try:
-            _run_async(_db_create_job(job_id, research_question, max_iterations, owner_uuid))
+            _run_async(
+                _db_create_job(
+                    job_id,
+                    research_question,
+                    max_iterations,
+                    owner_uuid,
+                    title=title,
+                    description=description,
+                    pdb_code=pdb_code,
+                    space_group=space_group,
+                )
+            )
         except Exception as e:
             logger.error("Failed to create job in database: %s", e)
             raise ValueError(f"Failed to create job in database: {e}") from e
@@ -373,18 +431,33 @@ class JobManager:
 
         # Create job directory and files (for backward compatibility)
         logger.info("Creating job %s filesystem structure", job_id)
-        create_job(
-            job_id=job_id,
-            research_question=research_question,
-            data_files=data_files,
-            max_iterations=max_iterations,
-            use_skills=use_skills,
-            jobs_dir=self.jobs_dir,
-            investigation_mode=investigation_mode,
-            owner_id=owner_id,
-            ntfy_enabled=ntfy_enabled,
-            ntfy_topic=ntfy_topic,
-        )
+        try:
+            create_job(
+                job_id=job_id,
+                research_question=research_question,
+                data_files=data_files,
+                max_iterations=max_iterations,
+                use_skills=use_skills,
+                jobs_dir=self.jobs_dir,
+                investigation_mode=investigation_mode,
+                owner_id=owner_id,
+                ntfy_enabled=ntfy_enabled,
+                ntfy_topic=ntfy_topic,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to initialize filesystem for job %s: %s", job_id, e)
+            # Compensating action: remove partially-created DB row/files to avoid split-brain.
+            try:
+                _run_async(_db_delete_job(job_id, owner_uuid))
+            except Exception as cleanup_error:  # noqa: BLE001
+                logger.error("Failed to rollback DB job %s: %s", job_id, cleanup_error)
+            try:
+                job_dir = self.jobs_dir / job_id
+                if job_dir.exists():
+                    shutil.rmtree(job_dir)
+            except OSError:
+                logger.warning("Failed to cleanup job directory after failure: %s", job_id)
+            raise ValueError(f"Failed to initialize job files: {e}") from e
 
         # Load job info
         job_info = self._load_job_info(job_id)
@@ -804,33 +877,16 @@ class JobManager:
 
     def _db_model_to_job_info(self, job_model: JobModel) -> JobInfo:
         """Convert a database JobModel to JobInfo with real-time progress from KS."""
-        iterations_completed = job_model.current_iteration
-        findings_count = 0
-
         # Load progress from knowledge_state.json for all jobs
         # (database sync may be async and not yet committed)
         ks_path = self.jobs_dir / str(job_model.id) / "knowledge_state.json"
-        if ks_path.exists():
-            try:
-                with open(ks_path, encoding="utf-8") as f:
-                    ks = json.load(f)
-                findings_count = len(ks.get("findings", []))
-                ks_iteration = ks.get("iteration", 1)
-
-                # For running jobs, iteration is the current (in-progress) iteration
-                # so completed = iteration - 1
-                # For completed/failed/cancelled jobs, iteration is the final count
-                if job_model.status in ("running", "awaiting_feedback"):
-                    iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-                else:
-                    iterations_completed = ks_iteration
-            except (
-                OSError,
-                json.JSONDecodeError,
-                KeyError,
-                ValueError,
-            ) as e:
-                logger.warning("Failed to load KS for job %s: %s", job_model.id, e)
+        iterations_completed, findings_count = _load_progress_from_knowledge_state(
+            ks_path=ks_path,
+            status=job_model.status,
+            default_iterations=job_model.current_iteration,
+            default_findings=0,
+            job_id=str(job_model.id),
+        )
 
         return JobInfo.from_db_model(job_model, iterations_completed, findings_count)
 
@@ -862,34 +918,17 @@ class JobManager:
             with open(config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
-            # Get progress from config, then override with knowledge_state.json if available
-            iterations_completed = config.get("iterations_completed", 0)
-            findings_count = config.get("findings_count", 0)
-
-            # Load progress from knowledge_state.json for all jobs
+            # Get progress from config, then override with knowledge_state.json if available.
+            default_iterations = config.get("iterations_completed", 0)
+            default_findings = config.get("findings_count", 0)
             ks_path = self.jobs_dir / job_id / "knowledge_state.json"
-            if ks_path.exists():
-                try:
-                    with open(ks_path, encoding="utf-8") as f:
-                        ks = json.load(f)
-                    # Always get findings count from KS (more accurate than config)
-                    findings_count = len(ks.get("findings", []))
-                    ks_iteration = ks.get("iteration", 1)
-
-                    # For running jobs, iteration is the current (in-progress) iteration
-                    # so completed = iteration - 1
-                    # For completed/failed/cancelled jobs, iteration is the final count
-                    if config["status"] in ("running", "awaiting_feedback"):
-                        iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-                    else:
-                        # Completed/failed/cancelled: use the iteration value directly
-                        iterations_completed = ks_iteration
-                except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
-                    logger.warning(
-                        "Failed to load KS for job %s: %s",
-                        job_id,
-                        e,
-                    )
+            iterations_completed, findings_count = _load_progress_from_knowledge_state(
+                ks_path=ks_path,
+                status=config["status"],
+                default_iterations=default_iterations,
+                default_findings=default_findings,
+                job_id=job_id,
+            )
 
             return JobInfo(
                 job_id=config["job_id"],

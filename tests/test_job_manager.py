@@ -340,3 +340,50 @@ class TestJobManagerCleanup:
         deleted = manager.cleanup_old_jobs(days=7, keep_completed=True)
         assert deleted == 0
         assert (tmp_path / "old_done").exists()
+
+
+class TestJobManagerCreationSafety:
+    """Tests for creation-time safety guards."""
+
+    def test_create_job_blocks_when_budget_limit_exceeded(self, tmp_path):
+        manager = JobManager(jobs_dir=tmp_path)
+        fake_provider = SimpleNamespace(
+            check_budget_limits=lambda: {
+                "can_proceed": False,
+                "errors": ["Provider budget exhausted"],
+            }
+        )
+
+        with (
+            patch.object(manager, "get_job", return_value=None),
+            patch("shandy.job_manager.get_provider", return_value=fake_provider),
+        ):
+            with pytest.raises(ValueError, match="Cannot create job"):
+                manager.create_job(
+                    job_id=str(uuid4()),
+                    research_question="Budget test",
+                    data_files=[],
+                    auto_start=False,
+                )
+
+    def test_create_job_rolls_back_database_when_filesystem_init_fails(self, tmp_path):
+        manager = JobManager(jobs_dir=tmp_path)
+        job_id = str(uuid4())
+        fake_provider = SimpleNamespace(check_budget_limits=lambda: {"can_proceed": True})
+
+        with (
+            patch.object(manager, "get_job", return_value=None),
+            patch("shandy.job_manager.get_provider", return_value=fake_provider),
+            patch("shandy.job_manager._db_create_job", new_callable=AsyncMock),
+            patch("shandy.job_manager._db_delete_job", new_callable=AsyncMock) as mock_db_delete,
+            patch("shandy.job_manager.create_job", side_effect=RuntimeError("disk full")),
+        ):
+            with pytest.raises(ValueError, match="Failed to initialize job files"):
+                manager.create_job(
+                    job_id=job_id,
+                    research_question="Filesystem failure test",
+                    data_files=[],
+                    auto_start=False,
+                )
+
+        assert mock_db_delete.await_count == 1

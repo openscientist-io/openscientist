@@ -5,7 +5,8 @@ Tests actual HTTP requests to API endpoints with mocked authentication.
 """
 
 import uuid
-from unittest.mock import MagicMock, patch
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -552,6 +553,48 @@ class TestJobEndpoints:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_get_job_invalid_uuid_returns_400(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Malformed job IDs should return client errors, not 500s."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                "/api/v1/jobs/not-a-uuid",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 400
+        assert "Invalid job ID format" in response.json()["detail"]
+
+    @pytest.mark.asyncio
     async def test_cannot_access_other_users_job(
         self,
         db_session: AsyncSession,
@@ -718,6 +761,9 @@ class TestJobEndpoints:
         test_api_key_db: tuple[APIKey, str],
     ):
         """Create a new job via API."""
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
         from fastapi import FastAPI
 
         from shandy.api.auth import get_current_user_from_api_key
@@ -739,12 +785,30 @@ class TestJobEndpoints:
         # Mock job manager
         mock_job_manager = MagicMock()
         mock_job_manager.create_job = MagicMock()
+        mock_loaded_job = SimpleNamespace(
+            id=uuid.uuid4(),
+            title="API Created Job",
+            description="Created via REST API",
+            status="pending",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+            max_iterations=10,
+            current_iteration=0,
+            pdb_code=None,
+            space_group=None,
+        )
 
         app.dependency_overrides[get_session] = override_get_session
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+        with (
+            patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager),
+            patch(
+                "shandy.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
+            ) as mock_get_job,
+        ):
+            mock_get_job.return_value = mock_loaded_job
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1366,6 +1430,48 @@ class TestJobSharingEndpoints:
         # Should be 403 forbidden (can see the share but can't revoke it)
         assert response.status_code == 403
 
+    @pytest.mark.asyncio
+    async def test_revoke_share_invalid_uuid_returns_400(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Malformed share IDs should return client errors, not 500s."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.delete(
+                "/api/v1/shares/not-a-uuid",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 400
+        assert "Invalid share_id format" in response.json()["detail"]
+
 
 class TestAuthenticationFlow:
     """Tests for full authentication flow."""
@@ -1409,6 +1515,7 @@ class TestAuthenticationFlow:
         """Non-existent API key returns 401."""
         from fastapi import FastAPI
 
+        from shandy.api import auth as api_auth
         from shandy.api.router import api_router as router
         from shandy.database.session import get_session
 
@@ -1417,16 +1524,20 @@ class TestAuthenticationFlow:
         async def override_get_session():
             yield db_session
 
+        @asynccontextmanager
+        async def override_get_admin_session():
+            yield db_session
+
         app.dependency_overrides[get_session] = override_get_session
         app.include_router(router)
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.get(
-                "/api/v1/jobs",
-                headers={"Authorization": "Bearer nonexistent:wrongsecret"},
-            )
+        with patch.object(api_auth, "get_admin_session", override_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    "/api/v1/jobs",
+                    headers={"Authorization": "Bearer nonexistent:wrongsecret"},
+                )
 
         assert response.status_code == 401
