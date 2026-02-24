@@ -164,7 +164,7 @@ search_pubmed("AlphaFold accuracy p53")
 When you identify important confidence patterns:
 
 ```
-update_knowledge_graph(
+update_knowledge_state(
     title="N-terminal domain shows low AlphaFold confidence",
     evidence="Residues 1-50: avg pLDDT = 45, known disordered region",
     interpretation="N-terminal transactivation domain is intrinsically disordered, explains missing density in crystal structures and high RMSD vs AlphaFold"

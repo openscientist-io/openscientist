@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from shandy.exceptions import ProviderError
 from shandy.settings import get_settings
@@ -22,23 +22,23 @@ class CostInfo:
 
     # Total project spending (all time)
     # None = unknown/unavailable (e.g., permissions error)
-    total_spend_usd: Optional[float]
+    total_spend_usd: float | None
 
     # Recent spending (configurable time window)
     # None = unknown/unavailable (e.g., permissions error)
-    recent_spend_usd: Optional[float]
+    recent_spend_usd: float | None
     recent_period_hours: int  # e.g., 24 for "last 24h"
 
     # Budget tracking (optional - provider-specific)
-    budget_limit_usd: Optional[float] = None
-    budget_remaining_usd: Optional[float] = None
+    budget_limit_usd: float | None = None
+    budget_remaining_usd: float | None = None
 
     # Data freshness
     last_updated: datetime = field(default_factory=datetime.now)
-    data_lag_note: Optional[str] = None  # e.g., "Data current as of 6:35 AM ET"
+    data_lag_note: str | None = None  # e.g., "Data current as of 6:35 AM ET"
 
     # Provider-specific extras
-    key_expires: Optional[str] = None  # CBORG only
+    key_expires: str | None = None  # CBORG only
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -177,8 +177,8 @@ class BaseProvider(ABC):
     async def send_message(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
-        model: Optional[str] = None,
+        system: str | None = None,
+        model: str | None = None,
         max_tokens: int = 4096,
     ) -> str:
         """
@@ -206,8 +206,8 @@ class BaseProvider(ABC):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-        system: Optional[str] = None,
-        model: Optional[str] = None,
+        system: str | None = None,
+        model: str | None = None,
         max_tokens: int = 4096,
     ) -> dict[str, Any]:
         """

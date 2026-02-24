@@ -60,6 +60,6 @@ class TestContainerMonitor:
     def test_default_timeout(self):
         monitor = ContainerMonitor(
             job_id="j1",
-            on_terminal=lambda jid, status: None,
+            on_terminal=lambda _jid, _status: None,
         )
         assert monitor._timeout_hours == 4

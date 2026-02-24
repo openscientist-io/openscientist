@@ -39,7 +39,7 @@ class TestGetCommit:
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("shandy.version.subprocess.run", side_effect=OSError("git not found"))
-    def test_git_fails_returns_unknown(self, mock_run):
+    def test_git_fails_returns_unknown(self, _mock_run):
         result = version_mod.get_commit()
         assert result == "unknown"
 
@@ -48,7 +48,7 @@ class TestGetCommit:
         "shandy.version.subprocess.run",
         side_effect=subprocess.SubprocessError("timeout"),
     )
-    def test_git_subprocess_error_returns_unknown(self, mock_run):
+    def test_git_subprocess_error_returns_unknown(self, _mock_run):
         result = version_mod.get_commit()
         assert result == "unknown"
 

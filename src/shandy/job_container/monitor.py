@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +58,8 @@ class ContainerMonitor:
         """Cancel the monitoring task."""
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         logger.info("ContainerMonitor cancelled for job %s", self._job_id)
 
     async def _run(self) -> None:

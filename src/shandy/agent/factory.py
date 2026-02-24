@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 def get_agent_executor(
     job_dir: Path,
     data_file: Path | None,
-    allowed_tools: list[str] | None,
     system_prompt: str | None,
 ) -> AgentExecutor:
     """
@@ -29,7 +28,6 @@ def get_agent_executor(
     Args:
         job_dir: Path to the job directory
         data_file: Optional path to the primary data file
-        allowed_tools: Unused (kept for call-site compatibility)
         system_prompt: System prompt to use
 
     Returns:

@@ -16,9 +16,14 @@ class TestAnthropicProviderValidation:
         mock_settings.provider.anthropic_api_key = None
         mock_settings.provider.claude_code_oauth_token = None
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
-        with patch("shandy.providers.anthropic.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
-                AnthropicProvider()
+        with (
+            patch("shandy.providers.anthropic.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="ANTHROPIC_API_KEY",
+            ),
+        ):
+            AnthropicProvider()
 
     def test_api_key_present_no_error(self):
         mock_settings = MagicMock()

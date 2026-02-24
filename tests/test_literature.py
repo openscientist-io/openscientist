@@ -92,7 +92,7 @@ class TestSearchPubmed:
 
     @patch("shandy.literature.requests.get")
     @patch("shandy.literature.time.sleep")
-    def test_search_and_fetch(self, mock_sleep, mock_get):
+    def test_search_and_fetch(self, _mock_sleep, mock_get):
         # Mock esearch response
         search_resp = MagicMock()
         search_resp.json.return_value = {"esearchresult": {"idlist": ["12345678"]}}

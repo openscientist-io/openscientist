@@ -124,7 +124,7 @@ execute_code(
 search_pubmed("p53 flexible regions crystal structure")
 
 # 5. Form hypothesis and record
-update_knowledge_graph(
+update_knowledge_state(
     title="Residues 150-180 show high RMSD due to flexible loop",
     evidence="RMSD 3.5 Å in this region, pLDDT < 65, literature confirms flexibility",
     interpretation="This loop is unstructured in apo state but ordered when bound to DNA"

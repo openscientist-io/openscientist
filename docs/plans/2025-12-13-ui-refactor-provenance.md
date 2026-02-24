@@ -298,7 +298,7 @@ jobs/job_xxx/
 
 Tools to update:
 - `search_pubmed(query, max_results, description="")`
-- `update_knowledge_graph(title, evidence, interpretation, description="")`
+- `update_knowledge_state(title, evidence, interpretation, description="")`
 - `save_iteration_summary(summary)` - summary IS the description, no change needed
 - `execute_code(code, description)` - already has it
 
@@ -316,7 +316,7 @@ def get_description(tool_use):
     name = tool_use["name"]
     if "search_pubmed" in name:
         return f"Search: {inp.get('query', '')}"
-    if "update_knowledge_graph" in name:
+    if "update_knowledge_state" in name:
         return f"Finding: {inp.get('title', '')}"
     if "execute_code" in name:
         return "Code execution"
@@ -337,7 +337,7 @@ Benefits:
 |-----------------|-------------|-------|
 | **Visualizations** | Inline with `execute_code` action that created them | Plot shown under the action |
 | **Literature searches** | Inline as `search_pubmed` actions | Query + results together |
-| **Findings** | Inline as `update_knowledge_graph` actions | Agent explicitly records these |
+| **Findings** | Inline as `update_knowledge_state` actions | Agent explicitly records these |
 
 Timeline becomes a unified stream of actions, not separate sections.
 
@@ -363,7 +363,7 @@ Timeline becomes a unified stream of actions, not separate sections.
 |-------|------|--------------|------|
 | `iteration` | Current iteration number | Orchestrator | Incremented between iterations |
 | `analysis_log[]` | `{iteration, action, timestamp, description, success, execution_time, plots}` | MCP tools | After each tool execution |
-| `findings[]` | `{iteration_discovered, title, evidence, interpretation}` | Agent via `update_knowledge_graph` | When agent records a finding |
+| `findings[]` | `{iteration_discovered, title, evidence, interpretation}` | Agent via `update_knowledge_state` | When agent records a finding |
 | `literature[]` | `{retrieved_at_iteration, pmid, title, abstract, search_query}` | `search_pubmed` tool | After each literature search |
 | `iteration_summaries[]` | `{iteration, summary, strapline, created_at}` | Agent via `save_iteration_summary` | End of each iteration |
 | `feedback_history[]` | `{after_iteration, text, submitted_at}` | User via UI | Between iterations (coinvestigate mode) |
@@ -397,7 +397,7 @@ Timeline becomes a unified stream of actions, not separate sections.
    - Rename `knowledge_graph.json` references to `knowledge_state.json`
 2. `src/shandy/code_executor.py` - Save plots to `provenance/` instead of `plots/`
 3. `src/shandy/mcp_server/server.py`:
-   - Add `description` param to `search_pubmed`, `update_knowledge_graph`
+   - Add `description` param to `search_pubmed`, `update_knowledge_state`
    - Add `strapline` param to `save_iteration_summary`
    - Rename `knowledge_graph.json` references to `knowledge_state.json`
 4. `src/shandy/knowledge_graph.py`:
@@ -414,9 +414,9 @@ Timeline becomes a unified stream of actions, not separate sections.
 
 ## Migration Strategy: Clean Break
 
-**Decision:** No backwards compat fallback logic. Instead, migrate all existing jobs with a one-off script.
+**Decision:** No backwards compat fallback logic. Instead, migrate all existing jobs with a one-off bootstrap procedure.
 
-### Migration Script (`scripts/migrate_jobs.py`)
+### Bootstrap Procedure (`python -m shandy.job_manager bootstrap`)
 
 1. **Backup first** - copy jobs/ to jobs_backup/
 2. **For each job:**
@@ -443,7 +443,7 @@ Before deploying:
 
 If something breaks:
 - Restore from jobs_backup/
-- Fix migration script
+- Fix bootstrap procedure
 - Re-run
 
 **Rationale:** Code is already complex. Adding fallback conditionals everywhere makes it worse. Clean migration + thorough testing is safer long-term.
@@ -518,7 +518,7 @@ def parse_stream_json(stdout: str) -> list:
 6. Rename `knowledge_graph` to `knowledge_state` throughout codebase
 
 ### Phase 2: Migration
-7. Write migration script (`scripts/migrate_jobs.py`)
+7. Write bootstrap procedure (`python -m shandy.job_manager bootstrap`)
 8. Test migration on copy of jobs/
 9. Run migration on production jobs/
 
@@ -541,7 +541,7 @@ def parse_stream_json(stdout: str) -> list:
    - Strips ALL large `data` fields (>1000 chars) during parsing - includes images, file contents, etc.
 
 2. ✅ Add `description` param to MCP tools (server.py)
-   - Added to `search_pubmed()` and `update_knowledge_graph()`
+   - Added to `search_pubmed()` and `update_knowledge_state()`
 
 3. ✅ Add `strapline` param to `save_iteration_summary`
    - Updated server.py and knowledge_state.py
@@ -562,7 +562,7 @@ def parse_stream_json(stdout: str) -> list:
 
 ### Phase 2: Migration - ✅ COMPLETE
 
-- Created `scripts/migrate_jobs.py` script
+- Added bootstrap command `python -m shandy.job_manager bootstrap`
 - Migrated 93 existing jobs:
   - Renamed `knowledge_graph.json` → `knowledge_state.json`
   - Renamed `plots/` → `provenance/`

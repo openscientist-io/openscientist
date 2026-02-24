@@ -10,7 +10,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +67,7 @@ class BaseSkillIngester(ABC):
 
     async def close(self) -> None:
         """Optional cleanup method for ingesters with resources."""
+        logger.debug("No ingester resources to close for %s", self.__class__.__name__)
 
 
 @dataclass
@@ -184,10 +185,7 @@ class SkillParser:
             # For generic filenames (SKILL.md, README.md, INDEX.md), use parent directory
             if filename_stem.upper() in ("SKILL", "README", "INDEX"):
                 path_parts = Path(source_path).parts
-                if len(path_parts) >= 2:
-                    slug = path_parts[-2]
-                else:
-                    slug = filename_stem
+                slug = path_parts[-2] if len(path_parts) >= 2 else filename_stem
             else:
                 slug = filename_stem
             # Sanitize slug
@@ -387,7 +385,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         Args:
             session: Database session
             source: SkillSource to sync from
-            **kwargs: Additional arguments (unused)
+            **kwargs: Additional arguments (e.g., force=True)
 
         Returns:
             Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
@@ -408,7 +406,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         # Short-circuit: skip if commit SHA unchanged (unless forced)
         if not force and source.last_commit_sha == commit_sha:
             logger.info("Skipping %s: commit unchanged (%s)", source.name, commit_sha[:12])
-            source.last_synced_at = datetime.now(timezone.utc)
+            source.last_synced_at = datetime.now(UTC)
             source.sync_error = None
             await session.commit()
             return {
@@ -477,7 +475,7 @@ class GitHubSkillIngester(BaseSkillIngester):
                 logger.warning("Error processing %s: %s", file_info["path"], e)
 
         # Update source metadata
-        source.last_synced_at = datetime.now(timezone.utc)
+        source.last_synced_at = datetime.now(UTC)
         source.last_commit_sha = commit_sha
         source.sync_error = None
 
@@ -506,7 +504,7 @@ class LocalSkillIngester(BaseSkillIngester):
         self,
         session: AsyncSession,
         source: SkillSource,
-        **kwargs: Any,
+        **_kwargs: Any,
     ) -> dict[str, int]:
         """
         Sync skills from a local directory source.
@@ -514,7 +512,7 @@ class LocalSkillIngester(BaseSkillIngester):
         Args:
             session: Database session
             source: SkillSource to sync from
-            **kwargs: Additional arguments (unused)
+            **_kwargs: Additional arguments (unused)
 
         Returns:
             Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
@@ -605,7 +603,7 @@ class LocalSkillIngester(BaseSkillIngester):
                 logger.warning("Error processing %s: %s", md_file, e)
 
         # Update source metadata
-        source.last_synced_at = datetime.now(timezone.utc)
+        source.last_synced_at = datetime.now(UTC)
         source.sync_error = None
 
         await session.commit()

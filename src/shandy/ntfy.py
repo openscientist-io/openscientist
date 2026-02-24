@@ -241,7 +241,7 @@ async def notify_job_status_change(
     """
     topic = ntfy_topic
 
-    # Only query database if topic not provided (backward compatibility)
+    # Only query database if topic was not passed by caller.
     if not topic:
         enabled, topic = await get_user_ntfy_settings(user_id)
         if not enabled:

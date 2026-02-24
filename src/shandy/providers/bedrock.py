@@ -6,7 +6,7 @@ Uses AWS Bedrock for model access. Cost tracking via AWS Cost Explorer.
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shandy.providers.base import BaseProvider, CostInfo
@@ -80,9 +80,8 @@ class BedrockProvider(BaseProvider):
             "VERTEX_REGION_CLAUDE_4_5_HAIKU",
         ]
         for var in vertex_vars:
-            if var in os.environ:  # noqa: env-ok
+            if os.environ.pop(var, None) is not None:  # noqa: env-ok
                 logger.debug(f"Removing conflicting {var}")
-                del os.environ[var]  # noqa: env-ok
 
         # Unset direct API key to avoid conflicts
         os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
@@ -98,8 +97,7 @@ class BedrockProvider(BaseProvider):
             "ANTHROPIC_BASE_URL",
         ]
         for var in empty_vars_to_clear:
-            val = os.environ.get(var)  # noqa: env-ok
-            if val == "":
+            if os.environ.get(var) == "":  # noqa: env-ok
                 os.environ.pop(var, None)  # noqa: env-ok
                 logger.debug(f"Unset empty {var}")
 
@@ -119,7 +117,7 @@ class BedrockProvider(BaseProvider):
             Requires AWS Cost Explorer access. Cost data typically has
             a 24-48 hour lag in AWS.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # AWS Cost Explorer requires ce:GetCostAndUsage permission
         # For now, return unavailable status with instructions

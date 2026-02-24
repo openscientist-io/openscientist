@@ -71,10 +71,10 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
     Environment:
         SIMULATE_PROVIDER_ERROR: Set to "true" for E2E testing of error UI
     """
-    import os
+    settings = get_settings()
 
     # Testing hook: simulate provider misconfiguration for E2E tests
-    if os.environ.get("SIMULATE_PROVIDER_ERROR") == "true":  # noqa: env-ok
+    if settings.dev.simulate_provider_error:
         return (
             False,
             "anthropic",
@@ -84,7 +84,6 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
             ],
         )
 
-    settings = get_settings()
     provider_name = settings.provider.claude_provider.lower()
 
     valid_providers = ("anthropic", "cborg", "vertex", "bedrock", "codex", "foundry")
@@ -105,4 +104,4 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
         return (False, provider_name, errors)
 
 
-__all__ = ["get_provider", "check_provider_config", "BaseProvider", "CostInfo"]
+__all__ = ["BaseProvider", "CostInfo", "check_provider_config", "get_provider"]

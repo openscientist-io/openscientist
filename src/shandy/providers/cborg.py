@@ -6,7 +6,7 @@ Uses CBORG API for model access and cost tracking.
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import requests
@@ -98,7 +98,7 @@ class CborgProvider(BaseProvider):
 
         # Get recent spend from /user/daily/activity
         try:
-            end_time = datetime.now(timezone.utc)
+            end_time = datetime.now(UTC)
             start_time = end_time - timedelta(hours=lookback_hours)
 
             activity_response = requests.get(
@@ -135,7 +135,7 @@ class CborgProvider(BaseProvider):
             recent_period_hours=lookback_hours,
             budget_limit_usd=max_budget,
             budget_remaining_usd=budget_remaining,
-            last_updated=datetime.now(timezone.utc),
+            last_updated=datetime.now(UTC),
             key_expires=key_expires,
         )
 

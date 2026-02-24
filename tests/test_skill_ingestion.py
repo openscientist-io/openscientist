@@ -354,7 +354,7 @@ tags:
 Access PubChem compound data.
 """
 
-        def mock_get_response(url, **kwargs):
+        def mock_get_response(url, **_kwargs):
             """Return appropriate mock response based on URL."""
             response = MagicMock()
             response.raise_for_status = MagicMock()
@@ -482,7 +482,7 @@ Access PubChem compound data.
 
         mock_tree: dict[str, list[str]] = {"tree": []}  # Empty tree, no skill files
 
-        def mock_get_response(url, **kwargs):
+        def mock_get_response(url, **_kwargs):
             response = MagicMock()
             response.raise_for_status = MagicMock()
             if "commits" in url:
@@ -527,7 +527,7 @@ Access PubChem compound data.
 
         mock_tree: dict[str, list[str]] = {"tree": []}  # Empty tree, no skill files
 
-        def mock_get_response(url, **kwargs):
+        def mock_get_response(url, **_kwargs):
             response = MagicMock()
             response.raise_for_status = MagicMock()
             if "commits" in url:

@@ -1,7 +1,7 @@
 """Tests for providers factory and base provider."""
 
 import os
-from typing import Any, List, Optional
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -19,25 +19,26 @@ class StubProvider(BaseProvider):
 
     def __init__(
         self,
-        cost_info: Optional[CostInfo] = None,
-        required_errors: Optional[List[str]] = None,
-        optional_warnings: Optional[List[str]] = None,
+        cost_info: CostInfo | None = None,
+        required_errors: list[str] | None = None,
+        optional_warnings: list[str] | None = None,
     ):
         self._cost_info = cost_info
         self._required_errors = required_errors or []
         self._optional_warnings = optional_warnings or []
         super().__init__()
 
-    def _validate_required_config(self) -> List[str]:
+    def _validate_required_config(self) -> list[str]:
         return self._required_errors
 
-    def _validate_optional_config(self) -> List[str]:
+    def _validate_optional_config(self) -> list[str]:
         return self._optional_warnings
 
     def setup_environment(self) -> None:
         pass
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
+        _ = lookback_hours
         if self._cost_info is None:
             raise ProviderError("No cost info configured")
         return self._cost_info
@@ -144,7 +145,7 @@ class TestGetProvider:
                 monkeypatch.delenv(key, raising=False)
 
         # No ANTHROPIC_API_KEY → AnthropicProvider.__init__ raises.
-        with pytest.raises(ValueError, match="Anthropic|ANTHROPIC_API_KEY"):
+        with pytest.raises(ValueError, match=r"Anthropic|ANTHROPIC_API_KEY"):
             get_provider()
 
 

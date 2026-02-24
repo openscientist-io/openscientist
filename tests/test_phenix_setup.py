@@ -19,10 +19,15 @@ class TestValidatePhenixPath:
 
     def test_absolute_path_valid(self):
         """Absolute path passes basic validation (existence checked separately)."""
-        with patch("shandy.phenix_setup.os.path.exists", return_value=True):
-            with patch("shandy.phenix_setup.os.path.isdir", return_value=True):
-                errors = validate_phenix_path("/opt/phenix")
-                assert errors == []
+        with (
+            patch("shandy.phenix_setup.os.path.exists", return_value=True),
+            patch(
+                "shandy.phenix_setup.os.path.isdir",
+                return_value=True,
+            ),
+        ):
+            errors = validate_phenix_path("/opt/phenix")
+            assert errors == []
 
     def test_relative_path_rejected(self):
         """Relative paths must be rejected."""
@@ -39,11 +44,16 @@ class TestValidatePhenixPath:
 
     def test_path_traversal_rejected(self):
         """Paths with .. must be rejected."""
-        with patch("shandy.phenix_setup.os.path.exists", return_value=True):
-            with patch("shandy.phenix_setup.os.path.isdir", return_value=True):
-                errors = validate_phenix_path("/opt/../etc/phenix")
-                assert len(errors) == 1
-                assert "path traversal" in errors[0]
+        with (
+            patch("shandy.phenix_setup.os.path.exists", return_value=True),
+            patch(
+                "shandy.phenix_setup.os.path.isdir",
+                return_value=True,
+            ),
+        ):
+            errors = validate_phenix_path("/opt/../etc/phenix")
+            assert len(errors) == 1
+            assert "path traversal" in errors[0]
 
     def test_nonexistent_path_rejected(self):
         """Non-existent paths must be rejected with helpful message."""
@@ -54,11 +64,16 @@ class TestValidatePhenixPath:
 
     def test_file_instead_of_directory_rejected(self):
         """Files (not directories) must be rejected."""
-        with patch("shandy.phenix_setup.os.path.exists", return_value=True):
-            with patch("shandy.phenix_setup.os.path.isdir", return_value=False):
-                errors = validate_phenix_path("/opt/phenix.tar.gz")
-                assert len(errors) == 1
-                assert "directory" in errors[0]
+        with (
+            patch("shandy.phenix_setup.os.path.exists", return_value=True),
+            patch(
+                "shandy.phenix_setup.os.path.isdir",
+                return_value=False,
+            ),
+        ):
+            errors = validate_phenix_path("/opt/phenix.tar.gz")
+            assert len(errors) == 1
+            assert "directory" in errors[0]
 
 
 class TestSetupPhenixEnv:

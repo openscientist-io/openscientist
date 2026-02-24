@@ -5,13 +5,13 @@ Proactive literature integration to inform hypothesis generation.
 """
 
 import time
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
 
 def search_pubmed(
-    query: str, max_results: int = 10, email: Optional[str] = None
+    query: str, max_results: int = 10, email: str | None = None
 ) -> list[dict[str, Any]]:
     """
     Search PubMed and return relevant papers.
@@ -67,9 +67,7 @@ def search_pubmed(
     fetch_response.raise_for_status()
 
     # Parse XML response (simplified - in production use proper XML parser)
-    papers = _parse_pubmed_xml(fetch_response.text, pmids)
-
-    return papers
+    return _parse_pubmed_xml(fetch_response.text, pmids)
 
 
 def _parse_pubmed_xml(xml_text: str, pmids: list[str]) -> list[dict[str, Any]]:
@@ -131,13 +129,13 @@ def _parse_pubmed_xml(xml_text: str, pmids: list[str]) -> list[dict[str, Any]]:
 
         return papers
 
-    except Exception as e:  # noqa: BLE001 — xml.etree can raise diverse C-level errors
+    except Exception as e:
         # Fallback: return minimal info
         return [
             {
                 "pmid": pmid,
                 "title": "Error parsing paper",
-                "abstract": f"Could not parse XML: {str(e)}",
+                "abstract": f"Could not parse XML: {e!s}",
                 "authors": "",
                 "year": "",
             }
@@ -160,9 +158,9 @@ def format_literature_for_prompt(papers: list[dict[str, Any]], max_papers: int =
         return "No literature references yet."
 
     lines = ["## Relevant Literature\n"]
-    for paper in papers[:max_papers]:
-        lines.append(
-            f"- **PMID {paper['pmid']}** ({paper.get('year', 'N/A')}): {paper['title'][:100]}..."
-        )
+    lines.extend(
+        f"- **PMID {paper['pmid']}** ({paper.get('year', 'N/A')}): {paper['title'][:100]}..."
+        for paper in papers[:max_papers]
+    )
 
     return "\n".join(lines)

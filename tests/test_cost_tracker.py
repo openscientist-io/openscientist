@@ -59,9 +59,14 @@ class TestTrackJobCost:
     @patch("shandy.cost_tracker.get_cborg_spend")
     def test_exceeds_budget_raises(self, mock_spend):
         mock_spend.return_value = 100.0
-        with patch.dict(os.environ, {"MAX_JOB_COST_USD": "10.0"}):
-            with pytest.raises(BudgetExceededError, match="exceeds limit"):
-                track_job_cost("j1", start_spend=0.0)
+        with (
+            patch.dict(os.environ, {"MAX_JOB_COST_USD": "10.0"}),
+            pytest.raises(
+                BudgetExceededError,
+                match="exceeds limit",
+            ),
+        ):
+            track_job_cost("j1", start_spend=0.0)
 
     @patch("shandy.cost_tracker.get_cborg_spend")
     def test_within_budget_no_error(self, mock_spend):
@@ -78,9 +83,14 @@ class TestGetCborgSpend:
         # Mock get_settings so .env file values don't leak in
         mock_settings = MagicMock()
         mock_settings.provider.anthropic_auth_token = None
-        with patch("shandy.cost_tracker.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="ANTHROPIC_AUTH_TOKEN"):
-                get_cborg_spend()
+        with (
+            patch("shandy.cost_tracker.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="ANTHROPIC_AUTH_TOKEN",
+            ),
+        ):
+            get_cborg_spend()
 
     @patch("shandy.cost_tracker.requests.get")
     def test_returns_spend(self, mock_get):

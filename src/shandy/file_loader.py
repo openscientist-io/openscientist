@@ -6,7 +6,7 @@ Handles multiple file formats with validation and magic number detection.
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -78,7 +78,7 @@ IMAGE_EXTENSIONS = {
 }
 
 
-# Re-exported from shandy.exceptions for backward compatibility
+# Re-exported from shandy.exceptions for convenience at this import path
 __all__ = ["FileTooBigError", "UnsupportedFileTypeError"]
 
 
@@ -206,7 +206,7 @@ def load_tabular_file(file_path: Path) -> pd.DataFrame:
         raise FileLoadError(f"Could not parse {file_path.name} as {extension}: {e}") from e
 
 
-def load_data_file(file_path: Path) -> Optional[pd.DataFrame]:
+def load_data_file(file_path: Path) -> pd.DataFrame | None:
     """
     Load data file, returning DataFrame for tabular data or None for other types.
 
@@ -303,14 +303,15 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
         ".cif": ["text/plain", "chemical/x-cif"],
     }
 
-    if extension in expected_mimes:
-        if not any(exp in mime_type for exp in expected_mimes[extension]):
-            logger.warning(
-                "File extension %s doesn't match detected type %s. "
-                "Proceeding anyway, but this may indicate file corruption.",
-                extension,
-                mime_type,
-            )
+    if extension in expected_mimes and not any(
+        exp in mime_type for exp in expected_mimes[extension]
+    ):
+        logger.warning(
+            "File extension %s doesn't match detected type %s. "
+            "Proceeding anyway, but this may indicate file corruption.",
+            extension,
+            mime_type,
+        )
 
     logger.info(
         "File validation passed: %s (%s, %d bytes)",

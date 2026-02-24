@@ -79,7 +79,7 @@ if phenix_path:
     phenix_tools.register_tools(server)
 ```
 
-**Keep existing tools** - `execute_code`, `search_pubmed`, `update_knowledge_graph` remain available and useful for structural biology.
+**Keep existing tools** - `execute_code`, `search_pubmed`, `update_knowledge_state` remain available and useful for structural biology.
 
 #### 2. Skills
 
@@ -166,7 +166,7 @@ Job runs for N iterations (e.g., 10) with full autonomy. The agent decides what 
 - `parse_alphafold_confidence` - Extract pLDDT/PAE data
 - `execute_code` - Python analysis and visualization
 - `search_pubmed` - Literature search
-- `update_knowledge_graph` - Record findings
+- `update_knowledge_state` - Record findings
 
 **Skills provide domain knowledge:**
 - How to use Phenix validation tools

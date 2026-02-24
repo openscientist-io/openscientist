@@ -10,13 +10,28 @@ import json
 import logging
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from shandy.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _container_error_result(
+    *,
+    error: str,
+    output: str = "",
+    execution_time: float = 0.0,
+) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": error,
+        "output": output,
+        "plots": [],
+        "execution_time": execution_time,
+    }
 
 
 class ContainerManager:
@@ -62,6 +77,72 @@ class ContainerManager:
             self._client = docker.from_env()
         return self._client
 
+    def _encode_executor_input(
+        self,
+        *,
+        code: str,
+        language: str,
+        data_path: str | None,
+        timeout: int,
+        description: str,
+        iteration: int,
+        data_files: list[dict[str, Any]] | None,
+    ) -> str:
+        input_data = {
+            "code": code,
+            "language": language,
+            "data_path": data_path,
+            "output_dir": "/output",
+            "timeout": timeout,
+            "description": description,
+            "iteration": iteration,
+            "data_files": data_files or [],
+        }
+        input_json = json.dumps(input_data)
+        return base64.b64encode(input_json.encode()).decode()
+
+    def _build_volumes(
+        self,
+        *,
+        output_dir: Path,
+        data_files: list[dict[str, Any]] | None,
+    ) -> dict[str, dict[str, str]]:
+        volumes: dict[str, dict[str, str]] = {
+            str(output_dir): {"bind": "/output", "mode": "rw"},
+        }
+        if not data_files:
+            return volumes
+
+        for file_info in data_files:
+            file_path = Path(file_info.get("path", "")).resolve()
+            if not file_path.exists():
+                continue
+            volumes[str(file_path.parent)] = {"bind": "/data", "mode": "ro"}
+            break
+
+        return volumes
+
+    def _parse_executor_result(self, result: bytes | str) -> dict[str, Any]:
+        if isinstance(result, bytes):
+            result = result.decode("utf-8")
+        try:
+            parsed: dict[str, Any] = json.loads(result)
+            return parsed
+        except json.JSONDecodeError as e:
+            return _container_error_result(
+                error=f"Failed to parse executor output: {e}",
+                output=result[:1000],
+            )
+
+    def _cleanup_container_by_name(self, container_name: str) -> None:
+        import docker.errors
+
+        try:
+            container = self.client.containers.get(container_name)
+            container.remove(force=True)
+        except docker.errors.NotFound:
+            return
+
     def execute_code(
         self,
         code: str,
@@ -97,37 +178,20 @@ class ContainerManager:
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Prepare input JSON and encode as base64 to avoid shell quoting issues
-        # (JSON may contain single quotes in Python code that break shell escaping)
-        input_data = {
-            "code": code,
-            "language": language,
-            "data_path": data_path,
-            "output_dir": "/output",
-            "timeout": timeout,
-            "description": description,
-            "iteration": iteration,
-            "data_files": data_files or [],
-        }
-        input_json = json.dumps(input_data)
-        input_b64 = base64.b64encode(input_json.encode()).decode()
+        input_b64 = self._encode_executor_input(
+            code=code,
+            language=language,
+            data_path=data_path,
+            timeout=timeout,
+            description=description,
+            iteration=iteration,
+            data_files=data_files,
+        )
 
         # Container name includes job_id for cleanup
         container_name = f"shandy-exec-{job_id}-{os.urandom(4).hex()}"
 
-        # Volume mounts
-        volumes = {
-            str(output_dir): {"bind": "/output", "mode": "rw"},
-        }
-
-        # Add data directory mount if data files exist
-        if data_files:
-            for file_info in data_files:
-                file_path = Path(file_info.get("path", "")).resolve()
-                if file_path.exists():
-                    parent = file_path.parent
-                    volumes[str(parent)] = {"bind": "/data", "mode": "ro"}
-                    break
+        volumes = self._build_volumes(output_dir=output_dir, data_files=data_files)
 
         logger.info(
             "Spawning executor container: %s (image=%s, mem=%s, cpu=%.2f)",
@@ -172,27 +236,8 @@ class ContainerManager:
                 ],
             )
 
-            # Parse result
-            if isinstance(result, bytes):
-                result = result.decode("utf-8")
-
-            try:
-                execution_result: dict[str, Any] = json.loads(result)
-            except json.JSONDecodeError as e:
-                execution_result = {
-                    "success": False,
-                    "error": f"Failed to parse executor output: {e}",
-                    "output": result[:1000],
-                    "plots": [],
-                    "execution_time": 0.0,
-                }
-
-            # Cleanup container
-            try:
-                container = self.client.containers.get(container_name)
-                container.remove(force=True)
-            except docker.errors.NotFound:
-                pass
+            execution_result = self._parse_executor_result(result)
+            self._cleanup_container_by_name(container_name)
 
             logger.info(
                 "Executor container %s completed: success=%s, time=%.2fs",
@@ -214,46 +259,29 @@ class ContainerManager:
             except docker.errors.NotFound:
                 logs = str(e)
 
-            return {
-                "success": False,
-                "error": f"Container execution failed: {e}",
-                "output": logs[:2000],
-                "plots": [],
-                "execution_time": 0.0,
-            }
+            return _container_error_result(
+                error=f"Container execution failed: {e}",
+                output=logs[:2000],
+            )
 
         except docker.errors.ImageNotFound:
             logger.error("Executor image not found: %s", self.image)
-            return {
-                "success": False,
-                "error": (
+            return _container_error_result(
+                error=(
                     f"Executor image not found: {self.image}. "
                     "Run 'make build-executor' to build it."
                 ),
-                "output": "",
-                "plots": [],
-                "execution_time": 0.0,
-            }
+            )
 
         except docker.errors.APIError as e:
             logger.error("Docker API error: %s", e)
-            return {
-                "success": False,
-                "error": f"Docker API error: {e}",
-                "output": "",
-                "plots": [],
-                "execution_time": 0.0,
-            }
+            return _container_error_result(error=f"Docker API error: {e}")
 
-        except Exception as e:  # noqa: BLE001 — catch all Docker issues
+        except Exception as e:
             logger.error("Unexpected error in container execution: %s", e)
-            return {
-                "success": False,
-                "error": f"Container execution error: {type(e).__name__}: {e}",
-                "output": "",
-                "plots": [],
-                "execution_time": 0.0,
-            }
+            return _container_error_result(
+                error=f"Container execution error: {type(e).__name__}: {e}",
+            )
 
     def cleanup_job_containers(self, job_id: str) -> int:
         """
@@ -306,7 +334,7 @@ class ContainerManager:
                 filters={"label": "shandy.type=executor"},
             )
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             for container in containers:
                 try:
@@ -364,7 +392,7 @@ class ContainerManager:
         try:
             self.client.ping()
             return True
-        except Exception:  # noqa: BLE001 — broad catch for any Docker issue
+        except Exception:
             return False
 
 

@@ -26,6 +26,8 @@ from shandy.database.session import get_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/keys", tags=["API Keys"])
+CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
+SESSION_DEP = Depends(get_session)
 
 
 # Pydantic models for request/response
@@ -70,8 +72,8 @@ class APIKeyListResponse(BaseModel):
 @router.post("", response_model=APIKeyCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     key_data: APIKeyCreate,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> APIKeyCreateResponse:
     """
     Create a new API key for the authenticated user.
@@ -136,8 +138,8 @@ async def create_api_key(
 
 @router.get("", response_model=APIKeyListResponse)
 async def list_api_keys(
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> APIKeyListResponse:
     """
     List all API keys for the authenticated user.
@@ -168,8 +170,8 @@ async def list_api_keys(
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: UUID,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ):
     """
     Revoke (deactivate) an API key.

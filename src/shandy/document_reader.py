@@ -7,7 +7,6 @@ be read directly by Claude's Read tool without returning garbled content.
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import fitz  # type: ignore[import-untyped]  # PyMuPDF
 import openpyxl
@@ -56,7 +55,7 @@ def is_text_file(file_path: Path) -> bool:
     return file_path.suffix.lower() in TEXT_EXTENSIONS
 
 
-def extract_text_from_pdf(file_path: Path, max_pages: Optional[int] = None) -> tuple[str, dict]:
+def extract_text_from_pdf(file_path: Path, max_pages: int | None = None) -> tuple[str, dict]:
     """
     Extract text from a PDF file using PyMuPDF.
 
@@ -75,7 +74,7 @@ def extract_text_from_pdf(file_path: Path, max_pages: Optional[int] = None) -> t
         "author": doc.metadata.get("author") or "",
     }
 
-    text_parts = []
+    text_parts: list[str] = []
     pages_to_extract = min(len(doc), max_pages) if max_pages else len(doc)
 
     for page_num in range(pages_to_extract):
@@ -121,10 +120,8 @@ def extract_text_from_docx(file_path: Path) -> tuple[str, dict]:
         pass
 
     # Extract text from paragraphs
-    text_parts = []
-    for para in doc.paragraphs:
-        if para.text.strip():
-            text_parts.append(para.text)
+    text_parts: list[str] = []
+    text_parts.extend(para.text for para in doc.paragraphs if para.text.strip())
 
     # Also extract text from tables
     for table in doc.tables:

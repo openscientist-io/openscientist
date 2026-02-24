@@ -73,7 +73,7 @@ Design additional analyses to support or refute your hypothesis.
 ### 7. Record Finding
 
 ```
-update_knowledge_graph(
+update_knowledge_state(
     title="[Concise description of discrepancy and cause]",
     evidence="[Quantitative data supporting your conclusion]",
     interpretation="[Biological meaning]"
@@ -271,7 +271,7 @@ search_pubmed("p53 DNA binding conformational change")
 # Result: Multiple papers confirm loop ordering upon DNA binding
 
 # 7. Record finding
-update_knowledge_graph(
+update_knowledge_state(
     title="Residues 150-165 show conformational change upon DNA binding",
     evidence="RMSD 4.5 Å in loop, pLDDT 62, experimental structure DNA-bound",
     interpretation="DNA-binding loop is flexible in apo state (AlphaFold) but becomes ordered when bound to DNA (3ts8). This is expected and biologically relevant."

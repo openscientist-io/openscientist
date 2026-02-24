@@ -6,7 +6,7 @@ Uses Vertex AI for model access and GCP Billing API for cost tracking.
 
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shandy.exceptions import ProviderError
@@ -112,7 +112,7 @@ class VertexProvider(BaseProvider):
         bq_client = bigquery.Client(credentials=credentials, project=project_id)
 
         # Calculate time windows
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_start = now - timedelta(hours=lookback_hours)
 
         # BigQuery billing export table name
@@ -151,7 +151,7 @@ class VertexProvider(BaseProvider):
             lag_time = now - timedelta(hours=3)
             data_lag_note = f"Data current as of ~{lag_time.strftime('%I:%M %p %Z')}"
 
-        except Exception as e:  # noqa: BLE001 — google-cloud exceptions are dynamic
+        except Exception as e:
             logger.warning("Could not fetch Vertex AI billing data: %s", e)
             logger.warning(
                 "Ensure BigQuery billing export is enabled in GCP Console. "

@@ -86,12 +86,12 @@ class TestMarkdownToPdf:
         mock_pdf.add_shandy_footer.assert_not_called()
 
     @patch("shandy.pdf_generator.ReportPDF")
-    def test_default_pdf_path(self, mock_pdf_cls, sample_md):
+    def test_default_pdf_path(self, _mock_pdf_cls, sample_md):
         result = markdown_to_pdf(sample_md)
         assert result == sample_md.with_suffix(".pdf")
 
     @patch("shandy.pdf_generator.ReportPDF")
-    def test_custom_pdf_path(self, mock_pdf_cls, sample_md, tmp_path):
+    def test_custom_pdf_path(self, _mock_pdf_cls, sample_md, tmp_path):
         custom = tmp_path / "custom_name.pdf"
         result = markdown_to_pdf(sample_md, pdf_path=custom)
         assert result == custom

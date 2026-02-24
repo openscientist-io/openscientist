@@ -7,13 +7,14 @@ to research questions.
 
 import logging
 from datetime import datetime
-from typing import Any, Optional, TypedDict
+from typing import TypedDict
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from shandy.api.auth import get_current_user_from_api_key
 from shandy.database.models import Skill, SkillSource, User
@@ -23,6 +24,12 @@ from shandy.database.session import get_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/skills", tags=["Skills"])
+CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
+SESSION_DEP = Depends(get_session)
+SKILL_TAGS_QUERY = Query(
+    None,
+    description="Filter by tags (skills must have all specified tags)",
+)
 
 
 # Pydantic models for request/response
@@ -33,7 +40,7 @@ class SkillResponse(BaseModel):
     name: str = Field(..., description="Skill name")
     slug: str = Field(..., description="URL-friendly identifier")
     category: str = Field(..., description="Skill category")
-    description: Optional[str] = Field(None, description="Brief description")
+    description: str | None = Field(None, description="Brief description")
     tags: list[str] = Field(default_factory=list, description="Skill tags")
     is_enabled: bool = Field(..., description="Whether skill is enabled")
     version: int = Field(..., description="Skill version")
@@ -45,7 +52,7 @@ class SkillDetailResponse(SkillResponse):
     """Detailed response for a skill including full content."""
 
     content: str = Field(..., description="Full markdown content")
-    source_path: Optional[str] = Field(None, description="Source path")
+    source_path: str | None = Field(None, description="Source path")
 
 
 class SkillListResponse(BaseModel):
@@ -67,11 +74,11 @@ class SkillSourceResponse(BaseModel):
     id: str = Field(..., description="Source ID")
     name: str = Field(..., description="Source name")
     source_type: str = Field(..., description="Source type (github/local)")
-    url: Optional[str] = Field(None, description="Source URL")
+    url: str | None = Field(None, description="Source URL")
     branch: str = Field(..., description="Git branch")
     is_enabled: bool = Field(..., description="Whether source is enabled")
-    last_synced_at: Optional[datetime] = Field(None, description="Last sync timestamp")
-    sync_error: Optional[str] = Field(None, description="Last sync error")
+    last_synced_at: datetime | None = Field(None, description="Last sync timestamp")
+    sync_error: str | None = Field(None, description="Last sync error")
 
 
 class _SkillResponseFields(TypedDict):
@@ -79,7 +86,7 @@ class _SkillResponseFields(TypedDict):
     name: str
     slug: str
     category: str
-    description: Optional[str]
+    description: str | None
     tags: list[str]
     is_enabled: bool
     version: int
@@ -117,33 +124,29 @@ def _skill_to_detail_response(skill: Skill) -> SkillDetailResponse:
     )
 
 
-def _build_skill_filters(category: Optional[str], tags: Optional[list[str]]) -> list[Any]:
+def _build_skill_filters(category: str | None, tags: list[str] | None) -> list[ColumnElement[bool]]:
     """Build common WHERE conditions for skill list queries."""
-    conditions = [Skill.is_enabled == True]  # noqa: E712
+    conditions: list[ColumnElement[bool]] = [Skill.is_enabled.is_(True)]
     if category:
         conditions.append(Skill.category == category)
     if tags:
-        for tag in tags:
-            conditions.append(Skill.tags.contains([tag]))
+        conditions.extend(Skill.tags.contains([tag]) for tag in tags)
     return conditions
 
 
 @router.get("", response_model=SkillListResponse)
 async def list_skills(
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
-    category: Optional[str] = Query(
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+    category: str | None = Query(
         None,
         description="Filter by category",
     ),
-    search: Optional[str] = Query(
+    search: str | None = Query(
         None,
         description="Full-text search query",
     ),
-    tags: Optional[list[str]] = Query(
-        None,
-        description="Filter by tags (skills must have all specified tags)",
-    ),
+    tags: list[str] | None = SKILL_TAGS_QUERY,
     offset: int = Query(0, ge=0, description="Pagination offset"),
     limit: int = Query(50, ge=1, le=100, description="Pagination limit"),
 ) -> SkillListResponse:
@@ -200,8 +203,8 @@ async def list_skills(
 
 @router.get("/categories", response_model=CategoryListResponse)
 async def list_categories(
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> CategoryListResponse:
     """
     List all skill categories.
@@ -212,10 +215,7 @@ async def list_categories(
 
     # Get unique categories from enabled skills
     stmt = (
-        select(Skill.category)
-        .where(Skill.is_enabled == True)  # noqa: E712
-        .distinct()
-        .order_by(Skill.category)
+        select(Skill.category).where(Skill.is_enabled.is_(True)).distinct().order_by(Skill.category)
     )
     result = await session.execute(stmt)
     categories = [row[0] for row in result.all()]
@@ -226,8 +226,8 @@ async def list_categories(
 @router.get("/{skill_id:uuid}", response_model=SkillDetailResponse)
 async def get_skill(
     skill_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> SkillDetailResponse:
     """
     Get a skill by ID.
@@ -246,7 +246,7 @@ async def get_skill(
 
     stmt = select(Skill).where(
         Skill.id == skill_uuid,
-        Skill.is_enabled == True,  # noqa: E712
+        Skill.is_enabled.is_(True),
     )
     result = await session.execute(stmt)
     skill = result.scalar_one_or_none()
@@ -264,8 +264,8 @@ async def get_skill(
 async def get_skill_by_slug(
     category: str,
     slug: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> SkillDetailResponse:
     """
     Get a skill by category and slug.
@@ -277,7 +277,7 @@ async def get_skill_by_slug(
     stmt = select(Skill).where(
         Skill.category == category,
         Skill.slug == slug,
-        Skill.is_enabled == True,  # noqa: E712
+        Skill.is_enabled.is_(True),
     )
     result = await session.execute(stmt)
     skill = result.scalar_one_or_none()
@@ -305,11 +305,11 @@ class SkillSourceCreate(BaseModel):
         pattern="^(github|local)$",
         description="Source type: 'github' or 'local'",
     )
-    url: Optional[str] = Field(
+    url: str | None = Field(
         None,
         description="GitHub repository URL (required for github type)",
     )
-    path: Optional[str] = Field(
+    path: str | None = Field(
         None,
         description="Local filesystem path (required for local type)",
     )
@@ -340,7 +340,7 @@ class SyncTriggerResponse(BaseModel):
     updated: int = Field(0, description="Skills updated")
     unchanged: int = Field(0, description="Skills unchanged")
     errors: int = Field(0, description="Errors encountered")
-    error_message: Optional[str] = Field(None, description="Error message if failed")
+    error_message: str | None = Field(None, description="Error message if failed")
 
 
 def _source_to_response(source: SkillSource) -> SkillSourceResponse:
@@ -359,8 +359,8 @@ def _source_to_response(source: SkillSource) -> SkillSourceResponse:
 
 @router.get("/sources", response_model=SkillSourceListResponse)
 async def list_skill_sources(
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> SkillSourceListResponse:
     """
     List all skill sources.
@@ -383,8 +383,8 @@ async def list_skill_sources(
 @router.post("/sources", response_model=SkillSourceResponse, status_code=status.HTTP_201_CREATED)
 async def create_skill_source(
     source_data: SkillSourceCreate,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> SkillSourceResponse:
     """
     Create a new skill source.
@@ -426,8 +426,8 @@ async def create_skill_source(
 @router.post("/sources/{source_id}/sync", response_model=SyncTriggerResponse)
 async def sync_skill_source_endpoint(
     source_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> SyncTriggerResponse:
     """
     Manually trigger a sync for a skill source.
@@ -479,8 +479,8 @@ async def sync_skill_source_endpoint(
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_skill_source(
     source_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> None:
     """
     Delete a skill source.

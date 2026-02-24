@@ -4,7 +4,7 @@ Tests for REST API endpoints.
 Tests job management, authentication, and API key functionality.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -243,7 +243,7 @@ async def test_api_key_last_used_update(db_session: AsyncSession, test_user: Use
     assert api_key.last_used_at is None
 
     # Update last_used_at
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     api_key.last_used_at = now
     await db_session.commit()
     await db_session.refresh(api_key)
@@ -368,8 +368,9 @@ async def test_api_key_wrong_secret(
     test_api_key_with_secret: tuple,
 ):
     """Test that wrong secret doesn't authenticate."""
+    _ = (db_session, test_user)
     api_key, full_key = test_api_key_with_secret
-    name, correct_secret = full_key.split(":")
+    _name, correct_secret = full_key.split(":")
 
     # Try with wrong secret
     wrong_secret = "wrong_secret_xyz"

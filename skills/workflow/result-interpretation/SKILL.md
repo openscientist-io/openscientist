@@ -29,7 +29,7 @@ category: workflow
 
 2. **Record the finding**
    ```
-   update_knowledge_graph(
+   update_knowledge_state(
        title="Clear, descriptive title",
        evidence="Statistical details: p-value, effect size, confidence interval",
        interpretation="Biological meaning"

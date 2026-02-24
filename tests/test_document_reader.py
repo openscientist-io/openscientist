@@ -115,7 +115,7 @@ class TestDocxExtraction:
         assert metadata["paragraphs"] >= 3
 
     def test_extract_text_from_docx_includes_tables(self, sample_docx):
-        text, metadata = extract_text_from_docx(sample_docx)
+        text, _metadata = extract_text_from_docx(sample_docx)
 
         assert "Header 1" in text
         assert "Value 1" in text
@@ -161,7 +161,7 @@ class TestXlsxExtraction:
         assert "Summary" in metadata["sheets"]
 
     def test_extract_text_from_xlsx_multiple_sheets(self, sample_xlsx):
-        text, metadata = extract_text_from_xlsx(sample_xlsx)
+        text, _metadata = extract_text_from_xlsx(sample_xlsx)
 
         assert "Sheet: Data" in text
         assert "Sheet: Summary" in text
@@ -261,7 +261,7 @@ class TestEdgeCases:
         doc.save(pdf_path)
         doc.close()
 
-        text, metadata = extract_text_from_pdf(pdf_path)
+        _text, metadata = extract_text_from_pdf(pdf_path)
 
         assert metadata["pages"] == 1
         # Text might be empty or minimal
@@ -274,6 +274,6 @@ class TestEdgeCases:
         doc = Document()
         doc.save(docx_path)
 
-        text, metadata = extract_text_from_docx(docx_path)
+        _text, metadata = extract_text_from_docx(docx_path)
 
         assert metadata["format"] == "docx"

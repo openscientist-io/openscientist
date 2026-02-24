@@ -7,9 +7,9 @@ Uses caching based on commit SHA to avoid redundant syncs.
 
 import asyncio
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +39,7 @@ class SyncResult:
     updated: int = 0
     unchanged: int = 0
     errors: int = 0
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 class SkillSyncScheduler:
@@ -57,7 +57,7 @@ class SkillSyncScheduler:
     def __init__(
         self,
         sync_interval: int = DEFAULT_SYNC_INTERVAL_SECONDS,
-        github_token: Optional[str] = None,
+        github_token: str | None = None,
     ):
         """
         Initialize the scheduler.
@@ -68,7 +68,7 @@ class SkillSyncScheduler:
         """
         self.sync_interval = sync_interval
         self.github_token = github_token or get_settings().provider.github_token
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running = False
         self._last_sync: dict[str, datetime] = {}  # source_id -> last sync time
 
@@ -90,10 +90,8 @@ class SkillSyncScheduler:
         self._running = False
         if self._task:
             self._task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
         logger.info("Skill sync scheduler stopped")
 
@@ -157,7 +155,7 @@ class SkillSyncScheduler:
         session: AsyncSession,
         source: SkillSource,
         force: bool = False,
-    ) -> Optional[SyncResult]:
+    ) -> SyncResult | None:
         """
         Sync a source if it needs syncing.
 
@@ -179,7 +177,7 @@ class SkillSyncScheduler:
             # In-memory rate limiting check
             last_sync = self._last_sync.get(source_id_str)
             if last_sync:
-                elapsed = (datetime.now(timezone.utc) - last_sync).total_seconds()
+                elapsed = (datetime.now(UTC) - last_sync).total_seconds()
                 if elapsed < MIN_SYNC_INTERVAL_SECONDS:
                     logger.debug(
                         "Skipping %s (synced %d seconds ago)",
@@ -189,7 +187,7 @@ class SkillSyncScheduler:
                     return None
             elif source.last_synced_at:
                 # DB-based fallback: check persisted last_synced_at (covers restarts)
-                elapsed = (datetime.now(timezone.utc) - source.last_synced_at).total_seconds()
+                elapsed = (datetime.now(UTC) - source.last_synced_at).total_seconds()
                 if elapsed < MIN_SYNC_INTERVAL_SECONDS:
                     logger.debug(
                         "Skipping %s (synced %d seconds ago per DB)",
@@ -211,7 +209,7 @@ class SkillSyncScheduler:
             )
 
             # Update last sync time
-            self._last_sync[source_id_str] = datetime.now(timezone.utc)
+            self._last_sync[source_id_str] = datetime.now(UTC)
 
             result = SyncResult(
                 source_id=source_id_str,
@@ -248,7 +246,7 @@ class SkillSyncScheduler:
                 error_message=str(e),
             )
 
-    async def sync_source_by_id(self, source_id: str) -> Optional[SyncResult]:
+    async def sync_source_by_id(self, source_id: str) -> SyncResult | None:
         """
         Manually trigger sync for a specific source.
 
@@ -281,7 +279,7 @@ class SkillSyncScheduler:
 
 
 # Global scheduler instance
-_scheduler: Optional[SkillSyncScheduler] = None
+_scheduler: SkillSyncScheduler | None = None
 
 
 def get_scheduler() -> SkillSyncScheduler:

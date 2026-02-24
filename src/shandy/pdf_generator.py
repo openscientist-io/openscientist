@@ -7,14 +7,26 @@ Uses fpdf2 (pure Python, no system dependencies).
 
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from fpdf import FPDF, XPos, YPos
 
 from shandy.exceptions import PDFGenerationError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _MarkdownRenderState:
+    """Parser state while walking markdown lines."""
+
+    in_code_block: bool = False
+    code_buffer: list[str] = field(default_factory=list)
+    in_list: bool = False
+    list_counter: int = 0
+    in_table: bool = False
+    table_rows: list[list[str]] = field(default_factory=list)
 
 
 class ReportPDF(FPDF):
@@ -170,12 +182,11 @@ class ReportPDF(FPDF):
         # **bold** -> still **bold** (fpdf2 handles this)
         # *italic* -> still *italic* (fpdf2 handles this)
         # `code` -> code (remove backticks as fpdf2 doesn't handle inline code well)
-        text = re.sub(r"`([^`]+)`", r"\1", text)
-        return text
+        return re.sub(r"`([^`]+)`", r"\1", text)
 
 
 def markdown_to_pdf(
-    markdown_path: Path, pdf_path: Optional[Path] = None, add_footer: bool = True
+    markdown_path: Path, pdf_path: Path | None = None, add_footer: bool = True
 ) -> Path:
     """
     Convert Markdown report to PDF with professional styling.
@@ -195,119 +206,29 @@ def markdown_to_pdf(
     if not markdown_path.exists():
         raise FileNotFoundError(f"Markdown file not found: {markdown_path}")
 
-    # Default PDF path
     if pdf_path is None:
         pdf_path = markdown_path.with_suffix(".pdf")
 
     logger.info("Converting %s to PDF...", markdown_path)
 
     try:
-        # Read Markdown content
-        with open(markdown_path, encoding="utf-8") as f:
-            markdown_content = f.read()
-
-        # Create PDF
+        markdown_content = _read_markdown_content(markdown_path)
         pdf = ReportPDF()
-
-        # Parse markdown line by line
-        in_code_block = False
-        code_buffer: list[str] = []
-        in_list = False
-        list_counter = 0
-        in_table = False
-        table_rows: list[list[str]] = []
-
+        state = _MarkdownRenderState()
         for line in markdown_content.split("\n"):
-            # Code blocks
-            if line.strip().startswith("```"):
-                if in_code_block:
-                    # End code block
-                    pdf.add_code_block("\n".join(code_buffer))
-                    code_buffer = []
-                    in_code_block = False
-                else:
-                    # Start code block
-                    in_code_block = True
+            if _handle_fenced_code_line(pdf, line, state):
                 continue
-
-            if in_code_block:
-                code_buffer.append(line)
+            if state.in_code_block:
+                state.code_buffer.append(line)
                 continue
-
-            # Table rows
-            if line.strip().startswith("|"):
-                in_table = True
-                # Skip separator rows like |---|---|
-                if re.match(r"^[|\s:\-]+$", line.strip()):
-                    continue
-                cells = [c.strip() for c in line.strip().split("|")]
-                # Drop empty strings from leading/trailing pipes
-                if cells and cells[0] == "":
-                    cells = cells[1:]
-                if cells and cells[-1] == "":
-                    cells = cells[:-1]
-                table_rows.append(cells)
+            if _handle_table_line(line, state):
                 continue
+            _flush_table(pdf, state)
+            _render_markdown_line(pdf, line, state)
 
-            # Flush table if we were in one
-            if in_table:
-                if table_rows:
-                    pdf.add_table(table_rows)
-                    table_rows = []
-                in_table = False
-
-            # Headings
-            if line.startswith("# "):
-                in_list = False
-                pdf.add_title(line[2:])
-            elif line.startswith("## "):
-                in_list = False
-                pdf.add_heading_1(line[3:])
-            elif line.startswith("### "):
-                in_list = False
-                pdf.add_heading_2(line[4:])
-            elif line.startswith("#### "):
-                in_list = False
-                pdf.add_heading_3(line[5:])
-
-            # Lists
-            elif line.strip().startswith("- ") or line.strip().startswith("* "):
-                in_list = True
-                pdf.add_list_item(line.strip()[2:], ordered=False)
-            elif re.match(r"^\d+\.\s", line.strip()):
-                if not in_list:
-                    list_counter = 0
-                in_list = True
-                list_counter += 1
-                text = re.sub(r"^\d+\.\s", "", line.strip())
-                pdf.add_list_item(text, ordered=True, indent=list_counter - 1)
-
-            # Horizontal rule
-            elif line.strip() in ["---", "***", "___"]:
-                in_list = False
-                pdf.ln(2)
-                pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-                pdf.ln(2)
-
-            # Blank lines
-            elif not line.strip():
-                in_list = False
-                continue
-
-            # Paragraphs
-            else:
-                in_list = False
-                pdf.add_paragraph(line)
-
-        # Flush any remaining table
-        if table_rows:
-            pdf.add_table(table_rows)
-
-        # Add footer
+        _flush_table(pdf, state)
         if add_footer:
             pdf.add_shandy_footer()
-
-        # Save PDF
         pdf.output(str(pdf_path))
 
         logger.info("PDF generated successfully: %s", pdf_path)
@@ -316,3 +237,94 @@ def markdown_to_pdf(
     except (OSError, RuntimeError, UnicodeEncodeError) as e:
         logger.error("PDF generation failed: %s", e, exc_info=True)
         raise PDFGenerationError(f"Failed to generate PDF: {e}") from e
+
+
+def _read_markdown_content(markdown_path: Path) -> str:
+    """Read markdown file text."""
+    with open(markdown_path, encoding="utf-8") as file_obj:
+        return file_obj.read()
+
+
+def _handle_fenced_code_line(pdf: ReportPDF, line: str, state: _MarkdownRenderState) -> bool:
+    """Handle markdown fenced-code markers and flush closed blocks."""
+    if not line.strip().startswith("```"):
+        return False
+    if state.in_code_block:
+        pdf.add_code_block("\n".join(state.code_buffer))
+        state.code_buffer = []
+        state.in_code_block = False
+    else:
+        state.in_code_block = True
+    return True
+
+
+def _handle_table_line(line: str, state: _MarkdownRenderState) -> bool:
+    """Collect markdown table rows until a non-table line is reached."""
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return False
+    state.in_table = True
+    if re.match(r"^[|\s:\-]+$", stripped):
+        return True
+    cells = [cell.strip() for cell in stripped.split("|")]
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    state.table_rows.append(cells)
+    return True
+
+
+def _flush_table(pdf: ReportPDF, state: _MarkdownRenderState) -> None:
+    """Render buffered table rows and reset table parsing state."""
+    if not state.in_table:
+        return
+    if state.table_rows:
+        pdf.add_table(state.table_rows)
+        state.table_rows = []
+    state.in_table = False
+
+
+def _render_markdown_line(pdf: ReportPDF, line: str, state: _MarkdownRenderState) -> None:
+    """Render one non-code, non-table markdown line."""
+    stripped = line.strip()
+    if line.startswith("# "):
+        state.in_list = False
+        pdf.add_title(line[2:])
+        return
+    if line.startswith("## "):
+        state.in_list = False
+        pdf.add_heading_1(line[3:])
+        return
+    if line.startswith("### "):
+        state.in_list = False
+        pdf.add_heading_2(line[4:])
+        return
+    if line.startswith("#### "):
+        state.in_list = False
+        pdf.add_heading_3(line[5:])
+        return
+    if stripped.startswith("- ") or stripped.startswith("* "):
+        state.in_list = True
+        pdf.add_list_item(stripped[2:], ordered=False)
+        return
+    if re.match(r"^\d+\.\s", stripped):
+        if not state.in_list:
+            state.list_counter = 0
+        state.in_list = True
+        state.list_counter += 1
+        pdf.add_list_item(
+            re.sub(r"^\d+\.\s", "", stripped), ordered=True, indent=state.list_counter - 1
+        )
+        return
+    if stripped in {"---", "***", "___"}:
+        state.in_list = False
+        pdf.ln(2)
+        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+        pdf.ln(2)
+        return
+    if not stripped:
+        state.in_list = False
+        return
+    state.in_list = False
+    pdf.add_paragraph(line)

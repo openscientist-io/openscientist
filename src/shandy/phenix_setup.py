@@ -3,7 +3,6 @@
 import os
 import subprocess
 import sys
-from typing import Optional
 
 from shandy.settings import get_settings
 
@@ -16,9 +15,8 @@ def validate_phenix_path(phenix_path: str) -> list[str]:
     """
     Validate PHENIX_PATH configuration.
 
-    This function is kept for backward compatibility with existing code.
-    For new code, prefer using `get_settings().phenix` which validates
-    at startup.
+    Prefer using `get_settings().phenix` in code paths that already use
+    centralized settings validation at startup.
 
     Args:
         phenix_path: The path to validate.
@@ -56,7 +54,7 @@ def validate_phenix_path(phenix_path: str) -> list[str]:
     return errors
 
 
-def setup_phenix_env(*, raise_on_error: bool = False) -> Optional[dict]:
+def setup_phenix_env(*, raise_on_error: bool = False) -> dict | None:
     """
     Source Phenix environment and return updated environment dict.
 
@@ -129,8 +127,8 @@ def check_phenix_available() -> bool:
     """
     Check if Phenix is properly configured and available.
 
-    First tries to use the centralized settings module for validation,
-    falling back to the original setup_phenix_env() for compatibility.
+    Uses centralized settings when available, with a fallback path for
+    situations where settings cannot be loaded.
 
     Returns:
         bool: True if Phenix is available, False otherwise

@@ -29,7 +29,7 @@ class TestVertexProviderValidation:
             provider = VertexProvider()
             assert "vertex" in provider.name.lower()
 
-    def test_missing_creds_file_raises(self, tmp_path):
+    def test_missing_creds_file_raises(self):
         with patch.dict(
             os.environ,
             {
@@ -59,9 +59,9 @@ class TestVertexProviderValidation:
         with (
             patch("shandy.providers.vertex.get_settings", return_value=mock_settings),
             patch("os.path.exists", return_value=True),
+            pytest.raises(ValueError, match="ANTHROPIC_VERTEX_PROJECT_ID"),
         ):
-            with pytest.raises(ValueError, match="ANTHROPIC_VERTEX_PROJECT_ID"):
-                VertexProvider()
+            VertexProvider()
 
     def test_missing_credentials_raises(self):
         from unittest.mock import MagicMock
@@ -75,11 +75,16 @@ class TestVertexProviderValidation:
         mock_settings.provider.vertex_region_claude_4_5_sonnet = None
         mock_settings.provider.vertex_region_claude_4_5_haiku = None
 
-        with patch("shandy.providers.vertex.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="GOOGLE_APPLICATION_CREDENTIALS"):
-                VertexProvider()
+        with (
+            patch("shandy.providers.vertex.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="GOOGLE_APPLICATION_CREDENTIALS",
+            ),
+        ):
+            VertexProvider()
 
-    def test_credentials_file_not_found_raises(self, tmp_path):
+    def test_credentials_file_not_found_raises(self):
         with patch.dict(
             os.environ,
             {

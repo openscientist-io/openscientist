@@ -82,9 +82,14 @@ class TestEncryptDecrypt:
         encrypted = encrypt(plaintext)
 
         # Switch to a different key
-        with _patch_encryption_key(generate_key()):
-            with pytest.raises(EncryptionError, match="invalid token"):
-                decrypt(encrypted)
+        with (
+            _patch_encryption_key(generate_key()),
+            pytest.raises(
+                EncryptionError,
+                match="invalid token",
+            ),
+        ):
+            decrypt(encrypted)
 
     def test_decrypt_invalid_ciphertext_fails(self):
         """Decryption fails with invalid ciphertext."""

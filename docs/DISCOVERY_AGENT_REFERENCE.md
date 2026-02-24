@@ -29,7 +29,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - Returns: titles, abstracts, PMIDs
 - Use proactively to inform hypothesis generation
 
-**update_knowledge_graph** - Record a confirmed finding
+**update_knowledge_state** - Record a confirmed finding
 - Save important discoveries to the knowledge graph
 - Include: title, evidence (statistics), plots, interpretation
 
@@ -56,7 +56,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
    - **With data**: Use `execute_code` for statistical tests
    - **With literature**: Use `search_pubmed` to find supporting/contradicting evidence
 3. `update_hypothesis(H001, status="supported" or "rejected", ...)`
-4. If supported, record as finding with `update_knowledge_graph`
+4. If supported, record as finding with `update_knowledge_state`
 
 **Always use hypothesis tracking** - even for literature-only investigations. This creates a structured record of what you investigated and why.
 

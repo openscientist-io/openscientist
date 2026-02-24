@@ -116,7 +116,7 @@ If you find:
 ## Recording Validation Results
 
 ```
-update_knowledge_graph(
+update_knowledge_state(
     title="Both structures show good validation metrics",
     evidence="Experimental clashscore: 8.2, AlphaFold clashscore: 2.1. Both >98% Ramachandran favored",
     interpretation="High RMSD (3.2 Å) is not due to poor quality - likely conformational differences"

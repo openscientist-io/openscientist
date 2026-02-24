@@ -1,20 +1,20 @@
 """
 Shared types for SHANDY job management.
 
-JobStatus, JobInfo, and JobStatusUpdateResult moved here from job_manager.py
-to avoid circular imports between job/lifecycle.py and job_manager.py.
+JobStatus, JobInfo, and JobStatusUpdateResult live here to avoid circular
+imports between job/lifecycle.py and job_manager.py.
 
-job_manager.py re-exports these for backward compatibility.
+job_manager.py also re-exports these to preserve a stable import surface.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Job status enum matching database schema."""
 
     PENDING = "pending"
@@ -32,7 +32,7 @@ class JobStatusUpdateResult:
     """Result of updating job status, includes data needed for notifications."""
 
     ntfy_enabled: bool = False
-    ntfy_topic: Optional[str] = None
+    ntfy_topic: str | None = None
 
 
 @dataclass
@@ -43,18 +43,18 @@ class JobInfo:
     research_question: str
     status: JobStatus
     created_at: str
-    started_at: Optional[str] = None
-    completed_at: Optional[str] = None
-    failed_at: Optional[str] = None
+    started_at: str | None = None
+    completed_at: str | None = None
+    failed_at: str | None = None
     max_iterations: int = 10
     iterations_completed: int = 0
     findings_count: int = 0
-    error: Optional[str] = None
-    cancellation_reason: Optional[str] = None
+    error: str | None = None
+    cancellation_reason: str | None = None
     use_skills: bool = True
     investigation_mode: str = "autonomous"
-    owner_id: Optional[str] = None
-    short_title: Optional[str] = None
+    owner_id: str | None = None
+    short_title: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -81,7 +81,7 @@ class JobInfo:
             created_at=job.created_at.isoformat(),
             started_at=(
                 job.updated_at.isoformat()
-                if job.status in ["running", "completed", "failed"]
+                if job.status in ["running", "awaiting_feedback", "completed", "failed"]
                 else None
             ),
             completed_at=(job.updated_at.isoformat() if job.status == "completed" else None),
@@ -91,8 +91,8 @@ class JobInfo:
             findings_count=findings_count,
             error=job.error_message,
             cancellation_reason=job.cancellation_reason,
-            use_skills=True,
-            investigation_mode="autonomous",
+            use_skills=bool(getattr(job, "use_skills", True)),
+            investigation_mode=getattr(job, "investigation_mode", "autonomous"),
             owner_id=str(job.owner_id) if job.owner_id else None,
             short_title=job.short_title,
         )

@@ -13,8 +13,7 @@ import hashlib
 import hmac
 import logging
 import secrets
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
@@ -29,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Use HTTPBearer for extracting Bearer tokens from Authorization header
 security = HTTPBearer()
+AUTH_CREDENTIALS_DEP = Depends(security)
 
 
 def hash_secret(secret: str) -> str:
@@ -78,7 +78,7 @@ def generate_api_key_secret(length: int = 32) -> str:
 
 
 async def get_current_user_from_api_key(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials = AUTH_CREDENTIALS_DEP,
 ) -> User:
     """
     Dependency to extract and validate API key from Authorization header.
@@ -87,11 +87,10 @@ async def get_current_user_from_api_key(
         Authorization: Bearer <name>:<secret>
 
     Args:
-        credentials: HTTP Authorization credentials (injected by FastAPI)
-        session: Database session (injected by FastAPI)
+        credentials: HTTP bearer credentials injected by FastAPI.
 
     Returns:
-        User object if authentication succeeds
+        Authenticated and active user row.
 
     Raises:
         HTTPException: If authentication fails (401 Unauthorized)
@@ -114,7 +113,7 @@ async def get_current_user_from_api_key(
         # Resolve API key by secret hash so lookup is deterministic even when names collide.
         key_stmt = select(APIKey).where(
             APIKey.key_hash == secret_hash,
-            APIKey.is_active == True,  # noqa: E712
+            APIKey.is_active.is_(True),
         )
         key_result = await session.execute(key_stmt)
         api_key = key_result.scalar_one_or_none()
@@ -151,7 +150,7 @@ async def get_current_user_from_api_key(
                 update(APIKey)
                 .where(APIKey.id == api_key.id)
                 .values(
-                    last_used_at=datetime.now(timezone.utc),
+                    last_used_at=datetime.now(UTC),
                     usage_count=APIKey.usage_count + 1,
                 )
             )
@@ -162,7 +161,7 @@ async def get_current_user_from_api_key(
             logger.warning("Failed to update API key usage stats: %s", e)
 
         # Load user
-        user_stmt = select(User).where(User.id == api_key.user_id, User.is_active == True)  # noqa: E712
+        user_stmt = select(User).where(User.id == api_key.user_id, User.is_active.is_(True))
         user_result = await session.execute(user_stmt)
         user = user_result.scalar_one_or_none()
 
@@ -181,7 +180,7 @@ async def get_api_key_by_id(
     key_id: UUID,
     user: User,
     session: AsyncSession,
-) -> Optional[APIKey]:
+) -> APIKey | None:
     """
     Get an API key by ID, verifying it belongs to the user.
 

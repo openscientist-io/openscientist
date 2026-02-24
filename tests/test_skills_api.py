@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.routing import Match
 
@@ -68,23 +67,27 @@ class TestSkillsListEndpoint:
     @pytest.mark.asyncio
     async def test_list_skills_empty(
         self,
-        app: FastAPI,
         db_session: AsyncSession,
         test_user: User,
     ):
         """Test listing skills when none exist."""
-        with patch(
-            "shandy.api.endpoints.skills.get_current_user_from_api_key",
-            return_value=test_user,
-        ):
-            with patch(
-                "shandy.api.endpoints.skills.get_session",
-                return_value=db_session,
-            ):
-                transport = ASGITransport(app=app)  # type: ignore[arg-type]
-                async with AsyncClient(transport=transport, base_url="http://test") as _client:
-                    # TODO: Complete HTTP client tests
-                    pass
+        from shandy.api.endpoints.skills import list_skills
+        from shandy.database.rls import set_current_user
+
+        await set_current_user(db_session, test_user.id)
+
+        response = await list_skills(
+            user=test_user,
+            session=db_session,
+            category=None,
+            search=None,
+            tags=None,
+            offset=0,
+            limit=50,
+        )
+
+        assert response.total == 0
+        assert response.skills == []
 
     @pytest.mark.asyncio
     async def test_list_skills_with_skills(
@@ -95,6 +98,7 @@ class TestSkillsListEndpoint:
         test_skill2: Skill,
     ):
         """Test listing skills returns all skills."""
+        _ = (test_skill, test_skill2)
         from shandy.api.endpoints.skills import list_skills
         from shandy.database.rls import set_current_user
 
@@ -125,6 +129,7 @@ class TestSkillsListEndpoint:
         test_skill2: Skill,
     ):
         """Test searching skills."""
+        _ = (test_skill, test_skill2)
         from shandy.api.endpoints.skills import list_skills
         from shandy.database.rls import set_current_user
 
@@ -281,6 +286,7 @@ class TestSkillsCategoriesEndpoint:
         test_skill2: Skill,
     ):
         """Test listing all categories."""
+        _ = (test_skill, test_skill2)
         from shandy.api.endpoints.skills import list_categories
         from shandy.database.rls import set_current_user
 
@@ -306,6 +312,7 @@ class TestSkillSourcesEndpoints:
         test_skill_source: SkillSource,
     ):
         """Test listing skill sources (requires admin)."""
+        _ = test_skill_source
         from shandy.api.endpoints.skills import list_skill_sources
         from shandy.database.rls import set_current_user
 
@@ -475,6 +482,7 @@ class TestSkillSourcesEndpoints:
         test_skill_source: SkillSource,
     ):
         """Test that non-admin users get empty list when listing sources."""
+        _ = test_skill_source
         from shandy.api.endpoints.skills import list_skill_sources
         from shandy.database.rls import set_current_user
 

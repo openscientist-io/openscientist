@@ -20,6 +20,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from claude_agent_sdk import tool as sdk_tool  # type: ignore[import-not-found]
@@ -36,8 +37,8 @@ def _python_type_to_json_schema(tp: Any) -> dict[str, Any]:
     origin = get_origin(tp)
     args = get_args(tp)
 
-    # Optional[X] is Union[X, None] — unwrap to X
-    if origin is Union:
+    # Optional[X] is Union[X, None] or X | None — unwrap to X
+    if origin in (Union, UnionType):
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
             return _python_type_to_json_schema(non_none[0])

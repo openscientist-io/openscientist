@@ -169,7 +169,7 @@ SHANDY gracefully handles missing Phenix:
 
 - **MCP server startup**: Logs "⚠️ Phenix tools not available" but continues
 - **Tool availability**: Phenix tools (run_phenix_tool, compare_structures, parse_alphafold_confidence) won't be registered
-- **Job execution**: Agent can still use execute_code, search_pubmed, update_knowledge_graph
+- **Job execution**: Agent can still use execute_code, search_pubmed, update_knowledge_state
 - **Structural biology jobs**: Will use BioPython/Python-based analysis instead of Phenix
 
 ## Troubleshooting

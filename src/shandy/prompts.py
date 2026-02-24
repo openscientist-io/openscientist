@@ -4,7 +4,7 @@ Prompt templates for SHANDY orchestrator.
 System prompts and discovery iteration prompts for the autonomous agent.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,7 +101,7 @@ def build_discovery_prompt(
     knowledge_graph_summary: str,
     iteration: int,
     max_iterations: int,
-    skills_available: Optional[str] = None,
+    skills_available: str | None = None,
 ) -> str:
     """
     Build the discovery iteration prompt.
@@ -258,10 +258,6 @@ async def get_enabled_skills(
     Returns:
         List of enabled Skill objects
     """
-    stmt = (
-        select(Skill)
-        .where(Skill.is_enabled == True)  # noqa: E712
-        .order_by(Skill.category, Skill.name)
-    )
+    stmt = select(Skill).where(Skill.is_enabled.is_(True)).order_by(Skill.category, Skill.name)
     result = await session.execute(stmt)
     return list(result.scalars().all())

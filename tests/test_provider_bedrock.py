@@ -21,9 +21,14 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_model = "model"
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
-        with patch("shandy.providers.bedrock.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="AWS_REGION"):
-                BedrockProvider()
+        with (
+            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="AWS_REGION",
+            ),
+        ):
+            BedrockProvider()
 
     def test_no_credentials_raises(self):
         mock_settings = MagicMock()
@@ -35,9 +40,14 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_model = "model"
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
-        with patch("shandy.providers.bedrock.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="AWS credentials"):
-                BedrockProvider()
+        with (
+            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="AWS credentials",
+            ),
+        ):
+            BedrockProvider()
 
     def test_valid_access_key_config(self):
         mock_settings = MagicMock()

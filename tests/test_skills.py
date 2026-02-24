@@ -34,10 +34,11 @@ async def test_skill_rls_public_read(
 @pytest.mark.asyncio
 async def test_skill_unique_category_slug(
     db_session: AsyncSession,
-    test_skill_source: SkillSource,  # noqa: ARG001  # Required for test_skill fixture
+    test_skill_source: SkillSource,  # Required for test_skill fixture
     test_skill: Skill,
 ):
     """Test unique constraint on (category, slug)."""
+    _ = test_skill_source
     from sqlalchemy.exc import IntegrityError
 
     # Try to create a skill with same category and slug

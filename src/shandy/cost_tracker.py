@@ -95,13 +95,12 @@ def check_budget_before_job(estimated_cost: float = 5.0) -> None:
     budget_info = get_budget_info()
 
     # Check CBORG budget (if set)
-    if budget_info["cborg_max_budget"]:
-        if budget_info["budget_remaining"] < estimated_cost:
-            raise ValueError(
-                f"Insufficient CBORG budget: "
-                f"${budget_info['budget_remaining']:.2f} remaining, "
-                f"need ~${estimated_cost}"
-            )
+    if budget_info["cborg_max_budget"] and budget_info["budget_remaining"] < estimated_cost:
+        raise ValueError(
+            f"Insufficient CBORG budget: "
+            f"${budget_info['budget_remaining']:.2f} remaining, "
+            f"need ~${estimated_cost}"
+        )
 
     # Check application-level limit
     if budget_info["current_spend"] + estimated_cost > budget_info["app_max_total_budget"]:

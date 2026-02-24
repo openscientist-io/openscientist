@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib.util
-from typing import Optional
 
 import pytest
 
@@ -52,12 +51,12 @@ class TestBridgeHelpers:
     def test_python_type_to_json_schema_optional_str(self) -> None:
         from shandy.tools.registry import _python_type_to_json_schema
 
-        assert _python_type_to_json_schema(Optional[str]) == {"type": "string"}
+        assert _python_type_to_json_schema(str | None) == {"type": "string"}
 
     def test_python_type_to_json_schema_optional_dict(self) -> None:
         from shandy.tools.registry import _python_type_to_json_schema
 
-        assert _python_type_to_json_schema(Optional[dict]) == {"type": "object"}
+        assert _python_type_to_json_schema(dict | None) == {"type": "object"}
 
     def test_extract_description_from_docstring(self) -> None:
         from shandy.tools.registry import _extract_description
@@ -96,6 +95,7 @@ class TestBridgeHelpers:
 
         def my_tool(query: str, count: int) -> str:
             """A tool."""
+            _ = (query, count)
             return ""
 
         schema = _build_input_schema(my_tool)
@@ -109,6 +109,7 @@ class TestBridgeHelpers:
 
         def my_tool(query: str, max_results: int = 10, desc: str = "") -> str:
             """A tool."""
+            _ = (query, max_results, desc)
             return ""
 
         schema = _build_input_schema(my_tool)
@@ -121,11 +122,12 @@ class TestBridgeHelpers:
 
         def my_tool(
             files: list[str],
-            args: Optional[dict] = None,
+            args: dict | None = None,
             flag: bool = False,
             score: float = 0.0,
         ) -> str:
             """A tool."""
+            _ = (files, args, flag, score)
             return ""
 
         schema = _build_input_schema(my_tool)

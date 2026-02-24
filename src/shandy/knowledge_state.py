@@ -9,12 +9,14 @@ import fcntl
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models.analysis_log import AnalysisLog
 from shandy.database.models.feedback_history import FeedbackHistory
@@ -63,7 +65,7 @@ class KnowledgeState:
                 "research_question": research_question,
                 "max_iterations": max_iterations,
                 "use_skills": use_skills,
-                "started_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.now(UTC).isoformat(),
             },
             "data_summary": {},
             "iteration": 1,
@@ -114,10 +116,8 @@ class KnowledgeState:
             os.rename(tmp_path, file_path)
         except BaseException:
             # Clean up temp file on any failure
-            try:
+            with suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
 
     def set_data_summary(self, summary: dict[str, Any]) -> None:
@@ -164,9 +164,9 @@ class KnowledgeState:
         self,
         title: str,
         evidence: str,
-        supporting_hypotheses: Optional[list[str]] = None,
-        literature_support: Optional[list[str]] = None,
-        plots: Optional[list[str]] = None,
+        supporting_hypotheses: list[str] | None = None,
+        literature_support: list[str] | None = None,
+        plots: list[str] | None = None,
     ) -> str:
         """
         Add a confirmed finding.
@@ -202,8 +202,8 @@ class KnowledgeState:
         pmid: str,
         title: str,
         abstract: str,
-        relevance_to: Optional[list[str]] = None,
-        search_query: Optional[str] = None,
+        relevance_to: list[str] | None = None,
+        search_query: str | None = None,
     ) -> str:
         """
         Add literature reference.
@@ -236,8 +236,8 @@ class KnowledgeState:
     def log_analysis(
         self,
         action: str,
-        code: Optional[str] = None,
-        output: Optional[str] = None,
+        code: str | None = None,
+        output: str | None = None,
         **kwargs,
     ) -> None:
         """
@@ -252,7 +252,7 @@ class KnowledgeState:
         log_entry = {
             "iteration": self.data["iteration"],
             "action": action,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             **kwargs,
         }
 
@@ -281,7 +281,7 @@ class KnowledgeState:
             if existing["iteration"] == iteration:
                 existing["summary"] = summary
                 existing["strapline"] = strapline
-                existing["updated_at"] = datetime.now(timezone.utc).isoformat()
+                existing["updated_at"] = datetime.now(UTC).isoformat()
                 return
 
         # Add new summary
@@ -290,7 +290,7 @@ class KnowledgeState:
                 "iteration": iteration,
                 "summary": summary,
                 "strapline": strapline,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             }
         )
 
@@ -306,18 +306,18 @@ class KnowledgeState:
             status: Brief status message (recommended: under 80 chars)
         """
         self.data["agent_status"] = status
-        self.data["agent_status_updated_at"] = datetime.now(timezone.utc).isoformat()
+        self.data["agent_status_updated_at"] = datetime.now(UTC).isoformat()
 
     def clear_agent_status(self) -> None:
         """Clear the agent status (e.g., when job completes)."""
         self.data["agent_status"] = None
         self.data["agent_status_updated_at"] = None
 
-    def get_agent_status(self) -> Optional[str]:
+    def get_agent_status(self) -> str | None:
         """Get the current agent status message."""
         return self.data.get("agent_status")
 
-    def get_iteration_summary(self, iteration: int) -> Optional[str]:
+    def get_iteration_summary(self, iteration: int) -> str | None:
         """
         Get the summary for a specific iteration.
 
@@ -356,11 +356,11 @@ class KnowledgeState:
             {
                 "after_iteration": after_iteration,
                 "text": text,
-                "submitted_at": datetime.now(timezone.utc).isoformat(),
+                "submitted_at": datetime.now(UTC).isoformat(),
             }
         )
 
-    def get_feedback_for_iteration(self, iteration: int) -> Optional[str]:
+    def get_feedback_for_iteration(self, iteration: int) -> str | None:
         """
         Get feedback that should be injected into this iteration.
 
@@ -409,26 +409,27 @@ class KnowledgeState:
         # Recent findings
         if self.data["findings"]:
             summary_parts.append("## Recent Findings")
-            for finding in self.data["findings"][-3:]:
-                summary_parts.append(f"- **{finding['title']}**: {finding['evidence']}")
+            summary_parts.extend(
+                f"- **{finding['title']}**: {finding['evidence']}"
+                for finding in self.data["findings"][-3:]
+            )
             summary_parts.append("")
 
         # Active hypotheses
         pending = [h for h in self.data["hypotheses"] if h["status"] == "pending"]
         if pending:
             summary_parts.append("## Pending Hypotheses")
-            for hyp in pending[-3:]:
-                summary_parts.append(f"- {hyp['id']}: {hyp['statement']}")
+            summary_parts.extend(f"- {hyp['id']}: {hyp['statement']}" for hyp in pending[-3:])
             summary_parts.append("")
 
         # Rejected hypotheses (learn from failures)
         rejected = [h for h in self.data["hypotheses"] if h["status"] == "rejected"]
         if rejected:
             summary_parts.append("## Rejected Hypotheses (avoid repeating)")
-            for hyp in rejected[-3:]:
-                summary_parts.append(
-                    f"- {hyp['id']}: {hyp['statement']} - {hyp.get('result', {}).get('conclusion', 'No conclusion')}"
-                )
+            summary_parts.extend(
+                f"- {hyp['id']}: {hyp['statement']} - {hyp.get('result', {}).get('conclusion', 'No conclusion')}"
+                for hyp in rejected[-3:]
+            )
             summary_parts.append("")
 
         return "\n".join(summary_parts)
@@ -444,7 +445,34 @@ class KnowledgeState:
         Returns:
             Formatted comprehensive summary of KS state
         """
-        parts: list[str] = [
+        all_hypotheses = self.data["hypotheses"]
+        supported, rejected, pending = self._split_hypotheses_by_status(all_hypotheses)
+
+        parts = self._report_intro_section()
+        self._append_data_summary_section(parts)
+        self._append_progress_overview_section(parts, all_hypotheses, supported, rejected, pending)
+        self._append_investigation_timeline_section(parts)
+        self._append_findings_section(parts)
+        self._append_supported_hypotheses_section(parts, supported)
+        self._append_rejected_hypotheses_section(parts, rejected)
+        self._append_pending_hypotheses_section(parts, pending)
+        self._append_literature_section(parts)
+        self._append_consensus_answer_section(parts)
+        return "\n".join(parts)
+
+    @staticmethod
+    def _split_hypotheses_by_status(
+        all_hypotheses: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split hypotheses into supported, rejected, and pending groups."""
+        supported = [hyp for hyp in all_hypotheses if hyp["status"] == "supported"]
+        rejected = [hyp for hyp in all_hypotheses if hyp["status"] == "rejected"]
+        pending = [hyp for hyp in all_hypotheses if hyp["status"] == "pending"]
+        return supported, rejected, pending
+
+    def _report_intro_section(self) -> list[str]:
+        """Build the report summary header section."""
+        return [
             f"# Comprehensive Knowledge Summary (After {self.data['iteration']} iterations)",
             "",
             "## Research Question",
@@ -452,22 +480,28 @@ class KnowledgeState:
             "",
         ]
 
-        # Data summary
-        ds = self.data.get("data_summary", {})
-        if ds:
-            parts.append("## Data Summary")
-            parts.append(f"- Files: {ds.get('files', [])}")
-            parts.append(f"- Samples: {ds.get('n_samples', 'Unknown')}")
-            parts.append(f"- Features: {ds.get('n_features', 'Unknown')}")
-            parts.append("")
+    def _append_data_summary_section(self, parts: list[str]) -> None:
+        """Append data summary section when available."""
+        data_summary = self.data.get("data_summary", {})
+        if not data_summary:
+            return
+        parts.append("## Data Summary")
+        parts.append(f"- Files: {data_summary.get('files', [])}")
+        parts.append(f"- Samples: {data_summary.get('n_samples', 'Unknown')}")
+        parts.append(f"- Features: {data_summary.get('n_features', 'Unknown')}")
+        parts.append("")
 
-        # Progress overview with full counts
-        all_hyps = self.data["hypotheses"]
-        supported = [h for h in all_hyps if h["status"] == "supported"]
-        rejected = [h for h in all_hyps if h["status"] == "rejected"]
-        pending = [h for h in all_hyps if h["status"] == "pending"]
+    def _append_progress_overview_section(
+        self,
+        parts: list[str],
+        all_hypotheses: list[dict[str, Any]],
+        supported: list[dict[str, Any]],
+        rejected: list[dict[str, Any]],
+        pending: list[dict[str, Any]],
+    ) -> None:
+        """Append high-level counts covering hypotheses/findings/literature."""
         parts.append("## Progress Overview")
-        parts.append(f"- Total hypotheses proposed: {len(all_hyps)}")
+        parts.append(f"- Total hypotheses proposed: {len(all_hypotheses)}")
         parts.append(f"- Supported: {len(supported)}")
         parts.append(f"- Rejected: {len(rejected)}")
         parts.append(f"- Pending: {len(pending)}")
@@ -475,92 +509,115 @@ class KnowledgeState:
         parts.append(f"- Literature reviewed: {len(self.data['literature'])}")
         parts.append("")
 
-        # Investigation timeline — all iteration summaries in order
+    def _append_investigation_timeline_section(self, parts: list[str]) -> None:
+        """Append ordered iteration summaries."""
         summaries = self.data.get("iteration_summaries", [])
-        if summaries:
-            parts.append("## Investigation Timeline")
-            for entry in sorted(summaries, key=lambda e: e["iteration"]):
-                strapline = entry.get("strapline", "")
-                label = f" — {strapline}" if strapline else ""
-                parts.append(f"- **Iteration {entry['iteration']}{label}:** {entry['summary']}")
+        if not summaries:
+            return
+        parts.append("## Investigation Timeline")
+        for entry in sorted(summaries, key=lambda item: item["iteration"]):
+            strapline = entry.get("strapline", "")
+            label = f" — {strapline}" if strapline else ""
+            parts.append(f"- **Iteration {entry['iteration']}{label}:** {entry['summary']}")
+        parts.append("")
+
+    def _append_findings_section(self, parts: list[str]) -> None:
+        """Append all findings with evidence and optional metadata."""
+        findings = self.data["findings"]
+        if not findings:
+            return
+        parts.append("## All Findings")
+        for finding in findings:
+            parts.append(f"### {finding['id']}: {finding['title']}")
+            parts.append(f"- **Evidence:** {finding['evidence']}")
+            if finding.get("biological_interpretation"):
+                parts.append(f"- **Interpretation:** {finding['biological_interpretation']}")
+            if finding.get("supporting_hypotheses"):
+                parts.append(
+                    f"- **Supporting hypotheses:** {', '.join(finding['supporting_hypotheses'])}"
+                )
+            if finding.get("literature_support"):
+                parts.append(
+                    f"- **Literature support:** {', '.join(finding['literature_support'])}"
+                )
+            if finding.get("plots"):
+                parts.append(f"- **Plots:** {', '.join(finding['plots'])}")
             parts.append("")
 
-        # All findings with full detail
-        if self.data["findings"]:
-            parts.append("## All Findings")
-            for finding in self.data["findings"]:
-                parts.append(f"### {finding['id']}: {finding['title']}")
-                parts.append(f"- **Evidence:** {finding['evidence']}")
-                if finding.get("biological_interpretation"):
-                    parts.append(f"- **Interpretation:** {finding['biological_interpretation']}")
-                if finding.get("supporting_hypotheses"):
-                    parts.append(
-                        f"- **Supporting hypotheses:** {', '.join(finding['supporting_hypotheses'])}"
-                    )
-                if finding.get("literature_support"):
-                    parts.append(
-                        f"- **Literature support:** {', '.join(finding['literature_support'])}"
-                    )
-                if finding.get("plots"):
-                    parts.append(f"- **Plots:** {', '.join(finding['plots'])}")
-                parts.append("")
+    @staticmethod
+    def _append_hypothesis_result_details(parts: list[str], result: dict[str, Any]) -> None:
+        """Append optional hypothesis result fields."""
+        if result.get("summary"):
+            parts.append(f"- **Result:** {result['summary']}")
+        if result.get("p_value"):
+            parts.append(f"- **P-value:** {result['p_value']}")
+        if result.get("effect_size"):
+            parts.append(f"- **Effect size:** {result['effect_size']}")
+        if result.get("conclusion"):
+            parts.append(f"- **Conclusion:** {result['conclusion']}")
 
-        # All supported hypotheses with test results
-        if supported:
-            parts.append("## Supported Hypotheses")
-            for hyp in supported:
-                parts.append(f"### {hyp['id']}: {hyp['statement']}")
-                result = hyp.get("result") or {}
-                if result.get("summary"):
-                    parts.append(f"- **Result:** {result['summary']}")
-                if result.get("p_value"):
-                    parts.append(f"- **P-value:** {result['p_value']}")
-                if result.get("effect_size"):
-                    parts.append(f"- **Effect size:** {result['effect_size']}")
-                if result.get("conclusion"):
-                    parts.append(f"- **Conclusion:** {result['conclusion']}")
-                parts.append("")
-
-        # All rejected hypotheses with conclusions
-        if rejected:
-            parts.append("## Rejected Hypotheses")
-            for hyp in rejected:
-                parts.append(f"### {hyp['id']}: {hyp['statement']}")
-                result = hyp.get("result") or {}
-                if result.get("conclusion"):
-                    parts.append(f"- **Conclusion:** {result['conclusion']}")
-                elif result.get("summary"):
-                    parts.append(f"- **Result:** {result['summary']}")
-                parts.append("")
-
-        # Pending hypotheses as knowledge gaps
-        if pending:
-            parts.append("## Knowledge Gaps (Pending Hypotheses)")
-            for hyp in pending:
-                parts.append(f"- {hyp['id']}: {hyp['statement']}")
+    def _append_supported_hypotheses_section(
+        self, parts: list[str], supported: list[dict[str, Any]]
+    ) -> None:
+        """Append all supported hypotheses and measured outcomes."""
+        if not supported:
+            return
+        parts.append("## Supported Hypotheses")
+        for hypothesis in supported:
+            parts.append(f"### {hypothesis['id']}: {hypothesis['statement']}")
+            self._append_hypothesis_result_details(parts, hypothesis.get("result") or {})
             parts.append("")
 
-        # Literature reviewed
-        if self.data["literature"]:
-            parts.append("## Literature Reviewed")
-            for lit in self.data["literature"]:
-                pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
-                parts.append(f"- **{lit['title']}**{pmid_str}")
-                abstract = lit.get("abstract", "")
-                if abstract:
-                    truncated = abstract[:200] + "..." if len(abstract) > 200 else abstract
-                    parts.append(f"  Abstract: {truncated}")
-                if lit.get("relevance_to"):
-                    parts.append(f"  Relevant to: {', '.join(lit['relevance_to'])}")
+    def _append_rejected_hypotheses_section(
+        self, parts: list[str], rejected: list[dict[str, Any]]
+    ) -> None:
+        """Append rejected hypotheses with conclusions."""
+        if not rejected:
+            return
+        parts.append("## Rejected Hypotheses")
+        for hypothesis in rejected:
+            parts.append(f"### {hypothesis['id']}: {hypothesis['statement']}")
+            result = hypothesis.get("result") or {}
+            if result.get("conclusion"):
+                parts.append(f"- **Conclusion:** {result['conclusion']}")
+            elif result.get("summary"):
+                parts.append(f"- **Result:** {result['summary']}")
             parts.append("")
 
-        # Previous consensus answer if one exists
-        if self.data.get("consensus_answer"):
-            parts.append("## Previous Consensus Answer")
-            parts.append(self.data["consensus_answer"])
-            parts.append("")
+    @staticmethod
+    def _append_pending_hypotheses_section(parts: list[str], pending: list[dict[str, Any]]) -> None:
+        """Append still-pending hypotheses as remaining knowledge gaps."""
+        if not pending:
+            return
+        parts.append("## Knowledge Gaps (Pending Hypotheses)")
+        parts.extend(f"- {hypothesis['id']}: {hypothesis['statement']}" for hypothesis in pending)
+        parts.append("")
 
-        return "\n".join(parts)
+    def _append_literature_section(self, parts: list[str]) -> None:
+        """Append reviewed literature titles and compact abstracts."""
+        literature_entries = self.data["literature"]
+        if not literature_entries:
+            return
+        parts.append("## Literature Reviewed")
+        for literature in literature_entries:
+            pmid_str = f" (PMID: {literature['pmid']})" if literature.get("pmid") else ""
+            parts.append(f"- **{literature['title']}**{pmid_str}")
+            abstract = literature.get("abstract", "")
+            if abstract:
+                truncated = abstract[:200] + "..." if len(abstract) > 200 else abstract
+                parts.append(f"  Abstract: {truncated}")
+            if literature.get("relevance_to"):
+                parts.append(f"  Relevant to: {', '.join(literature['relevance_to'])}")
+        parts.append("")
+
+    def _append_consensus_answer_section(self, parts: list[str]) -> None:
+        """Append consensus answer when one has been produced."""
+        consensus_answer = self.data.get("consensus_answer")
+        if not consensus_answer:
+            return
+        parts.append("## Previous Consensus Answer")
+        parts.append(consensus_answer)
+        parts.append("")
 
     def get_report_outline(self) -> str:
         """Get a concise outline of accumulated knowledge for the report prompt.
@@ -602,15 +659,15 @@ class KnowledgeState:
         # Findings — titles only
         if self.data["findings"]:
             parts.append("## Findings")
-            for finding in self.data["findings"]:
-                parts.append(f"- {finding['id']}: {finding['title']}")
+            parts.extend(
+                f"- {finding['id']}: {finding['title']}" for finding in self.data["findings"]
+            )
             parts.append("")
 
         # Hypotheses — one-line status
         if all_hyps:
             parts.append("## Hypotheses")
-            for hyp in all_hyps:
-                parts.append(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}")
+            parts.extend(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}" for hyp in all_hyps)
             parts.append("")
 
         # Literature — titles only (no abstracts)
@@ -645,7 +702,222 @@ class KnowledgeState:
 
     # Database persistence methods
 
-    async def save_to_database(self, job_id: str, user_id: Optional[UUID] = None) -> None:
+    async def _save_to_database_with_session(
+        self,
+        session: AsyncSession,
+        job_id: str,
+        user_id: UUID | None = None,
+    ) -> None:
+        """Persist knowledge-state rows using an existing session."""
+        if user_id:
+            await set_current_user(session, user_id)
+
+        job_uuid = UUID(job_id)
+        await self._update_job_record(session, job_uuid)
+        await self._upsert_hypotheses(session, job_uuid)
+        await self._upsert_findings(session, job_uuid)
+        await self._upsert_literature(session, job_uuid)
+        await self._upsert_analysis_log(session, job_uuid)
+        await self._upsert_iteration_summaries(session, job_uuid)
+        await self._upsert_feedback_history(session, job_uuid)
+
+    @staticmethod
+    async def _first_scalar(session: AsyncSession, statement: Any) -> Any:
+        """Execute select statement and return first scalar result."""
+        result = await session.execute(statement)
+        return result.scalars().first()
+
+    async def _update_job_record(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Update job-level metadata persisted in the jobs table."""
+        job = await self._first_scalar(session, select(JobModel).where(JobModel.id == job_uuid))
+        if not job:
+            return
+        job.current_iteration = self.data["iteration"]
+        consensus_answer = self.data.get("consensus_answer")
+        if consensus_answer:
+            job.consensus_answer = consensus_answer
+
+    async def _upsert_hypotheses(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Create or update hypotheses rows from knowledge state."""
+        for hypothesis_data in self.data["hypotheses"]:
+            existing = await self._first_scalar(
+                session,
+                select(Hypothesis).where(
+                    Hypothesis.job_id == job_uuid,
+                    Hypothesis.text == hypothesis_data["statement"],
+                ),
+            )
+            if not existing:
+                session.add(
+                    Hypothesis(
+                        job_id=job_uuid,
+                        iteration=hypothesis_data["iteration_proposed"],
+                        text=hypothesis_data["statement"],
+                        status=hypothesis_data["status"],
+                        confidence=None,
+                        priority=None,
+                        rationale=f"Proposed by {hypothesis_data.get('proposed_by', 'agent')}",
+                        test_strategy=hypothesis_data.get("test_code"),
+                        supporting_evidence={"result": hypothesis_data.get("result")},
+                    )
+                )
+                continue
+            existing.status = hypothesis_data["status"]
+            existing.test_strategy = hypothesis_data.get("test_code")
+            existing.supporting_evidence = {"result": hypothesis_data.get("result")}
+
+    @staticmethod
+    def _finding_payload(finding_data: dict[str, Any]) -> dict[str, Any]:
+        """Build serialized finding payload for database storage."""
+        return {
+            "evidence": finding_data["evidence"],
+            "supporting_hypotheses": finding_data.get("supporting_hypotheses", []),
+            "literature_support": finding_data.get("literature_support", []),
+            "plots": finding_data.get("plots", []),
+            "biological_interpretation": finding_data.get("biological_interpretation", ""),
+        }
+
+    async def _upsert_findings(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Create or update findings rows from knowledge state."""
+        for finding_data in self.data["findings"]:
+            existing = await self._first_scalar(
+                session,
+                select(Finding).where(
+                    Finding.job_id == job_uuid,
+                    Finding.text == finding_data["title"],
+                ),
+            )
+            if not existing:
+                session.add(
+                    Finding(
+                        job_id=job_uuid,
+                        iteration=finding_data["iteration_discovered"],
+                        text=finding_data["title"],
+                        finding_type=finding_data.get("finding_type", "observation"),
+                        source="code_execution",
+                        data=self._finding_payload(finding_data),
+                    )
+                )
+                continue
+            existing.finding_type = finding_data.get("finding_type", "observation")
+
+    @staticmethod
+    def _literature_extra_metadata(literature_data: dict[str, Any]) -> dict[str, Any]:
+        """Build normalized literature extra metadata payload."""
+        return {
+            "pmid": literature_data.get("pmid"),
+            "search_query": literature_data.get("search_query"),
+        }
+
+    async def _upsert_literature(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Create or update literature rows from knowledge state."""
+        for literature_data in self.data["literature"]:
+            existing = await self._first_scalar(
+                session,
+                select(Literature).where(
+                    Literature.job_id == job_uuid,
+                    Literature.title == literature_data["title"],
+                ),
+            )
+            if not existing:
+                session.add(
+                    Literature(
+                        job_id=job_uuid,
+                        iteration=literature_data.get("retrieved_at_iteration", 1),
+                        title=literature_data["title"],
+                        abstract=literature_data.get("abstract"),
+                        authors=literature_data.get("authors"),
+                        journal=literature_data.get("journal"),
+                        year=literature_data.get("year"),
+                        doi=literature_data.get("doi"),
+                        extra_metadata=self._literature_extra_metadata(literature_data),
+                    )
+                )
+                continue
+            existing.abstract = literature_data.get("abstract")
+            existing.authors = literature_data.get("authors")
+            existing.journal = literature_data.get("journal")
+            existing.year = literature_data.get("year")
+            existing.doi = literature_data.get("doi")
+            existing.extra_metadata = self._literature_extra_metadata(literature_data)
+
+    async def _upsert_analysis_log(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Insert analysis log rows that are not already persisted."""
+        for log_entry in self.data["analysis_log"]:
+            existing = await self._first_scalar(
+                session,
+                select(AnalysisLog).where(
+                    AnalysisLog.job_id == job_uuid,
+                    AnalysisLog.iteration == log_entry["iteration"],
+                    AnalysisLog.description == log_entry.get("action", ""),
+                    AnalysisLog.created_at >= datetime.fromisoformat(log_entry["timestamp"]),
+                ),
+            )
+            if existing:
+                continue
+            session.add(
+                AnalysisLog(
+                    job_id=job_uuid,
+                    iteration=log_entry["iteration"],
+                    step_number=1,
+                    action_type=log_entry["action"],
+                    description=log_entry.get("action", ""),
+                    input_data=({"code": log_entry.get("code")} if log_entry.get("code") else None),
+                    output_data=(
+                        {"output": log_entry.get("output")} if log_entry.get("output") else None
+                    ),
+                    success=True,
+                )
+            )
+
+    async def _upsert_iteration_summaries(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Create or update iteration summary rows."""
+        for summary_data in self.data.get("iteration_summaries", []):
+            existing = await self._first_scalar(
+                session,
+                select(IterationSummary).where(
+                    IterationSummary.job_id == job_uuid,
+                    IterationSummary.iteration == summary_data["iteration"],
+                ),
+            )
+            if not existing:
+                session.add(
+                    IterationSummary(
+                        job_id=job_uuid,
+                        iteration=summary_data["iteration"],
+                        summary_text=summary_data["summary"],
+                    )
+                )
+                continue
+            existing.summary_text = summary_data["summary"]
+
+    async def _upsert_feedback_history(self, session: AsyncSession, job_uuid: UUID) -> None:
+        """Insert feedback history rows when missing."""
+        for feedback_data in self.data.get("feedback_history", []):
+            existing = await self._first_scalar(
+                session,
+                select(FeedbackHistory).where(
+                    FeedbackHistory.job_id == job_uuid,
+                    FeedbackHistory.iteration == feedback_data["after_iteration"],
+                ),
+            )
+            if existing:
+                continue
+            session.add(
+                FeedbackHistory(
+                    job_id=job_uuid,
+                    iteration=feedback_data["after_iteration"],
+                    feedback_type="user_feedback",
+                    feedback_text=feedback_data["text"],
+                )
+            )
+
+    async def save_to_database(
+        self,
+        job_id: str,
+        user_id: UUID | None = None,
+        session: AsyncSession | None = None,
+    ) -> None:
         """
         Save knowledge state to database tables.
 
@@ -656,185 +928,17 @@ class KnowledgeState:
             job_id: Job ID (UUID string)
             user_id: User ID for RLS context (optional)
         """
-        async with AsyncSessionLocal(thread_safe=True) as session:
-            if user_id:
-                await set_current_user(session, user_id)
+        if session is None:
+            async with AsyncSessionLocal(thread_safe=True) as session:
+                await self._save_to_database_with_session(session, job_id, user_id)
+                await session.commit()
+            return
 
-            job_uuid = UUID(job_id)
-
-            # Update job's current iteration and consensus answer
-            job_stmt = select(JobModel).where(JobModel.id == job_uuid)
-            job_result = await session.execute(job_stmt)
-            job = job_result.scalar_one_or_none()
-            if job:
-                job.current_iteration = self.data["iteration"]
-                # Save consensus answer if available
-                if self.data.get("consensus_answer"):
-                    job.consensus_answer = self.data["consensus_answer"]
-
-            # Save hypotheses
-            for hyp_data in self.data["hypotheses"]:
-                # Check if hypothesis already exists (by looking for text match)
-                # Use .first() in case of duplicate statements
-                hyp_stmt = select(Hypothesis).where(
-                    Hypothesis.job_id == job_uuid,
-                    Hypothesis.text == hyp_data["statement"],
-                )
-                hyp_result = await session.execute(hyp_stmt)
-                existing_hyp = hyp_result.scalars().first()
-
-                if not existing_hyp:
-                    hypothesis = Hypothesis(
-                        job_id=job_uuid,
-                        iteration=hyp_data["iteration_proposed"],
-                        text=hyp_data["statement"],
-                        status=hyp_data["status"],
-                        confidence=None,
-                        priority=None,
-                        rationale=f"Proposed by {hyp_data.get('proposed_by', 'agent')}",
-                        test_strategy=hyp_data.get("test_code"),
-                        supporting_evidence={"result": hyp_data.get("result")},
-                    )
-                    session.add(hypothesis)
-                else:
-                    # Update existing
-                    existing_hyp.status = hyp_data["status"]
-                    existing_hyp.test_strategy = hyp_data.get("test_code")
-                    existing_hyp.supporting_evidence = {"result": hyp_data.get("result")}
-
-            # Save findings
-            for finding_data in self.data["findings"]:
-                # Check if finding already exists
-                # Use .first() in case of duplicate titles
-                finding_stmt = select(Finding).where(
-                    Finding.job_id == job_uuid, Finding.text == finding_data["title"]
-                )
-                finding_result = await session.execute(finding_stmt)
-                existing_finding = finding_result.scalars().first()
-
-                if not existing_finding:
-                    finding = Finding(
-                        job_id=job_uuid,
-                        iteration=finding_data["iteration_discovered"],
-                        text=finding_data["title"],
-                        finding_type="observation",
-                        source="code_execution",
-                        data={
-                            "evidence": finding_data["evidence"],
-                            "supporting_hypotheses": finding_data.get("supporting_hypotheses", []),
-                            "literature_support": finding_data.get("literature_support", []),
-                            "plots": finding_data.get("plots", []),
-                            "biological_interpretation": finding_data.get(
-                                "biological_interpretation", ""
-                            ),
-                        },
-                    )
-                    session.add(finding)
-
-            # Save literature
-            for lit_data in self.data["literature"]:
-                # Check if literature already exists (by title match since no pmid field)
-                # Use .first() since the same paper might appear multiple times
-                lit_stmt = select(Literature).where(
-                    Literature.job_id == job_uuid, Literature.title == lit_data["title"]
-                )
-                lit_result = await session.execute(lit_stmt)
-                existing_lit = lit_result.scalars().first()
-
-                if not existing_lit:
-                    lit_record = Literature(
-                        job_id=job_uuid,
-                        iteration=lit_data.get("retrieved_at_iteration", 1),
-                        title=lit_data["title"],
-                        abstract=lit_data.get("abstract"),
-                        authors=None,
-                        journal=None,
-                        year=None,
-                        doi=None,
-                        extra_metadata={
-                            "pmid": lit_data.get("pmid"),
-                            "search_query": lit_data.get("search_query"),
-                        },
-                    )
-                    session.add(lit_record)
-
-            # Save analysis log entries
-            for log_entry in self.data["analysis_log"]:
-                # Check if log entry already exists (by iteration + description + timestamp)
-                # Use .first() since the created_at >= check may match multiple rows
-                log_stmt = select(AnalysisLog).where(
-                    AnalysisLog.job_id == job_uuid,
-                    AnalysisLog.iteration == log_entry["iteration"],
-                    AnalysisLog.description == log_entry.get("action", ""),
-                    AnalysisLog.created_at >= datetime.fromisoformat(log_entry["timestamp"]),
-                )
-                log_result = await session.execute(log_stmt)
-                existing_log = log_result.scalars().first()
-
-                if not existing_log:
-                    analysis_log = AnalysisLog(
-                        job_id=job_uuid,
-                        iteration=log_entry["iteration"],
-                        step_number=1,
-                        action_type=log_entry["action"],
-                        description=log_entry.get("action", ""),
-                        input_data=(
-                            {"code": log_entry.get("code")} if log_entry.get("code") else None
-                        ),
-                        output_data=(
-                            {"output": log_entry.get("output")} if log_entry.get("output") else None
-                        ),
-                        success=True,
-                    )
-                    session.add(analysis_log)
-
-            # Save iteration summaries
-            for summary_data in self.data.get("iteration_summaries", []):
-                # Check if summary already exists
-                # Use .first() in case iteration constraint isn't enforced
-                summ_stmt = select(IterationSummary).where(
-                    IterationSummary.job_id == job_uuid,
-                    IterationSummary.iteration == summary_data["iteration"],
-                )
-                summ_result = await session.execute(summ_stmt)
-                existing_summ = summ_result.scalars().first()
-
-                if not existing_summ:
-                    iteration_summary = IterationSummary(
-                        job_id=job_uuid,
-                        iteration=summary_data["iteration"],
-                        summary_text=summary_data["summary"],
-                    )
-                    session.add(iteration_summary)
-                else:
-                    existing_summ.summary_text = summary_data["summary"]
-
-            # Save feedback history
-            for feedback_data in self.data.get("feedback_history", []):
-                # Check if feedback already exists
-                # Use .first() to handle potential duplicates
-                fb_stmt = select(FeedbackHistory).where(
-                    FeedbackHistory.job_id == job_uuid,
-                    FeedbackHistory.iteration == feedback_data["after_iteration"],
-                )
-                fb_result = await session.execute(fb_stmt)
-                existing_fb = fb_result.scalars().first()
-
-                if not existing_fb:
-                    feedback = FeedbackHistory(
-                        job_id=job_uuid,
-                        iteration=feedback_data["after_iteration"],
-                        feedback_type="user_feedback",
-                        feedback_text=feedback_data["text"],
-                    )
-                    session.add(feedback)
-
-            await session.commit()
+        await self._save_to_database_with_session(session, job_id, user_id)
+        await session.commit()
 
     @classmethod
-    async def load_from_database(
-        cls, job_id: str, user_id: Optional[UUID] = None
-    ) -> "KnowledgeState":
+    async def load_from_database(cls, job_id: str, user_id: UUID | None = None) -> "KnowledgeState":
         """
         Load knowledge state from database tables.
 
@@ -850,170 +954,183 @@ class KnowledgeState:
                 await set_current_user(session, user_id)
 
             job_uuid = UUID(job_id)
-
-            # Load job
-            job_stmt = select(JobModel).where(JobModel.id == job_uuid)
-            job_result = await session.execute(job_stmt)
-            job = job_result.scalar_one_or_none()
-
-            if not job:
-                raise ValueError(f"Job {job_id} not found in database")
-
-            # Create new KnowledgeState instance
-            ks = cls.__new__(cls)
-            ks.data = {
-                "config": {
-                    "job_id": job_id,
-                    "research_question": job.title,
-                    "max_iterations": job.max_iterations,
-                    "use_skills": True,  # Default
-                    "started_at": job.created_at.isoformat(),
-                },
-                "data_summary": {},  # Would need to load from job_data_files
-                "iteration": job.current_iteration,
-                "hypotheses": [],
-                "findings": [],
-                "literature": [],
-                "analysis_log": [],
-                "iteration_summaries": [],
-                "feedback_history": [],
-            }
-
-            # Load hypotheses
-            hyp_stmt = (
-                select(Hypothesis)
-                .where(Hypothesis.job_id == job_uuid)
-                .order_by(Hypothesis.created_at)
-            )
-            hyp_result = await session.execute(hyp_stmt)
-            hypotheses = hyp_result.scalars().all()
-
-            for hyp in hypotheses:
-                ks.data["hypotheses"].append(
-                    {
-                        "id": f"H{len(ks.data['hypotheses']) + 1:03d}",
-                        "iteration_proposed": hyp.iteration,
-                        "statement": hyp.text,
-                        "status": hyp.status,
-                        "proposed_by": "agent",
-                        "tested_at_iteration": None,
-                        "test_code": hyp.test_strategy,
-                        "result": (
-                            hyp.supporting_evidence.get("result")
-                            if hyp.supporting_evidence
-                            else None
-                        ),
-                        "spawned_hypotheses": [],
-                    }
-                )
-
-            # Load findings
-            finding_stmt = (
-                select(Finding).where(Finding.job_id == job_uuid).order_by(Finding.created_at)
-            )
-            finding_result = await session.execute(finding_stmt)
-            findings = finding_result.scalars().all()
-
-            for finding in findings:
-                finding_data = finding.data or {}
-                ks.data["findings"].append(
-                    {
-                        "id": f"F{len(ks.data['findings']) + 1:03d}",
-                        "iteration_discovered": finding.iteration,
-                        "title": finding.text,
-                        "evidence": finding_data.get("evidence", ""),
-                        "supporting_hypotheses": finding_data.get("supporting_hypotheses", []),
-                        "literature_support": finding_data.get("literature_support", []),
-                        "plots": finding_data.get("plots", []),
-                        "biological_interpretation": finding_data.get(
-                            "biological_interpretation", ""
-                        ),
-                    }
-                )
-
-            # Load literature
-            lit_stmt = (
-                select(Literature)
-                .where(Literature.job_id == job_uuid)
-                .order_by(Literature.created_at)
-            )
-            lit_result = await session.execute(lit_stmt)
-            literature_list = lit_result.scalars().all()
-
-            for lit in literature_list:
-                extra = lit.extra_metadata or {}
-                ks.data["literature"].append(
-                    {
-                        "id": f"L{len(ks.data['literature']) + 1:03d}",
-                        "pmid": extra.get("pmid", ""),
-                        "title": lit.title,
-                        "abstract": lit.abstract,
-                        "relevance_to": [],
-                        "retrieved_at_iteration": lit.iteration,
-                        "search_query": extra.get("search_query"),
-                    }
-                )
-
-            # Load analysis log
-            log_stmt = (
-                select(AnalysisLog)
-                .where(AnalysisLog.job_id == job_uuid)
-                .order_by(AnalysisLog.created_at)
-            )
-            log_result = await session.execute(log_stmt)
-            logs = log_result.scalars().all()
-
-            for log in logs:
-                log_entry: dict[str, Any] = {
-                    "iteration": log.iteration,
-                    "action": log.action_type,
-                    "timestamp": log.created_at.isoformat(),
-                }
-                if log.input_data and log.input_data.get("code"):
-                    log_entry["code"] = log.input_data["code"]
-                if log.output_data and log.output_data.get("output"):
-                    log_entry["output"] = log.output_data["output"]
-                ks.data["analysis_log"].append(log_entry)
-
-            # Load iteration summaries
-            summ_stmt = (
-                select(IterationSummary)
-                .where(IterationSummary.job_id == job_uuid)
-                .order_by(IterationSummary.iteration)
-            )
-            summ_result = await session.execute(summ_stmt)
-            summaries = summ_result.scalars().all()
-
-            for summary in summaries:
-                ks.data["iteration_summaries"].append(
-                    {
-                        "iteration": summary.iteration,
-                        "summary": summary.summary_text,
-                        "created_at": summary.created_at.isoformat(),
-                    }
-                )
-
-            # Load feedback history
-            fb_stmt = (
-                select(FeedbackHistory)
-                .where(FeedbackHistory.job_id == job_uuid)
-                .order_by(FeedbackHistory.created_at)
-            )
-            fb_result = await session.execute(fb_stmt)
-            feedback_list = fb_result.scalars().all()
-
-            for feedback in feedback_list:
-                ks.data["feedback_history"].append(
-                    {
-                        "after_iteration": feedback.iteration,
-                        "text": feedback.feedback_text,
-                        "submitted_at": feedback.created_at.isoformat(),
-                    }
-                )
-
+            job = await cls._load_job_or_raise(session, job_id, job_uuid)
+            ks = cls._new_from_job_record(job_id, job)
+            await cls._load_hypotheses(session, job_uuid, ks)
+            await cls._load_findings(session, job_uuid, ks)
+            await cls._load_literature(session, job_uuid, ks)
+            await cls._load_analysis_log(session, job_uuid, ks)
+            await cls._load_iteration_summaries(session, job_uuid, ks)
+            await cls._load_feedback_history(session, job_uuid, ks)
             return ks
 
-    def save_to_database_sync(self, job_id: str, user_id: Optional[UUID] = None) -> None:
+    @classmethod
+    async def _load_job_or_raise(
+        cls, session: AsyncSession, job_id: str, job_uuid: UUID
+    ) -> JobModel:
+        """Load job row and raise when it does not exist."""
+        result = await session.execute(select(JobModel).where(JobModel.id == job_uuid))
+        job = result.scalar_one_or_none()
+        if job is None:
+            raise ValueError(f"Job {job_id} not found in database")
+        return job
+
+    @classmethod
+    def _new_from_job_record(cls, job_id: str, job: JobModel) -> "KnowledgeState":
+        """Create a KnowledgeState instance seeded from jobs table metadata."""
+        ks = cls.__new__(cls)
+        ks.data = {
+            "config": {
+                "job_id": job_id,
+                "research_question": job.title,
+                "max_iterations": job.max_iterations,
+                "use_skills": True,
+                "started_at": job.created_at.isoformat(),
+            },
+            "data_summary": {},
+            "iteration": job.current_iteration,
+            "hypotheses": [],
+            "findings": [],
+            "literature": [],
+            "analysis_log": [],
+            "iteration_summaries": [],
+            "feedback_history": [],
+        }
+        return ks
+
+    @classmethod
+    async def _load_hypotheses(
+        cls, session: AsyncSession, job_uuid: UUID, ks: "KnowledgeState"
+    ) -> None:
+        """Load hypotheses rows into knowledge state format."""
+        result = await session.execute(
+            select(Hypothesis).where(Hypothesis.job_id == job_uuid).order_by(Hypothesis.created_at)
+        )
+        for hypothesis in result.scalars().all():
+            ks.data["hypotheses"].append(
+                {
+                    "id": f"H{len(ks.data['hypotheses']) + 1:03d}",
+                    "iteration_proposed": hypothesis.iteration,
+                    "statement": hypothesis.text,
+                    "status": hypothesis.status,
+                    "proposed_by": "agent",
+                    "tested_at_iteration": None,
+                    "test_code": hypothesis.test_strategy,
+                    "result": (
+                        hypothesis.supporting_evidence.get("result")
+                        if hypothesis.supporting_evidence
+                        else None
+                    ),
+                    "spawned_hypotheses": [],
+                }
+            )
+
+    @classmethod
+    async def _load_findings(
+        cls, session: AsyncSession, job_uuid: UUID, ks: "KnowledgeState"
+    ) -> None:
+        """Load findings rows into knowledge state format."""
+        result = await session.execute(
+            select(Finding).where(Finding.job_id == job_uuid).order_by(Finding.created_at)
+        )
+        for finding in result.scalars().all():
+            finding_data = finding.data or {}
+            ks.data["findings"].append(
+                {
+                    "id": f"F{len(ks.data['findings']) + 1:03d}",
+                    "iteration_discovered": finding.iteration,
+                    "title": finding.text,
+                    "evidence": finding_data.get("evidence", ""),
+                    "supporting_hypotheses": finding_data.get("supporting_hypotheses", []),
+                    "literature_support": finding_data.get("literature_support", []),
+                    "plots": finding_data.get("plots", []),
+                    "biological_interpretation": finding_data.get("biological_interpretation", ""),
+                }
+            )
+
+    @classmethod
+    async def _load_literature(
+        cls, session: AsyncSession, job_uuid: UUID, ks: "KnowledgeState"
+    ) -> None:
+        """Load literature rows into knowledge state format."""
+        result = await session.execute(
+            select(Literature).where(Literature.job_id == job_uuid).order_by(Literature.created_at)
+        )
+        for literature in result.scalars().all():
+            extra = literature.extra_metadata or {}
+            ks.data["literature"].append(
+                {
+                    "id": f"L{len(ks.data['literature']) + 1:03d}",
+                    "pmid": extra.get("pmid", ""),
+                    "title": literature.title,
+                    "abstract": literature.abstract,
+                    "relevance_to": [],
+                    "retrieved_at_iteration": literature.iteration,
+                    "search_query": extra.get("search_query"),
+                }
+            )
+
+    @classmethod
+    async def _load_analysis_log(
+        cls, session: AsyncSession, job_uuid: UUID, ks: "KnowledgeState"
+    ) -> None:
+        """Load analysis log rows into knowledge state format."""
+        result = await session.execute(
+            select(AnalysisLog)
+            .where(AnalysisLog.job_id == job_uuid)
+            .order_by(AnalysisLog.created_at)
+        )
+        for log_entry in result.scalars().all():
+            serialized: dict[str, Any] = {
+                "iteration": log_entry.iteration,
+                "action": log_entry.action_type,
+                "timestamp": log_entry.created_at.isoformat(),
+            }
+            if log_entry.input_data and log_entry.input_data.get("code"):
+                serialized["code"] = log_entry.input_data["code"]
+            if log_entry.output_data and log_entry.output_data.get("output"):
+                serialized["output"] = log_entry.output_data["output"]
+            ks.data["analysis_log"].append(serialized)
+
+    @classmethod
+    async def _load_iteration_summaries(
+        cls, session: AsyncSession, job_uuid: UUID, ks: "KnowledgeState"
+    ) -> None:
+        """Load iteration summary rows into knowledge state format."""
+        result = await session.execute(
+            select(IterationSummary)
+            .where(IterationSummary.job_id == job_uuid)
+            .order_by(IterationSummary.iteration)
+        )
+        for summary in result.scalars().all():
+            ks.data["iteration_summaries"].append(
+                {
+                    "iteration": summary.iteration,
+                    "summary": summary.summary_text,
+                    "created_at": summary.created_at.isoformat(),
+                }
+            )
+
+    @classmethod
+    async def _load_feedback_history(
+        cls, session: AsyncSession, job_uuid: UUID, ks: "KnowledgeState"
+    ) -> None:
+        """Load feedback history rows into knowledge state format."""
+        result = await session.execute(
+            select(FeedbackHistory)
+            .where(FeedbackHistory.job_id == job_uuid)
+            .order_by(FeedbackHistory.created_at)
+        )
+        for feedback in result.scalars().all():
+            ks.data["feedback_history"].append(
+                {
+                    "after_iteration": feedback.iteration,
+                    "text": feedback.feedback_text,
+                    "submitted_at": feedback.created_at.isoformat(),
+                }
+            )
+
+    def save_to_database_sync(self, job_id: str, user_id: UUID | None = None) -> None:
         """Synchronous wrapper for save_to_database."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -1023,9 +1140,7 @@ class KnowledgeState:
             loop.close()
 
     @classmethod
-    def load_from_database_sync(
-        cls, job_id: str, user_id: Optional[UUID] = None
-    ) -> "KnowledgeState":
+    def load_from_database_sync(cls, job_id: str, user_id: UUID | None = None) -> "KnowledgeState":
         """Synchronous wrapper for load_from_database."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)

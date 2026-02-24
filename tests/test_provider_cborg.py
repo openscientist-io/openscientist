@@ -32,9 +32,14 @@ class TestCborgProviderValidation:
         mock_settings.provider.anthropic_auth_token = None
         mock_settings.provider.anthropic_base_url = "https://api.cborg.lbl.gov"
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
-        with patch("shandy.providers.cborg.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="ANTHROPIC_AUTH_TOKEN"):
-                CborgProvider()
+        with (
+            patch("shandy.providers.cborg.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="ANTHROPIC_AUTH_TOKEN",
+            ),
+        ):
+            CborgProvider()
 
     def test_missing_base_url_raises(self):
         # Mock get_settings so .env file values don't leak in
@@ -42,9 +47,14 @@ class TestCborgProviderValidation:
         mock_settings.provider.anthropic_auth_token = "tok"
         mock_settings.provider.anthropic_base_url = None
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
-        with patch("shandy.providers.cborg.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="ANTHROPIC_BASE_URL"):
-                CborgProvider()
+        with (
+            patch("shandy.providers.cborg.get_settings", return_value=mock_settings),
+            pytest.raises(
+                ValueError,
+                match="ANTHROPIC_BASE_URL",
+            ),
+        ):
+            CborgProvider()
 
 
 class TestCborgSetupEnvironment:

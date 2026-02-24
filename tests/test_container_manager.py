@@ -6,6 +6,7 @@ Contains both unit tests (mocked Docker) and integration tests (real Docker).
 
 import json
 import tempfile
+from datetime import UTC
 from unittest.mock import MagicMock
 
 import pytest
@@ -156,7 +157,7 @@ class TestContainerManagerUnit:
 
     def test_cleanup_orphaned_containers(self):
         """Test cleanup of old orphaned containers."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         from shandy.container_manager import ContainerManager
 
@@ -166,8 +167,8 @@ class TestContainerManagerUnit:
         manager._client = mock_client
 
         # Create mock containers - one old, one recent
-        old_time = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-        recent_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+        recent_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
         old_container = MagicMock()
         old_container.name = "shandy-exec-old"

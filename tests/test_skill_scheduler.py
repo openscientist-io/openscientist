@@ -5,7 +5,7 @@ Tests that the scheduler correctly uses DB-based rate limiting
 and passes force through to the ingester.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -31,7 +31,7 @@ class TestSkillSyncSchedulerCaching:
             branch="main",
             skills_path="skills",
             is_enabled=True,
-            last_synced_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+            last_synced_at=datetime.now(UTC) - timedelta(seconds=30),
         )
         db_session.add(source)
         await db_session.commit()
@@ -61,7 +61,7 @@ class TestSkillSyncSchedulerCaching:
             branch="main",
             skills_path="skills",
             is_enabled=True,
-            last_synced_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+            last_synced_at=datetime.now(UTC) - timedelta(seconds=30),
             last_commit_sha="same_sha",
         )
         db_session.add(source)
