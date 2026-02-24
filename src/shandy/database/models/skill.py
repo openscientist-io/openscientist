@@ -5,7 +5,7 @@ Skills are markdown documents with YAML frontmatter that provide specialized
 knowledge and workflows for scientific analysis tasks.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
@@ -78,7 +78,7 @@ class Skill(UUIDv7Mixin, Base):
         comment="Full markdown content of the skill",
     )
 
-    tags: Mapped[list] = mapped_column(
+    tags: Mapped[list[Any]] = mapped_column(
         JSONB,
         nullable=False,
         server_default="[]",

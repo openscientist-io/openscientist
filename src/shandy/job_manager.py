@@ -994,7 +994,7 @@ class JobManager:
                 logger.warning("Failed to send ntfy notification: %s", e)
 
 
-def main():
+def main() -> None:
     """CLI entry point for job manager."""
     parser = argparse.ArgumentParser(description="SHANDY Job Manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1075,11 +1075,11 @@ def main():
             )
 
     elif args.command == "get":
-        job = manager.get_job(args.job_id)
-        if job is None:
+        job_result = manager.get_job(args.job_id)
+        if job_result is None:
             print(f"Job {args.job_id} not found")
         else:
-            print(json.dumps(job.to_dict(), indent=2))
+            print(json.dumps(job_result.to_dict(), indent=2))
 
     elif args.command == "delete":
         manager.delete_job(args.job_id)

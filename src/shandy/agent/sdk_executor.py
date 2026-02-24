@@ -16,13 +16,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from claude_agent_sdk import (  # type: ignore[import-not-found]
+from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
     create_sdk_mcp_server,
 )
-from claude_agent_sdk.types import (  # type: ignore[import-not-found]
+from claude_agent_sdk.types import (
     PermissionResultAllow,
     TextBlock,
     ToolPermissionContext,
@@ -44,8 +44,8 @@ def _install_parse_message_patch() -> None:
     so that unknown message types return a lightweight sentinel instead of
     raising ``MessageParseError``.
     """
-    import claude_agent_sdk._internal.message_parser as _mp  # type: ignore[import-not-found]
-    from claude_agent_sdk._errors import MessageParseError  # type: ignore[import-not-found]
+    import claude_agent_sdk._internal.message_parser as _mp
+    from claude_agent_sdk._errors import MessageParseError
 
     if getattr(_mp.parse_message, "__shandy_tolerant_patch__", False):
         return
@@ -53,7 +53,7 @@ def _install_parse_message_patch() -> None:
     _original_parse = _mp.parse_message
     known_types = {"user", "assistant", "system", "result", "stream_event"}
 
-    def _tolerant_parse(data: object):  # type: ignore[no-untyped-def]
+    def _tolerant_parse(data: Any) -> Any:
         try:
             return _original_parse(data)
         except MessageParseError:
@@ -66,7 +66,7 @@ def _install_parse_message_patch() -> None:
                     return _Sentinel(msg_type)
             raise
 
-    _tolerant_parse.__shandy_tolerant_patch__ = True
+    _tolerant_parse.__shandy_tolerant_patch__ = True  # type: ignore[attr-defined]
     _mp.parse_message = _tolerant_parse
 
 
@@ -124,7 +124,7 @@ class SDKAgentExecutor:
     @staticmethod
     async def _allow_all_tools(
         _tool_name: str,
-        _tool_input: dict,
+        _tool_input: dict[str, Any],
         _context: ToolPermissionContext,
     ) -> PermissionResultAllow:
         """Auto-approve all tool use — agent runs autonomously."""

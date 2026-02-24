@@ -5,7 +5,7 @@ Records each step in the analysis workflow for transparency,
 debugging, and reproducibility.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -74,13 +74,13 @@ class AnalysisLog(UUIDv7Mixin, Base):
         comment="Human-readable description of the action",
     )
 
-    input_data: Mapped[dict | None] = mapped_column(
+    input_data: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Input data for this step",
     )
 
-    output_data: Mapped[dict | None] = mapped_column(
+    output_data: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Output/result data from this step",

@@ -7,6 +7,7 @@ RLS policies control access to database rows based on the current user context.
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
@@ -137,7 +138,7 @@ async def verify_rls_enabled(session: AsyncSession, table_name: str) -> bool:
     return row is not None and row[0] is True
 
 
-async def list_rls_policies(session: AsyncSession, table_name: str) -> list[dict]:
+async def list_rls_policies(session: AsyncSession, table_name: str) -> list[dict[str, Any]]:
     """
     List all RLS policies defined on a table.
 

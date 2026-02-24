@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 from nicegui import app
@@ -41,7 +42,7 @@ async def api_get(path: str) -> httpx.Response:
         return await client.get(path)
 
 
-async def api_post(path: str, json: dict | None = None) -> httpx.Response:
+async def api_post(path: str, json: dict[str, Any] | None = None) -> httpx.Response:
     """
     Make authenticated POST request.
 

@@ -5,7 +5,7 @@ Hypotheses are central to the SHANDY workflow, representing testable
 explanations for crystallographic observations that drive analysis.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import Float, ForeignKey, Integer, String, Text
@@ -99,7 +99,7 @@ class Hypothesis(UUIDv7Mixin, Base):
         comment="Proposed method for testing",
     )
 
-    supporting_evidence: Mapped[dict | None] = mapped_column(
+    supporting_evidence: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Evidence supporting this hypothesis",

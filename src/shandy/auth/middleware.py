@@ -12,6 +12,7 @@ from collections.abc import Callable, Coroutine
 from contextlib import suppress
 from datetime import UTC, datetime
 from functools import wraps
+from typing import Any
 
 from nicegui import app, ui
 from sqlalchemy import select
@@ -91,7 +92,7 @@ async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
         return None
 
 
-async def validate_session(session_token: str) -> dict | None:
+async def validate_session(session_token: str) -> dict[str, Any] | None:
     """
     Validate a session token and return user info.
 
@@ -143,7 +144,7 @@ def _get_session_token() -> str | None:
     return app.storage.user.get("session_token")
 
 
-def _store_authenticated_user(session_token: str, user_info: dict) -> None:
+def _store_authenticated_user(session_token: str, user_info: dict[str, Any]) -> None:
     """Store authenticated user info in NiceGUI storage."""
     app.storage.user["session_token"] = session_token
     app.storage.user["user_id"] = user_info["user_id"]
@@ -184,7 +185,7 @@ def _redirect_to_login(
     ui.navigate.to("/login")
 
 
-def require_auth(func: Callable) -> Callable:
+def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator to require authentication for a page.
 
@@ -200,7 +201,7 @@ def require_auth(func: Callable) -> Callable:
     """
 
     @wraps(func)
-    async def async_wrapper(*args, **kwargs):
+    async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
         # Get session token
         session_token = _get_session_token()
         if not session_token:
@@ -222,7 +223,7 @@ def require_auth(func: Callable) -> Callable:
         return await func(*args, **kwargs)
 
     @wraps(func)
-    def sync_wrapper(*args, **kwargs):
+    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
         # Strictly validate every protected sync page against the database.
         session_token = _get_session_token()
         if not session_token:
@@ -297,7 +298,7 @@ def can_current_user_start_jobs() -> bool:
     )
 
 
-def require_admin(func: Callable) -> Callable:
+def require_admin(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator to require admin privileges for a page.
 
@@ -312,7 +313,7 @@ def require_admin(func: Callable) -> Callable:
     """
 
     @wraps(func)
-    async def async_wrapper(*args, **kwargs):
+    async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
         if not app.storage.user.get("is_admin", False):
             logger.warning(
                 "Non-admin user %s attempted to access admin page",
@@ -324,7 +325,7 @@ def require_admin(func: Callable) -> Callable:
         return await func(*args, **kwargs)
 
     @wraps(func)
-    def sync_wrapper(*args, **kwargs):
+    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
         if not app.storage.user.get("is_admin", False):
             logger.warning(
                 "Non-admin user %s attempted to access admin page",

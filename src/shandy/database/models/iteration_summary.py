@@ -5,7 +5,7 @@ Stores a summary of each analysis iteration including key findings,
 decisions, and progress toward the goal.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, Text, UniqueConstraint
@@ -69,7 +69,7 @@ class IterationSummary(UUIDv7Mixin, Base):
         comment="Natural language summary of iteration",
     )
 
-    key_findings: Mapped[list | None] = mapped_column(
+    key_findings: Mapped[list[Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="List of important findings from this iteration",
@@ -93,19 +93,19 @@ class IterationSummary(UUIDv7Mixin, Base):
         comment="Number of code blocks executed",
     )
 
-    new_insights: Mapped[list | None] = mapped_column(
+    new_insights: Mapped[list[Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="List of new insights gained",
     )
 
-    next_steps: Mapped[list | None] = mapped_column(
+    next_steps: Mapped[list[Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Planned next steps",
     )
 
-    metrics: Mapped[dict | None] = mapped_column(
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Structured metrics (e.g., R-factors, completeness)",

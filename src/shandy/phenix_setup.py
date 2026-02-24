@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from typing import Any
 
 from shandy.settings import get_settings
 
@@ -54,7 +55,7 @@ def validate_phenix_path(phenix_path: str) -> list[str]:
     return errors
 
 
-def setup_phenix_env(*, raise_on_error: bool = False) -> dict | None:
+def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
     """
     Source Phenix environment and return updated environment dict.
 

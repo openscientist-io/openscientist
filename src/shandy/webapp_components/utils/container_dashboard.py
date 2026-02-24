@@ -79,7 +79,7 @@ class DashboardData:
 # ---------------------------------------------------------------------------
 
 
-def _get_docker_client():
+def _get_docker_client() -> Any:
     """Create a Docker client; returns None if Docker is unavailable."""
     try:
         import docker
@@ -92,7 +92,7 @@ def _get_docker_client():
         return None
 
 
-def _list_shandy_containers(client) -> list[Any]:
+def _list_shandy_containers(client: Any) -> list[Any]:
     """List all containers with a ``shandy.type`` label."""
     return list(
         client.containers.list(
@@ -102,7 +102,7 @@ def _list_shandy_containers(client) -> list[Any]:
     )
 
 
-def _get_container_stats(container) -> dict[str, Any]:
+def _get_container_stats(container: Any) -> dict[str, Any]:
     """Fetch one-shot stats for a container (blocks ~200ms)."""
     try:
         return dict(container.stats(stream=False))
@@ -111,7 +111,7 @@ def _get_container_stats(container) -> dict[str, Any]:
         return {}
 
 
-def _parse_container_stats(stats: dict) -> tuple[float, float, float]:
+def _parse_container_stats(stats: dict[str, Any]) -> tuple[float, float, float]:
     """Extract CPU %, memory MB, and memory limit MB from raw Docker stats.
 
     Returns:
@@ -150,8 +150,8 @@ def _parse_container_stats(stats: dict) -> tuple[float, float, float]:
 
 
 def _build_container_info(
-    container,
-    stats: dict | None = None,
+    container: Any,
+    stats: dict[str, Any] | None = None,
 ) -> ContainerInfo:
     """Build a ContainerInfo from a Docker container object."""
     labels = container.labels or {}
@@ -225,7 +225,7 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
     return data
 
 
-async def _prepare_dashboard_client(data: DashboardData, settings) -> tuple[bool, Any | None]:
+async def _prepare_dashboard_client(data: DashboardData, settings: Any) -> tuple[bool, Any | None]:
     data.container_isolation_enabled = settings.container.use_container_isolation
     if not data.container_isolation_enabled:
         return False, None
@@ -239,7 +239,9 @@ async def _prepare_dashboard_client(data: DashboardData, settings) -> tuple[bool
     return True, client
 
 
-async def _fetch_dashboard_sources(client) -> tuple[list[Any], dict[str, dict]] | None:
+async def _fetch_dashboard_sources(
+    client: Any,
+) -> tuple[list[Any], dict[str, dict[str, Any]]] | None:
     try:
         containers_list, job_map = await asyncio.gather(
             asyncio.to_thread(_list_shandy_containers, client),
@@ -254,8 +256,8 @@ async def _fetch_dashboard_sources(client) -> tuple[list[Any], dict[str, dict]] 
 async def _collect_running_container_stats(
     containers_list: list[Any],
     include_stats: bool,
-) -> dict[str, dict]:
-    stats_map: dict[str, dict] = {}
+) -> dict[str, dict[str, Any]]:
+    stats_map: dict[str, dict[str, Any]] = {}
     if not include_stats or not containers_list:
         return stats_map
 
@@ -275,7 +277,7 @@ async def _collect_running_container_stats(
 
 
 def _build_container_infos(
-    containers_list: list[Any], stats_map: dict[str, dict]
+    containers_list: list[Any], stats_map: dict[str, dict[str, Any]]
 ) -> list[ContainerInfo]:
     return [_build_container_info(c, stats_map.get(c.short_id)) for c in containers_list]
 
@@ -340,7 +342,7 @@ def _compute_dashboard_totals(
     return totals
 
 
-async def _get_active_jobs_map() -> dict[str, dict]:
+async def _get_active_jobs_map() -> dict[str, dict[str, Any]]:
     """Query the database for running/queued/pending jobs.
 
     Returns:
@@ -351,7 +353,7 @@ async def _get_active_jobs_map() -> dict[str, dict]:
     from shandy.database.models import Job, User
     from shandy.database.session import get_admin_session
 
-    result_map: dict[str, dict] = {}
+    result_map: dict[str, dict[str, Any]] = {}
 
     try:
         async with get_admin_session() as session:

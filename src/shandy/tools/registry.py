@@ -23,7 +23,7 @@ from pathlib import Path
 from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
-from claude_agent_sdk import tool as sdk_tool  # type: ignore[import-not-found]
+from claude_agent_sdk import tool as sdk_tool
 
 logger = logging.getLogger(__name__)
 

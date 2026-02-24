@@ -7,6 +7,7 @@ be read directly by Claude's Read tool without returning garbled content.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import fitz  # type: ignore[import-untyped]  # PyMuPDF
 import openpyxl
@@ -55,7 +56,9 @@ def is_text_file(file_path: Path) -> bool:
     return file_path.suffix.lower() in TEXT_EXTENSIONS
 
 
-def extract_text_from_pdf(file_path: Path, max_pages: int | None = None) -> tuple[str, dict]:
+def extract_text_from_pdf(
+    file_path: Path, max_pages: int | None = None
+) -> tuple[str, dict[str, Any]]:
     """
     Extract text from a PDF file using PyMuPDF.
 
@@ -95,7 +98,7 @@ def extract_text_from_pdf(file_path: Path, max_pages: int | None = None) -> tupl
     return extracted_text, metadata
 
 
-def extract_text_from_docx(file_path: Path) -> tuple[str, dict]:
+def extract_text_from_docx(file_path: Path) -> tuple[str, dict[str, Any]]:
     """
     Extract text from a Word document using python-docx.
 
@@ -136,7 +139,7 @@ def extract_text_from_docx(file_path: Path) -> tuple[str, dict]:
     return "\n\n".join(text_parts), metadata
 
 
-def extract_text_from_xlsx(file_path: Path, max_rows: int = 1000) -> tuple[str, dict]:
+def extract_text_from_xlsx(file_path: Path, max_rows: int = 1000) -> tuple[str, dict[str, Any]]:
     """
     Extract text summary from an Excel file using openpyxl.
 

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @ui.page("/skill/{category}/{slug}")
 @require_auth
-async def skill_detail_page(category: str, slug: str):
+async def skill_detail_page(category: str, slug: str) -> None:
     """Skill detail page."""
     # Track active timers for cleanup on disconnect
     _active_timers = setup_timer_cleanup()
@@ -36,7 +36,7 @@ async def skill_detail_page(category: str, slug: str):
     # Container for page content (populated async)
     content_container = ui.column().classes("w-full")
 
-    async def load_skill():
+    async def load_skill() -> None:
         """Load skill from database."""
         try:
             user_id = get_current_user_id()

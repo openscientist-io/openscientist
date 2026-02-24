@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from nicegui import app, ui
@@ -86,7 +87,7 @@ async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bo
 @ui.page("/admin")
 @require_auth
 @require_admin
-async def admin_page():
+async def admin_page() -> None:
     """Admin page for managing orphaned jobs and user assignments."""
     render_navigator(active_page="admin")
 
@@ -117,7 +118,7 @@ async def admin_page():
                 await render_containers_panel()
 
 
-async def render_orphaned_jobs_panel():
+async def render_orphaned_jobs_panel() -> None:
     """Render the orphaned jobs management panel."""
 
     # Search and filter controls
@@ -127,7 +128,7 @@ async def render_orphaned_jobs_panel():
             placeholder="Job ID or title...",
         ).classes("flex-grow")
 
-        async def refresh_jobs():
+        async def refresh_jobs() -> None:
             """Refresh the jobs table."""
             await load_orphaned_jobs(
                 container=jobs_container,
@@ -143,7 +144,7 @@ async def render_orphaned_jobs_panel():
     await load_orphaned_jobs(container=jobs_container, search_query="")
 
 
-async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
+async def load_orphaned_jobs(container: ui.column, search_query: str = "") -> None:
     """Load and display orphaned jobs."""
 
     container.clear()
@@ -225,7 +226,7 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
             table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
 
             # Handle assign button clicks
-            async def handle_assign(e):
+            async def handle_assign(e: Any) -> None:
                 job_id = e.args["full_id"]
                 await show_assign_dialog(job_id)
 
@@ -237,9 +238,9 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
             ui.label("Error loading jobs. Check server logs for details.").classes("text-red-500")
 
 
-async def show_assign_dialog(job_id: str):
+async def show_assign_dialog(job_id: str) -> None:
     """Show dialog to assign a job to a user."""
-    selected_user: dict | None = None
+    selected_user: dict[str, Any] | None = None
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Assign Job to User").classes("text-lg font-bold mb-4")
@@ -248,7 +249,7 @@ async def show_assign_dialog(job_id: str):
             render_job_id_badge(job_id)
 
         # User search using shared component
-        async def on_user_select(user_data: dict):
+        async def on_user_select(user_data: dict[str, Any]) -> None:
             nonlocal selected_user
             selected_user = user_data
             search_input.value = f"{user_data['name']} ({user_data['email']})"
@@ -260,7 +261,7 @@ async def show_assign_dialog(job_id: str):
         )
 
         # Action handlers
-        async def do_assign():
+        async def do_assign() -> None:
             if not selected_user:
                 ui.notify("Please select a user", color="negative")
                 return
@@ -322,7 +323,7 @@ def _admin_users_columns() -> list[dict[str, str]]:
     ]
 
 
-async def _build_admin_user_rows(session, users: list[User]) -> list[dict[str, object]]:
+async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for user in users:
         stmt = select(Job).where(Job.owner_id == user.id)
@@ -342,7 +343,9 @@ async def _build_admin_user_rows(session, users: list[User]) -> list[dict[str, o
     return rows
 
 
-async def _handle_approval_update(e, is_approved: bool, reload_users) -> None:
+async def _handle_approval_update(
+    e: Any, is_approved: bool, reload_users: Callable[[], Awaitable[None]]
+) -> None:
     user_id = e.args.get("id")
     if not user_id:
         ui.notify("Invalid user selection", color="negative")
@@ -376,7 +379,9 @@ async def _handle_approval_update(e, is_approved: bool, reload_users) -> None:
 
 
 def _render_admin_users_table(
-    users_container: ui.column, rows: list[dict[str, object]], reload_users
+    users_container: ui.column,
+    rows: list[dict[str, object]],
+    reload_users: Callable[[], Awaitable[None]],
 ) -> None:
     with users_container:
         users_table = ui.table(columns=_admin_users_columns(), rows=rows, row_key="id").classes(
@@ -417,17 +422,17 @@ def _render_admin_users_table(
             """,
         )
 
-        async def approve_user(e):
+        async def approve_user(e: Any) -> None:
             await _handle_approval_update(e, is_approved=True, reload_users=reload_users)
 
-        async def unapprove_user(e):
+        async def unapprove_user(e: Any) -> None:
             await _handle_approval_update(e, is_approved=False, reload_users=reload_users)
 
         users_table.on("approve-user", approve_user)
         users_table.on("unapprove-user", unapprove_user)
 
 
-async def render_users_panel():
+async def render_users_panel() -> None:
     """Render the users management panel."""
 
     with ui.column().classes("w-full gap-4"):
@@ -436,7 +441,7 @@ async def render_users_panel():
 
         users_container = ui.column().classes("w-full mt-4")
 
-        async def load_users():
+        async def load_users() -> None:
             """Load all users."""
             users_container.clear()
 
@@ -446,7 +451,7 @@ async def render_users_panel():
                 async with get_admin_session() as session:
                     stmt = select(User).order_by(User.created_at.desc())
                     result = await session.execute(stmt)
-                    users = result.scalars().all()
+                    users = list(result.scalars().all())
                     users = _filter_users_for_admin_table(users, current_user_id)
 
                     if not users:
@@ -470,21 +475,21 @@ async def render_users_panel():
         await load_users()
 
 
-async def render_containers_panel():
+async def render_containers_panel() -> None:
     """Render the real-time container dashboard panel."""
     from shandy.webapp_components.utils.container_dashboard import collect_dashboard_data
 
     _active_timers = setup_timer_cleanup()
 
     @ui.refreshable
-    async def render_dashboard():
+    async def render_dashboard() -> None:
         data = await collect_dashboard_data()
         _render_dashboard_content(data)
 
     await render_dashboard()
 
     @guard_client
-    async def guarded_refresh():
+    async def guarded_refresh() -> None:
         await render_dashboard.refresh()
 
     timer = ui.timer(3.0, guarded_refresh)

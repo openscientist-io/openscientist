@@ -79,7 +79,7 @@ def _persist_data_files_to_db(job_id: str, data_paths: list[Path]) -> None:
 def create_job(
     job_id: str,
     research_question: str,
-    data_files: list,
+    data_files: list[Path],
     max_iterations: int,
     use_skills: bool = True,
     jobs_dir: Path = Path("jobs"),

@@ -121,7 +121,7 @@ async def _handle_upload(e: Any, session_id: str) -> None:
 
 @ui.page("/new")
 @require_auth
-def new_job_page():
+def new_job_page() -> None:
     """Job submission form."""
     from shandy import web_app
 

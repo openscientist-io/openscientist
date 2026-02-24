@@ -10,6 +10,7 @@ import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,7 +69,7 @@ class SkillSyncScheduler:
         """
         self.sync_interval = sync_interval
         self.github_token = github_token or get_settings().provider.github_token
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
         self._running = False
         self._last_sync: dict[str, datetime] = {}  # source_id -> last sync time
 

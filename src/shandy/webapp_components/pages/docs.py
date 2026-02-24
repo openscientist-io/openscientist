@@ -8,7 +8,7 @@ from shandy.webapp_components.ui_components import render_navigator
 
 @ui.page("/docs")
 @require_auth
-def docs_page():
+def docs_page() -> None:
     """Documentation page with user guide."""
     render_navigator(active_page="docs")
 

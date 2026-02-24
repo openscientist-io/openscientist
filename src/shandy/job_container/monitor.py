@@ -28,6 +28,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from contextlib import suppress
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class ContainerMonitor:
         self._job_id = job_id
         self._on_terminal = on_terminal
         self._timeout_hours = timeout_hours
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[Any] | None = None
 
     def start(self) -> None:
         """Start the monitoring asyncio task (non-blocking)."""

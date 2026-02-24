@@ -6,6 +6,7 @@ categorized, actionable error information for display to users.
 """
 
 import re
+from typing import Any
 
 # Error category constants
 CATEGORY_CONFIGURATION = "configuration"
@@ -316,7 +317,7 @@ def _get_steps_for_category(category: str, error_lower: str) -> list[str]:
     return _unknown_steps()
 
 
-def get_user_friendly_error(raw_error: str) -> dict:
+def get_user_friendly_error(raw_error: str) -> dict[str, Any]:
     """
     Parse a raw error and return user-friendly error information.
 

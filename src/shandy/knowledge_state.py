@@ -238,7 +238,7 @@ class KnowledgeState:
         action: str,
         code: str | None = None,
         output: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Log an analysis action.

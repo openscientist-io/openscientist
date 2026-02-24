@@ -9,6 +9,7 @@ access to tools (execute_code, search_pubmed, etc.) for follow-up analysis.
 import json
 import logging
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -38,7 +39,7 @@ def _append_research_question(parts: list[str], question: str) -> None:
     parts.append(f"# Research Question\n{question}\n")
 
 
-def _extract_research_question_from_ks(ks: dict) -> str | None:
+def _extract_research_question_from_ks(ks: dict[str, Any]) -> str | None:
     ks_config = ks.get("config", {})
     if not isinstance(ks_config, dict):
         return None
@@ -48,7 +49,7 @@ def _extract_research_question_from_ks(ks: dict) -> str | None:
     return None
 
 
-def _append_findings(parts: list[str], findings: list) -> None:
+def _append_findings(parts: list[str], findings: list[Any]) -> None:
     if not findings:
         return
     parts.append("# Findings")
@@ -68,7 +69,7 @@ def _append_findings(parts: list[str], findings: list) -> None:
     parts.append("")
 
 
-def _append_hypotheses(parts: list[str], hypotheses: list) -> None:
+def _append_hypotheses(parts: list[str], hypotheses: list[Any]) -> None:
     if not hypotheses:
         return
     parts.append("# Hypotheses")
@@ -86,7 +87,7 @@ def _append_hypotheses(parts: list[str], hypotheses: list) -> None:
     parts.append("")
 
 
-def _append_literature(parts: list[str], literature: list) -> None:
+def _append_literature(parts: list[str], literature: list[Any]) -> None:
     if not literature:
         return
     parts.append("# Literature Reviewed")
@@ -105,7 +106,7 @@ def _append_literature(parts: list[str], literature: list) -> None:
     parts.append("")
 
 
-def _append_iteration_summaries(parts: list[str], summaries: list) -> None:
+def _append_iteration_summaries(parts: list[str], summaries: list[Any]) -> None:
     if not summaries:
         return
     parts.append("# Analysis Progress")
@@ -120,7 +121,7 @@ def _append_iteration_summaries(parts: list[str], summaries: list) -> None:
     parts.append("")
 
 
-def _load_knowledge_state(job_id: str, job_dir: Path) -> dict | None:
+def _load_knowledge_state(job_id: str, job_dir: Path) -> dict[str, Any] | None:
     ks_path = job_dir / "knowledge_state.json"
     if not ks_path.exists():
         return None

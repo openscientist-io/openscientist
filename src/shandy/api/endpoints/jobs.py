@@ -28,6 +28,18 @@ from shandy.job_manager import JobManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
+
+
+def _parse_uuid(value: str, field_name: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid {field_name} format",
+        ) from e
+
+
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
 SESSION_DEP = Depends(get_session)
 
@@ -151,13 +163,7 @@ async def get_job_by_id(
     await set_current_user(session, user.id)
 
     # Query job (RLS policies will filter access)
-    try:
-        job_uuid = UUID(job_id)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid job ID format",
-        ) from e
+    job_uuid = _parse_uuid(job_id, "job ID")
 
     stmt = select(Job).where(Job.id == job_uuid)
     result = await session.execute(stmt)
@@ -391,7 +397,7 @@ async def cancel_job(
     job_id: str,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-):
+) -> None:
     """
     Cancel a pending, running, or queued job.
 
@@ -436,7 +442,7 @@ async def regenerate_report(
     job_id: str,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-):
+) -> dict[str, str]:
     """
     Regenerate the final report for a completed or failed job.
 
@@ -490,7 +496,7 @@ async def download_report(
     job_id: str,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-):
+) -> FileResponse:
     """
     Download the final analysis report (PDF or Markdown).
 
@@ -556,7 +562,7 @@ async def download_artifacts(
     background_tasks: BackgroundTasks,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-):
+) -> FileResponse:
     """
     Download all job artifacts as a ZIP archive.
 

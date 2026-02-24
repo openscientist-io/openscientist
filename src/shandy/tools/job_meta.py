@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from shandy.tools.registry import ToolContext, tool
@@ -16,7 +18,7 @@ _MAX_TITLE_LENGTH = 100
 _MIN_TITLE_LENGTH = 3
 
 
-def _status_path(ctx: ToolContext):
+def _status_path(ctx: ToolContext) -> Path:
     return ctx.job_dir / "knowledge_state.json"
 
 
@@ -126,7 +128,7 @@ def _set_consensus_answer_impl(ctx: ToolContext, answer: str) -> str:
     return "✅ Consensus answer set"
 
 
-def make_tools(ctx: ToolContext) -> list[Callable]:
+def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
     """Return job metadata tools (set_status, set_job_title, save_iteration_summary)."""
 
     @tool

@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 from nicegui import ui
@@ -23,7 +24,7 @@ from shandy.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
-_SKILL_COLUMNS = [
+_SKILL_COLUMNS: list[dict[str, Any]] = [
     {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
     {"name": "category", "label": "Category", "field": "category", "align": "center"},
     {"name": "source", "label": "Source", "field": "source", "align": "left"},
@@ -31,9 +32,9 @@ _SKILL_COLUMNS = [
 ]
 
 
-def _skill_rows(rows_data: list[tuple[Skill, SkillSource | None]]) -> list[dict]:
+def _skill_rows(rows_data: list[tuple[Skill, SkillSource | None]]) -> list[dict[str, Any]]:
     """Serialize query rows for skills table."""
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     for skill, source in rows_data:
         if source:
             source_name = source.name
@@ -59,7 +60,7 @@ def _skill_rows(rows_data: list[tuple[Skill, SkillSource | None]]) -> list[dict]
     return rows
 
 
-def _skills_stmt(search: str, category: str | None):
+def _skills_stmt(search: str, category: str | None) -> Any:
     """Build skill listing query from current filters."""
     conditions: list[ColumnElement[bool]] = [Skill.is_enabled.is_(True)]
     if category:
@@ -99,7 +100,7 @@ async def _load_categories() -> list[str]:
     return [row[0] for row in result.all()]
 
 
-async def _load_skills(search: str, category: str | None) -> list[dict]:
+async def _load_skills(search: str, category: str | None) -> list[dict[str, Any]]:
     """Load skill rows using current filters."""
     user_id = get_current_user_id()
     async with get_session_ctx() as session:
@@ -132,7 +133,7 @@ def _apply_table_visibility(
     *,
     skills_table: ui.table,
     empty_container: ui.element,
-    rows: list[dict],
+    rows: list[dict[str, Any]],
     has_search: bool,
     clear_search: Callable[[], None],
 ) -> None:
@@ -154,13 +155,13 @@ def _apply_table_visibility(
 
 @ui.page("/skills")
 @require_auth
-async def skills_page():
+async def skills_page() -> None:
     """Skills list page."""
     ui.page_title("Skills - SHANDY")
     _active_timers = setup_timer_cleanup()
     render_navigator(active_page="skills")
 
-    state = {"search": "", "category": None, "categories": []}
+    state: dict[str, Any] = {"search": "", "category": None, "categories": []}
 
     with ui.column().classes("w-full"):
         with ui.row().classes("w-full gap-4 mb-4 items-end flex-wrap"):
@@ -231,11 +232,11 @@ async def skills_page():
             logger.error("Failed to load skills: %s", exc, exc_info=True)
             ui.notify("Failed to load skills. Please try again.", type="negative")
 
-    async def on_search_change(e) -> None:
+    async def on_search_change(e: Any) -> None:
         state["search"] = e.value or ""
         await load_skills()
 
-    async def on_category_change(e) -> None:
+    async def on_category_change(e: Any) -> None:
         state["category"] = e.value
         await load_skills()
 

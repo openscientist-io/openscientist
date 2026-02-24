@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 from nicegui import ui
@@ -49,7 +50,7 @@ _ACTIONS_SLOT = r"""
 """
 
 
-def _api_key_columns(is_admin: bool) -> list[dict]:
+def _api_key_columns(is_admin: bool) -> list[dict[str, Any]]:
     """Return table column definitions, including User column for admins."""
     columns = [
         {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
@@ -90,9 +91,9 @@ def _user_display(user: User | None) -> tuple[str, str]:
     return user.name or user.email, user.name or ""
 
 
-def _api_key_rows(api_keys: list[APIKey]) -> list[dict]:
+def _api_key_rows(api_keys: list[APIKey]) -> list[dict[str, Any]]:
     """Serialize API keys for table rows."""
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     for api_key in api_keys:
         user_label, user_name = _user_display(api_key.user)
         rows.append(
@@ -128,13 +129,13 @@ def _validate_key_name(name: str) -> str | None:
     return None
 
 
-async def _check_user_key_limit(session, user_uuid: UUID) -> bool:
+async def _check_user_key_limit(session: Any, user_uuid: UUID) -> bool:
     """Return True if user already reached key limit."""
     result = await session.execute(select(func.count()).where(APIKey.user_id == user_uuid))
     return (result.scalar() or 0) >= MAX_KEYS_PER_USER
 
 
-async def _key_name_exists(session, user_uuid: UUID, key_name: str) -> bool:
+async def _key_name_exists(session: Any, user_uuid: UUID, key_name: str) -> bool:
     """Return True when same key name already exists for user."""
     result = await session.execute(
         select(APIKey).where(APIKey.user_id == user_uuid, APIKey.name == key_name)
@@ -224,9 +225,9 @@ async def _query_api_keys(search_query: str, is_admin: bool, user_id: str) -> li
 
 def _render_api_keys_table(
     container: ui.element,
-    rows: list[dict],
-    columns: list[dict],
-    on_revoke: Callable[[dict], Awaitable[None]],
+    rows: list[dict[str, Any]],
+    columns: list[dict[str, Any]],
+    on_revoke: Callable[[dict[str, Any]], Awaitable[None]],
 ) -> None:
     """Render API keys table with status and revoke slots."""
     with container:
@@ -391,7 +392,7 @@ def _make_load_keys_handler(
         rows = _api_key_rows(api_keys)
         columns = _api_key_columns(is_admin)
 
-        async def handle_revoke(row: dict) -> None:
+        async def handle_revoke(row: dict[str, Any]) -> None:
             _open_revoke_dialog(
                 api_key_id=row["id"],
                 api_key_name=row["name"],
@@ -407,7 +408,7 @@ def _make_load_keys_handler(
 
 @ui.page("/api-keys")
 @require_auth
-async def api_keys_page():
+async def api_keys_page() -> None:
     """API Keys management page."""
     ui.page_title("API Keys - SHANDY")
     _active_timers = setup_timer_cleanup()
@@ -416,6 +417,7 @@ async def api_keys_page():
 
     state = {"search": ""}
     user_id = get_current_user_id()
+    assert user_id is not None
 
     with ui.column().classes("w-full max-w-5xl mx-auto p-4 gap-6"):
         ui.markdown("# API Keys")
@@ -462,7 +464,7 @@ async def api_keys_page():
             user_id=user_id,
         )
 
-        async def on_search_change(event) -> None:
+        async def on_search_change(event: Any) -> None:
             state["search"] = event.value or ""
             await load_keys()
 

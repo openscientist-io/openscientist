@@ -642,7 +642,7 @@ async def sync_skill_source(
     session: AsyncSession,
     source: SkillSource,
     github_token: str | None = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> dict[str, int]:
     """
     Sync skills from a source based on its type.

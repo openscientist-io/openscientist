@@ -32,7 +32,7 @@ class _MarkdownRenderState:
 class ReportPDF(FPDF):
     """Custom PDF class for SHANDY reports with professional styling."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         # Use DejaVu font for Unicode support (system-installed fonts)
         # Debian/Ubuntu installs fonts to /usr/share/fonts/truetype/dejavu/
@@ -44,7 +44,7 @@ class ReportPDF(FPDF):
         self.add_page()
         self.set_auto_page_break(auto=True, margin=15)
 
-    def header(self):
+    def header(self) -> None:
         """Add header to each page (except first)."""
         if self.page_no() > 1:
             self.set_font("DejaVu", "I", 9)
@@ -59,21 +59,21 @@ class ReportPDF(FPDF):
             )
             self.ln(2)
 
-    def footer(self):
+    def footer(self) -> None:
         """Add footer with page number."""
         self.set_y(-15)
         self.set_font("DejaVu", "I", 8)
         self.set_text_color(128, 128, 128)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
-    def add_title(self, title: str):
+    def add_title(self, title: str) -> None:
         """Add report title."""
         self.set_font("DejaVu", "B", 24)
         self.set_text_color(44, 62, 80)
         self.multi_cell(0, 10, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(5)
 
-    def add_heading_1(self, text: str):
+    def add_heading_1(self, text: str) -> None:
         """Add H1 heading."""
         self.ln(5)
         self.set_font("DejaVu", "B", 18)
@@ -81,7 +81,7 @@ class ReportPDF(FPDF):
         self.multi_cell(0, 10, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(2)
 
-    def add_heading_2(self, text: str):
+    def add_heading_2(self, text: str) -> None:
         """Add H2 heading."""
         self.ln(4)
         self.set_font("DejaVu", "B", 14)
@@ -89,7 +89,7 @@ class ReportPDF(FPDF):
         self.multi_cell(0, 8, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(2)
 
-    def add_heading_3(self, text: str):
+    def add_heading_3(self, text: str) -> None:
         """Add H3 heading."""
         self.ln(3)
         self.set_font("DejaVu", "B", 12)
@@ -97,7 +97,7 @@ class ReportPDF(FPDF):
         self.multi_cell(0, 7, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(1)
 
-    def add_paragraph(self, text: str):
+    def add_paragraph(self, text: str) -> None:
         """Add body paragraph."""
         self.set_font("DejaVu", "", 11)
         self.set_text_color(51, 51, 51)
@@ -106,7 +106,7 @@ class ReportPDF(FPDF):
         self.multi_cell(0, 6, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT, markdown=True)
         self.ln(2)
 
-    def add_code_block(self, code: str):
+    def add_code_block(self, code: str) -> None:
         """Add code block."""
         self.ln(2)
         self.set_fill_color(245, 245, 245)
@@ -115,7 +115,7 @@ class ReportPDF(FPDF):
         self.multi_cell(0, 5, code, new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True, border=1)
         self.ln(2)
 
-    def add_list_item(self, text: str, ordered: bool = False, indent: int = 0):
+    def add_list_item(self, text: str, ordered: bool = False, indent: int = 0) -> None:
         """Add list item."""
         self.set_font("DejaVu", "", 11)
         self.set_text_color(51, 51, 51)
@@ -127,7 +127,7 @@ class ReportPDF(FPDF):
             0, 6, f"{bullet} {text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, markdown=True
         )
 
-    def add_shandy_footer(self):
+    def add_shandy_footer(self) -> None:
         """Add SHANDY attribution footer."""
         self.ln(10)
         self.line(10, self.get_y(), 200, self.get_y())
@@ -151,7 +151,7 @@ class ReportPDF(FPDF):
             align="C",
         )
 
-    def add_table(self, rows: list[list[str]]):
+    def add_table(self, rows: list[list[str]]) -> None:
         """Add a table from parsed markdown rows."""
         from fpdf.fonts import FontFace
 

@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from shandy.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
 
-def make_tools(ctx: ToolContext) -> list[Callable]:
+def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
     """Return knowledge state tools bound to ctx."""
 
     @tool

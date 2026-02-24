@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import UUID
 
 from nicegui import ui
@@ -63,7 +64,7 @@ def _truncate_question(question: str, limit: int = 50) -> str:
     return question
 
 
-def _render_badges(badges_container: ui.element, jobs: list) -> None:
+def _render_badges(badges_container: ui.element, jobs: list[Any]) -> None:
     """Render aggregate job counters."""
     status_counts = {
         status.value: sum(1 for job in jobs if job.status == status) for status in JobStatus
@@ -103,7 +104,7 @@ async def _fetch_shared_jobs(current_user_id: str) -> list[tuple[Job, User, JobS
         return list(result.tuples().all())
 
 
-def _owned_rows(job_manager, db_jobs: list[Job]) -> list[dict]:
+def _owned_rows(job_manager: Any, db_jobs: list[Job]) -> list[dict[str, Any]]:
     """Build owned-jobs table rows."""
     jobs = [job_manager._db_model_to_job_info(model) for model in db_jobs]
     return [
@@ -123,12 +124,12 @@ def _owned_rows(job_manager, db_jobs: list[Job]) -> list[dict]:
 
 
 def _shared_rows(
-    job_manager,
+    job_manager: Any,
     shared_jobs: list[tuple[Job, User, JobShare]],
     current_user_is_admin: bool,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Build shared-jobs table rows."""
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     for job, owner, share in shared_jobs:
         job_info = job_manager._db_model_to_job_info(job)
         rows.append(
@@ -151,7 +152,7 @@ def _shared_rows(
 
 async def _refresh_owned_jobs(
     *,
-    job_manager,
+    job_manager: Any,
     current_user_id: str,
     badges_container: ui.element,
     table: ui.table,
@@ -169,7 +170,7 @@ async def _refresh_owned_jobs(
 
 async def _refresh_shared_jobs(
     *,
-    job_manager,
+    job_manager: Any,
     current_user_id: str,
     current_user_is_admin: bool,
     table: ui.table,
@@ -192,7 +193,7 @@ def _show_share_dialog(job_id: str) -> None:
 def _show_delete_dialog(
     *,
     job_id: str,
-    job_manager,
+    job_manager: Any,
     on_deleted: Callable[[], Awaitable[None] | None],
 ) -> None:
     """Open delete confirmation dialog and refresh table on success."""
@@ -202,7 +203,7 @@ def _show_delete_dialog(
 
 @ui.page("/jobs")
 @require_auth
-def jobs_page():
+def jobs_page() -> None:
     """Jobs list page."""
     from shandy import web_app
 
@@ -211,6 +212,7 @@ def jobs_page():
     _active_timers = setup_timer_cleanup()
     current_user_is_admin = is_current_user_admin()
     current_user_id = get_current_user_id()
+    assert current_user_id is not None
     can_start_jobs = can_current_user_start_jobs()
 
     render_navigator(active_page="jobs", show_new_job=is_configured)

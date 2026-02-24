@@ -5,7 +5,7 @@ Tracks literature references (papers, documentation) retrieved
 during analysis to support hypotheses and findings.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -116,7 +116,7 @@ class Literature(UUIDv7Mixin, Base):
         comment="BibTeX citation key",
     )
 
-    extra_metadata: Mapped[dict | None] = mapped_column(
+    extra_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Additional structured metadata",

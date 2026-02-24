@@ -11,7 +11,7 @@ from shandy.webapp_components.ui_components import render_navigator
 
 @ui.page("/billing")
 @require_auth
-def billing_page():
+def billing_page() -> None:
     """Billing and cost tracking page."""
     render_navigator(active_page="billing")
 

@@ -20,8 +20,9 @@ from shandy.artifact_packager import create_artifacts_zip
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session_ctx
+from shandy.job.types import JobStatus
 from shandy.job_chat import get_chat_history, send_chat_message
-from shandy.job_manager import JobStatus, _db_get_job, _db_get_share_permission, _run_async
+from shandy.job_manager import _db_get_job, _db_get_share_permission, _run_async
 from shandy.knowledge_state import KnowledgeState
 from shandy.orchestrator.iteration import update_job_status
 from shandy.pdf_generator import markdown_to_pdf
@@ -54,7 +55,7 @@ from shandy.webapp_components.utils import (
 logger = logging.getLogger(__name__)
 
 
-def _load_knowledge_state(ks_path):
+def _load_knowledge_state(ks_path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Load knowledge state from file, returning (data, error_message)."""
     if not ks_path.exists():
         return None, None
@@ -66,12 +67,12 @@ def _load_knowledge_state(ks_path):
         return None, "Knowledge state is being updated. Please refresh the page."
 
 
-def _show_no_timeline_activity():
+def _show_no_timeline_activity() -> None:
     ui.label("No investigation activity yet").classes("text-gray-500")
 
 
-def _timeline_iteration_summaries(timeline_ks):
-    summaries = {}
+def _timeline_iteration_summaries(timeline_ks: dict[str, Any]) -> dict[int, dict[str, str]]:
+    summaries: dict[int, dict[str, str]] = {}
     for entry in timeline_ks.get("iteration_summaries", []):
         if not isinstance(entry, dict):
             continue
@@ -85,8 +86,10 @@ def _timeline_iteration_summaries(timeline_ks):
     return summaries
 
 
-def _timeline_entries_by_iteration(timeline_ks):
-    by_iteration = defaultdict(list)
+def _timeline_entries_by_iteration(
+    timeline_ks: dict[str, Any],
+) -> defaultdict[int, list[Any]]:
+    by_iteration: defaultdict[int, list[Any]] = defaultdict(list)
     for entry in timeline_ks.get("analysis_log", []):
         iteration = entry.get("iteration")
         if isinstance(iteration, int):
@@ -94,7 +97,7 @@ def _timeline_entries_by_iteration(timeline_ks):
     return by_iteration
 
 
-def _normalize_iteration_summary(iter_summary):
+def _normalize_iteration_summary(iter_summary: Any) -> tuple[str, str]:
     if isinstance(iter_summary, str):
         return "", iter_summary
     if not isinstance(iter_summary, dict):
@@ -102,14 +105,14 @@ def _normalize_iteration_summary(iter_summary):
     return iter_summary.get("strapline", ""), iter_summary.get("summary", "")
 
 
-def _iteration_activity_counts(entries):
+def _iteration_activity_counts(entries: list[Any]) -> tuple[int, int, int]:
     code_count = sum(1 for entry in entries if entry.get("action") == "execute_code")
     search_count = sum(1 for entry in entries if entry.get("action") == "search_pubmed")
     finding_count = sum(1 for entry in entries if entry.get("action") == "update_knowledge_state")
     return code_count, search_count, finding_count
 
 
-def _timeline_border_class(code_count, search_count, finding_count):
+def _timeline_border_class(code_count: int, search_count: int, finding_count: int) -> str:
     if finding_count > 0:
         return "border-l-4 border-green-500"
     if code_count > 0 or search_count > 0:
@@ -117,7 +120,7 @@ def _timeline_border_class(code_count, search_count, finding_count):
     return "border-l-4 border-gray-300"
 
 
-def _timeline_header_text(strapline, summary_text, is_in_progress):
+def _timeline_header_text(strapline: str, summary_text: str, is_in_progress: bool) -> str:
     if strapline:
         base_text = strapline
     elif summary_text:
@@ -129,7 +132,7 @@ def _timeline_header_text(strapline, summary_text, is_in_progress):
     return f"{base_text} [in progress]" if is_in_progress else base_text
 
 
-def _load_transcript_actions(transcript_path, iter_num):
+def _load_transcript_actions(transcript_path: Path, iter_num: int) -> list[Any]:
     if not transcript_path.exists():
         return []
     try:
@@ -141,7 +144,7 @@ def _load_transcript_actions(transcript_path, iter_num):
         return []
 
 
-def _action_card_class(tool_name):
+def _action_card_class(tool_name: str) -> str:
     if "execute_code" in tool_name:
         return "w-full mb-2 border-l-4 border-blue-300"
     if "search_pubmed" in tool_name:
@@ -151,7 +154,7 @@ def _action_card_class(tool_name):
     return "w-full mb-2 border-l-4 border-gray-300"
 
 
-def _render_action_details(action, success):
+def _render_action_details(action: dict[str, Any], success: bool) -> None:
     tool_name = action.get("tool_name", "")
     action_input = action.get("input", {})
     if "execute_code" in tool_name and action_input.get("code"):
@@ -175,7 +178,7 @@ def _render_action_details(action, success):
         ui.label(result_str).classes("text-xs text-red-600 mt-1")
 
 
-def _render_transcript_actions(transcript_actions):
+def _render_transcript_actions(transcript_actions: list[Any]) -> None:
     if not transcript_actions:
         return
     with ui.expansion(
@@ -196,8 +199,10 @@ def _render_transcript_actions(transcript_actions):
                 _render_action_details(action, success)
 
 
-def _collect_iteration_plots(iter_provenance_dir, iter_num):
-    plots = []
+def _collect_iteration_plots(
+    iter_provenance_dir: Path, iter_num: int
+) -> list[tuple[Path, dict[str, Any]]]:
+    plots: list[tuple[Path, dict[str, Any]]] = []
     if not iter_provenance_dir.exists():
         return plots
     for plot_file in sorted(iter_provenance_dir.glob("*.png")):
@@ -214,7 +219,7 @@ def _collect_iteration_plots(iter_provenance_dir, iter_num):
     return plots
 
 
-def _render_iteration_plots(iter_provenance_dir, iter_num):
+def _render_iteration_plots(iter_provenance_dir: Path, iter_num: int) -> None:
     iteration_plots = _collect_iteration_plots(iter_provenance_dir, iter_num)
     if not iteration_plots:
         return
@@ -246,7 +251,7 @@ def _render_iteration_plots(iter_provenance_dir, iter_num):
                         ui.code(plot_code, language="python").classes("text-xs")
 
 
-def _matching_papers(iter_ks_data, query, iter_num):
+def _matching_papers(iter_ks_data: dict[str, Any], query: str, iter_num: int) -> list[Any]:
     return [
         literature
         for literature in iter_ks_data.get("literature", [])
@@ -255,7 +260,7 @@ def _matching_papers(iter_ks_data, query, iter_num):
     ]
 
 
-def _render_literature_paper(paper):
+def _render_literature_paper(paper: dict[str, Any]) -> None:
     with ui.card().classes("w-full mb-1 p-2"):
         ui.label(paper.get("title", "Untitled")).classes("text-sm font-bold")
         pmid = paper.get("pmid", "")
@@ -267,7 +272,9 @@ def _render_literature_paper(paper):
             ui.label(preview).classes("text-xs text-gray-600 mt-1")
 
 
-def _render_iteration_literature(iter_entries, iter_ks_data, iter_num):
+def _render_iteration_literature(
+    iter_entries: list[Any], iter_ks_data: dict[str, Any], iter_num: int
+) -> None:
     literature_entries = [entry for entry in iter_entries if entry.get("action") == "search_pubmed"]
     if not literature_entries:
         return
@@ -288,7 +295,7 @@ def _render_iteration_literature(iter_entries, iter_ks_data, iter_num):
                 ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
 
 
-def _render_iteration_findings(iter_ks_data, iter_num):
+def _render_iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> None:
     iteration_findings = [
         finding
         for finding in iter_ks_data.get("findings", [])
@@ -318,14 +325,14 @@ def _render_iteration_findings(iter_ks_data, iter_num):
 
 
 def _load_iteration_content(
-    container,
-    loaded_flag,
-    iter_num,
-    iter_summary_text,
-    iter_entries,
-    iter_ks_data,
-    iter_provenance_dir,
-):
+    container: ui.column,
+    loaded_flag: dict[str, Any],
+    iter_num: int,
+    iter_summary_text: str,
+    iter_entries: list[Any],
+    iter_ks_data: dict[str, Any],
+    iter_provenance_dir: Path,
+) -> None:
     if not is_client_connected() or loaded_flag["value"]:
         return
     loaded_flag["value"] = True
@@ -346,7 +353,9 @@ def _load_iteration_content(
         _render_iteration_literature(iter_entries, iter_ks_data, iter_num)
 
 
-def _render_iteration_header(iteration, header_text, code_count, search_count, finding_count):
+def _render_iteration_header(
+    iteration: int, header_text: str, code_count: int, search_count: int, finding_count: int
+) -> None:
     with ui.row().classes("items-center gap-2 flex-wrap"):
         ui.label(f"Iteration {iteration}: {header_text}").classes("font-medium")
         if code_count:
@@ -358,14 +367,14 @@ def _render_iteration_header(iteration, header_text, code_count, search_count, f
 
 
 def _render_iteration_card(
-    iteration,
-    entries,
-    iter_summary,
-    timeline_ks,
-    timeline_max_iter,
-    latest_status,
-    iter_provenance_dir,
-):
+    iteration: int,
+    entries: list[Any],
+    iter_summary: Any,
+    timeline_ks: dict[str, Any],
+    timeline_max_iter: int,
+    latest_status: JobStatus,
+    iter_provenance_dir: Path,
+) -> None:
     is_in_progress = iteration == timeline_max_iter and latest_status == JobStatus.RUNNING
     strapline, summary_text = _normalize_iteration_summary(iter_summary)
     code_count, search_count, finding_count = _iteration_activity_counts(entries)
@@ -403,7 +412,7 @@ def _render_iteration_card(
         )
 
 
-def _render_timeline_content(timeline_ks, latest_job, job_dir):
+def _render_timeline_content(timeline_ks: dict[str, Any], latest_job: Any, job_dir: Path) -> None:
     timeline_iteration_summaries = _timeline_iteration_summaries(timeline_ks)
     timeline_by_iteration = _timeline_entries_by_iteration(timeline_ks)
     timeline_max_iter = timeline_ks.get("iteration", 1)
@@ -431,7 +440,7 @@ def _render_timeline_content(timeline_ks, latest_job, job_dir):
             )
 
 
-def _next_iteration_for_feedback(ks_path):
+def _next_iteration_for_feedback(ks_path: Path) -> int:
     if not ks_path.exists():
         return 1
     try:
@@ -439,10 +448,12 @@ def _next_iteration_for_feedback(ks_path):
             latest_ks = json.load(handle)
     except (OSError, json.JSONDecodeError):
         return 1
-    return latest_ks.get("iteration", 1)
+    return int(latest_ks.get("iteration", 1))
 
 
-def _submit_feedback_and_continue(job_dir, job_id, completed_iter, feedback_text):
+def _submit_feedback_and_continue(
+    job_dir: Path, job_id: str, completed_iter: int, feedback_text: str
+) -> None:
     ks = KnowledgeState.load(job_dir / "knowledge_state.json")
     if feedback_text.strip():
         ks.add_feedback(feedback_text.strip(), completed_iter)
@@ -457,7 +468,7 @@ def _submit_feedback_and_continue(job_dir, job_id, completed_iter, feedback_text
     ui.navigate.to(f"/job/{job_id}")
 
 
-def _parse_awaiting_started_at(awaiting_since):
+def _parse_awaiting_started_at(awaiting_since: str | None) -> datetime | None:
     if not awaiting_since:
         return None
     try:
@@ -469,7 +480,7 @@ def _parse_awaiting_started_at(awaiting_since):
     return started
 
 
-def _render_feedback_countdown(awaiting_since, active_timers):
+def _render_feedback_countdown(awaiting_since: str | None, active_timers: list[Any]) -> None:
     started = _parse_awaiting_started_at(awaiting_since)
     if started is None:
         ui.label("Auto-continues after 15 minutes if no response.").classes(
@@ -479,10 +490,10 @@ def _render_feedback_countdown(awaiting_since, active_timers):
 
     timeout_minutes = 15
     countdown_label = ui.label("").classes("text-xs text-gray-500 mt-2")
-    timer_ref = [None]
+    timer_ref: list[Any] = [None]
 
     @guard_client
-    def update_countdown():
+    def update_countdown() -> None:
         now = datetime.now(UTC)
         elapsed = (now - started).total_seconds()
         remaining = (timeout_minutes * 60) - elapsed
@@ -501,14 +512,14 @@ def _render_feedback_countdown(awaiting_since, active_timers):
 
 
 def _render_feedback_panel(
-    feedback_container,
-    latest_job,
-    can_edit,
-    job_dir,
-    job_id,
-    ks_path,
-    active_timers,
-):
+    feedback_container: ui.column,
+    latest_job: Any,
+    can_edit: bool,
+    job_dir: Path,
+    job_id: str,
+    ks_path: Path,
+    active_timers: list[Any],
+) -> None:
     if latest_job.status != JobStatus.AWAITING_FEEDBACK:
         return
 
@@ -532,7 +543,7 @@ def _render_feedback_panel(
                 placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
             ).classes("w-full")
 
-            def submit_feedback(fi=feedback_input, ci=completed_iter):
+            def submit_feedback(fi: Any = feedback_input, ci: int = completed_iter) -> None:
                 _submit_feedback_and_continue(job_dir, job_id, ci, fi.value)
 
             with ui.row().classes("w-full gap-2 mt-2"):
@@ -555,14 +566,14 @@ def _render_feedback_panel(
 
 
 def _refresh_feedback_panel(
-    feedback_container,
-    job_manager,
-    job_id,
-    can_edit,
-    job_dir,
-    ks_path,
-    active_timers,
-):
+    feedback_container: ui.column,
+    job_manager: Any,
+    job_id: str,
+    can_edit: bool,
+    job_dir: Path,
+    ks_path: Path,
+    active_timers: list[Any],
+) -> None:
     feedback_container.clear()
     latest_job = job_manager.get_job(job_id)
     if latest_job is None:
@@ -598,12 +609,12 @@ class _JobDetailContext:
     notifications_dialog: Any
 
 
-def _render_job_not_found():
+def _render_job_not_found() -> None:
     ui.label("Job not found").classes("text-h5")
     ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
 
 
-def _load_db_job_for_user(job_id, user_id):
+def _load_db_job_for_user(job_id: str, user_id: str) -> Any:
     try:
         return _run_async(_db_get_job(job_id, user_id=UUID(user_id)))
     except ValueError:
@@ -618,7 +629,7 @@ def _load_db_job_for_user(job_id, user_id):
         return None
 
 
-def _resolve_job_permissions(job_id, user_id, db_job):
+def _resolve_job_permissions(job_id: str, user_id: str, db_job: Any) -> tuple[bool, bool]:
     is_owner = db_job.owner_id == UUID(user_id)
     if is_owner:
         return True, True
@@ -626,14 +637,14 @@ def _resolve_job_permissions(job_id, user_id, db_job):
     return False, share_permission == "edit"
 
 
-def _job_page_title(job_info):
-    page_title = job_info.short_title or job_info.research_question[:50]
+def _job_page_title(job_info: Any) -> str:
+    page_title: str = job_info.short_title or job_info.research_question[:50]
     if len(job_info.research_question) > 50 and not job_info.short_title:
         page_title += "..."
     return page_title
 
 
-def _initial_job_state(job_info, ks_data):
+def _initial_job_state(job_info: Any, ks_data: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "status": job_info.status,
         "iteration": ks_data.get("iteration", 0) if ks_data else 0,
@@ -644,7 +655,7 @@ def _initial_job_state(job_info, ks_data):
     }
 
 
-def _create_page_dialogs(job_id, job_manager, user_id):
+def _create_page_dialogs(job_id: str, job_manager: Any, user_id: str) -> tuple[Any, Any, Any]:
     share_dialog = render_share_dialog(job_id)
     delete_dialog = render_delete_dialog(
         job_id,
@@ -655,11 +666,12 @@ def _create_page_dialogs(job_id, job_manager, user_id):
     return share_dialog, delete_dialog, notifications_dialog
 
 
-def _build_job_detail_context(job_id):
+def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
     from shandy import web_app
 
     job_manager = web_app.get_job_manager()
     user_id = get_current_user_id()
+    assert user_id is not None
     db_job = _load_db_job_for_user(job_id, user_id)
     if db_job is None:
         return None
@@ -699,19 +711,19 @@ def _build_job_detail_context(job_id):
     )
 
 
-def _render_cancelled_notice(job_info):
+def _render_cancelled_notice(job_info: Any) -> None:
     with ui.card().classes("w-full bg-orange-50 border border-orange-300 mb-4 p-4"):
         ui.label("Job Cancelled").classes("text-subtitle2 font-bold text-orange-800")
         ui.label(job_info.cancellation_reason or "No reason provided").classes("text-orange-700")
 
 
-def _render_ks_loading_notice(ks_load_error):
+def _render_ks_loading_notice(ks_load_error: str) -> None:
     with ui.card().classes("w-full bg-yellow-50 border border-yellow-300 mb-4 p-4"):
         ui.label("Loading...").classes("text-subtitle2 font-bold text-yellow-800")
         ui.label(ks_load_error).classes("text-yellow-700")
 
 
-def _render_job_status_notices(context):
+def _render_job_status_notices(context: _JobDetailContext) -> None:
     if context.job_info.status == JobStatus.FAILED and context.job_info.error:
         error_info = get_user_friendly_error(context.job_info.error)
         render_error_card(error_info, context.job_info, context.job_dir)
@@ -721,7 +733,7 @@ def _render_job_status_notices(context):
         _render_ks_loading_notice(context.ks_load_error)
 
 
-def _stats_badges(latest_job, lit_count):
+def _stats_badges(latest_job: Any, lit_count: int) -> list[Any]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
@@ -738,7 +750,7 @@ def _stats_badges(latest_job, lit_count):
     return badges
 
 
-def _render_job_stats_content(context):
+def _render_job_stats_content(context: _JobDetailContext) -> None:
     if not is_client_connected():
         return
 
@@ -757,7 +769,7 @@ def _render_job_stats_content(context):
                 render_thinking_status(agent_status)
 
 
-def _render_research_question_card(context):
+def _render_research_question_card(context: _JobDetailContext) -> None:
     with ui.card().classes("w-full mb-4"), ui.row().classes("w-full items-start justify-between"):
         with ui.column().classes("flex-1"):
             ui.label("Research Question").classes("text-subtitle2 font-bold")
@@ -779,7 +791,7 @@ def _render_research_question_card(context):
         )
 
 
-def _render_timeline_content_for_context(context):
+def _render_timeline_content_for_context(context: _JobDetailContext) -> None:
     if not is_client_connected():
         return
 
@@ -796,7 +808,7 @@ def _render_timeline_content_for_context(context):
     )
 
 
-def _state_snapshot(latest_job, latest_ks):
+def _state_snapshot(latest_job: Any, latest_ks: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "findings_count": latest_job.findings_count,
         "papers_count": len(latest_ks.get("literature", [])) if latest_ks else 0,
@@ -806,8 +818,8 @@ def _state_snapshot(latest_job, latest_ks):
     }
 
 
-def _stats_changed(state, snapshot):
-    return (
+def _stats_changed(state: dict[str, Any], snapshot: dict[str, Any]) -> bool:
+    return bool(
         state["findings_count"] != snapshot["findings_count"]
         or state["papers_count"] != snapshot["papers_count"]
         or state["iteration"] != snapshot["iteration"]
@@ -815,14 +827,14 @@ def _stats_changed(state, snapshot):
     )
 
 
-def _update_state_fields(state, snapshot):
+def _update_state_fields(state: dict[str, Any], snapshot: dict[str, Any]) -> None:
     state["findings_count"] = snapshot["findings_count"]
     state["papers_count"] = snapshot["papers_count"]
     state["iteration"] = snapshot["iteration"]
     state["agent_status"] = snapshot["agent_status"]
 
 
-def _reload_required_statuses():
+def _reload_required_statuses() -> list[JobStatus]:
     return [
         JobStatus.COMPLETED,
         JobStatus.FAILED,
@@ -831,7 +843,7 @@ def _reload_required_statuses():
     ]
 
 
-def _polling_statuses():
+def _polling_statuses() -> list[JobStatus]:
     return [
         JobStatus.PENDING,
         JobStatus.RUNNING,
@@ -841,13 +853,18 @@ def _polling_statuses():
     ]
 
 
-def _handle_missing_job_during_poll(stats_timer_holder):
+def _handle_missing_job_during_poll(stats_timer_holder: dict[str, Any]) -> None:
     timer = stats_timer_holder.get("timer")
     if timer:
         timer.deactivate()
 
 
-def _handle_status_transition(context, latest_job, stats_timer_holder, render_job_stats):
+def _handle_status_transition(
+    context: _JobDetailContext,
+    latest_job: Any,
+    stats_timer_holder: dict[str, Any],
+    render_job_stats: Any,
+) -> None:
     if latest_job.status == context.state["status"]:
         return
     context.state["status"] = latest_job.status
@@ -858,7 +875,12 @@ def _handle_status_transition(context, latest_job, stats_timer_holder, render_jo
     render_job_stats.refresh()
 
 
-def _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_holder):
+def _check_and_refresh(
+    context: _JobDetailContext,
+    render_job_stats: Any,
+    render_timeline: Any,
+    stats_timer_holder: dict[str, Any],
+) -> None:
     latest_job = context.job_manager.get_job(context.job_id)
     if latest_job is None:
         _handle_missing_job_during_poll(stats_timer_holder)
@@ -877,13 +899,13 @@ def _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_h
     _handle_status_transition(context, latest_job, stats_timer_holder, render_job_stats)
 
 
-def _render_timeline_tab(context):
+def _render_timeline_tab(context: _JobDetailContext) -> None:
     @ui.refreshable
-    def render_job_stats():
+    def render_job_stats() -> None:
         _render_job_stats_content(context)
 
     @ui.refreshable
-    def render_timeline():
+    def render_timeline() -> None:
         _render_timeline_content_for_context(context)
 
     render_job_stats()
@@ -902,10 +924,10 @@ def _render_timeline_tab(context):
         active_timers=context.active_timers,
     )
 
-    stats_timer_holder = {"timer": None}
+    stats_timer_holder: dict[str, Any] = {"timer": None}
 
     @guard_client
-    def check_and_refresh():
+    def check_and_refresh() -> None:
         _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_holder)
 
     if context.job_info.status in _polling_statuses():
@@ -913,7 +935,7 @@ def _render_timeline_tab(context):
         context.active_timers.append(stats_timer_holder["timer"])
 
 
-def _start_report_regeneration(context):
+def _start_report_regeneration(context: _JobDetailContext) -> None:
     try:
         context.job_manager.regenerate_report(context.job_id)
     except ValueError as exc:
@@ -923,7 +945,7 @@ def _start_report_regeneration(context):
     ui.navigate.to(f"/job/{context.job_id}")
 
 
-def _download_artifacts_zip(job_dir, job_id):
+def _download_artifacts_zip(job_dir: Path, job_id: str) -> None:
     try:
         zip_buffer = create_artifacts_zip(job_dir, job_id)
         ui.download(zip_buffer.getvalue(), filename=f"{job_id}_artifacts.zip")
@@ -932,7 +954,7 @@ def _download_artifacts_zip(job_dir, job_id):
         ui.notify("Failed to create ZIP. Please try again.", type="negative")
 
 
-def _download_pdf_report(report_path, pdf_path, job_id):
+def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None:
     try:
         markdown_to_pdf(report_path, pdf_path)
         ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
@@ -941,7 +963,7 @@ def _download_pdf_report(report_path, pdf_path, job_id):
         ui.notify("Failed to generate PDF. Please try again.", type="negative")
 
 
-def _render_report_actions(context, report_path, pdf_path):
+def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
         if (
             context.can_edit
@@ -979,14 +1001,14 @@ def _render_report_actions(context, report_path, pdf_path):
         ).props("color=accent outline")
 
 
-def _render_report_markdown(report_path):
+def _render_report_markdown(report_path: Path) -> None:
     with open(report_path, encoding="utf-8") as report_file:
         report_content = report_file.read()
     _inject_pubmed_badge_styles()
     ui.markdown(transform_pmid_references(report_content)).classes("w-full")
 
 
-def _render_missing_report_state(context):
+def _render_missing_report_state(context: _JobDetailContext) -> None:
     if context.job_info.status == JobStatus.GENERATING_REPORT:
         ui.label("Report is being generated...").classes("text-gray-500 italic")
         return
@@ -1003,7 +1025,7 @@ def _render_missing_report_state(context):
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
 
-def _render_report_tab(context):
+def _render_report_tab(context: _JobDetailContext) -> None:
     report_path = context.job_dir / "final_report.md"
     pdf_path = context.job_dir / "final_report.pdf"
 
@@ -1117,7 +1139,7 @@ _CHAT_AVATAR_HTML = """
 """
 
 
-def _chat_sound_script(sound_type):
+def _chat_sound_script(sound_type: str) -> str:
     return f"""
     (function() {{
         try {{
@@ -1180,15 +1202,15 @@ def _chat_sound_script(sound_type):
 
 
 class _ChatTabController:
-    def __init__(self, context):
+    def __init__(self, context: _JobDetailContext) -> None:
         self.context = context
         self.job_uuid = UUID(context.job_id)
-        self.chat_scroll = None
-        self.status_container = None
-        self.chat_input = None
-        self.send_btn = None
+        self.chat_scroll: Any = None
+        self.status_container: Any = None
+        self.chat_input: Any = None
+        self.send_btn: Any = None
 
-    def render(self):
+    def render(self) -> None:
         if self.context.job_info.status != JobStatus.COMPLETED:
             ui.label("Chat will be available when the job completes.").classes(
                 "text-gray-500 italic"
@@ -1206,7 +1228,7 @@ class _ChatTabController:
             "text-sm text-gray-500 italic mt-4 text-center"
         )
 
-    def _render_shell(self):
+    def _render_shell(self) -> None:
         with (
             ui.column()
             .classes("w-full max-w-4xl mx-auto chat-container p-4 flex flex-col flex-nowrap")
@@ -1228,10 +1250,10 @@ class _ChatTabController:
             with self.status_container:
                 render_thinking_status("Analyzing your message...")
 
-    def _play_sound(self, sound_type):
+    def _play_sound(self, sound_type: str) -> None:
         safe_run_javascript(_chat_sound_script(sound_type))
 
-    def _scroll_to_bottom(self):
+    def _scroll_to_bottom(self) -> None:
         safe_run_javascript(
             """
             setTimeout(() => {
@@ -1241,7 +1263,7 @@ class _ChatTabController:
             """
         )
 
-    def _render_message_bubble(self, role, content):
+    def _render_message_bubble(self, role: str, content: str) -> None:
         if role == "user":
             with (
                 ui.row().classes("w-full justify-end mb-3"),
@@ -1255,7 +1277,7 @@ class _ChatTabController:
             with ui.element("div").classes("chat-bubble-assistant"):
                 ui.markdown(content).classes("text-sm")
 
-    def _render_empty_state(self):
+    def _render_empty_state(self) -> None:
         with ui.column().classes("w-full items-center py-8"):
             ui.icon("chat_bubble_outline", size="xl").classes("text-gray-300 mb-4")
             if self.context.can_edit:
@@ -1277,12 +1299,12 @@ class _ChatTabController:
             ui.label("No messages yet").classes("text-lg font-medium text-gray-600")
             ui.label("You have view-only access to this job.").classes("text-sm text-gray-400")
 
-    async def _load_chat_messages(self):
+    async def _load_chat_messages(self) -> list[Any]:
         async with get_session_ctx() as session:
             await set_current_user(session, UUID(self.context.user_id))
             return await get_chat_history(session, self.job_uuid)
 
-    async def _render_messages(self):
+    async def _render_messages(self) -> None:
         guard = ClientGuard()
         if not guard.is_connected or self.chat_scroll is None:
             return
@@ -1303,7 +1325,7 @@ class _ChatTabController:
         except Exception as exc:
             logger.error("Failed to load chat history: %s", exc)
 
-    def _toggle_typing_indicator(self, visible):
+    def _toggle_typing_indicator(self, visible: bool) -> None:
         if self.status_container is None:
             return
         if visible:
@@ -1311,13 +1333,13 @@ class _ChatTabController:
             return
         self.status_container.classes(add="hidden")
 
-    def _read_input_message(self):
+    def _read_input_message(self) -> str | None:
         if self.chat_input is None:
             return None
         message = (self.chat_input.value or "").strip()
         return message or None
 
-    def _clear_input(self, guard):
+    def _clear_input(self, guard: ClientGuard) -> None:
         if self.chat_input is None or self.send_btn is None:
             return
         self.chat_input.value = ""
@@ -1326,18 +1348,18 @@ class _ChatTabController:
         )
         self.send_btn.disable()
 
-    async def _send_message_to_backend(self, message):
+    async def _send_message_to_backend(self, message: str) -> None:
         async with get_session_ctx() as session:
             await set_current_user(session, UUID(self.context.user_id))
             await send_chat_message(session, self.job_uuid, message, self.context.job_dir)
 
-    def _restore_input(self, guard):
+    def _restore_input(self, guard: ClientGuard) -> None:
         if not guard.is_connected or self.send_btn is None or self.chat_input is None:
             return
         self.send_btn.enable()
         self.chat_input.run_method("focus")
 
-    async def _send_message(self):
+    async def _send_message(self) -> None:
         guard = ClientGuard()
         if not guard.is_connected or self.chat_scroll is None:
             return
@@ -1369,13 +1391,13 @@ class _ChatTabController:
         finally:
             self._restore_input(guard)
 
-    async def _quick_send(self, message):
+    async def _quick_send(self, message: str) -> None:
         if self.chat_input is None:
             return
         self.chat_input.value = message
         await self._send_message()
 
-    def _render_input_area(self):
+    def _render_input_area(self) -> None:
         with ui.row().classes("w-full max-w-3xl mx-auto gap-3 mt-4 chat-input-row"):
             with ui.element("div").classes("flex-grow chat-input-container flex items-center px-4"):
                 self.chat_input = (
@@ -1397,11 +1419,11 @@ class _ChatTabController:
         )
 
 
-def _render_chat_tab(context):
+def _render_chat_tab(context: _JobDetailContext) -> None:
     _ChatTabController(context).render()
 
 
-def _render_job_tabs(context):
+def _render_job_tabs(context: _JobDetailContext) -> None:
     with ui.tabs().classes("w-full") as tabs:
         timeline_tab = ui.tab("Research Log")
         report_tab = ui.tab("Report")
@@ -1418,7 +1440,7 @@ def _render_job_tabs(context):
 
 @ui.page("/job/{job_id}")
 @require_auth
-def job_detail_page(job_id: str):
+def job_detail_page(job_id: str) -> None:
     """Job detail page with progressive disclosure UI."""
     context = _build_job_detail_context(job_id)
     if context is None:

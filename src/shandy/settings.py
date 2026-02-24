@@ -12,7 +12,7 @@ import os
 import re
 from functools import lru_cache
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -196,8 +196,10 @@ class ProviderSettings(BaseSettings):
         is available).  The authoritative validation lives in each
         provider's ``_validate_required_config``.
         """
+        from collections.abc import Callable
+
         provider = self.claude_provider.lower()
-        warning_builders = {
+        warning_builders: dict[str, Callable[[], list[str]]] = {
             "anthropic": self._anthropic_warnings,
             "cborg": self._cborg_warnings,
             "vertex": self._vertex_warnings,
@@ -458,7 +460,7 @@ class BudgetSettings(BaseSettings):
         "app_max_budget_usd",
     )
     @classmethod
-    def validate_positive(cls, v: float, info) -> float:
+    def validate_positive(cls, v: float, info: ValidationInfo) -> float:
         """Validate that budget values are positive."""
         if v <= 0:
             raise ValueError(f"{info.field_name} must be positive, got {v}")

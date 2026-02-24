@@ -5,7 +5,7 @@ The Job model represents a complete SHANDY analysis workflow, tracking
 status, configuration, and relationships to all job artifacts.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
@@ -144,7 +144,7 @@ class Job(UUIDv7Mixin, Base):
         comment="LLM provider being used (vertex/bedrock/cborg)",
     )
 
-    llm_config: Mapped[dict | None] = mapped_column(
+    llm_config: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="LLM configuration (model, temperature, etc.)",

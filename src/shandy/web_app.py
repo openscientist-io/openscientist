@@ -8,11 +8,12 @@ import argparse
 import importlib
 import logging
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from nicegui import app, ui
 
 from shandy.job_manager import JobManager
@@ -70,7 +71,7 @@ except Exception as e:
     STORAGE_SECRET = "unconfigured-fallback"
 
 
-def _create_config_error_page(error_message: str):
+def _create_config_error_page(error_message: str) -> None:
     """Create an error page for configuration errors.
 
     This page is shown when required configuration keys are missing.
@@ -82,7 +83,7 @@ def _create_config_error_page(error_message: str):
 
     @ui.page("/")
     @ui.page("/{path:path}")
-    def config_error_page(_path: str = ""):
+    def config_error_page(_path: str = "") -> None:
         """Display generic server error with 500 status."""
         app.storage.user["_error_shown"] = True
 
@@ -116,7 +117,7 @@ Administrators can find detailed error information in the server logs.
 
     # Also add a health check endpoint that returns 500
     @app.get("/health")
-    def health_check():
+    def health_check() -> Response:
         return Response(
             content='{"status": "error", "message": "Server error"}',
             status_code=500,
@@ -127,7 +128,7 @@ Administrators can find detailed error information in the server logs.
 class _AppState:
     """Module-level singleton holding mutable app state (avoids bare globals)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.job_manager: JobManager | None = None
         self.jobs_dir: Path = Path("jobs")
 
@@ -135,7 +136,7 @@ class _AppState:
 _state = _AppState()
 
 
-def _register_oauth_routes():
+def _register_oauth_routes() -> None:
     """Register OAuth authentication routes with the underlying FastAPI app."""
     try:
         from shandy.auth.fastapi_routes import router as auth_router
@@ -147,7 +148,7 @@ def _register_oauth_routes():
         logger.warning("Failed to register OAuth routes: %s", e)
 
 
-def _register_api_routes():
+def _register_api_routes() -> None:
     """Register REST API routes with the underlying FastAPI app."""
     try:
         from shandy.api import api_router
@@ -159,7 +160,7 @@ def _register_api_routes():
         logger.warning("Failed to register API routes: %s", e)
 
 
-def _register_share_routes():
+def _register_share_routes() -> None:
     """Register web share routes for session-based job sharing."""
     try:
         from shandy.webapp_components.share_routes import router as share_router
@@ -177,14 +178,14 @@ app.version = "1.0.0"
 app.description = "REST API for Scientific Hypothesis Agent for Novel Discovery"
 
 
-def _register_openapi_docs():
+def _register_openapi_docs() -> None:
     """Register OpenAPI documentation routes (Swagger UI and ReDoc).
 
     NiceGUI disables FastAPI's built-in docs, so we add them manually.
     """
 
     @app.get("/api-docs", include_in_schema=False)
-    async def swagger_ui_html():
+    async def swagger_ui_html() -> HTMLResponse:
         """Swagger UI documentation."""
         return get_swagger_ui_html(
             openapi_url="/openapi.json",
@@ -192,7 +193,7 @@ def _register_openapi_docs():
         )
 
     @app.get("/api-redoc", include_in_schema=False)
-    async def redoc_html():
+    async def redoc_html() -> HTMLResponse:
         """ReDoc documentation."""
         return get_redoc_html(
             openapi_url="/openapi.json",
@@ -200,7 +201,7 @@ def _register_openapi_docs():
         )
 
     @app.get("/openapi.json", include_in_schema=False)
-    async def openapi_json():
+    async def openapi_json() -> JSONResponse:
         """OpenAPI schema as JSON, filtered to only include /api/v1/* paths."""
         schema = app.openapi()
         # Filter to only include API paths
@@ -219,7 +220,7 @@ _register_openapi_docs()
 # Lightweight health endpoint — returns JSON without touching NiceGUI storage,
 # so the Docker health check doesn't trigger watchfiles reload events.
 @app.get("/health", include_in_schema=False)
-def health_check():
+def health_check() -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
@@ -256,7 +257,7 @@ def get_job_manager() -> JobManager:
     return _state.job_manager
 
 
-async def _verify_db_connection_and_rls(engine) -> None:
+async def _verify_db_connection_and_rls(engine: Any) -> None:
     """Verify database connection, tables, and RLS configuration."""
     from sqlalchemy import text
 
@@ -357,7 +358,7 @@ async def _ensure_default_skill_sources() -> None:
         logger.warning("Failed to seed default skill sources: %s", e)
 
 
-async def _start_background_tasks(engine) -> None:
+async def _start_background_tasks(engine: Any) -> None:
     """Start background tasks after database verification."""
     await _verify_db_connection_and_rls(engine)
     await _ensure_default_skill_sources()
@@ -383,7 +384,7 @@ def _initialize_job_manager_runtime(jobs_dir: Path) -> None:
     app.add_static_files("/assets", str(ASSETS_DIR))
 
 
-def init_app(jobs_dir: Path = Path("jobs")):
+def init_app(jobs_dir: Path = Path("jobs")) -> None:
     """Initialize the web application."""
     _state.jobs_dir = jobs_dir
 
@@ -396,7 +397,7 @@ def init_app(jobs_dir: Path = Path("jobs")):
 
         engine = get_engine()
 
-        async def start_background_tasks_for_engine():
+        async def start_background_tasks_for_engine() -> None:
             await _start_background_tasks(engine)
 
         # Defer background tasks to NiceGUI's startup event to ensure they run

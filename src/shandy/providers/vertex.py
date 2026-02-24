@@ -108,7 +108,7 @@ class VertexProvider(BaseProvider):
         if not creds_env:
             raise ProviderError("GOOGLE_APPLICATION_CREDENTIALS not set")
         creds_path = os.path.expanduser(creds_env)
-        credentials = service_account.Credentials.from_service_account_file(creds_path)
+        credentials = service_account.Credentials.from_service_account_file(creds_path)  # type: ignore[no-untyped-call]
 
         project_id = settings.provider.anthropic_vertex_project_id
         billing_account = settings.provider.gcp_billing_account_id

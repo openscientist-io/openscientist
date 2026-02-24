@@ -8,7 +8,7 @@ from shandy.webapp_components.ui_components import SHANDY_THINKING_SVG
 
 
 @ui.page("/login")
-def login_page():
+def login_page() -> None:
     """Login page with OAuth support."""
 
     # Check if OAuth is configured

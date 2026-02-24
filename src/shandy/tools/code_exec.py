@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from typing import Any
 
 from shandy.tools.registry import ToolContext, tool
 
@@ -62,7 +63,7 @@ def _ensure_data_loaded(ctx: ToolContext) -> str | None:
         return err
 
 
-def make_tools(ctx: ToolContext) -> list[Callable]:
+def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
     """Return the execute_code tool bound to ctx."""
 
     @tool

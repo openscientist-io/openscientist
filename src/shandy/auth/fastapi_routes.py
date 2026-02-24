@@ -44,7 +44,7 @@ def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
 
 
 @router.get("/mock/login")
-async def mock_oauth_login():
+async def mock_oauth_login() -> RedirectResponse:
     """
     Mock OAuth login (development only).
 
@@ -95,7 +95,7 @@ async def mock_oauth_login():
 
 
 @router.get("/mock/admin-login")
-async def mock_admin_oauth_login():
+async def mock_admin_oauth_login() -> RedirectResponse:
     """
     Mock OAuth login for admin user (development only).
 
@@ -165,7 +165,7 @@ async def mock_admin_oauth_login():
 
 
 @router.post("/mock/callback")
-async def mock_oauth_callback(request: Request):
+async def mock_oauth_callback(request: Request) -> RedirectResponse:
     """
     Handle mock OAuth callback (development only).
 
@@ -225,7 +225,7 @@ async def mock_oauth_callback(request: Request):
 
 
 @router.get("/{provider}/login")
-async def oauth_login(provider: str, request: Request):
+async def oauth_login(provider: str, request: Request) -> RedirectResponse:
     """
     Initiate OAuth login flow.
 
@@ -250,7 +250,7 @@ async def oauth_login(provider: str, request: Request):
         redirect_uri = f"{settings.auth.app_url}/auth/{provider}/callback"
 
         # Redirect to OAuth provider
-        return await client.authorize_redirect(request, redirect_uri)
+        return await client.authorize_redirect(request, redirect_uri)  # type: ignore[no-any-return]
 
     except Exception as e:
         logger.error("OAuth login error: %s", e, exc_info=True)
@@ -258,7 +258,7 @@ async def oauth_login(provider: str, request: Request):
 
 
 @router.get("/{provider}/callback")
-async def oauth_callback(provider: str, request: Request):
+async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
     """
     Handle OAuth callback.
 
@@ -318,7 +318,7 @@ async def oauth_callback(provider: str, request: Request):
 
 
 @router.get("/logout")
-async def logout(request: Request):
+async def logout(request: Request) -> RedirectResponse:
     """Handle logout by invalidating session."""
     session_token = request.cookies.get("session_token")
 

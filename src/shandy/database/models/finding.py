@@ -5,7 +5,7 @@ Findings represent discrete analytical observations or results
 from code execution, analysis, or data inspection.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import ForeignKey, Integer, String, Text
@@ -75,7 +75,7 @@ class Finding(UUIDv7Mixin, Base):
         comment="Source of finding (code_execution/literature/reasoning)",
     )
 
-    data: Mapped[dict | None] = mapped_column(
+    data: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Structured data associated with finding",

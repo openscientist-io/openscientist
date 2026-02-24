@@ -21,7 +21,7 @@ from shandy.auth import get_current_user_id
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_admin_session, get_session_ctx
-from shandy.job_manager import JobInfo, JobStatus
+from shandy.job.types import JobInfo, JobStatus
 from shandy.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def render_skill_name_slot() -> str:
 
 
 # Type alias for async callbacks
-AsyncCallback = Callable[[dict], Awaitable[None]]
+AsyncCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 # Status color mappings
 STATUS_COLORS = {
@@ -485,7 +485,7 @@ def transform_pmid_references(text: str) -> str:
     # But NOT when inside a markdown link [text](url)
     pattern = re.compile(r"(?<!\[)(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
 
-    def replace_pmid(match: re.Match) -> str:
+    def replace_pmid(match: re.Match[str]) -> str:
         pmid_list = match.group(2)
         pmids = [p.strip() for p in pmid_list.split(",")]
         badges = [_get_pubmed_badge_html(pmid) for pmid in pmids]
@@ -517,7 +517,7 @@ def render_justified_text(
     )
 
 
-def render_error_card(error_info: dict, job_info: JobInfo, job_dir: Path) -> None:
+def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Path) -> None:
     """
     Render a user-friendly error card with tiered disclosure.
 
@@ -591,7 +591,7 @@ def render_error_card(error_info: dict, job_info: JobInfo, job_dir: Path) -> Non
             with ui.row().classes("items-center justify-between w-full mb-2 flex-nowrap"):
                 ui.label("Raw Error Output:").classes("text-sm font-bold text-gray-800")
 
-                def copy_to_clipboard():
+                def copy_to_clipboard() -> None:
                     ui.run_javascript(
                         f"""
                             navigator.clipboard.writeText({error_info["raw"]!r});
@@ -739,7 +739,7 @@ def render_alert_banner(
                     )
 
 
-def get_status_badge_props(status: JobStatus) -> dict:
+def get_status_badge_props(status: JobStatus) -> dict[str, Any]:
     """
     Get NiceGUI badge properties for a job status.
 
@@ -1402,7 +1402,7 @@ async def render_user_search(
 
     results_container = ui.column().classes("w-full max-h-48 overflow-y-auto")
 
-    async def search_users():
+    async def search_users() -> None:
         """Search for users by email or name."""
         query = search_input.value
         if not query or len(query) < 2:
@@ -1431,7 +1431,7 @@ async def render_user_search(
                         ):
                             ui.label(f"{user.name} ({user.email})").classes("flex-grow text-sm")
 
-                            async def select_user(u=user):
+                            async def select_user(u: Any = user) -> None:
                                 user_data = {
                                     "id": u.id,
                                     "name": u.name,
@@ -1451,7 +1451,7 @@ async def render_user_search(
             with results_container:
                 ui.label("Search failed").classes("text-red-500 text-sm")
 
-    async def _on_search_change(_e):
+    async def _on_search_change(_e: Any) -> None:
         await search_users()
 
     search_input.on_value_change(_on_search_change)
@@ -1715,7 +1715,7 @@ class _ShareDialogController:
             logger.error("Failed to share job: %s", exc, exc_info=True)
             ui.notify("Error sharing job", type="negative")
 
-    async def on_search_change(self, event) -> None:
+    async def on_search_change(self, event: Any) -> None:
         """Handle search-input model updates."""
         await self.search_users(event.value)
 
@@ -1956,7 +1956,7 @@ def render_delete_dialog(
         content_container = ui.column().classes("w-full")
 
         @ui.refreshable
-        def render_dialog_content():
+        def render_dialog_content() -> None:
             content_container.clear()
             job_info = job_manager.get_job(job_id)
             is_active = job_info and job_info.status in [
@@ -1982,7 +1982,7 @@ def render_delete_dialog(
 
         render_dialog_content()
 
-        async def on_confirm():
+        async def on_confirm() -> None:
             dialog.close()
             try:
                 # Verify caller is the job owner

@@ -172,7 +172,7 @@ async def revoke_api_key(
     key_id: UUID,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-):
+) -> None:
     """
     Revoke (deactivate) an API key.
 

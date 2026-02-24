@@ -12,9 +12,12 @@ import os
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from shandy.settings import get_settings
+
+if TYPE_CHECKING:
+    import docker as _docker_module
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +69,10 @@ class ContainerManager:
         self.memory_limit = memory_limit or settings.container.executor_memory
         self.cpu_limit = cpu_limit if cpu_limit is not None else settings.container.executor_cpu
         self.timeout = timeout if timeout is not None else settings.container.executor_timeout
-        self._client = None
+        self._client: "_docker_module.DockerClient | None" = None
 
     @property
-    def client(self):
+    def client(self) -> "_docker_module.DockerClient":
         """Lazy-load Docker client."""
         if self._client is None:
             import docker
@@ -392,7 +395,8 @@ class ContainerManager:
         try:
             self.client.ping()
             return True
-        except Exception:
+        except Exception as exc:
+            logger.debug("Docker ping failed: %s", exc)
             return False
 
 

@@ -8,7 +8,7 @@ and automatically discover all ORM models for migration generation.
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context  # type: ignore[import-untyped]
+from alembic import context
 from pydantic import ValidationError
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection

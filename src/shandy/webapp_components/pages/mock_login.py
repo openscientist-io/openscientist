@@ -8,7 +8,7 @@ from shandy.settings import get_settings
 
 
 @ui.page("/mock-login-form")
-def mock_login_form():
+def mock_login_form() -> None:
     """Mock OAuth login form for development testing."""
 
     # Security check - only show in development mode
@@ -49,7 +49,7 @@ def mock_login_form():
                 "Never enable this in production!"
             ).classes("text-xs text-orange-600 mt-4")
 
-            async def submit_mock_login():
+            async def submit_mock_login() -> None:
                 """Submit mock login form."""
                 # Create form data
                 import httpx

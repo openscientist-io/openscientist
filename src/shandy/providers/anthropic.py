@@ -72,7 +72,9 @@ class AnthropicProvider(BaseProvider):
         # If using OAuth token (from claude login), set CLAUDE_CODE_OAUTH_TOKEN
         # which is what the Claude Code CLI expects for OAuth authentication
         if settings.provider.claude_code_oauth_token and not settings.provider.anthropic_api_key:
-            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = settings.provider.claude_code_oauth_token  # env-ok
+            os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = (
+                settings.provider.claude_code_oauth_token
+            )  # env-ok
             auth_method = "OAuth token (CLAUDE_CODE_OAUTH_TOKEN)"
         else:
             auth_method = "API key (ANTHROPIC_API_KEY)"

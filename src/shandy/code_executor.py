@@ -57,7 +57,7 @@ ALLOWED_IMPORTS = [
 ]
 
 
-def timeout_handler(_signum, _frame):
+def timeout_handler(_signum: int, _frame: Any) -> None:
     """Signal handler for execution timeout."""
     raise CodeExecutionTimeoutError("Code execution timed out")
 
@@ -233,7 +233,7 @@ def _install_plot_hooks(
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-    def savefig_hook(filename, *args, **kwargs):
+    def savefig_hook(filename: str, *args: Any, **kwargs: Any) -> Any:
         """Hook to intercept plt.savefig() and save to plots_dir with metadata."""
         plot_path = Path(filename)
         if not plot_path.is_absolute():

@@ -45,7 +45,7 @@ class CostInfo:
 class BaseProvider(ABC):
     """Abstract base class for model providers."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize and validate provider configuration."""
         errors = self._validate_required_config()
         if errors:

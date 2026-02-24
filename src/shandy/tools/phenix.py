@@ -11,6 +11,7 @@ import logging
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from shandy.tools.registry import ToolContext, tool
 
@@ -248,7 +249,7 @@ def _parse_alphafold_confidence_impl(
     return "\n".join(output)
 
 
-def make_tools(ctx: ToolContext) -> list[Callable]:
+def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
     """Return Phenix tools bound to ctx. Empty list if Phenix unavailable."""
     from shandy.phenix_setup import check_phenix_available
 
@@ -259,7 +260,7 @@ def make_tools(ctx: ToolContext) -> list[Callable]:
     def run_phenix_tool(
         tool_name: str,
         input_files: list[str],
-        arguments: dict | None = None,
+        arguments: dict[str, Any] | None = None,
         description: str = "",
     ) -> str:
         """

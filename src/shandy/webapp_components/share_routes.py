@@ -6,6 +6,7 @@ These routes use session-based authentication instead of API keys.
 """
 
 import logging
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -186,7 +187,7 @@ async def revoke_share(
     share_id: str,
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-) -> dict:
+) -> dict[str, Any]:
     """
     Revoke an existing share on a job owned by the caller.
 

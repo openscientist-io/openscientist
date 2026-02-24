@@ -15,7 +15,7 @@ from shandy.database.crypto import decrypt, encrypt, encryption_available
 logger = logging.getLogger(__name__)
 
 
-class EncryptedText(TypeDecorator):
+class EncryptedText(TypeDecorator[str]):
     """
     SQLAlchemy column type that transparently encrypts/decrypts text.
 
