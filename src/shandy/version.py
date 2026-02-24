@@ -4,15 +4,19 @@ Version information for SHANDY.
 Provides build metadata from Docker build args or git.
 """
 
+import logging
 import os
 import subprocess
 
 # Version constants
 __version__ = "0.1.0"
+SHORT_COMMIT_LENGTH: int = 12
 
 # Build metadata (set during Docker build via environment variables)
 _commit: str | None = None
 _build_time: str | None = None
+
+logger = logging.getLogger(__name__)
 
 
 def get_commit() -> str:
@@ -24,7 +28,7 @@ def get_commit() -> str:
     # Try environment variable first (set during Docker build)
     commit = os.environ.get("SHANDY_COMMIT", "")  # env-ok
     if commit and commit != "unknown":
-        _commit = commit[:12]
+        _commit = commit[:SHORT_COMMIT_LENGTH]
         return _commit
 
     # Fallback to git
@@ -37,10 +41,10 @@ def get_commit() -> str:
             check=False,
         )
         if result.returncode == 0:
-            _commit = result.stdout.strip()[:12]
+            _commit = result.stdout.strip()[:SHORT_COMMIT_LENGTH]
             return _commit
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("git rev-parse failed: %s", e)
 
     _commit = "unknown"
     return _commit

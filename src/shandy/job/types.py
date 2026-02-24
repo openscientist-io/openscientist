@@ -81,11 +81,19 @@ class JobInfo:
             created_at=job.created_at.isoformat(),
             started_at=(
                 job.updated_at.isoformat()
-                if job.status in ["running", "awaiting_feedback", "completed", "failed"]
+                if job.status
+                in {
+                    JobStatus.RUNNING,
+                    JobStatus.AWAITING_FEEDBACK,
+                    JobStatus.COMPLETED,
+                    JobStatus.FAILED,
+                }
                 else None
             ),
-            completed_at=(job.updated_at.isoformat() if job.status == "completed" else None),
-            failed_at=job.updated_at.isoformat() if job.status == "failed" else None,
+            completed_at=(
+                job.updated_at.isoformat() if job.status == JobStatus.COMPLETED else None
+            ),
+            failed_at=job.updated_at.isoformat() if job.status == JobStatus.FAILED else None,
             max_iterations=job.max_iterations,
             iterations_completed=iterations_completed,
             findings_count=findings_count,

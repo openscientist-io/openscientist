@@ -22,6 +22,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from shandy.version import SHORT_COMMIT_LENGTH
+
 logger = logging.getLogger(__name__)
 
 AGENT_IMAGE = "shandy-agent:latest"
@@ -95,7 +97,7 @@ class JobContainerRunner:
             volumes[str(gcp_host_path)] = {"bind": container_gcp_path, "mode": "ro"}
             env["GOOGLE_APPLICATION_CREDENTIALS"] = container_gcp_path
 
-        short_id = job_id[:12]
+        short_id = job_id[:SHORT_COMMIT_LENGTH]
         assert self._docker is not None
         container = self._docker.containers.run(
             image=AGENT_IMAGE,

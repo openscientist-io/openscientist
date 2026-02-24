@@ -34,6 +34,7 @@ class TestGetVersionMetadata:
         assert info["shandy_build_time"] == "2026-02-01T00:00:00"
 
     @patch.dict(os.environ, {"SHANDY_COMMIT": "unknown"}, clear=False)
+    @patch("shandy.version._commit", None)
     @patch("subprocess.run")
     def test_falls_back_to_git(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="abcdef123456789\n")
@@ -263,7 +264,9 @@ class TestDiscoveryCancellationAndFailure:
             patch(
                 "shandy.orchestrator.discovery._write_skills_to_claude_dir", new_callable=AsyncMock
             ),
-            patch("shandy.orchestrator.discovery._build_agent_executor", return_value=mock_executor),
+            patch(
+                "shandy.orchestrator.discovery._build_agent_executor", return_value=mock_executor
+            ),
             patch(
                 "shandy.orchestrator.discovery._run_report_generation_phase", new_callable=AsyncMock
             ) as mock_report_phase,
@@ -345,7 +348,9 @@ class TestDiscoveryCancellationAndFailure:
             patch(
                 "shandy.orchestrator.discovery._write_skills_to_claude_dir", new_callable=AsyncMock
             ),
-            patch("shandy.orchestrator.discovery._build_agent_executor", return_value=mock_executor),
+            patch(
+                "shandy.orchestrator.discovery._build_agent_executor", return_value=mock_executor
+            ),
             patch(
                 "shandy.orchestrator.discovery._run_report_generation_phase", new_callable=AsyncMock
             ) as mock_report_phase,

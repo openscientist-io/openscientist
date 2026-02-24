@@ -25,6 +25,7 @@ from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ShandyError
 from shandy.knowledge_state import KnowledgeState
 from shandy.orchestrator.iteration import (
+    FeedbackWaitResult,
     _get_job_status,
     build_initial_prompt,
     build_iteration_prompt,
@@ -117,7 +118,7 @@ async def _wait_for_coinvestigate_feedback(
     investigation_mode: str,
     current_iteration: int,
     max_iterations: int,
-) -> dict[str, str | None] | None:
+) -> FeedbackWaitResult | None:
     """Pause for user feedback between iterations in co-investigation mode."""
     if investigation_mode != "coinvestigate" or current_iteration >= max_iterations:
         return None
@@ -430,38 +431,25 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) 
 def get_version_metadata() -> dict[str, str]:
     """Get SHANDY version metadata for reproducibility."""
     import os
-    import subprocess
+
+    from shandy.version import SHORT_COMMIT_LENGTH, get_commit
 
     metadata: dict[str, str] = {}
 
-    shandy_commit = os.environ.get("SHANDY_COMMIT")  # env-ok
-    if shandy_commit and shandy_commit != "unknown":
-        metadata["shandy_commit"] = shandy_commit[:12]
+    commit = get_commit()
+    if commit != "unknown":
+        metadata["shandy_commit"] = commit
 
     shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # env-ok
     if shandy_build_time and shandy_build_time != "unknown":
         metadata["shandy_build_time"] = shandy_build_time
-
-    if "shandy_commit" not in metadata:
-        try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-            if result.returncode == 0:
-                metadata["shandy_commit"] = result.stdout.strip()[:12]
-        except (OSError, subprocess.SubprocessError):
-            pass
 
     try:
         if Path("/.dockerenv").exists():
             with open("/etc/hostname", encoding="utf-8") as f:
                 container_id = f.read().strip()
                 if container_id:
-                    metadata["docker_container_id"] = container_id[:12]
+                    metadata["docker_container_id"] = container_id[:SHORT_COMMIT_LENGTH]
     except OSError:
         pass
 
@@ -639,7 +627,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
         await executor.shutdown()
 
 
-def _save_transcript(path: Path, transcript: list[dict]) -> None:
+def _save_transcript(path: Path, transcript: list[dict[str, Any]]) -> None:
     """Save iteration transcript to JSON file."""
     import json as _json
 

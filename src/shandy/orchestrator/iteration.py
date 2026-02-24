@@ -18,6 +18,7 @@ from sqlalchemy import select
 from shandy.database.models import User
 from shandy.database.models.job import Job as JobModel
 from shandy.database.session import AsyncSessionLocal
+from shandy.job.types import JobStatus
 from shandy.knowledge_state import KnowledgeState
 from shandy.ntfy import notify_job_status_change
 
@@ -256,7 +257,7 @@ def _should_notify_awaiting_feedback(
     ntfy_enabled: bool,
     job_title: str | None,
 ) -> bool:
-    if status != "awaiting_feedback" or old_status == "awaiting_feedback":
+    if status != JobStatus.AWAITING_FEEDBACK or old_status == JobStatus.AWAITING_FEEDBACK:
         return False
     return bool(owner_id and ntfy_enabled and job_title)
 
