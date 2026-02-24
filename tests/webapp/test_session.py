@@ -1,11 +1,22 @@
 """Tests for session management utilities."""
 
+import tempfile
+from pathlib import Path
+
 from shandy.webapp_components.utils.session import (
     _uploaded_files,
     add_uploaded_file,
     clear_uploaded_files,
     get_uploaded_files,
 )
+
+
+def _make_temp_file(content: bytes = b"test content") -> Path:
+    """Create a real temp file for testing."""
+    tmp = tempfile.NamedTemporaryFile(delete=False, dir=tempfile.mkdtemp())
+    tmp.write(content)
+    tmp.close()
+    return Path(tmp.name)
 
 
 class TestSessionManagement:
@@ -26,22 +37,22 @@ class TestSessionManagement:
         """Test adding a file to a session."""
         session_id = "test_session_2"
         file_name = "test.txt"
-        file_content = b"test content"
+        file_path = _make_temp_file(b"test content")
 
-        add_uploaded_file(session_id, file_name, file_content)
+        add_uploaded_file(session_id, file_name, file_path)
 
         files = get_uploaded_files(session_id)
         assert len(files) == 1
         assert files[0]["name"] == file_name
-        assert files[0]["content"] == file_content
+        assert files[0]["path"] == file_path
 
     def test_add_multiple_files(self):
         """Test adding multiple files to a session."""
         session_id = "test_session_3"
 
-        add_uploaded_file(session_id, "file1.txt", b"content1")
-        add_uploaded_file(session_id, "file2.csv", b"content2")
-        add_uploaded_file(session_id, "file3.json", b"content3")
+        add_uploaded_file(session_id, "file1.txt", _make_temp_file(b"content1"))
+        add_uploaded_file(session_id, "file2.csv", _make_temp_file(b"content2"))
+        add_uploaded_file(session_id, "file3.json", _make_temp_file(b"content3"))
 
         files = get_uploaded_files(session_id)
         assert len(files) == 3
@@ -50,17 +61,21 @@ class TestSessionManagement:
         assert files[2]["name"] == "file3.json"
 
     def test_clear_uploaded_files(self):
-        """Test clearing files for a session."""
+        """Test clearing files for a session deletes the temp files."""
         session_id = "test_session_4"
 
-        add_uploaded_file(session_id, "file1.txt", b"content1")
-        add_uploaded_file(session_id, "file2.txt", b"content2")
+        path1 = _make_temp_file(b"content1")
+        path2 = _make_temp_file(b"content2")
+        add_uploaded_file(session_id, "file1.txt", path1)
+        add_uploaded_file(session_id, "file2.txt", path2)
 
         assert len(get_uploaded_files(session_id)) == 2
 
         clear_uploaded_files(session_id)
 
         assert len(get_uploaded_files(session_id)) == 0
+        assert not path1.exists()
+        assert not path2.exists()
 
     def test_clear_nonexistent_session(self):
         """Test clearing files for a session that doesn't exist."""
@@ -73,8 +88,8 @@ class TestSessionManagement:
         session1 = "session_1"
         session2 = "session_2"
 
-        add_uploaded_file(session1, "file1.txt", b"content1")
-        add_uploaded_file(session2, "file2.txt", b"content2")
+        add_uploaded_file(session1, "file1.txt", _make_temp_file(b"content1"))
+        add_uploaded_file(session2, "file2.txt", _make_temp_file(b"content2"))
 
         files1 = get_uploaded_files(session1)
         files2 = get_uploaded_files(session2)

@@ -32,14 +32,8 @@ def _build_upload_session_id(user_id: str | None, client: object) -> str:
 
 
 def _persist_uploaded_files(session_id: str) -> list[Path]:
-    """Persist in-memory uploads into temporary files for job creation."""
-    data_files: list[Path] = []
-    for uploaded_file in get_uploaded_files(session_id):
-        temp_file = Path(tempfile.mkdtemp()) / uploaded_file["name"]
-        with open(temp_file, "wb") as file_obj:
-            file_obj.write(uploaded_file["content"])
-        data_files.append(temp_file)
-    return data_files
+    """Return temp file paths for all uploaded files in the session."""
+    return [uploaded_file["path"] for uploaded_file in get_uploaded_files(session_id)]
 
 
 def _notify_creation_error(error: Exception) -> None:
@@ -107,13 +101,14 @@ def _submit_job(
 
 
 async def _handle_upload(e: Any, session_id: str) -> None:
-    """Persist a single upload into session state."""
+    """Stream upload directly to a temp file and record its path in session state."""
     try:
-        content = await e.file.read()
         name = e.file.name
-        add_uploaded_file(session_id, name, content)
+        temp_path = Path(tempfile.mkdtemp()) / name
+        await e.file.save(temp_path)
+        add_uploaded_file(session_id, name, temp_path)
         ui.notify(f"Uploaded: {name}", type="positive")
-        logger.info("Successfully uploaded %s (%d bytes)", name, len(content))
+        logger.info("Successfully uploaded %s (%d bytes)", name, e.file.size())
     except (ValueError, OSError) as exc:
         logger.error("Upload failed: %s", exc, exc_info=True)
         ui.notify(f"Upload failed: {exc}", type="negative")
