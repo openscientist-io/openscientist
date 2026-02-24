@@ -37,5 +37,4 @@ ENV SHANDY_BUILD_TIME=${BUILD_TIME}
 # Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
-# Run web app (--reload only in dev mode)
-CMD python -m shandy.web_app --host 0.0.0.0 --port 8080 ${SHANDY_DEV_MODE:+--reload}
+CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]

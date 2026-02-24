@@ -418,8 +418,7 @@ def main(
     host: str = "0.0.0.0",
     port: int = 8080,
     jobs_dir: Path = Path("jobs"),
-    reload: bool = False,
-):
+) -> None:
     """
     Run the web application.
 
@@ -427,7 +426,6 @@ def main(
         host: Host to bind to
         port: Port to bind to
         jobs_dir: Directory for jobs
-        reload: Enable auto-reload on file changes (development mode)
     """
     # Set up logging
     logging.basicConfig(
@@ -461,6 +459,10 @@ def main(
 
     logger.info("Settings validated successfully")
 
+    from shandy.settings import get_settings
+
+    reload = get_settings().dev.dev_mode
+
     # Initialize app BEFORE ui.run() to ensure job_manager is set
     # This must happen before any page is accessed
     init_app(jobs_dir=jobs_dir)
@@ -473,7 +475,7 @@ def main(
         port=port,
         title="SHANDY",
         favicon=ASSETS_DIR / "favicon.ico",
-        reload=reload,  # Enable auto-reload in development mode
+        reload=reload,
         uvicorn_reload_excludes=".nicegui,jobs",  # Don't reload on storage/job changes
         show=False,  # Don't auto-open browser in Docker
         storage_secret=STORAGE_SECRET,  # Required for app.storage.user
@@ -481,22 +483,11 @@ def main(
 
 
 if __name__ in {"__main__", "__mp_main__"}:
-    from shandy.settings import get_settings
-
-    # Auto-detect dev mode from environment
-    dev_mode = get_settings().dev.dev_mode
-
     parser = argparse.ArgumentParser(description="SHANDY Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
     parser.add_argument("--jobs-dir", default="jobs", help="Jobs directory")
-    parser.add_argument(
-        "--reload",
-        action="store_true",
-        default=dev_mode,  # Auto-enable in dev mode
-        help="Enable auto-reload on file changes (auto-enabled when SHANDY_DEV_MODE=true)",
-    )
 
     args = parser.parse_args()
 
-    main(host=args.host, port=args.port, jobs_dir=Path(args.jobs_dir), reload=args.reload)
+    main(host=args.host, port=args.port, jobs_dir=Path(args.jobs_dir))

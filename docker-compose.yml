@@ -1,12 +1,9 @@
 # Docker Compose for SHANDY
 #
 # Usage:
-#   Development: docker compose up
-#                (uses docker-compose.override.yml for source mounts)
-#                Set SHANDY_DEV_MODE=true in .env for auto-reload & mock auth
+#   Development: Set SHANDY_DEV_MODE=true in .env for auto-reload & mock auth
 #
-#   Production:  docker compose -f docker-compose.yml up
-#                (explicit file flag ignores override.yml)
+#   Production:  docker compose up  (SHANDY_DEV_MODE unset or false)
 
 services:
   postgres:
