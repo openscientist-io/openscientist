@@ -8,6 +8,7 @@ unit testing.
 import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -44,7 +45,7 @@ class TestGetVersionMetadata:
     @patch.dict(os.environ, {}, clear=True)
     @patch("subprocess.run", side_effect=FileNotFoundError)
     @patch("shandy.orchestrator.discovery.Path")
-    def test_empty_when_no_info_available(self, mock_path_cls, mock_run):
+    def test_empty_when_no_info_available(self, mock_path_cls, _mock_run):
         mock_path_cls.return_value.exists.return_value = False
         info = get_version_metadata()
         assert isinstance(info, dict)
@@ -54,42 +55,121 @@ class TestGetVersionMetadata:
 
 
 class TestUpdateJobStatus:
-    """Tests for job status file updates."""
+    """Tests for DB-backed job status updates."""
 
-    def test_update_status(self, tmp_path):
-        config = {"job_id": "j1", "status": "created"}
-        config_path = tmp_path / "config.json"
-        config_path.write_text(json.dumps(config))
+    @pytest.mark.asyncio
+    async def test_update_status(self, tmp_path):
+        job_id = str(uuid4())
+        job_dir = tmp_path / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
 
-        update_job_status(tmp_path, "running")
+        job = MagicMock()
+        job.status = "pending"
+        job.owner_id = None
+        job.short_title = None
+        job.title = "Test job"
 
-        with open(config_path, encoding="utf-8") as f:
-            updated = json.load(f)
-        assert updated["status"] == "running"
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = job
 
-    def test_awaiting_feedback_adds_timestamp(self, tmp_path):
-        config = {"job_id": "j1", "status": "running"}
-        (tmp_path / "config.json").write_text(json.dumps(config))
+        with patch("shandy.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls:
+            mock_session = AsyncMock()
+            mock_session.execute = AsyncMock(return_value=job_result)
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_session
+            mock_cm.__aexit__.return_value = False
+            mock_session_cls.return_value = mock_cm
 
-        update_job_status(tmp_path, "awaiting_feedback")
+            await update_job_status(job_dir, "running")
 
-        with open(tmp_path / "config.json", encoding="utf-8") as f:
-            updated = json.load(f)
-        assert "awaiting_feedback_since" in updated
+        assert job.status == "running"
+        mock_session.flush.assert_awaited_once()
+        mock_session.commit.assert_awaited_once()
 
-    def test_leaving_awaiting_feedback_removes_timestamp(self, tmp_path):
-        config = {
-            "job_id": "j1",
-            "status": "awaiting_feedback",
-            "awaiting_feedback_since": "2026-01-01T00:00:00",
-        }
-        (tmp_path / "config.json").write_text(json.dumps(config))
+    @pytest.mark.asyncio
+    async def test_awaiting_feedback_sends_notification(self, tmp_path):
+        job_id = str(uuid4())
+        job_dir = tmp_path / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "knowledge_state.json").write_text(json.dumps({"iteration": 4}))
 
-        update_job_status(tmp_path, "running")
+        owner_id = uuid4()
+        job = MagicMock()
+        job.status = "running"
+        job.owner_id = owner_id
+        job.short_title = "Short title"
+        job.title = "Long title"
 
-        with open(tmp_path / "config.json", encoding="utf-8") as f:
-            updated = json.load(f)
-        assert "awaiting_feedback_since" not in updated
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = job
+
+        user_row = MagicMock()
+        user_row.ntfy_enabled = True
+        user_row.ntfy_topic = "topic-123"
+        user_result = MagicMock()
+        user_result.first.return_value = user_row
+
+        with (
+            patch("shandy.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls,
+            patch(
+                "shandy.orchestrator.iteration.notify_job_status_change",
+                new_callable=AsyncMock,
+            ) as mock_notify,
+        ):
+            mock_session = AsyncMock()
+            mock_session.execute = AsyncMock(side_effect=[job_result, user_result])
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_session
+            mock_cm.__aexit__.return_value = False
+            mock_session_cls.return_value = mock_cm
+
+            await update_job_status(job_dir, "awaiting_feedback")
+
+        mock_notify.assert_awaited_once()
+        kwargs = mock_notify.await_args.kwargs
+        assert kwargs["job_id"] == job_id
+        assert kwargs["job_title"] == "Short title"
+        assert kwargs["new_status"] == "awaiting_feedback"
+        assert kwargs["iteration"] == 4
+
+    @pytest.mark.asyncio
+    async def test_running_does_not_send_feedback_notification(self, tmp_path):
+        job_id = str(uuid4())
+        job_dir = tmp_path / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        job = MagicMock()
+        job.status = "awaiting_feedback"
+        job.owner_id = uuid4()
+        job.short_title = "Short"
+        job.title = "Title"
+
+        job_result = MagicMock()
+        job_result.scalar_one_or_none.return_value = job
+
+        user_row = MagicMock()
+        user_row.ntfy_enabled = True
+        user_row.ntfy_topic = "topic-123"
+        user_result = MagicMock()
+        user_result.first.return_value = user_row
+
+        with (
+            patch("shandy.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls,
+            patch(
+                "shandy.orchestrator.iteration.notify_job_status_change",
+                new_callable=AsyncMock,
+            ) as mock_notify,
+        ):
+            mock_session = AsyncMock()
+            mock_session.execute = AsyncMock(side_effect=[job_result, user_result])
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_session
+            mock_cm.__aexit__.return_value = False
+            mock_session_cls.return_value = mock_cm
+
+            await update_job_status(job_dir, "running")
+
+        mock_notify.assert_not_awaited()
 
 
 # ─── increment_ks_iteration ──────────────────────────────────────────
@@ -303,62 +383,74 @@ class TestCreateJob:
     def test_creates_job_directory(self, tmp_path):
         from shandy.orchestrator import create_job
 
+        job_id = str(uuid4())
         data_file = tmp_path / "test.csv"
         data_file.write_text("a,b\n1,2\n")
 
-        job_dir = create_job(
-            job_id="test_123",
-            research_question="Why?",
-            data_files=[data_file],
-            max_iterations=5,
-            jobs_dir=tmp_path,
-        )
+        with (
+            patch("shandy.orchestrator.setup._persist_data_files_to_db"),
+            patch("shandy.orchestrator.setup.sync_knowledge_state_to_db"),
+        ):
+            job_dir = create_job(
+                job_id=job_id,
+                research_question="Why?",
+                data_files=[data_file],
+                max_iterations=5,
+                jobs_dir=tmp_path,
+            )
 
         assert job_dir.exists()
-        assert (job_dir / "config.json").exists()
+        assert not (job_dir / "config.json").exists()
         assert (job_dir / "knowledge_state.json").exists()
         assert (job_dir / "data").is_dir()
         assert (job_dir / "provenance").is_dir()
 
-    def test_config_contents(self, tmp_path):
+    def test_knowledge_state_contents(self, tmp_path):
         from shandy.orchestrator import create_job
 
+        job_id = str(uuid4())
         data_file = tmp_path / "test.csv"
         data_file.write_text("a,b\n1,2\n")
 
-        job_dir = create_job(
-            job_id="test_456",
-            research_question="What is X?",
-            data_files=[data_file],
-            max_iterations=15,
-            use_skills=False,
-            jobs_dir=tmp_path,
-            investigation_mode="coinvestigate",
-        )
+        with (
+            patch("shandy.orchestrator.setup._persist_data_files_to_db"),
+            patch("shandy.orchestrator.setup.sync_knowledge_state_to_db"),
+        ):
+            job_dir = create_job(
+                job_id=job_id,
+                research_question="What is X?",
+                data_files=[data_file],
+                max_iterations=15,
+                use_skills=False,
+                jobs_dir=tmp_path,
+            )
 
-        with open(job_dir / "config.json", encoding="utf-8") as f:
-            config = json.load(f)
+        with open(job_dir / "knowledge_state.json", encoding="utf-8") as f:
+            ks = json.load(f)
 
-        assert config["job_id"] == "test_456"
-        assert config["research_question"] == "What is X?"
-        assert config["max_iterations"] == 15
-        assert config["use_skills"] is False
-        assert config["investigation_mode"] == "coinvestigate"
-        assert config["status"] == "created"
+        assert ks["config"]["job_id"] == job_id
+        assert ks["config"]["research_question"] == "What is X?"
+        assert ks["config"]["max_iterations"] == 15
+        assert ks["config"]["use_skills"] is False
 
     def test_copies_data_file(self, tmp_path):
         from shandy.orchestrator import create_job
 
+        job_id = str(uuid4())
         data_file = tmp_path / "input_data.csv"
         data_file.write_text("x,y\n1,2\n3,4\n")
 
-        job_dir = create_job(
-            job_id="copy_test",
-            research_question="Q?",
-            data_files=[data_file],
-            max_iterations=5,
-            jobs_dir=tmp_path,
-        )
+        with (
+            patch("shandy.orchestrator.setup._persist_data_files_to_db"),
+            patch("shandy.orchestrator.setup.sync_knowledge_state_to_db"),
+        ):
+            job_dir = create_job(
+                job_id=job_id,
+                research_question="Q?",
+                data_files=[data_file],
+                max_iterations=5,
+                jobs_dir=tmp_path,
+            )
 
         copied = job_dir / "data" / "input_data.csv"
         assert copied.exists()
@@ -367,13 +459,17 @@ class TestCreateJob:
     def test_no_data_files(self, tmp_path):
         from shandy.orchestrator import create_job
 
-        job_dir = create_job(
-            job_id="no_data",
-            research_question="Literature only?",
-            data_files=[],
-            max_iterations=5,
-            jobs_dir=tmp_path,
-        )
+        with (
+            patch("shandy.orchestrator.setup._persist_data_files_to_db"),
+            patch("shandy.orchestrator.setup.sync_knowledge_state_to_db"),
+        ):
+            job_dir = create_job(
+                job_id=str(uuid4()),
+                research_question="Literature only?",
+                data_files=[],
+                max_iterations=5,
+                jobs_dir=tmp_path,
+            )
 
         with open(job_dir / "knowledge_state.json", encoding="utf-8") as f:
             ks = json.load(f)
@@ -492,7 +588,7 @@ class TestWriteChatClaudeMd:
         with patch("shandy.orchestrator.discovery.Path") as mock_path_cls:
             # Make Path(__file__) chain return our test source
             mock_file_path = MagicMock()
-            mock_file_path.parent.parent.parent.parent.__truediv__ = lambda self, name: chat_src
+            mock_file_path.parent.parent.parent.parent.__truediv__ = lambda _self, _name: chat_src
             mock_path_cls.return_value = mock_file_path
 
             # But also make the real Path work for dest
@@ -569,89 +665,3 @@ class TestBuildIterationPrompt:
         prompt = build_iteration_prompt(2, 10, ks, pending_feedback=None)
         assert "Scientist Feedback" not in prompt
         assert "Iteration 2/10" in prompt
-
-
-# ─── _send_iteration_notification ─────────────────────────────────────
-
-
-class TestSendIterationNotification:
-    """Tests for _send_iteration_notification()."""
-
-    def test_disabled_no_http_call(self, tmp_path):
-        from shandy.orchestrator.iteration import _send_iteration_notification
-
-        config = {"job_id": "j1", "ntfy_enabled": False, "ntfy_topic": None}
-        # Should return immediately without making any HTTP call
-        _send_iteration_notification(tmp_path, config)
-
-    def test_no_topic_no_http_call(self, tmp_path):
-        from shandy.orchestrator.iteration import _send_iteration_notification
-
-        config = {"job_id": "j1", "ntfy_enabled": True, "ntfy_topic": None}
-        _send_iteration_notification(tmp_path, config)
-
-    def test_success(self, tmp_path):
-        from shandy.orchestrator.iteration import _send_iteration_notification
-
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
-        # Write KS file so iteration can be read
-        ks_path = tmp_path / "knowledge_state.json"
-        ks_path.write_text('{"iteration": 3}')
-
-        config = {
-            "job_id": "j1",
-            "ntfy_enabled": True,
-            "ntfy_topic": "topic1",
-            "research_question": "Why?",
-        }
-
-        import httpx
-
-        with (
-            patch("shandy.settings.get_settings", return_value=mock_settings),
-            patch.object(httpx, "Client", return_value=mock_client),
-        ):
-            _send_iteration_notification(tmp_path, config)
-
-        mock_client.post.assert_called_once()
-        call_args = mock_client.post.call_args
-        assert "topic1" in call_args[1].get("url", call_args[0][0])
-
-    def test_failure_no_crash(self, tmp_path):
-        from shandy.orchestrator.iteration import _send_iteration_notification
-
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
-        mock_client = MagicMock()
-        mock_client.post.side_effect = Exception("connection failed")
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-
-        ks_path = tmp_path / "knowledge_state.json"
-        ks_path.write_text('{"iteration": 1}')
-
-        config = {
-            "job_id": "j1",
-            "ntfy_enabled": True,
-            "ntfy_topic": "topic1",
-            "research_question": "Why?",
-        }
-
-        import httpx
-
-        with (
-            patch("shandy.settings.get_settings", return_value=mock_settings),
-            patch.object(httpx, "Client", return_value=mock_client),
-        ):
-            # Should not raise
-            _send_iteration_notification(tmp_path, config)

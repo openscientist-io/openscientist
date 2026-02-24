@@ -4,8 +4,11 @@ HTTP endpoint tests for the REST API.
 Tests actual HTTP requests to API endpoints with mocked authentication.
 """
 
+import io
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -128,6 +131,30 @@ async def completed_job_db(
     return job
 
 
+def _build_authenticated_app(db_session: AsyncSession, user: User):
+    """Create an app with authenticated user + RLS-aware session overrides."""
+    from fastapi import FastAPI
+
+    from shandy.api.auth import get_current_user_from_api_key
+    from shandy.api.router import api_router as router
+    from shandy.database.rls import set_current_user
+    from shandy.database.session import get_session
+
+    app = FastAPI()
+
+    async def override_get_session():
+        await set_current_user(db_session, user.id)
+        yield db_session
+
+    async def override_get_user():
+        return user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+    app.include_router(router)
+    return app
+
+
 class TestHealthEndpoint:
     """Tests for the health check endpoint."""
 
@@ -239,7 +266,7 @@ class TestAPIKeyEndpoints:
         from shandy.api.router import api_router as router
         from shandy.database.session import get_session
 
-        api_key, full_key = test_api_key_db
+        _api_key, full_key = test_api_key_db
 
         app = FastAPI()
 
@@ -285,7 +312,7 @@ class TestAPIKeyEndpoints:
         from shandy.api.router import api_router as router
         from shandy.database.session import get_session
 
-        api_key, full_key = test_api_key_db
+        _api_key, full_key = test_api_key_db
 
         # Create another key to revoke (can't revoke the one we're using)
         key_to_revoke = APIKey(
@@ -339,7 +366,7 @@ class TestAPIKeyEndpoints:
         from shandy.api.router import api_router as router
         from shandy.database.session import get_session
 
-        api_key, full_key = test_api_key_db
+        _api_key, full_key = test_api_key_db
 
         app = FastAPI()
 
@@ -371,6 +398,16 @@ class TestAPIKeyEndpoints:
 class TestJobEndpoints:
     """Tests for job management endpoints."""
 
+    def test_jobs_endpoint_docstrings_are_domain_agnostic(self):
+        """Jobs endpoint docs should not be restricted to crystallography wording."""
+        from shandy.api.endpoints import jobs as jobs_endpoints
+
+        module_doc = (jobs_endpoints.__doc__ or "").lower()
+        create_doc = (jobs_endpoints.create_job.__doc__ or "").lower()
+
+        assert "crystallography" not in module_doc
+        assert "crystallography" not in create_doc
+
     @pytest.mark.asyncio
     async def test_list_jobs(
         self,
@@ -380,6 +417,7 @@ class TestJobEndpoints:
         test_job_db: Job,
     ):
         """List jobs for authenticated user."""
+        _ = test_job_db
         from fastapi import FastAPI
 
         from shandy.api.auth import get_current_user_from_api_key
@@ -463,6 +501,51 @@ class TestJobEndpoints:
         assert data["id"] == str(test_job_db.id)
         assert data["title"] == "Test API Job"
         assert data["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_get_job_detail_reads_research_metadata_from_database(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Job detail should use DB fields for research metadata."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get(
+                f"/api/v1/jobs/{test_job_db.id}",
+                headers={"Authorization": f"Bearer {full_key}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["research_question"] == "Test API Job"
+        assert data["investigation_mode"] == test_job_db.investigation_mode
 
     @pytest.mark.asyncio
     async def test_get_job_status(
@@ -662,13 +745,6 @@ class TestJobEndpoints:
         test_api_key_db: tuple[APIKey, str],
     ):
         """Cancel a running job."""
-        from fastapi import FastAPI
-
-        from shandy.api.auth import get_current_user_from_api_key
-        from shandy.api.router import api_router as router
-        from shandy.database.rls import set_current_user
-        from shandy.database.session import get_session
-
         _, full_key = test_api_key_db
 
         # Create a running job to cancel
@@ -682,22 +758,10 @@ class TestJobEndpoints:
         await db_session.commit()
         await db_session.refresh(running_job)
 
-        app = FastAPI()
-
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
-
-        async def override_get_user():
-            return test_user_db
-
+        app = _build_authenticated_app(db_session, test_user_db)
         # Mock the job manager
         mock_job_manager = MagicMock()
         mock_job_manager.cancel_job = MagicMock()
-
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
 
         with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
             async with AsyncClient(
@@ -713,6 +777,81 @@ class TestJobEndpoints:
         mock_job_manager.cancel_job.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_cancel_pending_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Cancel a pending job."""
+        _, full_key = test_api_key_db
+
+        pending_job = Job(
+            owner_id=test_user_db.id,
+            title="Pending Job",
+            description="Will be cancelled",
+            status="pending",
+        )
+        db_session.add(pending_job)
+        await db_session.commit()
+        await db_session.refresh(pending_job)
+
+        app = _build_authenticated_app(db_session, test_user_db)
+        mock_job_manager = MagicMock()
+        mock_job_manager.cancel_job = MagicMock()
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/jobs/{pending_job.id}/cancel",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 204
+        mock_job_manager.cancel_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cancel_job_does_not_directly_mutate_database_status(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Cancel endpoint should delegate status update to JobManager only."""
+        _, full_key = test_api_key_db
+
+        running_job = Job(
+            owner_id=test_user_db.id,
+            title="Running Job",
+            description="Should remain unchanged when manager is mocked",
+            status="running",
+        )
+        db_session.add(running_job)
+        await db_session.commit()
+        await db_session.refresh(running_job)
+
+        app = _build_authenticated_app(db_session, test_user_db)
+        mock_job_manager = MagicMock()
+        mock_job_manager.cancel_job = MagicMock()
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/jobs/{running_job.id}/cancel",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 204
+        await db_session.refresh(running_job)
+        assert running_job.status == "running"
+
+    @pytest.mark.asyncio
     async def test_cannot_cancel_completed_job(
         self,
         db_session: AsyncSession,
@@ -721,27 +860,9 @@ class TestJobEndpoints:
         completed_job_db: Job,
     ):
         """Cannot cancel a completed job."""
-        from fastapi import FastAPI
-
-        from shandy.api.auth import get_current_user_from_api_key
-        from shandy.api.router import api_router as router
-        from shandy.database.rls import set_current_user
-        from shandy.database.session import get_session
-
         _, full_key = test_api_key_db
 
-        app = FastAPI()
-
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
-
-        async def override_get_user():
-            return test_user_db
-
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
+        app = _build_authenticated_app(db_session, test_user_db)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -763,7 +884,7 @@ class TestJobEndpoints:
         test_api_key_db: tuple[APIKey, str],
     ):
         """Create a new job via API."""
-        from datetime import datetime, timezone
+        from datetime import datetime
         from types import SimpleNamespace
 
         from fastapi import FastAPI
@@ -792,8 +913,8 @@ class TestJobEndpoints:
             title="API Created Job",
             description="Created via REST API",
             status="pending",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             max_iterations=10,
             current_iteration=0,
             pdb_code=None,
@@ -833,6 +954,41 @@ class TestJobEndpoints:
         assert data["title"] == "API Created Job"
         assert data["status"] == "pending"
         mock_job_manager.create_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_job_returns_400_for_job_manager_value_error(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """User-correctable create errors are returned as 400 responses."""
+        _, full_key = test_api_key_db
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = MagicMock(side_effect=ValueError("Cannot create job: limit"))
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/jobs",
+                    json={
+                        "title": "Blocked",
+                        "description": "Blocked by validation",
+                        "research_question": "Question",
+                        "max_iterations": 10,
+                        "use_skills": True,
+                        "investigation_mode": "autonomous",
+                    },
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 400
+        assert "Cannot create job" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_create_job_rejected_for_unapproved_user(
@@ -900,6 +1056,7 @@ class TestJobEndpoints:
         completed_job_db: Job,
     ):
         """Filter jobs by status."""
+        _ = (test_job_db, completed_job_db)
         from fastapi import FastAPI
 
         from shandy.api.auth import get_current_user_from_api_key
@@ -1019,10 +1176,59 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        with patch("shandy.api.endpoints.jobs.Path") as mock_path:
-            # Make Path("jobs") / job_id return our tmp_path
-            mock_path.return_value.__truediv__ = lambda self, x: tmp_path / "jobs" / x
+        with patch("shandy.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/jobs/{completed_job_db.id}/report",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
 
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_get_job_report_uses_job_manager_jobs_dir(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        completed_job_db: Job,
+        tmp_path,
+    ):
+        """Report endpoint should read artifacts from configured JobManager jobs_dir."""
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        custom_jobs_dir = tmp_path / "custom-jobs"
+        job_dir = custom_jobs_dir / str(completed_job_db.id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "final_report.md").write_text("# Report\n\nCustom dir report", encoding="utf-8")
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.jobs_dir = custom_jobs_dir
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1043,27 +1249,9 @@ class TestJobEndpoints:
         test_job_db: Job,
     ):
         """Artifacts endpoint returns 404 if job directory doesn't exist."""
-        from fastapi import FastAPI
-
-        from shandy.api.auth import get_current_user_from_api_key
-        from shandy.api.router import api_router as router
-        from shandy.database.rls import set_current_user
-        from shandy.database.session import get_session
-
         _, full_key = test_api_key_db
 
-        app = FastAPI()
-
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
-
-        async def override_get_user():
-            return test_user_db
-
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
+        app = _build_authenticated_app(db_session, test_user_db)
 
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -1087,13 +1275,6 @@ class TestJobEndpoints:
         tmp_path,
     ):
         """Artifacts endpoint returns ZIP archive."""
-        from fastapi import FastAPI
-
-        from shandy.api.auth import get_current_user_from_api_key
-        from shandy.api.router import api_router as router
-        from shandy.database.rls import set_current_user
-        from shandy.database.session import get_session
-
         _, full_key = test_api_key_db
 
         # Create job directory with some files
@@ -1102,26 +1283,9 @@ class TestJobEndpoints:
         (job_dir / "plot.png").write_bytes(b"fake png data")
         (job_dir / "data.csv").write_text("a,b,c\n1,2,3\n")
 
-        app = FastAPI()
+        app = _build_authenticated_app(db_session, test_user_db)
 
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
-
-        async def override_get_user():
-            return test_user_db
-
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
-
-        with patch("shandy.api.endpoints.jobs.Path") as mock_path:
-            # Make Path("jobs") / job_id return our tmp_path structure
-            def mock_truediv(self, x):
-                return tmp_path / "jobs" / x
-
-            mock_path.return_value.__truediv__ = mock_truediv
-
+        with patch("shandy.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1133,6 +1297,79 @@ class TestJobEndpoints:
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
+        assert response.headers.get("accept-ranges") == "bytes"
+
+    @pytest.mark.asyncio
+    async def test_get_job_artifacts_excludes_config_json(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+        tmp_path,
+    ):
+        """Artifacts endpoint should not include config.json in archives."""
+        _, full_key = test_api_key_db
+
+        job_dir = tmp_path / "jobs" / str(test_job_db.id)
+        job_dir.mkdir(parents=True)
+        (job_dir / "config.json").write_text('{"legacy": true}', encoding="utf-8")
+        (job_dir / "knowledge_state.json").write_text("{}", encoding="utf-8")
+
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        with patch("shandy.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/jobs/{test_job_db.id}/artifacts",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            names = zf.namelist()
+            assert "knowledge_state.json" in names
+            assert "config.json" not in names
+
+    @pytest.mark.asyncio
+    async def test_get_job_artifacts_uses_job_manager_jobs_dir(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+        tmp_path,
+    ):
+        """Artifacts endpoint should zip files from configured JobManager jobs_dir."""
+        _, full_key = test_api_key_db
+
+        custom_jobs_dir = tmp_path / "custom-jobs"
+        job_dir = custom_jobs_dir / str(test_job_db.id)
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "plot.png").write_bytes(b"fake png data")
+        (job_dir / "data.csv").write_text("a,b,c\n1,2,3\n", encoding="utf-8")
+
+        app = _build_authenticated_app(db_session, test_user_db)
+        mock_job_manager = MagicMock()
+        mock_job_manager.jobs_dir = custom_jobs_dir
+
+        with patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/jobs/{test_job_db.id}/artifacts",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert response.headers.get("accept-ranges") == "bytes"
 
 
 class TestJobSharingEndpoints:

@@ -14,9 +14,123 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import JobChatMessage
+from shandy.database.models import Job, JobChatMessage
+from shandy.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
+
+
+async def _load_research_question_from_db(job_id: str) -> str | None:
+    try:
+        async with AsyncSessionLocal(thread_safe=True) as session:
+            result = await session.execute(select(Job.title).where(Job.id == UUID(job_id)))
+            value = result.scalar_one_or_none()
+        if isinstance(value, str) and value.strip():
+            return value
+    except ValueError:
+        logger.debug("Skipping DB lookup for non-UUID job id: %s", job_id)
+    except Exception as e:
+        logger.warning("Failed to load DB context for job %s: %s", job_id, e)
+    return None
+
+
+def _append_research_question(parts: list[str], question: str) -> None:
+    parts.append(f"# Research Question\n{question}\n")
+
+
+def _extract_research_question_from_ks(ks: dict) -> str | None:
+    ks_config = ks.get("config", {})
+    if not isinstance(ks_config, dict):
+        return None
+    question = ks_config.get("research_question")
+    if isinstance(question, str) and question.strip():
+        return question.strip()
+    return None
+
+
+def _append_findings(parts: list[str], findings: list) -> None:
+    if not findings:
+        return
+    parts.append("# Findings")
+    for i, finding in enumerate(findings, 1):
+        if not isinstance(finding, dict):
+            continue
+        importance = finding.get("importance", "unknown")
+        confidence = finding.get("confidence", "unknown")
+        parts.append(f"\n## Finding {i} (Importance: {importance}, Confidence: {confidence})")
+        finding_text = finding.get("content", finding.get("title", ""))
+        parts.append(finding_text if isinstance(finding_text, str) else str(finding_text))
+
+        evidence = finding.get("evidence", [])
+        if evidence:
+            parts.append("\nEvidence:")
+            parts.extend(f"- {ev}" for ev in evidence)
+    parts.append("")
+
+
+def _append_hypotheses(parts: list[str], hypotheses: list) -> None:
+    if not hypotheses:
+        return
+    parts.append("# Hypotheses")
+    for i, hyp in enumerate(hypotheses, 1):
+        if not isinstance(hyp, dict):
+            continue
+        status = hyp.get("status", "unknown")
+        parts.append(f"\n## Hypothesis {i} (Status: {status})")
+        hypothesis_text = hyp.get("hypothesis", hyp.get("statement", ""))
+        parts.append(hypothesis_text if isinstance(hypothesis_text, str) else str(hypothesis_text))
+
+        rationale = hyp.get("rationale")
+        if rationale:
+            parts.append(f"\nRationale: {rationale}")
+    parts.append("")
+
+
+def _append_literature(parts: list[str], literature: list) -> None:
+    if not literature:
+        return
+    parts.append("# Literature Reviewed")
+    for i, lit in enumerate(literature, 1):
+        if not isinstance(lit, dict):
+            continue
+        title = lit.get("title", "Unknown")
+        relevance = lit.get("relevance_score", "unknown")
+        parts.append(f"\n## Paper {i} (Relevance: {relevance})")
+        parts.append(f"Title: {title}")
+
+        key_findings = lit.get("key_findings", [])
+        if key_findings:
+            parts.append("Key findings:")
+            parts.extend(f"- {kf}" for kf in key_findings)
+    parts.append("")
+
+
+def _append_iteration_summaries(parts: list[str], summaries: list) -> None:
+    if not summaries:
+        return
+    parts.append("# Analysis Progress")
+    for summary in summaries:
+        if not isinstance(summary, dict):
+            continue
+        iteration = summary.get("iteration", 0)
+        strapline = summary.get("strapline", "")
+        summary_text = summary.get("summary", "")
+        parts.append(f"\n## Iteration {iteration}: {strapline}")
+        parts.append(summary_text)
+    parts.append("")
+
+
+def _load_knowledge_state(job_id: str, job_dir: Path) -> dict | None:
+    ks_path = job_dir / "knowledge_state.json"
+    if not ks_path.exists():
+        return None
+    try:
+        with open(ks_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        logger.warning("Failed to load knowledge state for job %s: %s", job_id, e)
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 async def load_job_context(job_id: str, job_dir: Path) -> str:
@@ -33,94 +147,24 @@ async def load_job_context(job_id: str, job_dir: Path) -> str:
     Returns:
         Formatted context string for LLM
     """
-    context_parts = []
+    context_parts: list[str] = []
+    research_question = await _load_research_question_from_db(job_id)
+    if research_question:
+        _append_research_question(context_parts, research_question)
 
-    # Load config
-    config_path = job_dir / "config.json"
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                config = json.load(f)
-                research_question = config.get("research_question", "Unknown")
-                context_parts.append(f"# Research Question\n{research_question}\n")
-        except Exception as e:
-            logger.warning("Failed to load config for job %s: %s", job_id, e)
+    ks = _load_knowledge_state(job_id, job_dir)
+    if not ks:
+        return "\n".join(context_parts)
 
-    # Load knowledge state
-    ks_path = job_dir / "knowledge_state.json"
-    if ks_path.exists():
-        try:
-            with open(ks_path) as f:
-                ks = json.load(f)
+    if not context_parts:
+        fallback_question = _extract_research_question_from_ks(ks)
+        if fallback_question:
+            _append_research_question(context_parts, fallback_question)
 
-                # Findings
-                findings = ks.get("findings", [])
-                if findings:
-                    context_parts.append("# Findings")
-                    for i, finding in enumerate(findings, 1):
-                        importance = finding.get("importance", "unknown")
-                        confidence = finding.get("confidence", "unknown")
-                        context_parts.append(
-                            f"\n## Finding {i} (Importance: {importance}, Confidence: {confidence})"
-                        )
-                        context_parts.append(finding.get("content", ""))
-
-                        # Evidence
-                        evidence = finding.get("evidence", [])
-                        if evidence:
-                            context_parts.append("\nEvidence:")
-                            for ev in evidence:
-                                context_parts.append(f"- {ev}")
-                    context_parts.append("")
-
-                # Hypotheses
-                hypotheses = ks.get("hypotheses", [])
-                if hypotheses:
-                    context_parts.append("# Hypotheses")
-                    for i, hyp in enumerate(hypotheses, 1):
-                        status = hyp.get("status", "unknown")
-                        context_parts.append(f"\n## Hypothesis {i} (Status: {status})")
-                        context_parts.append(hyp.get("hypothesis", ""))
-
-                        # Rationale
-                        rationale = hyp.get("rationale")
-                        if rationale:
-                            context_parts.append(f"\nRationale: {rationale}")
-                    context_parts.append("")
-
-                # Literature
-                literature = ks.get("literature", [])
-                if literature:
-                    context_parts.append("# Literature Reviewed")
-                    for i, lit in enumerate(literature, 1):
-                        title = lit.get("title", "Unknown")
-                        relevance = lit.get("relevance_score", "unknown")
-                        context_parts.append(f"\n## Paper {i} (Relevance: {relevance})")
-                        context_parts.append(f"Title: {title}")
-
-                        # Key findings from paper
-                        key_findings = lit.get("key_findings", [])
-                        if key_findings:
-                            context_parts.append("Key findings:")
-                            for kf in key_findings:
-                                context_parts.append(f"- {kf}")
-                    context_parts.append("")
-
-                # Iteration summaries
-                summaries = ks.get("iteration_summaries", [])
-                if summaries:
-                    context_parts.append("# Analysis Progress")
-                    for summary in summaries:
-                        iteration = summary.get("iteration", 0)
-                        strapline = summary.get("strapline", "")
-                        summary_text = summary.get("summary", "")
-                        context_parts.append(f"\n## Iteration {iteration}: {strapline}")
-                        context_parts.append(summary_text)
-                    context_parts.append("")
-
-        except Exception as e:
-            logger.warning("Failed to load knowledge state for job %s: %s", job_id, e)
-
+    _append_findings(context_parts, ks.get("findings", []))
+    _append_hypotheses(context_parts, ks.get("hypotheses", []))
+    _append_literature(context_parts, ks.get("literature", []))
+    _append_iteration_summaries(context_parts, ks.get("iteration_summaries", []))
     return "\n".join(context_parts)
 
 
@@ -219,7 +263,6 @@ async def _send_message_via_executor(
     system_prompt = """You are a research assistant helping a scientist discuss the results of their SHANDY literature review and hypothesis generation job.
 
 Your working directory is the job folder.  The full research context is available in these files — read them when you need details:
-- config.json — research question and job configuration
 - knowledge_state.json — findings, hypotheses, literature, and iteration summaries
 
 Your role is to:

@@ -8,18 +8,21 @@ calls via asyncio.run().
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
+
 from shandy.agent.factory import get_agent_executor
+from shandy.agent.protocol import AgentExecutor, IterationResult
+from shandy.async_tasks import create_background_task
 from shandy.database.models import JobDataFile
+from shandy.database.models.job import Job as JobModel
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ShandyError
-from shandy.file_loader import get_file_info
 from shandy.knowledge_state import KnowledgeState
 from shandy.orchestrator.iteration import (
     build_initial_prompt,
@@ -39,21 +42,283 @@ from shandy.version import get_version_string
 logger = logging.getLogger(__name__)
 
 
-ALLOWED_TOOLS = [
-    "execute_code",
-    "search_pubmed",
-    "update_knowledge_state",
-    "save_iteration_summary",
-    "set_status",
-    "set_job_title",
-    "set_consensus_answer",
-    "read_document",
-    "add_hypothesis",
-    "update_hypothesis",
-    "run_phenix_tool",
-    "compare_structures",
-    "parse_alphafold_confidence",
-]
+@dataclass(frozen=True)
+class _ReportOutcome:
+    """Outcome of report-generation phase."""
+
+    success: bool
+    error: str
+
+
+def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
+    """Resolve the primary data file path for the agent executor."""
+    if not data_files:
+        return None
+    data_file = Path(data_files[0])
+    if not data_file.is_absolute():
+        return data_file.absolute()
+    return data_file
+
+
+def _build_agent_executor(
+    job_dir: Path,
+    data_file: Path | None,
+    use_skills: bool,
+) -> AgentExecutor:
+    """Create a configured agent executor for discovery/report phases."""
+    system_prompt = get_system_prompt(skills_enabled=use_skills)
+    logger.info("Built system prompt (%d chars)", len(system_prompt))
+    return get_agent_executor(
+        job_dir=job_dir,
+        data_file=data_file,
+        system_prompt=system_prompt,
+    )
+
+
+def _append_iteration_artifacts(
+    *,
+    provenance_dir: Path,
+    log_file: Path,
+    iteration: int,
+    prompt: str,
+    result: IterationResult,
+    overwrite_log: bool = False,
+) -> None:
+    """Persist transcript and log entry for a completed iteration."""
+    _save_transcript(provenance_dir / f"iter{iteration}_transcript.json", result.transcript)
+    _append_log(
+        log_file,
+        iteration,
+        prompt,
+        result.output,
+        result.tool_calls,
+        write=overwrite_log,
+    )
+
+
+def _sync_version_metadata_if_available(job_dir: Path, ks_path: Path) -> None:
+    """Store runtime version metadata in knowledge state when available."""
+    version_info = get_version_metadata()
+    if not version_info:
+        return
+    ks = KnowledgeState.load(ks_path)
+    ks.set_version_info(version_info)
+    ks.save(ks_path)
+    sync_knowledge_state_to_db(job_dir, ks)
+
+
+async def _wait_for_coinvestigate_feedback(
+    job_dir: Path,
+    investigation_mode: str,
+    current_iteration: int,
+    max_iterations: int,
+) -> str | None:
+    """Pause for user feedback between iterations in co-investigation mode."""
+    if investigation_mode != "coinvestigate" or current_iteration >= max_iterations:
+        return None
+    await update_job_status(job_dir, "awaiting_feedback")
+    feedback = await wait_for_feedback_or_timeout(job_dir)
+    await update_job_status(job_dir, "running")
+    return feedback
+
+
+async def _run_primary_discovery_loop(
+    *,
+    executor: AgentExecutor,
+    job_dir: Path,
+    runtime: dict[str, Any],
+    ks_path: Path,
+    provenance_dir: Path,
+    log_file: Path,
+) -> None:
+    """Run initial and iterative discovery phases before report generation."""
+    max_iterations = runtime["max_iterations"]
+    data_files = runtime["data_files"]
+    investigation_mode = runtime["investigation_mode"]
+
+    ks = KnowledgeState.load(ks_path)
+    initial_prompt = build_initial_prompt(
+        runtime["research_question"], max_iterations, data_files, ks
+    )
+
+    logger.info("Iteration 1/%d: Starting session", max_iterations)
+    result = await executor.run_iteration(initial_prompt, reset_session=True)
+    if not result.success:
+        logger.error("Iteration 1 failed: %s", result.error)
+        raise RuntimeError(f"Agent loop failed: {result.error}")
+    logger.info("Iteration 1 completed (tool_calls=%d)", result.tool_calls)
+
+    _sync_version_metadata_if_available(job_dir, ks_path)
+    _append_iteration_artifacts(
+        provenance_dir=provenance_dir,
+        log_file=log_file,
+        iteration=1,
+        prompt=initial_prompt,
+        result=result,
+        overwrite_log=True,
+    )
+    if max_iterations > 1:
+        increment_ks_iteration(ks_path)
+
+    pending_feedback = await _wait_for_coinvestigate_feedback(
+        job_dir,
+        investigation_mode,
+        current_iteration=1,
+        max_iterations=max_iterations,
+    )
+    reset_interval = 5
+
+    for iteration in range(2, max_iterations + 1):
+        ks = KnowledgeState.load(ks_path)
+        if pending_feedback is None:
+            pending_feedback = ks.get_feedback_for_iteration(iteration)
+
+        iteration_prompt = build_iteration_prompt(iteration, max_iterations, ks, pending_feedback)
+        pending_feedback = None
+        should_reset = iteration % reset_interval == 1
+        logger.info(
+            "Iteration %d/%d (%s)",
+            iteration,
+            max_iterations,
+            "fresh session" if should_reset else "continuing",
+        )
+
+        result = await executor.run_iteration(iteration_prompt, reset_session=should_reset)
+        if not result.success:
+            logger.error("Iteration %d failed: %s", iteration, result.error)
+            break
+
+        logger.info("Iteration %d completed (tool_calls=%d)", iteration, result.tool_calls)
+        _append_iteration_artifacts(
+            provenance_dir=provenance_dir,
+            log_file=log_file,
+            iteration=iteration,
+            prompt=iteration_prompt,
+            result=result,
+        )
+
+        if iteration < max_iterations:
+            increment_ks_iteration(ks_path)
+        pending_feedback = await _wait_for_coinvestigate_feedback(
+            job_dir,
+            investigation_mode,
+            current_iteration=iteration,
+            max_iterations=max_iterations,
+        )
+
+    logger.info("Discovery loop completed")
+
+
+def _save_report_transcript(job_dir: Path, transcript: list[dict[str, Any]]) -> None:
+    """Persist report-generation transcript artifact."""
+    provenance_dir = job_dir / "provenance"
+    provenance_dir.mkdir(parents=True, exist_ok=True)
+    _save_transcript(provenance_dir / "report_transcript.json", transcript)
+
+
+def _ensure_report_written(report_path: Path, report_result: IterationResult) -> bool:
+    """Ensure final_report.md exists after report iteration."""
+    if report_path.exists():
+        return True
+    if report_result.success and len(report_result.output) > 500:
+        report_path.write_text(report_result.output, encoding="utf-8")
+        return True
+    return False
+
+
+def _try_generate_report_pdf(report_path: Path) -> None:
+    """Generate PDF from markdown report when possible."""
+    from shandy.pdf_generator import markdown_to_pdf
+
+    markdown_to_pdf(report_path, add_footer=True)
+
+
+async def _run_report_generation_phase(
+    executor: AgentExecutor,
+    job_dir: Path,
+    research_question: str,
+) -> _ReportOutcome:
+    """Run final report generation iteration and output artifact handling."""
+    ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+    report_prompt = build_report_prompt(research_question, ks)
+    logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
+    report_result = await executor.run_iteration(report_prompt, reset_session=True)
+
+    _save_report_transcript(job_dir, report_result.transcript)
+    report_path = job_dir / "final_report.md"
+    report_success = _ensure_report_written(report_path, report_result)
+
+    if report_success:
+        try:
+            _try_generate_report_pdf(report_path)
+        except (ValueError, OSError, ShandyError) as exc:
+            logger.warning("PDF generation failed: %s", exc)
+
+    return _ReportOutcome(success=report_success, error=report_result.error)
+
+
+async def _persist_final_status(
+    job_dir: Path,
+    report_outcome: _ReportOutcome,
+) -> str:
+    """Persist final job status based on report generation outcome."""
+    final_status = "completed" if report_outcome.success else "failed"
+    if final_status == "completed":
+        await update_job_status(job_dir, "completed")
+    else:
+        await update_job_status(
+            job_dir,
+            "failed",
+            error_message=f"Report generation failed: {report_outcome.error}",
+        )
+    return final_status
+
+
+async def _get_job_owner_id(job_id: str) -> UUID | None:
+    """Load job owner id from the database."""
+    try:
+        async with AsyncSessionLocal(thread_safe=True) as session:
+            result = await session.execute(
+                select(JobModel.owner_id).where(JobModel.id == UUID(job_id))
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.warning("Failed to load owner_id for job %s: %s", job_id, e)
+        return None
+
+
+async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
+    """Load runtime job metadata from the database."""
+    job_uuid = UUID(job_dir.name)
+
+    async with AsyncSessionLocal(thread_safe=True) as session:
+        job_result = await session.execute(select(JobModel).where(JobModel.id == job_uuid))
+        job = job_result.scalar_one_or_none()
+        if job is None:
+            raise ValueError(f"Job {job_uuid} not found in database")
+
+        files_result = await session.execute(
+            select(JobDataFile.file_path)
+            .where(JobDataFile.job_id == job_uuid)
+            .order_by(JobDataFile.created_at.asc())
+        )
+        data_files = [str(path) for path in files_result.scalars().all()]
+
+    resolved_files: list[str] = []
+    for raw_path in data_files:
+        file_path = Path(raw_path)
+        if not file_path.is_absolute():
+            file_path = job_dir / file_path
+        resolved_files.append(str(file_path))
+
+    return {
+        "job_id": str(job.id),
+        "research_question": job.title,
+        "max_iterations": job.max_iterations,
+        "use_skills": bool(job.use_skills),
+        "investigation_mode": job.investigation_mode,
+        "data_files": resolved_files,
+    }
 
 
 async def _write_skills_to_claude_dir(job_dir: Path, use_skills: bool) -> None:
@@ -109,78 +374,26 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) 
                 logger.warning("Knowledge state file not found: %s", ks_path)
                 return
 
-        config_path = job_dir / "config.json"
-        owner_id = None
-        if config_path.exists():
-            with open(config_path, encoding="utf-8") as f:
-                config = json.load(f)
-            owner_id_str = config.get("owner_id")
-            if owner_id_str:
-                owner_id = UUID(owner_id_str)
+        async def _save_with_error_handling() -> None:
+            try:
+                owner_id = await _get_job_owner_id(job_id)
+                await ks.save_to_database(job_id, owner_id)
+            except Exception as e:
+                logger.warning("Background database sync failed for job %s: %s", job_id, e)
 
         try:
-            loop = asyncio.get_running_loop()
-
-            async def _save_with_error_handling() -> None:
-                try:
-                    await ks.save_to_database(job_id, owner_id)
-                except Exception as e:
-                    logger.warning("Background database sync failed for job %s: %s", job_id, e)
-
-            loop.create_task(_save_with_error_handling())
+            asyncio.get_running_loop()
+            create_background_task(
+                _save_with_error_handling(),
+                name=f"sync-knowledge-state-{job_id}",
+                logger=logger,
+            )
         except RuntimeError:
-            ks.save_to_database_sync(job_id, owner_id)
+            asyncio.run(_save_with_error_handling())
 
         logger.debug("Synced knowledge state to database for job %s", job_id)
     except Exception as e:
         logger.warning("Failed to sync knowledge state to database: %s", e)
-
-
-def _persist_data_files_to_db(
-    job_id: str,
-    job_dir: Path,
-    data_paths: list[Path],
-    owner_id: UUID | None = None,
-) -> None:
-    """Persist uploaded data files to job_data_files table."""
-    try:
-
-        async def _save_data_files() -> None:
-            async with AsyncSessionLocal(thread_safe=True) as session:
-                for data_path in data_paths:
-                    file_info = get_file_info(data_path)
-                    relative_path = f"data/{data_path.name}"
-                    data_file = JobDataFile(
-                        job_id=UUID(job_id),
-                        filename=data_path.name,
-                        file_path=relative_path,
-                        file_type=file_info["file_type"],
-                        file_size=file_info["size"],
-                        mime_type=file_info["mime_type"],
-                    )
-                    session.add(data_file)
-                await session.commit()
-                logger.info(
-                    "Persisted %d data files to database for job %s",
-                    len(data_paths),
-                    job_id,
-                )
-
-        try:
-            loop = asyncio.get_running_loop()
-
-            async def _save_with_error_handling() -> None:
-                try:
-                    await _save_data_files()
-                except Exception as e:
-                    logger.warning("Background data file persist failed for job %s: %s", job_id, e)
-
-            loop.create_task(_save_with_error_handling())
-        except RuntimeError:
-            asyncio.run(_save_data_files())
-
-    except Exception as e:
-        logger.warning("Failed to persist data files to database: %s", e)
 
 
 def get_version_metadata() -> dict[str, str]:
@@ -233,186 +446,64 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     on the configured provider.
 
     Args:
-        job_dir: Path to job directory (must contain config.json)
+        job_dir: Path to job directory
 
     Returns:
         Dict: {job_id, status, iterations, findings}
     """
     job_dir = Path(job_dir)
-
-    with open(job_dir / "config.json", encoding="utf-8") as f:
-        config = json.load(f)
-
-    job_id = config["job_id"]
-    max_iterations = config["max_iterations"]
-    investigation_mode = config.get("investigation_mode", "autonomous")
-    data_file = Path(config["data_files"][0]) if config["data_files"] else None
-
-    if data_file and not data_file.is_absolute():
-        data_file = data_file.absolute()
-
-    logger.info("Starting discovery for job %s (mode=%s)", job_id, investigation_mode)
+    runtime = await _load_runtime_context(job_dir)
+    job_id = runtime["job_id"]
+    logger.info("Starting discovery for job %s (mode=%s)", job_id, runtime["investigation_mode"])
 
     provider = get_provider()
     provider.setup_environment()
+    await update_job_status(job_dir, "running")
 
-    config["status"] = "running"
-    config["started_at"] = datetime.now(timezone.utc).isoformat()
-    with open(job_dir / "config.json", "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
-
-    use_skills = config.get("use_skills", True)
+    use_skills = runtime["use_skills"]
     await _write_skills_to_claude_dir(job_dir, use_skills)
-    system_prompt = get_system_prompt(skills_enabled=use_skills)
-    logger.info("Built system prompt (%d chars)", len(system_prompt))
-
-    executor = get_agent_executor(
+    executor = _build_agent_executor(
         job_dir=job_dir,
-        data_file=data_file,
-        allowed_tools=ALLOWED_TOOLS,
-        system_prompt=system_prompt,
+        data_file=_resolve_primary_data_file(runtime["data_files"]),
+        use_skills=use_skills,
     )
     logger.info("Created agent executor for job %s", job_id)
 
+    ks_path = job_dir / "knowledge_state.json"
+    provenance_dir = job_dir / "provenance"
+    provenance_dir.mkdir(parents=True, exist_ok=True)
+    log_file = job_dir / "claude_iterations.log"
+
     try:
-        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-        initial_prompt = build_initial_prompt(
-            config["research_question"], max_iterations, config["data_files"], ks
+        await _run_primary_discovery_loop(
+            executor=executor,
+            job_dir=job_dir,
+            runtime=runtime,
+            ks_path=ks_path,
+            provenance_dir=provenance_dir,
+            log_file=log_file,
         )
-
-        provenance_dir = job_dir / "provenance"
-        provenance_dir.mkdir(parents=True, exist_ok=True)
-        log_file = job_dir / "claude_iterations.log"
-
-        logger.info("Iteration 1/%d: Starting session", max_iterations)
-        result = await executor.run_iteration(initial_prompt, reset_session=True)
-
-        if not result.success:
-            logger.error("Iteration 1 failed: %s", result.error)
-            raise RuntimeError(f"Agent loop failed: {result.error}")
-
-        logger.info("Iteration 1 completed (tool_calls=%d)", result.tool_calls)
-
-        version_info = get_version_metadata()
-        if version_info:
-            ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-            ks.set_version_info(version_info)
-            ks.save(job_dir / "knowledge_state.json")
-            sync_knowledge_state_to_db(job_dir, ks)
-
-        _save_transcript(provenance_dir / "iter1_transcript.json", result.transcript)
-        _append_log(log_file, 1, initial_prompt, result.output, result.tool_calls, write=True)
-
-        ks_path = job_dir / "knowledge_state.json"
-        if max_iterations > 1:
-            increment_ks_iteration(ks_path)
-
-        pending_feedback: str | None = None
-        if investigation_mode == "coinvestigate" and max_iterations > 1:
-            update_job_status(job_dir, "awaiting_feedback")
-            pending_feedback = wait_for_feedback_or_timeout(job_dir)
-            update_job_status(job_dir, "running")
-
-        reset_interval = 5
-
-        for iteration in range(2, max_iterations + 1):
-            ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-
-            if pending_feedback is None:
-                pending_feedback = ks.get_feedback_for_iteration(iteration)
-
-            iteration_prompt = build_iteration_prompt(
-                iteration, max_iterations, ks, pending_feedback
-            )
-            pending_feedback = None
-
-            should_reset = iteration % reset_interval == 1
-            logger.info(
-                "Iteration %d/%d (%s)",
-                iteration,
-                max_iterations,
-                "fresh session" if should_reset else "continuing",
-            )
-
-            result = await executor.run_iteration(iteration_prompt, reset_session=should_reset)
-
-            if not result.success:
-                logger.error("Iteration %d failed: %s", iteration, result.error)
-                break
-
-            logger.info("Iteration %d completed (tool_calls=%d)", iteration, result.tool_calls)
-
-            _save_transcript(provenance_dir / f"iter{iteration}_transcript.json", result.transcript)
-            _append_log(log_file, iteration, iteration_prompt, result.output, result.tool_calls)
-
-            if iteration < max_iterations:
-                increment_ks_iteration(ks_path)
-
-            if investigation_mode == "coinvestigate" and iteration < max_iterations:
-                update_job_status(job_dir, "awaiting_feedback")
-                pending_feedback = wait_for_feedback_or_timeout(job_dir)
-                update_job_status(job_dir, "running")
-
-        logger.info("Discovery loop completed")
-
-        # Report generation iteration (extra, not counted toward max_iterations)
-        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-        report_prompt = build_report_prompt(config["research_question"], ks)
-
-        logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
-        report_result = await executor.run_iteration(report_prompt, reset_session=True)
-
-        _save_transcript(provenance_dir / "report_transcript.json", report_result.transcript)
-
-        # Check if agent wrote final_report.md
-        report_path = job_dir / "final_report.md"
-        report_success = report_path.exists()
-
-        if not report_success and report_result.success and len(report_result.output) > 500:
-            # Fallback: agent returned report as output text instead of writing file
-            report_path.write_text(report_result.output, encoding="utf-8")
-            report_success = True
-
-        if report_success:
-            try:
-                from shandy.pdf_generator import markdown_to_pdf
-
-                markdown_to_pdf(report_path, add_footer=True)
-            except (ValueError, OSError, ShandyError) as e:
-                logger.warning("PDF generation failed: %s", e)
-
-        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-
-        if report_success:
-            config["status"] = "completed"
-        else:
-            config["status"] = "failed"
-            config["error"] = f"Report generation failed: {report_result.error}"
-
-        config["completed_at"] = datetime.now(timezone.utc).isoformat()
-        config["iterations_completed"] = ks.data["iteration"]
-        config["findings_count"] = len(ks.data["findings"])
-        config["max_iterations"] = ks.data["iteration"]
-
-        with open(job_dir / "config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
-
+        report_outcome = await _run_report_generation_phase(
+            executor=executor,
+            job_dir=job_dir,
+            research_question=runtime["research_question"],
+        )
+        final_status = await _persist_final_status(job_dir, report_outcome)
+        ks = KnowledgeState.load(ks_path)
         sync_knowledge_state_to_db(job_dir, ks)
-
         return {
             "job_id": job_id,
-            "status": config["status"],
+            "status": final_status,
             "iterations": ks.data["iteration"],
             "findings": len(ks.data["findings"]),
         }
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("Discovery failed [%s]: %s", get_version_string(), e, exc_info=True)
-        config["status"] = "failed"
-        config["error"] = str(e)
-        config["failed_at"] = datetime.now(timezone.utc).isoformat()
-        with open(job_dir / "config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+        try:
+            await update_job_status(job_dir, "failed", error_message=str(e))
+        except Exception as status_error:
+            logger.warning("Failed to persist failure status for job %s: %s", job_id, status_error)
         raise
 
     finally:
@@ -429,99 +520,58 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     """
     Re-run only the report generation phase for a completed/failed job.
 
-    Loads the existing KnowledgeState and config, creates a fresh executor
+    Loads the existing KnowledgeState and DB-backed job metadata, creates a fresh executor
     session, and generates a new final_report.md + PDF.
 
     Args:
-        job_dir: Path to job directory (must contain config.json and knowledge_state.json)
+        job_dir: Path to job directory (must contain knowledge_state.json)
 
     Returns:
         Dict: {job_id, status, report_success}
     """
     job_dir = Path(job_dir)
-
-    with open(job_dir / "config.json", encoding="utf-8") as f:
-        config = json.load(f)
-
-    job_id = config["job_id"]
+    runtime = await _load_runtime_context(job_dir)
+    job_id = runtime["job_id"]
 
     logger.info("Regenerating report for job %s", job_id)
 
     # Set up provider and executor
     provider = get_provider()
     provider.setup_environment()
+    await update_job_status(job_dir, "generating_report")
 
-    use_skills = config.get("use_skills", True)
+    use_skills = runtime["use_skills"]
     await _write_skills_to_claude_dir(job_dir, use_skills)
-    system_prompt = get_system_prompt(skills_enabled=use_skills)
-
-    data_file = Path(config["data_files"][0]) if config["data_files"] else None
-    if data_file and not data_file.is_absolute():
-        data_file = data_file.absolute()
-
-    executor = get_agent_executor(
+    executor = _build_agent_executor(
         job_dir=job_dir,
-        data_file=data_file,
-        allowed_tools=ALLOWED_TOOLS,
-        system_prompt=system_prompt,
+        data_file=_resolve_primary_data_file(runtime["data_files"]),
+        use_skills=use_skills,
     )
 
     try:
+        report_outcome = await _run_report_generation_phase(
+            executor=executor,
+            job_dir=job_dir,
+            research_question=runtime["research_question"],
+        )
+        final_status = await _persist_final_status(job_dir, report_outcome)
         ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-        report_prompt = build_report_prompt(config["research_question"], ks)
-
-        logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
-        report_result = await executor.run_iteration(report_prompt, reset_session=True)
-
-        provenance_dir = job_dir / "provenance"
-        provenance_dir.mkdir(parents=True, exist_ok=True)
-        _save_transcript(provenance_dir / "report_transcript.json", report_result.transcript)
-
-        # Check if agent wrote final_report.md
-        report_path = job_dir / "final_report.md"
-        report_success = report_path.exists()
-
-        if not report_success and report_result.success and len(report_result.output) > 500:
-            # Fallback: agent returned report as output text instead of writing file
-            report_path.write_text(report_result.output, encoding="utf-8")
-            report_success = True
-
-        if report_success:
-            try:
-                from shandy.pdf_generator import markdown_to_pdf
-
-                markdown_to_pdf(report_path, add_footer=True)
-            except (ValueError, OSError, ShandyError) as e:
-                logger.warning("PDF generation failed: %s", e)
-
-        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-
-        if report_success:
-            config["status"] = "completed"
-        else:
-            config["status"] = "failed"
-            config["error"] = f"Report generation failed: {report_result.error}"
-
-        config["completed_at"] = datetime.now(timezone.utc).isoformat()
-
-        with open(job_dir / "config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
-
         sync_knowledge_state_to_db(job_dir, ks)
 
         return {
             "job_id": job_id,
-            "status": config["status"],
-            "report_success": report_success,
+            "status": final_status,
+            "report_success": report_outcome.success,
         }
 
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("Report regeneration failed [%s]: %s", get_version_string(), e, exc_info=True)
-        config["status"] = "failed"
-        config["error"] = str(e)
-        config["failed_at"] = datetime.now(timezone.utc).isoformat()
-        with open(job_dir / "config.json", "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+        try:
+            await update_job_status(job_dir, "failed", error_message=str(e))
+        except Exception as status_error:
+            logger.warning(
+                "Failed to persist regenerate-report failure for %s: %s", job_id, status_error
+            )
         raise
 
     finally:

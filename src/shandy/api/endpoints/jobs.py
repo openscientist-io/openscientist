@@ -2,25 +2,24 @@
 Job management endpoints.
 
 Provides REST API endpoints for creating, listing, monitoring, and managing
-SHANDY crystallography analysis jobs.
+SHANDY scientific analysis jobs.
 """
 
-import io
-import json
 import logging
-import zipfile
+import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, TypedDict
+from typing import TypedDict
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
+from shandy.artifact_packager import create_artifacts_zip_file
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
@@ -29,6 +28,8 @@ from shandy.job_manager import JobManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
+CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
+SESSION_DEP = Depends(get_session)
 
 
 # Pydantic models for request/response
@@ -42,10 +43,10 @@ class JobCreate(BaseModel):
         description="Job title",
         examples=["Analyze protein structure X"],
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         None,
         description="Detailed job description",
-        examples=["Investigating binding sites in protein X using crystallography data"],
+        examples=["Comparing treated vs control samples to explain pathway shifts"],
     )
     research_question: str = Field(
         ...,
@@ -68,13 +69,13 @@ class JobCreate(BaseModel):
         description="Investigation mode: 'autonomous' or 'coinvestigate'",
         pattern="^(autonomous|coinvestigate)$",
     )
-    pdb_code: Optional[str] = Field(
+    pdb_code: str | None = Field(
         None,
         max_length=10,
         description="PDB code if analyzing existing structure",
         examples=["1ABC"],
     )
-    space_group: Optional[str] = Field(
+    space_group: str | None = Field(
         None,
         max_length=50,
         description="Crystal space group",
@@ -87,14 +88,14 @@ class JobResponse(BaseModel):
 
     id: str = Field(..., description="Job ID")
     title: str = Field(..., description="Job title")
-    description: Optional[str] = Field(None, description="Job description")
+    description: str | None = Field(None, description="Job description")
     status: str = Field(..., description="Job status")
     created_at: datetime = Field(..., description="Creation timestamp (UTC)")
     updated_at: datetime = Field(..., description="Last update timestamp (UTC)")
     max_iterations: int = Field(..., description="Maximum iterations")
     current_iteration: int = Field(..., description="Current iteration number")
-    pdb_code: Optional[str] = Field(None, description="PDB code")
-    space_group: Optional[str] = Field(None, description="Space group")
+    pdb_code: str | None = Field(None, description="PDB code")
+    space_group: str | None = Field(None, description="Space group")
 
 
 class JobListResponse(BaseModel):
@@ -111,36 +112,36 @@ class JobStatusResponse(BaseModel):
     status: str = Field(..., description="Current job status")
     current_iteration: int = Field(..., description="Current iteration")
     max_iterations: int = Field(..., description="Maximum iterations")
-    error_message: Optional[str] = Field(None, description="Error message if failed")
+    error_message: str | None = Field(None, description="Error message if failed")
 
 
 class JobDetailResponse(JobResponse):
     """Detailed response for a single job."""
 
-    research_question: Optional[str] = Field(None, description="Research question")
-    investigation_mode: Optional[str] = Field(None, description="Investigation mode")
-    result_summary: Optional[str] = Field(None, description="Final result summary")
-    error_message: Optional[str] = Field(None, description="Error message if failed")
+    research_question: str | None = Field(None, description="Research question")
+    investigation_mode: str | None = Field(None, description="Investigation mode")
+    result_summary: str | None = Field(None, description="Final result summary")
+    error_message: str | None = Field(None, description="Error message if failed")
 
 
 class _JobResponseFields(TypedDict):
     id: str
     title: str
-    description: Optional[str]
+    description: str | None
     status: str
     created_at: datetime
     updated_at: datetime
     max_iterations: int
     current_iteration: int
-    pdb_code: Optional[str]
-    space_group: Optional[str]
+    pdb_code: str | None
+    space_group: str | None
 
 
 async def get_job_by_id(
     job_id: str,
     user: User,
     session: AsyncSession,
-) -> Optional[Job]:
+) -> Job | None:
     """
     Get a job by ID, verifying the user has access.
 
@@ -171,6 +172,13 @@ def _get_job_manager() -> JobManager:
     return get_job_manager()
 
 
+def _get_jobs_dir() -> Path:
+    """Resolve the filesystem jobs directory from the active job manager."""
+    manager = _get_job_manager()
+    jobs_dir = getattr(manager, "jobs_dir", Path("jobs"))
+    return Path(jobs_dir)
+
+
 def _job_response_fields(job: Job) -> _JobResponseFields:
     """Return common response fields shared by job response models."""
     return {
@@ -194,25 +202,10 @@ def _job_to_response(job: Job) -> JobResponse:
 
 def _job_to_detail_response(job: Job) -> JobDetailResponse:
     """Convert Job model to JobDetailResponse."""
-    # Load legacy config.json for research_question if not in DB
-    research_question = None
-    investigation_mode = None
-
-    try:
-        job_dir = Path("jobs") / str(job.id)
-        config_file = job_dir / "config.json"
-        if config_file.exists():
-            with open(config_file) as f:
-                config = json.load(f)
-                research_question = config.get("research_question")
-                investigation_mode = config.get("investigation_mode", "autonomous")
-    except Exception as e:
-        logger.warning("Failed to load config for job %s: %s", job.id, e)
-
     return JobDetailResponse(
         **_job_response_fields(job),
-        research_question=research_question,
-        investigation_mode=investigation_mode,
+        research_question=job.title,
+        investigation_mode=job.investigation_mode,
         result_summary=job.result_summary,
         error_message=job.error_message,
     )
@@ -221,11 +214,11 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(
     job_data: JobCreate,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> JobResponse:
     """
-    Create a new crystallography analysis job.
+    Create a new scientific analysis job.
 
     The job will be queued and started automatically. Use the GET /jobs/{id}/status
     endpoint to monitor progress.
@@ -260,6 +253,12 @@ async def create_job(
             space_group=job_data.space_group,
         )
         logger.info("Created job %s for user %s", job_uuid, user.email)
+    except ValueError as e:
+        logger.info("Rejected job creation for user %s: %s", user.email, e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except Exception as e:
         logger.exception("Failed to create job for user %s", user.email)
         raise HTTPException(
@@ -280,7 +279,7 @@ async def create_job(
 
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
-    status_filter: Optional[str] = Query(
+    status_filter: str | None = Query(
         None,
         alias="status",
         description="Filter by status",
@@ -297,8 +296,8 @@ async def list_jobs(
         ge=0,
         description="Number of jobs to skip",
     ),
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> JobListResponse:
     """
     List jobs owned by the authenticated user.
@@ -340,8 +339,8 @@ async def list_jobs(
 @router.get("/{job_id}", response_model=JobDetailResponse)
 async def get_job(
     job_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> JobDetailResponse:
     """
     Get detailed information about a specific job.
@@ -362,8 +361,8 @@ async def get_job(
 @router.get("/{job_id}/status", response_model=JobStatusResponse)
 async def get_job_status(
     job_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> JobStatusResponse:
     """
     Get the current status of a job.
@@ -390,11 +389,11 @@ async def get_job_status(
 @router.post("/{job_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_job(
     job_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ):
     """
-    Cancel a running or queued job.
+    Cancel a pending, running, or queued job.
 
     The job will stop at the next iteration checkpoint.
     """
@@ -423,11 +422,6 @@ async def cancel_job(
     job_manager = _get_job_manager()
     try:
         job_manager.cancel_job(str(job.id))
-
-        # Update database
-        job.status = "cancelled"
-        await session.commit()
-
         logger.info("Cancelled job %s for user %s", job.id, user.email)
     except Exception as e:
         logger.exception("Failed to cancel job %s", job.id)
@@ -440,8 +434,8 @@ async def cancel_job(
 @router.post("/{job_id}/regenerate-report", status_code=status.HTTP_202_ACCEPTED)
 async def regenerate_report(
     job_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ):
     """
     Regenerate the final report for a completed or failed job.
@@ -494,8 +488,8 @@ async def regenerate_report(
 @router.get("/{job_id}/report")
 async def download_report(
     job_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ):
     """
     Download the final analysis report (PDF or Markdown).
@@ -517,7 +511,7 @@ async def download_report(
         )
 
     # Look for report file
-    job_dir = Path("jobs") / str(job.id)
+    job_dir = _get_jobs_dir() / str(job.id)
 
     # Regenerate PDF from markdown if markdown exists
     for md_name, pdf_name in [
@@ -559,13 +553,14 @@ async def download_report(
 @router.get("/{job_id}/artifacts")
 async def download_artifacts(
     job_id: str,
-    user: User = Depends(get_current_user_from_api_key),
-    session: AsyncSession = Depends(get_session),
+    background_tasks: BackgroundTasks,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ):
     """
     Download all job artifacts as a ZIP archive.
 
-    Includes plots, data files, reports, and configuration files.
+    Includes plots, data files, and reports.
     """
     job = await get_job_by_id(job_id, user, session)
 
@@ -575,7 +570,7 @@ async def download_artifacts(
             detail="Job not found or access denied",
         )
 
-    job_dir = Path("jobs") / str(job.id)
+    job_dir = _get_jobs_dir() / str(job.id)
 
     if not job_dir.exists():
         raise HTTPException(
@@ -583,22 +578,24 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
-    # Create ZIP archive in memory
-    zip_buffer = io.BytesIO()
+    # Build ZIP archive on disk to avoid holding large archives in memory.
+    with tempfile.NamedTemporaryFile(
+        suffix="_artifacts.zip",
+        prefix=f"shandy_{job.id}_",
+        delete=False,
+    ) as tmp_file:
+        archive_path = Path(tmp_file.name)
 
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        # Add all files recursively
-        for file_path in job_dir.rglob("*"):
-            if file_path.is_file():
-                arcname = file_path.relative_to(job_dir)
-                zip_file.write(file_path, arcname)
+    try:
+        create_artifacts_zip_file(job_dir=job_dir, archive_path=archive_path, job_id=str(job.id))
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
 
-    zip_buffer.seek(0)
+    background_tasks.add_task(archive_path.unlink, missing_ok=True)
 
-    return StreamingResponse(
-        zip_buffer,
+    return FileResponse(
+        path=archive_path,
         media_type="application/zip",
-        headers={
-            "Content-Disposition": f"attachment; filename={job.title.replace(' ', '_')}_artifacts.zip"
-        },
+        filename=f"{job.title.replace(' ', '_')}_artifacts.zip",
     )

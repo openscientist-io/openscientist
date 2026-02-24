@@ -12,9 +12,9 @@ import logging
 import shutil
 import threading
 from collections.abc import Coroutine
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional, TypeVar
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -28,7 +28,7 @@ from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ProviderError
 from shandy.job.types import JobInfo, JobStatus, JobStatusUpdateResult
-from shandy.ntfy import ensure_user_has_topic, get_user_ntfy_settings, notify_job_status_change
+from shandy.ntfy import notify_job_status_change
 from shandy.orchestrator import create_job, run_discovery
 from shandy.orchestrator import regenerate_report as _regenerate_report
 from shandy.providers import get_provider
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Database helper functions for async operations
 
 
-async def _apply_rls_context(session: AsyncSession, user_id: Optional[UUID]) -> None:
+async def _apply_rls_context(session: AsyncSession, user_id: UUID | None) -> None:
     """Apply user-scoped RLS context when a user id is provided."""
     if user_id is None:
         return
@@ -81,11 +81,13 @@ async def _db_create_job(
     job_id: str,
     research_question: str,
     max_iterations: int,
-    owner_id: Optional[UUID] = None,
-    title: Optional[str] = None,
-    description: Optional[str] = None,
-    pdb_code: Optional[str] = None,
-    space_group: Optional[str] = None,
+    use_skills: bool = True,
+    investigation_mode: str = "autonomous",
+    owner_id: UUID | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    pdb_code: str | None = None,
+    space_group: str | None = None,
 ) -> JobModel:
     """Create a job in the database (thread-safe for worker threads).
 
@@ -93,6 +95,8 @@ async def _db_create_job(
         job_id: UUID string for the job (used as primary key)
         research_question: The research question/title
         max_iterations: Maximum iterations allowed
+        use_skills: Whether skills are enabled for this job
+        investigation_mode: Investigation mode ('autonomous' or 'coinvestigate')
         owner_id: UUID of the job owner (optional)
         title: Display title for the job (defaults to research_question)
         description: Optional job description
@@ -110,6 +114,8 @@ async def _db_create_job(
             owner_id=owner_id,
             title=title or research_question,
             description=description,
+            use_skills=use_skills,
+            investigation_mode=investigation_mode,
             status=JobStatus.PENDING.value,
             max_iterations=max_iterations,
             current_iteration=0,
@@ -122,7 +128,7 @@ async def _db_create_job(
         return job
 
 
-async def _db_get_job(job_id: str, user_id: Optional[UUID] = None) -> Optional[JobModel]:
+async def _db_get_job(job_id: str, user_id: UUID | None = None) -> JobModel | None:
     """Get a job from the database (thread-safe for worker threads).
 
     When user_id is provided, drops to shandy_app role so RLS policies
@@ -137,7 +143,7 @@ async def _db_get_job(job_id: str, user_id: Optional[UUID] = None) -> Optional[J
         return result.scalar_one_or_none()
 
 
-async def _db_get_share_permission(job_id: str, user_id: UUID) -> Optional[str]:
+async def _db_get_share_permission(job_id: str, user_id: UUID) -> str | None:
     """Return the share permission level for a user on a job.
 
     Returns 'view', 'edit', or None if the user has no share.
@@ -150,16 +156,15 @@ async def _db_get_share_permission(job_id: str, user_id: UUID) -> Optional[str]:
             JobShare.shared_with_user_id == user_id,
         )
         result = await session.execute(stmt)
-        row = result.scalar_one_or_none()
-        return row
+        return result.scalar_one_or_none()
 
 
 async def _db_update_job_status(
     job_id: str,
     status: JobStatus,
-    error_message: Optional[str] = None,
-    user_id: Optional[UUID] = None,
-    cancellation_reason: Optional[str] = None,
+    error_message: str | None = None,
+    user_id: UUID | None = None,
+    cancellation_reason: str | None = None,
 ) -> JobStatusUpdateResult:
     """Update job status in the database (thread-safe for worker threads).
 
@@ -198,9 +203,9 @@ async def _db_update_job_status(
 
 
 async def _db_list_jobs(
-    status: Optional[JobStatus] = None,
-    limit: Optional[int] = None,
-    user_id: Optional[UUID] = None,
+    status: JobStatus | None = None,
+    limit: int | None = None,
+    user_id: UUID | None = None,
 ) -> list[JobModel]:
     """List jobs from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
@@ -218,7 +223,7 @@ async def _db_list_jobs(
         return list(result.scalars().all())
 
 
-async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
+async def _db_delete_job(job_id: str, user_id: UUID | None = None) -> None:
     """Delete a job from the database (thread-safe for worker threads)."""
     async with AsyncSessionLocal(thread_safe=True) as session:
         await _apply_rls_context(session, user_id)
@@ -232,10 +237,7 @@ async def _db_delete_job(job_id: str, user_id: Optional[UUID] = None) -> None:
             await session.commit()
 
 
-_T = TypeVar("_T")
-
-
-def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
+def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Helper to run async code from sync context.
 
     When called from within a running event loop (e.g., NiceGUI handlers),
@@ -251,7 +253,7 @@ def _run_async(coro: Coroutine[Any, Any, _T]) -> _T:
         # We're inside a running event loop - run in a separate thread
         # with a fresh event loop. The coroutine will create its own
         # database session via AsyncSessionLocal context manager.
-        def run_in_thread() -> _T:
+        def run_in_thread() -> T:
             return asyncio.run(coro)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -306,11 +308,8 @@ class JobManager:
         Since the orchestrator process died, these jobs will never complete.
         """
         stale_count = 0
-        for job_id in self._list_job_ids():
-            job_info = self._load_job_info(job_id)
-            if job_info is None:
-                continue
-
+        for job_info in self._list_operational_jobs():
+            job_id = job_info.job_id
             if job_info.status in [
                 JobStatus.RUNNING,
                 JobStatus.QUEUED,
@@ -325,20 +324,114 @@ class JobManager:
                 # Update database
                 try:
                     owner_id = UUID(job_info.owner_id) if job_info.owner_id else None
-                    _run_async(_db_update_job_status(job_id, JobStatus.CANCELLED, user_id=owner_id))
+                    _run_async(
+                        _db_update_job_status(
+                            job_id,
+                            JobStatus.CANCELLED,
+                            user_id=owner_id,
+                            cancellation_reason="Server restarted while job was running",
+                        )
+                    )
                 except Exception as e:
                     logger.error("Failed to update job %s in database: %s", job_id, e)
-
-                # Also update config.json for backward compatibility
-                self._update_job_status_file(
-                    job_id,
-                    JobStatus.CANCELLED,
-                    cancellation_reason="Server restarted while job was running",
-                )
                 stale_count += 1
 
         if stale_count > 0:
             logger.info("Cleaned up %d stale job(s) from previous run", stale_count)
+
+    def _ensure_job_not_exists(self, job_id: str) -> None:
+        if self.get_job(job_id) is not None:
+            raise ValueError(f"Job {job_id} already exists")
+
+    def _check_budget_before_creation(self) -> None:
+        try:
+            provider = get_provider()
+            budget_check = provider.check_budget_limits()
+        except ProviderError as e:
+            # Keep job creation available if provider cost endpoint is temporarily unavailable.
+            logger.warning("Budget check unavailable: %s", e)
+            budget_check = {"can_proceed": True}
+
+        if budget_check.get("can_proceed", True):
+            return
+
+        errors = budget_check.get("errors", [])
+        error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
+        raise ValueError(f"Cannot create job: {error_msg}")
+
+    def _create_db_job_record(
+        self,
+        *,
+        job_id: str,
+        research_question: str,
+        max_iterations: int,
+        use_skills: bool,
+        investigation_mode: str,
+        owner_id: str | None,
+        title: str | None,
+        description: str | None,
+        pdb_code: str | None,
+        space_group: str | None,
+    ) -> UUID | None:
+        owner_uuid = UUID(owner_id) if owner_id else None
+        try:
+            _run_async(
+                _db_create_job(
+                    job_id,
+                    research_question,
+                    max_iterations,
+                    use_skills=use_skills,
+                    investigation_mode=investigation_mode,
+                    owner_id=owner_uuid,
+                    title=title,
+                    description=description,
+                    pdb_code=pdb_code,
+                    space_group=space_group,
+                )
+            )
+        except Exception as e:
+            logger.error("Failed to create job in database: %s", e)
+            raise ValueError(f"Failed to create job in database: {e}") from e
+        return owner_uuid
+
+    def _rollback_failed_job_creation(self, job_id: str, owner_uuid: UUID | None) -> None:
+        try:
+            _run_async(_db_delete_job(job_id, owner_uuid))
+        except Exception as cleanup_error:
+            logger.error("Failed to rollback DB job %s: %s", job_id, cleanup_error)
+        try:
+            job_dir = self.jobs_dir / job_id
+            if job_dir.exists():
+                shutil.rmtree(job_dir)
+        except OSError:
+            logger.warning("Failed to cleanup job directory after failure: %s", job_id)
+
+    def _create_job_files(
+        self,
+        *,
+        job_id: str,
+        research_question: str,
+        data_files: list[Path],
+        max_iterations: int,
+        use_skills: bool,
+        owner_id: str | None,
+        owner_uuid: UUID | None,
+    ) -> None:
+        try:
+            create_job(
+                job_id=job_id,
+                research_question=research_question,
+                data_files=data_files,
+                max_iterations=max_iterations,
+                use_skills=use_skills,
+                jobs_dir=self.jobs_dir,
+                owner_id=owner_id,
+            )
+        except Exception as e:
+            logger.error("Failed to initialize filesystem for job %s: %s", job_id, e)
+            # Compensating action: remove partially-created DB row/files to avoid split-brain.
+            self._rollback_failed_job_creation(job_id, owner_uuid)
+            raise ValueError(f"Failed to initialize job files: {e}") from e
 
     def create_job(
         self,
@@ -349,11 +442,11 @@ class JobManager:
         use_skills: bool = True,
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
-        owner_id: Optional[str] = None,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        pdb_code: Optional[str] = None,
-        space_group: Optional[str] = None,
+        owner_id: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        pdb_code: str | None = None,
+        space_group: str | None = None,
     ) -> JobInfo:
         """
         Create a new discovery job.
@@ -379,85 +472,35 @@ class JobManager:
             ValueError: If job_id already exists
             BudgetExceededError: If insufficient budget
         """
-        # Check if job exists
-        if self.get_job(job_id) is not None:
-            raise ValueError(f"Job {job_id} already exists")
-
-        # Check budget limits
-        try:
-            provider = get_provider()
-            budget_check = provider.check_budget_limits()
-        except ProviderError as e:
-            # Keep job creation available if provider cost endpoint is temporarily unavailable.
-            logger.warning("Budget check unavailable: %s", e)
-            budget_check = {"can_proceed": True}
-
-        if not budget_check.get("can_proceed", True):
-            errors = budget_check.get("errors", [])
-            error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
-            raise ValueError(f"Cannot create job: {error_msg}")
+        self._ensure_job_not_exists(job_id)
+        self._check_budget_before_creation()
 
         # Create job in database
         logger.info("Creating job %s in database", job_id)
-        owner_uuid = UUID(owner_id) if owner_id else None
-        try:
-            _run_async(
-                _db_create_job(
-                    job_id,
-                    research_question,
-                    max_iterations,
-                    owner_uuid,
-                    title=title,
-                    description=description,
-                    pdb_code=pdb_code,
-                    space_group=space_group,
-                )
-            )
-        except Exception as e:
-            logger.error("Failed to create job in database: %s", e)
-            raise ValueError(f"Failed to create job in database: {e}") from e
+        owner_uuid = self._create_db_job_record(
+            job_id=job_id,
+            research_question=research_question,
+            max_iterations=max_iterations,
+            use_skills=use_skills,
+            investigation_mode=investigation_mode,
+            owner_id=owner_id,
+            title=title,
+            description=description,
+            pdb_code=pdb_code,
+            space_group=space_group,
+        )
 
-        # Get ntfy settings for the owner (for push notifications)
-        ntfy_enabled = False
-        ntfy_topic: Optional[str] = None
-        if owner_uuid:
-            try:
-                ntfy_enabled, ntfy_topic = _run_async(get_user_ntfy_settings(owner_uuid))
-                # Ensure user has a topic if ntfy is enabled
-                if ntfy_enabled and not ntfy_topic:
-                    ntfy_topic = _run_async(ensure_user_has_topic(owner_uuid))
-            except Exception as e:
-                logger.warning("Failed to get ntfy settings for user: %s", e)
-
-        # Create job directory and files (for backward compatibility)
+        # Create job directory and files
         logger.info("Creating job %s filesystem structure", job_id)
-        try:
-            create_job(
-                job_id=job_id,
-                research_question=research_question,
-                data_files=data_files,
-                max_iterations=max_iterations,
-                use_skills=use_skills,
-                jobs_dir=self.jobs_dir,
-                investigation_mode=investigation_mode,
-                owner_id=owner_id,
-                ntfy_enabled=ntfy_enabled,
-                ntfy_topic=ntfy_topic,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.error("Failed to initialize filesystem for job %s: %s", job_id, e)
-            # Compensating action: remove partially-created DB row/files to avoid split-brain.
-            try:
-                _run_async(_db_delete_job(job_id, owner_uuid))
-            except Exception as cleanup_error:  # noqa: BLE001
-                logger.error("Failed to rollback DB job %s: %s", job_id, cleanup_error)
-            try:
-                job_dir = self.jobs_dir / job_id
-                if job_dir.exists():
-                    shutil.rmtree(job_dir)
-            except OSError:
-                logger.warning("Failed to cleanup job directory after failure: %s", job_id)
-            raise ValueError(f"Failed to initialize job files: {e}") from e
+        self._create_job_files(
+            job_id=job_id,
+            research_question=research_question,
+            data_files=data_files,
+            max_iterations=max_iterations,
+            use_skills=use_skills,
+            owner_id=owner_id,
+            owner_uuid=owner_uuid,
+        )
 
         # Load job info
         job_info = self._load_job_info(job_id)
@@ -529,7 +572,7 @@ class JobManager:
             elif final_status == "failed":
                 self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
 
-        except Exception as e:  # noqa: BLE001 — thread-level safety net
+        except Exception as e:
             logger.error("Job %s failed [%s]: %s", job_id, get_version_string(), e, exc_info=True)
             self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
 
@@ -603,7 +646,7 @@ class JobManager:
             elif final_status == "failed":
                 self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
 
-        except Exception as e:  # noqa: BLE001 — thread-level safety net
+        except Exception as e:
             logger.error(
                 "Report regeneration for job %s failed [%s]: %s",
                 job_id,
@@ -623,19 +666,19 @@ class JobManager:
             if self._get_active_job_count() >= self.max_concurrent:
                 return
 
-            # Find next queued job
-            for job_id in self._list_job_ids():
-                job_info = self.get_job(job_id)
-                if job_info and job_info.status == JobStatus.QUEUED:
-                    logger.info("Starting queued job %s", job_id)
-                    thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
-                    self._running_jobs[job_id] = thread
-                    thread.start()
-                    break
+            queued_jobs = self._list_operational_jobs(status=JobStatus.QUEUED, limit=1)
+            if not queued_jobs:
+                return
+
+            job_id = queued_jobs[0].job_id
+            logger.info("Starting queued job %s", job_id)
+            thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
+            self._running_jobs[job_id] = thread
+            thread.start()
 
     def cancel_job(self, job_id: str) -> None:
         """
-        Cancel a running or queued job.
+        Cancel a pending, running, or queued job.
 
         Args:
             job_id: Job ID
@@ -647,8 +690,8 @@ class JobManager:
         if job_info is None:
             raise ValueError(f"Job {job_id} not found")
 
-        if job_info.status not in [JobStatus.RUNNING, JobStatus.QUEUED]:
-            raise ValueError(f"Job {job_id} is not running or queued")
+        if job_info.status not in [JobStatus.PENDING, JobStatus.RUNNING, JobStatus.QUEUED]:
+            raise ValueError(f"Job {job_id} is not pending, running, or queued")
 
         # Update status with reason
         self._update_job_status(
@@ -666,7 +709,7 @@ class JobManager:
         # Start next queued job if any
         self._start_next_queued_job()
 
-    def get_job(self, job_id: str) -> Optional[JobInfo]:
+    def get_job(self, job_id: str) -> JobInfo | None:
         """
         Get job information.
 
@@ -680,8 +723,8 @@ class JobManager:
 
     def list_jobs(
         self,
-        status: Optional[JobStatus] = None,
-        limit: Optional[int] = None,
+        status: JobStatus | None = None,
+        limit: int | None = None,
     ) -> list[JobInfo]:
         """
         List all jobs from the database (no user filtering).
@@ -721,6 +764,7 @@ class JobManager:
             _run_async(_db_delete_job(job_id, owner_id))
         except Exception as e:
             logger.error("Failed to delete job from database: %s", e)
+            raise ValueError(f"Failed to delete job {job_id} from database: {e}") from e
 
         # Clean up any executor containers for this job
         try:
@@ -749,13 +793,11 @@ class JobManager:
         Returns:
             Number of jobs deleted
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = datetime.now(UTC) - timedelta(days=days)
         deleted = 0
 
-        for job_id in self._list_job_ids():
-            job_info = self._load_job_info(job_id)
-            if job_info is None:
-                continue
+        for job_info in self._list_operational_jobs():
+            job_id = job_info.job_id
 
             # Skip running jobs
             if job_info.status == JobStatus.RUNNING:
@@ -768,7 +810,7 @@ class JobManager:
             # Check age
             created_at = datetime.fromisoformat(job_info.created_at)
             if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=timezone.utc)
+                created_at = created_at.replace(tzinfo=UTC)
             if created_at < cutoff:
                 try:
                     self.delete_job(job_id)
@@ -810,15 +852,13 @@ class JobManager:
         Used to limit concurrent coinvestigations to prevent resource exhaustion.
         """
         count = 0
-        for job_id in self._list_job_ids():
-            job_info = self.get_job(job_id)
-            if job_info and job_info.investigation_mode == "coinvestigate":
-                if job_info.status in [
-                    JobStatus.RUNNING,
-                    JobStatus.AWAITING_FEEDBACK,
-                    JobStatus.QUEUED,
-                ]:
-                    count += 1
+        for job_info in self._list_operational_jobs():
+            if job_info.investigation_mode == "coinvestigate" and job_info.status in [
+                JobStatus.RUNNING,
+                JobStatus.AWAITING_FEEDBACK,
+                JobStatus.QUEUED,
+            ]:
+                count += 1
         return count
 
     def can_start_coinvestigate(self, max_coinvestigate: int = 15) -> bool:
@@ -863,155 +903,74 @@ class JobManager:
             "budget_check": budget_check,
         }
 
-    def _list_job_ids(self) -> list[str]:
-        """List all job IDs."""
-        if not self.jobs_dir.exists():
+    def _list_operational_jobs(
+        self,
+        status: JobStatus | None = None,
+        limit: int | None = None,
+    ) -> list[JobInfo]:
+        """
+        List jobs for operational workflows.
+
+        Jobs are sourced exclusively from the database.
+        """
+        try:
+            db_jobs = _run_async(_db_list_jobs(status=status, limit=limit))
+            return [self._db_model_to_job_info(job) for job in db_jobs]
+        except Exception as e:
+            logger.warning("Failed to list jobs from database for operational scan: %s", e)
             return []
-
-        job_ids = []
-        for item in self.jobs_dir.iterdir():
-            if item.is_dir() and (item / "config.json").exists():
-                job_ids.append(item.name)
-
-        return job_ids
 
     def _db_model_to_job_info(self, job_model: JobModel) -> JobInfo:
         """Convert a database JobModel to JobInfo with real-time progress from KS."""
         # Load progress from knowledge_state.json for all jobs
         # (database sync may be async and not yet committed)
-        ks_path = self.jobs_dir / str(job_model.id) / "knowledge_state.json"
+        job_id = str(job_model.id)
+        job_dir = self.jobs_dir / job_id
+        ks_path = job_dir / "knowledge_state.json"
         iterations_completed, findings_count = _load_progress_from_knowledge_state(
             ks_path=ks_path,
             status=job_model.status,
             default_iterations=job_model.current_iteration,
             default_findings=0,
-            job_id=str(job_model.id),
+            job_id=job_id,
         )
 
         return JobInfo.from_db_model(job_model, iterations_completed, findings_count)
 
-    def _load_job_info(self, job_id: str) -> Optional[JobInfo]:
+    def _load_job_info(self, job_id: str) -> JobInfo | None:
         """
-        Load job info from database, falling back to config.json if needed.
-
-        This maintains backward compatibility with existing file-based jobs.
+        Load job info from database.
         """
-        # Try loading from database first
         try:
             job_model = _run_async(_db_get_job(job_id))
             if job_model:
                 return self._db_model_to_job_info(job_model)
         except Exception as e:
             logger.warning("Failed to load job %s from database: %s", job_id, e)
-
-        # Fallback to config.json for legacy jobs
-        return self._load_job_info_from_file(job_id)
-
-    def _load_job_info_from_file(self, job_id: str) -> Optional[JobInfo]:
-        """Load job info from config.json (legacy fallback)."""
-        config_path = self.jobs_dir / job_id / "config.json"
-
-        if not config_path.exists():
             return None
 
-        try:
-            with open(config_path, encoding="utf-8") as f:
-                config = json.load(f)
-
-            # Get progress from config, then override with knowledge_state.json if available.
-            default_iterations = config.get("iterations_completed", 0)
-            default_findings = config.get("findings_count", 0)
-            ks_path = self.jobs_dir / job_id / "knowledge_state.json"
-            iterations_completed, findings_count = _load_progress_from_knowledge_state(
-                ks_path=ks_path,
-                status=config["status"],
-                default_iterations=default_iterations,
-                default_findings=default_findings,
-                job_id=job_id,
-            )
-
-            return JobInfo(
-                job_id=config["job_id"],
-                research_question=config["research_question"],
-                status=JobStatus(config["status"]),
-                created_at=config["created_at"],
-                started_at=config.get("started_at"),
-                completed_at=config.get("completed_at"),
-                failed_at=config.get("failed_at"),
-                max_iterations=config["max_iterations"],
-                iterations_completed=iterations_completed,
-                findings_count=findings_count,
-                error=config.get("error"),
-                cancellation_reason=config.get("cancellation_reason"),
-                use_skills=config.get("use_skills", True),
-                investigation_mode=config.get("investigation_mode", "autonomous"),
-                owner_id=config.get("owner_id"),
-                short_title=config.get("short_title"),
-            )
-
-        except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.error("Failed to load job info for %s: %s", job_id, e)
-            return None
-
-    def _update_job_status_file(
-        self,
-        job_id: str,
-        status: JobStatus,
-        cancellation_reason: Optional[str] = None,
-    ) -> None:
-        """Update job status in config.json (for backward compatibility)."""
-        config_path = self.jobs_dir / job_id / "config.json"
-
-        if not config_path.exists():
-            return
-
-        try:
-            with open(config_path, encoding="utf-8") as f:
-                config = json.load(f)
-
-            config["status"] = status.value
-
-            # Update timestamps
-            if status == JobStatus.RUNNING and "started_at" not in config:
-                config["started_at"] = datetime.now(timezone.utc).isoformat()
-            elif status == JobStatus.COMPLETED and "completed_at" not in config:
-                config["completed_at"] = datetime.now(timezone.utc).isoformat()
-            elif status == JobStatus.FAILED and "failed_at" not in config:
-                config["failed_at"] = datetime.now(timezone.utc).isoformat()
-            elif status == JobStatus.CANCELLED:
-                config["cancelled_at"] = datetime.now(timezone.utc).isoformat()
-                if cancellation_reason:
-                    config["cancellation_reason"] = cancellation_reason
-
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2)
-
-        except (OSError, json.JSONDecodeError, ValueError) as e:
-            logger.error("Failed to update job status file for %s: %s", job_id, e)
+        return None
 
     def _update_job_status(
         self,
         job_id: str,
         status: JobStatus,
-        error_message: Optional[str] = None,
-        cancellation_reason: Optional[str] = None,
+        error_message: str | None = None,
+        cancellation_reason: str | None = None,
     ) -> None:
-        """Update job status in database and config.json."""
+        """Update job status in the database."""
         # Get job to find owner
         job_info = self._load_job_info(job_id)
         owner_id = UUID(job_info.owner_id) if job_info and job_info.owner_id else None
 
         # Update database and get ntfy settings
-        ntfy_result: Optional[JobStatusUpdateResult] = None
+        ntfy_result: JobStatusUpdateResult | None = None
         try:
             ntfy_result = _run_async(
                 _db_update_job_status(job_id, status, error_message, owner_id, cancellation_reason)
             )
         except Exception as e:
             logger.error("Failed to update job status in database: %s", e)
-
-        # Update file for backward compatibility
-        self._update_job_status_file(job_id, status, cancellation_reason)
 
         # Send push notification if user has ntfy enabled
         # Note: notify_job_status_change will create topic if not exists
@@ -1061,6 +1020,22 @@ def main():
     # Summary
     subparsers.add_parser("summary", help="Get job summary")
 
+    # Bootstrap filesystem jobs into DB
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap",
+        help="Bootstrap filesystem jobs into the database",
+    )
+    bootstrap_parser.add_argument(
+        "--jobs-dir",
+        default="jobs",
+        help="Directory containing job folders (default: jobs)",
+    )
+    bootstrap_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Scan and report without writing database changes",
+    )
+
     args = parser.parse_args()
 
     # Set up logging
@@ -1068,6 +1043,16 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    if args.command == "bootstrap":
+        from shandy.bootstrap import bootstrap_jobs_from_filesystem_sync
+
+        result = bootstrap_jobs_from_filesystem_sync(
+            jobs_dir=Path(args.jobs_dir),
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(result.to_dict(), indent=2))
+        return
 
     # Create job manager
     manager = JobManager()

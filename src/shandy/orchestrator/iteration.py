@@ -6,14 +6,19 @@ Prompt construction, iteration counter management, and status updates.
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import time
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from uuid import UUID
 
+from sqlalchemy import select
+
+from shandy.database.models import User
+from shandy.database.models.job import Job as JobModel
+from shandy.database.session import AsyncSessionLocal
 from shandy.knowledge_state import KnowledgeState
+from shandy.ntfy import notify_job_status_change
 
 logger = logging.getLogger(__name__)
 
@@ -167,81 +172,158 @@ def increment_ks_iteration(ks_path: Path) -> None:
     ks.save(ks_path)
 
 
-def update_job_status(job_dir: Path, status: str) -> None:
-    """Update job status in config.json and send ntfy notification if applicable."""
-    config_path = job_dir / "config.json"
-    with open(config_path, encoding="utf-8") as f:
-        config = json.load(f)
-
-    old_status = config.get("status")
-    config["status"] = status
-
-    if status == "awaiting_feedback":
-        config["awaiting_feedback_since"] = datetime.now(timezone.utc).isoformat()
-    elif "awaiting_feedback_since" in config:
-        del config["awaiting_feedback_since"]
-
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
-
-    if status == "awaiting_feedback" and old_status != "awaiting_feedback":
-        _send_iteration_notification(job_dir, config)
+async def _get_job_status(job_id: str) -> str | None:
+    """Fetch current job status from the database."""
+    try:
+        async with AsyncSessionLocal(thread_safe=True) as session:
+            result = await session.execute(
+                select(JobModel.status).where(JobModel.id == UUID(job_id))
+            )
+            return result.scalar_one_or_none()
+    except Exception as e:
+        logger.warning("Failed to fetch status for job %s: %s", job_id, e)
+        return None
 
 
-def _send_iteration_notification(job_dir: Path, config: dict[str, Any]) -> None:
-    """Send ntfy notification when an iteration completes."""
-    if not config.get("ntfy_enabled") or not config.get("ntfy_topic"):
-        return
+def _parse_job_uuid(job_id: str) -> UUID | None:
+    try:
+        return UUID(job_id)
+    except ValueError:
+        logger.warning("Cannot update status for invalid job id: %s", job_id)
+        return None
+
+
+async def _persist_job_status(
+    job_id: str,
+    job_uuid: UUID,
+    status: str,
+    error_message: str | None,
+) -> tuple[str | None, UUID | None, str | None, bool, str | None] | None:
+    old_status: str | None = None
+    owner_id: UUID | None = None
+    job_title: str | None = None
+    ntfy_enabled = False
+    ntfy_topic: str | None = None
 
     try:
-        import httpx
+        async with AsyncSessionLocal(thread_safe=True) as session:
+            job_result = await session.execute(select(JobModel).where(JobModel.id == job_uuid))
+            job = job_result.scalar_one_or_none()
+            if job is None:
+                logger.warning("Cannot update status for missing job %s", job_id)
+                return None
 
-        from shandy.settings import get_settings
+            old_status = job.status
+            if old_status != status:
+                job.status = status
+                await session.flush()
+            if error_message:
+                job.error_message = error_message
 
-        settings = get_settings()
-        topic = config["ntfy_topic"]
-        job_id = config["job_id"]
+            owner_id = job.owner_id
+            job_title = job.short_title or job.title
 
-        short_title = config.get("short_title")
-        if not short_title:
-            research_q = config.get("research_question", "Unknown job")
-            short_title = research_q[:50] + "..." if len(research_q) > 50 else research_q
+            if owner_id is not None:
+                user_result = await session.execute(
+                    select(User.ntfy_enabled, User.ntfy_topic).where(User.id == owner_id)
+                )
+                user_row = user_result.first()
+                if user_row:
+                    ntfy_enabled = bool(user_row.ntfy_enabled)
+                    ntfy_topic = user_row.ntfy_topic
 
-        ks_path = job_dir / "knowledge_state.json"
-        iteration = 1
-        if ks_path.exists():
-            ks = KnowledgeState.load(ks_path)
-            iteration = ks.data.get("iteration", 1)
-
-        url = f"https://ntfy.sh/{topic}"
-        headers = {
-            "Title": f"Iteration {iteration} Complete",
-            "Priority": "default",
-            "Tags": "white_check_mark",
-            "Click": f"{settings.base_url}/job/{job_id}",
-        }
-        message = f"'{short_title}' has completed iteration {iteration}."
-
-        with httpx.Client(timeout=10.0) as client:
-            response = client.post(url, content=message, headers=headers)
-            response.raise_for_status()
-            logger.info("Sent iteration notification to topic %s", topic)
+            await session.commit()
     except Exception as e:
-        logger.warning("Failed to send ntfy notification: %s", e)
+        logger.warning("Failed to update status for job %s: %s", job_id, e)
+        return None
+
+    return old_status, owner_id, job_title, ntfy_enabled, ntfy_topic
 
 
-def wait_for_feedback_or_timeout(
+def _should_notify_awaiting_feedback(
+    *,
+    status: str,
+    old_status: str | None,
+    owner_id: UUID | None,
+    ntfy_enabled: bool,
+    job_title: str | None,
+) -> bool:
+    if status != "awaiting_feedback" or old_status == "awaiting_feedback":
+        return False
+    return bool(owner_id and ntfy_enabled and job_title)
+
+
+def _get_feedback_iteration(ks_path: Path) -> int:
+    if not ks_path.exists():
+        return 1
+    try:
+        ks = KnowledgeState.load(ks_path)
+        iteration_value = ks.data.get("iteration", 1)
+        if isinstance(iteration_value, int):
+            return iteration_value
+        return int(iteration_value)
+    except Exception as e:
+        logger.warning("Failed to read iteration for feedback notification: %s", e)
+        return 1
+
+
+async def update_job_status(
+    job_dir: Path,
+    status: str,
+    error_message: str | None = None,
+) -> None:
+    """Update job status in the database and notify on feedback wait transitions."""
+    job_id = job_dir.name
+    ks_path = job_dir / "knowledge_state.json"
+
+    job_uuid = _parse_job_uuid(job_id)
+    if job_uuid is None:
+        return
+
+    db_result = await _persist_job_status(job_id, job_uuid, status, error_message)
+    if db_result is None:
+        return
+
+    old_status, owner_id, job_title, ntfy_enabled, ntfy_topic = db_result
+    if not _should_notify_awaiting_feedback(
+        status=status,
+        old_status=old_status,
+        owner_id=owner_id,
+        ntfy_enabled=ntfy_enabled,
+        job_title=job_title,
+    ):
+        return
+
+    if owner_id is None or not job_title:
+        return
+
+    iteration = _get_feedback_iteration(ks_path)
+
+    try:
+        await notify_job_status_change(
+            user_id=owner_id,
+            job_id=job_id,
+            job_title=job_title,
+            new_status="awaiting_feedback",
+            iteration=iteration,
+            ntfy_topic=ntfy_topic,
+        )
+    except Exception as e:
+        logger.warning("Failed to send awaiting_feedback notification for %s: %s", job_id, e)
+
+
+async def wait_for_feedback_or_timeout(
     job_dir: Path, timeout_seconds: int = FEEDBACK_TIMEOUT_SECONDS
 ) -> str | None:
     """
     Wait for scientist feedback or timeout (coinvestigate mode).
 
-    Returns feedback text if submitted, None if timeout or cancelled.
+    Returns feedback text if submitted, None if timeout, cancellation, or continue.
     """
-    config_path = job_dir / "config.json"
+    job_id = job_dir.name
     ks_path = job_dir / "knowledge_state.json"
 
-    start_time = time.time()
+    start_time = time.monotonic()
 
     ks = KnowledgeState.load(ks_path)
     current_iteration = ks.data["iteration"]
@@ -250,16 +332,18 @@ def wait_for_feedback_or_timeout(
     logger.info("Waiting for scientist feedback (timeout: %ds)", timeout_seconds)
 
     while True:
-        elapsed = time.time() - start_time
+        elapsed = time.monotonic() - start_time
 
         if elapsed >= timeout_seconds:
             logger.info("Feedback timeout after %.0fs - auto-continuing", elapsed)
             return None
 
-        with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
-        if config.get("status") == "cancelled":
+        status = await _get_job_status(job_id)
+        if status == "cancelled":
             logger.info("Job cancelled while waiting for feedback")
+            return None
+        if status == "running":
+            logger.info("Continue signal received (no feedback)")
             return None
 
         ks = KnowledgeState.load(ks_path)
@@ -271,10 +355,4 @@ def wait_for_feedback_or_timeout(
                 logger.info("Received feedback: %s...", latest["text"][:100])
                 return str(latest["text"])
 
-        with open(config_path, encoding="utf-8") as f:
-            config = json.load(f)
-        if config.get("status") == "running":
-            logger.info("Continue signal received (no feedback)")
-            return None
-
-        time.sleep(2)
+        await asyncio.sleep(2)

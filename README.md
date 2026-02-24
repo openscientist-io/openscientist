@@ -243,6 +243,32 @@ In `src/shandy/web_app.py`:
 - `max_concurrent`: Maximum concurrent jobs (default: 1)
 - `jobs_dir`: Directory for job data (default: `jobs/`)
 
+### Legacy Bootstrap (Filesystem -> DB)
+
+If you have pre-database jobs on disk, run the bootstrap command to create
+missing DB rows and migrate metadata:
+
+```bash
+python -m shandy.job_manager bootstrap --jobs-dir jobs
+```
+
+Keep unresolved ownership as orphaned (`owner_id=NULL`) by default, or assign
+orphans to a legacy placeholder user:
+
+```bash
+python -m shandy.job_manager bootstrap \
+  --jobs-dir jobs \
+  --legacy-user-email legacy@example.com \
+  --legacy-user-name "Legacy User" \
+  --assign-orphans-to-legacy
+```
+
+Preview only (no writes):
+
+```bash
+python -m shandy.job_manager bootstrap --jobs-dir jobs --dry-run
+```
+
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and deployment.

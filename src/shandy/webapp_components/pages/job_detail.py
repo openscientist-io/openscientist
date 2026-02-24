@@ -8,7 +8,10 @@ without full page reloads.
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from nicegui import ui
@@ -20,6 +23,7 @@ from shandy.database.session import get_session_ctx
 from shandy.job_chat import get_chat_history, send_chat_message
 from shandy.job_manager import JobStatus, _db_get_job, _db_get_share_permission, _run_async
 from shandy.knowledge_state import KnowledgeState
+from shandy.orchestrator.iteration import update_job_status
 from shandy.pdf_generator import markdown_to_pdf
 from shandy.webapp_components.error_handler import get_user_friendly_error
 from shandy.webapp_components.ui_components import (
@@ -62,60 +66,575 @@ def _load_knowledge_state(ks_path):
         return None, "Knowledge state is being updated. Please refresh the page."
 
 
-@ui.page("/job/{job_id}")
-@require_auth
-def job_detail_page(job_id: str):
-    """Job detail page with progressive disclosure UI."""
-    from shandy import web_app
+def _show_no_timeline_activity():
+    ui.label("No investigation activity yet").classes("text-gray-500")
 
-    job_manager = web_app.get_job_manager()
 
-    # Verify access: query DB with RLS to check the current user can see this job
-    user_id = get_current_user_id()
+def _timeline_iteration_summaries(timeline_ks):
+    summaries = {}
+    for entry in timeline_ks.get("iteration_summaries", []):
+        if not isinstance(entry, dict):
+            continue
+        iteration = entry.get("iteration")
+        if not isinstance(iteration, int):
+            continue
+        summaries[iteration] = {
+            "summary": entry.get("summary", ""),
+            "strapline": entry.get("strapline", ""),
+        }
+    return summaries
+
+
+def _timeline_entries_by_iteration(timeline_ks):
+    by_iteration = defaultdict(list)
+    for entry in timeline_ks.get("analysis_log", []):
+        iteration = entry.get("iteration")
+        if isinstance(iteration, int):
+            by_iteration[iteration].append(entry)
+    return by_iteration
+
+
+def _normalize_iteration_summary(iter_summary):
+    if isinstance(iter_summary, str):
+        return "", iter_summary
+    if not isinstance(iter_summary, dict):
+        return "", ""
+    return iter_summary.get("strapline", ""), iter_summary.get("summary", "")
+
+
+def _iteration_activity_counts(entries):
+    code_count = sum(1 for entry in entries if entry.get("action") == "execute_code")
+    search_count = sum(1 for entry in entries if entry.get("action") == "search_pubmed")
+    finding_count = sum(1 for entry in entries if entry.get("action") == "update_knowledge_state")
+    return code_count, search_count, finding_count
+
+
+def _timeline_border_class(code_count, search_count, finding_count):
+    if finding_count > 0:
+        return "border-l-4 border-green-500"
+    if code_count > 0 or search_count > 0:
+        return "border-l-4 border-blue-300"
+    return "border-l-4 border-gray-300"
+
+
+def _timeline_header_text(strapline, summary_text, is_in_progress):
+    if strapline:
+        base_text = strapline
+    elif summary_text:
+        base_text = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
+    elif is_in_progress:
+        return "Investigation in progress..."
+    else:
+        return "Completed"
+    return f"{base_text} [in progress]" if is_in_progress else base_text
+
+
+def _load_transcript_actions(transcript_path, iter_num):
+    if not transcript_path.exists():
+        return []
     try:
-        db_job = _run_async(_db_get_job(job_id, user_id=UUID(user_id)))
+        with open(transcript_path, encoding="utf-8") as transcript_file:
+            transcript = json.load(transcript_file)
+        return parse_transcript_actions(transcript)
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        logger.warning("Failed to load transcript for iter %d: %s", iter_num, e)
+        return []
+
+
+def _action_card_class(tool_name):
+    if "execute_code" in tool_name:
+        return "w-full mb-2 border-l-4 border-blue-300"
+    if "search_pubmed" in tool_name:
+        return "w-full mb-2 border-l-4 border-purple-300"
+    if "update_knowledge_state" in tool_name:
+        return "w-full mb-2 border-l-4 border-green-300"
+    return "w-full mb-2 border-l-4 border-gray-300"
+
+
+def _render_action_details(action, success):
+    tool_name = action.get("tool_name", "")
+    action_input = action.get("input", {})
+    if "execute_code" in tool_name and action_input.get("code"):
+        with ui.expansion("Code", icon="code").classes("w-full mt-1"):
+            ui.code(action_input["code"], language="python").classes("text-xs")
+
+    if "search_pubmed" in tool_name and action_input.get("query"):
+        ui.label(f'Query: "{action_input["query"]}"').classes("text-xs text-gray-600 mt-1")
+
+    result_text = action.get("result", "")
+    if not result_text:
+        return
+    result_str = str(result_text)
+    if len(result_str) > 200:
+        with ui.expansion("Result", icon="output").classes("w-full mt-1"):
+            ui.code(
+                result_str[:2000] + ("..." if len(result_str) > 2000 else ""),
+                language="text",
+            ).classes("text-xs")
+    elif not success:
+        ui.label(result_str).classes("text-xs text-red-600 mt-1")
+
+
+def _render_transcript_actions(transcript_actions):
+    if not transcript_actions:
+        return
+    with ui.expansion(
+        f"Actions ({len(transcript_actions)})",
+        icon="build",
+    ).classes("w-full mt-2"):
+        for action in transcript_actions:
+            success = action.get("success", True)
+            tool_name = action.get("tool_name", "")
+            short_name = action.get("short_name", "")
+            description = action.get("description", short_name or "Unknown")
+            status_icon = "✅" if success else "❌"
+
+            with ui.card().classes(_action_card_class(tool_name)):
+                with ui.row().classes("items-center gap-2"):
+                    ui.label(f"{status_icon} {description}").classes("font-medium text-sm")
+                    ui.badge(short_name, color="gray").props("outline").classes("text-xs")
+                _render_action_details(action, success)
+
+
+def _collect_iteration_plots(iter_provenance_dir, iter_num):
+    plots = []
+    if not iter_provenance_dir.exists():
+        return plots
+    for plot_file in sorted(iter_provenance_dir.glob("*.png")):
+        metadata_file = plot_file.with_suffix(".json")
+        if not metadata_file.exists():
+            continue
+        try:
+            with open(metadata_file, encoding="utf-8") as metadata_handle:
+                metadata = json.load(metadata_handle)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if metadata.get("iteration") == iter_num:
+            plots.append((plot_file, metadata))
+    return plots
+
+
+def _render_iteration_plots(iter_provenance_dir, iter_num):
+    iteration_plots = _collect_iteration_plots(iter_provenance_dir, iter_num)
+    if not iteration_plots:
+        return
+
+    with (
+        ui.expansion(
+            f"Visualizations ({len(iteration_plots)})",
+            icon="insert_chart",
+        ).classes("w-full mt-2"),
+        ui.grid(columns=2).classes("w-full gap-2"),
+    ):
+        for plot_file, metadata in iteration_plots:
+            plot_title = plot_file.stem.replace("_", " ").title()
+            description = metadata.get("description", "")
+            with ui.card().classes("p-2"):
+                ui.label(plot_title).classes("text-sm font-bold")
+                if description:
+                    ui.label(description).classes("text-xs text-blue-700 italic")
+                plot_url = f"/{plot_file}"
+                ui.image(plot_url).classes("w-full")
+                ui.button(
+                    "Download",
+                    on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                    icon="download",
+                ).props("size=sm flat dense").classes("mt-2")
+                plot_code = metadata.get("code")
+                if plot_code:
+                    with ui.expansion("View code", icon="code").classes("w-full mt-1"):
+                        ui.code(plot_code, language="python").classes("text-xs")
+
+
+def _matching_papers(iter_ks_data, query, iter_num):
+    return [
+        literature
+        for literature in iter_ks_data.get("literature", [])
+        if literature.get("search_query") == query
+        and literature.get("retrieved_at_iteration") == iter_num
+    ]
+
+
+def _render_literature_paper(paper):
+    with ui.card().classes("w-full mb-1 p-2"):
+        ui.label(paper.get("title", "Untitled")).classes("text-sm font-bold")
+        pmid = paper.get("pmid", "")
+        if pmid:
+            render_pmid_badge(pmid)
+        abstract = paper.get("abstract", "")
+        if abstract:
+            preview = abstract[:200] + "..." if len(abstract) > 200 else abstract
+            ui.label(preview).classes("text-xs text-gray-600 mt-1")
+
+
+def _render_iteration_literature(iter_entries, iter_ks_data, iter_num):
+    literature_entries = [entry for entry in iter_entries if entry.get("action") == "search_pubmed"]
+    if not literature_entries:
+        return
+
+    total_papers = sum(entry.get("results_count", 0) for entry in literature_entries)
+    with ui.expansion(
+        f"Literature searched ({total_papers} papers)",
+        icon="article",
+    ).classes("w-full mt-2"):
+        for entry in literature_entries:
+            query = entry.get("query", "")
+            matching = _matching_papers(iter_ks_data, query, iter_num)
+            if matching:
+                with ui.expansion(f'"{query}" ({len(matching)} papers)').classes("w-full"):
+                    for paper in matching:
+                        _render_literature_paper(paper)
+            else:
+                ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
+
+
+def _render_iteration_findings(iter_ks_data, iter_num):
+    iteration_findings = [
+        finding
+        for finding in iter_ks_data.get("findings", [])
+        if finding.get("iteration_discovered") == iter_num
+    ]
+    if not iteration_findings:
+        return
+
+    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes(
+        "w-full mt-2"
+    ):
+        for finding in iteration_findings:
+            with ui.card().classes("w-full mb-2 bg-green-50"):
+                ui.label(finding["title"]).classes("font-bold text-green-800")
+                render_text_with_pmid_links(
+                    finding["evidence"],
+                    text_classes="text-sm text-gray-700",
+                )
+                interpretation = finding.get("biological_interpretation") or finding.get(
+                    "interpretation", ""
+                )
+                if interpretation:
+                    render_justified_text(
+                        interpretation,
+                        text_classes="text-sm text-gray-600 italic mt-1",
+                    )
+
+
+def _load_iteration_content(
+    container,
+    loaded_flag,
+    iter_num,
+    iter_summary_text,
+    iter_entries,
+    iter_ks_data,
+    iter_provenance_dir,
+):
+    if not is_client_connected() or loaded_flag["value"]:
+        return
+    loaded_flag["value"] = True
+    container.clear()
+
+    with container:
+        if iter_summary_text:
+            with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
+                render_text_with_pmid_links(
+                    iter_summary_text,
+                    text_classes="text-sm text-gray-700",
+                )
+
+        _render_iteration_findings(iter_ks_data, iter_num)
+        transcript_path = iter_provenance_dir / f"iter{iter_num}_transcript.json"
+        _render_transcript_actions(_load_transcript_actions(transcript_path, iter_num))
+        _render_iteration_plots(iter_provenance_dir, iter_num)
+        _render_iteration_literature(iter_entries, iter_ks_data, iter_num)
+
+
+def _render_iteration_header(iteration, header_text, code_count, search_count, finding_count):
+    with ui.row().classes("items-center gap-2 flex-wrap"):
+        ui.label(f"Iteration {iteration}: {header_text}").classes("font-medium")
+        if code_count:
+            ui.badge(f"{code_count} analyses", color="blue").props("outline")
+        if search_count:
+            ui.badge(f"{search_count} searches", color="purple").props("outline")
+        if finding_count:
+            ui.badge(f"{finding_count} findings", color="green")
+
+
+def _render_iteration_card(
+    iteration,
+    entries,
+    iter_summary,
+    timeline_ks,
+    timeline_max_iter,
+    latest_status,
+    iter_provenance_dir,
+):
+    is_in_progress = iteration == timeline_max_iter and latest_status == JobStatus.RUNNING
+    strapline, summary_text = _normalize_iteration_summary(iter_summary)
+    code_count, search_count, finding_count = _iteration_activity_counts(entries)
+    border_class = _timeline_border_class(code_count, search_count, finding_count)
+    header_text = _timeline_header_text(strapline, summary_text, is_in_progress)
+
+    with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
+        with expansion.add_slot("header"):
+            _render_iteration_header(
+                iteration,
+                header_text,
+                code_count,
+                search_count,
+                finding_count,
+            )
+
+        content_container = ui.column().classes("w-full")
+        content_loaded = {"value": False}
+        with content_container:
+            ui.label("Click to load details...").classes("text-sm text-gray-400 italic")
+        expansion.on_value_change(
+            lambda e, cc=content_container, lf=content_loaded, iter_num=iteration, summary=summary_text, iter_data=entries, ks_data=timeline_ks, provenance_dir=iter_provenance_dir: (
+                _load_iteration_content(
+                    cc,
+                    lf,
+                    iter_num,
+                    summary,
+                    iter_data,
+                    ks_data,
+                    provenance_dir,
+                )
+                if e.value
+                else None
+            )
+        )
+
+
+def _render_timeline_content(timeline_ks, latest_job, job_dir):
+    timeline_iteration_summaries = _timeline_iteration_summaries(timeline_ks)
+    timeline_by_iteration = _timeline_entries_by_iteration(timeline_ks)
+    timeline_max_iter = timeline_ks.get("iteration", 1)
+
+    if not timeline_by_iteration and not timeline_iteration_summaries:
+        _show_no_timeline_activity()
+        return
+
+    display_max = (
+        timeline_max_iter - 1
+        if latest_job.status == JobStatus.AWAITING_FEEDBACK
+        else timeline_max_iter
+    )
+    iter_provenance_dir = job_dir / "provenance"
+    with ui.scroll_area().classes("w-full h-[600px]"):
+        for iteration in range(1, display_max + 1):
+            _render_iteration_card(
+                iteration=iteration,
+                entries=timeline_by_iteration.get(iteration, []),
+                iter_summary=timeline_iteration_summaries.get(iteration, {}),
+                timeline_ks=timeline_ks,
+                timeline_max_iter=timeline_max_iter,
+                latest_status=latest_job.status,
+                iter_provenance_dir=iter_provenance_dir,
+            )
+
+
+def _next_iteration_for_feedback(ks_path):
+    if not ks_path.exists():
+        return 1
+    try:
+        with open(ks_path, encoding="utf-8") as handle:
+            latest_ks = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return 1
+    return latest_ks.get("iteration", 1)
+
+
+def _submit_feedback_and_continue(job_dir, job_id, completed_iter, feedback_text):
+    ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+    if feedback_text.strip():
+        ks.add_feedback(feedback_text.strip(), completed_iter)
+        ks.save(job_dir / "knowledge_state.json")
+
+    try:
+        _run_async(update_job_status(job_dir, "running"))
+    except Exception:
+        ui.notify("Failed to continue job. Please try again.", type="negative")
+        return
+    ui.notify("Continuing to next iteration", type="positive")
+    ui.navigate.to(f"/job/{job_id}")
+
+
+def _parse_awaiting_started_at(awaiting_since):
+    if not awaiting_since:
+        return None
+    try:
+        started = datetime.fromisoformat(awaiting_since)
+    except (ValueError, TypeError):
+        return None
+    if started.tzinfo is None:
+        return started.replace(tzinfo=UTC)
+    return started
+
+
+def _render_feedback_countdown(awaiting_since, active_timers):
+    started = _parse_awaiting_started_at(awaiting_since)
+    if started is None:
+        ui.label("Auto-continues after 15 minutes if no response.").classes(
+            "text-xs text-gray-500 mt-2"
+        )
+        return
+
+    timeout_minutes = 15
+    countdown_label = ui.label("").classes("text-xs text-gray-500 mt-2")
+    timer_ref = [None]
+
+    @guard_client
+    def update_countdown():
+        now = datetime.now(UTC)
+        elapsed = (now - started).total_seconds()
+        remaining = (timeout_minutes * 60) - elapsed
+        if remaining <= 0:
+            countdown_label.text = "Auto-continuing now..."
+            if timer_ref[0]:
+                timer_ref[0].deactivate()
+            return
+        mins = int(remaining // 60)
+        secs = int(remaining % 60)
+        countdown_label.text = f"Auto-continues in {mins}:{secs:02d} if no response."
+
+    update_countdown()
+    timer_ref[0] = ui.timer(1.0, update_countdown)
+    active_timers.append(timer_ref[0])
+
+
+def _render_feedback_panel(
+    feedback_container,
+    latest_job,
+    can_edit,
+    job_dir,
+    job_id,
+    ks_path,
+    active_timers,
+):
+    if latest_job.status != JobStatus.AWAITING_FEEDBACK:
+        return
+
+    next_iter = _next_iteration_for_feedback(ks_path)
+    completed_iter = next_iter - 1 if next_iter > 1 else 1
+    awaiting_since = latest_job.started_at
+
+    with (
+        feedback_container,
+        ui.card().classes("w-full mt-2 bg-yellow-50 border-2 border-yellow-400 p-6"),
+    ):
+        ui.label(f"Iteration {completed_iter} Complete - Awaiting Your Input").classes(
+            "text-h6 font-bold text-yellow-800"
+        )
+        if can_edit:
+            ui.label(
+                "Provide guidance for the next iteration, or continue without feedback."
+            ).classes("text-sm text-gray-700 mb-4")
+            feedback_input = ui.textarea(
+                label="Your Feedback (optional)",
+                placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
+            ).classes("w-full")
+
+            def submit_feedback(fi=feedback_input, ci=completed_iter):
+                _submit_feedback_and_continue(job_dir, job_id, ci, fi.value)
+
+            with ui.row().classes("w-full gap-2 mt-2"):
+                ui.button(
+                    "Submit & Continue",
+                    on_click=submit_feedback,
+                    icon="send",
+                ).props("color=primary")
+                ui.button(
+                    "Continue Without Feedback",
+                    on_click=submit_feedback,
+                    icon="arrow_forward",
+                ).props("color=secondary outline")
+            return
+
+        ui.label("You have view-only access to this job.").classes(
+            "text-sm text-gray-500 italic mb-4"
+        )
+        _render_feedback_countdown(awaiting_since, active_timers)
+
+
+def _refresh_feedback_panel(
+    feedback_container,
+    job_manager,
+    job_id,
+    can_edit,
+    job_dir,
+    ks_path,
+    active_timers,
+):
+    feedback_container.clear()
+    latest_job = job_manager.get_job(job_id)
+    if latest_job is None:
+        return
+    _render_feedback_panel(
+        feedback_container=feedback_container,
+        latest_job=latest_job,
+        can_edit=can_edit,
+        job_dir=job_dir,
+        job_id=job_id,
+        ks_path=ks_path,
+        active_timers=active_timers,
+    )
+
+
+@dataclass
+class _JobDetailContext:
+    job_id: str
+    user_id: str
+    job_manager: Any
+    job_info: Any
+    db_job: Any
+    is_owner: bool
+    can_edit: bool
+    job_dir: Path
+    ks_path: Path
+    ks_data: dict[str, Any] | None
+    ks_load_error: str | None
+    state: dict[str, Any]
+    active_timers: list[Any]
+    share_dialog: Any
+    delete_dialog: Any
+    notifications_dialog: Any
+
+
+def _render_job_not_found():
+    ui.label("Job not found").classes("text-h5")
+    ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
+
+
+def _load_db_job_for_user(job_id, user_id):
+    try:
+        return _run_async(_db_get_job(job_id, user_id=UUID(user_id)))
     except ValueError:
-        db_job = None
+        return None
     except Exception:
         logger.error(
-            "Failed to check job access: job_id=%s user_id=%s", job_id, user_id, exc_info=True
+            "Failed to check job access: job_id=%s user_id=%s",
+            job_id,
+            user_id,
+            exc_info=True,
         )
-        db_job = None
+        return None
 
-    if db_job is None:
-        ui.label("Job not found").classes("text-h5")
-        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
-        return
 
-    # Determine the user's permission level for this job
+def _resolve_job_permissions(job_id, user_id, db_job):
     is_owner = db_job.owner_id == UUID(user_id)
     if is_owner:
-        can_edit = True
-    else:
-        share_permission = _run_async(_db_get_share_permission(job_id, UUID(user_id)))
-        can_edit = share_permission == "edit"
+        return True, True
+    share_permission = _run_async(_db_get_share_permission(job_id, UUID(user_id)))
+    return False, share_permission == "edit"
 
-    job_info = job_manager.get_job(job_id)
 
-    if job_info is None:
-        ui.label("Job not found").classes("text-h5")
-        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
-        return
-
-    # Set page title using short_title if available
+def _job_page_title(job_info):
     page_title = job_info.short_title or job_info.research_question[:50]
     if len(job_info.research_question) > 50 and not job_info.short_title:
         page_title += "..."
-    ui.page_title(f"{page_title} - SHANDY")
+    return page_title
 
-    job_dir = job_manager.jobs_dir / job_id
-    ks_path = job_dir / "knowledge_state.json"
 
-    # Load initial knowledge state data
-    ks_data, ks_load_error = _load_knowledge_state(ks_path)
-
-    # State tracking for real-time updates
-    _state = {
+def _initial_job_state(job_info, ks_data):
+    return {
         "status": job_info.status,
         "iteration": ks_data.get("iteration", 0) if ks_data else 0,
         "findings_count": job_info.findings_count,
@@ -124,1248 +643,789 @@ def job_detail_page(job_id: str):
         "agent_status": ks_data.get("agent_status") if ks_data else None,
     }
 
-    # Track active timers for cleanup on disconnect
-    _active_timers = setup_timer_cleanup()
 
-    # Create reusable dialogs for Share, Delete, and Notifications actions
+def _create_page_dialogs(job_id, job_manager, user_id):
     share_dialog = render_share_dialog(job_id)
     delete_dialog = render_delete_dialog(
         job_id,
         job_manager,
         on_deleted=lambda: ui.navigate.to("/jobs"),
     )
-    user_id = get_current_user_id()
     notifications_dialog = render_notifications_dialog(job_id, user_id)
+    return share_dialog, delete_dialog, notifications_dialog
 
-    # Page header with navigation
-    render_navigator()
 
-    # Error message if failed (show prominently at top)
-    if job_info.status == JobStatus.FAILED and job_info.error:
-        error_info = get_user_friendly_error(job_info.error)
-        render_error_card(error_info, job_info, job_dir)
+def _build_job_detail_context(job_id):
+    from shandy import web_app
 
-    # Cancellation message if cancelled (show prominently at top)
-    if job_info.status == JobStatus.CANCELLED:
-        with ui.card().classes("w-full bg-orange-50 border border-orange-300 mb-4 p-4"):
-            ui.label("Job Cancelled").classes("text-subtitle2 font-bold text-orange-800")
-            reason = job_info.cancellation_reason or "No reason provided"
-            ui.label(reason).classes("text-orange-700")
+    job_manager = web_app.get_job_manager()
+    user_id = get_current_user_id()
+    db_job = _load_db_job_for_user(job_id, user_id)
+    if db_job is None:
+        return None
 
-    # Warning if knowledge state couldn't be loaded (e.g., concurrent write)
-    if ks_load_error:
-        with ui.card().classes("w-full bg-yellow-50 border border-yellow-300 mb-4 p-4"):
-            ui.label("Loading...").classes("text-subtitle2 font-bold text-yellow-800")
-            ui.label(ks_load_error).classes("text-yellow-700")
+    is_owner, can_edit = _resolve_job_permissions(job_id, user_id, db_job)
+    job_info = job_manager.get_job(job_id)
+    if job_info is None:
+        return None
 
-    # 3-Tab Structure: Research Log (primary), Report, Chat
+    job_dir = job_manager.jobs_dir / job_id
+    ks_path = job_dir / "knowledge_state.json"
+    ks_data, ks_load_error = _load_knowledge_state(ks_path)
+    active_timers = setup_timer_cleanup()
+    share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
+        job_id,
+        job_manager,
+        user_id,
+    )
+
+    return _JobDetailContext(
+        job_id=job_id,
+        user_id=user_id,
+        job_manager=job_manager,
+        job_info=job_info,
+        db_job=db_job,
+        is_owner=is_owner,
+        can_edit=can_edit,
+        job_dir=job_dir,
+        ks_path=ks_path,
+        ks_data=ks_data,
+        ks_load_error=ks_load_error,
+        state=_initial_job_state(job_info, ks_data),
+        active_timers=active_timers,
+        share_dialog=share_dialog,
+        delete_dialog=delete_dialog,
+        notifications_dialog=notifications_dialog,
+    )
+
+
+def _render_cancelled_notice(job_info):
+    with ui.card().classes("w-full bg-orange-50 border border-orange-300 mb-4 p-4"):
+        ui.label("Job Cancelled").classes("text-subtitle2 font-bold text-orange-800")
+        ui.label(job_info.cancellation_reason or "No reason provided").classes("text-orange-700")
+
+
+def _render_ks_loading_notice(ks_load_error):
+    with ui.card().classes("w-full bg-yellow-50 border border-yellow-300 mb-4 p-4"):
+        ui.label("Loading...").classes("text-subtitle2 font-bold text-yellow-800")
+        ui.label(ks_load_error).classes("text-yellow-700")
+
+
+def _render_job_status_notices(context):
+    if context.job_info.status == JobStatus.FAILED and context.job_info.error:
+        error_info = get_user_friendly_error(context.job_info.error)
+        render_error_card(error_info, context.job_info, context.job_dir)
+    if context.job_info.status == JobStatus.CANCELLED:
+        _render_cancelled_notice(context.job_info)
+    if context.ks_load_error:
+        _render_ks_loading_notice(context.ks_load_error)
+
+
+def _stats_badges(latest_job, lit_count):
+    status_color = STATUS_COLORS.get(latest_job.status, "gray")
+    badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
+    if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
+        badges.append(
+            (
+                "Progress",
+                f"{latest_job.iterations_completed}/{latest_job.max_iterations}",
+                "blue",
+            )
+        )
+    badges.extend(
+        [("Findings", latest_job.findings_count, "green"), ("Papers", lit_count, "purple")]
+    )
+    return badges
+
+
+def _render_job_stats_content(context):
+    if not is_client_connected():
+        return
+
+    latest_job = context.job_manager.get_job(context.job_id)
+    if latest_job is None:
+        return
+
+    latest_ks, _ = _load_knowledge_state(context.ks_path)
+    lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
+    render_stat_badges(_stats_badges(latest_job, lit_count))
+
+    if latest_job.status == JobStatus.RUNNING and latest_ks:
+        agent_status = latest_ks.get("agent_status")
+        if agent_status:
+            with ui.element("div").classes("mt-2"):
+                render_thinking_status(agent_status)
+
+
+def _render_research_question_card(context):
+    with ui.card().classes("w-full mb-4"), ui.row().classes("w-full items-start justify-between"):
+        with ui.column().classes("flex-1"):
+            ui.label("Research Question").classes("text-subtitle2 font-bold")
+            ui.label(context.job_info.research_question).classes("text-lg")
+            consensus = context.ks_data.get("consensus_answer") if context.ks_data else None
+            if consensus and context.job_info.status == JobStatus.COMPLETED:
+                with ui.element("div").classes(
+                    "mt-3 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded"
+                ):
+                    ui.label("Consensus Answer").classes(
+                        "text-xs font-bold text-emerald-700 uppercase tracking-wide"
+                    )
+                    ui.label(consensus).classes("text-emerald-900 mt-1")
+
+        render_job_action_buttons(
+            on_share=context.share_dialog.open if context.is_owner else None,
+            on_delete=context.delete_dialog.open if context.is_owner else None,
+            on_notifications=context.notifications_dialog.open,
+        )
+
+
+def _render_timeline_content_for_context(context):
+    if not is_client_connected():
+        return
+
+    timeline_ks, _ = _load_knowledge_state(context.ks_path)
+    latest_job = context.job_manager.get_job(context.job_id)
+    if not timeline_ks or not latest_job:
+        _show_no_timeline_activity()
+        return
+
+    _render_timeline_content(
+        timeline_ks=timeline_ks,
+        latest_job=latest_job,
+        job_dir=context.job_dir,
+    )
+
+
+def _state_snapshot(latest_job, latest_ks):
+    return {
+        "findings_count": latest_job.findings_count,
+        "papers_count": len(latest_ks.get("literature", [])) if latest_ks else 0,
+        "iteration": latest_ks.get("iteration", 0) if latest_ks else 0,
+        "log_entries": len(latest_ks.get("analysis_log", [])) if latest_ks else 0,
+        "agent_status": latest_ks.get("agent_status") if latest_ks else None,
+    }
+
+
+def _stats_changed(state, snapshot):
+    return (
+        state["findings_count"] != snapshot["findings_count"]
+        or state["papers_count"] != snapshot["papers_count"]
+        or state["iteration"] != snapshot["iteration"]
+        or state["agent_status"] != snapshot["agent_status"]
+    )
+
+
+def _update_state_fields(state, snapshot):
+    state["findings_count"] = snapshot["findings_count"]
+    state["papers_count"] = snapshot["papers_count"]
+    state["iteration"] = snapshot["iteration"]
+    state["agent_status"] = snapshot["agent_status"]
+
+
+def _reload_required_statuses():
+    return [
+        JobStatus.COMPLETED,
+        JobStatus.FAILED,
+        JobStatus.CANCELLED,
+        JobStatus.AWAITING_FEEDBACK,
+    ]
+
+
+def _polling_statuses():
+    return [
+        JobStatus.PENDING,
+        JobStatus.RUNNING,
+        JobStatus.QUEUED,
+        JobStatus.AWAITING_FEEDBACK,
+        JobStatus.GENERATING_REPORT,
+    ]
+
+
+def _handle_missing_job_during_poll(stats_timer_holder):
+    timer = stats_timer_holder.get("timer")
+    if timer:
+        timer.deactivate()
+
+
+def _handle_status_transition(context, latest_job, stats_timer_holder, render_job_stats):
+    if latest_job.status == context.state["status"]:
+        return
+    context.state["status"] = latest_job.status
+    if latest_job.status in _reload_required_statuses():
+        _handle_missing_job_during_poll(stats_timer_holder)
+        ui.navigate.to(f"/job/{context.job_id}")
+        return
+    render_job_stats.refresh()
+
+
+def _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_holder):
+    latest_job = context.job_manager.get_job(context.job_id)
+    if latest_job is None:
+        _handle_missing_job_during_poll(stats_timer_holder)
+        return
+
+    latest_ks, _ = _load_knowledge_state(context.ks_path)
+    snapshot = _state_snapshot(latest_job, latest_ks)
+    if _stats_changed(context.state, snapshot):
+        _update_state_fields(context.state, snapshot)
+        render_job_stats.refresh()
+
+    if snapshot["log_entries"] > context.state["log_entries"]:
+        context.state["log_entries"] = snapshot["log_entries"]
+        render_timeline.refresh()
+
+    _handle_status_transition(context, latest_job, stats_timer_holder, render_job_stats)
+
+
+def _render_timeline_tab(context):
+    @ui.refreshable
+    def render_job_stats():
+        _render_job_stats_content(context)
+
+    @ui.refreshable
+    def render_timeline():
+        _render_timeline_content_for_context(context)
+
+    render_job_stats()
+    _render_research_question_card(context)
+    ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
+    render_timeline()
+
+    feedback_container = ui.column().classes("w-full")
+    _refresh_feedback_panel(
+        feedback_container=feedback_container,
+        job_manager=context.job_manager,
+        job_id=context.job_id,
+        can_edit=context.can_edit,
+        job_dir=context.job_dir,
+        ks_path=context.ks_path,
+        active_timers=context.active_timers,
+    )
+
+    stats_timer_holder = {"timer": None}
+
+    @guard_client
+    def check_and_refresh():
+        _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_holder)
+
+    if context.job_info.status in _polling_statuses():
+        stats_timer_holder["timer"] = ui.timer(2.0, check_and_refresh)
+        context.active_timers.append(stats_timer_holder["timer"])
+
+
+def _start_report_regeneration(context):
+    try:
+        context.job_manager.regenerate_report(context.job_id)
+    except ValueError as exc:
+        ui.notify(str(exc), type="negative")
+        return
+    ui.notify("Report regeneration started", type="positive")
+    ui.navigate.to(f"/job/{context.job_id}")
+
+
+def _download_artifacts_zip(job_dir, job_id):
+    try:
+        zip_buffer = create_artifacts_zip(job_dir, job_id)
+        ui.download(zip_buffer.getvalue(), filename=f"{job_id}_artifacts.zip")
+    except Exception as exc:
+        logger.error("Failed to create artifacts ZIP: %s", exc, exc_info=True)
+        ui.notify("Failed to create ZIP. Please try again.", type="negative")
+
+
+def _download_pdf_report(report_path, pdf_path, job_id):
+    try:
+        markdown_to_pdf(report_path, pdf_path)
+        ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
+    except Exception as exc:
+        logger.error("PDF generation failed: %s", exc, exc_info=True)
+        ui.notify("Failed to generate PDF. Please try again.", type="negative")
+
+
+def _render_report_actions(context, report_path, pdf_path):
+    with ui.row().classes("w-full justify-end mb-4 gap-2"):
+        if (
+            context.can_edit
+            and context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]
+            and context.ks_path.exists()
+        ):
+            ui.button(
+                "Regenerate Report",
+                on_click=lambda: _start_report_regeneration(context),
+                icon="refresh",
+            ).props("color=secondary outline")
+
+        ui.button(
+            "Download Markdown",
+            on_click=lambda: ui.download(
+                report_path.read_bytes(),
+                filename=f"{context.job_id}_report.md",
+            ),
+            icon="download",
+        ).props("color=secondary outline")
+
+        if pdf_path.exists() or report_path.exists():
+            ui.button(
+                "Download PDF",
+                on_click=lambda: _download_pdf_report(report_path, pdf_path, context.job_id),
+                icon="picture_as_pdf",
+            ).props("color=primary")
+        else:
+            ui.button("PDF Unavailable", icon="picture_as_pdf").props("color=grey outline disabled")
+
+        ui.button(
+            "Download All Artifacts",
+            on_click=lambda: _download_artifacts_zip(context.job_dir, context.job_id),
+            icon="folder_zip",
+        ).props("color=accent outline")
+
+
+def _render_report_markdown(report_path):
+    with open(report_path, encoding="utf-8") as report_file:
+        report_content = report_file.read()
+    _inject_pubmed_badge_styles()
+    ui.markdown(transform_pmid_references(report_content)).classes("w-full")
+
+
+def _render_missing_report_state(context):
+    if context.job_info.status == JobStatus.GENERATING_REPORT:
+        ui.label("Report is being generated...").classes("text-gray-500 italic")
+        return
+    if context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+        with ui.column().classes("gap-2"):
+            ui.label("Report generation failed").classes("text-red-500")
+            if context.can_edit and context.ks_path.exists():
+                ui.button(
+                    "Regenerate Report",
+                    on_click=lambda: _start_report_regeneration(context),
+                    icon="refresh",
+                ).props("color=secondary outline")
+        return
+    ui.label("Report will be available when job completes").classes("text-gray-500 italic")
+
+
+def _render_report_tab(context):
+    report_path = context.job_dir / "final_report.md"
+    pdf_path = context.job_dir / "final_report.pdf"
+
+    if context.job_info.status == JobStatus.GENERATING_REPORT:
+        render_thinking_status("Regenerating report...")
+
+    if report_path.exists():
+        _render_report_actions(context, report_path, pdf_path)
+        _render_report_markdown(report_path)
+        return
+
+    _render_missing_report_state(context)
+
+
+_CHAT_STYLES = """
+<style>
+    .chat-bubble-user {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 18px 18px 4px 18px;
+        padding: 12px 16px;
+        color: white;
+        max-width: 85%;
+        margin-left: auto;
+        word-wrap: break-word;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    }
+    .chat-bubble-assistant {
+        background: linear-gradient(135deg, #e0f2fe 0%, #cffafe 100%);
+        border-radius: 18px 18px 18px 4px;
+        padding: 12px 16px;
+        color: #0c4a6e;
+        max-width: 85%;
+        word-wrap: break-word;
+        box-shadow: 0 2px 8px rgba(14, 116, 144, 0.15);
+        border: 1px solid #a5f3fc;
+    }
+    .chat-bubble-assistant .markdown-body {
+        background: transparent !important;
+    }
+    .chat-container {
+        background: linear-gradient(180deg, #fafbfc 0%, #f0f2f5 100%);
+        border-radius: 12px;
+        border: 1px solid #e1e4e8;
+    }
+    .chat-input-container {
+        background: white;
+        border-radius: 24px;
+        border: 2px solid #e1e4e8;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        min-height: 48px;
+    }
+    .chat-input-container:focus-within {
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+    .chat-input-row {
+        align-items: center !important;
+    }
+    .chat-send-btn {
+        width: 48px !important;
+        height: 48px !important;
+        min-width: 48px !important;
+        min-height: 48px !important;
+    }
+</style>
+"""
+
+
+_CHAT_SCROLL_OBSERVER_SCRIPT = """
+if (!window._chatScrollObserver) {
+    window._chatScrollObserver = new MutationObserver(() => {
+        const el = document.querySelector('.chat-messages-scroll');
+        if (el && el.getBoundingClientRect().width > 0) {
+            window._chatScrollObserver.disconnect();
+            window._chatScrollObserver = null;
+            const scroll = () => {
+                const c = el.querySelector('.q-scrollarea__container');
+                if (c) c.scrollTop = c.scrollHeight;
+            };
+            [50, 150, 300].forEach(ms => setTimeout(scroll, ms));
+        }
+    });
+    window._chatScrollObserver.observe(document.body, {
+        childList: true, subtree: true, attributes: true
+    });
+}
+"""
+
+
+_CHAT_HEADER_SVG = """
+<svg viewBox="0 0 100 100" width="28" height="28" xmlns="http://www.w3.org/2000/svg">
+    <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
+          fill="none" stroke="#0891b2" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="22" cy="18" r="10" fill="#06b6d4"/>
+    <circle cx="78" cy="60" r="10" fill="#06b6d4"/>
+    <circle cx="22" cy="60" r="10" fill="#0e7490"/>
+</svg>
+"""
+
+
+_CHAT_AVATAR_HTML = """
+<div style="width: 32px; height: 32px; background: #e0f2fe; border-radius: 50%; padding: 4px; flex-shrink: 0;">
+    <svg viewBox="0 0 100 100" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
+              fill="none" stroke="#0891b2" stroke-width="12" stroke-linecap="round"/>
+        <circle cx="22" cy="18" r="10" fill="#06b6d4"/>
+        <circle cx="78" cy="60" r="10" fill="#06b6d4"/>
+        <circle cx="22" cy="60" r="10" fill="#0e7490"/>
+    </svg>
+</div>
+"""
+
+
+def _chat_sound_script(sound_type):
+    return f"""
+    (function() {{
+        try {{
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const type = '{sound_type}';
+
+            if (type === 'sound-send') {{
+                const osc1 = ctx.createOscillator();
+                const gain1 = ctx.createGain();
+                osc1.connect(gain1);
+                gain1.connect(ctx.destination);
+                osc1.frequency.setValueAtTime(600, ctx.currentTime);
+                osc1.frequency.exponentialRampToValueAtTime(900, ctx.currentTime + 0.08);
+                osc1.type = 'sine';
+                gain1.gain.setValueAtTime(0, ctx.currentTime);
+                gain1.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.02);
+                gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+                osc1.start(ctx.currentTime);
+                osc1.stop(ctx.currentTime + 0.15);
+            }} else if (type === 'sound-receive') {{
+                const osc1 = ctx.createOscillator();
+                const osc2 = ctx.createOscillator();
+                const gain1 = ctx.createGain();
+                const gain2 = ctx.createGain();
+                osc1.connect(gain1);
+                osc2.connect(gain2);
+                gain1.connect(ctx.destination);
+                gain2.connect(ctx.destination);
+                osc1.type = 'sine';
+                osc2.type = 'sine';
+                osc1.frequency.value = 880;
+                osc2.frequency.value = 1100;
+                gain1.gain.setValueAtTime(0, ctx.currentTime);
+                gain1.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.02);
+                gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+                gain2.gain.setValueAtTime(0, ctx.currentTime + 0.08);
+                gain2.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.1);
+                gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                osc1.start(ctx.currentTime);
+                osc2.start(ctx.currentTime + 0.08);
+                osc1.stop(ctx.currentTime + 0.3);
+                osc2.stop(ctx.currentTime + 0.35);
+            }} else if (type === 'sound-error') {{
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(280, ctx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0, ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.02);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.3);
+            }}
+        }} catch(e) {{}}
+    }})();
+    """
+
+
+class _ChatTabController:
+    def __init__(self, context):
+        self.context = context
+        self.job_uuid = UUID(context.job_id)
+        self.chat_scroll = None
+        self.status_container = None
+        self.chat_input = None
+        self.send_btn = None
+
+    def render(self):
+        if self.context.job_info.status != JobStatus.COMPLETED:
+            ui.label("Chat will be available when the job completes.").classes(
+                "text-gray-500 italic"
+            )
+            return
+
+        ui.add_head_html(_CHAT_STYLES)
+        self._render_shell()
+        self.context.active_timers.append(ui.timer(0.1, self._render_messages, once=True))
+
+        if self.context.can_edit:
+            self._render_input_area()
+            return
+        ui.label("You have view-only access to this job.").classes(
+            "text-sm text-gray-500 italic mt-4 text-center"
+        )
+
+    def _render_shell(self):
+        with (
+            ui.column()
+            .classes("w-full max-w-4xl mx-auto chat-container p-4 flex flex-col flex-nowrap")
+            .style("height: calc(100vh - 280px); min-height: 500px;")
+        ):
+            with ui.row().classes("w-full items-center gap-3 mb-4 pb-2 border-b"):
+                ui.html(_CHAT_HEADER_SVG)
+                ui.label("Research Assistant").classes("font-semibold text-gray-700")
+                ui.label("Discuss your findings").classes("text-sm text-gray-500 ml-auto")
+
+            self.chat_scroll = (
+                ui.scroll_area()
+                .classes("w-full flex-grow px-2 chat-messages-scroll")
+                .style("min-height: 400px; max-height: calc(100vh - 350px);")
+            )
+            ui.run_javascript(_CHAT_SCROLL_OBSERVER_SCRIPT)
+
+            self.status_container = ui.element("div").classes("hidden")
+            with self.status_container:
+                render_thinking_status("Analyzing your message...")
+
+    def _play_sound(self, sound_type):
+        safe_run_javascript(_chat_sound_script(sound_type))
+
+    def _scroll_to_bottom(self):
+        safe_run_javascript(
+            """
+            setTimeout(() => {
+                const el = document.querySelector('.chat-messages-scroll .q-scrollarea__container');
+                if (el) el.scrollTop = el.scrollHeight;
+            }, 100);
+            """
+        )
+
+    def _render_message_bubble(self, role, content):
+        if role == "user":
+            with (
+                ui.row().classes("w-full justify-end mb-3"),
+                ui.element("div").classes("chat-bubble-user"),
+            ):
+                ui.label(content).classes("text-sm")
+            return
+
+        with ui.row().classes("items-start gap-2 mb-3"):
+            ui.html(_CHAT_AVATAR_HTML)
+            with ui.element("div").classes("chat-bubble-assistant"):
+                ui.markdown(content).classes("text-sm")
+
+    def _render_empty_state(self):
+        with ui.column().classes("w-full items-center py-8"):
+            ui.icon("chat_bubble_outline", size="xl").classes("text-gray-300 mb-4")
+            if self.context.can_edit:
+                ui.label("Start a conversation").classes("text-lg font-medium text-gray-600")
+                ui.label("Ask questions about your research findings").classes(
+                    "text-sm text-gray-400 mb-4"
+                )
+                with ui.column().classes("gap-2"):
+                    for suggestion in [
+                        "What are the main findings?",
+                        "How strong is the evidence?",
+                        "What should I investigate next?",
+                    ]:
+                        ui.button(
+                            suggestion,
+                            on_click=lambda s=suggestion: self._quick_send(s),
+                        ).props("flat dense").classes("text-indigo-600 normal-case")
+                return
+            ui.label("No messages yet").classes("text-lg font-medium text-gray-600")
+            ui.label("You have view-only access to this job.").classes("text-sm text-gray-400")
+
+    async def _load_chat_messages(self):
+        async with get_session_ctx() as session:
+            await set_current_user(session, UUID(self.context.user_id))
+            return await get_chat_history(session, self.job_uuid)
+
+    async def _render_messages(self):
+        guard = ClientGuard()
+        if not guard.is_connected or self.chat_scroll is None:
+            return
+
+        try:
+            messages = await self._load_chat_messages()
+            if not guard.is_connected:
+                return
+
+            self.chat_scroll.clear()
+            with self.chat_scroll:
+                if not messages:
+                    self._render_empty_state()
+                else:
+                    for message in messages:
+                        self._render_message_bubble(message.role, message.content)
+            self._scroll_to_bottom()
+        except Exception as exc:
+            logger.error("Failed to load chat history: %s", exc)
+
+    def _toggle_typing_indicator(self, visible):
+        if self.status_container is None:
+            return
+        if visible:
+            self.status_container.classes(remove="hidden")
+            return
+        self.status_container.classes(add="hidden")
+
+    def _read_input_message(self):
+        if self.chat_input is None:
+            return None
+        message = (self.chat_input.value or "").strip()
+        return message or None
+
+    def _clear_input(self, guard):
+        if self.chat_input is None or self.send_btn is None:
+            return
+        self.chat_input.value = ""
+        guard.run_javascript(
+            "document.querySelector('textarea[placeholder=\"Ask about your research...\"]').value = ''"
+        )
+        self.send_btn.disable()
+
+    async def _send_message_to_backend(self, message):
+        async with get_session_ctx() as session:
+            await set_current_user(session, UUID(self.context.user_id))
+            await send_chat_message(session, self.job_uuid, message, self.context.job_dir)
+
+    def _restore_input(self, guard):
+        if not guard.is_connected or self.send_btn is None or self.chat_input is None:
+            return
+        self.send_btn.enable()
+        self.chat_input.run_method("focus")
+
+    async def _send_message(self):
+        guard = ClientGuard()
+        if not guard.is_connected or self.chat_scroll is None:
+            return
+
+        message = self._read_input_message()
+        if not message:
+            return
+
+        self._play_sound("sound-send")
+        self._clear_input(guard)
+        with self.chat_scroll:
+            self._render_message_bubble("user", message)
+        self._toggle_typing_indicator(True)
+        self._scroll_to_bottom()
+
+        try:
+            await self._send_message_to_backend(message)
+            if not guard.is_connected:
+                return
+            self._toggle_typing_indicator(False)
+            self._play_sound("sound-receive")
+            await self._render_messages()
+        except Exception as exc:
+            logger.error("Chat error: %s", exc, exc_info=True)
+            if guard.is_connected:
+                self._toggle_typing_indicator(False)
+                self._play_sound("sound-error")
+                ui.notify("An error occurred. Please try again.", type="negative")
+        finally:
+            self._restore_input(guard)
+
+    async def _quick_send(self, message):
+        if self.chat_input is None:
+            return
+        self.chat_input.value = message
+        await self._send_message()
+
+    def _render_input_area(self):
+        with ui.row().classes("w-full max-w-3xl mx-auto gap-3 mt-4 chat-input-row"):
+            with ui.element("div").classes("flex-grow chat-input-container flex items-center px-4"):
+                self.chat_input = (
+                    ui.textarea(placeholder="Ask about your research...")
+                    .classes("flex-grow")
+                    .props("borderless dense rows=1 autogrow input-class='text-sm py-3'")
+                )
+
+            self.send_btn = (
+                ui.button(icon="send")
+                .props("round color=indigo size=md")
+                .classes("shadow-lg chat-send-btn")
+            )
+
+        self.send_btn.on_click(self._send_message)
+        self.chat_input.on(
+            "keydown.enter",
+            lambda e: self._send_message() if not e.args.get("shiftKey") else None,
+        )
+
+
+def _render_chat_tab(context):
+    _ChatTabController(context).render()
+
+
+def _render_job_tabs(context):
     with ui.tabs().classes("w-full") as tabs:
         timeline_tab = ui.tab("Research Log")
         report_tab = ui.tab("Report")
         chat_tab = ui.tab("Chat")
 
     with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
-        # ===== TIMELINE TAB (Primary View) =====
         with ui.tab_panel(timeline_tab):
-            # Refreshable stats badges (updated via websocket)
-            @ui.refreshable
-            def render_job_stats():
-                """Render job stats badges - refreshable for real-time updates."""
-                if not is_client_connected():
-                    return
-
-                latest_job = job_manager.get_job(job_id)
-                if latest_job is None:
-                    return
-                latest_ks, _ = _load_knowledge_state(ks_path)
-                lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
-                status_color = STATUS_COLORS.get(latest_job.status, "gray")
-
-                # Build badge list - only show progress for active jobs
-                badges = [
-                    ("Status", latest_job.status.value.replace("_", " "), status_color),
-                ]
-
-                # Only show progress badge for non-terminal states
-                if latest_job.status not in [
-                    JobStatus.COMPLETED,
-                    JobStatus.FAILED,
-                    JobStatus.CANCELLED,
-                ]:
-                    badges.append(
-                        (
-                            "Progress",
-                            f"{latest_job.iterations_completed}/{latest_job.max_iterations}",
-                            "blue",
-                        )
-                    )
-
-                badges.extend(
-                    [
-                        ("Findings", latest_job.findings_count, "green"),
-                        ("Papers", lit_count, "purple"),
-                    ]
-                )
-
-                render_stat_badges(badges)
-
-                # Show agent status if job is running and has a status message
-                if latest_job.status == JobStatus.RUNNING and latest_ks:
-                    agent_status = latest_ks.get("agent_status")
-                    if agent_status:
-                        with ui.element("div").classes("mt-2"):
-                            render_thinking_status(agent_status)
-
-            render_job_stats()
-
-            # Research question with action buttons
-            with ui.card().classes("w-full mb-4"):
-                with ui.row().classes("w-full items-start justify-between"):
-                    with ui.column().classes("flex-1"):
-                        ui.label("Research Question").classes("text-subtitle2 font-bold")
-                        ui.label(job_info.research_question).classes("text-lg")
-
-                        # Show consensus answer if available (for completed jobs)
-                        consensus = ks_data.get("consensus_answer") if ks_data else None
-                        if consensus and job_info.status == JobStatus.COMPLETED:
-                            with ui.element("div").classes(
-                                "mt-3 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded"
-                            ):
-                                ui.label("Consensus Answer").classes(
-                                    "text-xs font-bold text-emerald-700 uppercase tracking-wide"
-                                )
-                                ui.label(consensus).classes("text-emerald-900 mt-1")
-
-                    render_job_action_buttons(
-                        on_share=share_dialog.open if is_owner else None,
-                        on_delete=delete_dialog.open if is_owner else None,
-                        on_notifications=notifications_dialog.open,
-                    )
-
-            # Investigation Timeline (refreshable for real-time updates)
-            ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
-
-            @ui.refreshable
-            def render_timeline():
-                """Render the investigation timeline - refreshable for real-time updates."""
-                if not is_client_connected():
-                    return
-
-                # Reload knowledge state for latest data
-                timeline_ks, _ = _load_knowledge_state(ks_path)
-                latest_job = job_manager.get_job(job_id)
-                if not timeline_ks or not latest_job:
-                    ui.label("No investigation activity yet").classes("text-gray-500")
-                    return
-
-                # Get iteration summaries (agent-generated)
-                timeline_iteration_summaries = {
-                    s["iteration"]: {
-                        "summary": s.get("summary", ""),
-                        "strapline": s.get("strapline", ""),
-                    }
-                    for s in timeline_ks.get("iteration_summaries", [])
-                }
-
-                # Group analysis log by iteration
-                timeline_by_iteration = defaultdict(list)
-                for entry in timeline_ks.get("analysis_log", []):
-                    timeline_by_iteration[entry["iteration"]].append(entry)
-
-                # Get max iteration
-                timeline_max_iter = timeline_ks.get("iteration", 1)
-
-                if not timeline_by_iteration and not timeline_iteration_summaries:
-                    ui.label("No investigation activity yet").classes("text-gray-500")
-                    return
-
-                with ui.scroll_area().classes("w-full h-[600px]"):
-                    # Display in chronological order (oldest first)
-                    # Don't show the current in-progress iteration if awaiting feedback
-                    display_max = (
-                        timeline_max_iter - 1
-                        if latest_job.status == JobStatus.AWAITING_FEEDBACK
-                        else timeline_max_iter
-                    )
-                    for iteration in range(1, display_max + 1):
-                        entries = timeline_by_iteration.get(iteration, [])
-
-                        # Check if this iteration is still in progress
-                        is_in_progress = (
-                            iteration == timeline_max_iter
-                            and latest_job.status == JobStatus.RUNNING
-                        )
-
-                        # Get agent summary
-                        iter_summary = timeline_iteration_summaries.get(iteration, {})
-                        if isinstance(iter_summary, str):
-                            strapline = ""
-                            summary_text = iter_summary
-                        else:
-                            strapline = iter_summary.get("strapline", "")
-                            summary_text = iter_summary.get("summary", "")
-
-                        # Get counts from analysis_log
-                        provenance_dir = job_dir / "provenance"
-                        code_count = len([e for e in entries if e["action"] == "execute_code"])
-                        search_count = len([e for e in entries if e["action"] == "search_pubmed"])
-                        finding_count = len(
-                            [e for e in entries if e["action"] == "update_knowledge_state"]
-                        )
-
-                        # Determine color based on outcome
-                        border_class = "border-l-4 border-gray-300"
-                        if finding_count > 0:
-                            border_class = "border-l-4 border-green-500"
-                        elif code_count > 0 or search_count > 0:
-                            border_class = "border-l-4 border-blue-300"
-
-                        # Header text
-                        if strapline:
-                            header_text = (
-                                f"{strapline} [in progress]" if is_in_progress else strapline
-                            )
-                        elif summary_text:
-                            truncated = (
-                                summary_text[:80] + "..."
-                                if len(summary_text) > 80
-                                else summary_text
-                            )
-                            header_text = (
-                                f"{truncated} [in progress]" if is_in_progress else truncated
-                            )
-                        elif is_in_progress:
-                            header_text = "Investigation in progress..."
-                        else:
-                            header_text = "Completed"
-
-                        with ui.expansion(icon="science").classes(
-                            f"w-full mb-2 {border_class}"
-                        ) as expansion:
-                            with expansion.add_slot("header"):
-                                with ui.row().classes("items-center gap-2 flex-wrap"):
-                                    ui.label(f"Iteration {iteration}: {header_text}").classes(
-                                        "font-medium"
-                                    )
-                                    if code_count:
-                                        ui.badge(f"{code_count} analyses", color="blue").props(
-                                            "outline"
-                                        )
-                                    if search_count:
-                                        ui.badge(f"{search_count} searches", color="purple").props(
-                                            "outline"
-                                        )
-                                    if finding_count:
-                                        ui.badge(f"{finding_count} findings", color="green")
-
-                            # Container for lazy-loaded content
-                            content_container = ui.column().classes("w-full")
-                            content_loaded = {"value": False}
-
-                            def load_iteration_content(
-                                container,
-                                loaded_flag,
-                                iter_num=iteration,
-                                iter_summary_text=summary_text,
-                                iter_entries=entries,
-                                iter_ks_data=timeline_ks,
-                                iter_job_dir=job_dir,
-                                iter_provenance_dir=provenance_dir,
-                            ):
-                                """Lazy load iteration content when expansion is opened."""
-                                if not is_client_connected():
-                                    return
-
-                                if loaded_flag["value"]:
-                                    return
-                                loaded_flag["value"] = True
-                                container.clear()
-
-                                with container:
-                                    if iter_summary_text:
-                                        with ui.expansion(
-                                            "Summary", icon="summarize", value=True
-                                        ).classes("w-full mt-2"):
-                                            render_text_with_pmid_links(
-                                                iter_summary_text,
-                                                text_classes="text-sm text-gray-700",
-                                            )
-
-                                    # Show findings recorded
-                                    iteration_findings = [
-                                        f
-                                        for f in iter_ks_data.get("findings", [])
-                                        if f.get("iteration_discovered") == iter_num
-                                    ]
-                                    if iteration_findings:
-                                        with ui.expansion(
-                                            f"Findings ({len(iteration_findings)})",
-                                            icon="lightbulb",
-                                        ).classes("w-full mt-2"):
-                                            for finding in iteration_findings:
-                                                with ui.card().classes("w-full mb-2 bg-green-50"):
-                                                    ui.label(finding["title"]).classes(
-                                                        "font-bold text-green-800"
-                                                    )
-                                                    render_text_with_pmid_links(
-                                                        finding["evidence"],
-                                                        text_classes="text-sm text-gray-700",
-                                                    )
-                                                    interpretation = finding.get(
-                                                        "biological_interpretation"
-                                                    ) or finding.get("interpretation", "")
-                                                    if interpretation:
-                                                        render_justified_text(
-                                                            interpretation,
-                                                            text_classes="text-sm text-gray-600 italic mt-1",
-                                                        )
-
-                                    # Load transcript lazily
-                                    transcript_path = (
-                                        iter_provenance_dir / f"iter{iter_num}_transcript.json"
-                                    )
-                                    transcript_actions = []
-                                    if transcript_path.exists():
-                                        try:
-                                            with open(transcript_path, encoding="utf-8") as tf:
-                                                transcript = json.load(tf)
-                                            transcript_actions = parse_transcript_actions(
-                                                transcript
-                                            )
-                                        except (
-                                            OSError,
-                                            json.JSONDecodeError,
-                                            KeyError,
-                                        ) as e:
-                                            logger.warning(
-                                                "Failed to load transcript for iter %d: %s",
-                                                iter_num,
-                                                e,
-                                            )
-
-                                    if transcript_actions:
-                                        with ui.expansion(
-                                            f"Actions ({len(transcript_actions)})",
-                                            icon="build",
-                                        ).classes("w-full mt-2"):
-                                            for action in transcript_actions:
-                                                success = action.get("success", True)
-                                                status_icon = "✅" if success else "❌"
-                                                desc = action.get(
-                                                    "description",
-                                                    action.get("short_name", "Unknown"),
-                                                )
-                                                tool_name = action.get("short_name", "")
-
-                                                if "execute_code" in action.get("tool_name", ""):
-                                                    card_class = (
-                                                        "w-full mb-2 border-l-4 border-blue-300"
-                                                    )
-                                                elif "search_pubmed" in action.get("tool_name", ""):
-                                                    card_class = (
-                                                        "w-full mb-2 border-l-4 border-purple-300"
-                                                    )
-                                                elif "update_knowledge_state" in action.get(
-                                                    "tool_name", ""
-                                                ):
-                                                    card_class = (
-                                                        "w-full mb-2 border-l-4 border-green-300"
-                                                    )
-                                                else:
-                                                    card_class = (
-                                                        "w-full mb-2 border-l-4 border-gray-300"
-                                                    )
-
-                                                with ui.card().classes(card_class):
-                                                    with ui.row().classes("items-center gap-2"):
-                                                        ui.label(f"{status_icon} {desc}").classes(
-                                                            "font-medium text-sm"
-                                                        )
-                                                        ui.badge(tool_name, color="gray").props(
-                                                            "outline"
-                                                        ).classes("text-xs")
-
-                                                    inp = action.get("input", {})
-                                                    if "execute_code" in action.get(
-                                                        "tool_name", ""
-                                                    ) and inp.get("code"):
-                                                        with ui.expansion(
-                                                            "Code", icon="code"
-                                                        ).classes("w-full mt-1"):
-                                                            ui.code(
-                                                                inp["code"],
-                                                                language="python",
-                                                            ).classes("text-xs")
-
-                                                    if "search_pubmed" in action.get(
-                                                        "tool_name", ""
-                                                    ) and inp.get("query"):
-                                                        ui.label(
-                                                            f'Query: "{inp["query"]}"'
-                                                        ).classes("text-xs text-gray-600 mt-1")
-
-                                                    result_text = action.get("result", "")
-                                                    if result_text and len(str(result_text)) > 0:
-                                                        result_str = str(result_text)
-                                                        if len(result_str) > 200:
-                                                            with ui.expansion(
-                                                                "Result", icon="output"
-                                                            ).classes("w-full mt-1"):
-                                                                ui.code(
-                                                                    result_str[:2000]
-                                                                    + (
-                                                                        "..."
-                                                                        if len(result_str) > 2000
-                                                                        else ""
-                                                                    ),
-                                                                    language="text",
-                                                                ).classes("text-xs")
-                                                        elif not success:
-                                                            ui.label(result_str).classes(
-                                                                "text-xs text-red-600 mt-1"
-                                                            )
-
-                                    # Show plots from this iteration
-                                    if iter_provenance_dir.exists():
-                                        iteration_plots = []
-                                        for plot_file in sorted(iter_provenance_dir.glob("*.png")):
-                                            metadata_file = plot_file.with_suffix(".json")
-                                            if metadata_file.exists():
-                                                with open(metadata_file, encoding="utf-8") as mf:
-                                                    metadata = json.load(mf)
-                                                if metadata.get("iteration") == iter_num:
-                                                    iteration_plots.append((plot_file, metadata))
-
-                                        if iteration_plots:
-                                            with ui.expansion(
-                                                f"Visualizations ({len(iteration_plots)})",
-                                                icon="insert_chart",
-                                            ).classes("w-full mt-2"):
-                                                with ui.grid(columns=2).classes("w-full gap-2"):
-                                                    for (
-                                                        plot_file,
-                                                        metadata,
-                                                    ) in iteration_plots:
-                                                        plot_title = plot_file.stem.replace(
-                                                            "_", " "
-                                                        ).title()
-                                                        description = metadata.get(
-                                                            "description", ""
-                                                        )
-
-                                                        with ui.card().classes("p-2"):
-                                                            ui.label(plot_title).classes(
-                                                                "text-sm font-bold"
-                                                            )
-                                                            if description:
-                                                                ui.label(description).classes(
-                                                                    "text-xs text-blue-700 italic"
-                                                                )
-                                                            plot_url = f"/{plot_file}"
-                                                            ui.image(plot_url).classes("w-full")
-
-                                                            ui.button(
-                                                                "Download",
-                                                                on_click=lambda p=plot_file: (
-                                                                    ui.download(
-                                                                        p.read_bytes(),
-                                                                        filename=p.name,
-                                                                    )
-                                                                ),
-                                                                icon="download",
-                                                            ).props("size=sm flat dense").classes(
-                                                                "mt-2"
-                                                            )
-
-                                                            plot_code = metadata.get("code")
-                                                            if plot_code:
-                                                                with ui.expansion(
-                                                                    "View code",
-                                                                    icon="code",
-                                                                ).classes("w-full mt-1"):
-                                                                    ui.code(
-                                                                        plot_code,
-                                                                        language="python",
-                                                                    ).classes("text-xs")
-
-                                    # Show literature searched
-                                    literature_entries = [
-                                        e for e in iter_entries if e["action"] == "search_pubmed"
-                                    ]
-                                    if literature_entries:
-                                        total_papers = sum(
-                                            e.get("results_count", 0) for e in literature_entries
-                                        )
-                                        with ui.expansion(
-                                            f"Literature searched ({total_papers} papers)",
-                                            icon="article",
-                                        ).classes("w-full mt-2"):
-                                            for entry in literature_entries:
-                                                query = entry.get("query", "")
-                                                matching_papers = [
-                                                    lit
-                                                    for lit in iter_ks_data.get("literature", [])
-                                                    if lit.get("search_query") == query
-                                                    and lit.get("retrieved_at_iteration")
-                                                    == iter_num
-                                                ]
-                                                if matching_papers:
-                                                    with ui.expansion(
-                                                        f'"{query}" ({len(matching_papers)} papers)'
-                                                    ).classes("w-full"):
-                                                        for paper in matching_papers:
-                                                            with ui.card().classes(
-                                                                "w-full mb-1 p-2"
-                                                            ):
-                                                                ui.label(
-                                                                    paper.get(
-                                                                        "title",
-                                                                        "Untitled",
-                                                                    )
-                                                                ).classes("text-sm font-bold")
-                                                                pmid = paper.get("pmid", "")
-                                                                if pmid:
-                                                                    render_pmid_badge(pmid)
-                                                                abstract = paper.get("abstract", "")
-                                                                if abstract:
-                                                                    ui.label(
-                                                                        abstract[:200] + "..."
-                                                                        if len(abstract) > 200
-                                                                        else abstract
-                                                                    ).classes(
-                                                                        "text-xs text-gray-600 mt-1"
-                                                                    )
-                                                else:
-                                                    ui.label(f'"{query}" (0 results)').classes(
-                                                        "text-sm text-gray-400 italic"
-                                                    )
-
-                            # Show loading placeholder initially
-                            with content_container:
-                                ui.label("Click to load details...").classes(
-                                    "text-sm text-gray-400 italic"
-                                )
-
-                            # Trigger lazy load when expansion is opened
-                            expansion.on_value_change(
-                                lambda e, cc=content_container, lf=content_loaded, fn=load_iteration_content: (
-                                    fn(cc, lf) if e.value else None
-                                )
-                            )
-
-            render_timeline()
-
-            # Dynamic feedback panel container (updates via polling)
-            feedback_container = ui.column().classes("w-full")
-
-            def build_feedback_panel():
-                """Build or rebuild the feedback panel based on current status."""
-                feedback_container.clear()
-
-                # Re-check job status
-                latest_job = job_manager.get_job(job_id)
-                if latest_job is None:
-                    return
-
-                if latest_job.status == JobStatus.AWAITING_FEEDBACK:
-                    # Reload KS to get current iteration (which is the NEXT iteration to run)
-                    next_iter = 1
-                    awaiting_since = None
-                    if ks_path.exists():
-                        with open(ks_path, encoding="utf-8") as f:
-                            latest_ks = json.load(f)
-                        next_iter = latest_ks.get("iteration", 1)
-                    # The completed iteration is the previous one
-                    completed_iter = next_iter - 1 if next_iter > 1 else 1
-
-                    # Get awaiting_feedback_since from config
-                    config_path = job_dir / "config.json"
-                    if config_path.exists():
-                        with open(config_path, encoding="utf-8") as f:
-                            cfg = json.load(f)
-                        awaiting_since = cfg.get("awaiting_feedback_since")
-
-                    with feedback_container:
-                        with ui.card().classes(
-                            "w-full mt-2 bg-yellow-50 border-2 border-yellow-400 p-6"
-                        ):
-                            ui.label(
-                                f"Iteration {completed_iter} Complete - Awaiting Your Input"
-                            ).classes("text-h6 font-bold text-yellow-800")
-
-                            if can_edit:
-                                ui.label(
-                                    "Provide guidance for the next iteration, or continue without feedback."
-                                ).classes("text-sm text-gray-700 mb-4")
-
-                                feedback_input = ui.textarea(
-                                    label="Your Feedback (optional)",
-                                    placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
-                                ).classes("w-full")
-
-                                with ui.row().classes("w-full gap-2 mt-2"):
-
-                                    def submit_feedback(fi=feedback_input, ci=completed_iter):
-                                        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
-                                        if fi.value.strip():
-                                            ks.add_feedback(fi.value.strip(), ci)
-                                            ks.save(job_dir / "knowledge_state.json")
-                                        # Set status back to running to signal continue
-                                        with open(job_dir / "config.json", encoding="utf-8") as f:
-                                            cfg = json.load(f)
-                                        cfg["status"] = "running"
-                                        with open(
-                                            job_dir / "config.json",
-                                            "w",
-                                            encoding="utf-8",
-                                        ) as f:
-                                            json.dump(cfg, f, indent=2)
-                                        ui.notify(
-                                            "Continuing to next iteration",
-                                            type="positive",
-                                        )
-                                        ui.navigate.to(f"/job/{job_id}")
-
-                                    ui.button(
-                                        "Submit & Continue",
-                                        on_click=submit_feedback,
-                                        icon="send",
-                                    ).props("color=primary")
-                                    ui.button(
-                                        "Continue Without Feedback",
-                                        on_click=submit_feedback,
-                                        icon="arrow_forward",
-                                    ).props("color=secondary outline")
-                            else:
-                                ui.label("You have view-only access to this job.").classes(
-                                    "text-sm text-gray-500 italic mb-4"
-                                )
-
-                            # Countdown timer
-                            if awaiting_since:
-                                try:
-                                    started = datetime.fromisoformat(awaiting_since)
-                                    if started.tzinfo is None:
-                                        started = started.replace(tzinfo=timezone.utc)
-                                    timeout_minutes = 15
-                                    countdown_label = ui.label("").classes(
-                                        "text-xs text-gray-500 mt-2"
-                                    )
-                                    # Container for timer reference (allows closure access)
-                                    timer_ref: list[ui.timer | None] = [None]
-
-                                    @guard_client
-                                    def update_countdown():
-                                        now = datetime.now(timezone.utc)
-                                        elapsed = (now - started).total_seconds()
-                                        remaining = (timeout_minutes * 60) - elapsed
-                                        if remaining <= 0:
-                                            countdown_label.text = "Auto-continuing now..."
-                                            # Stop the timer when countdown is done
-                                            if timer_ref[0]:
-                                                timer_ref[0].deactivate()
-                                        else:
-                                            mins = int(remaining // 60)
-                                            secs = int(remaining % 60)
-                                            countdown_label.text = f"Auto-continues in {mins}:{secs:02d} if no response."
-
-                                    update_countdown()
-                                    timer_ref[0] = ui.timer(1.0, update_countdown)
-                                    _active_timers.append(timer_ref[0])
-                                except (ValueError, TypeError, OSError):
-                                    ui.label(
-                                        "Auto-continues after 15 minutes if no response."
-                                    ).classes("text-xs text-gray-500 mt-2")
-                            else:
-                                ui.label("Auto-continues after 15 minutes if no response.").classes(
-                                    "text-xs text-gray-500 mt-2"
-                                )
-
-            # Build initial feedback panel
-            build_feedback_panel()
-
-            # Poll for changes and refresh stats/timeline in real-time
-            @guard_client
-            def check_and_refresh():
-                latest_job = job_manager.get_job(job_id)
-                if latest_job is None:
-                    stats_timer.deactivate()
-                    return
-
-                latest_ks, _ = _load_knowledge_state(ks_path)
-                new_papers = len(latest_ks.get("literature", [])) if latest_ks else 0
-                new_iter = latest_ks.get("iteration", 0) if latest_ks else 0
-                new_log_entries = len(latest_ks.get("analysis_log", [])) if latest_ks else 0
-                # Get agent status
-                new_agent_status = latest_ks.get("agent_status") if latest_ks else None
-
-                # Check if any stats changed
-                stats_changed = (
-                    _state["findings_count"] != latest_job.findings_count
-                    or _state["papers_count"] != new_papers
-                    or _state["iteration"] != new_iter
-                    or _state["agent_status"] != new_agent_status
-                )
-
-                # Refresh stats badges if changed
-                if stats_changed:
-                    _state["findings_count"] = latest_job.findings_count
-                    _state["papers_count"] = new_papers
-                    _state["iteration"] = new_iter
-                    _state["agent_status"] = new_agent_status
-                    render_job_stats.refresh()
-
-                # Check if timeline needs refresh (new log entries)
-                if new_log_entries > _state["log_entries"]:
-                    _state["log_entries"] = new_log_entries
-                    render_timeline.refresh()
-
-                # Status change requires different handling
-                if latest_job.status != _state["status"]:
-                    _state["status"] = latest_job.status
-
-                    # Terminal states or feedback state need full page reload
-                    # to update UI structure (show feedback panel, error card, etc.)
-                    if latest_job.status in [
-                        JobStatus.COMPLETED,
-                        JobStatus.FAILED,
-                        JobStatus.CANCELLED,
-                        JobStatus.AWAITING_FEEDBACK,
-                    ]:
-                        stats_timer.deactivate()
-                        ui.navigate.to(f"/job/{job_id}")
-                    else:
-                        # Just refresh stats for other transitions
-                        render_job_stats.refresh()
-
-            # Only poll if job is still active (including PENDING waiting to start)
-            if job_info.status in [
-                JobStatus.PENDING,
-                JobStatus.RUNNING,
-                JobStatus.QUEUED,
-                JobStatus.AWAITING_FEEDBACK,
-                JobStatus.GENERATING_REPORT,
-            ]:
-                stats_timer = ui.timer(2.0, check_and_refresh)  # Poll every 2 seconds
-                _active_timers.append(stats_timer)
-
-        # ===== REPORT TAB =====
+            _render_timeline_tab(context)
         with ui.tab_panel(report_tab):
-            report_path = job_dir / "final_report.md"
-            pdf_path = job_dir / "final_report.pdf"
-
-            # Show thinking status when report is being regenerated
-            if job_info.status == JobStatus.GENERATING_REPORT:
-                render_thinking_status("Regenerating report...")
-
-            if report_path.exists():
-
-                def download_artifacts():
-                    """Create and download ZIP of all job artifacts."""
-                    try:
-                        zip_buffer = create_artifacts_zip(job_dir, job_id)
-                        ui.download(
-                            zip_buffer.getvalue(),
-                            filename=f"{job_id}_artifacts.zip",
-                        )
-                    except Exception as e:
-                        logger.error("Failed to create artifacts ZIP: %s", e, exc_info=True)
-                        ui.notify("Failed to create ZIP. Please try again.", type="negative")
-
-                # Download buttons at top
-                with ui.row().classes("w-full justify-end mb-4 gap-2"):
-                    # Regenerate Report button (shown for completed/failed jobs with KS, edit access only)
-                    if (
-                        can_edit
-                        and job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]
-                        and ks_path.exists()
-                    ):
-
-                        def on_regenerate():
-                            try:
-                                job_manager.regenerate_report(job_id)
-                                ui.notify("Report regeneration started", type="positive")
-                                ui.navigate.to(f"/job/{job_id}")
-                            except ValueError as e:
-                                ui.notify(str(e), type="negative")
-
-                        ui.button(
-                            "Regenerate Report",
-                            on_click=on_regenerate,
-                            icon="refresh",
-                        ).props("color=secondary outline")
-
-                    ui.button(
-                        "Download Markdown",
-                        on_click=lambda: ui.download(
-                            report_path.read_bytes(), filename=f"{job_id}_report.md"
-                        ),
-                        icon="download",
-                    ).props("color=secondary outline")
-
-                    if pdf_path.exists() or report_path.exists():
-
-                        def download_pdf():
-                            """Regenerate PDF from markdown and download."""
-                            try:
-                                markdown_to_pdf(report_path, pdf_path)
-                                ui.download(
-                                    pdf_path.read_bytes(),
-                                    filename=f"{job_id}_report.pdf",
-                                )
-                            except Exception as e:
-                                logger.error("PDF generation failed: %s", e, exc_info=True)
-                                ui.notify(
-                                    "Failed to generate PDF. Please try again.",
-                                    type="negative",
-                                )
-
-                        ui.button(
-                            "Download PDF",
-                            on_click=download_pdf,
-                            icon="picture_as_pdf",
-                        ).props("color=primary")
-                    else:
-                        ui.button("PDF Unavailable", icon="picture_as_pdf").props(
-                            "color=grey outline disabled"
-                        )
-
-                    # Artifacts ZIP (code, plots, provenance, etc.)
-                    ui.button(
-                        "Download All Artifacts",
-                        on_click=download_artifacts,
-                        icon="folder_zip",
-                    ).props("color=accent outline")
-
-                # Display markdown with PubMed badges for PMID references
-                with open(report_path, encoding="utf-8") as f:
-                    report_content = f.read()
-
-                # Inject PubMed badge styles
-                _inject_pubmed_badge_styles()
-
-                # Transform PMID references to clickable badges
-                report_with_badges = transform_pmid_references(report_content)
-                ui.markdown(report_with_badges).classes("w-full")
-            else:
-                if job_info.status == JobStatus.GENERATING_REPORT:
-                    ui.label("Report is being generated...").classes("text-gray-500 italic")
-                elif job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
-                    with ui.column().classes("gap-2"):
-                        ui.label("Report generation failed").classes("text-red-500")
-                        if can_edit and ks_path.exists():
-
-                            def on_regenerate_no_report():
-                                try:
-                                    job_manager.regenerate_report(job_id)
-                                    ui.notify("Report regeneration started", type="positive")
-                                    ui.navigate.to(f"/job/{job_id}")
-                                except ValueError as e:
-                                    ui.notify(str(e), type="negative")
-
-                            ui.button(
-                                "Regenerate Report",
-                                on_click=on_regenerate_no_report,
-                                icon="refresh",
-                            ).props("color=secondary outline")
-                else:
-                    ui.label("Report will be available when job completes").classes(
-                        "text-gray-500 italic"
-                    )
-
-        # ===== CHAT TAB =====
+            _render_report_tab(context)
         with ui.tab_panel(chat_tab):
-            if job_info.status != JobStatus.COMPLETED:
-                ui.label("Chat will be available when the job completes.").classes(
-                    "text-gray-500 italic"
-                )
-            else:
-                job_uuid = UUID(job_id)
+            _render_chat_tab(context)
 
-                # Chat styles - inject into head for proper application
-                ui.add_head_html(
-                    """
-                <style>
-                    .chat-bubble-user {
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        border-radius: 18px 18px 4px 18px;
-                        padding: 12px 16px;
-                        color: white;
-                        max-width: 85%;
-                        margin-left: auto;
-                        word-wrap: break-word;
-                        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
-                    }
-                    .chat-bubble-assistant {
-                        background: linear-gradient(135deg, #e0f2fe 0%, #cffafe 100%);
-                        border-radius: 18px 18px 18px 4px;
-                        padding: 12px 16px;
-                        color: #0c4a6e;
-                        max-width: 85%;
-                        word-wrap: break-word;
-                        box-shadow: 0 2px 8px rgba(14, 116, 144, 0.15);
-                        border: 1px solid #a5f3fc;
-                    }
-                    .chat-bubble-assistant .markdown-body {
-                        background: transparent !important;
-                    }
-                    .chat-container {
-                        background: linear-gradient(180deg, #fafbfc 0%, #f0f2f5 100%);
-                        border-radius: 12px;
-                        border: 1px solid #e1e4e8;
-                    }
-                    .chat-input-container {
-                        background: white;
-                        border-radius: 24px;
-                        border: 2px solid #e1e4e8;
-                        transition: border-color 0.2s, box-shadow 0.2s;
-                        min-height: 48px;
-                    }
-                    .chat-input-container:focus-within {
-                        border-color: #667eea;
-                        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-                    }
-                    .chat-input-row {
-                        align-items: center !important;
-                    }
-                    .chat-send-btn {
-                        width: 48px !important;
-                        height: 48px !important;
-                        min-width: 48px !important;
-                        min-height: 48px !important;
-                    }
-                </style>
-                """
-                )
 
-                # Helper to play smooth sounds using Web Audio API
-                def play_sound(sound_type: str):
-                    # Generate smooth sine-wave sounds programmatically
-                    safe_run_javascript(
-                        f"""
-                        (function() {{
-                            try {{
-                                const ctx = new (window.AudioContext || window.webkitAudioContext)();
-                                const type = '{sound_type}';
+@ui.page("/job/{job_id}")
+@require_auth
+def job_detail_page(job_id: str):
+    """Job detail page with progressive disclosure UI."""
+    context = _build_job_detail_context(job_id)
+    if context is None:
+        _render_job_not_found()
+        return
 
-                                if (type === 'sound-send') {{
-                                    // Soft ascending "pop" - two quick notes
-                                    const osc1 = ctx.createOscillator();
-                                    const gain1 = ctx.createGain();
-                                    osc1.connect(gain1);
-                                    gain1.connect(ctx.destination);
-                                    osc1.frequency.setValueAtTime(600, ctx.currentTime);
-                                    osc1.frequency.exponentialRampToValueAtTime(900, ctx.currentTime + 0.08);
-                                    osc1.type = 'sine';
-                                    gain1.gain.setValueAtTime(0, ctx.currentTime);
-                                    gain1.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.02);
-                                    gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
-                                    osc1.start(ctx.currentTime);
-                                    osc1.stop(ctx.currentTime + 0.15);
-                                }} else if (type === 'sound-receive') {{
-                                    // Pleasant two-tone chime
-                                    const osc1 = ctx.createOscillator();
-                                    const osc2 = ctx.createOscillator();
-                                    const gain1 = ctx.createGain();
-                                    const gain2 = ctx.createGain();
-                                    osc1.connect(gain1);
-                                    osc2.connect(gain2);
-                                    gain1.connect(ctx.destination);
-                                    gain2.connect(ctx.destination);
-                                    osc1.type = 'sine';
-                                    osc2.type = 'sine';
-                                    osc1.frequency.value = 880;
-                                    osc2.frequency.value = 1100;
-                                    gain1.gain.setValueAtTime(0, ctx.currentTime);
-                                    gain1.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.02);
-                                    gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
-                                    gain2.gain.setValueAtTime(0, ctx.currentTime + 0.08);
-                                    gain2.gain.linearRampToValueAtTime(0.1, ctx.currentTime + 0.1);
-                                    gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-                                    osc1.start(ctx.currentTime);
-                                    osc2.start(ctx.currentTime + 0.08);
-                                    osc1.stop(ctx.currentTime + 0.3);
-                                    osc2.stop(ctx.currentTime + 0.35);
-                                }} else if (type === 'sound-error') {{
-                                    // Soft descending tone
-                                    const osc = ctx.createOscillator();
-                                    const gain = ctx.createGain();
-                                    osc.connect(gain);
-                                    gain.connect(ctx.destination);
-                                    osc.type = 'sine';
-                                    osc.frequency.setValueAtTime(440, ctx.currentTime);
-                                    osc.frequency.exponentialRampToValueAtTime(280, ctx.currentTime + 0.2);
-                                    gain.gain.setValueAtTime(0, ctx.currentTime);
-                                    gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.02);
-                                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
-                                    osc.start(ctx.currentTime);
-                                    osc.stop(ctx.currentTime + 0.3);
-                                }}
-                            }} catch(e) {{}}
-                        }})();
-                    """
-                    )
-
-                # Chat container (full height)
-                with (
-                    ui.column()
-                    .classes(
-                        "w-full max-w-4xl mx-auto chat-container p-4 flex flex-col flex-nowrap"
-                    )
-                    .style("height: calc(100vh - 280px); min-height: 500px;")
-                ):
-                    # Header with SHANDY logo
-                    with ui.row().classes("w-full items-center gap-3 mb-4 pb-2 border-b"):
-                        ui.html(
-                            """
-                            <svg viewBox="0 0 100 100" width="28" height="28" xmlns="http://www.w3.org/2000/svg">
-                                <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
-                                      fill="none" stroke="#0891b2" stroke-width="10" stroke-linecap="round"/>
-                                <circle cx="22" cy="18" r="10" fill="#06b6d4"/>
-                                <circle cx="78" cy="60" r="10" fill="#06b6d4"/>
-                                <circle cx="22" cy="60" r="10" fill="#0e7490"/>
-                            </svg>
-                        """
-                        )
-                        ui.label("Research Assistant").classes("font-semibold text-gray-700")
-                        ui.label("Discuss your findings").classes("text-sm text-gray-500 ml-auto")
-
-                    # Messages area with unique class for JavaScript targeting
-                    chat_scroll = (
-                        ui.scroll_area()
-                        .classes("w-full flex-grow px-2 chat-messages-scroll")
-                        .style("min-height: 400px; max-height: calc(100vh - 350px);")
-                    )
-
-                    def scroll_chat_to_bottom():
-                        """Scroll chat to bottom after new messages are added."""
-                        safe_run_javascript(
-                            """
-                            setTimeout(() => {
-                                const el = document.querySelector('.chat-messages-scroll .q-scrollarea__container');
-                                if (el) el.scrollTop = el.scrollHeight;
-                            }, 100);
-                            """
-                        )
-
-                    # Scroll to bottom when chat tab becomes visible (uses MutationObserver
-                    # because tab content is lazy-loaded and not in DOM until tab is selected)
-                    ui.run_javascript(
-                        """
-                        if (!window._chatScrollObserver) {
-                            window._chatScrollObserver = new MutationObserver(() => {
-                                const el = document.querySelector('.chat-messages-scroll');
-                                if (el && el.getBoundingClientRect().width > 0) {
-                                    window._chatScrollObserver.disconnect();
-                                    window._chatScrollObserver = null;
-                                    const scroll = () => {
-                                        const c = el.querySelector('.q-scrollarea__container');
-                                        if (c) c.scrollTop = c.scrollHeight;
-                                    };
-                                    // Scroll multiple times as content renders
-                                    [50, 150, 300].forEach(ms => setTimeout(scroll, ms));
-                                }
-                            });
-                            window._chatScrollObserver.observe(document.body, {
-                                childList: true, subtree: true, attributes: true
-                            });
-                        }
-                        """
-                    )
-
-                    # Status indicator (hidden by default)
-                    status_container = ui.element("div").classes("hidden")
-
-                    with status_container:
-                        render_thinking_status("Analyzing your message...")
-
-                # Display welcome or existing messages
-                async def render_messages():
-                    """Render chat messages."""
-                    guard = ClientGuard()
-                    if not guard.is_connected:
-                        return
-
-                    try:
-                        async with get_session_ctx() as session:
-                            await set_current_user(session, UUID(user_id))
-                            messages = await get_chat_history(session, job_uuid)
-
-                        # Re-check after await - client may have disconnected
-                        if not guard.is_connected:
-                            return
-
-                        chat_scroll.clear()
-                        with chat_scroll:
-                            if not messages:
-                                # Welcome message
-                                with ui.column().classes("w-full items-center py-8"):
-                                    ui.icon("chat_bubble_outline", size="xl").classes(
-                                        "text-gray-300 mb-4"
-                                    )
-                                    if can_edit:
-                                        ui.label("Start a conversation").classes(
-                                            "text-lg font-medium text-gray-600"
-                                        )
-                                        ui.label(
-                                            "Ask questions about your research findings"
-                                        ).classes("text-sm text-gray-400 mb-4")
-                                        with ui.column().classes("gap-2"):
-                                            for suggestion in [
-                                                "What are the main findings?",
-                                                "How strong is the evidence?",
-                                                "What should I investigate next?",
-                                            ]:
-                                                with (
-                                                    ui.button(
-                                                        suggestion,
-                                                        on_click=lambda s=suggestion: quick_send(s),
-                                                    )
-                                                    .props("flat dense")
-                                                    .classes("text-indigo-600 normal-case")
-                                                ):
-                                                    pass
-                                    else:
-                                        ui.label("No messages yet").classes(
-                                            "text-lg font-medium text-gray-600"
-                                        )
-                                        ui.label("You have view-only access to this job.").classes(
-                                            "text-sm text-gray-400"
-                                        )
-                            else:
-                                # Render message history
-                                for msg in messages:
-                                    render_message_bubble(msg.role, msg.content)
-
-                        # Scroll to bottom after DOM has rendered
-                        scroll_chat_to_bottom()
-                    except Exception as e:
-                        logger.error("Failed to load chat history: %s", e)
-
-                def render_message_bubble(role: str, content: str):
-                    """Render a single message bubble."""
-                    if role == "user":
-                        with ui.row().classes("w-full justify-end mb-3"):
-                            with ui.element("div").classes("chat-bubble-user"):
-                                ui.label(content).classes("text-sm")
-                    else:
-                        with ui.row().classes("items-start gap-2 mb-3"):
-                            # Small SHANDY logo as avatar
-                            ui.html(
-                                """
-                                <div style="width: 32px; height: 32px; background: #e0f2fe; border-radius: 50%; padding: 4px; flex-shrink: 0;">
-                                    <svg viewBox="0 0 100 100" width="24" height="24" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="M22 18 Q50 18 50 40 Q50 60 78 60 Q78 82 50 82 Q22 82 22 60"
-                                              fill="none" stroke="#0891b2" stroke-width="12" stroke-linecap="round"/>
-                                        <circle cx="22" cy="18" r="10" fill="#06b6d4"/>
-                                        <circle cx="78" cy="60" r="10" fill="#06b6d4"/>
-                                        <circle cx="22" cy="60" r="10" fill="#0e7490"/>
-                                    </svg>
-                                </div>
-                            """
-                            )
-                            with ui.element("div").classes("chat-bubble-assistant"):
-                                ui.markdown(content).classes("text-sm")
-
-                # Load messages on page load
-                _active_timers.append(ui.timer(0.1, render_messages, once=True))
-
-                if can_edit:
-
-                    @guard_client
-                    async def quick_send(message: str):
-                        """Send a quick suggestion message."""
-                        chat_input.value = message
-                        await send_message()
-
-                    # Input area
-                    with ui.row().classes("w-full max-w-3xl mx-auto gap-3 mt-4 chat-input-row"):
-                        with ui.element("div").classes(
-                            "flex-grow chat-input-container flex items-center px-4"
-                        ):
-                            chat_input = (
-                                ui.textarea(placeholder="Ask about your research...")
-                                .classes("flex-grow")
-                                .props(
-                                    "borderless dense rows=1 autogrow input-class='text-sm py-3'"
-                                )
-                            )
-
-                        send_btn = (
-                            ui.button(icon="send")
-                            .props("round color=indigo size=md")
-                            .classes("shadow-lg chat-send-btn")
-                        )
-
-                    async def send_message():
-                        """Send chat message to LLM."""
-                        nonlocal status_container
-
-                        guard = ClientGuard()
-                        if not guard.is_connected:
-                            return
-
-                        message = chat_input.value
-                        if not message or not message.strip():
-                            return
-
-                        # Play send sound
-                        play_sound("sound-send")
-
-                        # Clear input and disable - use JavaScript to ensure DOM is updated
-                        chat_input.value = ""
-                        guard.run_javascript(
-                            "document.querySelector('textarea[placeholder=\"Ask about your research...\"]').value = ''"
-                        )
-                        send_btn.disable()
-
-                        # Show user message immediately
-                        with chat_scroll:
-                            render_message_bubble("user", message.strip())
-
-                        # Show typing indicator
-                        status_container.classes(remove="hidden")
-
-                        # Scroll to bottom after DOM has rendered
-                        scroll_chat_to_bottom()
-
-                        try:
-                            async with get_session_ctx() as session:
-                                await set_current_user(session, UUID(user_id))
-                                await send_chat_message(session, job_uuid, message.strip(), job_dir)
-
-                            # Re-check after await - client may have disconnected
-                            if not guard.is_connected:
-                                return
-
-                            # Hide typing indicator
-                            status_container.classes(add="hidden")
-
-                            # Play receive sound
-                            play_sound("sound-receive")
-
-                            # Reload all messages to show response
-                            await render_messages()
-
-                        except Exception as e:
-                            logger.error("Chat error: %s", e, exc_info=True)
-                            if guard.is_connected:
-                                status_container.classes(add="hidden")
-                                play_sound("sound-error")
-                                ui.notify("An error occurred. Please try again.", type="negative")
-                        finally:
-                            if guard.is_connected:
-                                send_btn.enable()
-                                chat_input.run_method("focus")
-
-                    send_btn.on_click(send_message)
-
-                    # Enter to send (Shift+Enter for newline)
-                    chat_input.on(
-                        "keydown.enter",
-                        lambda e: send_message() if not e.args.get("shiftKey") else None,
-                    )
-                else:
-                    ui.label("You have view-only access to this job.").classes(
-                        "text-sm text-gray-500 italic mt-4 text-center"
-                    )
+    ui.page_title(f"{_job_page_title(context.job_info)} - SHANDY")
+    render_navigator()
+    _render_job_status_notices(context)
+    _render_job_tabs(context)

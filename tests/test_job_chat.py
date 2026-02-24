@@ -29,6 +29,7 @@ async def test_create_chat_message(
     test_job: Job,
 ):
     """Test creating a chat message."""
+    _ = test_user
     message = JobChatMessage(
         job_id=test_job.id,
         role="user",
@@ -52,6 +53,7 @@ async def test_chat_conversation_flow(
     test_job: Job,
 ):
     """Test a full conversation flow with user and assistant messages."""
+    _ = test_user
     # User asks a question
     user_msg = JobChatMessage(
         job_id=test_job.id,
@@ -91,6 +93,7 @@ async def test_get_chat_history(
     test_job: Job,
 ):
     """Test retrieving chat history."""
+    _ = test_user
     # Create multiple messages
     messages = [
         JobChatMessage(
@@ -123,6 +126,7 @@ async def test_chat_history_limit(
     test_job: Job,
 ):
     """Test that chat history respects limit parameter."""
+    _ = test_user
     # Create 20 messages
     for i in range(20):
         msg = JobChatMessage(
@@ -242,22 +246,14 @@ async def test_load_job_context_empty_dir(temp_jobs_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_load_job_context_with_config(temp_jobs_dir: Path):
-    """Test loading context with config file."""
+async def test_load_job_context_with_knowledge_state_config(temp_jobs_dir: Path):
+    """Test loading context with research question in knowledge state."""
     job_id = "test_job_456"
     job_dir = temp_jobs_dir / job_id
     job_dir.mkdir()
 
-    # Create config file
-    config = {
-        "job_id": job_id,
-        "research_question": "What is the crystal structure?",
-        "provider": "vertex",
-        "model": "claude-3-5-sonnet",
-    }
-
-    with open(job_dir / "config.json", "w") as f:
-        json.dump(config, f)
+    with open(job_dir / "knowledge_state.json", "w") as f:
+        json.dump({"config": {"research_question": "What is the crystal structure?"}}, f)
 
     context = await load_job_context(job_id, job_dir)
 
@@ -333,12 +329,44 @@ async def test_load_job_context_with_knowledge_state(temp_jobs_dir: Path):
 
 
 @pytest.mark.asyncio
+async def test_load_job_context_supports_modern_knowledge_state_keys(temp_jobs_dir: Path):
+    """Context rendering should support modern finding/hypothesis key names."""
+    job_id = "test_job_modern_keys"
+    job_dir = temp_jobs_dir / job_id
+    job_dir.mkdir()
+
+    knowledge_state = {
+        "findings": [
+            {
+                "title": "Modern finding title",
+                "importance": "high",
+                "confidence": "strong",
+            }
+        ],
+        "hypotheses": [
+            {
+                "statement": "Modern hypothesis statement",
+                "status": "supported",
+            }
+        ],
+    }
+
+    with open(job_dir / "knowledge_state.json", "w", encoding="utf-8") as f:
+        json.dump(knowledge_state, f)
+
+    context = await load_job_context(job_id, job_dir)
+    assert "Modern finding title" in context
+    assert "Modern hypothesis statement" in context
+
+
+@pytest.mark.asyncio
 async def test_chat_message_role_validation(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
 ):
     """Test that chat messages have proper role values."""
+    _ = test_user
     # Create user message
     user_msg = JobChatMessage(
         job_id=test_job.id,
@@ -421,6 +449,7 @@ async def test_send_chat_message_success(
     temp_jobs_dir: Path,
 ):
     """Test that send_chat_message stores messages and returns response."""
+    _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
     job_dir.mkdir()
 
@@ -461,6 +490,7 @@ async def test_send_chat_message_raises_on_executor_failure(
     temp_jobs_dir: Path,
 ):
     """Test that executor failure raises RuntimeError instead of returning empty string."""
+    _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
     job_dir.mkdir()
 
@@ -495,6 +525,7 @@ async def test_send_chat_message_raises_generic_on_empty_error(
     temp_jobs_dir: Path,
 ):
     """Test that executor failure with no error message still raises."""
+    _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
     job_dir.mkdir()
 
@@ -524,6 +555,7 @@ async def test_system_prompt_does_not_include_job_context(
     temp_jobs_dir: Path,
 ):
     """Test that the system prompt is small and doesn't embed job context."""
+    _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
     job_dir.mkdir()
 
@@ -536,10 +568,12 @@ async def test_system_prompt_does_not_include_job_context(
 
     class FakeExecutor:
         def __init__(self, *, job_dir, data_file, system_prompt):
+            _ = (job_dir, data_file)
             nonlocal captured_system_prompt
             captured_system_prompt = system_prompt
 
         async def run_iteration(self, prompt, *, reset_session=False):
+            _ = (prompt, reset_session)
             return IterationResult(
                 success=True,
                 output="Response",
@@ -562,7 +596,6 @@ async def test_system_prompt_does_not_include_job_context(
     assert captured_system_prompt is not None
     assert len(captured_system_prompt) < 2000
     # Should reference files, not embed them
-    assert "config.json" in captured_system_prompt
     assert "knowledge_state.json" in captured_system_prompt
     # Should NOT contain the large content
     assert "x" * 1000 not in captured_system_prompt

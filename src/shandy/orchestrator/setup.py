@@ -2,24 +2,78 @@
 Job filesystem setup for SHANDY discovery.
 
 create_job() initializes the job directory structure, knowledge state,
-and config.json.
+and knowledge_state.json.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 from uuid import UUID
 
+from shandy.async_tasks import create_background_task
+from shandy.database.models import JobDataFile
+from shandy.database.session import AsyncSessionLocal
 from shandy.file_loader import get_file_info
 from shandy.knowledge_state import KnowledgeState
-from shandy.orchestrator.discovery import _persist_data_files_to_db, sync_knowledge_state_to_db
+from shandy.orchestrator.discovery import sync_knowledge_state_to_db
 
 logger = logging.getLogger(__name__)
+
+
+def _persist_data_files_to_db(job_id: str, data_paths: list[Path]) -> None:
+    """
+    Persist copied job data files into ``job_data_files``.
+
+    Uses a background task when already inside a running event loop, and falls
+    back to a direct blocking write when called from synchronous contexts.
+
+    Args:
+        job_id: UUID string for the job owning the files.
+        data_paths: Absolute paths to files already copied into the job folder.
+    """
+    try:
+
+        async def _save_data_files() -> None:
+            async with AsyncSessionLocal(thread_safe=True) as session:
+                for data_path in data_paths:
+                    file_info = get_file_info(data_path)
+                    relative_path = f"data/{data_path.name}"
+                    data_file = JobDataFile(
+                        job_id=UUID(job_id),
+                        filename=data_path.name,
+                        file_path=relative_path,
+                        file_type=file_info["file_type"],
+                        file_size=file_info["size"],
+                        mime_type=file_info["mime_type"],
+                    )
+                    session.add(data_file)
+                await session.commit()
+                logger.info(
+                    "Persisted %d data files to database for job %s",
+                    len(data_paths),
+                    job_id,
+                )
+
+        async def _save_with_error_handling() -> None:
+            try:
+                await _save_data_files()
+            except Exception as e:
+                logger.warning("Background data file persist failed for job %s: %s", job_id, e)
+
+        try:
+            asyncio.get_running_loop()
+            create_background_task(
+                _save_with_error_handling(),
+                name=f"persist-job-data-files-{job_id}",
+                logger=logger,
+            )
+        except RuntimeError:
+            asyncio.run(_save_data_files())
+    except Exception as e:
+        logger.warning("Failed to persist data files to database: %s", e)
 
 
 def create_job(
@@ -29,10 +83,7 @@ def create_job(
     max_iterations: int,
     use_skills: bool = True,
     jobs_dir: Path = Path("jobs"),
-    investigation_mode: str = "autonomous",
-    owner_id: Optional[str] = None,
-    ntfy_enabled: bool = False,
-    ntfy_topic: Optional[str] = None,
+    owner_id: str | None = None,
 ) -> Path:
     """
     Create a new discovery job directory structure.
@@ -44,14 +95,13 @@ def create_job(
         max_iterations: Maximum number of iterations
         use_skills: Whether to use skills
         jobs_dir: Base directory for jobs
-        investigation_mode: "autonomous" (default) or "coinvestigate"
-        owner_id: UUID string of the job owner (for notifications)
-        ntfy_enabled: Whether ntfy notifications are enabled for the owner
-        ntfy_topic: The ntfy topic for push notifications
+        owner_id: UUID string of the job owner. Kept for signature compatibility;
+            ownership is persisted by higher-level DB job creation.
 
     Returns:
         Path to job directory
     """
+    _ = owner_id
     job_dir = jobs_dir / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -67,8 +117,7 @@ def create_job(
             data_paths.append(dest)
 
     if data_paths:
-        owner_uuid = UUID(owner_id) if owner_id else None
-        _persist_data_files_to_db(job_id, job_dir, data_paths, owner_uuid)
+        _persist_data_files_to_db(job_id, data_paths)
 
     ks = KnowledgeState(
         job_id=job_id,
@@ -92,23 +141,6 @@ def create_job(
 
     ks.save(job_dir / "knowledge_state.json")
     sync_knowledge_state_to_db(job_dir, ks)
-
-    config = {
-        "job_id": job_id,
-        "research_question": research_question,
-        "data_files": [str(p) for p in data_paths],
-        "max_iterations": max_iterations,
-        "use_skills": use_skills,
-        "investigation_mode": investigation_mode,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "status": "created",
-        "owner_id": owner_id,
-        "ntfy_enabled": ntfy_enabled,
-        "ntfy_topic": ntfy_topic,
-    }
-
-    with open(job_dir / "config.json", "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
 
     logger.info("Created job %s at %s", job_id, job_dir)
     return job_dir

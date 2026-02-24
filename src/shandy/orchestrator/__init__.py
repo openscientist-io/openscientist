@@ -6,9 +6,8 @@ Module layout:
 - iteration.py  — prompt builders, increment_ks_iteration, update_job_status
 - setup.py      — create_job (filesystem initialization)
 
-All public names are re-exported here for backward compatibility so that
-existing code using ``from shandy.orchestrator import create_job, run_discovery``
-continues to work.
+All public names are re-exported here to keep a stable import surface
+for ``from shandy.orchestrator import create_job, run_discovery``.
 """
 
 from __future__ import annotations
@@ -68,13 +67,13 @@ def regenerate_report(job_dir: Path) -> dict[str, Any]:
 
 __all__ = [
     "create_job",
+    "get_version_metadata",
+    "increment_ks_iteration",
     "regenerate_report",
     "regenerate_report_async",
     "run_discovery",
     "run_discovery_async",
     "sync_knowledge_state_to_db",
-    "increment_ks_iteration",
     "update_job_status",
     "wait_for_feedback_or_timeout",
-    "get_version_metadata",
 ]
