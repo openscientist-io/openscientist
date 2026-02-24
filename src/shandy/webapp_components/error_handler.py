@@ -14,6 +14,75 @@ CATEGORY_RUNTIME = "runtime"
 CATEGORY_RESEARCH = "research"
 CATEGORY_UNKNOWN = "unknown"
 
+_TEXT_PATTERN = r'"text"\s*:\s*"([^"]+)"'
+_ERROR_PATTERN = r'(?:API Error|Error):\s*(.+?)(?:\.|$|")'
+_RESULT_PATTERN = r'"result"\s*:\s*"([^"]+)"'
+_COMMON_ERROR_INDICATORS = [
+    "does not exist",
+    "not found",
+    "failed",
+    "permission denied",
+    "access denied",
+    "timeout",
+    "connection refused",
+]
+
+
+def _extract_text_field_error(raw_error: str) -> str | None:
+    """Extract useful error text from JSON `text` fields."""
+    matches = re.findall(_TEXT_PATTERN, raw_error)
+    if not matches:
+        return None
+
+    for match in matches:
+        if "API Error:" in match or "Error:" in match:
+            return str(match)
+
+    for match in matches:
+        if len(match) > 20 and not match.startswith(("session_id", "uuid", "type")):
+            return str(match)
+
+    return None
+
+
+def _extract_direct_error(raw_error: str) -> str | None:
+    """Extract direct API/Error pattern from plain text."""
+    error_match = re.search(_ERROR_PATTERN, raw_error, re.IGNORECASE)
+    if error_match:
+        return error_match.group(0)
+    return None
+
+
+def _extract_result_field_error(raw_error: str) -> str | None:
+    """Extract error from JSON `result` field."""
+    result_match = re.search(_RESULT_PATTERN, raw_error)
+    if result_match:
+        return result_match.group(1)
+    return None
+
+
+def _extract_common_indicator_error(raw_error: str) -> str | None:
+    """Extract sentence containing common error indicator."""
+    lowered = raw_error.lower()
+    for indicator in _COMMON_ERROR_INDICATORS:
+        if indicator not in lowered:
+            continue
+        for sentence in raw_error.split("."):
+            if indicator in sentence.lower():
+                return sentence.strip()
+    return None
+
+
+def _truncate_error(raw_error: str) -> str:
+    """Return short user-facing fallback error text."""
+    if len(raw_error) <= 200:
+        return raw_error
+
+    for line in raw_error.split("\n"):
+        if len(line) > 20 and not line.startswith(("{", "[", " ")):
+            return line.strip()[:200] + "..."
+    return raw_error[:200] + "..."
+
 
 def extract_error_message(raw_error: str) -> str:
     """
@@ -31,66 +100,13 @@ def extract_error_message(raw_error: str) -> str:
     if not raw_error:
         return "Unknown error"
 
-    # Pattern 1: Look for "text": "API Error: ..." in JSON content
-    # This handles nested JSON structure from API responses
-    text_pattern = r'"text"\s*:\s*"([^"]+)"'
-    matches = re.findall(text_pattern, raw_error)
-
-    for match in matches:
-        # Prioritize "API Error:" messages
-        if "API Error:" in match or "Error:" in match:
-            return str(match)
-
-    # If we found any text fields but no explicit errors, use the first substantive one
-    if matches:
-        for match in matches:
-            # Skip system messages, focus on actual errors
-            if len(match) > 20 and not match.startswith(("session_id", "uuid", "type")):
-                return str(match)
-
-    # Pattern 2: Direct "API Error:" or "Error:" in the string
-    error_pattern = r'(?:API Error|Error):\s*(.+?)(?:\.|$|")'
-    error_match = re.search(error_pattern, raw_error, re.IGNORECASE)
-    if error_match:
-        return error_match.group(0)
-
-    # Pattern 3: Extract from "result": "..." field
-    result_pattern = r'"result"\s*:\s*"([^"]+)"'
-    result_match = re.search(result_pattern, raw_error)
-    if result_match:
-        return result_match.group(1)
-
-    # Pattern 4: Look for common error indicators
-    common_errors = [
-        "does not exist",
-        "not found",
-        "failed",
-        "permission denied",
-        "access denied",
-        "timeout",
-        "connection refused",
-    ]
-
-    for error_indicator in common_errors:
-        if error_indicator.lower() in raw_error.lower():
-            # Find the sentence containing this error
-            sentences = raw_error.split(".")
-            for sentence in sentences:
-                if error_indicator.lower() in sentence.lower():
-                    return sentence.strip()
-
-    # Fallback: If error is short, return as-is; if long, truncate intelligently
-    if len(raw_error) <= 200:
-        return raw_error
-
-    # Try to get first meaningful line
-    lines = raw_error.split("\n")
-    for line in lines:
-        if len(line) > 20 and not line.startswith(("{", "[", " ")):
-            return line.strip()[:200] + "..."
-
-    # Ultimate fallback
-    return raw_error[:200] + "..."
+    return (
+        _extract_text_field_error(raw_error)
+        or _extract_direct_error(raw_error)
+        or _extract_result_field_error(raw_error)
+        or _extract_common_indicator_error(raw_error)
+        or _truncate_error(raw_error)
+    )
 
 
 def categorize_error(error_msg: str) -> str:
@@ -190,89 +206,114 @@ def get_actionable_steps(category: str, error_msg: str) -> list[str]:
     """
     error_lower = error_msg.lower()
 
-    if category == CATEGORY_CONFIGURATION:
-        if "gcp-credentials.json" in error_lower or "credentials.json" in error_lower:
-            return [
-                "Contact your system administrator to configure Google Cloud authentication",
-                "Ensure GCP credentials file is mounted at /app/gcp-credentials.json",
-                "Check the DEPLOYMENT.md documentation for setup instructions",
-            ]
-        if ".env" in error_lower:
-            return [
-                "Check that the .env file exists and contains required configuration",
-                "Verify environment variables are properly set",
-                "See README.md for required environment variables",
-            ]
-        if "permission denied" in error_lower:
-            return [
-                "Check file and directory permissions in the container",
-                "Verify the application has write access to the jobs directory",
-                "Contact your system administrator if running in restricted environment",
-            ]
-        return [
-            "Verify all required configuration files are present",
-            "Check the documentation for setup requirements",
-            "Contact your system administrator for assistance",
-        ]
+    return _get_steps_for_category(category, error_lower)
 
-    if category == CATEGORY_PROVIDER:
-        if "budget" in error_lower or "quota" in error_lower:
-            return [
-                "Check the billing page to see your current usage",
-                "Contact your administrator to increase budget limits",
-                "Consider optimizing your research questions to use fewer resources",
-            ]
-        if "api key" in error_lower or "authentication" in error_lower:
-            return [
-                "Verify your API credentials are correctly configured",
-                "Check that your API key has not expired",
-                "Contact your administrator to update credentials",
-            ]
-        if "rate limit" in error_lower:
-            return [
-                "Wait a few minutes before retrying the job",
-                "Consider reducing max_iterations to lower API usage",
-                "Contact your administrator about rate limit increases",
-            ]
-        return [
-            "Check your cloud provider configuration",
-            "Verify API credentials and billing status",
-            "Contact your system administrator",
-        ]
 
-    if category == CATEGORY_RUNTIME:
-        if "mcp" in error_lower:
-            return [
-                "This is likely a temporary issue with the MCP server",
-                "Try restarting the job",
-                "If the problem persists, contact your administrator",
-            ]
-        if "timeout" in error_lower:
-            return [
-                "The operation took too long to complete",
-                "Try with a simpler research question or fewer iterations",
-                "Check your network connection if using remote services",
-            ]
+def _configuration_steps(error_lower: str) -> list[str]:
+    """Get actionable steps for configuration errors."""
+    if "gcp-credentials.json" in error_lower or "credentials.json" in error_lower:
         return [
-            "This appears to be a runtime issue",
+            "Contact your system administrator to configure Google Cloud authentication",
+            "Ensure GCP credentials file is mounted at /app/gcp-credentials.json",
+            "Check the DEPLOYMENT.md documentation for setup instructions",
+        ]
+    if ".env" in error_lower:
+        return [
+            "Check that the .env file exists and contains required configuration",
+            "Verify environment variables are properly set",
+            "See README.md for required environment variables",
+        ]
+    if "permission denied" in error_lower:
+        return [
+            "Check file and directory permissions in the container",
+            "Verify the application has write access to the jobs directory",
+            "Contact your system administrator if running in restricted environment",
+        ]
+    return [
+        "Verify all required configuration files are present",
+        "Check the documentation for setup requirements",
+        "Contact your system administrator for assistance",
+    ]
+
+
+def _provider_steps(error_lower: str) -> list[str]:
+    """Get actionable steps for cloud provider errors."""
+    if "budget" in error_lower or "quota" in error_lower:
+        return [
+            "Check the billing page to see your current usage",
+            "Contact your administrator to increase budget limits",
+            "Consider optimizing your research questions to use fewer resources",
+        ]
+    if "api key" in error_lower or "authentication" in error_lower:
+        return [
+            "Verify your API credentials are correctly configured",
+            "Check that your API key has not expired",
+            "Contact your administrator to update credentials",
+        ]
+    if "rate limit" in error_lower:
+        return [
+            "Wait a few minutes before retrying the job",
+            "Consider reducing max_iterations to lower API usage",
+            "Contact your administrator about rate limit increases",
+        ]
+    return [
+        "Check your cloud provider configuration",
+        "Verify API credentials and billing status",
+        "Contact your system administrator",
+    ]
+
+
+def _runtime_steps(error_lower: str) -> list[str]:
+    """Get actionable steps for runtime errors."""
+    if "mcp" in error_lower:
+        return [
+            "This is likely a temporary issue with the MCP server",
             "Try restarting the job",
-            "If the problem persists, contact your administrator with the error details below",
+            "If the problem persists, contact your administrator",
         ]
-
-    if category == CATEGORY_RESEARCH:
+    if "timeout" in error_lower:
         return [
-            "Check that your uploaded data files are properly formatted",
-            "Ensure data files match the expected format (CSV, Excel, etc.)",
-            "Try providing a more detailed description of your data in the research question",
-            "See the documentation for supported data formats",
+            "The operation took too long to complete",
+            "Try with a simpler research question or fewer iterations",
+            "Check your network connection if using remote services",
         ]
+    return [
+        "This appears to be a runtime issue",
+        "Try restarting the job",
+        "If the problem persists, contact your administrator with the error details below",
+    ]
 
-    # CATEGORY_UNKNOWN
+
+def _research_steps() -> list[str]:
+    """Get actionable steps for research/data errors."""
+    return [
+        "Check that your uploaded data files are properly formatted",
+        "Ensure data files match the expected format (CSV, Excel, etc.)",
+        "Try providing a more detailed description of your data in the research question",
+        "See the documentation for supported data formats",
+    ]
+
+
+def _unknown_steps() -> list[str]:
+    """Get actionable steps for unknown errors."""
     return [
         "An unexpected error occurred",
         "Try restarting the job",
         "If the problem persists, contact your administrator with the error details below",
     ]
+
+
+def _get_steps_for_category(category: str, error_lower: str) -> list[str]:
+    """Dispatch actionable steps generation by category."""
+    if category == CATEGORY_CONFIGURATION:
+        return _configuration_steps(error_lower)
+    if category == CATEGORY_PROVIDER:
+        return _provider_steps(error_lower)
+    if category == CATEGORY_RUNTIME:
+        return _runtime_steps(error_lower)
+    if category == CATEGORY_RESEARCH:
+        return _research_steps()
+    return _unknown_steps()
 
 
 def get_user_friendly_error(raw_error: str) -> dict:

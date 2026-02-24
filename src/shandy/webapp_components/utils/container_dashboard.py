@@ -10,7 +10,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -163,7 +163,7 @@ def _build_container_info(
         try:
             created_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
             if container.status == "running":
-                uptime_seconds = (datetime.now(timezone.utc) - created_at).total_seconds()
+                uptime_seconds = (datetime.now(UTC) - created_at).total_seconds()
         except (ValueError, TypeError):
             pass
 
@@ -208,19 +208,38 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
     settings = get_settings()
     data = DashboardData()
 
-    # 1. Check isolation setting
-    data.container_isolation_enabled = settings.container.use_container_isolation
-    if not data.container_isolation_enabled:
+    ready, client = await _prepare_dashboard_client(data, settings)
+    if not ready:
         return data
 
-    # 2. Check Docker availability
+    fetch_result = await _fetch_dashboard_sources(client)
+    if fetch_result is None:
+        data.error_message = "Error collecting container data. Check server logs."
+        return data
+    containers_list, job_map = fetch_result
+
+    stats_map = await _collect_running_container_stats(containers_list, include_stats)
+    container_infos = _build_container_infos(containers_list, stats_map)
+    data.job_groups, data.orphan_containers = _group_containers_by_job(container_infos, job_map)
+    data.totals = _compute_dashboard_totals(data.job_groups, data.orphan_containers)
+    return data
+
+
+async def _prepare_dashboard_client(data: DashboardData, settings) -> tuple[bool, Any | None]:
+    data.container_isolation_enabled = settings.container.use_container_isolation
+    if not data.container_isolation_enabled:
+        return False, None
+
     client = await asyncio.to_thread(_get_docker_client)
     if client is None:
         data.error_message = "Docker daemon is not reachable."
-        return data
-    data.docker_available = True
+        return False, None
 
-    # 3. Fetch containers and DB jobs in parallel
+    data.docker_available = True
+    return True, client
+
+
+async def _fetch_dashboard_sources(client) -> tuple[list[Any], dict[str, dict]] | None:
     try:
         containers_list, job_map = await asyncio.gather(
             asyncio.to_thread(_list_shandy_containers, client),
@@ -228,29 +247,54 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
         )
     except Exception as exc:
         logger.error("Failed to collect dashboard data: %s", exc, exc_info=True)
-        data.error_message = "Error collecting container data. Check server logs."
-        return data
+        return None
+    return containers_list, job_map
 
-    # 4. Optionally fetch stats in parallel
+
+async def _collect_running_container_stats(
+    containers_list: list[Any],
+    include_stats: bool,
+) -> dict[str, dict]:
     stats_map: dict[str, dict] = {}
-    if include_stats and containers_list:
-        running = [c for c in containers_list if c.status == "running"]
-        if running:
-            with ThreadPoolExecutor(max_workers=min(len(running), 8)) as pool:
-                loop = asyncio.get_running_loop()
-                futures = {
-                    c.short_id: loop.run_in_executor(pool, _get_container_stats, c) for c in running
-                }
-                for cid, fut in futures.items():
-                    try:
-                        stats_map[cid] = await fut
-                    except Exception:
-                        stats_map[cid] = {}
+    if not include_stats or not containers_list:
+        return stats_map
 
-    # 5. Build ContainerInfo objects
-    container_infos = [_build_container_info(c, stats_map.get(c.short_id)) for c in containers_list]
+    running = [c for c in containers_list if c.status == "running"]
+    if not running:
+        return stats_map
 
-    # 6. Group by job_id
+    with ThreadPoolExecutor(max_workers=min(len(running), 8)) as pool:
+        loop = asyncio.get_running_loop()
+        futures = {c.short_id: loop.run_in_executor(pool, _get_container_stats, c) for c in running}
+        for cid, fut in futures.items():
+            try:
+                stats_map[cid] = await fut
+            except Exception:
+                stats_map[cid] = {}
+    return stats_map
+
+
+def _build_container_infos(
+    containers_list: list[Any], stats_map: dict[str, dict]
+) -> list[ContainerInfo]:
+    return [_build_container_info(c, stats_map.get(c.short_id)) for c in containers_list]
+
+
+def _build_group(job_id: str, job_info: dict[str, Any]) -> JobContainerGroup:
+    return JobContainerGroup(
+        job_id=job_id,
+        title=job_info["title"],
+        status=job_info["status"],
+        owner_email=job_info["owner_email"],
+        current_iteration=job_info["current_iteration"],
+        max_iterations=job_info["max_iterations"],
+    )
+
+
+def _group_containers_by_job(
+    container_infos: list[ContainerInfo],
+    job_map: dict[str, dict[str, Any]],
+) -> tuple[list[JobContainerGroup], list[ContainerInfo]]:
     groups: dict[str, JobContainerGroup] = {}
     orphans: list[ContainerInfo] = []
 
@@ -259,53 +303,41 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
             orphans.append(ci)
             continue
 
-        if ci.job_id not in groups:
-            job_info = job_map.get(ci.job_id)
-            if job_info is None:
-                # Container references a job not in DB — orphan
-                orphans.append(ci)
-                continue
-            groups[ci.job_id] = JobContainerGroup(
-                job_id=ci.job_id,
-                title=job_info["title"],
-                status=job_info["status"],
-                owner_email=job_info["owner_email"],
-                current_iteration=job_info["current_iteration"],
-                max_iterations=job_info["max_iterations"],
-            )
-
         group = groups.get(ci.job_id)
         if group is None:
-            # Shouldn't happen, but guard against it
-            orphans.append(ci)
-            continue
+            job_info = job_map.get(ci.job_id)
+            if job_info is None:
+                orphans.append(ci)
+                continue
+            group = _build_group(ci.job_id, job_info)
+            groups[ci.job_id] = group
 
         if ci.container_type == "agent":
             group.agent_container = ci
         else:
             group.executor_containers.append(ci)
 
-    data.job_groups = list(groups.values())
-    data.orphan_containers = orphans
+    return list(groups.values()), orphans
 
-    # 7. Compute totals
-    totals = DashboardTotals()
-    totals.running_jobs = len(data.job_groups)
-    for g in data.job_groups:
-        if g.agent_container:
+
+def _compute_dashboard_totals(
+    job_groups: list[JobContainerGroup],
+    orphan_containers: list[ContainerInfo],
+) -> DashboardTotals:
+    totals = DashboardTotals(running_jobs=len(job_groups))
+    for group in job_groups:
+        if group.agent_container:
             totals.agent_containers += 1
-            totals.total_memory_mb += g.agent_container.memory_mb
-            totals.total_cpu_percent += g.agent_container.cpu_percent
-        for ec in g.executor_containers:
+            totals.total_memory_mb += group.agent_container.memory_mb
+            totals.total_cpu_percent += group.agent_container.cpu_percent
+        for ec in group.executor_containers:
             totals.executor_containers += 1
             totals.total_memory_mb += ec.memory_mb
             totals.total_cpu_percent += ec.cpu_percent
-    for oc in data.orphan_containers:
-        totals.total_memory_mb += oc.memory_mb
-        totals.total_cpu_percent += oc.cpu_percent
-    data.totals = totals
-
-    return data
+    for orphan in orphan_containers:
+        totals.total_memory_mb += orphan.memory_mb
+        totals.total_cpu_percent += orphan.cpu_percent
+    return totals
 
 
 async def _get_active_jobs_map() -> dict[str, dict]:

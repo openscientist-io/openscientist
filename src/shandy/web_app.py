@@ -5,9 +5,9 @@ Provides web UI for job submission, monitoring, and results viewing.
 """
 
 import argparse
+import importlib
 import logging
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 from fastapi import Response
@@ -58,7 +58,7 @@ if not load_dotenv("/app/.env", override=False):
 logger = logging.getLogger(__name__)
 
 # Validate settings at import time (but don't fail yet - defer to main())
-_settings_error: Optional[str] = None
+_settings_error: str | None = None
 try:
     from shandy.settings import get_settings
 
@@ -82,7 +82,7 @@ def _create_config_error_page(error_message: str):
 
     @ui.page("/")
     @ui.page("/{path:path}")
-    def config_error_page(path: str = ""):
+    def config_error_page(_path: str = ""):
         """Display generic server error with 500 status."""
         app.storage.user["_error_shown"] = True
 
@@ -128,7 +128,7 @@ class _AppState:
     """Module-level singleton holding mutable app state (avoids bare globals)."""
 
     def __init__(self):
-        self.job_manager: Optional[JobManager] = None
+        self.job_manager: JobManager | None = None
         self.jobs_dir: Path = Path("jobs")
 
 
@@ -229,8 +229,7 @@ def health_check():
 _register_oauth_routes()
 _register_api_routes()
 _register_share_routes()
-
-from shandy.webapp_components import pages  # noqa: E402, F401
+importlib.import_module("shandy.webapp_components.pages")
 
 
 def get_job_manager() -> JobManager:
@@ -257,6 +256,133 @@ def get_job_manager() -> JobManager:
     return _state.job_manager
 
 
+async def _verify_db_connection_and_rls(engine) -> None:
+    """Verify database connection, tables, and RLS configuration."""
+    from sqlalchemy import text
+
+    try:
+        async with engine.begin() as conn:
+            # Simple query to verify connection
+            await conn.execute(text("SELECT 1"))
+            logger.info("Database connection verified")
+
+            # Verify RLS is properly configured
+            rls_result = await conn.execute(
+                text(
+                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'jobs'"
+                )
+            )
+            rls_row = rls_result.first()
+            if rls_row is None:
+                logger.warning("RLS CHECK: 'jobs' table not found — migrations may not have run")
+            elif not rls_row[0] or not rls_row[1]:
+                logger.error(
+                    "RLS CHECK FAILED: jobs table has rowsecurity=%s, forcerowsecurity=%s — "
+                    "run 'alembic upgrade head' to fix",
+                    rls_row[0],
+                    rls_row[1],
+                )
+            else:
+                logger.info("RLS CHECK: jobs table has RLS enabled and forced")
+
+            # Verify shandy_app role exists and is not superuser
+            role_result = await conn.execute(
+                text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'shandy_app'")
+            )
+            role_row = role_result.first()
+            if role_row is None:
+                logger.error(
+                    "RLS CHECK FAILED: 'shandy_app' role does not exist — "
+                    "run 'alembic upgrade head' to create it"
+                )
+            elif role_row[0]:
+                logger.error(
+                    "RLS CHECK FAILED: 'shandy_app' role is a SUPERUSER — "
+                    "this bypasses all RLS policies"
+                )
+            elif role_row[1]:
+                logger.error(
+                    "RLS CHECK FAILED: 'shandy_app' role has BYPASSRLS — "
+                    "this bypasses all RLS policies"
+                )
+            else:
+                logger.info("RLS CHECK: shandy_app role is correctly configured")
+    except Exception as e:
+        logger.error("Database connection failed: %s", e)
+        logger.warning("Application will continue but database features may not work")
+
+
+async def _ensure_default_skill_sources() -> None:
+    """Ensure default skill sources exist in the database."""
+    from sqlalchemy import select
+
+    from shandy.database.models import SkillSource
+    from shandy.database.session import get_admin_session
+
+    default_sources = [
+        {
+            "source_type": "github",
+            "name": "Claude Scientific Skills",
+            "url": "https://github.com/K-Dense-AI/claude-scientific-skills",
+            "branch": "main",
+            "skills_path": "scientific-skills",
+            "is_enabled": True,
+        },
+        {
+            "source_type": "local",
+            "name": "SHANDY Built-in Skills",
+            "path": "skills",
+            "is_enabled": True,
+        },
+    ]
+
+    try:
+        async with get_admin_session() as session:
+            for source_data in default_sources:
+                # Check if source already exists by URL or path
+                if source_data.get("url"):
+                    stmt = select(SkillSource).where(SkillSource.url == source_data["url"])
+                else:
+                    stmt = select(SkillSource).where(SkillSource.path == source_data.get("path"))
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if not existing:
+                    source = SkillSource(**source_data)
+                    session.add(source)
+                    logger.info("Added default skill source: %s", source_data["name"])
+
+            await session.commit()
+    except Exception as e:
+        logger.warning("Failed to seed default skill sources: %s", e)
+
+
+async def _start_background_tasks(engine) -> None:
+    """Start background tasks after database verification."""
+    await _verify_db_connection_and_rls(engine)
+    await _ensure_default_skill_sources()
+
+    # Start skill sync scheduler
+    try:
+        from shandy.skill_scheduler import start_skill_scheduler
+
+        await start_skill_scheduler()
+        logger.info("Skill sync scheduler started")
+    except Exception as e:
+        logger.warning("Failed to start skill sync scheduler: %s", e)
+
+
+def _initialize_job_manager_runtime(jobs_dir: Path) -> None:
+    _state.job_manager = JobManager(
+        jobs_dir=jobs_dir,
+        max_concurrent=get_settings().max_concurrent_jobs,
+    )
+    # Add static file serving for job plots
+    app.add_static_files("/jobs", str(jobs_dir))
+    # Add static file serving for assets (icons, etc.)
+    app.add_static_files("/assets", str(ASSETS_DIR))
+
+
 def init_app(jobs_dir: Path = Path("jobs")):
     """Initialize the web application."""
     _state.jobs_dir = jobs_dir
@@ -265,156 +391,25 @@ def init_app(jobs_dir: Path = Path("jobs")):
         logger.info("Web app already initialized, skipping re-initialization")
         return
 
-    # Initialize database connection
     try:
         from shandy.database.engine import get_engine
 
         engine = get_engine()
 
-        async def verify_db():
-            """Verify database connection, tables, and RLS configuration."""
-            from sqlalchemy import text
-
-            try:
-                async with engine.begin() as conn:
-                    # Simple query to verify connection
-                    await conn.execute(text("SELECT 1"))
-                    logger.info("Database connection verified")
-
-                    # Verify RLS is properly configured
-                    rls_result = await conn.execute(
-                        text(
-                            "SELECT relrowsecurity, relforcerowsecurity "
-                            "FROM pg_class WHERE relname = 'jobs'"
-                        )
-                    )
-                    rls_row = rls_result.first()
-                    if rls_row is None:
-                        logger.warning(
-                            "RLS CHECK: 'jobs' table not found — migrations may not have run"
-                        )
-                    elif not rls_row[0] or not rls_row[1]:
-                        logger.error(
-                            "RLS CHECK FAILED: jobs table has "
-                            "rowsecurity=%s, forcerowsecurity=%s — "
-                            "run 'alembic upgrade head' to fix",
-                            rls_row[0],
-                            rls_row[1],
-                        )
-                    else:
-                        logger.info("RLS CHECK: jobs table has RLS enabled and forced")
-
-                    # Verify shandy_app role exists and is not superuser
-                    role_result = await conn.execute(
-                        text(
-                            "SELECT rolsuper, rolbypassrls FROM pg_roles "
-                            "WHERE rolname = 'shandy_app'"
-                        )
-                    )
-                    role_row = role_result.first()
-                    if role_row is None:
-                        logger.error(
-                            "RLS CHECK FAILED: 'shandy_app' role does not exist — "
-                            "run 'alembic upgrade head' to create it"
-                        )
-                    elif role_row[0]:
-                        logger.error(
-                            "RLS CHECK FAILED: 'shandy_app' role is a SUPERUSER — "
-                            "this bypasses all RLS policies"
-                        )
-                    elif role_row[1]:
-                        logger.error(
-                            "RLS CHECK FAILED: 'shandy_app' role has BYPASSRLS — "
-                            "this bypasses all RLS policies"
-                        )
-                    else:
-                        logger.info("RLS CHECK: shandy_app role is correctly configured")
-            except Exception as e:
-                logger.error("Database connection failed: %s", e)
-                logger.warning("Application will continue but database features may not work")
-
-        async def ensure_default_skill_sources():
-            """Ensure default skill sources exist in the database."""
-            from sqlalchemy import select
-
-            from shandy.database.models import SkillSource
-            from shandy.database.session import get_admin_session
-
-            # Default skill sources to seed
-            default_sources = [
-                {
-                    "source_type": "github",
-                    "name": "Claude Scientific Skills",
-                    "url": "https://github.com/K-Dense-AI/claude-scientific-skills",
-                    "branch": "main",
-                    "skills_path": "scientific-skills",
-                    "is_enabled": True,
-                },
-                {
-                    "source_type": "local",
-                    "name": "SHANDY Built-in Skills",
-                    "path": "skills",
-                    "is_enabled": True,
-                },
-            ]
-
-            try:
-                async with get_admin_session() as session:
-                    for source_data in default_sources:
-                        # Check if source already exists by URL or path
-                        if source_data.get("url"):
-                            stmt = select(SkillSource).where(SkillSource.url == source_data["url"])
-                        else:
-                            stmt = select(SkillSource).where(
-                                SkillSource.path == source_data.get("path")
-                            )
-                        result = await session.execute(stmt)
-                        existing = result.scalar_one_or_none()
-
-                        if not existing:
-                            source = SkillSource(**source_data)
-                            session.add(source)
-                            logger.info("Added default skill source: %s", source_data["name"])
-
-                    await session.commit()
-            except Exception as e:
-                logger.warning("Failed to seed default skill sources: %s", e)
-
-        async def start_background_tasks():
-            """Start background tasks after database verification."""
-            await verify_db()
-
-            # Ensure default skill sources exist
-            await ensure_default_skill_sources()
-
-            # Start skill sync scheduler
-            try:
-                from shandy.skill_scheduler import start_skill_scheduler
-
-                await start_skill_scheduler()
-                logger.info("Skill sync scheduler started")
-            except Exception as e:
-                logger.warning("Failed to start skill sync scheduler: %s", e)
+        async def start_background_tasks_for_engine():
+            await _start_background_tasks(engine)
 
         # Defer background tasks to NiceGUI's startup event to ensure they run
         # in the correct event loop. Running them before ui.run() causes connections
         # to be bound to a temporary event loop, leading to "Future attached to a
         # different loop" errors when NiceGUI's Uvicorn loop tries to close them.
-        app.on_startup(start_background_tasks)
+        app.on_startup(start_background_tasks_for_engine)
 
     except Exception as e:
         logger.error("Failed to initialize database: %s", e)
         logger.warning("Application will continue but database features may not work")
 
-    _state.job_manager = JobManager(
-        jobs_dir=jobs_dir, max_concurrent=get_settings().max_concurrent_jobs
-    )
-
-    # Add static file serving for job plots
-    app.add_static_files("/jobs", str(jobs_dir))
-
-    # Add static file serving for assets (icons, etc.)
-    app.add_static_files("/assets", str(ASSETS_DIR))
+    _initialize_job_manager_runtime(jobs_dir)
 
     logger.info("Web app initialized with jobs_dir=%s", jobs_dir)
 

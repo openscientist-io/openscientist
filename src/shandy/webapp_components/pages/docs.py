@@ -12,10 +12,9 @@ def docs_page():
     """Documentation page with user guide."""
     render_navigator(active_page="docs")
 
-    with ui.column().classes("w-full max-w-4xl mx-auto mt-8 gap-4"):
-        with ui.card().classes("w-full"):
-            ui.markdown(
-                """
+    with ui.column().classes("w-full max-w-4xl mx-auto mt-8 gap-4"), ui.card().classes("w-full"):
+        ui.markdown(
+            """
 # SHANDY Documentation
 
 **Scientific Hypothesis Agent for Novel Discovery**
@@ -92,5 +91,5 @@ complicated questions.
 ## Support
 
 For issues or questions, contact your system administrator.
-                """
-            )
+            """
+        )

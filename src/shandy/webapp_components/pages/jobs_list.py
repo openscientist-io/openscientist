@@ -1,6 +1,7 @@
 """Jobs list page."""
 
 import logging
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from nicegui import ui
@@ -33,339 +34,258 @@ from shandy.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
+_OWNED_COLUMNS = [
+    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+    {"name": "question", "label": "Research Question", "field": "question", "align": "left"},
+    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+    {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
+    {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
+    {"name": "created", "label": "Created", "field": "created", "align": "left"},
+    {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+]
+
+_SHARED_COLUMNS = [
+    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+    {"name": "question", "label": "Research Question", "field": "question", "align": "left"},
+    {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
+    {"name": "permission", "label": "Permission", "field": "permission", "align": "center"},
+    {"name": "status", "label": "Status", "field": "status", "align": "center"},
+    {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
+    {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
+    {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+]
+
+
+def _truncate_question(question: str, limit: int = 50) -> str:
+    """Truncate long research question text for table display."""
+    if len(question) > limit:
+        return question[:limit] + "..."
+    return question
+
+
+def _render_badges(badges_container: ui.element, jobs: list) -> None:
+    """Render aggregate job counters."""
+    status_counts = {
+        status.value: sum(1 for job in jobs if job.status == status) for status in JobStatus
+    }
+    badges_container.clear()
+    with badges_container:
+        render_stat_badges(
+            [
+                ("Total Jobs", len(jobs), ""),
+                ("Running", status_counts.get("running", 0), "blue"),
+                ("Completed", status_counts.get("completed", 0), "green"),
+            ]
+        )
+
+
+async def _fetch_owned_jobs(current_user_id: str) -> list[Job]:
+    """Fetch jobs owned by current user under RLS."""
+    async with get_session_ctx() as session:
+        user_uuid = UUID(current_user_id)
+        await set_current_user(session, user_uuid)
+        result = await session.execute(
+            select(Job).where(Job.owner_id == user_uuid).order_by(Job.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+
+async def _fetch_shared_jobs(current_user_id: str) -> list[tuple[Job, User, JobShare]]:
+    """Fetch jobs shared with current user (owner join requires admin session)."""
+    async with get_admin_session() as session:
+        result = await session.execute(
+            select(Job, User, JobShare)
+            .join(JobShare, Job.id == JobShare.job_id)
+            .join(User, Job.owner_id == User.id)
+            .where(JobShare.shared_with_user_id == UUID(current_user_id))
+            .order_by(Job.updated_at.desc())
+        )
+        return list(result.tuples().all())
+
+
+def _owned_rows(job_manager, db_jobs: list[Job]) -> list[dict]:
+    """Build owned-jobs table rows."""
+    jobs = [job_manager._db_model_to_job_info(model) for model in db_jobs]
+    return [
+        {
+            "job_id": job.job_id,
+            "question": _truncate_question(job.research_question),
+            "status": job.status.value,
+            "error": job.error or "",
+            "iterations": f"{job.iterations_completed}/{job.max_iterations}",
+            "findings": job.findings_count,
+            "created": job.created_at[:19],
+            "can_share": True,
+            "can_delete": True,
+        }
+        for job in jobs
+    ]
+
+
+def _shared_rows(
+    job_manager,
+    shared_jobs: list[tuple[Job, User, JobShare]],
+    current_user_is_admin: bool,
+) -> list[dict]:
+    """Build shared-jobs table rows."""
+    rows: list[dict] = []
+    for job, owner, share in shared_jobs:
+        job_info = job_manager._db_model_to_job_info(job)
+        rows.append(
+            {
+                "job_id": str(job.id),
+                "question": _truncate_question(job_info.research_question),
+                "owner": owner.name,
+                "permission": share.permission_level,
+                "status": job_info.status.value,
+                "error": job_info.error or "",
+                "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
+                "findings": job_info.findings_count,
+                "created": job_info.created_at[:19],
+                "can_share": False,
+                "can_delete": current_user_is_admin,
+            }
+        )
+    return rows
+
+
+async def _refresh_owned_jobs(
+    *,
+    job_manager,
+    current_user_id: str,
+    badges_container: ui.element,
+    table: ui.table,
+) -> None:
+    """Refresh owned jobs table and summary badges."""
+    try:
+        db_jobs = await _fetch_owned_jobs(current_user_id)
+        jobs = [job_manager._db_model_to_job_info(model) for model in db_jobs]
+        _render_badges(badges_container, jobs)
+        table.rows = _owned_rows(job_manager, db_jobs)
+        table.update()
+    except Exception as exc:
+        logger.error("Failed to load jobs: %s", exc, exc_info=True)
+
+
+async def _refresh_shared_jobs(
+    *,
+    job_manager,
+    current_user_id: str,
+    current_user_is_admin: bool,
+    table: ui.table,
+) -> None:
+    """Refresh shared jobs table."""
+    try:
+        shared_jobs = await _fetch_shared_jobs(current_user_id)
+        table.rows = _shared_rows(job_manager, shared_jobs, current_user_is_admin)
+        table.update()
+    except Exception as exc:
+        logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
+
+
+def _show_share_dialog(job_id: str) -> None:
+    """Open share dialog."""
+    dialog = render_share_dialog(job_id)
+    dialog.open()
+
+
+def _show_delete_dialog(
+    *,
+    job_id: str,
+    job_manager,
+    on_deleted: Callable[[], Awaitable[None] | None],
+) -> None:
+    """Open delete confirmation dialog and refresh table on success."""
+    dialog = render_delete_dialog(job_id, job_manager, on_deleted=on_deleted)
+    dialog.open()
+
 
 @ui.page("/jobs")
 @require_auth
 def jobs_page():
     """Jobs list page."""
-    # Import module to access global job_manager at runtime
     from shandy import web_app
 
     job_manager = web_app.get_job_manager()
-
-    # Check provider configuration
     is_configured, provider_name, config_errors = check_provider_config()
-
-    # Track active timers for cleanup on disconnect
     _active_timers = setup_timer_cleanup()
-
-    # Capture admin status and user ID for access control
     current_user_is_admin = is_current_user_admin()
     current_user_id = get_current_user_id()
     can_start_jobs = can_current_user_start_jobs()
 
-    async def refresh_jobs(table_to_update):
-        """Refresh jobs table from database with RLS."""
-        try:
-            async with get_session_ctx() as session:
-                await set_current_user(session, UUID(current_user_id))
-
-                stmt = (
-                    select(Job)
-                    .where(Job.owner_id == UUID(current_user_id))
-                    .order_by(Job.created_at.desc())
-                )
-                result = await session.execute(stmt)
-                db_jobs = result.scalars().all()
-
-            # Augment with real-time progress from knowledge_state.json
-            jobs = [job_manager._db_model_to_job_info(m) for m in db_jobs]
-
-            # Update summary badges
-            status_counts: dict[str, int] = {}
-            for s in JobStatus:
-                status_counts[s.value] = sum(1 for j in jobs if j.status == s)
-
-            badges_container.clear()
-            with badges_container:
-                render_stat_badges(
-                    [
-                        ("Total Jobs", len(jobs), ""),
-                        ("Running", status_counts.get("running", 0), "blue"),
-                        ("Completed", status_counts.get("completed", 0), "green"),
-                    ]
-                )
-
-            # Update table
-            table_to_update.rows = [
-                {
-                    "job_id": job.job_id,
-                    "question": (
-                        job.research_question[:50] + "..."
-                        if len(job.research_question) > 50
-                        else job.research_question
-                    ),
-                    "status": job.status.value,
-                    "error": job.error or "",  # Include error for tooltip
-                    "iterations": f"{job.iterations_completed}/{job.max_iterations}",
-                    "findings": job.findings_count,
-                    "created": job.created_at[:19],  # Remove milliseconds
-                    "can_share": True,  # Users can always share their own jobs
-                    "can_delete": True,  # Users can always delete their own jobs
-                }
-                for job in jobs
-            ]
-            table_to_update.update()
-        except Exception as e:
-            logger.error("Failed to load jobs: %s", e)
-
-    async def refresh_shared_jobs(table_to_update):
-        """Refresh shared jobs table from database."""
-        try:
-            # Use admin session to bypass RLS on the users table join
-            # (RLS on users only allows seeing own record, but we need
-            # to see the job owner's name). Authorization is handled by
-            # the WHERE clause filtering on current_user_id.
-            async with get_admin_session() as session:
-                # Get jobs shared with current user
-                stmt = (
-                    select(Job, User, JobShare)
-                    .join(JobShare, Job.id == JobShare.job_id)
-                    .join(User, Job.owner_id == User.id)
-                    .where(JobShare.shared_with_user_id == UUID(current_user_id))
-                    .order_by(Job.updated_at.desc())
-                )
-                result = await session.execute(stmt)
-                shared_jobs = result.all()
-
-                # Augment with real-time progress from knowledge_state.json
-                rows = []
-                for job, owner, share in shared_jobs:
-                    job_info = job_manager._db_model_to_job_info(job)
-                    rows.append(
-                        {
-                            "job_id": str(job.id),
-                            "question": (
-                                job_info.research_question[:50] + "..."
-                                if len(job_info.research_question) > 50
-                                else job_info.research_question
-                            ),
-                            "owner": owner.name,
-                            "permission": share.permission_level,
-                            "status": job_info.status.value,
-                            "error": job_info.error or "",
-                            "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
-                            "findings": job_info.findings_count,
-                            "created": job_info.created_at[:19],
-                            # Users cannot share jobs they don't own
-                            "can_share": False,
-                            # Only admins can delete shared jobs
-                            "can_delete": current_user_is_admin,
-                        }
-                    )
-
-                table_to_update.rows = rows
-                table_to_update.update()
-        except Exception as e:
-            logger.error("Failed to load shared jobs: %s", e)
-
-    def show_delete_dialog(job_id: str, table_to_refresh, is_shared: bool = False):
-        """Show confirmation dialog for deleting a job."""
-
-        async def on_deleted():
-            if is_shared:
-                await refresh_shared_jobs(table_to_refresh)
-            else:
-                await refresh_jobs(table_to_refresh)
-
-        dialog = render_delete_dialog(job_id, job_manager, on_deleted=on_deleted)
-        dialog.open()
-
-    def show_share_dialog(job_id: str):
-        """Show dialog for sharing a job with other users."""
-        dialog = render_share_dialog(job_id)
-        dialog.open()
-
-    # Page header with navigation
     render_navigator(active_page="jobs", show_new_job=is_configured)
-
-    # Show configuration error banner if provider is not configured
     if not is_configured:
         render_config_error_banner(provider_name, config_errors)
-
     if not can_start_jobs:
         render_pending_approval_notice()
 
-    # Summary badges (populated async by refresh_jobs)
     badges_container = ui.row().classes("w-full")
 
-    # Tabs for My Jobs vs Shared with me
     with ui.tabs().classes("w-full") as tabs:
         my_jobs_tab = ui.tab("My Jobs", icon="work")
         shared_tab = ui.tab("Shared with me", icon="people")
 
     with ui.tab_panels(tabs, value=my_jobs_tab).classes("w-full"):
-        # ===== MY JOBS TAB =====
         with ui.tab_panel(my_jobs_tab):
-            # My jobs table
             my_jobs_table = ui.table(
-                columns=[
-                    {
-                        "name": "job_id",
-                        "label": "Job ID",
-                        "field": "job_id",
-                        "align": "left",
-                    },
-                    {
-                        "name": "question",
-                        "label": "Research Question",
-                        "field": "question",
-                        "align": "left",
-                    },
-                    {
-                        "name": "status",
-                        "label": "Status",
-                        "field": "status",
-                        "align": "center",
-                    },
-                    {
-                        "name": "iterations",
-                        "label": "Iterations",
-                        "field": "iterations",
-                        "align": "center",
-                    },
-                    {
-                        "name": "findings",
-                        "label": "Findings",
-                        "field": "findings",
-                        "align": "center",
-                    },
-                    {
-                        "name": "created",
-                        "label": "Created",
-                        "field": "created",
-                        "align": "left",
-                    },
-                    {
-                        "name": "actions",
-                        "label": "Actions",
-                        "field": "actions",
-                        "align": "center",
-                    },
-                ],
+                columns=_OWNED_COLUMNS,
                 rows=[],
                 row_key="job_id",
                 pagination=10,
             ).classes("w-full")
-
-            # Add job ID column slot with clickable badges
             my_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
-
-            # Add status column slot with enhanced styling for failed jobs
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
-
-            # Add action buttons with share and delete icons
             my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
-
-            # Handle job ID badge clicks and action buttons
             my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
-            my_jobs_table.on("share-job", lambda e: show_share_dialog(e.args))
+            my_jobs_table.on("share-job", lambda e: _show_share_dialog(e.args))
+
+            async def refresh_my_jobs_table() -> None:
+                await _refresh_owned_jobs(
+                    job_manager=job_manager,
+                    current_user_id=current_user_id,
+                    badges_container=badges_container,
+                    table=my_jobs_table,
+                )
+
             my_jobs_table.on(
                 "delete-job",
-                lambda e: show_delete_dialog(e.args, my_jobs_table, is_shared=False),
+                lambda e: _show_delete_dialog(
+                    job_id=e.args,
+                    job_manager=job_manager,
+                    on_deleted=refresh_my_jobs_table,
+                ),
             )
+            _active_timers.append(ui.timer(0.1, refresh_my_jobs_table, once=True))
+            _active_timers.append(ui.timer(5.0, refresh_my_jobs_table))
 
-            # Async wrapper for timer
-            async def refresh_my_jobs_table():
-                await refresh_jobs(my_jobs_table)
-
-            # Initial load
-            my_jobs_init_timer = ui.timer(0.1, refresh_my_jobs_table, once=True)
-            _active_timers.append(my_jobs_init_timer)
-
-            # Auto-refresh via websocket (no page reload)
-            my_jobs_timer = ui.timer(5.0, refresh_my_jobs_table)
-            _active_timers.append(my_jobs_timer)
-
-        # ===== SHARED WITH ME TAB =====
         with ui.tab_panel(shared_tab):
-            # Shared jobs table (includes owner and permission columns)
             shared_jobs_table = ui.table(
-                columns=[
-                    {
-                        "name": "job_id",
-                        "label": "Job ID",
-                        "field": "job_id",
-                        "align": "left",
-                    },
-                    {
-                        "name": "question",
-                        "label": "Research Question",
-                        "field": "question",
-                        "align": "left",
-                    },
-                    {
-                        "name": "owner",
-                        "label": "Owner",
-                        "field": "owner",
-                        "align": "left",
-                    },
-                    {
-                        "name": "permission",
-                        "label": "Permission",
-                        "field": "permission",
-                        "align": "center",
-                    },
-                    {
-                        "name": "status",
-                        "label": "Status",
-                        "field": "status",
-                        "align": "center",
-                    },
-                    {
-                        "name": "iterations",
-                        "label": "Iterations",
-                        "field": "iterations",
-                        "align": "center",
-                    },
-                    {
-                        "name": "findings",
-                        "label": "Findings",
-                        "field": "findings",
-                        "align": "center",
-                    },
-                    {
-                        "name": "actions",
-                        "label": "Actions",
-                        "field": "actions",
-                        "align": "center",
-                    },
-                ],
+                columns=_SHARED_COLUMNS,
                 rows=[],
                 row_key="job_id",
                 pagination=10,
             ).classes("w-full")
-
-            # Add job ID column slot with clickable badges
             shared_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
-
-            # Add status column slot
             shared_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
-
-            # Add permission badge slot
-            shared_jobs_table.add_slot(
-                "body-cell-permission",
-                render_permission_badge_slot(),
-            )
-
-            # Add action buttons with share and delete icons
+            shared_jobs_table.add_slot("body-cell-permission", render_permission_badge_slot())
             shared_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
-
-            # Handle job ID badge clicks and action buttons
             shared_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
+
+            async def refresh_shared_jobs_table() -> None:
+                await _refresh_shared_jobs(
+                    job_manager=job_manager,
+                    current_user_id=current_user_id,
+                    current_user_is_admin=current_user_is_admin,
+                    table=shared_jobs_table,
+                )
+
             shared_jobs_table.on(
                 "delete-job",
-                lambda e: show_delete_dialog(e.args, shared_jobs_table, is_shared=True),
+                lambda e: _show_delete_dialog(
+                    job_id=e.args,
+                    job_manager=job_manager,
+                    on_deleted=refresh_shared_jobs_table,
+                ),
             )
-
-            # Create async wrapper for timer (lambda + async doesn't work correctly)
-            async def refresh_shared_table():
-                await refresh_shared_jobs(shared_jobs_table)
-
-            # Initial load
-            shared_init_timer = ui.timer(0.1, refresh_shared_table, once=True)
-            _active_timers.append(shared_init_timer)
-
-            # Auto-refresh via websocket (no page reload)
-            shared_refresh_timer = ui.timer(5.0, refresh_shared_table)
-            _active_timers.append(shared_refresh_timer)
+            _active_timers.append(ui.timer(0.1, refresh_shared_jobs_table, once=True))
+            _active_timers.append(ui.timer(5.0, refresh_shared_jobs_table))

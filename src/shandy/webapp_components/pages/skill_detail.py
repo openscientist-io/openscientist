@@ -51,7 +51,7 @@ async def skill_detail_page(category: str, slug: str):
                     .where(
                         Skill.category == category,
                         Skill.slug == slug,
-                        Skill.is_enabled == True,  # noqa: E712
+                        Skill.is_enabled.is_(True),
                     )
                 )
                 result = await session.execute(stmt)
@@ -87,56 +87,56 @@ async def skill_detail_page(category: str, slug: str):
                         ui.label(skill.name).classes("text-gray-600")
 
                     # Metadata card
-                    with ui.card().classes("w-full mb-4"):
-                        with ui.row().classes("items-start justify-between flex-wrap"):
-                            with ui.column().classes("flex-1 min-w-0"):
-                                # Skill name with category badge
-                                with ui.row().classes("items-center gap-3 mb-2"):
-                                    ui.label(skill.name).classes("text-h5 font-bold")
-                                    ui.badge(skill.category, color=cat_color)
+                    with (
+                        ui.card().classes("w-full mb-4"),
+                        ui.row().classes("items-start justify-between flex-wrap"),
+                    ):
+                        with ui.column().classes("flex-1 min-w-0"):
+                            # Skill name with category badge
+                            with ui.row().classes("items-center gap-3 mb-2"):
+                                ui.label(skill.name).classes("text-h5 font-bold")
+                                ui.badge(skill.category, color=cat_color)
 
-                                # Description
-                                if skill.description:
-                                    ui.label(skill.description).classes("text-gray-600 mb-3")
+                            # Description
+                            if skill.description:
+                                ui.label(skill.description).classes("text-gray-600 mb-3")
 
-                                # Tags
-                                if skill.tags:
-                                    with ui.row().classes("gap-2 flex-wrap"):
-                                        for tag in skill.tags:
-                                            ui.badge(tag, color="gray").props("outline dense")
+                            # Tags
+                            if skill.tags:
+                                with ui.row().classes("gap-2 flex-wrap"):
+                                    for tag in skill.tags:
+                                        ui.badge(tag, color="gray").props("outline dense")
 
-                            # Metadata sidebar
-                            with ui.column().classes("gap-2 ml-4"):
-                                # Version
+                        # Metadata sidebar
+                        with ui.column().classes("gap-2 ml-4"):
+                            # Version
+                            with ui.row().classes("items-center gap-2"):
+                                ui.icon("tag", size="sm").classes("text-gray-400")
+                                ui.label(f"Version {skill.version}").classes(
+                                    "text-sm text-gray-600"
+                                )
+
+                            # Source info
+                            if source:
                                 with ui.row().classes("items-center gap-2"):
-                                    ui.icon("tag", size="sm").classes("text-gray-400")
-                                    ui.label(f"Version {skill.version}").classes(
+                                    icon = "public" if source.source_type == "github" else "folder"
+                                    ui.icon(icon, size="sm").classes("text-gray-400")
+                                    with ui.column():
+                                        ui.label(source.name).classes("text-sm font-medium")
+                                        ui.label(source.source_type).classes(
+                                            "text-xs text-gray-500"
+                                        )
+
+                                # Last synced
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.icon("sync", size="sm").classes("text-gray-400")
+                                    ui.label(format_relative_time(source.last_synced_at)).classes(
                                         "text-sm text-gray-600"
                                     )
-
-                                # Source info
-                                if source:
-                                    with ui.row().classes("items-center gap-2"):
-                                        icon = (
-                                            "public" if source.source_type == "github" else "folder"
-                                        )
-                                        ui.icon(icon, size="sm").classes("text-gray-400")
-                                        with ui.column():
-                                            ui.label(source.name).classes("text-sm font-medium")
-                                            ui.label(source.source_type).classes(
-                                                "text-xs text-gray-500"
-                                            )
-
-                                    # Last synced
-                                    with ui.row().classes("items-center gap-2"):
-                                        ui.icon("sync", size="sm").classes("text-gray-400")
-                                        ui.label(
-                                            format_relative_time(source.last_synced_at)
-                                        ).classes("text-sm text-gray-600")
-                                else:
-                                    with ui.row().classes("items-center gap-2"):
-                                        ui.icon("inventory_2", size="sm").classes("text-gray-400")
-                                        ui.label("Built-in").classes("text-sm text-gray-600")
+                            else:
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.icon("inventory_2", size="sm").classes("text-gray-400")
+                                    ui.label("Built-in").classes("text-sm text-gray-600")
 
                     # Skill content
                     with ui.card().classes("w-full"):

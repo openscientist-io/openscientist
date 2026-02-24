@@ -2,6 +2,7 @@
 
 import html
 import re
+from contextlib import suppress
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -195,13 +196,9 @@ class TestRenderErrorCard:
 
         job_dir = Path("/fake/job/dir")
 
-        # Should not raise any exceptions
-        try:
+        # Some exceptions are acceptable due to mock limitations.
+        with suppress(Exception):
             render_error_card(error_info, job_info, job_dir)
-        except Exception:
-            # Some exceptions are OK due to mock limitations
-            # Just verify it attempts to render
-            pass
 
         # Verify UI elements were called
         assert mock_ui.card.called or mock_ui.row.called

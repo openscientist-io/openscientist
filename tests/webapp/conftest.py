@@ -1,7 +1,7 @@
 """Pytest fixtures for webapp tests."""
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -42,7 +42,7 @@ async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session
     """Create a valid session for the webapp test user."""
     session = Session(
         user_id=webapp_user.id,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+        expires_at=datetime.now(UTC) + timedelta(hours=24),
         ip_address="127.0.0.1",
         user_agent="pytest-test-agent",
     )

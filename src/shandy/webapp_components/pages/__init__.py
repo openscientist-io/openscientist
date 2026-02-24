@@ -15,16 +15,16 @@ from shandy.webapp_components.pages.skill_detail import skill_detail_page
 from shandy.webapp_components.pages.skills_list import skills_page
 
 __all__ = [
-    "login_page",
-    "mock_login_form",
-    "index_page",
-    "new_job_page",
-    "jobs_page",
-    "job_detail_page",
-    "billing_page",
-    "docs_page",
     "admin_page",
     "api_keys_page",
-    "skills_page",
+    "billing_page",
+    "docs_page",
+    "index_page",
+    "job_detail_page",
+    "jobs_page",
+    "login_page",
+    "mock_login_form",
+    "new_job_page",
     "skill_detail_page",
+    "skills_page",
 ]

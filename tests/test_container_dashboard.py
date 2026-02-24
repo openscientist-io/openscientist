@@ -94,7 +94,7 @@ class TestParseContainerStats:
             },
             "memory_stats": {"usage": 0, "stats": {}, "limit": 0},
         }
-        cpu, mem, limit = _parse_container_stats(stats)
+        cpu, _mem, _limit = _parse_container_stats(stats)
         assert cpu == 0.0
 
     def test_empty_stats(self):

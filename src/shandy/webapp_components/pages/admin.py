@@ -28,7 +28,7 @@ from shandy.webapp_components.ui_components import (
 from shandy.webapp_components.utils import guard_client, setup_timer_cleanup
 
 if TYPE_CHECKING:
-    from shandy.webapp_components.utils.container_dashboard import ContainerInfo
+    from shandy.webapp_components.utils.container_dashboard import ContainerInfo, DashboardData
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,6 @@ async def admin_page():
         with ui.tabs().classes("w-full") as tabs:
             orphaned_tab = ui.tab("Orphaned Jobs", icon="work_off")
             users_tab = ui.tab("Users", icon="people")
-            legacy_user_tab = ui.tab("Legacy User", icon="person_add")
             containers_tab = ui.tab("Containers", icon="dns")
 
         with ui.tab_panels(tabs, value=orphaned_tab).classes("w-full"):
@@ -112,10 +111,6 @@ async def admin_page():
             # Users Panel
             with ui.tab_panel(users_tab):
                 await render_users_panel()
-
-            # Legacy User Panel
-            with ui.tab_panel(legacy_user_tab):
-                await render_legacy_user_panel()
 
             # Containers Panel
             with ui.tab_panel(containers_tab):
@@ -199,19 +194,18 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
             },
         ]
 
-        rows = []
-        for job in orphaned_jobs:
-            rows.append(
-                {
-                    "id": str(job.id)[:8] + "...",
-                    "full_id": str(job.id),
-                    "title": job.title[:50] + ("..." if len(job.title) > 50 else ""),
-                    "status": job.status,
-                    "created_at": (
-                        job.created_at.strftime("%Y-%m-%d %H:%M") if job.created_at else "N/A"
-                    ),
-                }
-            )
+        rows = [
+            {
+                "id": str(job.id)[:8] + "...",
+                "full_id": str(job.id),
+                "title": job.title[:50] + ("..." if len(job.title) > 50 else ""),
+                "status": job.status,
+                "created_at": job.created_at.strftime("%Y-%m-%d %H:%M")
+                if job.created_at
+                else "N/A",
+            }
+            for job in orphaned_jobs
+        ]
 
         with container:
             table = ui.table(columns=columns, rows=rows, row_key="full_id").classes("w-full")
@@ -224,7 +218,6 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = ""):
                     label="Assign",
                     event_name="assign",
                     icon="person_add",
-                    row_id_field="full_id",
                 ),
             )
 
@@ -302,6 +295,138 @@ async def show_assign_dialog(job_id: str):
     dialog.open()
 
 
+def _get_admin_current_user_id() -> str | None:
+    try:
+        return get_current_user_id()
+    except (RuntimeError, AssertionError, AttributeError):
+        logger.debug(
+            "Current user ID unavailable while loading users table",
+            exc_info=True,
+        )
+        return None
+
+
+def _admin_users_columns() -> list[dict[str, str]]:
+    return [
+        {"name": "name", "label": "Name", "field": "name", "align": "left"},
+        {"name": "email", "label": "Email", "field": "email", "align": "left"},
+        {"name": "created_at", "label": "Joined", "field": "created_at", "align": "left"},
+        {"name": "job_count", "label": "Jobs", "field": "job_count", "align": "center"},
+        {
+            "name": "approval_status",
+            "label": "Approval",
+            "field": "approval_status",
+            "align": "center",
+        },
+        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+    ]
+
+
+async def _build_admin_user_rows(session, users: list[User]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for user in users:
+        stmt = select(Job).where(Job.owner_id == user.id)
+        result = await session.execute(stmt)
+        job_count = len(result.scalars().all())
+        rows.append(
+            {
+                "id": str(user.id),
+                "name": user.name or "N/A",
+                "email": user.email,
+                "created_at": user.created_at.strftime("%Y-%m-%d") if user.created_at else "N/A",
+                "job_count": job_count,
+                "approval_status": "Approved" if user.is_approved else "Pending",
+                "is_approved": bool(user.is_approved),
+            }
+        )
+    return rows
+
+
+async def _handle_approval_update(e, is_approved: bool, reload_users) -> None:
+    user_id = e.args.get("id")
+    if not user_id:
+        ui.notify("Invalid user selection", color="negative")
+        return
+
+    try:
+        success, message = await set_user_approval_status(
+            UUID(user_id),
+            is_approved=is_approved,
+        )
+        ui.notify(message, color="positive" if success else "info")
+        if success:
+            await reload_users()
+    except ValueError:
+        ui.notify("Invalid user selection", color="negative")
+    except Exception as ex:
+        action = "approve" if is_approved else "unapprove"
+        logger.error(
+            "Error trying to %s user %s: %s",
+            action,
+            user_id,
+            ex,
+            exc_info=True,
+        )
+        error_message = (
+            "Failed to approve user. Check server logs."
+            if is_approved
+            else "Failed to remove user approval. Check server logs."
+        )
+        ui.notify(error_message, color="negative")
+
+
+def _render_admin_users_table(
+    users_container: ui.column, rows: list[dict[str, object]], reload_users
+) -> None:
+    with users_container:
+        users_table = ui.table(columns=_admin_users_columns(), rows=rows, row_key="id").classes(
+            "w-full"
+        )
+        users_table.add_slot(
+            "body-cell-approval_status",
+            """
+            <q-td :props="props">
+                <q-badge
+                    :color="props.row.is_approved ? 'positive' : 'warning'"
+                    :label="props.row.approval_status"
+                />
+            </q-td>
+            """,
+        )
+        users_table.add_slot(
+            "body-cell-actions",
+            """
+            <q-td :props="props">
+                <q-btn
+                    v-if="!props.row.is_approved"
+                    size="sm"
+                    color="positive"
+                    icon="check"
+                    label="Approve"
+                    @click="$parent.$emit('approve-user', props.row)"
+                />
+                <q-btn
+                    v-else
+                    size="sm"
+                    color="warning"
+                    icon="remove_circle"
+                    label="Unapprove"
+                    @click="$parent.$emit('unapprove-user', props.row)"
+                />
+            </q-td>
+            """,
+        )
+
+        async def approve_user(e):
+            await _handle_approval_update(e, is_approved=True, reload_users=reload_users)
+
+        async def unapprove_user(e):
+            await _handle_approval_update(e, is_approved=False, reload_users=reload_users)
+
+        users_table.on("approve-user", approve_user)
+        users_table.on("unapprove-user", unapprove_user)
+
+
 async def render_users_panel():
     """Render the users management panel."""
 
@@ -316,14 +441,7 @@ async def render_users_panel():
             users_container.clear()
 
             try:
-                current_user_id: str | None = None
-                try:
-                    current_user_id = get_current_user_id()
-                except (RuntimeError, AssertionError, AttributeError):
-                    logger.debug(
-                        "Current user ID unavailable while loading users table",
-                        exc_info=True,
-                    )
+                current_user_id = _get_admin_current_user_id()
 
                 async with get_admin_session() as session:
                     stmt = select(User).order_by(User.created_at.desc())
@@ -339,154 +457,8 @@ async def render_users_panel():
                             render_empty_state(empty_message)
                         return
 
-                    # Create table
-                    columns = [
-                        {
-                            "name": "name",
-                            "label": "Name",
-                            "field": "name",
-                            "align": "left",
-                        },
-                        {
-                            "name": "email",
-                            "label": "Email",
-                            "field": "email",
-                            "align": "left",
-                        },
-                        {
-                            "name": "created_at",
-                            "label": "Joined",
-                            "field": "created_at",
-                            "align": "left",
-                        },
-                        {
-                            "name": "job_count",
-                            "label": "Jobs",
-                            "field": "job_count",
-                            "align": "center",
-                        },
-                        {
-                            "name": "approval_status",
-                            "label": "Approval",
-                            "field": "approval_status",
-                            "align": "center",
-                        },
-                        {
-                            "name": "actions",
-                            "label": "Actions",
-                            "field": "actions",
-                            "align": "center",
-                        },
-                    ]
-
-                    rows = []
-                    for user in users:
-                        # Count user's jobs
-                        stmt = select(Job).where(Job.owner_id == user.id)
-                        result = await session.execute(stmt)
-                        job_count = len(result.scalars().all())
-
-                        rows.append(
-                            {
-                                "id": str(user.id),
-                                "name": user.name or "N/A",
-                                "email": user.email,
-                                "created_at": (
-                                    user.created_at.strftime("%Y-%m-%d")
-                                    if user.created_at
-                                    else "N/A"
-                                ),
-                                "job_count": job_count,
-                                "approval_status": "Approved" if user.is_approved else "Pending",
-                                "is_approved": bool(user.is_approved),
-                            }
-                        )
-
-                    with users_container:
-                        users_table = ui.table(columns=columns, rows=rows, row_key="id").classes(
-                            "w-full"
-                        )
-                        users_table.add_slot(
-                            "body-cell-approval_status",
-                            """
-                            <q-td :props="props">
-                                <q-badge
-                                    :color="props.row.is_approved ? 'positive' : 'warning'"
-                                    :label="props.row.approval_status"
-                                />
-                            </q-td>
-                            """,
-                        )
-                        users_table.add_slot(
-                            "body-cell-actions",
-                            """
-                            <q-td :props="props">
-                                <q-btn
-                                    v-if="!props.row.is_approved"
-                                    size="sm"
-                                    color="positive"
-                                    icon="check"
-                                    label="Approve"
-                                    @click="$parent.$emit('approve-user', props.row)"
-                                />
-                                <q-btn
-                                    v-else
-                                    size="sm"
-                                    color="warning"
-                                    icon="remove_circle"
-                                    label="Unapprove"
-                                    @click="$parent.$emit('unapprove-user', props.row)"
-                                />
-                            </q-td>
-                            """,
-                        )
-
-                        async def handle_approval_update(e, is_approved: bool):
-                            """Handle approval state updates for user accounts."""
-                            user_id = e.args.get("id")
-                            if not user_id:
-                                ui.notify("Invalid user selection", color="negative")
-                                return
-
-                            try:
-                                success, message = await set_user_approval_status(
-                                    UUID(user_id),
-                                    is_approved=is_approved,
-                                )
-                                ui.notify(message, color="positive" if success else "info")
-                                if success:
-                                    await load_users()
-                            except ValueError:
-                                ui.notify("Invalid user selection", color="negative")
-                            except Exception as ex:
-                                action = "approve" if is_approved else "unapprove"
-                                logger.error(
-                                    "Error trying to %s user %s: %s",
-                                    action,
-                                    user_id,
-                                    ex,
-                                    exc_info=True,
-                                )
-                                error_message = (
-                                    "Failed to approve user. Check server logs."
-                                    if is_approved
-                                    else "Failed to remove user approval. Check server logs."
-                                )
-                                ui.notify(
-                                    error_message,
-                                    color="negative",
-                                )
-
-                        async def approve_user(e):
-                            """Approve a pending user account."""
-                            await handle_approval_update(e, is_approved=True)
-
-                        async def unapprove_user(e):
-                            """Remove approval from an approved user account."""
-                            await handle_approval_update(e, is_approved=False)
-
-                        users_table.on("approve-user", approve_user)
-                        users_table.on("unapprove-user", unapprove_user)
+                    rows = await _build_admin_user_rows(session, users)
+                _render_admin_users_table(users_container, rows, load_users)
 
             except Exception as e:
                 logger.error("Error loading users: %s", e, exc_info=True)
@@ -498,139 +470,6 @@ async def render_users_panel():
         await load_users()
 
 
-async def render_legacy_user_panel():
-    """Render the legacy user creation panel."""
-
-    with ui.column().classes("w-full gap-4"):
-        ui.markdown("## Create Legacy User")
-        ui.markdown(
-            "Create a placeholder 'legacy' user to own orphaned jobs that cannot be "
-            "attributed to a specific individual."
-        )
-
-        with ui.card().classes("w-full max-w-md mt-4"):
-            ui.label("Legacy User Details").classes("text-lg font-bold mb-4")
-
-            name_input = ui.input(
-                label="Name",
-                placeholder="Legacy User",
-                value="Legacy User",
-            ).classes("w-full")
-
-            email_input = ui.input(
-                label="Email",
-                placeholder="legacy@example.com",
-                value="legacy@example.com",
-            ).classes("w-full")
-
-            async def create_legacy_user():
-                """Create the legacy user."""
-                if not name_input.value or not email_input.value:
-                    ui.notify("Please fill in all fields", color="negative")
-                    return
-
-                try:
-                    async with get_admin_session() as session:
-                        # Check if user already exists
-                        stmt = select(User).where(User.email == email_input.value)
-                        result = await session.execute(stmt)
-                        existing_user = result.scalar_one_or_none()
-
-                        if existing_user:
-                            ui.notify(
-                                "User with this email already exists",
-                                color="warning",
-                            )
-                            return
-
-                        # Create legacy user
-                        user = User(
-                            name=name_input.value,
-                            email=email_input.value,
-                            is_approved=True,
-                        )
-                        session.add(user)
-                        await session.commit()
-
-                    ui.notify("Legacy user created successfully", color="positive")
-
-                except Exception as e:
-                    logger.error("Error creating legacy user: %s", e, exc_info=True)
-                    ui.notify("Failed to create legacy user. Check server logs.", color="negative")
-
-            ui.button(
-                "Create Legacy User",
-                icon="person_add",
-                on_click=create_legacy_user,
-            ).props("color=primary").classes("mt-4")
-
-        # Job claim by ID section
-        ui.markdown("## Claim Job by ID")
-        ui.markdown(
-            "Allow users to claim orphaned jobs by entering the job ID. "
-            "The job will be assigned to the currently logged-in user."
-        )
-
-        with ui.card().classes("w-full max-w-md mt-4"):
-            ui.label("Claim Job").classes("text-lg font-bold mb-4")
-
-            job_id_input = ui.input(
-                label="Job ID",
-                placeholder="job_12345678...",
-            ).classes("w-full")
-
-            async def claim_job():
-                """Claim a job by ID."""
-                job_id = job_id_input.value
-                if not job_id:
-                    ui.notify("Please enter a job ID", color="negative")
-                    return
-
-                # Remove "job_" prefix if present
-                if job_id.startswith("job_"):
-                    job_id = job_id[4:]
-
-                try:
-                    # Get current user ID
-                    current_user_id = app.storage.user.get("user_id")
-                    if not current_user_id:
-                        ui.notify("You must be logged in to claim a job", color="negative")
-                        return
-
-                    async with get_admin_session() as session:
-                        # Find the job
-                        stmt = select(Job).where(Job.id == UUID(job_id))
-                        result = await session.execute(stmt)
-                        job = result.scalar_one_or_none()
-
-                        if not job:
-                            ui.notify("Job not found", color="negative")
-                            return
-
-                        if job.owner_id is not None:
-                            ui.notify("Job already has an owner", color="warning")
-                            return
-
-                        # Claim the job
-                        job.owner_id = UUID(current_user_id)
-                        await session.commit()
-
-                    ui.notify("Job claimed successfully!", color="positive")
-                    job_id_input.value = ""
-
-                except ValueError:
-                    ui.notify("Invalid job ID format", color="negative")
-                except Exception as e:
-                    logger.error("Error claiming job: %s", e, exc_info=True)
-                    ui.notify("Failed to claim job. Check server logs.", color="negative")
-
-            ui.button(
-                "Claim Job",
-                icon="add_circle",
-                on_click=claim_job,
-            ).props("color=primary").classes("mt-4")
-
-
 async def render_containers_panel():
     """Render the real-time container dashboard panel."""
     from shandy.webapp_components.utils.container_dashboard import collect_dashboard_data
@@ -640,102 +479,7 @@ async def render_containers_panel():
     @ui.refreshable
     async def render_dashboard():
         data = await collect_dashboard_data()
-
-        # Container isolation disabled
-        if not data.container_isolation_enabled:
-            render_alert_banner(
-                title="Container Isolation Disabled",
-                message=(
-                    "Container isolation is not enabled. Set "
-                    "SHANDY_USE_CONTAINER_ISOLATION=true to use per-job containers."
-                ),
-                severity="info",
-            )
-            return
-
-        # Docker unavailable
-        if not data.docker_available:
-            render_alert_banner(
-                title="Docker Unavailable",
-                message=data.error_message or "Docker daemon is not reachable.",
-                severity="warning",
-            )
-            return
-
-        # General error
-        if data.error_message:
-            render_alert_banner(
-                title="Dashboard Error",
-                message=data.error_message,
-                severity="error",
-            )
-            return
-
-        # Summary stats row
-        totals = data.totals
-        render_stat_badges(
-            [
-                ("Jobs", totals.running_jobs, "blue"),
-                ("Agents", totals.agent_containers, "green"),
-                ("Executors", totals.executor_containers, "orange"),
-                ("Memory", f"{totals.total_memory_mb:.0f} MB", ""),
-                ("CPU", f"{totals.total_cpu_percent:.1f}%", ""),
-            ],
-            icon_map={
-                "Jobs": "work",
-                "Agents": "smart_toy",
-                "Executors": "code",
-                "Memory": "memory",
-                "CPU": "speed",
-            },
-        )
-
-        # No containers running
-        if not data.job_groups and not data.orphan_containers:
-            render_empty_state("No SHANDY containers are currently running.")
-            return
-
-        # Job container groups
-        for group in data.job_groups:
-            with ui.card().classes("w-full mb-3"):
-                # Header row
-                with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-                    render_job_id_badge(group.job_id)
-                    ui.label(group.title[:60] + ("..." if len(group.title) > 60 else "")).classes(
-                        "font-medium text-sm flex-grow"
-                    )
-                    ui.badge(group.status, color=_job_status_color(group.status)).classes("px-2")
-                    ui.label(f"Iteration {group.current_iteration}/{group.max_iterations}").classes(
-                        "text-xs text-gray-500"
-                    )
-                    ui.label(group.owner_email).classes("text-xs text-gray-400")
-
-                ui.separator()
-
-                # Agent container
-                if group.agent_container:
-                    _render_container_row(group.agent_container, icon="smart_toy")
-
-                # Executor containers
-                for ec in group.executor_containers:
-                    _render_container_row(ec, icon="code")
-
-                if not group.agent_container and not group.executor_containers:
-                    ui.label("No containers").classes("text-gray-400 text-sm px-2 py-1")
-
-        # Orphan containers — persist expansion state across timer refreshes
-        if data.orphan_containers:
-            key = "admin_orphan_containers_expanded"
-            expanded = app.storage.client.get(key, False)
-            exp = ui.expansion(
-                f"Orphan Containers ({len(data.orphan_containers)})",
-                icon="warning",
-                value=expanded,
-            ).classes("w-full mt-4 border border-orange-200 rounded")
-            exp.on_value_change(lambda e: app.storage.client.update({key: e.value}))
-            with exp:
-                for oc in data.orphan_containers:
-                    _render_container_row(oc, icon="help_outline")
+        _render_dashboard_content(data)
 
     await render_dashboard()
 
@@ -757,6 +501,106 @@ def _job_status_color(status: str) -> str:
         "failed": "red",
         "cancelled": "grey",
     }.get(status, "grey")
+
+
+def _render_dashboard_unavailable_state(data: DashboardData) -> bool:
+    if not data.container_isolation_enabled:
+        render_alert_banner(
+            title="Container Isolation Disabled",
+            message=(
+                "Container isolation is not enabled. Set "
+                "SHANDY_USE_CONTAINER_ISOLATION=true to use per-job containers."
+            ),
+            severity="info",
+        )
+        return True
+    if not data.docker_available:
+        render_alert_banner(
+            title="Docker Unavailable",
+            message=data.error_message or "Docker daemon is not reachable.",
+            severity="warning",
+        )
+        return True
+    if data.error_message:
+        render_alert_banner(
+            title="Dashboard Error",
+            message=data.error_message,
+            severity="error",
+        )
+        return True
+    return False
+
+
+def _render_dashboard_totals(data: DashboardData) -> None:
+    totals = data.totals
+    render_stat_badges(
+        [
+            ("Jobs", totals.running_jobs, "blue"),
+            ("Agents", totals.agent_containers, "green"),
+            ("Executors", totals.executor_containers, "orange"),
+            ("Memory", f"{totals.total_memory_mb:.0f} MB", ""),
+            ("CPU", f"{totals.total_cpu_percent:.1f}%", ""),
+        ],
+        icon_map={
+            "Jobs": "work",
+            "Agents": "smart_toy",
+            "Executors": "code",
+            "Memory": "memory",
+            "CPU": "speed",
+        },
+    )
+
+
+def _render_dashboard_job_groups(data: DashboardData) -> None:
+    for group in data.job_groups:
+        with ui.card().classes("w-full mb-3"):
+            with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+                render_job_id_badge(group.job_id)
+                ui.label(group.title[:60] + ("..." if len(group.title) > 60 else "")).classes(
+                    "font-medium text-sm flex-grow"
+                )
+                ui.badge(group.status, color=_job_status_color(group.status)).classes("px-2")
+                ui.label(f"Iteration {group.current_iteration}/{group.max_iterations}").classes(
+                    "text-xs text-gray-500"
+                )
+                ui.label(group.owner_email).classes("text-xs text-gray-400")
+
+            ui.separator()
+
+            if group.agent_container:
+                _render_container_row(group.agent_container, icon="smart_toy")
+            for ec in group.executor_containers:
+                _render_container_row(ec, icon="code")
+
+            if not group.agent_container and not group.executor_containers:
+                ui.label("No containers").classes("text-gray-400 text-sm px-2 py-1")
+
+
+def _render_dashboard_orphan_containers(data: DashboardData) -> None:
+    if not data.orphan_containers:
+        return
+    key = "admin_orphan_containers_expanded"
+    expanded = app.storage.client.get(key, False)
+    exp = ui.expansion(
+        f"Orphan Containers ({len(data.orphan_containers)})",
+        icon="warning",
+        value=expanded,
+    ).classes("w-full mt-4 border border-orange-200 rounded")
+    exp.on_value_change(lambda e: app.storage.client.update({key: e.value}))
+    with exp:
+        for oc in data.orphan_containers:
+            _render_container_row(oc, icon="help_outline")
+
+
+def _render_dashboard_content(data: DashboardData) -> None:
+    if _render_dashboard_unavailable_state(data):
+        return
+    _render_dashboard_totals(data)
+    if not data.job_groups and not data.orphan_containers:
+        render_empty_state("No SHANDY containers are currently running.")
+        return
+    _render_dashboard_job_groups(data)
+    _render_dashboard_orphan_containers(data)
 
 
 def _render_container_row(ci: ContainerInfo, icon: str = "dns") -> None:

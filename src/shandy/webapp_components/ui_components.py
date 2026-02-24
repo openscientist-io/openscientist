@@ -9,9 +9,9 @@ import html
 import logging
 import re
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from nicegui import app, ui
@@ -25,6 +25,9 @@ from shandy.job_manager import JobInfo, JobStatus
 from shandy.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from shandy.job_manager import JobManager
 
 
 def format_relative_time(dt: datetime | None) -> str:
@@ -42,9 +45,9 @@ def format_relative_time(dt: datetime | None) -> str:
 
     # Ensure dt is timezone-aware (assume UTC if naive)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     delta = now - dt
 
     seconds = delta.total_seconds()
@@ -554,65 +557,67 @@ def render_error_card(error_info: dict, job_info: JobInfo, job_dir: Path) -> Non
             )
 
         # Collapsible: What happened
-        with ui.expansion("What happened?", icon="info").classes(
-            "w-full mt-3 border border-red-200 rounded"
+        with (
+            ui.expansion("What happened?", icon="info").classes(
+                "w-full mt-3 border border-red-200 rounded"
+            ),
+            ui.column().classes("gap-2 p-3"),
         ):
-            with ui.column().classes("gap-2 p-3"):
-                ui.label(f"Error Category: {error_info['category'].title()}").classes(
-                    "text-sm font-bold text-gray-800"
-                )
-                ui.label(f"Job Status: {job_info.status.value}").classes("text-sm text-gray-700")
-                ui.label(
-                    f"Iterations Completed: {job_info.iterations_completed}/{job_info.max_iterations}"
-                ).classes("text-sm text-gray-700")
-                if job_info.failed_at:
-                    ui.label(f"Failed At: {job_info.failed_at[:19]}").classes(
-                        "text-sm text-gray-700"
-                    )
+            ui.label(f"Error Category: {error_info['category'].title()}").classes(
+                "text-sm font-bold text-gray-800"
+            )
+            ui.label(f"Job Status: {job_info.status.value}").classes("text-sm text-gray-700")
+            ui.label(
+                f"Iterations Completed: {job_info.iterations_completed}/{job_info.max_iterations}"
+            ).classes("text-sm text-gray-700")
+            if job_info.failed_at:
+                ui.label(f"Failed At: {job_info.failed_at[:19]}").classes("text-sm text-gray-700")
 
-                # Extracted error message
-                if error_info.get("extracted_error"):
-                    ui.label("Error Message:").classes("text-sm font-bold mt-3 text-gray-800")
-                    with ui.element("div").classes("w-full overflow-hidden"):
-                        ui.label(error_info["extracted_error"]).classes(
-                            "text-sm bg-white p-3 rounded border border-red-200 text-gray-700"
-                        ).style("word-break: break-word; overflow-wrap: break-word;")
+            # Extracted error message
+            if error_info.get("extracted_error"):
+                ui.label("Error Message:").classes("text-sm font-bold mt-3 text-gray-800")
+                with ui.element("div").classes("w-full overflow-hidden"):
+                    ui.label(error_info["extracted_error"]).classes(
+                        "text-sm bg-white p-3 rounded border border-red-200 text-gray-700"
+                    ).style("word-break: break-word; overflow-wrap: break-word;")
 
         # Collapsible: Technical details
-        with ui.expansion("Technical Details", icon="code").classes(
-            "w-full mt-2 border border-red-200 rounded overflow-hidden"
+        with (
+            ui.expansion("Technical Details", icon="code").classes(
+                "w-full mt-2 border border-red-200 rounded overflow-hidden"
+            ),
+            ui.column().classes("gap-2 p-3 w-full"),
         ):
-            with ui.column().classes("gap-2 p-3 w-full"):
-                with ui.row().classes("items-center justify-between w-full mb-2 flex-nowrap"):
-                    ui.label("Raw Error Output:").classes("text-sm font-bold text-gray-800")
+            with ui.row().classes("items-center justify-between w-full mb-2 flex-nowrap"):
+                ui.label("Raw Error Output:").classes("text-sm font-bold text-gray-800")
 
-                    def copy_to_clipboard():
-                        ui.run_javascript(
-                            f"""
-                            navigator.clipboard.writeText({repr(error_info["raw"])});
+                def copy_to_clipboard():
+                    ui.run_javascript(
+                        f"""
+                            navigator.clipboard.writeText({error_info["raw"]!r});
                         """
-                        )
-                        ui.notify("Error message copied to clipboard", type="positive")
-
-                    with (
-                        ui.button(icon="content_copy", on_click=copy_to_clipboard)
-                        .props("flat dense color=primary size=sm")
-                        .classes("flex-shrink-0")
-                    ):
-                        ui.tooltip("Copy to clipboard")
-
-                # Wrap code block in container to prevent overflow
-                with ui.element("div").classes("w-full overflow-x-auto"):
-                    ui.code(error_info["raw"], language="text").classes(
-                        "text-xs max-h-[300px] overflow-y-auto p-2 bg-gray-50 rounded"
-                    ).style("word-break: break-word; white-space: pre-wrap; max-width: 100%;")
-
-                # Link to logs if available
-                log_file = job_dir / "orchestrator.log"
-                if log_file.exists():
-                    ui.label("Check the orchestrator.log file for complete details.").classes(
-                        "text-xs text-gray-600 mt-2"
                     )
+                    ui.notify("Error message copied to clipboard", type="positive")
+
+                with (
+                    ui.button(icon="content_copy", on_click=copy_to_clipboard)
+                    .props("flat dense color=primary size=sm")
+                    .classes("flex-shrink-0")
+                ):
+                    ui.tooltip("Copy to clipboard")
+
+            # Wrap code block in container to prevent overflow
+            with ui.element("div").classes("w-full overflow-x-auto"):
+                ui.code(error_info["raw"], language="text").classes(
+                    "text-xs max-h-[300px] overflow-y-auto p-2 bg-gray-50 rounded"
+                ).style("word-break: break-word; white-space: pre-wrap; max-width: 100%;")
+
+            # Link to logs if available
+            log_file = job_dir / "orchestrator.log"
+            if log_file.exists():
+                ui.label("Check the orchestrator.log file for complete details.").classes(
+                    "text-xs text-gray-600 mt-2"
+                )
 
 
 def render_config_error_banner(
@@ -633,34 +638,36 @@ def render_config_error_banner(
     """
     # Use a wrapper div with padding to ensure proper spacing on mobile
     # This avoids the w-full + margin overflow issue
-    with ui.element("div").classes("w-full px-4 mt-4 box-border"):
-        with ui.card().classes("w-full bg-red-50 border-l-4 border-red-500"):
-            with ui.row().classes("items-start gap-3 flex-wrap"):
-                ui.icon("error", color="red", size="md").classes("flex-shrink-0 mt-1")
-                with ui.column().classes("gap-1 flex-1 min-w-0"):
-                    ui.label("Server Configuration Error").classes(
-                        "text-red-800 font-bold text-base sm:text-lg"
-                    )
-                    ui.label(
-                        f"The {provider_name.upper()} provider is not configured correctly. "
-                        "Jobs cannot be started until this is resolved."
-                    ).classes("text-red-700 text-sm sm:text-base break-words")
-                    ui.label("Please contact the system administrator.").classes(
-                        "text-red-600 text-xs sm:text-sm"
-                    )
+    with (
+        ui.element("div").classes("w-full px-4 mt-4 box-border"),
+        ui.card().classes("w-full bg-red-50 border-l-4 border-red-500"),
+    ):
+        with ui.row().classes("items-start gap-3 flex-wrap"):
+            ui.icon("error", color="red", size="md").classes("flex-shrink-0 mt-1")
+            with ui.column().classes("gap-1 flex-1 min-w-0"):
+                ui.label("Server Configuration Error").classes(
+                    "text-red-800 font-bold text-base sm:text-lg"
+                )
+                ui.label(
+                    f"The {provider_name.upper()} provider is not configured correctly. "
+                    "Jobs cannot be started until this is resolved."
+                ).classes("text-red-700 text-sm sm:text-base break-words")
+                ui.label("Please contact the system administrator.").classes(
+                    "text-red-600 text-xs sm:text-sm"
+                )
 
-            with ui.expansion("Technical Details", icon="info").classes("mt-2 w-full"):
-                for error in config_errors:
-                    ui.label(f"• {error}").classes(
-                        "text-red-600 text-xs sm:text-sm font-mono break-words"
-                    )
+        with ui.expansion("Technical Details", icon="info").classes("mt-2 w-full"):
+            for error in config_errors:
+                ui.label(f"• {error}").classes(
+                    "text-red-600 text-xs sm:text-sm font-mono break-words"
+                )
 
-            if show_back_button:
-                ui.button(
-                    "Back to Jobs",
-                    on_click=lambda: ui.navigate.to("/jobs"),
-                    icon="arrow_back",
-                ).classes("mt-4")
+        if show_back_button:
+            ui.button(
+                "Back to Jobs",
+                on_click=lambda: ui.navigate.to("/jobs"),
+                icon="arrow_back",
+            ).classes("mt-4")
 
 
 def render_alert_banner(
@@ -714,20 +721,22 @@ def render_alert_banner(
     icon_name = {"error": "error", "warning": "warning", "info": "info"}.get(severity, "error")
 
     # Use a wrapper div with padding to ensure proper spacing on mobile
-    with ui.element("div").classes("w-full px-4 mt-4 box-border"):
-        with ui.card().classes(f"w-full {c['bg']} border-l-4 {c['border']}"):
-            with ui.row().classes("items-start gap-3 flex-wrap"):
-                ui.icon(icon_name, color=c["icon_color"], size="md").classes("flex-shrink-0 mt-1")
-                with ui.column().classes("gap-1 flex-1 min-w-0"):
-                    ui.label(title).classes(f"{c['title']} font-bold text-base sm:text-lg")
-                    ui.label(message).classes(f"{c['message']} text-sm sm:text-base break-words")
+    with (
+        ui.element("div").classes("w-full px-4 mt-4 box-border"),
+        ui.card().classes(f"w-full {c['bg']} border-l-4 {c['border']}"),
+    ):
+        with ui.row().classes("items-start gap-3 flex-wrap"):
+            ui.icon(icon_name, color=c["icon_color"], size="md").classes("flex-shrink-0 mt-1")
+            with ui.column().classes("gap-1 flex-1 min-w-0"):
+                ui.label(title).classes(f"{c['title']} font-bold text-base sm:text-lg")
+                ui.label(message).classes(f"{c['message']} text-sm sm:text-base break-words")
 
-            if details:
-                with ui.expansion(expansion_title, icon="info").classes("mt-2 w-full"):
-                    for detail in details:
-                        ui.label(f"• {detail}").classes(
-                            f"{c['detail']} text-xs sm:text-sm font-mono break-words"
-                        )
+        if details:
+            with ui.expansion(expansion_title, icon="info").classes("mt-2 w-full"):
+                for detail in details:
+                    ui.label(f"• {detail}").classes(
+                        f"{c['detail']} text-xs sm:text-sm font-mono break-words"
+                    )
 
 
 def get_status_badge_props(status: JobStatus) -> dict:
@@ -947,37 +956,17 @@ def render_job_action_buttons(
                 ui.tooltip("Delete job")
 
 
-def render_navigator(
-    active_page: str | None = None,
-    show_new_job: bool = True,
-    extra_buttons: list[tuple[str, str, Callable[[], None], str]] | None = None,
-) -> None:
-    """
-    Render the standard navigation header for all authenticated pages.
-
-    Provides consistent navigation across the application with links to
-    New Job, Billing, Docs, and Admin pages. The SHANDY logo/title acts
-    as a home button linking to the jobs list.
-
-    On mobile screens (< 640px), navigation buttons are collapsed into a
-    hamburger menu that opens a right-side drawer.
-
-    Args:
-        active_page: Current page name for highlighting ("jobs", "new", "billing", "docs", "admin")
-        show_new_job: Whether to show the New Job button (disable on config error)
-        extra_buttons: List of (label, icon, on_click, props) tuples for page-specific buttons
-    """
-    # Add mobile icon meta tags to page head
+def _inject_navigation_head_assets() -> None:
+    """Inject PWA/icon assets used by navigation header."""
     ui.add_head_html(
         '<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">'
     )
     ui.add_head_html('<link rel="manifest" href="/assets/manifest.json">')
     ui.add_head_html('<meta name="theme-color" content="#0891b2">')
 
-    # Check role/approval status from session storage (set by require_auth decorator)
-    show_admin = app.storage.user.get("is_admin", False)
-    can_start_jobs = app.storage.user.get("can_start_jobs", False)
-    # Add responsive CSS for mobile/desktop navigation toggle
+
+def _inject_navigation_responsive_css() -> None:
+    """Inject responsive CSS toggling mobile drawer button vs desktop nav."""
     ui.add_css(
         """
         @media (max-width: 639px) {
@@ -991,11 +980,14 @@ def render_navigator(
     """
     )
 
-    # Button styles: active = white bg with cyan text, inactive = flat white
-    active_style = "unelevated color=white text-color=primary"
-    inactive_style = "flat color=white"
 
-    # Define navigation items for reuse in both desktop and mobile views
+def _build_navigation_items(
+    active_page: str | None,
+    show_new_job: bool,
+    can_start_jobs: bool,
+    show_admin: bool,
+) -> list[tuple[str, str, str, bool]]:
+    """Build ordered navigation entries for both desktop and mobile UIs."""
     nav_items: list[tuple[str, str, str, bool]] = []
     if show_new_job and can_start_jobs:
         nav_items.append(("New", "add", "/new", active_page == "new"))
@@ -1009,116 +1001,150 @@ def render_navigator(
     )
     if show_admin:
         nav_items.append(("Admin", "admin_panel_settings", "/admin", active_page == "admin"))
+    return nav_items
 
-    # Mobile drawer for navigation
-    with ui.right_drawer(value=False).props("overlay behavior=mobile bordered") as drawer:
-        drawer.classes("bg-primary")
-        with ui.column().classes("w-full gap-2 p-4"):
-            ui.label("Navigation").classes("text-white text-h6 font-bold mb-2")
 
-            # Page-specific extra buttons in drawer
-            if extra_buttons:
-                for label, icon, on_click, props in extra_buttons:
+def _drawer_click_handler(drawer: ui.element, callback: Callable[[], None]) -> Callable[[], None]:
+    """Wrap drawer click callbacks to close the drawer first."""
 
-                    def make_drawer_click(fn: Callable[[], None]) -> Callable[[], None]:
-                        def handler() -> None:
-                            drawer.set_value(False)
-                            fn()
+    def handler() -> None:
+        cast(Any, drawer).set_value(False)
+        callback()
 
-                        return handler
+    return handler
 
-                    ui.button(
-                        label,
-                        on_click=make_drawer_click(on_click),
-                        icon=icon,
-                    ).props("flat color=white align=left").classes("w-full justify-start")
 
-            # Navigation items in drawer
-            for label, icon, route, is_active in nav_items:
-                style = active_style if is_active else "flat color=white"
+def _drawer_route_handler(drawer: ui.element, route: str) -> Callable[[], None]:
+    """Create navigation handler for drawer route buttons."""
 
-                def make_nav_click(r: str) -> Callable[[], None]:
-                    def handler() -> None:
-                        drawer.set_value(False)
-                        ui.navigate.to(r)
+    def handler() -> None:
+        cast(Any, drawer).set_value(False)
+        ui.navigate.to(route)
 
-                    return handler
+    return handler
 
-                ui.button(
-                    label,
-                    on_click=make_nav_click(route),
-                    icon=icon,
-                ).props(f"{style} align=left").classes("w-full justify-start")
 
-            ui.separator().classes("bg-white/30 my-2")
-
-            # Logout button in drawer
+def _render_mobile_drawer(
+    drawer: ui.element,
+    nav_items: list[tuple[str, str, str, bool]],
+    extra_buttons: list[tuple[str, str, Callable[[], None], str]] | None,
+    active_style: str,
+) -> None:
+    """Render right-side mobile drawer navigation."""
+    drawer.classes("bg-primary")
+    with ui.column().classes("w-full gap-2 p-4"):
+        ui.label("Navigation").classes("text-white text-h6 font-bold mb-2")
+        for label, icon, on_click, _props in extra_buttons or []:
             ui.button(
-                "Logout",
-                on_click=lambda: ui.navigate.to("/auth/logout"),
-                icon="logout",
+                label,
+                on_click=_drawer_click_handler(drawer, on_click),
+                icon=icon,
             ).props("flat color=white align=left").classes("w-full justify-start")
 
-    with ui.header().classes("items-center justify-between"):
-        # Title section - clickable to go home
-        with ui.link(target="/jobs").classes("no-underline"):
-            with ui.row().classes("items-center gap-2 cursor-pointer"):
-                # Logo in white circle
-                with ui.element("div").classes(
-                    "w-10 h-10 rounded-full bg-white flex items-center justify-center"
-                ):
-                    ui.image("/assets/logo.svg").classes("w-8 h-8")
-                # SHANDY text in white
-                ui.label("SHANDY").classes("text-white text-h5 font-bold")
-
-        # Mobile hamburger menu button (visible on small screens only)
-        hamburger = ui.button(
-            icon="menu",
-            on_click=lambda: drawer.set_value(True),
-        ).props("flat color=white")
-        hamburger.style("display: none").classes("mobile-menu-btn")
-
-        # Desktop navigation section (hidden on small screens)
-        nav_row = ui.row().classes("gap-1 desktop-nav")
-        nav_row.style("display: flex")
-
-        with nav_row:
-            # Page-specific extra buttons first
-            if extra_buttons:
-                for label, icon, on_click, props in extra_buttons:
-                    btn = ui.button(label, on_click=on_click, icon=icon)
-                    if props:
-                        btn.props(props)
-
-            # Standard navigation buttons
-            for label, icon, route, is_active in nav_items:
-                style = active_style if is_active else inactive_style
-                ui.button(
-                    label,
-                    on_click=lambda r=route: ui.navigate.to(r),
-                    icon=icon,
-                ).props(style)
-
-            # Logout button
+        for label, icon, route, is_active in nav_items:
+            style = active_style if is_active else "flat color=white"
             ui.button(
-                "Logout",
-                on_click=lambda: ui.navigate.to("/auth/logout"),
-                icon="logout",
-            ).props(inactive_style)
+                label,
+                on_click=_drawer_route_handler(drawer, route),
+                icon=icon,
+            ).props(f"{style} align=left").classes("w-full justify-start")
+
+        ui.separator().classes("bg-white/30 my-2")
+        ui.button(
+            "Logout",
+            on_click=lambda: ui.navigate.to("/auth/logout"),
+            icon="logout",
+        ).props("flat color=white align=left").classes("w-full justify-start")
+
+
+def _render_navigation_brand() -> None:
+    """Render SHANDY brand/link in header left section."""
+    with (
+        ui.link(target="/jobs").classes("no-underline"),
+        ui.row().classes("items-center gap-2 cursor-pointer"),
+    ):
+        with ui.element("div").classes(
+            "w-10 h-10 rounded-full bg-white flex items-center justify-center"
+        ):
+            ui.image("/assets/logo.svg").classes("w-8 h-8")
+        ui.label("SHANDY").classes("text-white text-h5 font-bold")
+
+
+def _render_desktop_navigation(
+    nav_items: list[tuple[str, str, str, bool]],
+    extra_buttons: list[tuple[str, str, Callable[[], None], str]] | None,
+    active_style: str,
+    inactive_style: str,
+) -> None:
+    """Render desktop navigation button row."""
+    nav_row = ui.row().classes("gap-1 desktop-nav")
+    nav_row.style("display: flex")
+    with nav_row:
+        for label, icon, on_click, props in extra_buttons or []:
+            btn = ui.button(label, on_click=on_click, icon=icon)
+            if props:
+                btn.props(props)
+        for label, icon, route, is_active in nav_items:
+            style = active_style if is_active else inactive_style
+            ui.button(
+                label,
+                on_click=lambda r=route: ui.navigate.to(r),
+                icon=icon,
+            ).props(style)
+        ui.button(
+            "Logout",
+            on_click=lambda: ui.navigate.to("/auth/logout"),
+            icon="logout",
+        ).props(inactive_style)
+
+
+def render_navigator(
+    active_page: str | None = None,
+    show_new_job: bool = True,
+    extra_buttons: list[tuple[str, str, Callable[[], None], str]] | None = None,
+) -> None:
+    """
+    Render the standard navigation header for all authenticated pages.
+
+    Provides consistent navigation across the application with links to
+    New Job, Billing, Docs, and Admin pages. The SHANDY logo/title acts
+    as a home button linking to the jobs list.
+    """
+    _inject_navigation_head_assets()
+    _inject_navigation_responsive_css()
+
+    show_admin = app.storage.user.get("is_admin", False)
+    can_start_jobs = app.storage.user.get("can_start_jobs", False)
+    active_style = "unelevated color=white text-color=primary"
+    inactive_style = "flat color=white"
+    nav_items = _build_navigation_items(active_page, show_new_job, can_start_jobs, show_admin)
+
+    with ui.right_drawer(value=False).props("overlay behavior=mobile bordered") as drawer:
+        _render_mobile_drawer(drawer, nav_items, extra_buttons, active_style)
+
+    with ui.header().classes("items-center justify-between"):
+        _render_navigation_brand()
+        hamburger = ui.button(icon="menu", on_click=lambda: drawer.set_value(True)).props(
+            "flat color=white"
+        )
+        hamburger.style("display: none").classes("mobile-menu-btn")
+        _render_desktop_navigation(nav_items, extra_buttons, active_style, inactive_style)
 
 
 def render_pending_approval_notice() -> None:
     """Render an informational notice for users awaiting administrator approval."""
-    with ui.card().classes("w-full border-l-4 border-amber-500 bg-amber-50"):
-        with ui.row().classes("items-start gap-3"):
-            ui.icon("hourglass_top", color="amber", size="md")
-            with ui.column().classes("gap-1"):
-                ui.label("Account Pending Approval").classes("text-amber-900 font-bold")
-                ui.label(
-                    "Your account is waiting for administrator approval. "
-                    "You can browse existing pages, but starting new jobs "
-                    "is disabled until approval."
-                ).classes("text-amber-800")
+    with (
+        ui.card().classes("w-full border-l-4 border-amber-500 bg-amber-50"),
+        ui.row().classes("items-start gap-3"),
+    ):
+        ui.icon("hourglass_top", color="amber", size="md")
+        with ui.column().classes("gap-1"):
+            ui.label("Account Pending Approval").classes("text-amber-900 font-bold")
+            ui.label(
+                "Your account is waiting for administrator approval. "
+                "You can browse existing pages, but starting new jobs "
+                "is disabled until approval."
+            ).classes("text-amber-800")
 
 
 def render_stat_badges(
@@ -1162,10 +1188,12 @@ def render_stat_badges(
         for label, value, color in stats:
             badge_color = color if color else "gray"
             icon = icons.get(label, "tag")
-            with ui.badge(color=badge_color).props("outline").classes("px-3 py-1 text-sm"):
-                with ui.row().classes("items-center gap-1"):
-                    ui.icon(icon, size="xs")
-                    ui.label(f"{label}: {value}").classes("font-medium")
+            with (
+                ui.badge(color=badge_color).props("outline").classes("px-3 py-1 text-sm"),
+                ui.row().classes("items-center gap-1"),
+            ):
+                ui.icon(icon, size="xs")
+                ui.label(f"{label}: {value}").classes("font-medium")
 
 
 def render_empty_state(message: str) -> None:
@@ -1307,7 +1335,6 @@ def make_action_button_slot(
     event_name: str,
     icon: str | None = None,
     color: str = "primary",
-    row_id_field: str = "job_id",
 ) -> str:
     """
     Generate a Quasar table slot template for an action button.
@@ -1320,7 +1347,6 @@ def make_action_button_slot(
         event_name: Event name emitted when button is clicked
         icon: Optional Material icon name (e.g., "person_add")
         color: Quasar color for the button
-        row_id_field: Field name in row data to use for identification
 
     Returns:
         Quasar slot template string
@@ -1433,305 +1459,441 @@ async def render_user_search(
     return search_input, results_container
 
 
+async def _load_job_shares(job_id: str) -> list[tuple[JobShare, User]]:
+    """Load current share rows for the target job."""
+    async with get_admin_session() as session:
+        result = await session.execute(
+            select(JobShare, User)
+            .join(User, JobShare.shared_with_user_id == User.id)
+            .where(JobShare.job_id == UUID(job_id))
+            .order_by(User.email)
+        )
+    return list(result.tuples().all())
+
+
+def _render_share_rows(
+    shares_container: ui.element,
+    shares: list[tuple[JobShare, User]],
+    on_revoke: Callable[[str], Awaitable[None]],
+) -> None:
+    """Render current share list cards."""
+    shares_container.clear()
+    with shares_container:
+        if not shares:
+            ui.label("No shares yet").classes("text-gray-500 italic")
+            return
+        ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
+        for share, target_user in shares:
+            with (
+                ui.card().classes("w-full p-2"),
+                ui.row().classes("items-center justify-between w-full"),
+            ):
+                with ui.column():
+                    ui.label(target_user.name).classes("font-bold")
+                    ui.label(target_user.email).classes("text-sm text-gray-600")
+                with ui.row().classes("items-center gap-2"):
+                    ui.badge(share.permission_level, color="blue")
+                    ui.button(icon="delete", on_click=lambda s=share: on_revoke(str(s.id))).props(
+                        "flat dense color=red"
+                    )
+
+
+async def _revoke_share(job_id: str, share_id: str, current_user_id: str) -> tuple[bool, str]:
+    """Revoke a share after checking ownership."""
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, UUID(job_id))
+        if not job_obj or str(job_obj.owner_id) != current_user_id:
+            return False, "Only the job owner can revoke shares"
+        result = await session.execute(select(JobShare).where(JobShare.id == UUID(share_id)))
+        share = result.scalar_one_or_none()
+        if not share:
+            return False, "Share not found"
+        await session.delete(share)
+        await session.commit()
+    return True, "Share revoked successfully"
+
+
+async def _search_share_targets(search_query: str) -> list[User]:
+    """Search active users by email/name for share target picker."""
+    search_pattern = f"%{search_query}%"
+    async with get_admin_session() as session:
+        result = await session.execute(
+            select(User)
+            .where(or_(User.email.ilike(search_pattern), User.name.ilike(search_pattern)))
+            .where(User.is_active.is_(True))
+            .order_by(User.email)
+            .limit(10)
+        )
+    return list(result.scalars().all())
+
+
+def _render_share_search_results(
+    search_results: ui.element,
+    users: list[User],
+    on_select: Callable[[str, str], None],
+) -> None:
+    """Render selectable cards for searched users."""
+    search_results.clear()
+    with search_results:
+        if not users:
+            ui.label("No users found").classes("text-gray-500 italic")
+            return
+        for user in users:
+            with (
+                ui.card()
+                .classes("w-full p-2 cursor-pointer hover:bg-blue-50")
+                .on("click", lambda u=user: on_select(u.email, u.name or u.email)),
+                ui.row().classes("items-center gap-2"),
+            ):
+                ui.icon("person_outline", size="sm").classes("text-gray-400")
+                with ui.column().classes("gap-0"):
+                    ui.label(user.name or user.email).classes("font-bold text-sm")
+                    if user.name:
+                        ui.label(user.email).classes("text-xs text-gray-600")
+
+
+async def _share_with_user(
+    job_id: str,
+    email: str,
+    permission_level: str,
+    current_user_id: str,
+) -> tuple[bool, str]:
+    """Create or update share with target user email."""
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, UUID(job_id))
+        if not job_obj or str(job_obj.owner_id) != current_user_id:
+            return False, "Only the job owner can share this job"
+        target = await session.execute(select(User).where(User.email == email))
+        target_user = target.scalar_one_or_none()
+        if not target_user:
+            return False, f"User '{email}' not found"
+        if str(target_user.id) == current_user_id:
+            return False, "Cannot share with yourself"
+
+        existing = await session.execute(
+            select(JobShare).where(
+                JobShare.job_id == UUID(job_id),
+                JobShare.shared_with_user_id == target_user.id,
+            )
+        )
+        existing_share = existing.scalar_one_or_none()
+        if existing_share:
+            existing_share.permission_level = permission_level
+        else:
+            session.add(
+                JobShare(
+                    job_id=UUID(job_id),
+                    shared_with_user_id=target_user.id,
+                    permission_level=permission_level,
+                )
+            )
+        await session.commit()
+    return True, f"Shared with {email}"
+
+
+def _render_selected_share_user(
+    selected_user_container: ui.element,
+    email: str,
+    name: str,
+    clear_selection: Callable[[], None],
+) -> None:
+    """Render selected user card above permission row."""
+    selected_user_container.clear()
+    with selected_user_container, ui.row().classes("items-center gap-2 p-2 bg-blue-50 rounded"):
+        ui.icon("person", color="primary")
+        with ui.column().classes("gap-0"):
+            ui.label(name).classes("font-bold text-sm")
+            ui.label(email).classes("text-xs text-gray-600")
+        ui.button(icon="close", on_click=clear_selection).props("flat dense round size=xs")
+
+
+class _ShareDialogController:
+    """Controller for share dialog state and actions."""
+
+    def __init__(
+        self,
+        job_id: str,
+        shares_container: ui.element,
+        search_input: ui.input,
+        search_results: ui.element,
+        selected_user_container: ui.element,
+        share_action_row: ui.element,
+        permission_select: ui.select,
+    ) -> None:
+        self.job_id = job_id
+        self.shares_container = shares_container
+        self.search_input = search_input
+        self.search_results = search_results
+        self.selected_user_container = selected_user_container
+        self.share_action_row = share_action_row
+        self.permission_select = permission_select
+        self.selected_user_state: dict[str, str | None] = {"email": None, "name": None}
+        self.search_counter = {"value": 0}
+
+    def clear_selection(self) -> None:
+        """Clear selected share target and show search input again."""
+        self.selected_user_state["email"] = None
+        self.selected_user_state["name"] = None
+        self.selected_user_container.clear()
+        self.share_action_row.classes(add="hidden")
+        self.search_input.visible = True
+        self.search_input.value = ""
+
+    def select_user(self, email: str, name: str) -> None:
+        """Select user from search results and reveal share controls."""
+        self.selected_user_state["email"] = email
+        self.selected_user_state["name"] = name
+        self.search_results.clear()
+        self.search_input.visible = False
+        _render_selected_share_user(self.selected_user_container, email, name, self.clear_selection)
+        self.share_action_row.classes(remove="hidden")
+
+    async def refresh_shares(self) -> None:
+        """Reload current shares list from database."""
+        try:
+            shares = await _load_job_shares(self.job_id)
+            _render_share_rows(self.shares_container, shares, self.revoke_share)
+        except Exception as exc:
+            logger.error("Failed to load shares: %s", exc, exc_info=True)
+            self.shares_container.clear()
+            with self.shares_container:
+                ui.label("Failed to load shares").classes("text-red-600")
+
+    async def revoke_share(self, share_id: str) -> None:
+        """Revoke share and refresh list on success."""
+        try:
+            current_user_id = get_current_user_id()
+            if not current_user_id:
+                ui.notify("You must be signed in to revoke shares", type="negative")
+                return
+            success, message = await _revoke_share(self.job_id, share_id, current_user_id)
+            ui.notify(message, type="positive" if success else "negative")
+            if success:
+                await self.refresh_shares()
+        except Exception as exc:
+            logger.error("Failed to revoke share: %s", exc, exc_info=True)
+            ui.notify("Error revoking share", type="negative")
+
+    async def search_users(self, search_query: str) -> None:
+        """Search users and render result cards with debounce guard."""
+        self.search_counter["value"] += 1
+        search_index = self.search_counter["value"]
+        self.search_results.clear()
+        if not search_query or len(search_query) < 2:
+            return
+        try:
+            users = await _search_share_targets(search_query)
+            if search_index == self.search_counter["value"]:
+                _render_share_search_results(self.search_results, users, self.select_user)
+        except Exception as exc:
+            logger.error("Failed to search users: %s", exc, exc_info=True)
+            with self.search_results:
+                ui.label("Search failed").classes("text-red-600")
+
+    async def do_share(self) -> None:
+        """Create/update share for selected user and refresh list."""
+        email = self.selected_user_state["email"]
+        if not email:
+            ui.notify("Select a user first", type="warning")
+            return
+        try:
+            current_user_id = get_current_user_id()
+            if not current_user_id:
+                ui.notify("You must be signed in to share jobs", type="negative")
+                return
+            success, message = await _share_with_user(
+                self.job_id,
+                email,
+                self.permission_select.value,
+                current_user_id,
+            )
+            ui.notify(message, type="positive" if success else "negative")
+            if success:
+                self.clear_selection()
+                await self.refresh_shares()
+        except Exception as exc:
+            logger.error("Failed to share job: %s", exc, exc_info=True)
+            ui.notify("Error sharing job", type="negative")
+
+    async def on_search_change(self, event) -> None:
+        """Handle search-input model updates."""
+        await self.search_users(event.value)
+
+
 def render_share_dialog(job_id: str) -> ui.dialog:
-    """
-    Create and return a share dialog for a job.
-
-    This is a reusable component for sharing jobs with other users.
-    The dialog includes:
-    - List of current shares with revoke buttons
-    - User search to find users by email/name
-    - Permission level selector (view/edit)
-
-    Args:
-        job_id: The job ID to share
-
-    Returns:
-        The dialog element (call .open() to show it)
-
-    Example:
-        share_dialog = render_share_dialog(job_id)
-        ui.button("Share", on_click=share_dialog.open)
-    """
+    """Create and return a share dialog for a job."""
     with ui.dialog() as dialog, ui.card().classes("w-[600px]"):
         with ui.row().classes("items-center gap-2 mb-4"):
             ui.label("Share Job").classes("text-h6")
             render_job_id_badge(job_id)
 
-        # Container for current shares
         shares_container = ui.column().classes("w-full mb-4")
-
-        async def refresh_shares():
-            """Load and display current shares via direct DB query."""
-            shares_container.clear()
-
-            try:
-                async with get_admin_session() as session:
-                    stmt = (
-                        select(JobShare, User)
-                        .join(User, JobShare.shared_with_user_id == User.id)
-                        .where(JobShare.job_id == UUID(job_id))
-                        .order_by(User.email)
-                    )
-                    result = await session.execute(stmt)
-                    shares = result.all()
-
-                if shares:
-                    with shares_container:
-                        ui.label("Current Shares").classes("text-subtitle2 font-bold mb-2")
-                        for share, target_user in shares:
-                            with ui.card().classes("w-full p-2"):
-                                with ui.row().classes("items-center justify-between w-full"):
-                                    with ui.column():
-                                        ui.label(target_user.name).classes("font-bold")
-                                        ui.label(target_user.email).classes("text-sm text-gray-600")
-                                    with ui.row().classes("items-center gap-2"):
-                                        ui.badge(
-                                            share.permission_level,
-                                            color="blue",
-                                        )
-                                        ui.button(
-                                            icon="delete",
-                                            on_click=lambda s=share: revoke_share(str(s.id)),
-                                        ).props("flat dense color=red")
-                else:
-                    with shares_container:
-                        ui.label("No shares yet").classes("text-gray-500 italic")
-            except Exception as e:
-                logger.error("Failed to load shares: %s", e)
-                with shares_container:
-                    ui.label("Failed to load shares").classes("text-red-600")
-
-        async def revoke_share(share_id: str):
-            """Revoke a job share via direct DB delete."""
-            try:
-                current_user_id = get_current_user_id()
-                async with get_admin_session() as session:
-                    # Verify caller is the job owner
-                    job_obj = await session.get(Job, UUID(job_id))
-                    if not job_obj or str(job_obj.owner_id) != current_user_id:
-                        ui.notify("Only the job owner can revoke shares", type="negative")
-                        return
-
-                    stmt = select(JobShare).where(JobShare.id == UUID(share_id))
-                    result = await session.execute(stmt)
-                    share = result.scalar_one_or_none()
-                    if share:
-                        await session.delete(share)
-                        await session.commit()
-                        ui.notify("Share revoked successfully", type="positive")
-                        await refresh_shares()
-                    else:
-                        ui.notify("Share not found", type="negative")
-            except Exception as e:
-                logger.error("Failed to revoke share: %s", e)
-                ui.notify("Error revoking share", type="negative")
-
         ui.separator()
-
-        # Add new share section
         ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
-
-        # State for selected user
-        selected_user_state: dict[str, str | None] = {
-            "email": None,
-            "name": None,
-        }
-
-        # User search
-        search_input = ui.input(
-            "Search by email or name",
-            placeholder="user@example.com",
-        ).classes("w-full")
-
-        # Search results container
+        search_input = ui.input("Search by email or name", placeholder="user@example.com").classes(
+            "w-full"
+        )
         search_results = ui.column().classes("w-full")
-
-        # Selected user display (hidden until a user is selected)
         selected_user_container = ui.column().classes("w-full")
-
-        # Permission + Share button row (hidden until a user is selected)
         share_action_row = ui.row().classes("w-full gap-4 items-end hidden")
+
         with share_action_row:
             permission_select = ui.select(
-                ["view", "edit"],
-                value="view",
-                label="Permission Level",
+                ["view", "edit"], value="view", label="Permission Level"
             ).classes("min-w-32")
             permission_select.props("outlined dense")
 
-            ui.button(
-                "Share",
-                icon="person_add",
-                on_click=lambda: do_share(),
-            ).props("color=primary")
+        controller = _ShareDialogController(
+            job_id=job_id,
+            shares_container=shares_container,
+            search_input=search_input,
+            search_results=search_results,
+            selected_user_container=selected_user_container,
+            share_action_row=share_action_row,
+            permission_select=permission_select,
+        )
+        with share_action_row:
+            ui.button("Share", icon="person_add", on_click=controller.do_share).props(
+                "color=primary"
+            )
 
-        # Counter for debouncing concurrent search calls
-        search_counter = {"value": 0}
+        search_input.on_value_change(controller.on_search_change)
 
-        def select_user(email: str, name: str):
-            """Select a user from search results."""
-            selected_user_state["email"] = email
-            selected_user_state["name"] = name
-
-            # Hide search results, show selected user
-            search_results.clear()
-            search_input.visible = False
-
-            selected_user_container.clear()
-            with selected_user_container:
-                with ui.row().classes("items-center gap-2 p-2 bg-blue-50 rounded"):
-                    ui.icon("person", color="primary")
-                    with ui.column().classes("gap-0"):
-                        ui.label(name).classes("font-bold text-sm")
-                        ui.label(email).classes("text-xs text-gray-600")
-                    ui.button(
-                        icon="close",
-                        on_click=clear_selection,
-                    ).props("flat dense round size=xs")
-
-            # Show permission + share button
-            share_action_row.classes(remove="hidden")
-
-        def clear_selection():
-            """Clear selected user and show search again."""
-            selected_user_state["email"] = None
-            selected_user_state["name"] = None
-            selected_user_container.clear()
-            share_action_row.classes(add="hidden")
-            search_input.visible = True
-            search_input.value = ""
-
-        async def search_users(search_query: str):
-            """Search for users by email or name via direct DB query."""
-            search_counter["value"] += 1
-            my_counter = search_counter["value"]
-
-            search_results.clear()
-
-            if not search_query or len(search_query) < 2:
-                return
-
-            try:
-                async with get_admin_session() as session:
-                    search_pattern = f"%{search_query}%"
-                    stmt = (
-                        select(User)
-                        .where(
-                            or_(
-                                User.email.ilike(search_pattern),
-                                User.name.ilike(search_pattern),
-                            )
-                        )
-                        .where(User.is_active == True)  # noqa: E712
-                        .order_by(User.email)
-                        .limit(10)
-                    )
-                    result = await session.execute(stmt)
-                    users = result.scalars().all()
-
-                # Skip rendering if a newer search has started
-                if my_counter != search_counter["value"]:
-                    return
-
-                if users:
-                    with search_results:
-                        for user in users:
-                            with (
-                                ui.card()
-                                .classes("w-full p-2 cursor-pointer hover:bg-blue-50")
-                                .on(
-                                    "click",
-                                    lambda u=user: select_user(u.email, u.name or u.email),
-                                )
-                            ):
-                                with ui.row().classes("items-center gap-2"):
-                                    ui.icon("person_outline", size="sm").classes("text-gray-400")
-                                    with ui.column().classes("gap-0"):
-                                        ui.label(user.name or user.email).classes(
-                                            "font-bold text-sm"
-                                        )
-                                        if user.name:
-                                            ui.label(user.email).classes("text-xs text-gray-600")
-                else:
-                    with search_results:
-                        ui.label("No users found").classes("text-gray-500 italic")
-            except Exception as e:
-                logger.error("Failed to search users: %s", e, exc_info=True)
-                with search_results:
-                    ui.label("Search failed").classes("text-red-600")
-
-        async def do_share():
-            """Share job with the selected user."""
-            email = selected_user_state["email"]
-            if not email:
-                ui.notify("Select a user first", type="warning")
-                return
-
-            try:
-                current_user_id = get_current_user_id()
-                async with get_admin_session() as session:
-                    # Verify caller is the job owner
-                    job_obj = await session.get(Job, UUID(job_id))
-                    if not job_obj or str(job_obj.owner_id) != current_user_id:
-                        ui.notify("Only the job owner can share this job", type="negative")
-                        return
-
-                    # Find target user
-                    target = await session.execute(select(User).where(User.email == email))
-                    target_user = target.scalar_one_or_none()
-                    if not target_user:
-                        ui.notify(f"User '{email}' not found", type="negative")
-                        return
-
-                    # Prevent self-share
-                    if str(target_user.id) == current_user_id:
-                        ui.notify("Cannot share with yourself", type="warning")
-                        return
-
-                    # Check for existing share
-                    existing = await session.execute(
-                        select(JobShare).where(
-                            JobShare.job_id == UUID(job_id),
-                            JobShare.shared_with_user_id == target_user.id,
-                        )
-                    )
-                    existing_share = existing.scalar_one_or_none()
-
-                    if existing_share:
-                        existing_share.permission_level = permission_select.value
-                    else:
-                        session.add(
-                            JobShare(
-                                job_id=UUID(job_id),
-                                shared_with_user_id=target_user.id,
-                                permission_level=permission_select.value,
-                            )
-                        )
-                    await session.commit()
-
-                ui.notify(f"Shared with {email}", type="positive")
-                clear_selection()
-                await refresh_shares()
-            except Exception as e:
-                logger.error("Failed to share job: %s", e, exc_info=True)
-                ui.notify("Error sharing job", type="negative")
-
-        # Bind search input to trigger search.
-        # Must be an actual async def (not a lambda wrapping async) so NiceGUI awaits it.
-        async def _on_search_change(e):
-            await search_users(e.value)
-
-        search_input.on_value_change(_on_search_change)
-
-        # Dialog actions
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
             ui.button("Close", on_click=dialog.close)
-
-        # Load shares when dialog opens
-        dialog.on("open", refresh_shares)
+        dialog.on("open", controller.refresh_shares)
 
     return dialog
+
+
+async def _fetch_notification_settings(user_id: str) -> tuple[bool, str | None] | None:
+    """Fetch current ntfy settings for user."""
+    async with get_session_ctx() as session:
+        await set_current_user(session, UUID(user_id))
+        result = await session.execute(
+            select(User.ntfy_enabled, User.ntfy_topic).where(User.id == UUID(user_id))
+        )
+        row = result.first()
+    if row is None:
+        return None
+    return row.ntfy_enabled, row.ntfy_topic
+
+
+async def _set_notifications_enabled(user_id: str, enabled: bool) -> None:
+    """Persist ntfy_enabled flag."""
+    async with get_session_ctx() as session:
+        await set_current_user(session, UUID(user_id))
+        stmt = update(User).where(User.id == UUID(user_id)).values(ntfy_enabled=enabled)
+        await session.execute(stmt)
+        await session.commit()
+
+
+def _render_ntfy_topic_details(ntfy_topic: str) -> None:
+    """Render subscription links and copy controls for ntfy topic."""
+    subscription_url = get_subscription_url(ntfy_topic)
+    ui.separator().classes("my-2")
+    ui.label("Subscribe to your notifications").classes("text-subtitle2 font-bold mb-2")
+
+    with ui.column().classes("gap-2"):
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("computer", size="sm").classes("text-blue-500")
+            ui.link("Open in browser", target=subscription_url, new_tab=True).classes(
+                "text-blue-600 underline"
+            )
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("phone_android", size="sm").classes("text-green-500")
+            ui.markdown(
+                f"**Mobile**: Install [ntfy app](https://ntfy.sh/app) and subscribe to `{ntfy_topic}`"
+            )
+
+        def copy_topic() -> None:
+            ui.run_javascript(f'navigator.clipboard.writeText("{ntfy_topic}")')
+            ui.notify("Copied!", type="positive")
+
+        with ui.row().classes("items-center gap-2 mt-2"):
+            topic_input = ui.input(value=ntfy_topic, label="Your topic").classes("flex-grow")
+            topic_input.props("readonly outlined dense")
+            ui.button(icon="content_copy", on_click=copy_topic).props("flat round").tooltip(
+                "Copy topic"
+            )
+
+
+def _render_ntfy_test_button(ntfy_topic: str) -> None:
+    """Render button to send a test ntfy notification."""
+    ui.separator().classes("my-2")
+
+    async def send_test() -> None:
+        success = await send_notification(
+            topic=ntfy_topic,
+            title="SHANDY Test",
+            message="Test notification - if you see this, it works!",
+            tags=["white_check_mark"],
+        )
+        ui.notify(
+            "Test sent!" if success else "Failed to send",
+            type="positive" if success else "negative",
+        )
+
+    ui.button(
+        "Send Test Notification",
+        on_click=send_test,
+        icon="notifications_active",
+    ).props("color=primary")
+
+
+async def _render_notifications_content(
+    content_container: ui.element,
+    user_id: str,
+    reload_content: Callable[[], Awaitable[None]],
+) -> None:
+    """Fetch and render notifications content inside dialog."""
+    content_container.clear()
+    try:
+        settings = await _fetch_notification_settings(user_id)
+        if settings is None:
+            with content_container:
+                ui.label("User not found").classes("text-red-500")
+            return
+        ntfy_enabled, ntfy_topic = settings
+        if ntfy_enabled and not ntfy_topic:
+            ntfy_topic = await ensure_user_has_topic(UUID(user_id))
+    except Exception as exc:
+        logger.error("Error loading settings: %s", exc, exc_info=True)
+        with content_container:
+            ui.label("Error loading settings. Check server logs.").classes("text-red-500")
+        return
+
+    with content_container:
+
+        async def toggle_notifications(event: Any) -> None:
+            new_value = event.value
+            try:
+                await _set_notifications_enabled(user_id, new_value)
+                ui.notify(
+                    "Notifications enabled" if new_value else "Notifications disabled",
+                    type="positive",
+                )
+                await reload_content()
+            except Exception as exc:
+                logger.error("Failed to toggle notifications: %s", exc, exc_info=True)
+                ui.notify(f"Failed to update: {exc}", type="negative")
+
+        ui.switch(
+            "Enable push notifications",
+            value=ntfy_enabled,
+            on_change=toggle_notifications,
+        ).classes("mb-4")
+
+        if not ntfy_enabled:
+            ui.label(
+                "Enable notifications to receive alerts when jobs complete, fail, or need feedback."
+            ).classes("text-gray-500")
+            return
+        if not ntfy_topic:
+            ui.label("Setting up your notification topic...").classes("text-gray-500")
+            return
+        _render_ntfy_topic_details(ntfy_topic)
+        _render_ntfy_test_button(ntfy_topic)
 
 
 def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.dialog:
@@ -1739,19 +1901,10 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
     Create and return a notifications dialog for a job.
 
     Shows the user's ntfy.sh subscription info and allows toggling notifications.
-    Fetches the real ntfy topic from the database when the dialog opens.
-
-    Args:
-        job_id: The job ID for context
-        user_id: The current user's ID (must be passed from page context)
-
-    Returns:
-        The dialog element (call .open() to show it)
     """
     with ui.dialog() as dialog, ui.card().classes("w-[500px]"):
         with ui.row().classes("items-center gap-2 mb-4"):
             ui.label("Push Notifications").classes("text-h6")
-            # Only show job badge if it's a real job ID
             if job_id and job_id != "notifications" and len(job_id) > 10:
                 render_job_id_badge(job_id)
 
@@ -1759,161 +1912,17 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
             ui.label("Not logged in").classes("text-red-500")
             content_container = None
         else:
-            # Container for dynamic content - will be populated when dialog opens
             content_container = ui.column().classes("w-full")
             with content_container:
                 ui.label("Loading...").classes("text-gray-500")
 
-        # Dialog actions
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
             ui.button("Close", on_click=dialog.close)
 
-        # Load content when dialog is shown
         if content_container and user_id:
 
             async def load_content() -> None:
-                """Load ntfy settings and render the dialog content."""
-                content_container.clear()
-
-                try:
-                    # Fetch current settings from database
-                    async with get_session_ctx() as session:
-                        await set_current_user(session, UUID(user_id))
-                        stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
-                            User.id == UUID(user_id)
-                        )
-                        result = await session.execute(stmt)
-                        row = result.first()
-                        if not row:
-                            with content_container:
-                                ui.label("User not found").classes("text-red-500")
-                            return
-                        ntfy_enabled = row.ntfy_enabled
-                        ntfy_topic = row.ntfy_topic
-
-                    # Ensure topic exists if enabled but missing
-                    if ntfy_enabled and not ntfy_topic:
-                        ntfy_topic = await ensure_user_has_topic(UUID(user_id))
-
-                except Exception as e:
-                    logger.error("Error loading settings: %s", e, exc_info=True)
-                    with content_container:
-                        ui.label("Error loading settings. Check server logs.").classes(
-                            "text-red-500"
-                        )
-                    return
-
-                # Render the content
-                with content_container:
-
-                    async def toggle_notifications(e: Any) -> None:
-                        """Toggle ntfy_enabled in the database."""
-                        new_value = e.value
-                        try:
-                            async with get_session_ctx() as sess:
-                                await set_current_user(sess, UUID(user_id))
-                                stmt = (
-                                    update(User)
-                                    .where(User.id == UUID(user_id))
-                                    .values(ntfy_enabled=new_value)
-                                )
-                                await sess.execute(stmt)
-                                await sess.commit()
-                                ui.notify(
-                                    (
-                                        "Notifications enabled"
-                                        if new_value
-                                        else "Notifications disabled"
-                                    ),
-                                    type="positive",
-                                )
-                                # Reload the content
-                                await load_content()
-                        except Exception as ex:
-                            logger.error("Failed to toggle notifications: %s", ex, exc_info=True)
-                            ui.notify(f"Failed to update: {ex}", type="negative")
-
-                    # Enable/disable toggle
-                    ui.switch(
-                        "Enable push notifications",
-                        value=ntfy_enabled,
-                        on_change=toggle_notifications,
-                    ).classes("mb-4")
-
-                    if not ntfy_enabled:
-                        ui.label(
-                            "Enable notifications to receive alerts when jobs "
-                            "complete, fail, or need feedback."
-                        ).classes("text-gray-500")
-                    elif not ntfy_topic:
-                        ui.label("Setting up your notification topic...").classes("text-gray-500")
-                    else:
-                        subscription_url = get_subscription_url(ntfy_topic)
-
-                        ui.separator().classes("my-2")
-                        ui.label("Subscribe to your notifications").classes(
-                            "text-subtitle2 font-bold mb-2"
-                        )
-
-                        with ui.column().classes("gap-2"):
-                            # Web/Browser
-                            with ui.row().classes("items-center gap-2"):
-                                ui.icon("computer", size="sm").classes("text-blue-500")
-                                ui.link(
-                                    "Open in browser",
-                                    target=subscription_url,
-                                    new_tab=True,
-                                ).classes("text-blue-600 underline")
-
-                            # Mobile app
-                            with ui.row().classes("items-center gap-2"):
-                                ui.icon("phone_android", size="sm").classes("text-green-500")
-                                ui.markdown(
-                                    f"**Mobile**: Install [ntfy app](https://ntfy.sh/app) "
-                                    f"and subscribe to `{ntfy_topic}`"
-                                )
-
-                            # Topic with copy
-                            topic_for_copy = ntfy_topic  # Capture for closure
-
-                            def copy_topic() -> None:
-                                ui.run_javascript(
-                                    f'navigator.clipboard.writeText("{topic_for_copy}")'
-                                )
-                                ui.notify("Copied!", type="positive")
-
-                            with ui.row().classes("items-center gap-2 mt-2"):
-                                topic_input = ui.input(
-                                    value=ntfy_topic, label="Your topic"
-                                ).classes("flex-grow")
-                                topic_input.props("readonly outlined dense")
-                                ui.button(
-                                    icon="content_copy",
-                                    on_click=copy_topic,
-                                ).props("flat round").tooltip("Copy topic")
-
-                        ui.separator().classes("my-2")
-
-                        # Test button
-                        topic_for_test = ntfy_topic  # Capture for closure
-
-                        async def send_test() -> None:
-                            success = await send_notification(
-                                topic=topic_for_test,
-                                title="SHANDY Test",
-                                message="Test notification - if you see this, it works!",
-                                tags=["white_check_mark"],
-                            )
-                            if success:
-                                ui.notify("Test sent!", type="positive")
-                            else:
-                                ui.notify("Failed to send", type="negative")
-
-                        ui.button(
-                            "Send Test Notification",
-                            on_click=send_test,
-                            icon="notifications_active",
-                        ).props("color=primary")
+                await _render_notifications_content(content_container, user_id, load_content)
 
             dialog.on("show", load_content)
 
@@ -1922,8 +1931,8 @@ def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.d
 
 def render_delete_dialog(
     job_id: str,
-    job_manager: "JobManager",  # type: ignore[name-defined]  # noqa: F821
-    on_deleted: Callable[[], None] | None = None,
+    job_manager: "JobManager",
+    on_deleted: Callable[[], None | Awaitable[None]] | None = None,
 ) -> ui.dialog:
     """
     Create and return a delete confirmation dialog for a job.
@@ -1978,6 +1987,9 @@ def render_delete_dialog(
             try:
                 # Verify caller is the job owner
                 current_user_id = get_current_user_id()
+                if not current_user_id:
+                    ui.notify("You must be signed in to delete jobs", type="negative")
+                    return
                 async with get_admin_session() as session:
                     job_obj = await session.get(Job, UUID(job_id))
                 if not job_obj or str(job_obj.owner_id) != current_user_id:
@@ -1997,8 +2009,7 @@ def render_delete_dialog(
                 ui.notify(f"Job {short_id} deleted successfully", type="positive")
                 if on_deleted:
                     result = on_deleted()
-                    # Support async callbacks
-                    if hasattr(result, "__await__"):
+                    if result is not None:
                         await result
             except ValueError:
                 ui.notify(

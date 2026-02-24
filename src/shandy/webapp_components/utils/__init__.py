@@ -19,16 +19,15 @@ from shandy.webapp_components.utils.transcript_parser import (
 )
 
 __all__ = [
-    "is_dev_mode",
-    "get_uploaded_files",
+    "ClientGuard",
     "add_uploaded_file",
     "clear_uploaded_files",
     "get_action_description",
-    "parse_transcript_actions",
-    # Client guard utilities
-    "is_client_connected",
+    "get_uploaded_files",
     "guard_client",
-    "ClientGuard",
+    "is_client_connected",
+    "is_dev_mode",
+    "parse_transcript_actions",
     "safe_run_javascript",
     "setup_timer_cleanup",
 ]

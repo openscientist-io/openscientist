@@ -13,7 +13,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from functools import wraps
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
 
@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nicegui import Client
-
-F = TypeVar("F", bound=Callable[..., Any])
 
 
 def is_client_connected() -> bool:
@@ -38,7 +36,7 @@ def is_client_connected() -> bool:
         return False
 
 
-def guard_client(func: F) -> F:
+def guard_client[F: Callable[..., Any]](func: F) -> F:
     """Decorator that skips execution if the client has been deleted.
 
     Use on timer callbacks, event handlers, and async functions that modify UI.
