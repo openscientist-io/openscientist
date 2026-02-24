@@ -77,6 +77,12 @@ IMAGE_EXTENSIONS = {
     ".webp",
 }
 
+HDF5_EXTENSIONS = {
+    ".h5ad",  # AnnData (single-cell genomics)
+    ".h5",
+    ".hdf5",
+}
+
 
 # Re-exported from shandy.exceptions for convenience at this import path
 __all__ = ["FileTooBigError", "UnsupportedFileTypeError"]
@@ -134,6 +140,8 @@ def get_file_info(file_path: Path) -> dict[str, Any]:
         file_type = "sequence"
     elif extension in IMAGE_EXTENSIONS:
         file_type = "image"
+    elif extension in HDF5_EXTENSIONS:
+        file_type = "hdf5"
     else:
         file_type = "unknown"
 
@@ -228,7 +236,7 @@ def load_data_file(file_path: Path) -> pd.DataFrame | None:
         logger.info("Loading tabular file: %s (%s)", file_path.name, info["extension"])
         return load_tabular_file(file_path)
 
-    if info["file_type"] in ["structure", "sequence"]:
+    if info["file_type"] in ["structure", "sequence", "hdf5"]:
         logger.info(
             "Non-tabular file detected: %s (%s). Agent will access file directly.",
             file_path.name,
