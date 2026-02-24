@@ -172,6 +172,205 @@ class TestUpdateJobStatus:
         mock_notify.assert_not_awaited()
 
 
+# ─── discovery cancellation / failure flow ────────────────────────────
+
+
+class TestDiscoveryCancellationAndFailure:
+    """Regression tests for cancellation and iteration-failure handling."""
+
+    @pytest.mark.asyncio
+    async def test_cancelled_feedback_wait_does_not_resume_running(self, tmp_path):
+        from shandy.orchestrator.discovery import _wait_for_coinvestigate_feedback
+
+        job_id = str(uuid4())
+        job_dir = tmp_path / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        wait_outcome = {
+            "outcome": "cancelled",
+            "feedback_text": None,
+        }
+
+        with (
+            patch(
+                "shandy.orchestrator.discovery.update_job_status", new_callable=AsyncMock
+            ) as mock_update,
+            patch(
+                "shandy.orchestrator.discovery.wait_for_feedback_or_timeout",
+                new_callable=AsyncMock,
+                return_value=wait_outcome,
+            ),
+        ):
+            result = await _wait_for_coinvestigate_feedback(
+                job_dir=job_dir,
+                investigation_mode="coinvestigate",
+                current_iteration=1,
+                max_iterations=4,
+            )
+
+        assert result == wait_outcome
+        # Should enter awaiting_feedback but must not flip back to running when cancelled.
+        assert mock_update.await_count == 1
+        assert mock_update.await_args.args == (job_dir, "awaiting_feedback")
+
+    @pytest.mark.asyncio
+    async def test_run_discovery_stops_when_cancelled_before_next_iteration(self, tmp_path):
+        from shandy.agent.protocol import IterationResult, TokenUsage
+        from shandy.orchestrator.discovery import run_discovery_async
+
+        job_id = str(uuid4())
+        job_dir = tmp_path / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        from shandy.knowledge_state import KnowledgeState
+
+        ks = KnowledgeState(job_id, "Question?", 3)
+        ks.save(job_dir / "knowledge_state.json")
+
+        runtime = {
+            "job_id": job_id,
+            "research_question": "Question?",
+            "max_iterations": 3,
+            "use_skills": False,
+            "investigation_mode": "autonomous",
+            "data_files": [],
+        }
+
+        mock_executor = MagicMock()
+        mock_executor.total_tokens = TokenUsage()
+        mock_executor.shutdown = AsyncMock()
+        mock_executor.run_iteration = AsyncMock(
+            side_effect=[
+                IterationResult(
+                    success=True,
+                    output="iteration 1 complete",
+                    tool_calls=0,
+                    transcript=[],
+                ),
+                AssertionError("second iteration should not run after cancellation"),
+            ]
+        )
+
+        mock_provider = MagicMock()
+
+        with (
+            patch(
+                "shandy.orchestrator.discovery._load_runtime_context",
+                new_callable=AsyncMock,
+                return_value=runtime,
+            ),
+            patch("shandy.orchestrator.discovery.get_provider", return_value=mock_provider),
+            patch(
+                "shandy.orchestrator.discovery._write_skills_to_claude_dir", new_callable=AsyncMock
+            ),
+            patch("shandy.orchestrator.discovery._build_agent_executor", return_value=mock_executor),
+            patch(
+                "shandy.orchestrator.discovery._run_report_generation_phase", new_callable=AsyncMock
+            ) as mock_report_phase,
+            patch(
+                "shandy.orchestrator.discovery._persist_final_status",
+                new_callable=AsyncMock,
+                return_value="cancelled",
+            ),
+            patch("shandy.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
+            patch("shandy.orchestrator.discovery.sync_knowledge_state_to_db"),
+            patch("shandy.orchestrator.discovery._append_iteration_artifacts"),
+            patch("shandy.orchestrator.discovery._sync_version_metadata_if_available"),
+            patch(
+                "shandy.orchestrator.discovery._get_job_status",
+                new_callable=AsyncMock,
+                side_effect=["running", "cancelled"],
+                create=True,
+            ),
+        ):
+            result = await run_discovery_async(job_dir)
+
+        assert result["status"] == "cancelled"
+        assert mock_executor.run_iteration.await_count == 1
+        mock_report_phase.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_run_discovery_marks_failed_when_iteration_fails(self, tmp_path):
+        from shandy.agent.protocol import IterationResult, TokenUsage
+        from shandy.orchestrator.discovery import run_discovery_async
+
+        job_id = str(uuid4())
+        job_dir = tmp_path / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        from shandy.knowledge_state import KnowledgeState
+
+        ks = KnowledgeState(job_id, "Question?", 3)
+        ks.save(job_dir / "knowledge_state.json")
+
+        runtime = {
+            "job_id": job_id,
+            "research_question": "Question?",
+            "max_iterations": 3,
+            "use_skills": False,
+            "investigation_mode": "autonomous",
+            "data_files": [],
+        }
+
+        mock_executor = MagicMock()
+        mock_executor.total_tokens = TokenUsage()
+        mock_executor.shutdown = AsyncMock()
+        mock_executor.run_iteration = AsyncMock(
+            side_effect=[
+                IterationResult(
+                    success=True,
+                    output="iteration 1 complete",
+                    tool_calls=0,
+                    transcript=[],
+                ),
+                IterationResult(
+                    success=False,
+                    output="",
+                    tool_calls=0,
+                    transcript=[],
+                    error="iteration 2 exploded",
+                ),
+            ]
+        )
+
+        mock_provider = MagicMock()
+
+        with (
+            patch(
+                "shandy.orchestrator.discovery._load_runtime_context",
+                new_callable=AsyncMock,
+                return_value=runtime,
+            ),
+            patch("shandy.orchestrator.discovery.get_provider", return_value=mock_provider),
+            patch(
+                "shandy.orchestrator.discovery._write_skills_to_claude_dir", new_callable=AsyncMock
+            ),
+            patch("shandy.orchestrator.discovery._build_agent_executor", return_value=mock_executor),
+            patch(
+                "shandy.orchestrator.discovery._run_report_generation_phase", new_callable=AsyncMock
+            ) as mock_report_phase,
+            patch(
+                "shandy.orchestrator.discovery._persist_final_status",
+                new_callable=AsyncMock,
+                return_value="failed",
+            ),
+            patch("shandy.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
+            patch("shandy.orchestrator.discovery.sync_knowledge_state_to_db"),
+            patch("shandy.orchestrator.discovery._append_iteration_artifacts"),
+            patch("shandy.orchestrator.discovery._sync_version_metadata_if_available"),
+            patch(
+                "shandy.orchestrator.discovery._get_job_status",
+                new_callable=AsyncMock,
+                return_value="running",
+                create=True,
+            ),
+        ):
+            result = await run_discovery_async(job_dir)
+
+        assert result["status"] == "failed"
+        mock_report_phase.assert_not_awaited()
+
+
 # ─── increment_ks_iteration ──────────────────────────────────────────
 
 

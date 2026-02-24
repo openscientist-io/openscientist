@@ -698,9 +698,11 @@ class JobManager:
             job_id, JobStatus.CANCELLED, cancellation_reason="Cancelled by user"
         )
 
-        # Remove from running jobs if present
+        # For running jobs, cancellation is cooperative; keep thread tracked until
+        # it exits so active-slot accounting remains accurate.
         with self._lock:
-            self._running_jobs.pop(job_id, None)
+            if job_info.status in [JobStatus.PENDING, JobStatus.QUEUED]:
+                self._running_jobs.pop(job_id, None)
 
         # Note: We can't actually kill the thread cleanly in Python
         # The orchestrator will check status and stop at next iteration

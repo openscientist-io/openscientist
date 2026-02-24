@@ -478,6 +478,47 @@ class TestJobManagerCoinvestigate:
             assert manager.can_start_coinvestigate(max_coinvestigate=1) is False
 
 
+class TestJobManagerCancellationConcurrency:
+    """Tests for cancellation behavior and active-slot accounting."""
+
+    def test_cancel_running_job_keeps_thread_registered_until_exit(self, tmp_path):
+        manager = _new_manager(tmp_path)
+        job_id = str(uuid4())
+        manager._running_jobs[job_id] = MagicMock()
+
+        running_job = JobInfo(
+            job_id=job_id,
+            research_question="Q?",
+            status=JobStatus.RUNNING,
+            created_at="2026-02-01T00:00:00+00:00",
+        )
+
+        with (
+            patch.object(manager, "get_job", return_value=running_job),
+            patch.object(manager, "_update_job_status"),
+            patch.object(manager, "_start_next_queued_job"),
+        ):
+            manager.cancel_job(job_id)
+
+        # Cancellation is cooperative; keep tracking until worker thread exits.
+        assert job_id in manager._running_jobs
+
+    def test_active_job_count_keeps_cancelled_threads_until_exit(self, tmp_path):
+        manager = _new_manager(tmp_path)
+        job_id = str(uuid4())
+        manager._running_jobs[job_id] = MagicMock()
+
+        cancelled_job = JobInfo(
+            job_id=job_id,
+            research_question="Q?",
+            status=JobStatus.CANCELLED,
+            created_at="2026-02-01T00:00:00+00:00",
+        )
+
+        with patch.object(manager, "get_job", return_value=cancelled_job):
+            assert manager._get_active_job_count() == 1
+
+
 class TestJobManagerCleanup:
     """Tests for old job cleanup."""
 

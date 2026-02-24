@@ -25,6 +25,7 @@ from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ShandyError
 from shandy.knowledge_state import KnowledgeState
 from shandy.orchestrator.iteration import (
+    _get_job_status,
     build_initial_prompt,
     build_iteration_prompt,
     build_report_prompt,
@@ -40,6 +41,10 @@ from shandy.providers import get_provider
 from shandy.version import get_version_string
 
 logger = logging.getLogger(__name__)
+
+
+class _DiscoveryCancelledError(RuntimeError):
+    """Raised when a job is cancelled during discovery execution."""
 
 
 @dataclass(frozen=True)
@@ -112,14 +117,22 @@ async def _wait_for_coinvestigate_feedback(
     investigation_mode: str,
     current_iteration: int,
     max_iterations: int,
-) -> str | None:
+) -> dict[str, str | None] | None:
     """Pause for user feedback between iterations in co-investigation mode."""
     if investigation_mode != "coinvestigate" or current_iteration >= max_iterations:
         return None
     await update_job_status(job_dir, "awaiting_feedback")
-    feedback = await wait_for_feedback_or_timeout(job_dir)
-    await update_job_status(job_dir, "running")
-    return feedback
+    wait_result = await wait_for_feedback_or_timeout(job_dir)
+    if wait_result["outcome"] != "cancelled":
+        await update_job_status(job_dir, "running")
+    return wait_result
+
+
+async def _assert_job_not_cancelled(job_id: str) -> None:
+    """Raise if the job was cancelled by the user."""
+    status = await _get_job_status(job_id)
+    if status == "cancelled":
+        raise _DiscoveryCancelledError(f"Job {job_id} was cancelled")
 
 
 async def _run_primary_discovery_loop(
@@ -132,6 +145,7 @@ async def _run_primary_discovery_loop(
     log_file: Path,
 ) -> None:
     """Run initial and iterative discovery phases before report generation."""
+    job_id = runtime["job_id"]
     max_iterations = runtime["max_iterations"]
     data_files = runtime["data_files"]
     investigation_mode = runtime["investigation_mode"]
@@ -159,16 +173,25 @@ async def _run_primary_discovery_loop(
     )
     if max_iterations > 1:
         increment_ks_iteration(ks_path)
+    await _assert_job_not_cancelled(job_id)
 
-    pending_feedback = await _wait_for_coinvestigate_feedback(
+    pending_feedback_result = await _wait_for_coinvestigate_feedback(
         job_dir,
         investigation_mode,
         current_iteration=1,
         max_iterations=max_iterations,
     )
+    if pending_feedback_result and pending_feedback_result["outcome"] == "cancelled":
+        raise _DiscoveryCancelledError(f"Job {job_id} was cancelled")
+    pending_feedback = (
+        pending_feedback_result["feedback_text"]
+        if pending_feedback_result and pending_feedback_result["outcome"] == "feedback"
+        else None
+    )
     reset_interval = 5
 
     for iteration in range(2, max_iterations + 1):
+        await _assert_job_not_cancelled(job_id)
         ks = KnowledgeState.load(ks_path)
         if pending_feedback is None:
             pending_feedback = ks.get_feedback_for_iteration(iteration)
@@ -186,7 +209,7 @@ async def _run_primary_discovery_loop(
         result = await executor.run_iteration(iteration_prompt, reset_session=should_reset)
         if not result.success:
             logger.error("Iteration %d failed: %s", iteration, result.error)
-            break
+            raise RuntimeError(f"Iteration {iteration} failed: {result.error}")
 
         logger.info("Iteration %d completed (tool_calls=%d)", iteration, result.tool_calls)
         _append_iteration_artifacts(
@@ -199,11 +222,19 @@ async def _run_primary_discovery_loop(
 
         if iteration < max_iterations:
             increment_ks_iteration(ks_path)
-        pending_feedback = await _wait_for_coinvestigate_feedback(
+        await _assert_job_not_cancelled(job_id)
+        pending_feedback_result = await _wait_for_coinvestigate_feedback(
             job_dir,
             investigation_mode,
             current_iteration=iteration,
             max_iterations=max_iterations,
+        )
+        if pending_feedback_result and pending_feedback_result["outcome"] == "cancelled":
+            raise _DiscoveryCancelledError(f"Job {job_id} was cancelled")
+        pending_feedback = (
+            pending_feedback_result["feedback_text"]
+            if pending_feedback_result and pending_feedback_result["outcome"] == "feedback"
+            else None
         )
 
     logger.info("Discovery loop completed")
@@ -403,11 +434,11 @@ def get_version_metadata() -> dict[str, str]:
 
     metadata: dict[str, str] = {}
 
-    shandy_commit = os.environ.get("SHANDY_COMMIT")  # noqa: env-ok
+    shandy_commit = os.environ.get("SHANDY_COMMIT")  # env-ok
     if shandy_commit and shandy_commit != "unknown":
         metadata["shandy_commit"] = shandy_commit[:12]
 
-    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # noqa: env-ok
+    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # env-ok
     if shandy_build_time and shandy_build_time != "unknown":
         metadata["shandy_build_time"] = shandy_build_time
 
@@ -498,13 +529,37 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             "findings": len(ks.data["findings"]),
         }
 
+    except _DiscoveryCancelledError:
+        logger.info("Discovery cancelled for job %s", job_id)
+        ks = KnowledgeState.load(ks_path)
+        sync_knowledge_state_to_db(job_dir, ks)
+        return {
+            "job_id": job_id,
+            "status": "cancelled",
+            "iterations": ks.data["iteration"],
+            "findings": len(ks.data["findings"]),
+        }
+
     except Exception as e:
         logger.error("Discovery failed [%s]: %s", get_version_string(), e, exc_info=True)
         try:
             await update_job_status(job_dir, "failed", error_message=str(e))
         except Exception as status_error:
             logger.warning("Failed to persist failure status for job %s: %s", job_id, status_error)
-        raise
+        try:
+            ks = KnowledgeState.load(ks_path)
+            iterations = ks.data["iteration"]
+            findings = len(ks.data["findings"])
+        except Exception:
+            iterations = 0
+            findings = 0
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "iterations": iterations,
+            "findings": findings,
+            "error": str(e),
+        }
 
     finally:
         tokens = executor.total_tokens

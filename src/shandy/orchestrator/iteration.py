@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from pathlib import Path
+from typing import Literal, TypedDict
 from uuid import UUID
 
 from sqlalchemy import select
@@ -23,6 +24,13 @@ from shandy.ntfy import notify_job_status_change
 logger = logging.getLogger(__name__)
 
 FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
+
+
+class FeedbackWaitResult(TypedDict):
+    """Outcome for co-investigate feedback waiting."""
+
+    outcome: Literal["feedback", "timeout", "continued", "cancelled"]
+    feedback_text: str | None
 
 
 def build_initial_prompt(
@@ -314,11 +322,16 @@ async def update_job_status(
 
 async def wait_for_feedback_or_timeout(
     job_dir: Path, timeout_seconds: int = FEEDBACK_TIMEOUT_SECONDS
-) -> str | None:
+) -> FeedbackWaitResult:
     """
     Wait for scientist feedback or timeout (coinvestigate mode).
 
-    Returns feedback text if submitted, None if timeout, cancellation, or continue.
+    Returns:
+        Structured feedback wait outcome:
+            - outcome="feedback" with feedback_text when scientist submits feedback
+            - outcome="timeout" when timeout elapsed
+            - outcome="cancelled" when job is cancelled
+            - outcome="continued" when user resumes without feedback
     """
     job_id = job_dir.name
     ks_path = job_dir / "knowledge_state.json"
@@ -336,15 +349,15 @@ async def wait_for_feedback_or_timeout(
 
         if elapsed >= timeout_seconds:
             logger.info("Feedback timeout after %.0fs - auto-continuing", elapsed)
-            return None
+            return {"outcome": "timeout", "feedback_text": None}
 
         status = await _get_job_status(job_id)
         if status == "cancelled":
             logger.info("Job cancelled while waiting for feedback")
-            return None
+            return {"outcome": "cancelled", "feedback_text": None}
         if status == "running":
             logger.info("Continue signal received (no feedback)")
-            return None
+            return {"outcome": "continued", "feedback_text": None}
 
         ks = KnowledgeState.load(ks_path)
         feedback_history = ks.data.get("feedback_history", [])
@@ -353,6 +366,6 @@ async def wait_for_feedback_or_timeout(
             latest = feedback_history[-1]
             if latest.get("after_iteration") == current_iteration:
                 logger.info("Received feedback: %s...", latest["text"][:100])
-                return str(latest["text"])
+                return {"outcome": "feedback", "feedback_text": str(latest["text"])}
 
         await asyncio.sleep(2)
