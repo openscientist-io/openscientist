@@ -250,6 +250,21 @@ class TestProviderContainerEnvVars:
         assert env["ANTHROPIC_SMALL_FAST_MODEL"] == "model-b"
         assert env["GITHUB_TOKEN"] == "ghp_example"
 
+    def test_foundry_resource_still_exports_api_key(self):
+        settings = ProviderSettings(
+            CLAUDE_PROVIDER="foundry",
+            ANTHROPIC_FOUNDRY_RESOURCE="lab-foundry",
+            ANTHROPIC_FOUNDRY_API_KEY="foundry-key",
+        )
+
+        env = settings.get_container_env_vars()
+
+        assert env["CLAUDE_PROVIDER"] == "foundry"
+        assert env["CLAUDE_CODE_USE_FOUNDRY"] == "1"
+        assert env["ANTHROPIC_FOUNDRY_RESOURCE"] == "lab-foundry"
+        assert env["ANTHROPIC_FOUNDRY_API_KEY"] == "foundry-key"
+        assert "ANTHROPIC_FOUNDRY_BASE_URL" not in env
+
 
 class TestDatabaseSettings:
     """Tests for database configuration."""

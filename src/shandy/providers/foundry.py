@@ -13,6 +13,13 @@ from typing import Any
 from shandy.providers.base import BaseProvider, CostInfo
 from shandy.settings import get_settings
 
+from ._anthropic_common import (
+    build_system_blocks,
+    build_tool_params,
+    build_usage_dict,
+    convert_response_blocks,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,7 +91,7 @@ class FoundryProvider(BaseProvider):
         environment variables from other providers.
         """
         # Enable Foundry mode for Claude Code
-        os.environ["CLAUDE_CODE_USE_FOUNDRY"] = "1"  # noqa: env-ok
+        os.environ["CLAUDE_CODE_USE_FOUNDRY"] = "1"  # env-ok
 
         # Note: Claude Code 2.1.42+ will construct the base URL from ANTHROPIC_FOUNDRY_RESOURCE
         # automatically, so we don't need to set ANTHROPIC_FOUNDRY_BASE_URL here.
@@ -98,7 +105,7 @@ class FoundryProvider(BaseProvider):
             "VERTEX_REGION_CLAUDE_4_5_HAIKU",
         ]
         for var in vertex_vars:
-            if os.environ.pop(var, None) is not None:  # noqa: env-ok
+            if os.environ.pop(var, None) is not None:  # env-ok
                 logger.debug(f"Removing conflicting {var}")
 
         # Unset Bedrock vars to avoid conflicts
@@ -107,12 +114,12 @@ class FoundryProvider(BaseProvider):
             "AWS_BEARER_TOKEN_BEDROCK",
         ]
         for var in bedrock_vars:
-            if os.environ.pop(var, None) is not None:  # noqa: env-ok
+            if os.environ.pop(var, None) is not None:  # env-ok
                 logger.debug(f"Removing conflicting {var}")
 
         # Unset direct Anthropic API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
-        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)  # noqa: env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)  # env-ok
 
         # Unset empty vars that interfere with auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -124,13 +131,30 @@ class FoundryProvider(BaseProvider):
             "AWS_SESSION_TOKEN",
         ]
         for var in empty_vars_to_clear:
-            if os.environ.get(var) == "":  # noqa: env-ok
-                os.environ.pop(var, None)  # noqa: env-ok
+            if os.environ.get(var) == "":  # env-ok
+                os.environ.pop(var, None)  # env-ok
                 logger.debug(f"Unset empty {var}")
 
         settings = get_settings()
         auth_method = "API key" if settings.provider.anthropic_foundry_api_key else "Entra ID"
         logger.info(f"Azure Foundry provider initialized (using {auth_method} authentication)")
+
+    @staticmethod
+    def _build_base_url_from_resource(resource: str) -> str:
+        """Build Azure Foundry Anthropic endpoint URL from resource name."""
+        return f"https://{resource}.services.ai.azure.com/api/anthropic"
+
+    def _resolve_base_url(self) -> str:
+        """Resolve Foundry base URL from explicit URL or resource name."""
+        settings = get_settings()
+        if settings.provider.anthropic_foundry_base_url:
+            return settings.provider.anthropic_foundry_base_url
+        if settings.provider.anthropic_foundry_resource:
+            return self._build_base_url_from_resource(settings.provider.anthropic_foundry_resource)
+        raise ValueError(
+            "Azure Foundry endpoint not configured. Set ANTHROPIC_FOUNDRY_BASE_URL "
+            "or ANTHROPIC_FOUNDRY_RESOURCE."
+        )
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """
@@ -212,7 +236,7 @@ class FoundryProvider(BaseProvider):
         from anthropic.types import MessageParam, TextBlock
 
         settings = get_settings()
-        base_url = settings.provider.anthropic_foundry_base_url
+        base_url = self._resolve_base_url()
         api_key = settings.provider.anthropic_foundry_api_key
 
         client = anthropic.Anthropic(
@@ -262,7 +286,7 @@ class FoundryProvider(BaseProvider):
         from anthropic.types import ToolParam, ToolUseBlock
 
         settings = get_settings()
-        base_url = settings.provider.anthropic_foundry_base_url
+        base_url = self._resolve_base_url()
         api_key = settings.provider.anthropic_foundry_api_key
 
         client = anthropic.Anthropic(
@@ -276,27 +300,10 @@ class FoundryProvider(BaseProvider):
         )
 
         # Convert tools to ToolParam format
-        tool_params: list[ToolParam] = [
-            {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "input_schema": t["input_schema"],
-            }
-            for t in tools
-        ]
+        tool_params: list[ToolParam] = build_tool_params(tools)  # type: ignore[assignment]
 
         # Use block format for system prompt with cache_control
-        system_blocks = (
-            [
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-            if system
-            else []
-        )
+        system_blocks = build_system_blocks(system)
 
         response = client.messages.create(
             model=effective_model,
@@ -307,29 +314,13 @@ class FoundryProvider(BaseProvider):
         )
 
         # Convert response to dict format
-        content_blocks = []
-        for block in response.content:
-            if hasattr(block, "text"):
-                content_blocks.append({"type": "text", "text": block.text})
-            elif isinstance(block, ToolUseBlock):
-                content_blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
+        content_blocks = convert_response_blocks(
+            response.content,
+            tool_use_block_type=ToolUseBlock,
+        )
 
         # Build usage dict with cache info if available
-        usage: dict[str, int] = {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        }
-        if hasattr(response.usage, "cache_creation_input_tokens"):
-            usage["cache_creation_input_tokens"] = response.usage.cache_creation_input_tokens or 0
-        if hasattr(response.usage, "cache_read_input_tokens"):
-            usage["cache_read_input_tokens"] = response.usage.cache_read_input_tokens or 0
+        usage = build_usage_dict(response.usage)
 
         return {
             "stop_reason": response.stop_reason,

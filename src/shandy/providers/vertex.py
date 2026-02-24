@@ -13,6 +13,13 @@ from shandy.exceptions import ProviderError
 from shandy.providers.base import BaseProvider, CostInfo
 from shandy.settings import get_settings
 
+from ._anthropic_common import (
+    build_system_blocks,
+    build_tool_params,
+    build_usage_dict,
+    convert_response_blocks,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,8 +74,8 @@ class VertexProvider(BaseProvider):
     def setup_environment(self) -> None:
         """Vertex AI environment should be configured via .env and docker-compose.yml."""
         # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # noqa: env-ok
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # noqa: env-ok
+        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
+        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
@@ -257,29 +264,12 @@ class VertexProvider(BaseProvider):
         effective_model = model or settings.provider.anthropic_model or "claude-sonnet-4-5@20250929"
 
         # Convert tools to ToolParam format
-        tool_params: list[ToolParam] = [
-            {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "input_schema": t["input_schema"],
-            }
-            for t in tools
-        ]
+        tool_params: list[ToolParam] = build_tool_params(tools)  # type: ignore[assignment]
 
         # Use block format for system prompt with cache_control
         # This enables prompt caching: 90% cost reduction, 85% latency improvement
         # Cache is "ephemeral" (5 minute TTL) - good for multi-turn agentic loops
-        system_blocks = (
-            [
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-            if system
-            else []
-        )
+        system_blocks = build_system_blocks(system)
 
         response = client.messages.create(
             model=effective_model,
@@ -290,30 +280,13 @@ class VertexProvider(BaseProvider):
         )
 
         # Convert response to dict format
-        content_blocks = []
-        for block in response.content:
-            if hasattr(block, "text"):
-                content_blocks.append({"type": "text", "text": block.text})
-            elif isinstance(block, ToolUseBlock):
-                content_blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
+        content_blocks = convert_response_blocks(
+            response.content,
+            tool_use_block_type=ToolUseBlock,
+        )
 
         # Build usage dict with cache info if available
-        usage: dict[str, int] = {
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-        }
-        # Add cache metrics if present (from prompt caching)
-        if hasattr(response.usage, "cache_creation_input_tokens"):
-            usage["cache_creation_input_tokens"] = response.usage.cache_creation_input_tokens or 0
-        if hasattr(response.usage, "cache_read_input_tokens"):
-            usage["cache_read_input_tokens"] = response.usage.cache_read_input_tokens or 0
+        usage = build_usage_dict(response.usage)
 
         return {
             "stop_reason": response.stop_reason,

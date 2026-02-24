@@ -280,12 +280,11 @@ class ProviderSettings(BaseSettings):
         self._set_env_if_present(
             env_vars, "ANTHROPIC_FOUNDRY_RESOURCE", self.anthropic_foundry_resource
         )
-        if self.anthropic_foundry_resource:
-            # Claude Code treats resource/base_url as mutually exclusive.
-            return
-        self._set_env_if_present(
-            env_vars, "ANTHROPIC_FOUNDRY_BASE_URL", self.anthropic_foundry_base_url
-        )
+        # Claude Code treats resource/base_url as mutually exclusive.
+        if not self.anthropic_foundry_resource:
+            self._set_env_if_present(
+                env_vars, "ANTHROPIC_FOUNDRY_BASE_URL", self.anthropic_foundry_base_url
+            )
         self._set_env_if_present(
             env_vars, "ANTHROPIC_FOUNDRY_API_KEY", self.anthropic_foundry_api_key
         )

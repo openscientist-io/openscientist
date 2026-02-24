@@ -140,7 +140,8 @@ class TestCborgGetCostInfo:
             cost = provider.get_cost_info()
 
             assert cost.total_spend_usd == 50.0
-            assert cost.recent_spend_usd == 0.0  # Fallback
+            assert cost.recent_spend_usd is None
+            assert "unavailable" in (cost.data_lag_note or "").lower()
 
     @patch("shandy.providers.cborg.requests.get")
     def test_no_max_budget(self, mock_get):
