@@ -273,10 +273,13 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
     extension = file_path.suffix.lower()
 
     # Detect actual file type from content
-    try:
-        mime_type = magic.from_buffer(content, mime=True)
-    except (ValueError, OSError) as e:
-        logger.warning("Could not detect MIME type from content: %s", e)
+    if HAS_MAGIC:
+        try:
+            mime_type = magic.from_buffer(content, mime=True)
+        except (ValueError, OSError) as e:
+            logger.warning("Could not detect MIME type from content: %s", e)
+            mime_type = "application/octet-stream"
+    else:
         mime_type = "application/octet-stream"
 
     # Check for executable content

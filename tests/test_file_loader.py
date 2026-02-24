@@ -182,3 +182,11 @@ class TestValidateUploadedFile:
             mock_magic.from_buffer.return_value = "application/x-executable"
             with pytest.raises(ValueError, match="Executable file detected"):
                 validate_uploaded_file(tmp_path / "data.csv", b"fake-binary")
+
+    def test_validation_works_without_python_magic(self, tmp_path):
+        """When python-magic is unavailable, validation should use fallback MIME."""
+        with (
+            patch("shandy.file_loader.HAS_MAGIC", False),
+            patch("shandy.file_loader.magic", None),
+        ):
+            validate_uploaded_file(tmp_path / "data.csv", b"a,b\n1,2\n")
