@@ -70,6 +70,7 @@ def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     use_skills: bool,
+    use_hypotheses: bool = False,
 ) -> AgentExecutor:
     """Create a configured agent executor for discovery/report phases."""
     system_prompt = get_system_prompt(skills_enabled=use_skills)
@@ -78,6 +79,7 @@ def _build_agent_executor(
         job_dir=job_dir,
         data_file=data_file,
         system_prompt=system_prompt,
+        use_hypotheses=use_hypotheses,
     )
 
 
@@ -348,6 +350,7 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
         "research_question": job.title,
         "max_iterations": job.max_iterations,
         "use_skills": bool(job.use_skills),
+        "use_hypotheses": bool(job.use_hypotheses),
         "investigation_mode": job.investigation_mode,
         "data_files": resolved_files,
     }
@@ -480,11 +483,13 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     await update_job_status(job_dir, "running")
 
     use_skills = runtime["use_skills"]
+    use_hypotheses = runtime["use_hypotheses"]
     await _write_skills_to_claude_dir(job_dir, use_skills)
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_skills=use_skills,
+        use_hypotheses=use_hypotheses,
     )
     logger.info("Created agent executor for job %s", job_id)
 
@@ -584,11 +589,13 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     await update_job_status(job_dir, "generating_report")
 
     use_skills = runtime["use_skills"]
+    use_hypotheses = runtime["use_hypotheses"]
     await _write_skills_to_claude_dir(job_dir, use_skills)
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_skills=use_skills,
+        use_hypotheses=use_hypotheses,
     )
 
     try:

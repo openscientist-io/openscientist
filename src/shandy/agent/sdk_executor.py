@@ -110,13 +110,14 @@ class SDKAgentExecutor:
         job_dir: Path,
         data_file: Path | None,
         system_prompt: str | None,
+        use_hypotheses: bool = False,
     ) -> None:
         from shandy.tools.registry import build_tool_list
 
         self._job_dir = job_dir
         self._data_file = data_file
         self._system_prompt = system_prompt
-        self._tools = build_tool_list(job_dir, data_file)
+        self._tools = build_tool_list(job_dir, data_file, use_hypotheses=use_hypotheses)
         self._token_usage = TokenUsage()
         self._client: ClaudeSDKClient | None = None
         self._stderr_lines: list[str] = []

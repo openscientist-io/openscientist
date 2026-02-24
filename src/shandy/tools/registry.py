@@ -152,7 +152,9 @@ class ToolContext:
     data_file: Path | None = None
 
 
-def build_tool_list(job_dir: Path, data_file: Path | None = None) -> list[Any]:
+def build_tool_list(
+    job_dir: Path, data_file: Path | None = None, use_hypotheses: bool = False
+) -> list[Any]:
     """
     Build the full list of SDK tool objects for a job.
 
@@ -172,7 +174,7 @@ def build_tool_list(job_dir: Path, data_file: Path | None = None) -> list[Any]:
 
     tools: list[Any] = []
     tools.extend(pubmed_tools(ctx))
-    tools.extend(knowledge_tools(ctx))
+    tools.extend(knowledge_tools(ctx, use_hypotheses=use_hypotheses))
     tools.extend(code_tools(ctx))
     tools.extend(doc_tools(ctx))
     tools.extend(meta_tools(ctx))

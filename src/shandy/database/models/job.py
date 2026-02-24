@@ -90,6 +90,13 @@ class Job(UUIDv7Mixin, Base):
         comment="Whether specialized skills are enabled for this job",
     )
 
+    use_hypotheses: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="Whether hypothesis tracking tools are enabled",
+    )
+
     investigation_mode: Mapped[str] = mapped_column(
         String(20),
         nullable=False,

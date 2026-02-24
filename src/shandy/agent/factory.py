@@ -21,6 +21,7 @@ def get_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     system_prompt: str | None,
+    use_hypotheses: bool = False,
 ) -> AgentExecutor:
     """
     Return an SDKAgentExecutor for the configured provider.
@@ -38,4 +39,5 @@ def get_agent_executor(
         job_dir=job_dir,
         data_file=data_file,
         system_prompt=system_prompt,
+        use_hypotheses=use_hypotheses,
     )

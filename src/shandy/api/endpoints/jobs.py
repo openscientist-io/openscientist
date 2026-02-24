@@ -76,6 +76,10 @@ class JobCreate(BaseModel):
         True,
         description="Whether to use specialized analysis skills (all enabled skills are available)",
     )
+    use_hypotheses: bool = Field(
+        False,
+        description="Whether to enable hypothesis tracking and testing tools for this job",
+    )
     investigation_mode: str = Field(
         "autonomous",
         description="Investigation mode: 'autonomous' or 'coinvestigate'",
@@ -250,6 +254,7 @@ async def create_job(
             data_files=[],  # TODO: Support file uploads in API
             max_iterations=job_data.max_iterations,
             use_skills=job_data.use_skills,
+            use_hypotheses=job_data.use_hypotheses,
             auto_start=True,
             investigation_mode=job_data.investigation_mode,
             owner_id=str(user.id),

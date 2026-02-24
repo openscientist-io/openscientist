@@ -13,7 +13,7 @@ from shandy.tools.registry import ToolContext, tool
 logger = logging.getLogger(__name__)
 
 
-def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
+def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[..., Any]]:
     """Return knowledge state tools bound to ctx."""
 
     @tool
@@ -130,4 +130,6 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         status_emoji = {"testing": "🔬", "supported": "✅", "rejected": "❌"}.get(status, "📝")
         return f"{status_emoji} Hypothesis {hypothesis_id} updated to '{status}'"
 
-    return [update_knowledge_state, add_hypothesis, update_hypothesis]
+    if use_hypotheses:
+        return [update_knowledge_state, add_hypothesis, update_hypothesis]
+    return [update_knowledge_state]

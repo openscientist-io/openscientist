@@ -52,6 +52,7 @@ class JobInfo:
     error: str | None = None
     cancellation_reason: str | None = None
     use_skills: bool = True
+    use_hypotheses: bool = False
     investigation_mode: str = "autonomous"
     owner_id: str | None = None
     short_title: str | None = None
@@ -100,6 +101,7 @@ class JobInfo:
             error=job.error_message,
             cancellation_reason=job.cancellation_reason,
             use_skills=bool(getattr(job, "use_skills", True)),
+            use_hypotheses=bool(getattr(job, "use_hypotheses", False)),
             investigation_mode=getattr(job, "investigation_mode", "autonomous"),
             owner_id=str(job.owner_id) if job.owner_id else None,
             short_title=job.short_title,

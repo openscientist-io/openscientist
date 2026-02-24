@@ -390,6 +390,13 @@ def upgrade() -> None:
             comment="Whether specialized skills are enabled for this job",
         ),
         sa.Column(
+            "use_hypotheses",
+            sa.Boolean(),
+            server_default="false",
+            nullable=False,
+            comment="Whether hypothesis tracking tools are enabled",
+        ),
+        sa.Column(
             "investigation_mode",
             sa.String(length=20),
             server_default="autonomous",

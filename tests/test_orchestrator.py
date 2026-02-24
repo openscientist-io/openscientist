@@ -233,6 +233,7 @@ class TestDiscoveryCancellationAndFailure:
             "research_question": "Question?",
             "max_iterations": 3,
             "use_skills": False,
+            "use_hypotheses": False,
             "investigation_mode": "autonomous",
             "data_files": [],
         }
@@ -311,6 +312,7 @@ class TestDiscoveryCancellationAndFailure:
             "research_question": "Question?",
             "max_iterations": 3,
             "use_skills": False,
+            "use_hypotheses": False,
             "investigation_mode": "autonomous",
             "data_files": [],
         }
