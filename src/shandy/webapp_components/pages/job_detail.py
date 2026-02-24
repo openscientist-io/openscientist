@@ -295,6 +295,47 @@ def _render_iteration_literature(
                 ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
 
 
+_HYPOTHESIS_STATUS_CLASSES: dict[str, str] = {
+    "supported": "bg-green-50 border-l-4 border-green-500",
+    "rejected": "bg-red-50 border-l-4 border-red-400",
+    "testing": "bg-blue-50 border-l-4 border-blue-400",
+    "pending": "bg-gray-50",
+}
+
+_HYPOTHESIS_STATUS_LABEL_CLASSES: dict[str, str] = {
+    "supported": "text-green-700",
+    "rejected": "text-red-700",
+    "testing": "text-blue-700",
+    "pending": "text-gray-500",
+}
+
+
+def _render_iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) -> None:
+    iter_hypotheses = [
+        h
+        for h in iter_ks_data.get("hypotheses", [])
+        if h.get("iteration_proposed") == iter_num or h.get("iteration_tested") == iter_num
+    ]
+    if not iter_hypotheses:
+        return
+
+    with ui.expansion(f"Hypotheses ({len(iter_hypotheses)})", icon="science").classes(
+        "w-full mt-2"
+    ):
+        for hyp in iter_hypotheses:
+            status = hyp.get("status", "pending")
+            card_class = _HYPOTHESIS_STATUS_CLASSES.get(status, "bg-gray-50")
+            label_class = _HYPOTHESIS_STATUS_LABEL_CLASSES.get(status, "text-gray-500")
+            with ui.card().classes(f"w-full mb-2 {card_class}"):
+                ui.label(hyp.get("statement", "")).classes("font-bold text-gray-800 text-sm")
+                ui.label(f"Status: {status}").classes(f"text-xs {label_class} mt-1")
+                result = hyp.get("result") or {}
+                if result.get("summary"):
+                    ui.label(result["summary"]).classes("text-sm text-gray-700 mt-1")
+                if result.get("conclusion"):
+                    ui.label(result["conclusion"]).classes("text-sm text-gray-600 italic mt-1")
+
+
 def _render_iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> None:
     iteration_findings = [
         finding
@@ -346,6 +387,7 @@ def _load_iteration_content(
                     text_classes="text-sm text-gray-700",
                 )
 
+        _render_iteration_hypotheses(iter_ks_data, iter_num)
         _render_iteration_findings(iter_ks_data, iter_num)
         transcript_path = iter_provenance_dir / f"iter{iter_num}_transcript.json"
         _render_transcript_actions(_load_transcript_actions(transcript_path, iter_num))
@@ -354,10 +396,17 @@ def _load_iteration_content(
 
 
 def _render_iteration_header(
-    iteration: int, header_text: str, code_count: int, search_count: int, finding_count: int
+    iteration: int,
+    header_text: str,
+    code_count: int,
+    search_count: int,
+    finding_count: int,
+    hypothesis_count: int = 0,
 ) -> None:
     with ui.row().classes("items-center gap-2 flex-wrap"):
         ui.label(f"Iteration {iteration}: {header_text}").classes("font-medium")
+        if hypothesis_count:
+            ui.badge(f"{hypothesis_count} hypotheses", color="orange")
         if code_count:
             ui.badge(f"{code_count} analyses", color="blue").props("outline")
         if search_count:
@@ -378,6 +427,11 @@ def _render_iteration_card(
     is_in_progress = iteration == timeline_max_iter and latest_status == JobStatus.RUNNING
     strapline, summary_text = _normalize_iteration_summary(iter_summary)
     code_count, search_count, finding_count = _iteration_activity_counts(entries)
+    hypothesis_count = sum(
+        1
+        for h in timeline_ks.get("hypotheses", [])
+        if h.get("iteration_proposed") == iteration or h.get("iteration_tested") == iteration
+    )
     border_class = _timeline_border_class(code_count, search_count, finding_count)
     header_text = _timeline_header_text(strapline, summary_text, is_in_progress)
 
@@ -389,6 +443,7 @@ def _render_iteration_card(
                 code_count,
                 search_count,
                 finding_count,
+                hypothesis_count,
             )
 
         content_container = ui.column().classes("w-full")
@@ -733,7 +788,7 @@ def _render_job_status_notices(context: _JobDetailContext) -> None:
         _render_ks_loading_notice(context.ks_load_error)
 
 
-def _stats_badges(latest_job: Any, lit_count: int) -> list[Any]:
+def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[Any]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
@@ -747,6 +802,8 @@ def _stats_badges(latest_job: Any, lit_count: int) -> list[Any]:
     badges.extend(
         [("Findings", latest_job.findings_count, "green"), ("Papers", lit_count, "purple")]
     )
+    if hyp_count:
+        badges.append(("Hypotheses", hyp_count, "orange"))
     return badges
 
 
@@ -760,7 +817,8 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
 
     latest_ks, _ = _load_knowledge_state(context.ks_path)
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
-    render_stat_badges(_stats_badges(latest_job, lit_count))
+    hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
+    render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
 
     if latest_job.status == JobStatus.RUNNING and latest_ks:
         agent_status = latest_ks.get("agent_status")
