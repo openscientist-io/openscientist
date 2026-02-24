@@ -37,6 +37,7 @@ async def health_check(request: Request) -> dict[str, str]:
 
     Returns API version and status.
     """
+    _ = request
     return {
         "status": "ok",
         "version": "v1",

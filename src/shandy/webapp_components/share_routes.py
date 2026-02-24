@@ -10,29 +10,26 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.auth.middleware import get_current_user_id
-from shandy.database.models import Job, JobShare, User
+from shandy.database.models import JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_admin_session, get_session
+from shandy.share_service import (
+    create_or_update_share,
+    list_shares_for_owned_job,
+    revoke_share_for_owned_job,
+    search_active_users,
+)
 
 logger = logging.getLogger(__name__)
 
 # Web UI routes use session auth - exclude from API docs
 router = APIRouter(prefix="/web/shares", include_in_schema=False)
-
-
-def _parse_uuid(value: str, field_name: str) -> UUID:
-    """Parse UUID input and raise a client error on invalid format."""
-    try:
-        return UUID(value)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid {field_name} format",
-        ) from e
+CURRENT_USER_ID_DEP = Depends(get_current_user_id)
+SESSION_DEP = Depends(get_session)
 
 
 # Pydantic models for request/response
@@ -69,7 +66,16 @@ class UserSearchResult(BaseModel):
 
 
 def _share_to_response(share: JobShare, target_user: User) -> ShareResponse:
-    """Convert a JobShare + User pair to ShareResponse."""
+    """
+    Convert persisted sharing rows into API response shape.
+
+    Args:
+        share: Job share row.
+        target_user: User row referenced by ``share.shared_with_user_id``.
+
+    Returns:
+        Serialized share response.
+    """
     return ShareResponse(
         id=str(share.id),
         job_id=str(share.job_id),
@@ -79,38 +85,23 @@ def _share_to_response(share: JobShare, target_user: User) -> ShareResponse:
     )
 
 
-async def _get_owned_job(
-    session: AsyncSession,
-    user: User,
-    job_id: str,
-    forbidden_detail: str,
-) -> Job:
-    """Load a job and verify ownership by the current user."""
-    job_uuid = _parse_uuid(job_id, "job_id")
-    job_stmt = select(Job).where(Job.id == job_uuid)
-    job_result = await session.execute(job_stmt)
-    job = job_result.scalar_one_or_none()
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or you don't have access",
-        )
-
-    if job.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=forbidden_detail,
-        )
-
-    return job
-
-
 async def get_current_user_from_session(
-    user_id: UUID = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_session),
+    user_id: UUID = CURRENT_USER_ID_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> User:
-    """Get the current user from session authentication."""
+    """
+    Resolve the authenticated user for web-session routes.
+
+    Args:
+        user_id: User ID extracted from session middleware.
+        session: Request-scoped database session.
+
+    Returns:
+        Active user record for downstream authorization checks.
+
+    Raises:
+        HTTPException: If the session references a missing user.
+    """
     stmt = select(User).where(User.id == user_id)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
@@ -124,129 +115,98 @@ async def get_current_user_from_session(
     return user
 
 
+CURRENT_SESSION_USER_DEP = Depends(get_current_user_from_session)
+
+
 @router.post("/job/{job_id}")
 async def create_share(
     job_id: str,
     share_data: ShareCreate,
-    user: User = Depends(get_current_user_from_session),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_SESSION_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> ShareResponse:
-    """Share a job with another user."""
+    """
+    Create or update a share for a job owned by the current user.
+
+    Args:
+        job_id: Target job UUID string.
+        share_data: Share target email and permission payload.
+        user: Authenticated session user.
+        session: Request-scoped database session.
+
+    Returns:
+        Persisted share metadata for the target user.
+    """
     # Set RLS context
     await set_current_user(session, user.id)
 
-    # Verify job exists and user owns it
-    job = await _get_owned_job(session, user, job_id, "You can only share jobs you own")
-
-    # Find user to share with by email
-    target_stmt = select(User).where(User.email == share_data.shared_with_email)
-    target_result = await session.execute(target_stmt)
-    target_user = target_result.scalar_one_or_none()
-
-    if not target_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with email '{share_data.shared_with_email}' not found",
-        )
-
-    # Prevent sharing with self
-    if target_user.id == user.id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot share job with yourself",
-        )
-
-    # Check if share already exists
-    share_check_stmt = select(JobShare).where(
-        JobShare.job_id == job.id,
-        JobShare.shared_with_user_id == target_user.id,
-    )
-    share_check_result = await session.execute(share_check_stmt)
-    existing_share = share_check_result.scalar_one_or_none()
-
-    if existing_share:
-        # Update existing share permission
-        existing_share.permission_level = share_data.permission_level
-        await session.commit()
-        await session.refresh(existing_share)
-
-        return _share_to_response(existing_share, target_user)
-
-    # Create new share
-    new_share = JobShare(
-        job_id=job.id,
-        shared_with_user_id=target_user.id,
+    share, target_user = await create_or_update_share(
+        session,
+        user.id,
+        job_id=job_id,
+        shared_with_email=share_data.shared_with_email,
         permission_level=share_data.permission_level,
+        not_owned_detail="You can only share jobs you own",
+        admin_session_factory=get_admin_session,
     )
-    session.add(new_share)
-    await session.commit()
-    await session.refresh(new_share)
-
-    return _share_to_response(new_share, target_user)
+    return _share_to_response(share, target_user)
 
 
 @router.get("/job/{job_id}")
 async def list_job_shares(
     job_id: str,
-    user: User = Depends(get_current_user_from_session),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_SESSION_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> list[ShareResponse]:
-    """List all shares for a specific job."""
+    """
+    List all shares configured for an owned job.
+
+    Args:
+        job_id: Target job UUID string.
+        user: Authenticated session user.
+        session: Request-scoped database session.
+
+    Returns:
+        Shares for the job, ordered by target user email.
+    """
     # Set RLS context
     await set_current_user(session, user.id)
 
-    # Verify job exists and user owns it
-    job = await _get_owned_job(session, user, job_id, "You can only view shares for jobs you own")
-
-    # Get all shares for this job with user info
-    shares_stmt = (
-        select(JobShare, User)
-        .join(User, JobShare.shared_with_user_id == User.id)
-        .where(JobShare.job_id == job.id)
-        .order_by(User.email)
+    shares = await list_shares_for_owned_job(
+        session,
+        user.id,
+        job_id=job_id,
+        not_owned_detail="You can only view shares for jobs you own",
     )
-    shares_result = await session.execute(shares_stmt)
-    shares = shares_result.all()
-
     return [_share_to_response(share, target_user) for share, target_user in shares]
 
 
 @router.delete("/{share_id}")
 async def revoke_share(
     share_id: str,
-    user: User = Depends(get_current_user_from_session),
-    session: AsyncSession = Depends(get_session),
+    user: User = CURRENT_SESSION_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
 ) -> dict:
-    """Revoke a job share."""
+    """
+    Revoke an existing share on a job owned by the caller.
+
+    Args:
+        share_id: Share UUID string.
+        user: Authenticated session user.
+        session: Request-scoped database session.
+
+    Returns:
+        Success payload consumed by the web UI.
+    """
     # Set RLS context
     await set_current_user(session, user.id)
 
-    # Find the share
-    share_uuid = _parse_uuid(share_id, "share_id")
-    share_stmt = select(JobShare).where(JobShare.id == share_uuid)
-    share_result = await session.execute(share_stmt)
-    share = share_result.scalar_one_or_none()
-
-    if not share:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Share not found",
-        )
-
-    # Verify user owns the job
-    job_stmt = select(Job).where(Job.id == share.job_id)
-    job_result = await session.execute(job_stmt)
-    job = job_result.scalar_one_or_none()
-
-    if not job or job.owner_id != user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only revoke shares for jobs you own",
-        )
-
-    # Delete the share
-    await session.delete(share)
-    await session.commit()
+    await revoke_share_for_owned_job(
+        session,
+        user.id,
+        share_id=share_id,
+        not_owned_detail="You can only revoke shares for jobs you own",
+    )
 
     return {"status": "success"}
 
@@ -255,26 +215,24 @@ async def revoke_share(
 async def search_users(
     q: str = Query(..., min_length=2, description="Search query"),
     limit: int = Query(10, ge=1, le=100),
-    user: User = Depends(get_current_user_from_session),
+    _user: User = CURRENT_SESSION_USER_DEP,
 ) -> list[UserSearchResult]:
-    """Search for users by email or name."""
-    # Use admin session to bypass RLS (users table only allows SELECT of own record)
-    search_pattern = f"%{q}%"
-    async with get_admin_session() as admin_session:
-        stmt = (
-            select(User)
-            .where(
-                or_(
-                    User.email.ilike(search_pattern),
-                    User.name.ilike(search_pattern),
-                )
-            )
-            .where(User.is_active == True)  # noqa: E712
-            .order_by(User.email)
-            .limit(limit)
-        )
-        result = await admin_session.execute(stmt)
-        users = result.scalars().all()
+    """
+    Search active users for share-target autocompletion.
+
+    Args:
+        q: Case-insensitive search query.
+        limit: Maximum number of users to return.
+        _user: Authenticated session user (auth gate only).
+
+    Returns:
+        Matching users (id, email, display name).
+    """
+    users = await search_active_users(
+        q,
+        limit,
+        admin_session_factory=get_admin_session,
+    )
 
     return [
         UserSearchResult(

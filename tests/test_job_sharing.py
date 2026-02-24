@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Job, JobShare, User
@@ -384,7 +385,7 @@ async def test_cannot_share_same_job_twice_to_same_user(
         permission_level="edit",
     )
 
-    with pytest.raises(Exception):  # IntegrityError from unique constraint
+    with pytest.raises(IntegrityError):
         async with db_session.begin_nested():
             db_session.add(share2)
             await db_session.flush()
