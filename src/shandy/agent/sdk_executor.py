@@ -45,19 +45,28 @@ def _install_parse_message_patch() -> None:
     raising ``MessageParseError``.
     """
     import claude_agent_sdk._internal.message_parser as _mp  # type: ignore[import-not-found]
+    from claude_agent_sdk._errors import MessageParseError  # type: ignore[import-not-found]
+
+    if getattr(_mp.parse_message, "__shandy_tolerant_patch__", False):
+        return
 
     _original_parse = _mp.parse_message
+    known_types = {"user", "assistant", "system", "result", "stream_event"}
 
-    def _tolerant_parse(data: dict):  # type: ignore[no-untyped-def]
+    def _tolerant_parse(data: object):  # type: ignore[no-untyped-def]
         try:
             return _original_parse(data)
-        except Exception:
-            msg_type = data.get("type", "unknown")
-            logger.debug("Skipping unrecognised SDK message type: %s", msg_type)
-            # Return a lightweight object that receive_response will ignore
-            # (it only acts on ResultMessage / AssistantMessage / etc.)
-            return _Sentinel(msg_type)
+        except MessageParseError:
+            if isinstance(data, dict):
+                msg_type = data.get("type")
+                if isinstance(msg_type, str) and msg_type not in known_types:
+                    logger.debug("Skipping unrecognised SDK message type: %s", msg_type)
+                    # Return a lightweight object that receive_response will ignore
+                    # (it only acts on ResultMessage / AssistantMessage / etc.)
+                    return _Sentinel(msg_type)
+            raise
 
+    _tolerant_parse.__shandy_tolerant_patch__ = True
     _mp.parse_message = _tolerant_parse
 
 
