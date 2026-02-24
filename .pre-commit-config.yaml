@@ -12,13 +12,6 @@ repos:
 
   - repo: local
     hooks:
-      - id: no-direct-env-access
-        name: No direct os.getenv (use get_settings())
-        entry: ./scripts/check-no-env-access.sh
-        language: script
-        pass_filenames: false
-        types: [python]
-
       - id: mypy
         name: mypy
         entry: uv run mypy

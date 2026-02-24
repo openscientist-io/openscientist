@@ -26,6 +26,7 @@ RUN mkdir -p /data /output && chown executor:executor /data /output
 
 # Copy executor module
 COPY src/shandy_executor /app/shandy_executor
+COPY src/shandy /app/shandy
 
 # Switch to non-root user
 USER executor

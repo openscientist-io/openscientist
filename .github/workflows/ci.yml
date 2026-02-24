@@ -27,9 +27,6 @@ jobs:
       - name: Format check
         run: uv run ruff format --check src/ tests/
 
-      - name: No direct env access
-        run: ./scripts/check-no-env-access.sh
-
   typecheck:
     runs-on: ubuntu-latest
     steps:

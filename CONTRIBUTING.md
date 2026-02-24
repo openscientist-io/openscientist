@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.12+
 - Docker
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
@@ -16,12 +16,12 @@ Create a `.env` file with database configuration:
 # Copy the example environment file
 cp .env.example .env
 
-# Edit .env and uncomment the DATABASE_URL line (around line 68)
+# Edit .env and uncomment the DATABASE_URL line
 # For local development, use:
 # DATABASE_URL=postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy
 
 # Start the database with Docker
-make dev-start
+docker compose -f docker-compose.yml up -d postgres
 ```
 
 See the README for provider-specific settings if you need to configure Claude API access.
@@ -38,8 +38,8 @@ uv run pytest
 # Run tests with coverage
 uv run pytest --cov=src/shandy --cov-report=term-missing
 
-# Run NiceGUI page tests (slower, excluded from pre-commit)
-uv run pytest tests/webapp/pages/
+# Run webapp tests
+uv run pytest tests/webapp/
 
 # Type checking
 uv run mypy src/shandy/ tests/
@@ -49,23 +49,21 @@ uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 ```
 
-## Docker (Development Mode)
-
-Development mode mounts `src/` into the container so code changes auto-reload without rebuilding.
+## Docker
 
 ```bash
-# First time: build the image
+# Build images
 make build
 
-# Start with live reload
-make dev-start
+# Start services
+make start
 
 # View logs
-make dev-logs
+make logs
 
 # Restart / stop
-make dev-restart
-make dev-stop
+make restart
+make stop
 ```
 
 The app runs at <http://localhost:8080>.
