@@ -47,7 +47,7 @@ def _ensure_data_loaded(ctx: ToolContext) -> str | None:
 
         if data is not None:
             print(
-                f"✅ Loaded {data.shape[0]}×{data.shape[1]} in {elapsed:.1f}s",
+                f"✅ Loaded {data.shape[0]}x{data.shape[1]} in {elapsed:.1f}s",
                 file=sys.stderr,
             )
         _DATA_CACHE[key] = data

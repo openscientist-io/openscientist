@@ -12,7 +12,9 @@ Bedrock, Foundry).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from claude_agent_sdk import (  # type: ignore[import-not-found]
     ClaudeAgentOptions,
@@ -68,6 +70,15 @@ class _Sentinel:
         self.type = msg_type
 
 
+@dataclass
+class _IterationState:
+    """Mutable state captured while processing one SDK streaming response."""
+
+    tool_call_count: int = 0
+    transcript: list[dict[str, Any]] = field(default_factory=list)
+    final_output: str = ""
+
+
 _install_parse_message_patch()
 
 
@@ -103,9 +114,9 @@ class SDKAgentExecutor:
 
     @staticmethod
     async def _allow_all_tools(
-        tool_name: str,
-        tool_input: dict,
-        context: ToolPermissionContext,
+        _tool_name: str,
+        _tool_input: dict,
+        _context: ToolPermissionContext,
     ) -> PermissionResultAllow:
         """Auto-approve all tool use — agent runs autonomously."""
         return PermissionResultAllow()
@@ -146,6 +157,149 @@ class SDKAgentExecutor:
             logger.info("ClaudeSDKClient connected")
         return self._client
 
+    async def _reset_session_if_requested(self, reset_session: bool) -> None:
+        """Disconnect existing SDK client when caller requests a fresh session."""
+        if reset_session and self._client is not None:
+            await self._client.disconnect()
+            self._client = None
+            logger.info("Session reset — client disconnected")
+
+    @staticmethod
+    def _usage_from_payload(usage: object) -> TokenUsage:
+        """Normalize SDK usage payloads (object or dict) to TokenUsage."""
+        if isinstance(usage, dict):
+            return TokenUsage(
+                input_tokens=int(usage.get("input_tokens", 0) or 0),
+                output_tokens=int(usage.get("output_tokens", 0) or 0),
+                cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0) or 0),
+                cache_read_tokens=int(usage.get("cache_read_input_tokens", 0) or 0),
+            )
+        return TokenUsage(
+            input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            cache_creation_tokens=int(getattr(usage, "cache_creation_input_tokens", 0) or 0),
+            cache_read_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+        )
+
+    def _record_usage(self, message: object) -> None:
+        """Accumulate token usage from any SDK message carrying usage info."""
+        usage = getattr(message, "usage", None)
+        if usage:
+            self._token_usage += self._usage_from_payload(usage)
+
+    @staticmethod
+    def _tool_use_item(block: ToolUseBlock, tool_call_count: int) -> dict[str, object]:
+        """Build transcript entry for a single tool call."""
+        return {
+            "type": "tool_use",
+            "id": getattr(block, "id", f"tool_{tool_call_count}"),
+            "name": block.name,
+            "input": getattr(block, "input", {}),
+        }
+
+    def _handle_content_list(self, raw_content: list[object], state: _IterationState) -> None:
+        """Convert SDK content blocks into transcript items."""
+        content_items: list[dict[str, object]] = []
+        for block in raw_content:
+            if isinstance(block, TextBlock):
+                state.final_output = block.text
+                content_items.append({"type": "text", "text": block.text})
+                continue
+            if isinstance(block, ToolUseBlock):
+                state.tool_call_count += 1
+                logger.debug("Tool call: %s", block.name)
+                content_items.append(self._tool_use_item(block, state.tool_call_count))
+        if content_items:
+            state.transcript.append({"type": "assistant", "message": {"content": content_items}})
+
+    @staticmethod
+    def _handle_content_text(raw_content: str, state: _IterationState) -> None:
+        """Record plain-string message content in iteration transcript."""
+        state.final_output = raw_content
+        state.transcript.append(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": raw_content}]},
+            }
+        )
+
+    def _handle_stream_message(self, message: object, state: _IterationState) -> None:
+        """Process one streamed SDK message."""
+        if isinstance(message, _Sentinel):
+            return
+
+        self._record_usage(message)
+
+        if isinstance(message, ResultMessage):
+            if message.result:
+                state.final_output = message.result
+            return
+
+        raw_content = getattr(message, "content", None)
+        if isinstance(raw_content, list):
+            self._handle_content_list(raw_content, state)
+        elif isinstance(raw_content, str):
+            self._handle_content_text(raw_content, state)
+
+    def _stderr_tail(self, limit: int = 20) -> str:
+        """Return the last stderr lines captured from the CLI."""
+        return "\n".join(self._stderr_lines[-limit:])
+
+    def _iteration_failure_result(
+        self, error: Exception, state: _IterationState
+    ) -> IterationResult:
+        """Build IterationResult for exceptions raised during iteration streaming."""
+        stderr_tail = self._stderr_tail()
+        if stderr_tail:
+            message = f"{error}\nCLI stderr:\n{stderr_tail}"
+            logger.error("SDK query failed: %s\nCLI stderr:\n%s", error, stderr_tail)
+        else:
+            message = str(error)
+            logger.error("SDK query failed: %s", error, exc_info=True)
+        self._stderr_lines.clear()
+        self._client = None
+        return IterationResult(
+            success=False,
+            output="",
+            tool_calls=state.tool_call_count,
+            transcript=state.transcript,
+            error=message,
+        )
+
+    def _api_error_result(self, state: _IterationState) -> IterationResult | None:
+        """Return failure result if CLI returned an API error as plain text."""
+        if not state.final_output or "API Error:" not in state.final_output:
+            return None
+        if state.tool_call_count != 0:
+            return None
+        logger.error("CLI returned API error as output: %s", state.final_output[:500])
+        return IterationResult(
+            success=False,
+            output=state.final_output,
+            tool_calls=0,
+            transcript=state.transcript,
+            error=state.final_output,
+        )
+
+    def _silent_crash_result(self, state: _IterationState) -> IterationResult | None:
+        """Return failure result for no-output/no-transcript CLI crashes."""
+        if state.final_output or state.tool_call_count or state.transcript:
+            return None
+        stderr_tail = self._stderr_tail()
+        self._stderr_lines.clear()
+        error_message = "CLI produced no output (process may have crashed)"
+        if stderr_tail:
+            error_message += f"\nCLI stderr:\n{stderr_tail}"
+        logger.error(error_message)
+        self._client = None
+        return IterationResult(
+            success=False,
+            output="",
+            tool_calls=0,
+            transcript=[],
+            error=error_message,
+        )
+
     async def run_iteration(
         self,
         prompt: str,
@@ -159,138 +313,31 @@ class SDKAgentExecutor:
         continuity.  When reset_session=True, the old client is
         disconnected and a fresh one is created.
         """
-        if reset_session and self._client is not None:
-            await self._client.disconnect()
-            self._client = None
-            logger.info("Session reset — client disconnected")
-
-        tool_call_count = 0
-        transcript: list[dict] = []
-        final_output = ""
-        error = ""
+        await self._reset_session_if_requested(reset_session)
+        self._stderr_lines.clear()
+        state = _IterationState()
 
         try:
             client = await self._ensure_client()
             await client.query(prompt)
-
             async for message in client.receive_response():
-                # Skip sentinel objects from the parse_message patch
-                if isinstance(message, _Sentinel):
-                    continue
+                self._handle_stream_message(message, state)
+        except Exception as e:
+            return self._iteration_failure_result(e, state)
 
-                # Accumulate token usage
-                usage = getattr(message, "usage", None)
-                if usage:
-                    self._token_usage += TokenUsage(
-                        input_tokens=getattr(usage, "input_tokens", 0),
-                        output_tokens=getattr(usage, "output_tokens", 0),
-                        cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", 0),
-                        cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0),
-                    )
+        api_error = self._api_error_result(state)
+        if api_error is not None:
+            return api_error
 
-                # Handle ResultMessage (final message in receive_response)
-                if isinstance(message, ResultMessage):
-                    if message.usage:
-                        self._token_usage += TokenUsage(
-                            input_tokens=message.usage.get("input_tokens", 0),
-                            output_tokens=message.usage.get("output_tokens", 0),
-                            cache_creation_tokens=message.usage.get(
-                                "cache_creation_input_tokens", 0
-                            ),
-                            cache_read_tokens=message.usage.get("cache_read_input_tokens", 0),
-                        )
-                    if message.result:
-                        final_output = message.result
-                    continue
-
-                # Extract text content and build transcript in the format
-                # expected by parse_transcript_actions():
-                #   {"type": "assistant", "message": {"content": [...]}}
-                raw_content = getattr(message, "content", None)
-                if isinstance(raw_content, list):
-                    content_items: list[dict[str, object]] = []
-                    for block in raw_content:
-                        if isinstance(block, TextBlock):
-                            final_output = block.text
-                            content_items.append({"type": "text", "text": block.text})
-                        elif isinstance(block, ToolUseBlock):
-                            tool_call_count += 1
-                            logger.debug("Tool call: %s", block.name)
-                            content_items.append(
-                                {
-                                    "type": "tool_use",
-                                    "id": getattr(block, "id", f"tool_{tool_call_count}"),
-                                    "name": block.name,
-                                    "input": getattr(block, "input", {}),
-                                }
-                            )
-                        # ThinkingBlock and others are silently skipped
-                    if content_items:
-                        transcript.append(
-                            {"type": "assistant", "message": {"content": content_items}}
-                        )
-                elif isinstance(raw_content, str):
-                    final_output = raw_content
-                    transcript.append(
-                        {
-                            "type": "assistant",
-                            "message": {"content": [{"type": "text", "text": raw_content}]},
-                        }
-                    )
-
-        except Exception as e:  # noqa: BLE001
-            # Include captured stderr in error for diagnostics
-            stderr_tail = "\n".join(self._stderr_lines[-20:])
-            if stderr_tail:
-                error = f"{e}\nCLI stderr:\n{stderr_tail}"
-                logger.error("SDK query failed: %s\nCLI stderr:\n%s", e, stderr_tail)
-            else:
-                error = str(e)
-                logger.error("SDK query failed: %s", e, exc_info=True)
-            self._stderr_lines.clear()
-            # Client may be in a bad state — discard it
-            self._client = None
-            return IterationResult(
-                success=False,
-                output="",
-                tool_calls=tool_call_count,
-                transcript=transcript,
-                error=error,
-            )
-
-        # Detect API errors returned as text (e.g. auth failures)
-        if final_output and "API Error:" in final_output and tool_call_count == 0:
-            logger.error("CLI returned API error as output: %s", final_output[:500])
-            return IterationResult(
-                success=False,
-                output=final_output,
-                tool_calls=0,
-                transcript=transcript,
-                error=final_output,
-            )
-
-        # Detect silent CLI crash: no output, no tool calls, no error
-        if not final_output and tool_call_count == 0 and not transcript:
-            stderr_tail = "\n".join(self._stderr_lines[-20:])
-            self._stderr_lines.clear()
-            err_msg = "CLI produced no output (process may have crashed)"
-            if stderr_tail:
-                err_msg += f"\nCLI stderr:\n{stderr_tail}"
-            logger.error(err_msg)
-            self._client = None  # Discard likely-broken client
-            return IterationResult(
-                success=False,
-                output="",
-                tool_calls=0,
-                transcript=[],
-                error=err_msg,
-            )
+        silent_crash = self._silent_crash_result(state)
+        if silent_crash is not None:
+            return silent_crash
 
         return IterationResult(
             success=True,
-            output=final_output,
-            tool_calls=tool_call_count,
-            transcript=transcript,
+            output=state.final_output,
+            tool_calls=state.tool_call_count,
+            transcript=state.transcript,
             error="",
         )
 
@@ -299,7 +346,7 @@ class SDKAgentExecutor:
         if self._client is not None:
             try:
                 await self._client.disconnect()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.debug("Error during client disconnect", exc_info=True)
             self._client = None
         logger.debug("SDKAgentExecutor shut down")

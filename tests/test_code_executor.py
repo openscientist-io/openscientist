@@ -4,6 +4,7 @@ import shutil
 from pathlib import Path
 from unittest.mock import patch
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
@@ -13,6 +14,7 @@ from shandy.code_executor import (
     execute_rust_code,
     execute_sparql_code,
     format_execution_result,
+    load_data,
     validate_imports,
 )
 
@@ -174,6 +176,54 @@ plt.show()
         assert result["success"] is True
         # New plot should be plot_6.png, not plot_1.png
         assert (plots_dir / "plot_6.png").exists()
+
+    def test_restores_matplotlib_hooks_after_execution(self, plots_dir):
+        """execute_code should not leave global pyplot hooks patched."""
+        original_show = plt.show
+        original_savefig = plt.savefig
+
+        result = execute_code("print('ok')", data=None, plots_dir=plots_dir)
+
+        assert result["success"] is True
+        assert plt.show is original_show
+        assert plt.savefig is original_savefig
+
+
+# ─── load_data ────────────────────────────────────────────────────────
+
+
+class TestLoadData:
+    """Tests for executor data loading helper."""
+
+    def test_none_path_returns_none(self):
+        assert load_data(None) is None
+
+    def test_missing_path_raises(self, tmp_path: Path):
+        with pytest.raises(FileNotFoundError):
+            load_data(str(tmp_path / "missing.csv"))
+
+    def test_load_csv(self, tmp_path: Path):
+        csv_path = tmp_path / "data.csv"
+        csv_path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+        df = load_data(str(csv_path))
+        assert df is not None
+        assert list(df.columns) == ["a", "b"]
+        assert len(df) == 2
+
+    def test_load_tsv(self, tmp_path: Path):
+        tsv_path = tmp_path / "data.tsv"
+        tsv_path.write_text("a\tb\n1\t2\n", encoding="utf-8")
+        df = load_data(str(tsv_path))
+        assert df is not None
+        assert list(df.columns) == ["a", "b"]
+        assert len(df) == 1
+
+    def test_csv_fallback_for_unknown_extension(self, tmp_path: Path):
+        data_path = tmp_path / "data.custom"
+        data_path.write_text("x,y\n5,6\n", encoding="utf-8")
+        df = load_data(str(data_path))
+        assert df is not None
+        assert list(df.columns) == ["x", "y"]
 
 
 # ─── execute_rust_code ────────────────────────────────────────────────

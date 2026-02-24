@@ -12,7 +12,7 @@ import time
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import matplotlib
 import numpy as np
@@ -24,8 +24,37 @@ import seaborn as sns
 
 from shandy.exceptions import CodeExecutionTimeoutError, ForbiddenImportError
 
-# Backward-compat alias (old name shadowed builtin TimeoutError)
-TimeoutError = CodeExecutionTimeoutError
+# Allowed imports for sandboxed Python execution.
+ALLOWED_IMPORTS = [
+    # Core scientific computing
+    "pandas",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "statsmodels",
+    "sklearn",
+    # Standard library (safe modules)
+    "math",
+    "statistics",
+    "collections",
+    "itertools",
+    "functools",
+    "operator",
+    "datetime",
+    "time",
+    "re",
+    "json",
+    "os",  # Environment variables (for API tokens)
+    # HTTP/API access
+    "requests",  # HTTP requests (for KBase, external APIs)
+    # Domain-specific
+    "networkx",  # Network/graph analysis (for pathways)
+    # Single-cell genomics
+    "scanpy",
+    "anndata",
+    "h5py",
+]
 
 
 def timeout_handler(_signum, _frame):
@@ -58,24 +87,192 @@ def validate_imports(code: str, allowed_imports: list[str]) -> None:
                         f"Import of '{alias.name}' is not allowed. "
                         f"Allowed imports: {', '.join(allowed_imports)}"
                     )
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                module_name = node.module.split(".")[0]
-                if module_name not in allowed_imports:
-                    raise ForbiddenImportError(
-                        f"Import from '{node.module}' is not allowed. "
-                        f"Allowed imports: {', '.join(allowed_imports)}"
-                    )
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            module_name = node.module.split(".")[0]
+            if module_name not in allowed_imports:
+                raise ForbiddenImportError(
+                    f"Import from '{node.module}' is not allowed. "
+                    f"Allowed imports: {', '.join(allowed_imports)}"
+                )
+
+
+def load_data(data_path: str | None) -> pd.DataFrame | None:
+    """Load tabular data from disk for code execution."""
+    if not data_path:
+        return None
+
+    path = Path(data_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Data file not found: {data_path}")
+
+    suffix = path.suffix.lower()
+
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    if suffix == ".tsv":
+        return pd.read_csv(path, sep="\t")
+    if suffix == ".parquet":
+        return pd.read_parquet(path)
+    if suffix in (".xlsx", ".xls"):
+        return pd.read_excel(path)
+    if suffix == ".json":
+        return pd.read_json(path)
+    # Try CSV as fallback
+    return pd.read_csv(path)
+
+
+def _execution_failure(
+    *,
+    error: str,
+    output: str = "",
+    execution_time: float = 0.0,
+    plots: list[str] | None = None,
+    trace: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "success": False,
+        "error": error,
+        "output": output,
+        "plots": plots or [],
+        "execution_time": execution_time,
+    }
+    if trace:
+        result["traceback"] = trace
+    return result
+
+
+def _build_execution_namespace(
+    data: pd.DataFrame | None,
+    data_files: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    return {
+        "data": data,
+        "data_files": data_files or [],
+        "pd": pd,
+        "np": np,
+        "plt": plt,
+        "sns": sns,
+        "__builtins__": __builtins__,
+    }
+
+
+def _next_plot_number(plots_dir: Path) -> int:
+    max_number = 0
+    for plot_path in plots_dir.glob("plot_*.png"):
+        try:
+            number = int(plot_path.stem.split("_")[1])
+        except (IndexError, ValueError):
+            continue
+        if number > max_number:
+            max_number = number
+    return max_number
+
+
+def _set_timeout_alarm(timeout: int) -> None:
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout)
+
+
+def _clear_timeout_alarm() -> None:
+    if hasattr(signal, "SIGALRM"):
+        signal.alarm(0)
+
+
+def _plot_metadata(
+    *,
+    filename: str,
+    code: str,
+    description: str,
+    iteration: int,
+    save_code_with_plots: bool,
+    fallback_to_filename: bool,
+) -> dict[str, Any]:
+    resolved_description = description
+    if not resolved_description and fallback_to_filename:
+        resolved_description = f"Analysis: {Path(filename).stem.replace('_', ' ').title()}"
+    return {
+        "filename": filename,
+        "iteration": iteration,
+        "description": resolved_description,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "code": code if save_code_with_plots else None,
+    }
+
+
+def _install_plot_hooks(
+    *,
+    plots_dir: Path,
+    code: str,
+    description: str,
+    iteration: int,
+    save_code_with_plots: bool,
+    plot_counter: list[int],
+) -> tuple[Any, Any]:
+    original_show = plt.show
+    original_savefig = plt.savefig
+
+    def save_plot_hook() -> None:
+        """Hook to intercept plt.show() and save plots instead."""
+        plot_counter[0] += 1
+        plot_path = plots_dir / f"plot_{plot_counter[0]}.png"
+        plt.savefig(plot_path, bbox_inches="tight", dpi=150)
+        plt.close()
+
+        metadata_path = plots_dir / f"plot_{plot_counter[0]}.json"
+        metadata = _plot_metadata(
+            filename=plot_path.name,
+            code=code,
+            description=description,
+            iteration=iteration,
+            save_code_with_plots=save_code_with_plots,
+            fallback_to_filename=False,
+        )
+        metadata["plot_number"] = plot_counter[0]
+
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+    def savefig_hook(filename, *args, **kwargs):
+        """Hook to intercept plt.savefig() and save to plots_dir with metadata."""
+        plot_path = Path(filename)
+        if not plot_path.is_absolute():
+            plot_path = plots_dir / plot_path.name
+
+        result = original_savefig(str(plot_path), *args, **kwargs)
+
+        metadata_path = plot_path.with_suffix(".json")
+        metadata = _plot_metadata(
+            filename=plot_path.name,
+            code=code,
+            description=description,
+            iteration=iteration,
+            save_code_with_plots=save_code_with_plots,
+            fallback_to_filename=True,
+        )
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
+
+        return result
+
+    plt.show = save_plot_hook
+    plt.savefig = savefig_hook
+    return original_show, original_savefig
+
+
+def _restore_plot_hooks(original_show: Any, original_savefig: Any) -> None:
+    plt.show = original_show
+    plt.savefig = original_savefig
 
 
 def execute_code(
     code: str,
-    data: Optional[pd.DataFrame],
+    data: pd.DataFrame | None,
     plots_dir: Path,
     timeout: int = 60,
     description: str = "",
     iteration: int = 0,
-    data_files: Optional[list[dict[str, Any]]] = None,
+    data_files: list[dict[str, Any]] | None = None,
     save_code_with_plots: bool = True,
 ) -> dict[str, Any]:
     """
@@ -107,199 +304,61 @@ def execute_code(
             "execution_time": float
         }
     """
-    # Allowed imports
-    allowed_imports = [
-        # Core scientific computing
-        "pandas",
-        "numpy",
-        "scipy",
-        "matplotlib",
-        "seaborn",
-        "statsmodels",
-        "sklearn",
-        # Standard library (safe modules)
-        "math",
-        "statistics",
-        "collections",
-        "itertools",
-        "functools",
-        "operator",
-        "datetime",
-        "time",
-        "re",
-        "json",
-        "os",  # Environment variables (for API tokens)
-        # HTTP/API access
-        "requests",  # HTTP requests (for KBase, external APIs)
-        # Domain-specific
-        "networkx",  # Network/graph analysis (for pathways)
-        # Single-cell genomics
-        "scanpy",
-        "anndata",
-        "h5py",
-    ]
-
-    # Validate imports
     try:
-        validate_imports(code, allowed_imports)
+        validate_imports(code, ALLOWED_IMPORTS)
     except (SyntaxError, ForbiddenImportError) as e:
-        return {
-            "success": False,
-            "error": str(e),
-            "output": "",
-            "plots": [],
-            "execution_time": 0.0,
-        }
+        return _execution_failure(error=str(e))
 
-    # Prepare namespace with allowed libraries
-    namespace: dict[str, Any] = {
-        "data": data,
-        "data_files": data_files or [],
-        "pd": pd,
-        "np": np,
-        "plt": plt,
-        "sns": sns,
-        "__builtins__": __builtins__,
-    }
+    namespace = _build_execution_namespace(data, data_files)
 
-    # Capture stdout/stderr
     stdout_capture = io.StringIO()
     stderr_capture = io.StringIO()
 
-    # Track plots
     plots_dir.mkdir(parents=True, exist_ok=True)
-
-    # Find highest existing plot number to avoid overwriting
-    existing_plots = list(plots_dir.glob("plot_*.png"))
-    if existing_plots:
-        plot_numbers = []
-        for p in existing_plots:
-            try:
-                # Extract number from plot_N.png filename
-                num = int(p.stem.split("_")[1])
-                plot_numbers.append(num)
-            except (IndexError, ValueError):
-                pass
-        plot_counter = [max(plot_numbers)] if plot_numbers else [0]
-    else:
-        plot_counter = [0]
-
-    def save_plot_hook():
-        """Hook to intercept plt.show() and save plots instead."""
-        plot_counter[0] += 1
-        plot_path = plots_dir / f"plot_{plot_counter[0]}.png"
-        plt.savefig(plot_path, bbox_inches="tight", dpi=150)
-        plt.close()
-
-        # Save plot metadata (description, iteration, and code)
-        metadata_path = plots_dir / f"plot_{plot_counter[0]}.json"
-        metadata = {
-            "plot_number": plot_counter[0],
-            "iteration": iteration,
-            "description": description,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "code": code if save_code_with_plots else None,
-        }
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
-
-        return str(plot_path)
-
-    # Replace plt.show() with our hook
-    namespace["plt"].show = save_plot_hook
-
-    # Also intercept plt.savefig() to save metadata for custom-named plots
-    original_savefig = namespace["plt"].savefig
-
-    def savefig_hook(filename, *args, **kwargs):
-        """Hook to intercept plt.savefig() and save to plots_dir with metadata."""
-        # Redirect relative paths to plots_dir
-        plot_path = Path(filename)
-        if not plot_path.is_absolute():
-            plot_path = plots_dir / plot_path.name
-
-        # Call original savefig with redirected path
-        result = original_savefig(str(plot_path), *args, **kwargs)
-
-        # Save metadata alongside the plot
-        metadata_path = plot_path.with_suffix(".json")
-
-        metadata = {
-            "filename": plot_path.name,
-            "iteration": iteration,
-            "description": (
-                description
-                if description
-                else f"Analysis: {plot_path.stem.replace('_', ' ').title()}"
-            ),
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "code": code if save_code_with_plots else None,
-        }
-
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
-
-        return result
-
-    namespace["plt"].savefig = savefig_hook
+    plot_counter = [_next_plot_number(plots_dir)]
+    original_show, original_savefig = _install_plot_hooks(
+        plots_dir=plots_dir,
+        code=code,
+        description=description,
+        iteration=iteration,
+        save_code_with_plots=save_code_with_plots,
+        plot_counter=plot_counter,
+    )
 
     start_time = time.time()
 
     try:
-        # Set timeout signal (Unix only - won't work on Windows)
-        if hasattr(signal, "SIGALRM"):
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout)
+        _set_timeout_alarm(timeout)
 
-        # Execute code with output capture
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             exec(code, namespace)
 
-        # Cancel timeout
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
-
         execution_time = time.time() - start_time
-
-        # Collect generated plots
-        plot_files = [str(p) for p in plots_dir.glob("plot_*.png")]
-
         return {
             "success": True,
             "output": stdout_capture.getvalue(),
-            "plots": plot_files,
+            "plots": [str(p) for p in plots_dir.glob("plot_*.png")],
             "error": None,
             "execution_time": execution_time,
         }
 
     except CodeExecutionTimeoutError:
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
-        return {
-            "success": False,
-            "error": f"Code execution timed out after {timeout} seconds",
-            "output": stdout_capture.getvalue(),
-            "plots": [],
-            "execution_time": timeout,
-        }
+        return _execution_failure(
+            error=f"Code execution timed out after {timeout} seconds",
+            output=stdout_capture.getvalue(),
+            execution_time=float(timeout),
+        )
 
-    except Exception as e:  # noqa: BLE001 — intentional catch-all for arbitrary user code
-        if hasattr(signal, "SIGALRM"):
-            signal.alarm(0)
-
-        execution_time = time.time() - start_time
-
-        # Get traceback
-        error_trace = traceback.format_exc()
-
-        return {
-            "success": False,
-            "error": f"{type(e).__name__}: {str(e)}",
-            "output": stdout_capture.getvalue(),
-            "traceback": error_trace,
-            "plots": [],
-            "execution_time": execution_time,
-        }
+    except Exception as e:
+        return _execution_failure(
+            error=f"{type(e).__name__}: {e!s}",
+            output=stdout_capture.getvalue(),
+            execution_time=time.time() - start_time,
+            trace=traceback.format_exc(),
+        )
+    finally:
+        _clear_timeout_alarm()
+        _restore_plot_hooks(original_show, original_savefig)
 
 
 def execute_sparql_code(
@@ -308,7 +367,7 @@ def execute_sparql_code(
     timeout: int = 60,
     description: str = "",
     iteration: int = 0,
-    data_files: Optional[list[dict[str, Any]]] = None,
+    data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Execute a SPARQL query against a remote endpoint.
@@ -327,6 +386,7 @@ def execute_sparql_code(
     Returns:
         Dictionary with execution results (no plots for SPARQL)
     """
+    _ = (plots_dir, description, iteration, data_files)
     start_time = time.time()
 
     # Parse endpoint from query comments
@@ -376,7 +436,7 @@ def execute_sparql_code(
             "plots": [],
             "execution_time": time.time() - start_time,
         }
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {
             "success": False,
             "error": f"{type(e).__name__}: {e}",
@@ -421,7 +481,7 @@ def execute_rust_code(
     timeout: int = 60,
     description: str = "",
     iteration: int = 0,
-    data_files: Optional[list[dict[str, Any]]] = None,
+    data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Execute Rust code by compiling with rustc and running the binary.
@@ -440,6 +500,7 @@ def execute_rust_code(
     import subprocess
     import tempfile
 
+    _ = (plots_dir, description, iteration, data_files)
     start_time = time.time()
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -535,8 +596,7 @@ def format_execution_result(result: dict[str, Any]) -> str:
             parts.append(f"Output:\n{result['output']}\n")
         if result["plots"]:
             parts.append(f"Generated {len(result['plots'])} plot(s):\n")
-            for plot in result["plots"]:
-                parts.append(f"  - {plot}\n")
+            parts.extend(f"  - {plot}\n" for plot in result["plots"])
         parts.append(f"Execution time: {result['execution_time']:.2f}s")
         return "".join(parts)
     parts = ["L Code execution failed\n"]
