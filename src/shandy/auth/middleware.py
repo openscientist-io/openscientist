@@ -2,16 +2,16 @@
 Authentication middleware for SHANDY.
 
 Provides authentication decorators and user context management.
-Supports both cookie-based sessions (OAuth) and legacy auth.
+Supports cookie-backed session authentication.
 """
 
 import inspect
 import logging
 import threading
 from collections.abc import Callable, Coroutine
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
 from functools import wraps
-from typing import Optional, TypeVar
 
 from nicegui import app, ui
 from sqlalchemy import select
@@ -22,10 +22,9 @@ from shandy.database.models import Session, User
 from shandy.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
-_T = TypeVar("_T")
 
 
-def _run_awaitable_sync(awaitable: Coroutine[object, object, _T]) -> _T:
+def _run_awaitable_sync[T](awaitable: Coroutine[object, object, T]) -> T:
     """Run an awaitable safely from sync code.
 
     NiceGUI page handlers may execute while an event loop is already running.
@@ -40,7 +39,7 @@ def _run_awaitable_sync(awaitable: Coroutine[object, object, _T]) -> _T:
 
         return asyncio.run(awaitable)
 
-    result: dict[str, _T] = {}
+    result: dict[str, T] = {}
     error: dict[str, Exception] = {}
 
     def _runner() -> None:
@@ -48,7 +47,7 @@ def _run_awaitable_sync(awaitable: Coroutine[object, object, _T]) -> _T:
             import asyncio
 
             result["value"] = asyncio.run(awaitable)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             error["value"] = exc
 
     thread = threading.Thread(target=_runner, daemon=True)
@@ -62,7 +61,7 @@ def _run_awaitable_sync(awaitable: Coroutine[object, object, _T]) -> _T:
     return result["value"]
 
 
-async def get_current_user(db: AsyncSession, session_token: str) -> Optional[User]:
+async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
     """
     Get user from session token.
 
@@ -81,7 +80,7 @@ async def get_current_user(db: AsyncSession, session_token: str) -> Optional[Use
             .join(Session)
             .where(
                 Session.id == session_token,
-                Session.expires_at > datetime.now(timezone.utc),
+                Session.expires_at > datetime.now(UTC),
             )
             .options(selectinload(User.administrator))
         )
@@ -92,7 +91,7 @@ async def get_current_user(db: AsyncSession, session_token: str) -> Optional[Use
         return None
 
 
-async def validate_session(session_token: str) -> Optional[dict]:
+async def validate_session(session_token: str) -> dict | None:
     """
     Validate a session token and return user info.
 
@@ -122,12 +121,11 @@ async def validate_session(session_token: str) -> Optional[dict]:
     return None
 
 
-def _get_session_token() -> Optional[str]:
+def _get_session_token() -> str | None:
     """
     Get session token from cookie or app storage.
 
-    Checks cookies first (for OAuth), then falls back to app.storage.user
-    (for legacy auth or dev mode).
+    Checks cookies first, then falls back to NiceGUI user storage.
 
     Returns:
         Session token if found, None otherwise
@@ -141,7 +139,7 @@ def _get_session_token() -> Optional[str]:
     except Exception:
         logger.debug("Could not read session cookie", exc_info=True)
 
-    # Fall back to app.storage.user (legacy auth or already validated)
+    # Fall back to app.storage.user for authenticated UI flows.
     return app.storage.user.get("session_token")
 
 
@@ -168,11 +166,8 @@ def _save_return_to_path() -> None:
 def _clear_user_storage(tolerate_uninitialized: bool = False) -> None:
     """Clear NiceGUI user storage with optional tolerance for test contexts."""
     if tolerate_uninitialized:
-        try:
+        with suppress(AssertionError, AttributeError):
             app.storage.user.clear()
-        except (AssertionError, AttributeError):
-            # Storage may not be initialized in some test environments.
-            pass
         return
     app.storage.user.clear()
 
@@ -211,14 +206,14 @@ def require_auth(func: Callable) -> Callable:
         if not session_token:
             logger.debug("No session token, redirecting to login")
             _redirect_to_login()
-            return
+            return None
 
         # Validate session against database
         user_info = await validate_session(session_token)
         if not user_info:
             logger.debug("Invalid session token, redirecting to login")
             _redirect_to_login(clear_storage=True)
-            return
+            return None
 
         # Store user info in app.storage.user for easy access
         _store_authenticated_user(session_token, user_info)
@@ -233,7 +228,7 @@ def require_auth(func: Callable) -> Callable:
         if not session_token:
             logger.debug("No session cookie, redirecting to login")
             _redirect_to_login(clear_storage=True, tolerate_uninitialized_storage=True)
-            return
+            return None
 
         try:
             user_info = _run_awaitable_sync(validate_session(session_token))
@@ -244,7 +239,7 @@ def require_auth(func: Callable) -> Callable:
         if not user_info:
             logger.debug("Invalid session token in sync path, redirecting to login")
             _redirect_to_login(clear_storage=True, tolerate_uninitialized_storage=True)
-            return
+            return None
 
         _store_authenticated_user(session_token, user_info)
 
@@ -256,7 +251,7 @@ def require_auth(func: Callable) -> Callable:
     return sync_wrapper
 
 
-def get_current_user_id() -> Optional[str]:
+def get_current_user_id() -> str | None:
     """
     Get the current authenticated user's ID.
 
@@ -325,7 +320,7 @@ def require_admin(func: Callable) -> Callable:
             )
             ui.notify("Admin access required", type="warning")
             ui.navigate.to("/")
-            return
+            return None
         return await func(*args, **kwargs)
 
     @wraps(func)
@@ -337,7 +332,7 @@ def require_admin(func: Callable) -> Callable:
             )
             ui.notify("Admin access required", type="warning")
             ui.navigate.to("/")
-            return
+            return None
         return func(*args, **kwargs)
 
     if inspect.iscoroutinefunction(func):

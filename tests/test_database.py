@@ -4,7 +4,7 @@ Tests for core database functionality.
 Tests basic CRUD operations, model relationships, and UUIDv7 generation.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -118,7 +118,7 @@ async def test_api_key_creation(db_session: AsyncSession, test_user: User):
 @pytest.mark.asyncio
 async def test_session_creation(db_session: AsyncSession, test_user: User):
     """Test creating a user session."""
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    expires_at = datetime.now(UTC) + timedelta(days=7)
     session = DBSession(
         user_id=test_user.id,
         expires_at=expires_at,
@@ -297,6 +297,7 @@ async def test_plot_creation(db_session: AsyncSession, test_job: Job):
 @pytest.mark.asyncio
 async def test_chat_message_creation(db_session: AsyncSession, test_job: Job, test_user: User):
     """Test creating chat messages."""
+    _ = test_user
     message = JobChatMessage(
         job_id=test_job.id,
         role="user",

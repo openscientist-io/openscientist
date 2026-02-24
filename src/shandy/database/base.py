@@ -4,7 +4,7 @@ Base model classes for SHANDY database models.
 Provides declarative base and common mixins for all ORM models.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -55,7 +55,7 @@ class UUIDv7Mixin:
         DateTime(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         comment="Timestamp when record was last updated (UTC)",
     )
 

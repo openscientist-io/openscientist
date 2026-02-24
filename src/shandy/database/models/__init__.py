@@ -44,32 +44,26 @@ from .skill_source import SkillSource
 from .user import User
 
 __all__ = [
-    # Core authentication
-    "User",
-    "OAuthAccount",
-    "Session",
     "APIKey",
     "Administrator",
-    # Jobs
+    "AnalysisLog",
+    "CostRecord",
+    "FeedbackHistory",
+    "Finding",
+    "Hypothesis",
+    "HypothesisSpawn",
+    "IterationSummary",
     "Job",
-    "JobShare",
-    "JobDataFile",
     "JobChatMessage",
-    # Skills
+    "JobDataFile",
+    "JobShare",
+    "Literature",
+    "OAuthAccount",
+    "Plot",
+    "Session",
     "Skill",
     "SkillSource",
-    # Knowledge state
-    "Hypothesis",
-    "Finding",
-    "Literature",
-    "AnalysisLog",
-    "IterationSummary",
-    "FeedbackHistory",
-    "Plot",
-    # Relationships
+    "User",
     "finding_hypotheses",
     "finding_literature",
-    "HypothesisSpawn",
-    # Cost tracking
-    "CostRecord",
 ]

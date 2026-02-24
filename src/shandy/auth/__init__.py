@@ -16,12 +16,12 @@ from shandy.auth.middleware import (
 from shandy.auth.oauth import get_oauth_client, is_oauth_configured
 
 __all__ = [
-    "require_auth",
-    "require_admin",
-    "get_oauth_client",
-    "is_oauth_configured",
+    "can_current_user_start_jobs",
     "get_current_user_id",
+    "get_oauth_client",
     "is_current_user_admin",
     "is_current_user_approved",
-    "can_current_user_start_jobs",
+    "is_oauth_configured",
+    "require_admin",
+    "require_auth",
 ]

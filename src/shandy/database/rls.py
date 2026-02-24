@@ -174,15 +174,12 @@ async def list_rls_policies(session: AsyncSession, table_name: str) -> list[dict
         {"table_name": table_name},
     )
 
-    policies = []
-    for row in result:
-        policies.append(
-            {
-                "name": row[0],
-                "cmd": row[1],  # '*' (ALL), 'r' (SELECT), 'w' (UPDATE), 'a' (INSERT), 'd' (DELETE)
-                "using": row[2],
-                "check": row[3],
-            }
-        )
-
-    return policies
+    return [
+        {
+            "name": row[0],
+            "cmd": row[1],  # '*' (ALL), 'r' (SELECT), 'w' (UPDATE), 'a' (INSERT), 'd' (DELETE)
+            "using": row[2],
+            "check": row[3],
+        }
+        for row in result
+    ]

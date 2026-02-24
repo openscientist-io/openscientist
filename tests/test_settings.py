@@ -90,29 +90,39 @@ class TestProviderSettings:
 
     def test_vertex_missing_project_id_warns(self, caplog):
         """Vertex AI provider warns when project ID is missing."""
-        with patch("os.path.exists", return_value=True):
-            with caplog.at_level(logging.WARNING, logger="shandy.settings"):
-                settings = ProviderSettings(
-                    CLAUDE_PROVIDER="vertex",
-                    ANTHROPIC_VERTEX_PROJECT_ID=None,
-                    GOOGLE_APPLICATION_CREDENTIALS="/path/to/creds.json",
-                    GCP_BILLING_ACCOUNT_ID="123-456-789",
-                    CLOUD_ML_REGION="us-east5",
-                )
+        with (
+            patch("os.path.exists", return_value=True),
+            caplog.at_level(
+                logging.WARNING,
+                logger="shandy.settings",
+            ),
+        ):
+            settings = ProviderSettings(
+                CLAUDE_PROVIDER="vertex",
+                ANTHROPIC_VERTEX_PROJECT_ID=None,
+                GOOGLE_APPLICATION_CREDENTIALS="/path/to/creds.json",
+                GCP_BILLING_ACCOUNT_ID="123-456-789",
+                CLOUD_ML_REGION="us-east5",
+            )
         assert settings.claude_provider == "vertex"
         assert "ANTHROPIC_VERTEX_PROJECT_ID" in caplog.text
 
     def test_vertex_missing_credentials_file_warns(self, caplog):
         """Vertex AI provider warns when credentials file is missing."""
-        with patch("os.path.exists", return_value=False):
-            with caplog.at_level(logging.WARNING, logger="shandy.settings"):
-                settings = ProviderSettings(
-                    CLAUDE_PROVIDER="vertex",
-                    ANTHROPIC_VERTEX_PROJECT_ID="my-project",
-                    GOOGLE_APPLICATION_CREDENTIALS="/nonexistent/creds.json",
-                    GCP_BILLING_ACCOUNT_ID="123-456-789",
-                    CLOUD_ML_REGION="us-east5",
-                )
+        with (
+            patch("os.path.exists", return_value=False),
+            caplog.at_level(
+                logging.WARNING,
+                logger="shandy.settings",
+            ),
+        ):
+            settings = ProviderSettings(
+                CLAUDE_PROVIDER="vertex",
+                ANTHROPIC_VERTEX_PROJECT_ID="my-project",
+                GOOGLE_APPLICATION_CREDENTIALS="/nonexistent/creds.json",
+                GCP_BILLING_ACCOUNT_ID="123-456-789",
+                CLOUD_ML_REGION="us-east5",
+            )
         assert settings.claude_provider == "vertex"
         assert "not found" in caplog.text
 
@@ -179,6 +189,66 @@ class TestProviderSettings:
             settings = ProviderSettings(CLAUDE_PROVIDER="foundry")
         assert settings.claude_provider == "foundry"
         assert caplog.text == ""
+
+
+class TestProviderContainerEnvVars:
+    """Tests for ProviderSettings.get_container_env_vars()."""
+
+    def test_vertex_env_vars_use_container_credentials_path_override(self):
+        settings = ProviderSettings(
+            CLAUDE_PROVIDER="vertex",
+            ANTHROPIC_VERTEX_PROJECT_ID="vertex-proj",
+            GOOGLE_APPLICATION_CREDENTIALS="/host/creds.json",
+            GCP_BILLING_ACCOUNT_ID="123-456-789",
+            CLOUD_ML_REGION="us-east5",
+        )
+
+        env = settings.get_container_env_vars(gcp_credentials_container_path="/agent/gcp.json")
+
+        assert env["CLAUDE_PROVIDER"] == "vertex"
+        assert env["CLAUDE_CODE_USE_VERTEX"] == "1"
+        assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/agent/gcp.json"
+        assert "CLAUDE_CODE_USE_BEDROCK" not in env
+
+    def test_bedrock_env_vars_include_flag_and_credentials(self):
+        settings = ProviderSettings(
+            CLAUDE_PROVIDER="bedrock",
+            AWS_REGION="us-east-1",
+            AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE",
+            AWS_SECRET_ACCESS_KEY="secret",
+        )
+
+        env = settings.get_container_env_vars()
+
+        assert env["CLAUDE_PROVIDER"] == "bedrock"
+        assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+        assert env["AWS_REGION"] == "us-east-1"
+        assert env["AWS_ACCESS_KEY_ID"] == "AKIAIOSFODNN7EXAMPLE"
+        assert env["AWS_SECRET_ACCESS_KEY"] == "secret"
+        assert "CLAUDE_CODE_USE_VERTEX" not in env
+
+    def test_optional_model_and_token_env_vars_are_included(self):
+        settings = ProviderSettings(
+            CLAUDE_PROVIDER="anthropic",
+            ANTHROPIC_API_KEY="sk-ant-test-key",
+            CLAUDE_CODE_OAUTH_TOKEN="oauth-token",
+            ANTHROPIC_AUTH_TOKEN="auth-token",
+            ANTHROPIC_BASE_URL="https://api.example.com",
+            ANTHROPIC_MODEL="model-a",
+            ANTHROPIC_SMALL_FAST_MODEL="model-b",
+            GITHUB_TOKEN="ghp_example",
+        )
+
+        env = settings.get_container_env_vars()
+
+        assert env["CLAUDE_PROVIDER"] == "anthropic"
+        assert env["ANTHROPIC_API_KEY"] == "sk-ant-test-key"
+        assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-token"
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "auth-token"
+        assert env["ANTHROPIC_BASE_URL"] == "https://api.example.com"
+        assert env["ANTHROPIC_MODEL"] == "model-a"
+        assert env["ANTHROPIC_SMALL_FAST_MODEL"] == "model-b"
+        assert env["GITHUB_TOKEN"] == "ghp_example"
 
 
 class TestDatabaseSettings:
@@ -324,10 +394,15 @@ class TestPhenixSettings:
 
     def test_phenix_path_no_traversal(self):
         """PHENIX_PATH must not contain path traversal."""
-        with patch("os.path.exists", return_value=True):
-            with patch("os.path.isdir", return_value=True):
-                with pytest.raises(ValidationError) as exc_info:
-                    PhenixSettings(PHENIX_PATH="/opt/../etc/phenix")
+        with (
+            patch("os.path.exists", return_value=True),
+            patch(
+                "os.path.isdir",
+                return_value=True,
+            ),
+            pytest.raises(ValidationError) as exc_info,
+        ):
+            PhenixSettings(PHENIX_PATH="/opt/../etc/phenix")
         assert "path traversal" in str(exc_info.value)
 
     def test_phenix_nonexistent_path_accepted(self):
@@ -355,24 +430,22 @@ class TestPhenixSettings:
 
     def test_phenix_is_available_checks_env_script(self):
         """is_available checks for phenix_env.sh."""
-        with patch("os.path.exists") as mock_exists:
-            with patch("os.path.isdir", return_value=True):
-                # Directory exists and phenix_env.sh exists
-                mock_exists.side_effect = lambda p: True
-                settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
-                assert settings.is_available is True
+        with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
+            # Directory exists and phenix_env.sh exists
+            mock_exists.side_effect = lambda _p: True
+            settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
+            assert settings.is_available is True
 
     def test_phenix_not_available_without_env_script(self):
         """is_available is False when phenix_env.sh is missing."""
-        with patch("os.path.exists") as mock_exists:
-            with patch("os.path.isdir", return_value=True):
-                # Directory exists but phenix_env.sh does not
-                def exists_side_effect(path):
-                    return not path.endswith("phenix_env.sh")
+        with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
+            # Directory exists but phenix_env.sh does not
+            def exists_side_effect(path):
+                return not path.endswith("phenix_env.sh")
 
-                mock_exists.side_effect = exists_side_effect
-                settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
-                assert settings.is_available is False
+            mock_exists.side_effect = exists_side_effect
+            settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
+            assert settings.is_available is False
 
 
 class TestFileSettings:

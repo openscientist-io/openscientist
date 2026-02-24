@@ -383,6 +383,20 @@ def upgrade() -> None:
             comment="User-provided job description",
         ),
         sa.Column(
+            "use_skills",
+            sa.Boolean(),
+            server_default="true",
+            nullable=False,
+            comment="Whether specialized skills are enabled for this job",
+        ),
+        sa.Column(
+            "investigation_mode",
+            sa.String(length=20),
+            server_default="autonomous",
+            nullable=False,
+            comment="Investigation mode (autonomous or coinvestigate)",
+        ),
+        sa.Column(
             "status",
             sa.String(length=50),
             server_default="pending",
@@ -1052,7 +1066,11 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(["job_id"], ["jobs.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("iteration"),
+        sa.UniqueConstraint(
+            "job_id",
+            "iteration",
+            name="uq_iteration_summaries_job_iteration",
+        ),
     )
     op.create_index(
         op.f("ix_iteration_summaries_job_id"),

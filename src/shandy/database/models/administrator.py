@@ -48,7 +48,7 @@ class Administrator(Base):
         comment="User who has admin privileges",
     )
 
-    granted_by: Mapped[Optional[UUID]] = mapped_column(
+    granted_by: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
@@ -62,7 +62,7 @@ class Administrator(Base):
         comment="Timestamp when admin was granted (UTC)",
     )
 
-    notes: Mapped[Optional[str]] = mapped_column(
+    notes: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         comment="Optional notes about why admin was granted",

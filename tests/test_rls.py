@@ -518,7 +518,7 @@ def test_user_facing_pages_use_get_session():
     pages_dir = Path("src/shandy/webapp_components/pages")
     ui_components = Path("src/shandy/webapp_components/ui_components.py")
 
-    files_to_check = list(pages_dir.glob("*.py")) + [ui_components]
+    files_to_check = [*list(pages_dir.glob("*.py")), ui_components]
     violations = []
 
     for filepath in files_to_check:

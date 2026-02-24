@@ -4,23 +4,28 @@ import asyncio
 import os
 import subprocess
 import tempfile
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
-from typing import AsyncGenerator, Generator
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
-
-@pytest.fixture
-def event_loop():
-    """Create a new event loop for each test.
-
-    This overrides pytest-playwright's event_loop fixture to prevent
-    conflicts with async database tests and NiceGUI user_simulation.
-    """
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+from shandy.database.models import (
+    Administrator,
+    APIKey,
+    Job,
+    Skill,
+    SkillSource,
+    User,
+)
 
 
 # Clear any cached settings after environment setup
@@ -35,24 +40,6 @@ def _clear_settings_cache():
         pass
 
 
-import pytest_asyncio  # noqa: E402
-from sqlalchemy import text  # noqa: E402
-from sqlalchemy.ext.asyncio import (  # noqa: E402
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
-
-from shandy.database.models import (  # noqa: E402
-    Administrator,
-    APIKey,
-    Job,
-    Skill,
-    SkillSource,
-    User,
-)
-
 # Set up required env vars for Settings validation at import time.
 # The real DATABASE_URL comes from the testcontainer later.
 if "SHANDY_SECRET_KEY" not in os.environ:
@@ -62,6 +49,18 @@ if "DATABASE_URL" not in os.environ:
 
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()
+
+
+@pytest.fixture
+def event_loop():
+    """Create a new event loop for each test.
+
+    This overrides pytest-playwright's event_loop fixture to prevent
+    conflicts with async database tests and NiceGUI user_simulation.
+    """
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.fixture(scope="session")
@@ -225,8 +224,7 @@ def test_database_url(postgres_container: PostgresContainer | None) -> str:
     # Get connection URL from container and convert to asyncpg driver
     # testcontainers returns psycopg2 URL, we need asyncpg
     sync_url: str = postgres_container.get_connection_url()
-    async_url = sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
-    return async_url
+    return sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
 
 
 @pytest_asyncio.fixture
@@ -301,7 +299,10 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
             await session.execute(text("RESET ROLE"))
 
         # Rollback outer transaction - undoes ALL changes from this test
-        await trans.rollback()
+        # Some tests intentionally trigger rollback paths that can deassociate
+        # the outer transaction before fixture teardown.
+        if trans.is_active:
+            await trans.rollback()
 
 
 @pytest_asyncio.fixture
@@ -335,7 +336,8 @@ async def db_session_rls(
 
             await session.execute(text("RESET ROLE"))
 
-        await trans.rollback()
+        if trans.is_active:
+            await trans.rollback()
 
 
 @pytest_asyncio.fixture

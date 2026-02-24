@@ -12,6 +12,83 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _select_primary_verified_email(emails: list[dict[str, Any]]) -> str | None:
+    """Return primary verified email from /user/emails records."""
+    for record in emails:
+        if record.get("primary") and record.get("verified") and record.get("email"):
+            return str(record["email"])
+    return None
+
+
+def _select_any_verified_email(emails: list[dict[str, Any]]) -> str | None:
+    """Return first verified email from /user/emails records."""
+    for record in emails:
+        if record.get("verified") and record.get("email"):
+            return str(record["email"])
+    return None
+
+
+def _select_profile_email_with_verification(
+    user_data: dict[str, Any],
+    emails: list[dict[str, Any]],
+) -> tuple[str | None, bool]:
+    """Select public profile email and infer verification from email records."""
+    public_email = user_data.get("email")
+    if not public_email:
+        return None, False
+
+    email = str(public_email)
+    matched = next(
+        (record for record in emails if str(record.get("email", "")).lower() == email.lower()),
+        None,
+    )
+    return email, bool(matched and matched.get("verified"))
+
+
+def _select_fallback_email(emails: list[dict[str, Any]]) -> tuple[str | None, bool]:
+    """Select fallback email from /user/emails records."""
+    fallback_record: dict[str, Any] | None = None
+    for item in emails:
+        if item.get("primary") and item.get("email"):
+            fallback_record = item
+            break
+
+    if fallback_record is None:
+        for item in emails:
+            if item.get("email"):
+                fallback_record = item
+                break
+
+    if not fallback_record:
+        return None, False
+    return str(fallback_record["email"]), bool(fallback_record.get("verified"))
+
+
+def _resolve_email_and_verification(
+    user_data: dict[str, Any],
+    emails: list[dict[str, Any]],
+) -> tuple[str, bool]:
+    """Resolve best available email + verification flag from GitHub profile data."""
+    email = _select_primary_verified_email(emails)
+    if email:
+        return email, True
+
+    email = _select_any_verified_email(emails)
+    if email:
+        return email, True
+
+    profile_email, profile_verified = _select_profile_email_with_verification(user_data, emails)
+    if profile_email:
+        return profile_email, profile_verified
+
+    fallback_email, fallback_verified = _select_fallback_email(emails)
+    if fallback_email:
+        return fallback_email, fallback_verified
+
+    logger.warning("No email found for GitHub user %s", user_data.get("login"))
+    return f"{user_data['login']}@users.noreply.github.com", False
+
+
 class GitHubProvider:
     """GitHub OAuth provider implementation."""
 
@@ -63,58 +140,7 @@ class GitHubProvider:
                     exc_info=True,
                 )
 
-            email: str | None = None
-            email_verified = False
-
-            # Prefer verified emails from the dedicated emails endpoint.
-            for record in emails:
-                if record.get("primary") and record.get("verified") and record.get("email"):
-                    email = str(record["email"])
-                    email_verified = True
-                    break
-
-            if not email:
-                for record in emails:
-                    if record.get("verified") and record.get("email"):
-                        email = str(record["email"])
-                        email_verified = True
-                        break
-
-            # Fall back to public profile email when needed.
-            if not email:
-                public_email = user_data.get("email")
-                if public_email:
-                    email = str(public_email)
-                    matched = next(
-                        (
-                            record
-                            for record in emails
-                            if str(record.get("email", "")).lower() == email.lower()
-                        ),
-                        None,
-                    )
-                    email_verified = bool(matched and matched.get("verified"))
-
-            # Final fallback: first available email record from /user/emails.
-            if not email and emails:
-                fallback_record: dict[str, Any] | None = None
-                for item in emails:
-                    if item.get("primary") and item.get("email"):
-                        fallback_record = item
-                        break
-                if fallback_record is None:
-                    for item in emails:
-                        if item.get("email"):
-                            fallback_record = item
-                            break
-                if fallback_record:
-                    email = str(fallback_record["email"])
-                    email_verified = bool(fallback_record.get("verified"))
-
-            if not email:
-                logger.warning("No email found for GitHub user %s", user_data.get("login"))
-                email = f"{user_data['login']}@users.noreply.github.com"
-                email_verified = False
+            email, email_verified = _resolve_email_and_verification(user_data, emails)
 
             return {
                 "provider_user_id": str(user_data["id"]),

@@ -5,7 +5,7 @@ Tracks active user sessions created after successful OAuth login.
 Sessions expire after a configurable period of inactivity.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -71,6 +71,5 @@ class Session(UUIDv7Mixin, Base):
 
     def is_expired(self) -> bool:
         """Check if the session has expired."""
-        from datetime import timezone
 
-        return datetime.now(timezone.utc) > self.expires_at
+        return datetime.now(UTC) > self.expires_at

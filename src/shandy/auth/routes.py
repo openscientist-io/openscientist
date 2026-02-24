@@ -5,8 +5,7 @@ Handles OAuth callback flows and session creation for authenticated users.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 from uuid import UUID as _UUID
 
 from sqlalchemy import select
@@ -85,7 +84,7 @@ async def create_or_update_user(
     email: str,
     name: str,
     access_token: str,
-    refresh_token: Optional[str] = None,
+    refresh_token: str | None = None,
     email_verified: bool | None = None,
     auth_provider: str | None = None,
 ) -> User:
@@ -186,7 +185,7 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
         New Session object
     """
     settings = get_settings()
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.auth.session_duration_days)
+    expires_at = datetime.now(UTC) + timedelta(days=settings.auth.session_duration_days)
 
     session = Session(
         user_id=_UUID(user_id) if isinstance(user_id, str) else user_id,

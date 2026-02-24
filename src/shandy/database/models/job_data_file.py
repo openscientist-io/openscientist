@@ -1,7 +1,7 @@
 """
-Job data file model for uploaded crystallography data.
+Job data file model for uploaded scientific data.
 
-Tracks uploaded data files (MTZ, CIF, PDB, etc.) with metadata.
+Tracks uploaded data files (CSV, MTZ, CIF, PDB, etc.) with metadata.
 Binary file contents remain on filesystem; only metadata stored in DB.
 """
 
@@ -22,7 +22,7 @@ class JobDataFile(UUIDv7Mixin, Base):
     """
     Uploaded data file for a job.
 
-    Tracks metadata for uploaded crystallography data files. The actual
+    Tracks metadata for uploaded job data files. The actual
     binary content is stored on the filesystem, referenced by file_path.
 
     Attributes:

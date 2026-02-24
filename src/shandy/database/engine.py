@@ -12,8 +12,6 @@ with a PostgreSQL role that has elevated privileges (table owner or role with
 BYPASSRLS). If not configured, falls back to the regular DATABASE_URL.
 """
 
-from typing import Optional
-
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -24,8 +22,8 @@ from shandy.settings import get_settings
 load_dotenv()
 
 # Global engine instances
-_engine: Optional[AsyncEngine] = None
-_admin_engine: Optional[AsyncEngine] = None
+_engine: AsyncEngine | None = None
+_admin_engine: AsyncEngine | None = None
 
 
 def get_engine() -> AsyncEngine:

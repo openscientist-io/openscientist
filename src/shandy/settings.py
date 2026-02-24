@@ -11,7 +11,6 @@ import logging
 import os
 import re
 from functools import lru_cache
-from typing import Optional
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,6 +29,7 @@ class DevSettings(BaseSettings):
     )
 
     dev_mode: bool = Field(default=False, alias="SHANDY_DEV_MODE")
+    simulate_provider_error: bool = Field(default=False, alias="SIMULATE_PROVIDER_ERROR")
 
 
 class ProviderSettings(BaseSettings):
@@ -49,48 +49,143 @@ class ProviderSettings(BaseSettings):
     )
 
     # GitHub token for skill syncing
-    github_token: Optional[str] = Field(default=None, alias="GITHUB_TOKEN")
+    github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
 
     # Anthropic direct API
-    anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
 
     # CBORG (Berkeley Lab) / OAuth tokens
-    anthropic_auth_token: Optional[str] = Field(default=None, alias="ANTHROPIC_AUTH_TOKEN")
-    claude_code_oauth_token: Optional[str] = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")
-    anthropic_base_url: Optional[str] = Field(default=None, alias="ANTHROPIC_BASE_URL")
+    anthropic_auth_token: str | None = Field(default=None, alias="ANTHROPIC_AUTH_TOKEN")
+    claude_code_oauth_token: str | None = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")
+    anthropic_base_url: str | None = Field(default=None, alias="ANTHROPIC_BASE_URL")
 
     # Model settings
-    anthropic_model: Optional[str] = Field(default=None, alias="ANTHROPIC_MODEL")
-    anthropic_small_fast_model: Optional[str] = Field(
-        default=None, alias="ANTHROPIC_SMALL_FAST_MODEL"
+    anthropic_model: str | None = Field(default=None, alias="ANTHROPIC_MODEL")
+    anthropic_small_fast_model: str | None = Field(default=None, alias="ANTHROPIC_SMALL_FAST_MODEL")
+    anthropic_default_sonnet_model: str | None = Field(
+        default=None, alias="ANTHROPIC_DEFAULT_SONNET_MODEL"
+    )
+    anthropic_default_haiku_model: str | None = Field(
+        default=None, alias="ANTHROPIC_DEFAULT_HAIKU_MODEL"
+    )
+    anthropic_default_opus_model: str | None = Field(
+        default=None, alias="ANTHROPIC_DEFAULT_OPUS_MODEL"
     )
 
     # AWS Bedrock
-    aws_region: Optional[str] = Field(default=None, alias="AWS_REGION")
-    aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
-    aws_profile: Optional[str] = Field(default=None, alias="AWS_PROFILE")
-    aws_bearer_token_bedrock: Optional[str] = Field(default=None, alias="AWS_BEARER_TOKEN_BEDROCK")
+    aws_region: str | None = Field(default=None, alias="AWS_REGION")
+    aws_access_key_id: str | None = Field(default=None, alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: str | None = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
+    aws_profile: str | None = Field(default=None, alias="AWS_PROFILE")
+    aws_bearer_token_bedrock: str | None = Field(default=None, alias="AWS_BEARER_TOKEN_BEDROCK")
 
     # Google Vertex AI
-    anthropic_vertex_project_id: Optional[str] = Field(
+    anthropic_vertex_project_id: str | None = Field(
         default=None, alias="ANTHROPIC_VERTEX_PROJECT_ID"
     )
-    google_application_credentials: Optional[str] = Field(
+    google_application_credentials: str | None = Field(
         default=None, alias="GOOGLE_APPLICATION_CREDENTIALS"
     )
     # Host path for GCP credentials (for agent container mounts when running in Docker)
-    gcp_credentials_host_path: Optional[str] = Field(
-        default=None, alias="GCP_CREDENTIALS_HOST_PATH"
-    )
-    gcp_billing_account_id: Optional[str] = Field(default=None, alias="GCP_BILLING_ACCOUNT_ID")
-    cloud_ml_region: Optional[str] = Field(default=None, alias="CLOUD_ML_REGION")
-    vertex_region_claude_4_5_sonnet: Optional[str] = Field(
+    gcp_credentials_host_path: str | None = Field(default=None, alias="GCP_CREDENTIALS_HOST_PATH")
+    gcp_billing_account_id: str | None = Field(default=None, alias="GCP_BILLING_ACCOUNT_ID")
+    cloud_ml_region: str | None = Field(default=None, alias="CLOUD_ML_REGION")
+    vertex_region_claude_4_5_sonnet: str | None = Field(
         default=None, alias="VERTEX_REGION_CLAUDE_4_5_SONNET"
     )
-    vertex_region_claude_4_5_haiku: Optional[str] = Field(
+    vertex_region_claude_4_5_haiku: str | None = Field(
         default=None, alias="VERTEX_REGION_CLAUDE_4_5_HAIKU"
     )
+
+    # Azure AI Foundry
+    anthropic_foundry_resource: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_RESOURCE")
+    anthropic_foundry_base_url: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_BASE_URL")
+    anthropic_foundry_api_key: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_API_KEY")
+
+    @staticmethod
+    def _warn_if_missing(value: str | None, message: str, warnings: list[str]) -> None:
+        if not value:
+            warnings.append(message)
+
+    def _anthropic_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        if not self.anthropic_api_key and not self.claude_code_oauth_token:
+            warnings.append(
+                "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is required "
+                "when CLAUDE_PROVIDER=anthropic. "
+                "Get your API key from https://console.anthropic.com "
+                "or run 'claude login' for OAuth."
+            )
+        return warnings
+
+    def _cborg_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        self._warn_if_missing(
+            self.anthropic_auth_token,
+            "ANTHROPIC_AUTH_TOKEN is required when CLAUDE_PROVIDER=cborg",
+            warnings,
+        )
+        self._warn_if_missing(
+            self.anthropic_base_url,
+            "ANTHROPIC_BASE_URL is required when CLAUDE_PROVIDER=cborg "
+            "(should be https://api.cborg.lbl.gov)",
+            warnings,
+        )
+        return warnings
+
+    def _vertex_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        self._warn_if_missing(
+            self.anthropic_vertex_project_id,
+            "ANTHROPIC_VERTEX_PROJECT_ID is required for Vertex AI",
+            warnings,
+        )
+        if not self.google_application_credentials:
+            warnings.append(
+                "GOOGLE_APPLICATION_CREDENTIALS is required for Vertex AI "
+                "(path to service account JSON)"
+            )
+        elif not os.path.exists(os.path.expanduser(self.google_application_credentials)):
+            warnings.append(
+                f"GOOGLE_APPLICATION_CREDENTIALS file not found: "
+                f"{self.google_application_credentials}"
+            )
+        self._warn_if_missing(
+            self.gcp_billing_account_id,
+            "GCP_BILLING_ACCOUNT_ID is required for Vertex AI cost tracking",
+            warnings,
+        )
+        self._warn_if_missing(
+            self.cloud_ml_region,
+            "CLOUD_ML_REGION is required for Vertex AI (e.g., us-east5)",
+            warnings,
+        )
+        return warnings
+
+    def _bedrock_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        self._warn_if_missing(
+            self.aws_region,
+            "AWS_REGION is required for Bedrock (e.g., us-east-1)",
+            warnings,
+        )
+        has_access_key = self.aws_access_key_id and self.aws_secret_access_key
+        has_profile = bool(self.aws_profile)
+        has_bearer = bool(self.aws_bearer_token_bedrock)
+        if not (has_access_key or has_profile or has_bearer):
+            warnings.append(
+                "AWS credentials required for Bedrock. Set one of: "
+                "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, "
+                "or AWS_BEARER_TOKEN_BEDROCK"
+            )
+        return warnings
+
+    @staticmethod
+    def _unknown_provider_warnings(provider: str) -> list[str]:
+        return [
+            f"Unknown provider '{provider}'. "
+            "Valid options: anthropic, cborg, vertex, bedrock, codex, foundry"
+        ]
 
     @model_validator(mode="after")
     def validate_provider_requirements(self) -> "ProviderSettings":
@@ -102,73 +197,98 @@ class ProviderSettings(BaseSettings):
         provider's ``_validate_required_config``.
         """
         provider = self.claude_provider.lower()
-        warnings: list[str] = []
-
-        if provider == "anthropic":
-            if not self.anthropic_api_key and not self.claude_code_oauth_token:
-                warnings.append(
-                    "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN is required "
-                    "when CLAUDE_PROVIDER=anthropic. "
-                    "Get your API key from https://console.anthropic.com "
-                    "or run 'claude login' for OAuth."
-                )
-
-        elif provider == "cborg":
-            if not self.anthropic_auth_token:
-                warnings.append("ANTHROPIC_AUTH_TOKEN is required when CLAUDE_PROVIDER=cborg")
-            if not self.anthropic_base_url:
-                warnings.append(
-                    "ANTHROPIC_BASE_URL is required when CLAUDE_PROVIDER=cborg "
-                    "(should be https://api.cborg.lbl.gov)"
-                )
-
-        elif provider == "vertex":
-            if not self.anthropic_vertex_project_id:
-                warnings.append("ANTHROPIC_VERTEX_PROJECT_ID is required for Vertex AI")
-            if not self.google_application_credentials:
-                warnings.append(
-                    "GOOGLE_APPLICATION_CREDENTIALS is required for Vertex AI "
-                    "(path to service account JSON)"
-                )
-            elif not os.path.exists(os.path.expanduser(self.google_application_credentials)):
-                warnings.append(
-                    f"GOOGLE_APPLICATION_CREDENTIALS file not found: "
-                    f"{self.google_application_credentials}"
-                )
-            if not self.gcp_billing_account_id:
-                warnings.append("GCP_BILLING_ACCOUNT_ID is required for Vertex AI cost tracking")
-            if not self.cloud_ml_region:
-                warnings.append("CLOUD_ML_REGION is required for Vertex AI (e.g., us-east5)")
-
-        elif provider == "bedrock":
-            if not self.aws_region:
-                warnings.append("AWS_REGION is required for Bedrock (e.g., us-east-1)")
-
-            has_access_key = self.aws_access_key_id and self.aws_secret_access_key
-            has_profile = bool(self.aws_profile)
-            has_bearer = bool(self.aws_bearer_token_bedrock)
-
-            if not (has_access_key or has_profile or has_bearer):
-                warnings.append(
-                    "AWS credentials required for Bedrock. Set one of: "
-                    "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, "
-                    "or AWS_BEARER_TOKEN_BEDROCK"
-                )
-
-        elif provider in ("codex", "foundry"):
-            pass  # Minimal requirements
-
-        else:
-            warnings.append(
-                f"Unknown provider '{provider}'. "
-                "Valid options: anthropic, cborg, vertex, bedrock, codex, foundry"
-            )
-
-        if warnings:
-            for w in warnings:
-                logger.warning("Provider config: %s", w)
+        warning_builders = {
+            "anthropic": self._anthropic_warnings,
+            "cborg": self._cborg_warnings,
+            "vertex": self._vertex_warnings,
+            "bedrock": self._bedrock_warnings,
+            "codex": lambda: [],
+            "foundry": lambda: [],
+        }
+        warnings = warning_builders.get(
+            provider, lambda: self._unknown_provider_warnings(provider)
+        )()
+        for warning in warnings:
+            logger.warning("Provider config: %s", warning)
 
         return self
+
+    @staticmethod
+    def _set_env_if_present(env_vars: dict[str, str], key: str, value: str | None) -> None:
+        if value:
+            env_vars[key] = value
+
+    def _apply_model_env_vars(self, env_vars: dict[str, str]) -> None:
+        self._set_env_if_present(env_vars, "ANTHROPIC_MODEL", self.anthropic_model)
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_SMALL_FAST_MODEL", self.anthropic_small_fast_model
+        )
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_DEFAULT_SONNET_MODEL", self.anthropic_default_sonnet_model
+        )
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_DEFAULT_HAIKU_MODEL", self.anthropic_default_haiku_model
+        )
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_DEFAULT_OPUS_MODEL", self.anthropic_default_opus_model
+        )
+
+    def _apply_auth_env_vars(self, env_vars: dict[str, str]) -> None:
+        self._set_env_if_present(env_vars, "ANTHROPIC_API_KEY", self.anthropic_api_key)
+        self._set_env_if_present(env_vars, "ANTHROPIC_AUTH_TOKEN", self.anthropic_auth_token)
+        self._set_env_if_present(env_vars, "CLAUDE_CODE_OAUTH_TOKEN", self.claude_code_oauth_token)
+        self._set_env_if_present(env_vars, "ANTHROPIC_BASE_URL", self.anthropic_base_url)
+
+    def _apply_vertex_env_vars(
+        self,
+        env_vars: dict[str, str],
+        gcp_credentials_container_path: str | None,
+    ) -> None:
+        if self.claude_provider.lower() == "vertex":
+            env_vars["CLAUDE_CODE_USE_VERTEX"] = "1"
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_VERTEX_PROJECT_ID", self.anthropic_vertex_project_id
+        )
+        self._set_env_if_present(env_vars, "GCP_BILLING_ACCOUNT_ID", self.gcp_billing_account_id)
+        self._set_env_if_present(env_vars, "CLOUD_ML_REGION", self.cloud_ml_region)
+        self._set_env_if_present(
+            env_vars, "VERTEX_REGION_CLAUDE_4_5_SONNET", self.vertex_region_claude_4_5_sonnet
+        )
+        self._set_env_if_present(
+            env_vars, "VERTEX_REGION_CLAUDE_4_5_HAIKU", self.vertex_region_claude_4_5_haiku
+        )
+        if self.google_application_credentials:
+            env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = (
+                gcp_credentials_container_path or self.google_application_credentials
+            )
+
+    def _apply_bedrock_env_vars(self, env_vars: dict[str, str]) -> None:
+        if self.claude_provider.lower() == "bedrock":
+            env_vars["CLAUDE_CODE_USE_BEDROCK"] = "1"
+        self._set_env_if_present(env_vars, "AWS_REGION", self.aws_region)
+        self._set_env_if_present(env_vars, "AWS_ACCESS_KEY_ID", self.aws_access_key_id)
+        self._set_env_if_present(env_vars, "AWS_SECRET_ACCESS_KEY", self.aws_secret_access_key)
+        self._set_env_if_present(env_vars, "AWS_PROFILE", self.aws_profile)
+        self._set_env_if_present(
+            env_vars, "AWS_BEARER_TOKEN_BEDROCK", self.aws_bearer_token_bedrock
+        )
+
+    def _apply_foundry_env_vars(self, env_vars: dict[str, str]) -> None:
+        if self.claude_provider.lower() == "foundry":
+            env_vars["CLAUDE_CODE_USE_FOUNDRY"] = "1"
+
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_FOUNDRY_RESOURCE", self.anthropic_foundry_resource
+        )
+        if self.anthropic_foundry_resource:
+            # Claude Code treats resource/base_url as mutually exclusive.
+            return
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_FOUNDRY_BASE_URL", self.anthropic_foundry_base_url
+        )
+        self._set_env_if_present(
+            env_vars, "ANTHROPIC_FOUNDRY_API_KEY", self.anthropic_foundry_api_key
+        )
 
     def get_container_env_vars(
         self,
@@ -183,68 +303,13 @@ class ProviderSettings(BaseSettings):
         Returns:
             Dict of env var names to values (only includes set values).
         """
-        env_vars: dict[str, str] = {}
-
-        # Provider selection
-        env_vars["CLAUDE_PROVIDER"] = self.claude_provider
-
-        # Model settings
-        if self.anthropic_model:
-            env_vars["ANTHROPIC_MODEL"] = self.anthropic_model
-        if self.anthropic_small_fast_model:
-            env_vars["ANTHROPIC_SMALL_FAST_MODEL"] = self.anthropic_small_fast_model
-
-        # Anthropic direct
-        if self.anthropic_api_key:
-            env_vars["ANTHROPIC_API_KEY"] = self.anthropic_api_key
-
-        # CBORG / OAuth token
-        if self.anthropic_auth_token:
-            env_vars["ANTHROPIC_AUTH_TOKEN"] = self.anthropic_auth_token
-        # Claude Code CLI expects CLAUDE_CODE_OAUTH_TOKEN for OAuth auth
-        if self.claude_code_oauth_token:
-            env_vars["CLAUDE_CODE_OAUTH_TOKEN"] = self.claude_code_oauth_token
-        if self.anthropic_base_url:
-            env_vars["ANTHROPIC_BASE_URL"] = self.anthropic_base_url
-
-        # Vertex AI
-        # CLAUDE_CODE_USE_VERTEX is what Claude CLI checks for Vertex AI mode
-        if self.claude_provider.lower() == "vertex":
-            env_vars["CLAUDE_CODE_USE_VERTEX"] = "1"
-        if self.anthropic_vertex_project_id:
-            env_vars["ANTHROPIC_VERTEX_PROJECT_ID"] = self.anthropic_vertex_project_id
-        if self.gcp_billing_account_id:
-            env_vars["GCP_BILLING_ACCOUNT_ID"] = self.gcp_billing_account_id
-        if self.cloud_ml_region:
-            env_vars["CLOUD_ML_REGION"] = self.cloud_ml_region
-        if self.vertex_region_claude_4_5_sonnet:
-            env_vars["VERTEX_REGION_CLAUDE_4_5_SONNET"] = self.vertex_region_claude_4_5_sonnet
-        if self.vertex_region_claude_4_5_haiku:
-            env_vars["VERTEX_REGION_CLAUDE_4_5_HAIKU"] = self.vertex_region_claude_4_5_haiku
-        if self.google_application_credentials:
-            env_vars["GOOGLE_APPLICATION_CREDENTIALS"] = (
-                gcp_credentials_container_path or self.google_application_credentials
-            )
-
-        # AWS Bedrock
-        # CLAUDE_CODE_USE_BEDROCK is what Claude CLI checks for Bedrock mode
-        if self.claude_provider.lower() == "bedrock":
-            env_vars["CLAUDE_CODE_USE_BEDROCK"] = "1"
-        if self.aws_region:
-            env_vars["AWS_REGION"] = self.aws_region
-        if self.aws_access_key_id:
-            env_vars["AWS_ACCESS_KEY_ID"] = self.aws_access_key_id
-        if self.aws_secret_access_key:
-            env_vars["AWS_SECRET_ACCESS_KEY"] = self.aws_secret_access_key
-        if self.aws_profile:
-            env_vars["AWS_PROFILE"] = self.aws_profile
-        if self.aws_bearer_token_bedrock:
-            env_vars["AWS_BEARER_TOKEN_BEDROCK"] = self.aws_bearer_token_bedrock
-
-        # GitHub token
-        if self.github_token:
-            env_vars["GITHUB_TOKEN"] = self.github_token
-
+        env_vars: dict[str, str] = {"CLAUDE_PROVIDER": self.claude_provider}
+        self._apply_model_env_vars(env_vars)
+        self._apply_auth_env_vars(env_vars)
+        self._apply_vertex_env_vars(env_vars, gcp_credentials_container_path)
+        self._apply_bedrock_env_vars(env_vars)
+        self._apply_foundry_env_vars(env_vars)
+        self._set_env_if_present(env_vars, "GITHUB_TOKEN", self.github_token)
         return env_vars
 
 
@@ -261,7 +326,7 @@ class DatabaseSettings(BaseSettings):
 
     # Admin database URL for elevated operations (bypasses RLS via DB role).
     # If not set, falls back to DATABASE_URL.
-    admin_database_url: Optional[str] = Field(default=None, alias="ADMIN_DATABASE_URL")
+    admin_database_url: str | None = Field(default=None, alias="ADMIN_DATABASE_URL")
 
     # Debug settings
     sql_echo: bool = Field(default=False, alias="SQL_ECHO")
@@ -292,19 +357,19 @@ class AuthSettings(BaseSettings):
 
     # Derived from SHANDY_SECRET_KEY (populated by Settings.derive_secrets)
     storage_secret: str = Field(default="")
-    token_encryption_key: Optional[str] = Field(default=None)
+    token_encryption_key: str | None = Field(default=None)
 
     # Google OAuth
-    google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID")
-    google_client_secret: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
 
     # GitHub OAuth
-    github_client_id: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_ID")
-    github_client_secret: Optional[str] = Field(default=None, alias="GITHUB_CLIENT_SECRET")
-    bootstrap_admin_emails: Optional[str] = Field(default=None, alias="BOOTSTRAP_ADMIN_EMAILS")
+    github_client_id: str | None = Field(default=None, alias="GITHUB_CLIENT_ID")
+    github_client_secret: str | None = Field(default=None, alias="GITHUB_CLIENT_SECRET")
+    bootstrap_admin_emails: str | None = Field(default=None, alias="BOOTSTRAP_ADMIN_EMAILS")
 
     @staticmethod
-    def _parse_bootstrap_admin_emails(raw_value: Optional[str]) -> set[str]:
+    def _parse_bootstrap_admin_emails(raw_value: str | None) -> set[str]:
         """Parse and validate BOOTSTRAP_ADMIN_EMAILS as normalized email set."""
         if not raw_value:
             return set()
@@ -324,7 +389,7 @@ class AuthSettings(BaseSettings):
 
     @field_validator("bootstrap_admin_emails")
     @classmethod
-    def validate_bootstrap_admin_emails(cls, value: Optional[str]) -> Optional[str]:
+    def validate_bootstrap_admin_emails(cls, value: str | None) -> str | None:
         """Validate BOOTSTRAP_ADMIN_EMAILS format if set."""
         cls._parse_bootstrap_admin_emails(value)
         return value
@@ -445,7 +510,7 @@ class ContainerSettings(BaseSettings):
     # paths need to be translated from container paths to host paths.
     # Example: /app inside container maps to /home/user/shandy on host
     container_app_dir: str = Field(default="/app", alias="SHANDY_CONTAINER_APP_DIR")
-    host_project_dir: Optional[str] = Field(
+    host_project_dir: str | None = Field(
         default=None,
         alias="SHANDY_HOST_PROJECT_DIR",
         description="Host path for project directory. Required when using agent containers.",
@@ -461,11 +526,11 @@ class PhenixSettings(BaseSettings):
         extra="ignore",
     )
 
-    phenix_path: Optional[str] = Field(default=None, alias="PHENIX_PATH")
+    phenix_path: str | None = Field(default=None, alias="PHENIX_PATH")
 
     @field_validator("phenix_path")
     @classmethod
-    def validate_phenix_path(cls, v: Optional[str]) -> Optional[str]:
+    def validate_phenix_path(cls, v: str | None) -> str | None:
         """
         Validate PHENIX_PATH format if set.
 
@@ -515,8 +580,8 @@ class BerkeleyLabSettings(BaseSettings):
         extra="ignore",
     )
 
-    dremio_user: Optional[str] = Field(default=None, alias="DREMIO_USER")
-    dremio_password: Optional[str] = Field(default=None, alias="DREMIO_PASSWORD")
+    dremio_user: str | None = Field(default=None, alias="DREMIO_USER")
+    dremio_password: str | None = Field(default=None, alias="DREMIO_PASSWORD")
 
 
 class AgentSettings(BaseSettings):

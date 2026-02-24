@@ -6,43 +6,20 @@ and automatically discover all ORM models for migration generation.
 """
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context  # type: ignore[import-untyped]
+from pydantic import ValidationError
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+# Import all models so Alembic autogenerate sees the full metadata graph.
+import shandy.database.models as models
+
 # Import the Base class and all models so Alembic can detect them
 from shandy.database.base import Base
-
-# Import all models here so they're registered with Base.metadata
-# This is necessary for auto-generating migrations
-from shandy.database.models import (  # noqa: F401
-    Administrator,
-    AnalysisLog,
-    APIKey,
-    CostRecord,
-    FeedbackHistory,
-    Finding,
-    Hypothesis,
-    HypothesisSpawn,
-    IterationSummary,
-    Job,
-    JobChatMessage,
-    JobDataFile,
-    JobShare,
-    Literature,
-    OAuthAccount,
-    Plot,
-    Session,
-    Skill,
-    SkillSource,
-    User,
-    finding_hypotheses,
-    finding_literature,
-)
+from shandy.settings import DatabaseSettings
 
 # Alembic Config object provides access to alembic.ini values
 config = context.config
@@ -52,21 +29,21 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Set the SQLAlchemy URL from environment variable
-# Note: Alembic migrations must read DATABASE_URL directly from environment
-# because settings module may not be importable during migrations
-database_url: str = os.getenv("DATABASE_URL", "")  # noqa: env-ok
-if not database_url:
+# Set the SQLAlchemy URL from validated settings
+try:
+    database_url: str = DatabaseSettings().database_url
+except ValidationError as exc:
     raise ValueError(
         "DATABASE_URL environment variable is required for migrations. "
         "Example: postgresql+asyncpg://user:pass@localhost:5432/shandy"
-    )
+    ) from exc
 
 # Set the sqlalchemy.url in the Alembic config
 config.set_main_option("sqlalchemy.url", database_url)
 
 # Add your model's MetaData object here for 'autogenerate' support
 target_metadata = Base.metadata
+MODEL_REGISTRY = models
 
 
 def run_migrations_offline() -> None:

@@ -1,5 +1,5 @@
 """
-Job model for crystallography analysis jobs.
+Job model for scientific analysis jobs.
 
 The Job model represents a complete SHANDY analysis workflow, tracking
 status, configuration, and relationships to all job artifacts.
@@ -8,7 +8,7 @@ status, configuration, and relationships to all job artifacts.
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 class Job(UUIDv7Mixin, Base):
     """
-    Crystallography analysis job.
+    Scientific analysis job.
 
     Represents a complete SHANDY workflow from data upload through
     iterative analysis to final report generation.
@@ -35,6 +35,8 @@ class Job(UUIDv7Mixin, Base):
         owner_id: Foreign key to user who owns this job (NULL for orphaned)
         title: User-provided job title
         description: User-provided job description
+        use_skills: Whether skills are enabled for this job
+        investigation_mode: Investigation mode (autonomous/coinvestigate)
         status: Current job status (pending/running/completed/failed/cancelled)
         max_iterations: Maximum number of analysis iterations allowed
         current_iteration: Current iteration number (0-based)
@@ -79,6 +81,20 @@ class Job(UUIDv7Mixin, Base):
         Text,
         nullable=True,
         comment="User-provided job description",
+    )
+
+    use_skills: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="true",
+        comment="Whether specialized skills are enabled for this job",
+    )
+
+    investigation_mode: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="autonomous",
+        comment="Investigation mode (autonomous or coinvestigate)",
     )
 
     status: Mapped[str] = mapped_column(

@@ -8,7 +8,7 @@ decisions, and progress toward the goal.
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, Text
+from sqlalchemy import ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -41,6 +41,13 @@ class IterationSummary(UUIDv7Mixin, Base):
     """
 
     __tablename__ = "iteration_summaries"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            "iteration",
+            name="uq_iteration_summaries_job_iteration",
+        ),
+    )
 
     job_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -53,7 +60,6 @@ class IterationSummary(UUIDv7Mixin, Base):
     iteration: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
-        unique=True,
         comment="Iteration number being summarized",
     )
 

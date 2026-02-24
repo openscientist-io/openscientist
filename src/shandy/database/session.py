@@ -16,8 +16,7 @@ role is a non-superuser NOLOGIN role that is subject to RLS policies.
 
 import logging
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from typing import Optional
+from contextlib import asynccontextmanager, suppress
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -30,8 +29,8 @@ from .engine import get_admin_engine, get_engine
 logger = logging.getLogger(__name__)
 
 # Lazy session factories (initialized on first use)
-_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
-_admin_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
+_admin_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def _get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -94,7 +93,7 @@ def _create_fresh_session_factory() -> async_sessionmaker[AsyncSession]:
     )
 
 
-def AsyncSessionLocal(thread_safe: bool = False) -> AsyncSession:  # noqa: N802
+def async_session_local(thread_safe: bool = False) -> AsyncSession:
     """Create a new async session.
 
     Args:
@@ -116,6 +115,10 @@ def AsyncSessionLocal(thread_safe: bool = False) -> AsyncSession:  # noqa: N802
     return _get_session_factory()()
 
 
+# Backward-compatible alias for older imports.
+AsyncSessionLocal = async_session_local
+
+
 async def _set_app_role(session: AsyncSession) -> None:
     """Drop privileges to shandy_app role for RLS enforcement.
 
@@ -132,18 +135,14 @@ async def _set_app_role(session: AsyncSession) -> None:
 
 async def _clear_rls_user_context(session: AsyncSession) -> None:
     """Clear app.current_user_id to prevent context leakage across pooled connections."""
-    try:
+    with suppress(Exception):
         await session.execute(text("SELECT set_config('app.current_user_id', NULL, false)"))
-    except Exception:
-        pass
 
 
 async def _reset_role(session: AsyncSession) -> None:
     """Restore the original database role after session use."""
-    try:
+    with suppress(Exception):
         await session.execute(text("RESET ROLE"))
-    except Exception:
-        pass  # Connection may already be closed/invalid
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

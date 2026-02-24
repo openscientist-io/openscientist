@@ -5,7 +5,6 @@ Provides OAuth client initialization and configuration for supported providers.
 """
 
 import logging
-from typing import Optional
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore[import-untyped]
 from starlette.config import Config
@@ -15,7 +14,7 @@ from shandy.settings import get_settings
 logger = logging.getLogger(__name__)
 
 # OAuth configuration
-_oauth: Optional[OAuth] = None
+_oauth: OAuth | None = None
 
 
 def get_oauth_config() -> Config:
