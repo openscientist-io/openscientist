@@ -150,10 +150,14 @@ class ToolContext:
 
     job_dir: Path
     data_file: Path | None = None
+    data_files: tuple[Path, ...] = ()
 
 
 def build_tool_list(
-    job_dir: Path, data_file: Path | None = None, use_hypotheses: bool = False
+    job_dir: Path,
+    data_file: Path | None = None,
+    use_hypotheses: bool = False,
+    data_files: list[Path] | None = None,
 ) -> list[Any]:
     """
     Build the full list of SDK tool objects for a job.
@@ -164,8 +168,17 @@ def build_tool_list(
         job_dir: Path to the job directory
         data_file: Optional path to the primary data file
         use_hypotheses: Whether to include hypothesis tracking tools
+        data_files: All data files for this job. Falls back to [data_file] when
+            not provided so callers that only set data_file keep working.
     """
-    ctx = ToolContext(job_dir=job_dir, data_file=data_file)
+    resolved_files: tuple[Path, ...]
+    if data_files is not None:
+        resolved_files = tuple(data_files)
+    elif data_file is not None:
+        resolved_files = (data_file,)
+    else:
+        resolved_files = ()
+    ctx = ToolContext(job_dir=job_dir, data_file=data_file, data_files=resolved_files)
 
     from shandy.tools.code_exec import make_tools as code_tools
     from shandy.tools.document import make_tools as doc_tools

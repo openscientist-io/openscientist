@@ -22,6 +22,7 @@ def get_agent_executor(
     data_file: Path | None,
     system_prompt: str | None,
     use_hypotheses: bool = False,
+    data_files: list[Path] | None = None,
 ) -> AgentExecutor:
     """
     Return an SDKAgentExecutor for the configured provider.
@@ -31,6 +32,7 @@ def get_agent_executor(
         data_file: Optional path to the primary data file
         system_prompt: System prompt to use
         use_hypotheses: Whether to include hypothesis tracking tools
+        data_files: All data files for this job (used for multi-file metadata)
 
     Returns:
         An SDKAgentExecutor instance
@@ -41,4 +43,5 @@ def get_agent_executor(
         data_file=data_file,
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
+        data_files=data_files,
     )
