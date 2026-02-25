@@ -159,6 +159,7 @@ def new_job_page() -> None:
             auto_upload=True,
             on_upload=on_upload,
         ).classes("w-full")
+        ui.label("Maximum file size: 500 MB per file").classes("text-caption text-grey-6")
 
         max_iterations = ui.number(
             label="Max Iterations",
