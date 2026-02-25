@@ -8,7 +8,6 @@ to research questions.
 import logging
 from datetime import datetime
 from typing import TypedDict
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -17,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from shandy.api.auth import get_current_user_from_api_key
+from shandy.api.utils import parse_uuid
 from shandy.database.models import Skill, SkillSource, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
@@ -24,16 +24,6 @@ from shandy.database.session import get_session
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/skills", tags=["Skills"])
-
-
-def _parse_uuid(value: str, field_name: str) -> UUID:
-    try:
-        return UUID(value)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid {field_name} format",
-        ) from e
 
 
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
@@ -257,7 +247,7 @@ async def get_skill(
     """
     await set_current_user(session, user.id)
 
-    skill_uuid = _parse_uuid(skill_id, "skill ID")
+    skill_uuid = parse_uuid(skill_id, "skill_id")
 
     stmt = select(Skill).where(
         Skill.id == skill_uuid,
@@ -452,7 +442,7 @@ async def sync_skill_source_endpoint(
     await set_current_user(session, user.id)
 
     # Verify admin access by trying to read the source (RLS will block non-admins)
-    source_uuid = _parse_uuid(source_id, "source ID")
+    source_uuid = parse_uuid(source_id, "source_id")
 
     stmt = select(SkillSource).where(SkillSource.id == source_uuid)
     check_result = await session.execute(stmt)
@@ -498,7 +488,7 @@ async def delete_skill_source(
     """
     await set_current_user(session, user.id)
 
-    source_uuid = _parse_uuid(source_id, "source ID")
+    source_uuid = parse_uuid(source_id, "source_id")
 
     # RLS policy enforces admin-only access
     stmt = select(SkillSource).where(SkillSource.id == source_uuid)

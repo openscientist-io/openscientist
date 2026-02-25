@@ -677,7 +677,7 @@ class TestJobEndpoints:
             )
 
         assert response.status_code == 400
-        assert "Invalid job ID format" in response.json()["detail"]
+        assert "Invalid job_id format" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_cannot_access_other_users_job(

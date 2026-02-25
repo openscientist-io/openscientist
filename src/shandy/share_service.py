@@ -15,33 +15,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shandy.api.utils import parse_uuid
 from shandy.database.models import Job, JobShare, User
 from shandy.database.session import get_admin_session
 
 AdminSessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
-
-
-def parse_uuid(value: str, field_name: str) -> UUID:
-    """
-    Parse a UUID string and convert invalid input into an HTTP 400 error.
-
-    Args:
-        value: Raw UUID string provided by the client.
-        field_name: Field name used in the validation error message.
-
-    Returns:
-        Parsed UUID instance.
-
-    Raises:
-        HTTPException: If the value is not a valid UUID string.
-    """
-    try:
-        return UUID(value)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid {field_name} format",
-        ) from e
 
 
 async def get_owned_job(

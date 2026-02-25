@@ -10,7 +10,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import TypedDict
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.api.auth import get_current_user_from_api_key
+from shandy.api.utils import parse_uuid
 from shandy.artifact_packager import create_artifacts_zip_file
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
@@ -28,16 +29,6 @@ from shandy.job_manager import JobManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
-
-
-def _parse_uuid(value: str, field_name: str) -> UUID:
-    try:
-        return UUID(value)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid {field_name} format",
-        ) from e
 
 
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
@@ -163,7 +154,7 @@ async def get_job_by_id(
     await set_current_user(session, user.id)
 
     # Query job (RLS policies will filter access)
-    job_uuid = _parse_uuid(job_id, "job ID")
+    job_uuid = parse_uuid(job_id, "job_id")
 
     stmt = select(Job).where(Job.id == job_uuid)
     result = await session.execute(stmt)
