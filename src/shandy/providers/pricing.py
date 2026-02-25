@@ -10,8 +10,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 _LITELLM_PRICING_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
-    "model_prices_and_context_window.json"
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 )
 _CACHE_TTL_SECONDS = 86_400  # 24 hours
 

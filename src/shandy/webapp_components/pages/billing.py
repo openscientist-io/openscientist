@@ -23,9 +23,7 @@ async def render_billing_panel() -> None:
 async def _render_db_cost_section() -> None:
     """Query CostRecord and display per-job cost breakdown."""
     async with get_admin_session() as session:
-        records = await session.execute(
-            select(CostRecord).order_by(CostRecord.created_at.desc())
-        )
+        records = await session.execute(select(CostRecord).order_by(CostRecord.created_at.desc()))
         cost_records = records.scalars().all()
 
     if not cost_records:
@@ -36,11 +34,13 @@ async def _render_db_cost_section() -> None:
     total_output = sum(r.output_tokens for r in cost_records)
     total_cost = sum(r.cost_usd for r in cost_records)
 
-    render_stat_badges([
-        ("Total Cost", f"${total_cost:.4f}", "green"),
-        ("Input Tokens", f"{total_input:,}", "blue"),
-        ("Output Tokens", f"{total_output:,}", "orange"),
-    ])
+    render_stat_badges(
+        [
+            ("Total Cost", f"${total_cost:.4f}", "green"),
+            ("Input Tokens", f"{total_input:,}", "blue"),
+            ("Output Tokens", f"{total_output:,}", "orange"),
+        ]
+    )
 
     columns = [
         {"name": "job_id", "label": "Job", "field": "job_id", "align": "left"},
@@ -133,15 +133,11 @@ def _render_provider_cost_section() -> None:
             # Budget warnings/errors
             if budget_check and budget_check.get("errors"):
                 with ui.card().classes("w-full bg-red-50 border border-red-300 mt-4 p-4"):
-                    ui.label("Budget Alerts").classes(
-                        "text-subtitle2 font-bold text-red-800 mb-2"
-                    )
+                    ui.label("Budget Alerts").classes("text-subtitle2 font-bold text-red-800 mb-2")
                     for error in budget_check["errors"]:
                         ui.label(f"⚠️ {error}").classes("text-sm text-red-600")
             elif budget_check and budget_check.get("warnings"):
-                with ui.card().classes(
-                    "w-full bg-yellow-50 border border-yellow-300 mt-4 p-4"
-                ):
+                with ui.card().classes("w-full bg-yellow-50 border border-yellow-300 mt-4 p-4"):
                     ui.label("Budget Warnings").classes(
                         "text-subtitle2 font-bold text-yellow-800 mb-2"
                     )
