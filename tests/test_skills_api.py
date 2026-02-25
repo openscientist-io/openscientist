@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.routing import Match
 
@@ -59,6 +60,47 @@ def mock_session(db_session: AsyncSession):
 
     with patch("shandy.api.endpoints.skills.get_session", get_mock_session):
         yield db_session
+
+
+async def _create_searchable_skill(
+    db_session: AsyncSession,
+    test_skill_source: SkillSource,
+    *,
+    name: str,
+    slug: str,
+    category: str = "pagination",
+) -> Skill:
+    """Create a skill and ensure search_vector is populated for full-text tests."""
+    skill = Skill(
+        name=name,
+        slug=slug,
+        category=category,
+        description="Pagination search test skill",
+        content=f"# {name}\n\nPagination test content.",
+        tags=["pagination", "search"],
+        source_id=test_skill_source.id,
+        source_path=f"{category}/{slug}.md",
+        content_hash=uuid4().hex,
+        is_enabled=True,
+    )
+    db_session.add(skill)
+    await db_session.commit()
+
+    await db_session.execute(
+        text(
+            """
+            UPDATE skills SET search_vector =
+                setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+                setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+                setweight(to_tsvector('english', coalesce(category, '')), 'C')
+            WHERE id = :skill_id
+        """
+        ),
+        {"skill_id": skill.id},
+    )
+    await db_session.commit()
+    await db_session.refresh(skill)
+    return skill
 
 
 class TestSkillsListEndpoint:
@@ -147,6 +189,141 @@ class TestSkillsListEndpoint:
 
         # Should find genomics skill
         assert len(response.skills) >= 1
+
+    @pytest.mark.asyncio
+    async def test_list_skills_search_applies_offset_and_limit(
+        self,
+        db_session: AsyncSession,
+        test_user: User,
+        test_skill_source: SkillSource,
+    ):
+        """Test search mode honors pagination offset and limit."""
+        from shandy.api.endpoints.skills import list_skills
+        from shandy.database.rls import set_current_user
+
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="A Skill",
+            slug="a-skill",
+        )
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="B Skill",
+            slug="b-skill",
+        )
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="C Skill",
+            slug="c-skill",
+        )
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="D Skill",
+            slug="d-skill",
+        )
+
+        await set_current_user(db_session, test_user.id)
+
+        response = await list_skills(
+            user=test_user,
+            session=db_session,
+            category=None,
+            search="skill",
+            tags=None,
+            offset=1,
+            limit=2,
+        )
+
+        assert response.total == 4
+        assert [skill.name for skill in response.skills] == ["B Skill", "C Skill"]
+
+    @pytest.mark.asyncio
+    async def test_list_skills_search_total_is_full_match_count(
+        self,
+        db_session: AsyncSession,
+        test_user: User,
+        test_skill_source: SkillSource,
+    ):
+        """Test search mode total reports full match count, not page size."""
+        from shandy.api.endpoints.skills import list_skills
+        from shandy.database.rls import set_current_user
+
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="Alpha Skill",
+            slug="alpha-skill",
+        )
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="Beta Skill",
+            slug="beta-skill",
+        )
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="Gamma Skill",
+            slug="gamma-skill",
+        )
+
+        await set_current_user(db_session, test_user.id)
+
+        response = await list_skills(
+            user=test_user,
+            session=db_session,
+            category=None,
+            search="skill",
+            tags=None,
+            offset=0,
+            limit=1,
+        )
+
+        assert len(response.skills) == 1
+        assert response.total == 3
+
+    @pytest.mark.asyncio
+    async def test_list_skills_search_offset_past_end_returns_empty_page(
+        self,
+        db_session: AsyncSession,
+        test_user: User,
+        test_skill_source: SkillSource,
+    ):
+        """Test search mode returns empty page with correct total when offset is past end."""
+        from shandy.api.endpoints.skills import list_skills
+        from shandy.database.rls import set_current_user
+
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="One Skill",
+            slug="one-skill",
+        )
+        await _create_searchable_skill(
+            db_session,
+            test_skill_source,
+            name="Two Skill",
+            slug="two-skill",
+        )
+
+        await set_current_user(db_session, test_user.id)
+
+        response = await list_skills(
+            user=test_user,
+            session=db_session,
+            category=None,
+            search="skill",
+            tags=None,
+            offset=10,
+            limit=5,
+        )
+
+        assert response.total == 2
+        assert response.skills == []
 
 
 class TestSkillsGetEndpoint:

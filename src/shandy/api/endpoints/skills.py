@@ -178,15 +178,24 @@ async def list_skills(
         tsquery = func.plainto_tsquery("english", search)
         conditions.append(Skill.search_vector.op("@@")(tsquery))
 
+        count_stmt = select(func.count(Skill.id)).where(*conditions)
+        count_result = await session.execute(count_stmt)
+        total = count_result.scalar() or 0
+
         stmt = (
             select(Skill)
             .where(*conditions)
-            .order_by(func.ts_rank(Skill.search_vector, tsquery).desc())
+            .order_by(
+                func.ts_rank(Skill.search_vector, tsquery).desc(),
+                Skill.category,
+                Skill.name,
+                Skill.id,
+            )
+            .offset(offset)
             .limit(limit)
         )
         result = await session.execute(stmt)
         skills = list(result.scalars().all())
-        total = len(skills)
     else:
         # Regular query with filters
         conditions = _build_skill_filters(category, tags)
