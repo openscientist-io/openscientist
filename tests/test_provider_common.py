@@ -7,6 +7,9 @@ from shandy.providers._anthropic_common import (
     build_tool_params,
     build_usage_dict,
     convert_response_blocks,
+    resolve_model_name,
+    send_anthropic_message,
+    send_anthropic_message_with_tools,
 )
 
 
@@ -87,3 +90,102 @@ def test_build_usage_dict_handles_optional_cache_fields():
         "input_tokens": 5,
         "output_tokens": 2,
     }
+
+
+def test_resolve_model_name_precedence():
+    assert (
+        resolve_model_name(
+            model_override="override-model",
+            configured_model="configured-model",
+            provider_default_model="provider-default",
+        )
+        == "override-model"
+    )
+    assert (
+        resolve_model_name(
+            model_override=None,
+            configured_model="configured-model",
+            provider_default_model="provider-default",
+        )
+        == "configured-model"
+    )
+    assert (
+        resolve_model_name(
+            model_override=None,
+            configured_model=None,
+            provider_default_model="provider-default",
+        )
+        == "provider-default"
+    )
+
+
+def test_send_anthropic_message_uses_resolved_model_and_extracts_text():
+    calls: list[dict[str, object]] = []
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(content=[SimpleNamespace(text="hello")])
+
+    client = SimpleNamespace(messages=FakeMessages())
+    result = send_anthropic_message(
+        client=client,
+        messages=[{"role": "user", "content": "ping"}],
+        system=None,
+        model=None,
+        configured_model="configured-model",
+        provider_default_model="provider-default",
+        max_tokens=123,
+    )
+
+    assert result == "hello"
+    assert calls[0]["model"] == "configured-model"
+    assert calls[0]["system"] == ""
+    assert calls[0]["messages"] == [{"role": "user", "content": "ping"}]
+
+
+def test_send_anthropic_message_with_tools_returns_normalized_payload():
+    calls: list[dict[str, object]] = []
+
+    class FakeToolUseBlock:
+        def __init__(self) -> None:
+            self.id = "tool_1"
+            self.name = "lookup"
+            self.input = {"q": "x"}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            usage = SimpleNamespace(input_tokens=3, output_tokens=5)
+            return SimpleNamespace(
+                stop_reason="tool_use",
+                content=[FakeToolUseBlock(), SimpleNamespace(text="done")],
+                model="provider-default",
+                usage=usage,
+            )
+
+    client = SimpleNamespace(messages=FakeMessages())
+    result = send_anthropic_message_with_tools(
+        client=client,
+        messages=[{"role": "user", "content": "ping"}],
+        tools=[{"name": "lookup", "description": "Lookup", "input_schema": {"type": "object"}}],
+        system="system prompt",
+        model=None,
+        configured_model=None,
+        provider_default_model="provider-default",
+        max_tokens=321,
+        tool_use_block_type=FakeToolUseBlock,
+    )
+
+    assert calls[0]["model"] == "provider-default"
+    assert result["stop_reason"] == "tool_use"
+    assert result["content"] == [
+        {
+            "type": "tool_use",
+            "id": "tool_1",
+            "name": "lookup",
+            "input": {"q": "x"},
+        },
+        {"type": "text", "text": "done"},
+    ]
+    assert result["usage"] == {"input_tokens": 3, "output_tokens": 5}
