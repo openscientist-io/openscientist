@@ -19,6 +19,7 @@ from ._anthropic_common import (
     build_usage_dict,
     convert_response_blocks,
 )
+from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +74,9 @@ class VertexProvider(BaseProvider):
 
     def setup_environment(self) -> None:
         """Vertex AI environment should be configured via .env and docker-compose.yml."""
-        # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        # Keep existing Vertex mode flag (if configured) and clear conflicting ones.
+        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_VERTEX")
+        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:

@@ -1,14 +1,20 @@
 """Tests for providers factory and base provider."""
 
 import os
+from contextlib import ExitStack
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from shandy.exceptions import ProviderError
 from shandy.providers import get_provider
+from shandy.providers.anthropic import AnthropicProvider
 from shandy.providers.base import BaseProvider, CostInfo
+from shandy.providers.bedrock import BedrockProvider
+from shandy.providers.cborg import CborgProvider
+from shandy.providers.foundry import FoundryProvider
+from shandy.providers.vertex import VertexProvider
 from shandy.settings import clear_settings_cache
 
 # ─── Concrete stub for testing BaseProvider ───────────────────────────
@@ -405,3 +411,122 @@ class TestGetProviderAllNames:
     def test_unknown_raises_with_valid_options(self):
         with pytest.raises(ValueError, match="Valid options"):
             get_provider()
+
+
+class TestProviderEnvironmentSwitching:
+    """Regression tests for provider switching in the same process."""
+
+    @staticmethod
+    def _foundry_settings() -> MagicMock:
+        settings = MagicMock()
+        settings.provider.anthropic_foundry_resource = "lab-foundry"
+        settings.provider.anthropic_foundry_base_url = None
+        settings.provider.anthropic_foundry_api_key = "foundry-key"
+        settings.provider.anthropic_default_sonnet_model = "claude-sonnet-4-5"
+        settings.provider.anthropic_default_haiku_model = None
+        settings.provider.anthropic_default_opus_model = None
+        return settings
+
+    @staticmethod
+    def _anthropic_settings() -> MagicMock:
+        settings = MagicMock()
+        settings.provider.anthropic_api_key = "sk-ant-test-key"
+        settings.provider.claude_code_oauth_token = None
+        settings.provider.anthropic_model = "claude-sonnet-4-6"
+        return settings
+
+    @staticmethod
+    def _cborg_settings() -> MagicMock:
+        settings = MagicMock()
+        settings.provider.anthropic_auth_token = "cborg-token"
+        settings.provider.anthropic_base_url = "https://api.cborg.lbl.gov"
+        settings.provider.anthropic_model = "claude-sonnet-4-6"
+        return settings
+
+    @staticmethod
+    def _vertex_settings() -> MagicMock:
+        settings = MagicMock()
+        settings.provider.anthropic_vertex_project_id = "vertex-project"
+        settings.provider.google_application_credentials = "/tmp/vertex-creds.json"
+        settings.provider.gcp_billing_account_id = "012345-ABCDEF"
+        settings.provider.cloud_ml_region = "us-east5"
+        settings.provider.anthropic_model = "claude-sonnet-4-5@20250929"
+        settings.provider.vertex_region_claude_4_5_sonnet = None
+        settings.provider.vertex_region_claude_4_5_haiku = None
+        return settings
+
+    @staticmethod
+    def _bedrock_settings() -> MagicMock:
+        settings = MagicMock()
+        settings.provider.aws_region = "us-east-1"
+        settings.provider.aws_access_key_id = "AKIA..."
+        settings.provider.aws_secret_access_key = "secret"
+        settings.provider.aws_profile = None
+        settings.provider.aws_bearer_token_bedrock = None
+        settings.provider.anthropic_model = "claude-sonnet-4-5"
+        settings.provider.anthropic_small_fast_model = "claude-haiku-4-5"
+        return settings
+
+    @pytest.mark.parametrize(
+        (
+            "provider_cls",
+            "settings_patch_target",
+            "settings_factory_name",
+            "expects_bedrock_flag",
+        ),
+        [
+            (
+                AnthropicProvider,
+                "shandy.providers.anthropic.get_settings",
+                "_anthropic_settings",
+                False,
+            ),
+            (
+                CborgProvider,
+                "shandy.providers.cborg.get_settings",
+                "_cborg_settings",
+                False,
+            ),
+            (
+                VertexProvider,
+                "shandy.providers.vertex.get_settings",
+                "_vertex_settings",
+                False,
+            ),
+            (
+                BedrockProvider,
+                "shandy.providers.bedrock.get_settings",
+                "_bedrock_settings",
+                True,
+            ),
+        ],
+    )
+    def test_switching_away_from_foundry_clears_foundry_flag(
+        self,
+        provider_cls: type[AnthropicProvider | CborgProvider | VertexProvider | BedrockProvider],
+        settings_patch_target: str,
+        settings_factory_name: str,
+        expects_bedrock_flag: bool,
+    ) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with patch(
+                "shandy.providers.foundry.get_settings",
+                return_value=self._foundry_settings(),
+            ):
+                FoundryProvider().setup_environment()
+
+            assert os.environ.get("CLAUDE_CODE_USE_FOUNDRY") == "1"
+
+            settings_factory = getattr(self, settings_factory_name)
+            patchers = [patch(settings_patch_target, return_value=settings_factory())]
+            if provider_cls is VertexProvider:
+                patchers.append(patch("shandy.providers.vertex.os.path.exists", return_value=True))
+
+            with ExitStack() as stack:
+                for patcher in patchers:
+                    stack.enter_context(patcher)
+                provider_cls().setup_environment()
+
+            assert "CLAUDE_CODE_USE_FOUNDRY" not in os.environ
+            if expects_bedrock_flag:
+                assert os.environ.get("CLAUDE_CODE_USE_BEDROCK") == "1"

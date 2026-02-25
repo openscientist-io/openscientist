@@ -16,6 +16,7 @@ from ._anthropic_common import (
     build_usage_dict,
     convert_response_blocks,
 )
+from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_env_vars, clear_provider_mode_flags
 from .base import BaseProvider, CostInfo
 
 logger = logging.getLogger(__name__)
@@ -64,10 +65,9 @@ class AnthropicProvider(BaseProvider):
         """Set up environment for Anthropic direct API or OAuth token."""
         settings = get_settings()
 
-        # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # env-ok
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
-        os.environ.pop("ANTHROPIC_VERTEX_PROJECT_ID", None)  # env-ok
+        # Unset conflicting provider routing vars
+        clear_provider_mode_flags(logger)
+        clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
 
         # If using OAuth token (from claude login), set CLAUDE_CODE_OAUTH_TOKEN
         # which is what the Claude Code CLI expects for OAuth authentication

@@ -5,7 +5,6 @@ Uses CBORG API for model access and cost tracking.
 """
 
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -21,6 +20,7 @@ from ._anthropic_common import (
     build_usage_dict,
     convert_response_blocks,
 )
+from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,9 @@ class CborgProvider(BaseProvider):
 
     def setup_environment(self) -> None:
         """CBORG environment should be configured via .env and docker-compose.yml."""
-        # Unset conflicting provider vars
-        os.environ.pop("CLAUDE_CODE_USE_BEDROCK", None)  # env-ok
-        os.environ.pop("CLAUDE_CODE_USE_VERTEX", None)  # env-ok
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        # Unset conflicting provider routing vars
+        clear_provider_mode_flags(logger)
+        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
         logger.info("CBORG provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:

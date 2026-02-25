@@ -18,6 +18,12 @@ from ._anthropic_common import (
     build_usage_dict,
     convert_response_blocks,
 )
+from ._env_cleanup import (
+    VERTEX_PROVIDER_ENV_VARS,
+    clear_empty_env_vars,
+    clear_env_vars,
+    clear_provider_mode_flags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,19 +85,12 @@ class BedrockProvider(BaseProvider):
         # Enable Bedrock mode for Claude Code
         os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # env-ok
 
-        # Unset Vertex-related vars to avoid conflicts
-        vertex_vars = [
-            "CLAUDE_CODE_USE_VERTEX",
-            "ANTHROPIC_VERTEX_PROJECT_ID",
-            "VERTEX_REGION_CLAUDE_4_5_SONNET",
-            "VERTEX_REGION_CLAUDE_4_5_HAIKU",
-        ]
-        for var in vertex_vars:
-            if os.environ.pop(var, None) is not None:  # env-ok
-                logger.debug(f"Removing conflicting {var}")
+        # Unset conflicting provider routing vars
+        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_BEDROCK")
+        clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
 
         # Unset direct API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
+        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
 
         # Unset empty vars that interfere with Bedrock auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -103,10 +102,7 @@ class BedrockProvider(BaseProvider):
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_BASE_URL",
         ]
-        for var in empty_vars_to_clear:
-            if os.environ.get(var) == "":  # env-ok
-                os.environ.pop(var, None)  # env-ok
-                logger.debug(f"Unset empty {var}")
+        clear_empty_env_vars(logger, empty_vars_to_clear)
 
         logger.info("Bedrock provider initialized (using AWS credentials)")
 

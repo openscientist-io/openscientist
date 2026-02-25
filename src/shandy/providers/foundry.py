@@ -19,6 +19,12 @@ from ._anthropic_common import (
     build_usage_dict,
     convert_response_blocks,
 )
+from ._env_cleanup import (
+    VERTEX_PROVIDER_ENV_VARS,
+    clear_empty_env_vars,
+    clear_env_vars,
+    clear_provider_mode_flags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,29 +103,13 @@ class FoundryProvider(BaseProvider):
         # automatically, so we don't need to set ANTHROPIC_FOUNDRY_BASE_URL here.
         # In fact, setting both causes an error: "baseURL and resource are mutually exclusive"
 
-        # Unset Vertex-related vars to avoid conflicts
-        vertex_vars = [
-            "CLAUDE_CODE_USE_VERTEX",
-            "ANTHROPIC_VERTEX_PROJECT_ID",
-            "VERTEX_REGION_CLAUDE_4_5_SONNET",
-            "VERTEX_REGION_CLAUDE_4_5_HAIKU",
-        ]
-        for var in vertex_vars:
-            if os.environ.pop(var, None) is not None:  # env-ok
-                logger.debug(f"Removing conflicting {var}")
-
-        # Unset Bedrock vars to avoid conflicts
-        bedrock_vars = [
-            "CLAUDE_CODE_USE_BEDROCK",
-            "AWS_BEARER_TOKEN_BEDROCK",
-        ]
-        for var in bedrock_vars:
-            if os.environ.pop(var, None) is not None:  # env-ok
-                logger.debug(f"Removing conflicting {var}")
+        # Unset conflicting provider routing vars
+        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_FOUNDRY")
+        clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
+        clear_env_vars(logger, ("AWS_BEARER_TOKEN_BEDROCK",))
 
         # Unset direct Anthropic API key to avoid conflicts
-        os.environ.pop("ANTHROPIC_API_KEY", None)  # env-ok
-        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)  # env-ok
+        clear_env_vars(logger, ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
 
         # Unset empty vars that interfere with auth
         # This happens when docker-compose passes VAR=${VAR} and it's unset
@@ -130,10 +120,7 @@ class FoundryProvider(BaseProvider):
             "AWS_PROFILE",
             "AWS_SESSION_TOKEN",
         ]
-        for var in empty_vars_to_clear:
-            if os.environ.get(var) == "":  # env-ok
-                os.environ.pop(var, None)  # env-ok
-                logger.debug(f"Unset empty {var}")
+        clear_empty_env_vars(logger, empty_vars_to_clear)
 
         settings = get_settings()
         auth_method = "API key" if settings.provider.anthropic_foundry_api_key else "Entra ID"
