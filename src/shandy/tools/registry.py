@@ -163,6 +163,7 @@ def build_tool_list(
     Args:
         job_dir: Path to the job directory
         data_file: Optional path to the primary data file
+        use_hypotheses: Whether to include hypothesis tracking tools
     """
     ctx = ToolContext(job_dir=job_dir, data_file=data_file)
 

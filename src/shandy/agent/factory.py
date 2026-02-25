@@ -30,6 +30,7 @@ def get_agent_executor(
         job_dir: Path to the job directory
         data_file: Optional path to the primary data file
         system_prompt: System prompt to use
+        use_hypotheses: Whether to include hypothesis tracking tools
 
     Returns:
         An SDKAgentExecutor instance
