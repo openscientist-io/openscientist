@@ -92,7 +92,7 @@ async def admin_page() -> None:
     render_navigator(active_page="admin")
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-6"):
-        ui.markdown("# Admin - Orphaned Jobs")
+        ui.markdown("# Admin")
         ui.markdown(
             "Manage jobs that were imported from file-based storage without an owner. "
             "Assign these jobs to users or allow users to claim them."
