@@ -7,7 +7,7 @@ Cost tracking via Azure Cost Management API.
 
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shandy.providers.base import BaseProvider, CostInfo
@@ -25,6 +25,40 @@ from ._env_cleanup import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _query_azure_cost_usd(
+    client: Any,
+    scope: str,
+    start: datetime,
+    end: datetime,
+) -> float:
+    """
+    Query Azure Cost Management for total cost between start and end.
+
+    Returns the aggregated cost as a float. The currency is the subscription's
+    billing currency (typically USD for US subscriptions).
+    """
+    from azure.mgmt.costmanagement.models import (  # noqa: PLC0415
+        QueryAggregation,
+        QueryDataset,
+        QueryDefinition,
+        QueryTimePeriod,
+    )
+
+    params = QueryDefinition(
+        type="Usage",
+        timeframe="Custom",
+        time_period=QueryTimePeriod(from_property=start, to=end),
+        dataset=QueryDataset(
+            granularity="None",
+            aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
+        ),
+    )
+    result = client.query.usage(scope, params)
+    if result is None or not result.rows:
+        return 0.0
+    return float(result.rows[0][0])
 
 
 class FoundryProvider(BaseProvider):
@@ -168,65 +202,99 @@ class FoundryProvider(BaseProvider):
         """
         Get Azure Foundry cost information from Azure Cost Management API.
 
+        Requires AZURE_SUBSCRIPTION_ID to be set. Optionally AZURE_RESOURCE_GROUP
+        scopes the query to a specific resource group (recommended to avoid pulling
+        all subscription costs).
+
+        Uses DefaultAzureCredential for authentication (Entra ID / managed identity).
+        Cost data typically has a 1–3 day lag in Azure.
+
         Args:
             lookback_hours: Time window for recent spend calculation
 
         Returns:
             CostInfo with Foundry spend data
-
-        Note:
-            Requires Azure Cost Management API access.
-            Cost data typically has a delay in Azure.
         """
         now = datetime.now(UTC)
-
-        # Azure Cost Management API requires authentication and proper permissions
-        # For now, return unavailable status with instructions
-        # Check if Azure SDK is available using find_spec (no unused import)
-        import importlib.util
-
-        if importlib.util.find_spec("azure.identity") is None:
-            logger.warning(
-                "Azure SDK not installed. Cannot fetch cost data. "
-                "Install with: pip install azure-identity azure-mgmt-costmanagement"
-            )
-            total_spend = None
-            recent_spend = None
-            data_lag_note = "Azure SDK not installed"
-        else:
-            # Azure SDK is available but cost tracking not yet implemented
-            # Full implementation would:
-            # 1. Get subscription_id from AZURE_SUBSCRIPTION_ID
-            # 2. Initialize: credential = DefaultAzureCredential()
-            # 3. Create client: cost_client = CostManagementClient(credential, subscription_id)
-            # 4. Calculate time windows based on lookback_hours
-            # 5. Query cost management API with proper filters for Foundry resource
-            logger.warning(
-                "Azure Cost Management API integration not fully implemented. "
-                "Cost data unavailable."
-            )
-            total_spend = None
-            recent_spend = None
-            data_lag_note = (
-                "Azure cost tracking not yet implemented. "
-                "View costs in Azure Portal > Cost Management"
-            )
-
         settings = get_settings()
-        resource_name = settings.provider.anthropic_foundry_resource or "unknown-resource"
+        subscription_id = settings.provider.azure_subscription_id
 
-        return CostInfo(
-            provider_name="Azure AI Foundry",
-            total_spend_usd=total_spend,
-            recent_spend_usd=recent_spend,
-            recent_period_hours=lookback_hours,
-            last_updated=now,
-            data_lag_note=data_lag_note,
-            metadata={
-                "resource": resource_name,
-                "base_url": settings.provider.anthropic_foundry_base_url,
-            },
-        )
+        if not subscription_id:
+            resource_name = settings.provider.anthropic_foundry_resource or "Azure AI Foundry"
+            return CostInfo(
+                provider_name=f"Azure AI Foundry ({resource_name})",
+                total_spend_usd=None,
+                recent_spend_usd=None,
+                recent_period_hours=lookback_hours,
+                last_updated=now,
+                data_lag_note=(
+                    "Set AZURE_SUBSCRIPTION_ID to enable Azure Cost Management tracking"
+                ),
+                metadata={"resource": resource_name},
+            )
+
+        try:
+            from azure.identity import DefaultAzureCredential  # noqa: PLC0415
+            from azure.mgmt.costmanagement import CostManagementClient  # noqa: PLC0415
+        except ImportError:
+            logger.warning(
+                "Azure Cost Management SDK not installed. "
+                "Run: pip install azure-identity azure-mgmt-costmanagement"
+            )
+            return CostInfo(
+                provider_name="Azure AI Foundry",
+                total_spend_usd=None,
+                recent_spend_usd=None,
+                recent_period_hours=lookback_hours,
+                last_updated=now,
+                data_lag_note=(
+                    "Install azure-mgmt-costmanagement to enable billing: "
+                    "pip install azure-mgmt-costmanagement"
+                ),
+            )
+
+        resource_group = settings.provider.azure_resource_group
+        if resource_group:
+            scope = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+        else:
+            scope = f"/subscriptions/{subscription_id}"
+
+        try:
+            credential = DefaultAzureCredential()
+            client = CostManagementClient(credential)
+
+            # Total spend: current calendar month (month-to-date)
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            total_spend = _query_azure_cost_usd(client, scope, month_start, now)
+
+            # Recent spend: last lookback_hours
+            recent_start = now - timedelta(hours=lookback_hours)
+            recent_spend = _query_azure_cost_usd(client, scope, recent_start, now)
+
+            resource_name = settings.provider.anthropic_foundry_resource or "Azure AI Foundry"
+            return CostInfo(
+                provider_name=f"Azure AI Foundry ({resource_name})",
+                total_spend_usd=total_spend,
+                recent_spend_usd=recent_spend,
+                recent_period_hours=lookback_hours,
+                last_updated=now,
+                data_lag_note="Azure billing data may have 1–3 day lag",
+                metadata={
+                    "scope": scope,
+                    "resource": settings.provider.anthropic_foundry_resource,
+                },
+            )
+
+        except Exception as e:
+            logger.warning("Azure Cost Management query failed: %s", e)
+            return CostInfo(
+                provider_name="Azure AI Foundry",
+                total_spend_usd=None,
+                recent_spend_usd=None,
+                recent_period_hours=lookback_hours,
+                last_updated=now,
+                data_lag_note=f"Cost query failed: {e}",
+            )
 
     async def send_message(
         self,

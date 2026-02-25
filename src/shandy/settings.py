@@ -101,6 +101,9 @@ class ProviderSettings(BaseSettings):
     anthropic_foundry_resource: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_RESOURCE")
     anthropic_foundry_base_url: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_BASE_URL")
     anthropic_foundry_api_key: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_API_KEY")
+    # Azure Cost Management (optional, enables billing data for foundry provider)
+    azure_subscription_id: str | None = Field(default=None, alias="AZURE_SUBSCRIPTION_ID")
+    azure_resource_group: str | None = Field(default=None, alias="AZURE_RESOURCE_GROUP")
 
     @staticmethod
     def _warn_if_missing(value: str | None, message: str, warnings: list[str]) -> None:
