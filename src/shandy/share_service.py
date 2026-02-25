@@ -104,7 +104,12 @@ async def find_user_by_email(
         HTTPException: If no user exists for the given email.
     """
     async with admin_session_factory() as admin_session:
-        result = await admin_session.execute(select(User).where(User.email == email))
+        result = await admin_session.execute(
+            select(User).where(
+                User.email == email,
+                User.is_active.is_(True),
+            )
+        )
         target_user = result.scalar_one_or_none()
 
     if not target_user:
