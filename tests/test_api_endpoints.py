@@ -956,6 +956,180 @@ class TestJobEndpoints:
         mock_job_manager.create_job.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_job_accepts_multipart_with_uploaded_files(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Create job via multipart/form-data and forward uploaded files."""
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        captured_uploads: dict[str, list[str]] = {"names": [], "contents": []}
+
+        def capture_create_job(*args, **kwargs):
+            _ = args
+            uploaded = kwargs["data_files"]
+            captured_uploads["names"] = [p.name for p in uploaded]
+            captured_uploads["contents"] = [p.read_text(encoding="utf-8") for p in uploaded]
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = MagicMock(side_effect=capture_create_job)
+        mock_loaded_job = SimpleNamespace(
+            id=uuid.uuid4(),
+            title="Multipart Job",
+            description="Created via multipart API",
+            status="pending",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            max_iterations=7,
+            current_iteration=0,
+            pdb_code=None,
+            space_group=None,
+        )
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with (
+            patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager),
+            patch(
+                "shandy.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
+            ) as mock_get_job,
+        ):
+            mock_get_job.return_value = mock_loaded_job
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/jobs",
+                    data={
+                        "title": "Multipart Job",
+                        "description": "Created via multipart API",
+                        "research_question": "How does uploaded data affect output?",
+                        "max_iterations": "7",
+                        "use_hypotheses": "true",
+                        "investigation_mode": "coinvestigate",
+                    },
+                    files=[
+                        ("data_files", ("dataset.csv", b"a,b\n1,2\n", "text/csv")),
+                        ("data_files", ("notes.txt", b"hello\n", "text/plain")),
+                    ],
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 201
+        mock_job_manager.create_job.assert_called_once()
+        called_kwargs = mock_job_manager.create_job.call_args.kwargs
+        assert called_kwargs["max_iterations"] == 7
+        assert called_kwargs["use_hypotheses"] is True
+        assert called_kwargs["investigation_mode"] == "coinvestigate"
+        assert captured_uploads["names"] == ["dataset.csv", "notes.txt"]
+        assert captured_uploads["contents"] == ["a,b\n1,2\n", "hello\n"]
+
+    @pytest.mark.asyncio
+    async def test_create_job_uploads_with_duplicate_names_get_unique_temp_paths(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """Duplicate multipart upload names should not overwrite each other."""
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from fastapi import FastAPI
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        captured_names: list[str] = []
+
+        def capture_create_job(*args, **kwargs):
+            _ = args
+            captured_names.extend([p.name for p in kwargs["data_files"]])
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = MagicMock(side_effect=capture_create_job)
+        mock_loaded_job = SimpleNamespace(
+            id=uuid.uuid4(),
+            title="Duplicate Uploads",
+            description="Upload integration test",
+            status="pending",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            max_iterations=5,
+            current_iteration=0,
+            pdb_code=None,
+            space_group=None,
+        )
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with (
+            patch("shandy.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager),
+            patch(
+                "shandy.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
+            ) as mock_get_job,
+        ):
+            mock_get_job.return_value = mock_loaded_job
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/jobs",
+                    data={
+                        "title": "Duplicate Uploads",
+                        "research_question": "Do duplicate upload names collide?",
+                    },
+                    files=[
+                        ("data_files", ("duplicate.csv", b"a,b\n1,2\n", "text/csv")),
+                        ("data_files", ("duplicate.csv", b"a,b\n3,4\n", "text/csv")),
+                    ],
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 201
+        assert captured_names == ["duplicate.csv", "duplicate_1.csv"]
+
+    @pytest.mark.asyncio
     async def test_create_job_returns_400_for_job_manager_value_error(
         self,
         db_session: AsyncSession,
