@@ -9,14 +9,25 @@ import logging
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import FormData
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from shandy.api.auth import get_current_user_from_api_key
 from shandy.api.utils import parse_uuid
@@ -24,6 +35,7 @@ from shandy.artifact_packager import create_artifacts_zip_file
 from shandy.database.models import Job, JobShare, User
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session
+from shandy.file_loader import FileTooBigError, validate_uploaded_file
 from shandy.job_manager import JobManager
 
 logger = logging.getLogger(__name__)
@@ -208,9 +220,138 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
     )
 
 
+def _with_body_error_loc(errors: list[Any]) -> list[dict[str, Any]]:
+    """Prefix Pydantic errors with 'body' for FastAPI validation responses."""
+    normalized: list[dict[str, Any]] = []
+    for error in errors:
+        raw_loc = error.get("loc", ())
+        if isinstance(raw_loc, tuple):
+            loc = raw_loc
+        elif isinstance(raw_loc, list):
+            loc = tuple(raw_loc)
+        elif raw_loc is None:
+            loc = ()
+        else:
+            loc = (raw_loc,)
+
+        if not loc or loc[0] != "body":
+            loc = ("body", *loc)
+
+        normalized.append({**error, "loc": loc})
+    return normalized
+
+
+def _validate_job_payload(payload: dict[str, Any]) -> JobCreate:
+    """Validate request payload and convert to JobCreate."""
+    try:
+        return JobCreate.model_validate(payload)
+    except ValidationError as exc:
+        raise RequestValidationError(_with_body_error_loc(exc.errors())) from exc
+
+
+def _extract_upload_files(form: FormData) -> list[StarletteUploadFile]:
+    """Extract uploaded files from multipart form fields."""
+    upload_files: list[StarletteUploadFile] = []
+    for field_name in ("data_files", "data_files[]"):
+        for value in form.getlist(field_name):
+            if isinstance(value, StarletteUploadFile) and value.filename:
+                upload_files.append(value)
+    return upload_files
+
+
+def _extract_job_payload_from_form(form: FormData) -> dict[str, Any]:
+    """Build a JobCreate payload from multipart form fields."""
+    payload: dict[str, Any] = {}
+    for field_name in JobCreate.model_fields:
+        value = form.get(field_name)
+        if value is None or isinstance(value, StarletteUploadFile):
+            continue
+        payload[field_name] = value
+
+    description = payload.get("description")
+    if isinstance(description, str) and not description.strip():
+        payload["description"] = None
+
+    return payload
+
+
+def _build_unique_upload_path(temp_dir: Path, filename: str) -> Path:
+    """Create a safe, unique destination path for an uploaded file."""
+    safe_name = Path(filename).name
+    if not safe_name:
+        raise ValueError("Uploaded file is missing a filename")
+
+    candidate = temp_dir / safe_name
+    stem = Path(safe_name).stem
+    suffix = Path(safe_name).suffix
+    index = 1
+    while candidate.exists():
+        candidate = temp_dir / f"{stem}_{index}{suffix}"
+        index += 1
+    return candidate
+
+
+async def _persist_uploaded_files(
+    upload_files: list[StarletteUploadFile],
+    temp_dir: Path,
+) -> list[Path]:
+    """Write uploaded files to temporary disk paths and return those paths."""
+    persisted_files: list[Path] = []
+    for upload in upload_files:
+        try:
+            target_path = _build_unique_upload_path(temp_dir, upload.filename or "")
+            content = await upload.read()
+            validate_uploaded_file(target_path, content)
+            target_path.write_bytes(content)
+            persisted_files.append(target_path)
+        finally:
+            await upload.close()
+
+    return persisted_files
+
+
+async def _parse_job_create_request(
+    request: Request,
+) -> tuple[JobCreate, list[StarletteUploadFile]]:
+    """Parse job creation payload from JSON or multipart form-data."""
+    content_type = request.headers.get("content-type", "").lower()
+    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        payload = _extract_job_payload_from_form(form)
+        return _validate_job_payload(payload), _extract_upload_files(form)
+
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise RequestValidationError(
+            [
+                {
+                    "type": "value_error.jsondecode",
+                    "loc": ("body",),
+                    "msg": "Invalid JSON payload",
+                    "input": None,
+                }
+            ]
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise RequestValidationError(
+            [
+                {
+                    "type": "type_error.dict",
+                    "loc": ("body",),
+                    "msg": "Input should be an object",
+                    "input": payload,
+                }
+            ]
+        )
+
+    return _validate_job_payload(payload), []
+
+
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(
-    job_data: JobCreate,
+    request: Request,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> JobResponse:
@@ -220,8 +361,9 @@ async def create_job(
     The job will be queued and started automatically. Use the GET /jobs/{id}/status
     endpoint to monitor progress.
 
-    Note: File uploads are not yet supported via the REST API. Use the web interface
-    to upload data files, or provide a PDB code for analysis.
+    Accepts either:
+    - JSON payload (`application/json`) without file uploads
+    - Multipart form-data with optional repeated `data_files` file fields
     """
     if not user.is_approved:
         raise HTTPException(
@@ -231,25 +373,35 @@ async def create_job(
             ),
         )
 
+    job_data, upload_files = await _parse_job_create_request(request)
+
     # Create job via JobManager (database + filesystem structure).
     job_uuid = uuid4()
     job_manager = _get_job_manager()
     try:
-        job_manager.create_job(
-            job_id=str(job_uuid),
-            research_question=job_data.research_question,
-            data_files=[],  # TODO: Support file uploads in API
-            max_iterations=job_data.max_iterations,
-            use_hypotheses=job_data.use_hypotheses,
-            auto_start=True,
-            investigation_mode=job_data.investigation_mode,
-            owner_id=str(user.id),
-            title=job_data.title,
-            description=job_data.description,
-            pdb_code=job_data.pdb_code,
-            space_group=job_data.space_group,
-        )
+        with tempfile.TemporaryDirectory(prefix="shandy_api_upload_") as upload_tmp:
+            data_files = await _persist_uploaded_files(upload_files, Path(upload_tmp))
+            job_manager.create_job(
+                job_id=str(job_uuid),
+                research_question=job_data.research_question,
+                data_files=data_files,
+                max_iterations=job_data.max_iterations,
+                use_hypotheses=job_data.use_hypotheses,
+                auto_start=True,
+                investigation_mode=job_data.investigation_mode,
+                owner_id=str(user.id),
+                title=job_data.title,
+                description=job_data.description,
+                pdb_code=job_data.pdb_code,
+                space_group=job_data.space_group,
+            )
         logger.info("Created job %s for user %s", job_uuid, user.email)
+    except FileTooBigError as e:
+        logger.info("Rejected oversized file upload for user %s: %s", user.email, e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except ValueError as e:
         logger.info("Rejected job creation for user %s: %s", user.email, e)
         raise HTTPException(
