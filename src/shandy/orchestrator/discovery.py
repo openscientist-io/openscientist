@@ -17,7 +17,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from shandy.agent.factory import get_agent_executor
-from shandy.agent.protocol import AgentExecutor, IterationResult
+from shandy.agent.protocol import AgentExecutor, IterationResult, TokenUsage
 from shandy.async_tasks import create_background_task
 from shandy.database.models import JobDataFile
 from shandy.database.models.job import Job as JobModel
@@ -39,6 +39,7 @@ from shandy.prompts import (
     get_system_prompt,
 )
 from shandy.providers import get_provider
+from shandy.settings import get_settings
 from shandy.version import get_version_string
 
 logger = logging.getLogger(__name__)
@@ -457,6 +458,42 @@ def get_version_metadata() -> dict[str, str]:
     return metadata
 
 
+_PROVIDER_DEFAULT_MODELS: dict[str, str] = {
+    "Anthropic": "claude-sonnet-4-20250514",
+    "CBORG": "claude-sonnet-4-20250514",
+    "Vertex AI": "claude-sonnet-4-5@20250929",
+    "AWS Bedrock": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "Azure AI Foundry": "claude-sonnet-4-5",
+}
+
+
+async def _persist_job_cost_record(
+    job_id: str,
+    tokens: TokenUsage,
+    provider_name: str,
+    model_name: str,
+    operation_type: str = "discovery",
+) -> None:
+    """Write a CostRecord for the completed job execution."""
+    from shandy.database.models import CostRecord
+    from shandy.providers.pricing import estimate_cost_usd
+
+    cost_usd = estimate_cost_usd(model_name, tokens.input_tokens, tokens.output_tokens)
+    async with AsyncSessionLocal(thread_safe=True) as session:
+        record = CostRecord(
+            job_id=UUID(job_id),
+            iteration=None,
+            operation_type=operation_type,
+            provider=provider_name,
+            model=model_name,
+            input_tokens=tokens.input_tokens,
+            output_tokens=tokens.output_tokens,
+            cost_usd=cost_usd,
+        )
+        session.add(record)
+        await session.commit()
+
+
 async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     """
     Run autonomous discovery using the configured agent executor.
@@ -559,6 +596,16 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             tokens.input_tokens,
             tokens.output_tokens,
         )
+        try:
+            settings = get_settings()
+            model_name = (
+                settings.provider.anthropic_model
+                or settings.provider.anthropic_default_sonnet_model
+                or _PROVIDER_DEFAULT_MODELS.get(provider.name, "unknown")
+            )
+            await _persist_job_cost_record(job_id, tokens, provider.name, model_name)
+        except Exception as cost_err:
+            logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
         await executor.shutdown()
 
 
@@ -629,6 +676,16 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
             tokens.input_tokens,
             tokens.output_tokens,
         )
+        try:
+            settings = get_settings()
+            model_name = (
+                settings.provider.anthropic_model
+                or settings.provider.anthropic_default_sonnet_model
+                or _PROVIDER_DEFAULT_MODELS.get(provider.name, "unknown")
+            )
+            await _persist_job_cost_record(job_id, tokens, provider.name, model_name, "report")
+        except Exception as cost_err:
+            logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
         await executor.shutdown()
 
 
