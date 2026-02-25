@@ -1491,6 +1491,74 @@ class TestJobSharingEndpoints:
         assert "users" in data
 
     @pytest.mark.asyncio
+    async def test_share_job_with_inactive_user_returns_404(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Sharing to an inactive user should be rejected as not found."""
+        from contextlib import asynccontextmanager
+        from unittest.mock import patch
+
+        from fastapi import FastAPI
+        from sqlalchemy import select
+
+        from shandy.api.auth import get_current_user_from_api_key
+        from shandy.api.router import api_router as router
+        from shandy.database.models import JobShare
+        from shandy.database.rls import set_current_user
+        from shandy.database.session import get_session
+
+        _, full_key = test_api_key_db
+
+        test_user2_db.is_active = False
+        await db_session.commit()
+        await db_session.refresh(test_user2_db)
+
+        app = FastAPI()
+
+        async def override_get_session():
+            await set_current_user(db_session, test_user_db.id)
+            yield db_session
+
+        async def override_get_user():
+            return test_user_db
+
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            yield db_session
+
+        app.dependency_overrides[get_session] = override_get_session
+        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+        app.include_router(router)
+
+        with patch("shandy.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/shares",
+                    json={
+                        "job_id": str(test_job_db.id),
+                        "shared_with_email": test_user2_db.email,
+                        "permission_level": "view",
+                    },
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+        share_result = await db_session.execute(
+            select(JobShare).where(JobShare.job_id == test_job_db.id)
+        )
+        assert share_result.scalar_one_or_none() is None
+
+    @pytest.mark.asyncio
     async def test_list_job_shares(
         self,
         db_session: AsyncSession,
