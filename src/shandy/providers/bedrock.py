@@ -13,10 +13,8 @@ from shandy.providers.base import BaseProvider, CostInfo
 from shandy.settings import get_settings
 
 from ._anthropic_common import (
-    build_system_blocks,
-    build_tool_params,
-    build_usage_dict,
-    convert_response_blocks,
+    send_anthropic_message,
+    send_anthropic_message_with_tools,
 )
 from ._env_cleanup import (
     VERTEX_PROVIDER_ENV_VARS,
@@ -192,39 +190,20 @@ class BedrockProvider(BaseProvider):
         filter, which can produce false positives on legitimate scientific content.
         """
         import anthropic
-        from anthropic.types import MessageParam, TextBlock
 
         settings = get_settings()
         client = anthropic.AnthropicBedrock(
             aws_region=settings.provider.aws_region or "us-east-1",
         )
-
-        # Use configured model or default (Bedrock uses different model IDs)
-        effective_model = (
-            model
-            or settings.provider.anthropic_model
-            or "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        )
-
-        # Convert to MessageParam type (role is validated elsewhere as user/assistant)
-        typed_messages: list[MessageParam] = [
-            {"role": msg["role"], "content": msg["content"]}  # type: ignore[typeddict-item]
-            for msg in messages
-        ]
-
-        response = client.messages.create(
-            model=effective_model,
+        return send_anthropic_message(
+            client=client,
+            messages=messages,
+            system=system,
+            model=model,
+            configured_model=settings.provider.anthropic_model,
+            provider_default_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
             max_tokens=max_tokens,
-            system=system or "",
-            messages=typed_messages,
         )
-
-        # Extract text from response (only TextBlock has .text)
-        if response.content and len(response.content) > 0:
-            first_block = response.content[0]
-            if isinstance(first_block, TextBlock):
-                return first_block.text
-        return ""
 
     async def send_message_with_tools(
         self,
@@ -240,48 +219,20 @@ class BedrockProvider(BaseProvider):
         Returns full response including stop_reason and content blocks.
         """
         import anthropic
-        from anthropic.types import ToolParam, ToolUseBlock
+        from anthropic.types import ToolUseBlock
 
         settings = get_settings()
         client = anthropic.AnthropicBedrock(
             aws_region=settings.provider.aws_region or "us-east-1",
         )
-
-        # Use configured model or default (Bedrock uses different model IDs)
-        effective_model = (
-            model
-            or settings.provider.anthropic_model
-            or "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
-        )
-
-        # Convert tools to ToolParam format
-        tool_params: list[ToolParam] = build_tool_params(tools)  # type: ignore[assignment]
-
-        # Use block format for system prompt with cache_control
-        # This enables prompt caching: 90% cost reduction, 85% latency improvement
-        # Cache is "ephemeral" (5 minute TTL) - good for multi-turn agentic loops
-        system_blocks = build_system_blocks(system)
-
-        response = client.messages.create(
-            model=effective_model,
+        return send_anthropic_message_with_tools(
+            client=client,
+            messages=messages,
+            tools=tools,
+            system=system,
+            model=model,
+            configured_model=settings.provider.anthropic_model,
+            provider_default_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
             max_tokens=max_tokens,
-            system=system_blocks,  # type: ignore[arg-type]
-            messages=messages,  # type: ignore[arg-type]
-            tools=tool_params,
-        )
-
-        # Convert response to dict format
-        content_blocks = convert_response_blocks(
-            response.content,
             tool_use_block_type=ToolUseBlock,
         )
-
-        # Build usage dict with cache info if available
-        usage = build_usage_dict(response.usage)
-
-        return {
-            "stop_reason": response.stop_reason,
-            "content": content_blocks,
-            "model": response.model,
-            "usage": usage,
-        }

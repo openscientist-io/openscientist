@@ -154,19 +154,9 @@ async def test_send_message_with_tools_uses_entra_id_token_when_no_api_key():
     fake_azure_identity = types.ModuleType("azure.identity")
     fake_azure_identity.DefaultAzureCredential = lambda: fake_credential  # type: ignore[assignment]
 
-    # Patch _anthropic_common helpers used by send_message_with_tools
-    fake_build_tool_params = lambda tools: []  # noqa: E731
-    fake_build_system_blocks = lambda system: []  # noqa: E731
-    fake_convert_response_blocks = lambda content, **_kw: []  # noqa: E731
-    fake_build_usage_dict = lambda usage: {}  # noqa: E731
-
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None, api_key=None)
     with (
         patch("shandy.providers.foundry.get_settings", return_value=settings),
-        patch("shandy.providers.foundry.build_tool_params", fake_build_tool_params),
-        patch("shandy.providers.foundry.build_system_blocks", fake_build_system_blocks),
-        patch("shandy.providers.foundry.convert_response_blocks", fake_convert_response_blocks),
-        patch("shandy.providers.foundry.build_usage_dict", fake_build_usage_dict),
         patch.dict(
             sys.modules,
             {
