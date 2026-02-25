@@ -397,6 +397,7 @@ class TestSkillsGetEndpoint:
             )
 
         assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Invalid skill_id format"
 
 
 class TestSkillsBySlugEndpoint:
