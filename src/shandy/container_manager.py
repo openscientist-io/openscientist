@@ -109,21 +109,85 @@ class ContainerManager:
         *,
         output_dir: Path,
         data_files: list[dict[str, Any]] | None,
-    ) -> dict[str, dict[str, str]]:
+    ) -> tuple[dict[str, dict[str, str]], dict[str, str]]:
+        """Build Docker volume mounts for an executor container.
+
+        Returns:
+            (volumes, host_to_container): Docker volumes dict, and a mapping
+            from host directory path string to container directory path string.
+            The mapping is used by _remap_paths to rewrite file paths in the
+            executor payload from host-side absolute paths to container paths.
+
+        Raises:
+            ValueError: If any data file path is empty or the file does not
+                exist (strict mode — missing files surface as an explicit error
+                rather than silently producing an incomplete execution context).
+        """
         volumes: dict[str, dict[str, str]] = {
             str(output_dir): {"bind": "/output", "mode": "rw"},
         }
+        host_to_container: dict[str, str] = {}
+
         if not data_files:
-            return volumes
+            return volumes, host_to_container
 
+        container_idx = 0
         for file_info in data_files:
-            file_path = Path(file_info.get("path", "")).resolve()
+            raw_path = file_info.get("path", "")
+            if not raw_path:
+                raise ValueError(f"data_files entry has empty 'path': {file_info!r}")
+            file_path = Path(raw_path).resolve()
             if not file_path.exists():
-                continue
-            volumes[str(file_path.parent)] = {"bind": "/data", "mode": "ro"}
-            break
+                raise ValueError(f"Data file not found: {file_path}")
+            host_dir = str(file_path.parent)
+            if host_dir not in host_to_container:
+                container_dir = "/data" if container_idx == 0 else f"/data/{container_idx}"
+                host_to_container[host_dir] = container_dir
+                volumes[host_dir] = {"bind": container_dir, "mode": "ro"}
+                container_idx += 1
 
-        return volumes
+        return volumes, host_to_container
+
+    def _remap_paths(
+        self,
+        *,
+        data_path: str | None,
+        data_files: list[dict[str, Any]] | None,
+        host_to_container: dict[str, str],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """Remap host-side absolute paths to container-internal equivalents.
+
+        Args:
+            data_path: Optional path to the primary data file on the host.
+            data_files: List of file metadata dicts, each with a "path" key.
+            host_to_container: Mapping from host directory → container directory,
+                as returned by _build_volumes.
+
+        Returns:
+            (remapped_data_path, remapped_files) with all paths rewritten.
+
+        Raises:
+            ValueError: If a path cannot be mapped (not under any mounted dir).
+        """
+        if not host_to_container:
+            return data_path, list(data_files or [])
+
+        def _remap(p: str) -> str:
+            resolved = Path(p).resolve()
+            container_dir = host_to_container.get(str(resolved.parent))
+            if container_dir is None:
+                raise ValueError(
+                    f"Path {p!r} is not under any mounted host directory. "
+                    f"Mounted: {list(host_to_container.keys())}"
+                )
+            return str(Path(container_dir) / resolved.name)
+
+        remapped_data_path = _remap(data_path) if data_path else None
+        remapped_files: list[dict[str, Any]] = []
+        for f in data_files or []:
+            raw = f.get("path", "")
+            remapped_files.append({**f, "path": _remap(raw)} if raw else dict(f))
+        return remapped_data_path, remapped_files
 
     def _parse_executor_result(self, result: bytes | str) -> dict[str, Any]:
         if isinstance(result, bytes):
@@ -181,20 +245,27 @@ class ContainerManager:
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        volumes, host_to_container = self._build_volumes(
+            output_dir=output_dir, data_files=data_files
+        )
+        remapped_data_path, remapped_files = self._remap_paths(
+            data_path=data_path,
+            data_files=data_files,
+            host_to_container=host_to_container,
+        )
+
         input_b64 = self._encode_executor_input(
             code=code,
             language=language,
-            data_path=data_path,
+            data_path=remapped_data_path,
             timeout=timeout,
             description=description,
             iteration=iteration,
-            data_files=data_files,
+            data_files=remapped_files,
         )
 
         # Container name includes job_id for cleanup
         container_name = f"shandy-exec-{job_id}-{os.urandom(4).hex()}"
-
-        volumes = self._build_volumes(output_dir=output_dir, data_files=data_files)
 
         logger.info(
             "Spawning executor container: %s (image=%s, mem=%s, cpu=%.2f)",

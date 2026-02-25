@@ -7,6 +7,7 @@ Contains both unit tests (mocked Docker) and integration tests (real Docker).
 import json
 import tempfile
 from datetime import UTC
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -235,6 +236,143 @@ class TestContainerManagerUnit:
         mock_client.ping.side_effect = Exception("Docker not running")
 
         assert manager.is_available() is False
+
+
+class TestBuildVolumes:
+    """Unit tests for _build_volumes and _remap_paths."""
+
+    def _make_manager(self):
+        from shandy.container_manager import ContainerManager
+
+        return ContainerManager()
+
+    def test_no_data_files_returns_only_output_mount(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        volumes, host_to_container = mgr._build_volumes(output_dir=tmp_path, data_files=None)
+        assert str(tmp_path) in volumes
+        assert volumes[str(tmp_path)] == {"bind": "/output", "mode": "rw"}
+        assert host_to_container == {}
+
+    def test_single_file_mounted_as_data(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        f = data_dir / "study.csv"
+        f.write_text("a,b\n1,2\n")
+        volumes, host_to_container = mgr._build_volumes(
+            output_dir=tmp_path / "out",
+            data_files=[{"path": str(f), "name": "study.csv"}],
+        )
+        assert str(data_dir) in host_to_container
+        assert host_to_container[str(data_dir)] == "/data"
+        assert volumes[str(data_dir)] == {"bind": "/data", "mode": "ro"}
+
+    def test_two_files_same_dir_one_mount(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        f1 = data_dir / "a.csv"
+        f2 = data_dir / "b.csv"
+        f1.write_text("x\n1\n")
+        f2.write_text("x\n2\n")
+        volumes, host_to_container = mgr._build_volumes(
+            output_dir=tmp_path / "out",
+            data_files=[{"path": str(f1)}, {"path": str(f2)}],
+        )
+        # Both live in the same dir — only one mount
+        assert len(host_to_container) == 1
+        assert host_to_container[str(data_dir)] == "/data"
+
+    def test_two_files_different_dirs_two_mounts(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        dir_a = tmp_path / "mnt_a"
+        dir_b = tmp_path / "mnt_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        fa = dir_a / "study.csv"
+        fb = dir_b / "labels.csv"
+        fa.write_text("x\n1\n")
+        fb.write_text("y\n2\n")
+        volumes, host_to_container = mgr._build_volumes(
+            output_dir=tmp_path / "out",
+            data_files=[{"path": str(fa)}, {"path": str(fb)}],
+        )
+        assert host_to_container[str(dir_a)] == "/data"
+        assert host_to_container[str(dir_b)] == "/data/1"
+        assert volumes[str(dir_a)] == {"bind": "/data", "mode": "ro"}
+        assert volumes[str(dir_b)] == {"bind": "/data/1", "mode": "ro"}
+
+    def test_missing_file_raises_value_error(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        missing = tmp_path / "ghost.csv"
+        with pytest.raises(ValueError, match="Data file not found"):
+            mgr._build_volumes(
+                output_dir=tmp_path / "out",
+                data_files=[{"path": str(missing)}],
+            )
+
+    def test_empty_path_raises_value_error(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        with pytest.raises(ValueError, match="empty 'path'"):
+            mgr._build_volumes(
+                output_dir=tmp_path / "out",
+                data_files=[{"path": ""}],
+            )
+
+    def test_remap_paths_single_dir(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        f = data_dir / "file.csv"
+        f.write_text("x\n")
+        host_to_container = {str(data_dir): "/data"}
+        remapped_data_path, remapped_files = mgr._remap_paths(
+            data_path=str(f),
+            data_files=[{"path": str(f), "name": "file.csv"}],
+            host_to_container=host_to_container,
+        )
+        assert remapped_data_path == "/data/file.csv"
+        assert remapped_files[0]["path"] == "/data/file.csv"
+        assert remapped_files[0]["name"] == "file.csv"  # non-path field preserved
+
+    def test_remap_paths_multi_dir(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        dir_a = tmp_path / "a"
+        dir_b = tmp_path / "b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        fa = dir_a / "study.csv"
+        fb = dir_b / "labels.csv"
+        fa.write_text("x\n")
+        fb.write_text("y\n")
+        host_to_container = {str(dir_a): "/data", str(dir_b): "/data/1"}
+        _, remapped_files = mgr._remap_paths(
+            data_path=str(fa),
+            data_files=[{"path": str(fa)}, {"path": str(fb)}],
+            host_to_container=host_to_container,
+        )
+        assert remapped_files[0]["path"] == "/data/study.csv"
+        assert remapped_files[1]["path"] == "/data/1/labels.csv"
+
+    def test_remap_paths_no_map_is_identity(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        data_files = [{"path": "/host/data/f.csv"}]
+        remapped_data_path, remapped_files = mgr._remap_paths(
+            data_path="/host/data/f.csv",
+            data_files=data_files,
+            host_to_container={},
+        )
+        assert remapped_data_path == "/host/data/f.csv"
+        assert remapped_files[0]["path"] == "/host/data/f.csv"
+
+    def test_remap_unmounted_path_raises(self, tmp_path: Path) -> None:
+        mgr = self._make_manager()
+        with pytest.raises(ValueError, match="not under any mounted"):
+            mgr._remap_paths(
+                data_path="/some/other/dir/file.csv",
+                data_files=[],
+                host_to_container={"/mounted/dir": "/data"},
+            )
 
 
 class TestGetContainerManager:

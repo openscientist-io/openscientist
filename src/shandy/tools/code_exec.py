@@ -160,11 +160,14 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         else:
             data = _DATA_CACHE.get(str(ctx.job_dir))
 
-            # Build data_files metadata list
+            # Build data_files metadata list from all data files in context
             data_files = []
-            if ctx.data_file and ctx.data_file.exists():
-                info = get_file_info(ctx.data_file)
-                data_files.append(info)
+            for df_path in ctx.data_files:
+                if not df_path.exists():
+                    raise FileNotFoundError(f"Data file not found: {df_path}")
+                data_files.append(get_file_info(df_path))
+
+            primary_data_path = str(ctx.data_files[0]) if ctx.data_files else None
 
             if get_settings().container.use_container_isolation:
                 from shandy.container_manager import get_container_manager
@@ -173,7 +176,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
                 result = container_mgr.execute_code(
                     code=code,
                     job_id=ctx.job_dir.name,
-                    data_path=str(ctx.data_file) if ctx.data_file else None,
+                    data_path=primary_data_path,
                     output_dir=provenance_dir,
                     timeout=60,
                     description=description,
