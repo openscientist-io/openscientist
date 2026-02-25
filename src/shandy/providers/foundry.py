@@ -53,13 +53,20 @@ class FoundryProvider(BaseProvider):
             )
 
         # Check authentication - either API key or Azure credentials
-        # If API key is not set, we assume Azure default credential chain is available
         has_api_key = settings.provider.anthropic_foundry_api_key
         if not has_api_key:
-            logger.info(
-                "ANTHROPIC_FOUNDRY_API_KEY not set. "
-                "Will use Azure default credential chain (Entra ID authentication)"
-            )
+            try:
+                import azure.identity  # noqa: F401, PLC0415
+            except ImportError:
+                errors.append(
+                    "ANTHROPIC_FOUNDRY_API_KEY not set and azure-identity is not installed. "
+                    "Either set ANTHROPIC_FOUNDRY_API_KEY or install: pip install azure-identity"
+                )
+            else:
+                logger.info(
+                    "ANTHROPIC_FOUNDRY_API_KEY not set. "
+                    "Will use Azure default credential chain (Entra ID authentication)"
+                )
 
         return errors
 
@@ -130,6 +137,22 @@ class FoundryProvider(BaseProvider):
     def _build_base_url_from_resource(resource: str) -> str:
         """Build Azure Foundry Anthropic endpoint URL from resource name."""
         return f"https://{resource}.services.ai.azure.com/api/anthropic"
+
+    def _resolve_api_key(self) -> str:
+        """Return bearer token for Anthropic client.
+
+        Uses the configured API key if present; otherwise fetches a short-lived
+        Entra ID token via Azure's default credential chain.
+        """
+        settings = get_settings()
+        api_key = settings.provider.anthropic_foundry_api_key
+        if api_key:
+            return api_key
+        from azure.identity import DefaultAzureCredential  # noqa: PLC0415
+
+        credential = DefaultAzureCredential()
+        token = credential.get_token("https://cognitiveservices.azure.com/.default")
+        return token.token
 
     def _resolve_base_url(self) -> str:
         """Resolve Foundry base URL from explicit URL or resource name."""
@@ -224,11 +247,10 @@ class FoundryProvider(BaseProvider):
 
         settings = get_settings()
         base_url = self._resolve_base_url()
-        api_key = settings.provider.anthropic_foundry_api_key
 
         client = anthropic.Anthropic(
             base_url=base_url,
-            api_key=api_key or "placeholder",  # Azure Foundry may use Entra ID auth
+            api_key=self._resolve_api_key(),
         )
 
         # Use configured model or default
@@ -274,11 +296,10 @@ class FoundryProvider(BaseProvider):
 
         settings = get_settings()
         base_url = self._resolve_base_url()
-        api_key = settings.provider.anthropic_foundry_api_key
 
         client = anthropic.Anthropic(
             base_url=base_url,
-            api_key=api_key or "placeholder",  # Azure Foundry may use Entra ID auth
+            api_key=self._resolve_api_key(),
         )
 
         # Use configured model or default
