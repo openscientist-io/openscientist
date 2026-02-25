@@ -232,7 +232,6 @@ class TestDiscoveryCancellationAndFailure:
             "job_id": job_id,
             "research_question": "Question?",
             "max_iterations": 3,
-            "use_skills": False,
             "use_hypotheses": False,
             "investigation_mode": "autonomous",
             "data_files": [],
@@ -311,7 +310,6 @@ class TestDiscoveryCancellationAndFailure:
             "job_id": job_id,
             "research_question": "Question?",
             "max_iterations": 3,
-            "use_skills": False,
             "use_hypotheses": False,
             "investigation_mode": "autonomous",
             "data_files": [],
@@ -447,7 +445,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path, use_skills=True)
+            await _write_skills_to_claude_dir(tmp_path)
 
         skills_dir = tmp_path / ".claude" / "skills"
         assert skills_dir.is_dir()
@@ -475,23 +473,9 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path, use_skills=True)
+            await _write_skills_to_claude_dir(tmp_path)
 
         # .claude/ dir and CLAUDE.md are always written; skills/ subdir is not
-        assert (tmp_path / ".claude" / "CLAUDE.md").exists()
-        assert not (tmp_path / ".claude" / "skills").exists()
-
-    @pytest.mark.asyncio
-    async def test_use_skills_false_still_writes_claude_md(self, tmp_path):
-        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
-
-        with patch(
-            "shandy.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
-        ) as mock_get_skills:
-            await _write_skills_to_claude_dir(tmp_path, use_skills=False)
-            mock_get_skills.assert_not_called()
-
-        # CLAUDE.md is written even when skills are disabled
         assert (tmp_path / ".claude" / "CLAUDE.md").exists()
         assert not (tmp_path / ".claude" / "skills").exists()
 
@@ -519,7 +503,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path, use_skills=True)
+            await _write_skills_to_claude_dir(tmp_path)
 
         md_file = tmp_path / ".claude" / "skills" / "workflow--stopping-criteria.md"
         assert md_file.exists()
@@ -543,7 +527,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path, use_skills=True)
+            await _write_skills_to_claude_dir(tmp_path)
 
         claude_md = tmp_path / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
@@ -572,7 +556,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path, use_skills=True)
+            await _write_skills_to_claude_dir(tmp_path)
 
         skills_dir = tmp_path / ".claude" / "skills"
         assert len(list(skills_dir.glob("*.md"))) == 2
@@ -627,7 +611,6 @@ class TestCreateJob:
                 research_question="What is X?",
                 data_files=[data_file],
                 max_iterations=15,
-                use_skills=False,
                 jobs_dir=tmp_path,
             )
 
@@ -637,7 +620,6 @@ class TestCreateJob:
         assert ks["config"]["job_id"] == job_id
         assert ks["config"]["research_question"] == "What is X?"
         assert ks["config"]["max_iterations"] == 15
-        assert ks["config"]["use_skills"] is False
 
     def test_copies_data_file(self, tmp_path):
         from shandy.orchestrator import create_job

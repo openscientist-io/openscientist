@@ -77,7 +77,6 @@ async def test_bootstrap_creates_job_and_syncs_modern_knowledge_state(
                 "job_id": job_id,
                 "research_question": "Modern migration test",
                 "max_iterations": 5,
-                "use_skills": True,
                 "started_at": "2026-02-01T10:00:00",
             },
             "iteration": 2,

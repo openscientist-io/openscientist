@@ -72,10 +72,6 @@ class JobCreate(BaseModel):
         le=20,
         description="Maximum number of analysis iterations",
     )
-    use_skills: bool = Field(
-        True,
-        description="Whether to use specialized analysis skills (all enabled skills are available)",
-    )
     use_hypotheses: bool = Field(
         False,
         description="Whether to enable hypothesis tracking and testing tools for this job",
@@ -253,7 +249,6 @@ async def create_job(
             research_question=job_data.research_question,
             data_files=[],  # TODO: Support file uploads in API
             max_iterations=job_data.max_iterations,
-            use_skills=job_data.use_skills,
             use_hypotheses=job_data.use_hypotheses,
             auto_start=True,
             investigation_mode=job_data.investigation_mode,

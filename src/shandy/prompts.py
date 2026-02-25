@@ -12,18 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .database.models import Skill
 
 
-def get_system_prompt(skills_enabled: bool = True) -> str:
+def get_system_prompt() -> str:
     """
     Get system prompt for Claude.
-
-    Args:
-        skills_enabled: Whether skills are enabled for this session
 
     Returns:
         System prompt string
     """
-    if skills_enabled:
-        return """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
+    return """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 
 **Your Capabilities:**
 
@@ -48,42 +44,6 @@ Domain-specific analysis skills are in `.claude/skills/`. List the directory and
 4. **Interpret results** - both positive AND negative findings are valuable
 5. **Iterate** - use findings to generate new hypotheses
 6. **Learn from failures** - rejected hypotheses guide future investigation
-
-**Important Principles:**
-
-- Write clear, well-documented Python code
-- Always check assumptions (normality, homoscedasticity, etc.)
-- Report effect sizes, not just p-values
-- Negative results are valuable - they rule out hypotheses
-- Search literature proactively to inform hypothesis generation
-- Don't repeat failed hypotheses
-
-Think step by step. Be rigorous. Be creative."""
-
-    # Skills disabled - pure LLM reasoning
-    return """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
-
-**Your Capabilities:**
-
-You have access to tools:
-- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx), `language="rust"` (compiled via rustc, useful for performance-critical computation), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query)
-- `search_pubmed`: Search scientific literature for relevant papers
-- `update_knowledge_state`: Record a confirmed finding
-- `set_status`: Update your current status message (e.g., "Analyzing correlation between X and Y")
-- `set_job_title`: Set a brief title for this job (e.g., "Kinase inhibitor binding analysis")
-
-IMPORTANT:
-- Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title
-- Call `set_status` at the START of each significant action to let users know what you're working on
-
-**Your Approach:**
-
-You have maximum freedom to design your own analytical strategy. Think creatively about:
-1. What patterns to look for
-2. What hypotheses to test
-3. What analyses to run
-4. How to interpret results
-5. When to pivot or dive deeper
 
 **Important Principles:**
 

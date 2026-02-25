@@ -10,25 +10,19 @@ from shandy.prompts import (
 class TestGetSystemPrompt:
     """Tests for system prompt generation."""
 
-    def test_skills_enabled_mentions_claude_skills_dir(self):
-        prompt = get_system_prompt(skills_enabled=True)
+    def test_mentions_claude_skills_dir(self):
+        prompt = get_system_prompt()
         assert ".claude/skills/" in prompt
 
-    def test_skills_disabled_no_claude_skills_dir(self):
-        prompt = get_system_prompt(skills_enabled=False)
-        assert ".claude/skills/" not in prompt
+    def test_mentions_execute_code(self):
+        prompt = get_system_prompt()
+        assert "execute_code" in prompt
+        assert "search_pubmed" in prompt
 
-    def test_both_prompts_mention_execute_code(self):
-        for skills in (True, False):
-            prompt = get_system_prompt(skills_enabled=skills)
-            assert "execute_code" in prompt
-            assert "search_pubmed" in prompt
-
-    def test_both_prompts_mention_principles(self):
-        for skills in (True, False):
-            prompt = get_system_prompt(skills_enabled=skills)
-            assert "effect sizes" in prompt
-            assert "Negative results" in prompt
+    def test_mentions_principles(self):
+        prompt = get_system_prompt()
+        assert "effect sizes" in prompt
+        assert "Negative results" in prompt
 
 
 class TestBuildDiscoveryPrompt:

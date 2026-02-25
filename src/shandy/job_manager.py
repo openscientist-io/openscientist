@@ -81,7 +81,6 @@ async def _db_create_job(
     job_id: str,
     research_question: str,
     max_iterations: int,
-    use_skills: bool = True,
     use_hypotheses: bool = False,
     investigation_mode: str = "autonomous",
     owner_id: UUID | None = None,
@@ -96,7 +95,6 @@ async def _db_create_job(
         job_id: UUID string for the job (used as primary key)
         research_question: The research question/title
         max_iterations: Maximum iterations allowed
-        use_skills: Whether skills are enabled for this job
         use_hypotheses: Whether hypothesis tracking tools are enabled for this job
         investigation_mode: Investigation mode ('autonomous' or 'coinvestigate')
         owner_id: UUID of the job owner (optional)
@@ -116,7 +114,6 @@ async def _db_create_job(
             owner_id=owner_id,
             title=title or research_question,
             description=description,
-            use_skills=use_skills,
             use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
             status=JobStatus.PENDING.value,
@@ -368,7 +365,6 @@ class JobManager:
         job_id: str,
         research_question: str,
         max_iterations: int,
-        use_skills: bool,
         use_hypotheses: bool,
         investigation_mode: str,
         owner_id: str | None,
@@ -384,7 +380,6 @@ class JobManager:
                     job_id,
                     research_question,
                     max_iterations,
-                    use_skills=use_skills,
                     use_hypotheses=use_hypotheses,
                     investigation_mode=investigation_mode,
                     owner_id=owner_uuid,
@@ -418,7 +413,6 @@ class JobManager:
         research_question: str,
         data_files: list[Path],
         max_iterations: int,
-        use_skills: bool,
         owner_id: str | None,
         owner_uuid: UUID | None,
     ) -> None:
@@ -428,7 +422,6 @@ class JobManager:
                 research_question=research_question,
                 data_files=data_files,
                 max_iterations=max_iterations,
-                use_skills=use_skills,
                 jobs_dir=self.jobs_dir,
                 owner_id=owner_id,
             )
@@ -444,7 +437,6 @@ class JobManager:
         research_question: str,
         data_files: list[Path],
         max_iterations: int = 10,
-        use_skills: bool = True,
         use_hypotheses: bool = False,
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
@@ -462,7 +454,6 @@ class JobManager:
             research_question: Research question
             data_files: List of data file paths (can be empty for literature-only jobs)
             max_iterations: Maximum iterations
-            use_skills: Whether to use skills
             use_hypotheses: Whether to enable hypothesis tracking tools
             auto_start: Whether to start job immediately
             investigation_mode: "autonomous" (default) or "coinvestigate"
@@ -488,7 +479,6 @@ class JobManager:
             job_id=job_id,
             research_question=research_question,
             max_iterations=max_iterations,
-            use_skills=use_skills,
             use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
             owner_id=owner_id,
@@ -505,7 +495,6 @@ class JobManager:
             research_question=research_question,
             data_files=data_files,
             max_iterations=max_iterations,
-            use_skills=use_skills,
             owner_id=owner_id,
             owner_uuid=owner_uuid,
         )

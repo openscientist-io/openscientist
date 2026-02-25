@@ -35,7 +35,6 @@ class Job(UUIDv7Mixin, Base):
         owner_id: Foreign key to user who owns this job (NULL for orphaned)
         title: User-provided job title
         description: User-provided job description
-        use_skills: Whether skills are enabled for this job
         investigation_mode: Investigation mode (autonomous/coinvestigate)
         status: Current job status (pending/running/completed/failed/cancelled)
         max_iterations: Maximum number of analysis iterations allowed
@@ -81,13 +80,6 @@ class Job(UUIDv7Mixin, Base):
         Text,
         nullable=True,
         comment="User-provided job description",
-    )
-
-    use_skills: Mapped[bool] = mapped_column(
-        Boolean,
-        nullable=False,
-        server_default="true",
-        comment="Whether specialized skills are enabled for this job",
     )
 
     use_hypotheses: Mapped[bool] = mapped_column(

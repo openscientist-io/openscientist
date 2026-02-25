@@ -69,11 +69,10 @@ def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
 def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
-    use_skills: bool,
     use_hypotheses: bool = False,
 ) -> AgentExecutor:
     """Create a configured agent executor for discovery/report phases."""
-    system_prompt = get_system_prompt(skills_enabled=use_skills)
+    system_prompt = get_system_prompt()
     logger.info("Built system prompt (%d chars)", len(system_prompt))
     return get_agent_executor(
         job_dir=job_dir,
@@ -349,14 +348,13 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
         "job_id": str(job.id),
         "research_question": job.title,
         "max_iterations": job.max_iterations,
-        "use_skills": bool(job.use_skills),
         "use_hypotheses": bool(job.use_hypotheses),
         "investigation_mode": job.investigation_mode,
         "data_files": resolved_files,
     }
 
 
-async def _write_skills_to_claude_dir(job_dir: Path, use_skills: bool) -> None:
+async def _write_skills_to_claude_dir(job_dir: Path) -> None:
     """Write CLAUDE.md and enabled skill files into job_dir/.claude/."""
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
@@ -364,8 +362,6 @@ async def _write_skills_to_claude_dir(job_dir: Path, use_skills: bool) -> None:
     # Always write the chat-agent CLAUDE.md so the chat agent finds it via cwd
     _write_chat_claude_md(claude_dir)
 
-    if not use_skills:
-        return
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
             skills = await get_enabled_skills(session)
@@ -482,13 +478,11 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     provider.setup_environment()
     await update_job_status(job_dir, "running")
 
-    use_skills = runtime["use_skills"]
     use_hypotheses = runtime["use_hypotheses"]
-    await _write_skills_to_claude_dir(job_dir, use_skills)
+    await _write_skills_to_claude_dir(job_dir)
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
-        use_skills=use_skills,
         use_hypotheses=use_hypotheses,
     )
     logger.info("Created agent executor for job %s", job_id)
@@ -588,13 +582,11 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     provider.setup_environment()
     await update_job_status(job_dir, "generating_report")
 
-    use_skills = runtime["use_skills"]
     use_hypotheses = runtime["use_hypotheses"]
-    await _write_skills_to_claude_dir(job_dir, use_skills)
+    await _write_skills_to_claude_dir(job_dir)
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
-        use_skills=use_skills,
         use_hypotheses=use_hypotheses,
     )
 

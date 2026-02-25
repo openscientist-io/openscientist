@@ -902,7 +902,6 @@ def _build_new_job(
         owner_id=owner_id,
         title=title,
         description=_to_optional_string(config.get("description")) or title,
-        use_skills=bool(config.get("use_skills", ks_config.get("use_skills", True))),
         investigation_mode=_to_string(
             config.get("investigation_mode") or ks_config.get("investigation_mode")
         )

@@ -81,7 +81,6 @@ def create_job(
     research_question: str,
     data_files: list[Path],
     max_iterations: int,
-    use_skills: bool = True,
     jobs_dir: Path = Path("jobs"),
     owner_id: str | None = None,
 ) -> Path:
@@ -93,7 +92,6 @@ def create_job(
         research_question: User's research question
         data_files: List of uploaded data file paths
         max_iterations: Maximum number of iterations
-        use_skills: Whether to use skills
         jobs_dir: Base directory for jobs
         owner_id: UUID string of the job owner. Kept for signature compatibility;
             ownership is persisted by higher-level DB job creation.
@@ -123,7 +121,6 @@ def create_job(
         job_id=job_id,
         research_question=research_question,
         max_iterations=max_iterations,
-        use_skills=use_skills,
     )
 
     if data_paths:

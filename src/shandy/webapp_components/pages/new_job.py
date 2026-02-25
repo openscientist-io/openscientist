@@ -58,7 +58,6 @@ def _submit_job(
     session_id: str,
     research_question: ui.textarea,
     max_iterations: ui.number,
-    use_skills_toggle: ui.switch,
     use_hypotheses: ui.switch,
     coinvestigate_mode: ui.switch,
 ) -> None:
@@ -88,7 +87,6 @@ def _submit_job(
             research_question=question,
             data_files=data_files,
             max_iterations=int(max_iterations.value),
-            use_skills=use_skills_toggle.value,
             use_hypotheses=use_hypotheses.value,
             auto_start=True,
             investigation_mode=mode,
@@ -185,15 +183,6 @@ def new_job_page() -> None:
             "Requires you to stay near your computer. Auto-continues after 15 min if you don't respond."
         ).classes("text-xs text-orange-700")
 
-        with (
-            ui.expansion("Advanced Options (Experimental)", icon="science").classes("w-full mt-4"),
-            ui.card().classes("w-full"),
-        ):
-            use_skills_toggle = ui.switch("Enable Skills", value=True)
-            ui.label(
-                "Skills provide domain-specific guidance (e.g., statistical methods, analysis workflows)."
-            ).classes("text-sm text-gray-700 mt-1")
-
         ui.button(
             "Start Discovery",
             on_click=lambda: _submit_job(
@@ -202,7 +191,6 @@ def new_job_page() -> None:
                 session_id=session_id,
                 research_question=research_question,
                 max_iterations=max_iterations,
-                use_skills_toggle=use_skills_toggle,
                 use_hypotheses=use_hypotheses,
                 coinvestigate_mode=coinvestigate_mode,
             ),

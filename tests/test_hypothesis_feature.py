@@ -46,7 +46,6 @@ async def job_with_hypotheses(db_session: AsyncSession, db_user: User) -> JobMod
         status="pending",
         max_iterations=5,
         use_hypotheses=True,
-        use_skills=False,
     )
     db_session.add(job)
     await db_session.commit()
@@ -63,7 +62,6 @@ async def job_without_hypotheses(db_session: AsyncSession, db_user: User) -> Job
         status="pending",
         max_iterations=5,
         use_hypotheses=False,
-        use_skills=False,
     )
     db_session.add(job)
     await db_session.commit()
@@ -414,7 +412,6 @@ class TestLoadRuntimeContextHypotheses:
             id=job_id,
             title="Test research",
             max_iterations=5,
-            use_skills=False,
             use_hypotheses=use_hypotheses,
             investigation_mode="autonomous",
         )
@@ -468,7 +465,6 @@ class TestLoadRuntimeContextHypotheses:
             "job_id",
             "research_question",
             "max_iterations",
-            "use_skills",
             "use_hypotheses",
             "investigation_mode",
             "data_files",
@@ -751,14 +747,6 @@ class TestNewJobPageStructure:
         sig = inspect.signature(_submit_job)
         assert "coinvestigate_mode" in sig.parameters
 
-    def test_submit_job_accepts_use_skills_toggle(self) -> None:
-        import inspect
-
-        from shandy.webapp_components.pages.new_job import _submit_job
-
-        sig = inspect.signature(_submit_job)
-        assert "use_skills_toggle" in sig.parameters
-
     def test_all_required_params_present(self) -> None:
         import inspect
 
@@ -771,7 +759,6 @@ class TestNewJobPageStructure:
             "session_id",
             "research_question",
             "max_iterations",
-            "use_skills_toggle",
             "use_hypotheses",
             "coinvestigate_mode",
         }
@@ -799,12 +786,11 @@ class TestEndToEndHypothesesFlow:
 
         jm = JobManager(jobs_dir=jobs_dir)
 
-        with patch("shandy.job_manager._run_async") as mock_run:
+        with patch("shandy.job_manager._db_create_job", new_callable=AsyncMock) as mock_db_create:
             jm._create_db_job_record(
                 job_id=job_id,
                 research_question="Test",
                 max_iterations=3,
-                use_skills=False,
                 use_hypotheses=True,
                 investigation_mode="autonomous",
                 owner_id=None,
@@ -813,15 +799,9 @@ class TestEndToEndHypothesesFlow:
                 pdb_code=None,
                 space_group=None,
             )
-            assert mock_run.called
-            # The coroutine argument to _run_async should include use_hypotheses
-            coro = mock_run.call_args[0][0]
-            # Inspect the coroutine locals to verify use_hypotheses=True
-            frame_locals = coro.cr_frame.f_locals if hasattr(coro, "cr_frame") else {}
-            # If coroutine hasn't started yet, check the closure
-            if not frame_locals:
-                # Verify the coro is the right type (_db_create_job)
-                assert hasattr(coro, "cr_code") or hasattr(coro, "__name__")
+            mock_db_create.assert_called_once()
+            _, kwargs = mock_db_create.call_args
+            assert kwargs["use_hypotheses"] is True
 
     async def test_runtime_context_true_via_mock(self, tmp_path: Path) -> None:
         """Jobs with use_hypotheses=True produce runtime['use_hypotheses'] = True."""
@@ -835,7 +815,6 @@ class TestEndToEndHypothesesFlow:
             id=job_id,
             title="Hypothesis research",
             max_iterations=5,
-            use_skills=False,
             use_hypotheses=True,
             investigation_mode="autonomous",
         )
@@ -860,7 +839,6 @@ class TestEndToEndHypothesesFlow:
             id=job_id,
             title="No-hypothesis research",
             max_iterations=5,
-            use_skills=False,
             use_hypotheses=False,
             investigation_mode="autonomous",
         )
@@ -885,7 +863,6 @@ class TestEndToEndHypothesesFlow:
             _build_agent_executor(
                 job_dir=tmp_path,
                 data_file=None,
-                use_skills=False,
                 use_hypotheses=True,
             )
             call_kwargs = mock_get_executor.call_args[1]
@@ -901,7 +878,6 @@ class TestEndToEndHypothesesFlow:
             _build_agent_executor(
                 job_dir=tmp_path,
                 data_file=None,
-                use_skills=False,
                 use_hypotheses=False,
             )
             call_kwargs = mock_get_executor.call_args[1]

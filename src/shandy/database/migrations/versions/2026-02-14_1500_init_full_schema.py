@@ -383,13 +383,6 @@ def upgrade() -> None:
             comment="User-provided job description",
         ),
         sa.Column(
-            "use_skills",
-            sa.Boolean(),
-            server_default="true",
-            nullable=False,
-            comment="Whether specialized skills are enabled for this job",
-        ),
-        sa.Column(
             "use_hypotheses",
             sa.Boolean(),
             server_default="false",
