@@ -3,7 +3,6 @@
 # Import all page functions to register routes
 from shandy.webapp_components.pages.admin import admin_page
 from shandy.webapp_components.pages.api_keys import api_keys_page
-from shandy.webapp_components.pages.billing import billing_page
 from shandy.webapp_components.pages.docs import docs_page
 from shandy.webapp_components.pages.index import index_page
 from shandy.webapp_components.pages.job_detail import job_detail_page
@@ -17,7 +16,6 @@ from shandy.webapp_components.pages.skills_list import skills_page
 __all__ = [
     "admin_page",
     "api_keys_page",
-    "billing_page",
     "docs_page",
     "index_page",
     "job_detail_page",

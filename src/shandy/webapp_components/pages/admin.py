@@ -13,6 +13,7 @@ from sqlalchemy import String, select
 from shandy.auth.middleware import get_current_user_id, require_admin, require_auth
 from shandy.database.models import Job, User
 from shandy.database.session import get_admin_session
+from shandy.webapp_components.pages.billing import render_billing_panel
 from shandy.webapp_components.ui_components import (
     format_uptime,
     make_action_button_slot,
@@ -93,16 +94,13 @@ async def admin_page() -> None:
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-6"):
         ui.markdown("# Admin")
-        ui.markdown(
-            "Manage jobs that were imported from file-based storage without an owner. "
-            "Assign these jobs to users or allow users to claim them."
-        )
 
         # Tabs for different admin functions
         with ui.tabs().classes("w-full") as tabs:
             orphaned_tab = ui.tab("Orphaned Jobs", icon="work_off")
             users_tab = ui.tab("Users", icon="people")
             containers_tab = ui.tab("Containers", icon="dns")
+            billing_tab = ui.tab("Billing", icon="payments")
 
         with ui.tab_panels(tabs, value=orphaned_tab).classes("w-full"):
             # Orphaned Jobs Panel
@@ -116,6 +114,10 @@ async def admin_page() -> None:
             # Containers Panel
             with ui.tab_panel(containers_tab):
                 await render_containers_panel()
+
+            # Billing Panel
+            with ui.tab_panel(billing_tab):
+                await render_billing_panel()
 
 
 async def render_orphaned_jobs_panel() -> None:

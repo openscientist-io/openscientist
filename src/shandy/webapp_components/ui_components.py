@@ -995,7 +995,6 @@ def _build_navigation_items(
         [
             ("Skills", "school", "/skills", active_page == "skills"),
             ("API Keys", "vpn_key", "/api-keys", active_page == "api-keys"),
-            ("Billing", "payments", "/billing", active_page == "billing"),
             ("Docs", "description", "/docs", active_page == "docs"),
         ]
     )
