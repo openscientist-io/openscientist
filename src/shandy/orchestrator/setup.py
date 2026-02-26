@@ -102,9 +102,15 @@ def create_job(
     _ = owner_id
     job_dir = jobs_dir / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
+    # chmod after mkdir because mode= is masked by the process umask.
+    # World-writable so the agent container (non-root UID) can write into
+    # the mounted job directory regardless of host/container UID mismatches.
+    job_dir.chmod(0o777)
 
     (job_dir / "data").mkdir(exist_ok=True)
+    (job_dir / "data").chmod(0o777)
     (job_dir / "provenance").mkdir(exist_ok=True)
+    (job_dir / "provenance").chmod(0o777)
 
     data_paths: list[Path] = []
     if data_files:
@@ -112,6 +118,8 @@ def create_job(
             original_name = Path(data_file).name
             dest = job_dir / "data" / original_name
             shutil.copy(data_file, dest)
+            # chmod after copy so the agent container (non-root UID) can read it.
+            dest.chmod(0o666)
             data_paths.append(dest)
 
     if data_paths:
@@ -136,7 +144,10 @@ def create_job(
     else:
         ks.set_data_summary({"files": [], "file_type": "none", "file_size_mb": 0})
 
-    ks.save(job_dir / "knowledge_state.json")
+    ks_path = job_dir / "knowledge_state.json"
+    ks.save(ks_path)
+    # chmod so the agent container (non-root UID) can read and update it.
+    ks_path.chmod(0o666)
     sync_knowledge_state_to_db(job_dir, ks)
 
     logger.info("Created job %s at %s", job_id, job_dir)
