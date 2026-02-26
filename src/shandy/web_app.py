@@ -543,7 +543,7 @@ def main(
     )
 
 
-if __name__ in {"__main__", "__mp_main__"}:
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SHANDY Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
