@@ -34,19 +34,9 @@ class JobContainerRunner:
     """Launches and stops per-job agent containers."""
 
     def __init__(self) -> None:
-        try:
-            import docker
+        import docker
 
-            self._docker: docker.DockerClient | None = docker.from_env()
-            self._available = True
-        except Exception as e:
-            logger.warning("Docker not available: %s", e)
-            self._docker = None
-            self._available = False
-
-    def is_available(self) -> bool:
-        """Return True if the Docker daemon is reachable."""
-        return self._available
+        self._docker: docker.DockerClient = docker.from_env()
 
     def launch(self, job_id: str, job_dir: Path) -> Any:
         """
@@ -65,9 +55,6 @@ class JobContainerRunner:
         Raises:
             RuntimeError: If Docker is unavailable or launch fails
         """
-        if not self._available:
-            raise RuntimeError("Docker is not available")
-
         from shandy.settings import get_settings
 
         settings = get_settings()
@@ -98,7 +85,6 @@ class JobContainerRunner:
             env["GOOGLE_APPLICATION_CREDENTIALS"] = container_gcp_path
 
         short_id = job_id[:SHORT_COMMIT_LENGTH]
-        assert self._docker is not None
         container = self._docker.containers.run(
             image=AGENT_IMAGE,
             name=f"shandy-agent-{short_id}",
@@ -121,8 +107,6 @@ class JobContainerRunner:
 
     def stop(self, job_id: str, timeout: int = 10) -> None:
         """Stop the container for a job (graceful → SIGKILL)."""
-        if not self._available:
-            return
         container = self._find_container(job_id)
         if container:
             try:
@@ -133,8 +117,6 @@ class JobContainerRunner:
 
     def cleanup(self, job_id: str) -> None:
         """Remove the container for a job."""
-        if not self._available:
-            return
         container = self._find_container(job_id)
         if container:
             try:
@@ -145,8 +127,6 @@ class JobContainerRunner:
 
     def _find_container(self, job_id: str) -> Any | None:
         """Find the running container for a job by label."""
-        if self._docker is None:
-            return None
         try:
             containers = self._docker.containers.list(
                 all=True,

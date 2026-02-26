@@ -11,6 +11,7 @@ import json
 import logging
 import shutil
 import threading
+import time
 from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -29,7 +30,7 @@ from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ProviderError
 from shandy.job.types import JobInfo, JobStatus, JobStatusUpdateResult
 from shandy.ntfy import notify_job_status_change
-from shandy.orchestrator import create_job, run_discovery
+from shandy.orchestrator import create_job
 from shandy.orchestrator import regenerate_report as _regenerate_report
 from shandy.providers import get_provider
 from shandy.version import get_version_string
@@ -334,6 +335,15 @@ class JobManager:
                     )
                 except Exception as e:
                     logger.error("Failed to update job %s in database: %s", job_id, e)
+
+                # Stop any orphaned agent container for this stale job.
+                try:
+                    from shandy.job_container import JobContainerRunner
+
+                    JobContainerRunner().cleanup(job_id)
+                except Exception as e:
+                    logger.warning("Failed to cleanup container for stale job %s: %s", job_id, e)
+
                 stale_count += 1
 
         if stale_count > 0:
@@ -544,41 +554,58 @@ class JobManager:
             thread.start()
 
     def _run_job(self, job_id: str) -> None:
-        """
-        Run a job (internal, called by thread).
+        """Run a job (internal, called by thread)."""
+        self._run_job_in_container(job_id)
 
-        Args:
-            job_id: Job ID
-        """
+    def _run_job_in_container(self, job_id: str) -> None:
+        """Launch an agent container for the job and block until it reaches a terminal status."""
+        from shandy.job_container import JobContainerRunner
+
+        poll_interval = 5
+        terminal_statuses = {"completed", "failed", "cancelled"}
+
         job_dir = self.jobs_dir / job_id
+        runner = JobContainerRunner()
 
         try:
-            # Update status
             self._update_job_status(job_id, JobStatus.RUNNING)
+            runner.launch(job_id, job_dir)
+            logger.info("Agent container launched for job %s", job_id)
 
-            # Run discovery
-            logger.info("Running discovery for job %s", job_id)
-            result = run_discovery(job_dir)
+            # Poll the database until the container's agent writes a terminal status.
+            timeout_seconds = 4 * 3600
+            elapsed = 0
+            while elapsed < timeout_seconds:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+                try:
+                    job_info = self._load_job_info(job_id)
+                    if job_info and job_info.status.value in terminal_statuses:
+                        logger.info(
+                            "Container job %s reached terminal status: %s",
+                            job_id,
+                            job_info.status.value,
+                        )
+                        return
+                except Exception as poll_err:
+                    logger.warning("DB poll failed for job %s: %s", job_id, poll_err)
 
-            logger.info("Job %s completed: %s", job_id, result)
-
-            # Update database status based on result
-            final_status = result.get("status", "completed")
-            if final_status == "completed":
-                self._update_job_status(job_id, JobStatus.COMPLETED)
-            elif final_status == "failed":
-                self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
+            # Hard timeout reached.
+            logger.error("Container job %s timed out after 4 hours", job_id)
+            self._update_job_status(
+                job_id, JobStatus.FAILED, error_message="Job timed out after 4 hours"
+            )
 
         except Exception as e:
-            logger.error("Job %s failed [%s]: %s", job_id, get_version_string(), e, exc_info=True)
+            logger.error(
+                "Container job %s failed [%s]: %s", job_id, get_version_string(), e, exc_info=True
+            )
             self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
 
         finally:
-            # Remove from running jobs
+            runner.cleanup(job_id)
             with self._lock:
                 self._running_jobs.pop(job_id, None)
-
-            # Start next queued job if any
             self._start_next_queued_job()
 
     def regenerate_report(self, job_id: str) -> None:
@@ -695,15 +722,23 @@ class JobManager:
             job_id, JobStatus.CANCELLED, cancellation_reason="Cancelled by user"
         )
 
-        # For running jobs, cancellation is cooperative; keep thread tracked until
-        # it exits so active-slot accounting remains accurate.
+        # For running jobs, keep the thread tracked until it exits so
+        # active-slot accounting stays accurate.
         with self._lock:
             if job_info.status in [JobStatus.PENDING, JobStatus.QUEUED]:
                 self._running_jobs.pop(job_id, None)
 
-        # Note: We can't actually kill the thread cleanly in Python
-        # The orchestrator will check status and stop at next iteration
-        logger.info("Job %s cancelled (will stop at next iteration)", job_id)
+        # Send SIGTERM to the agent container immediately so it doesn't
+        # keep burning resources until the polling loop notices the DB change.
+        if job_info.status == JobStatus.RUNNING:
+            try:
+                from shandy.job_container import JobContainerRunner
+
+                JobContainerRunner().stop(job_id)
+            except Exception as e:
+                logger.warning("Failed to stop container for cancelled job %s: %s", job_id, e)
+
+        logger.info("Job %s cancelled", job_id)
 
         # Start next queued job if any
         self._start_next_queued_job()

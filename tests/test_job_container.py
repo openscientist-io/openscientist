@@ -5,22 +5,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shandy.job_container.monitor import ContainerMonitor
 from shandy.job_container.runner import JobContainerRunner
 
 
 class TestJobContainerRunner:
-    """Tests for JobContainerRunner init and availability."""
+    """Tests for JobContainerRunner init."""
 
-    def test_docker_unavailable(self):
-        # Create a mock docker module where from_env() raises
+    def test_docker_unavailable_raises(self):
         mock_docker = MagicMock()
         mock_docker.from_env.side_effect = Exception("Docker not running")
 
         with patch.dict(sys.modules, {"docker": mock_docker}):
-            runner = JobContainerRunner()
-            assert runner.is_available() is False
-            assert runner._docker is None
+            with pytest.raises(Exception, match="Docker not running"):
+                JobContainerRunner()
 
     def test_docker_available(self):
         mock_client = MagicMock()
@@ -29,37 +26,4 @@ class TestJobContainerRunner:
 
         with patch.dict(sys.modules, {"docker": mock_docker}):
             runner = JobContainerRunner()
-            assert runner.is_available() is True
             assert runner._docker is mock_client
-
-
-class TestContainerMonitor:
-    """Tests for ContainerMonitor."""
-
-    def test_init_stores_params(self):
-        callback = MagicMock()
-        monitor = ContainerMonitor(
-            job_id="test-job-id",
-            on_terminal=callback,
-            timeout_hours=2,
-        )
-        assert monitor._job_id == "test-job-id"
-        assert monitor._on_terminal is callback
-        assert monitor._timeout_hours == 2
-
-    @pytest.mark.asyncio
-    async def test_cancel_before_start_no_error(self):
-        callback = MagicMock()
-        monitor = ContainerMonitor(
-            job_id="test-job-id",
-            on_terminal=callback,
-        )
-        # Cancel before start should not raise
-        await monitor.cancel()
-
-    def test_default_timeout(self):
-        monitor = ContainerMonitor(
-            job_id="j1",
-            on_terminal=lambda _jid, _status: None,
-        )
-        assert monitor._timeout_hours == 4
