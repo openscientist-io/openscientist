@@ -17,10 +17,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from nicegui import app, ui
 
 from shandy.job_manager import JobManager
+from shandy.security import ScannerBlockMiddleware
 from shandy.version import get_version_string
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
+
+# Register security middleware early so it runs before NiceGUI routing.
+# This short-circuits automated scanner probes before they hit the DB.
+app.add_middleware(ScannerBlockMiddleware)
 
 
 # ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
