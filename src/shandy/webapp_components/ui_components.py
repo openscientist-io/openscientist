@@ -2130,7 +2130,7 @@ def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
         "items-center gap-3 py-3 px-4 bg-cyan-50 rounded-lg border border-cyan-200"
     ) as container:
         # Animated SHANDY logo (compact size)
-        ui.html(SHANDY_THINKING_SVG).classes("w-6 h-6")
+        ui.html(SHANDY_THINKING_SVG, sanitize=False).classes("w-6 h-6")
         # Status text
         ui.label(status_text).classes("text-cyan-700 italic thinking-label")
 

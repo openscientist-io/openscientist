@@ -54,7 +54,7 @@ def login_page() -> None:
         ui.card().classes("login-card p-8 items-center gap-6"),
     ):
         # Animated SHANDY logo
-        ui.html(SHANDY_THINKING_SVG).classes("w-16 h-16")
+        ui.html(SHANDY_THINKING_SVG, sanitize=False).classes("w-16 h-16")
 
         # Title and subtitle
         ui.label("SHANDY").classes("text-3xl font-bold text-cyan-800")
