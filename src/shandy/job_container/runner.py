@@ -166,7 +166,18 @@ class JobContainerRunner:
         try:
             container.reload()
             if container.status in ("exited", "dead"):
-                return container.attrs["State"]["ExitCode"]
+                exit_code = container.attrs.get("State", {}).get("ExitCode")
+                if isinstance(exit_code, int):
+                    return exit_code
+                if exit_code is not None:
+                    try:
+                        return int(exit_code)
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Unexpected non-integer exit code for job %s: %r",
+                            job_id,
+                            exit_code,
+                        )
         except Exception as e:
             logger.warning("Failed to get exit code for job %s: %s", job_id, e)
         return None
