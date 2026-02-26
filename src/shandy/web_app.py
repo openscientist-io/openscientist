@@ -7,26 +7,25 @@ Provides web UI for job submission, monitoring, and results viewing.
 import argparse
 import importlib
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import uvicorn
 from dotenv import load_dotenv
-from fastapi import Response
+from fastapi import FastAPI, Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from nicegui import app, ui
 
 from shandy.job_manager import JobManager
-from shandy.security import ScannerBlockMiddleware
+from shandy.security import register_scanner_block_middleware
 from shandy.version import get_version_string
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
-
-# Register security middleware early so it runs before NiceGUI routing.
-# This short-circuits automated scanner probes before they hit the DB.
-app.add_middleware(ScannerBlockMiddleware)
-
+JOBS_DIR_ENV = "SHANDY_JOBS_DIR"
 
 # ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
 # When a container (e.g. feedback_container) is .clear()-ed, child timers
@@ -136,30 +135,30 @@ class _AppState:
     def __init__(self) -> None:
         self.job_manager: JobManager | None = None
         self.jobs_dir: Path = Path("jobs")
+        self.app_configured: bool = False
+        self.host_app: FastAPI | None = None
 
 
 _state = _AppState()
 
 
 def _register_oauth_routes() -> None:
-    """Register OAuth authentication routes with the underlying FastAPI app."""
+    """Register OAuth authentication routes with the mounted NiceGUI app."""
     try:
         from shandy.auth.fastapi_routes import router as auth_router
 
-        # NiceGUI's app is a FastAPI app, so we can mount routers
         app.include_router(auth_router)
         logger.info("OAuth authentication routes registered")
     except Exception as e:
         logger.warning("Failed to register OAuth routes: %s", e)
 
 
-def _register_api_routes() -> None:
-    """Register REST API routes with the underlying FastAPI app."""
+def _register_api_routes(host_app: FastAPI) -> None:
+    """Register REST API routes with the host FastAPI app."""
     try:
         from shandy.api import api_router
 
-        # Mount the REST API
-        app.include_router(api_router)
+        host_app.include_router(api_router)
         logger.info("REST API routes registered at /api/v1")
     except Exception as e:
         logger.warning("Failed to register API routes: %s", e)
@@ -170,7 +169,6 @@ def _register_share_routes() -> None:
     try:
         from shandy.webapp_components.share_routes import router as share_router
 
-        # Mount the share routes
         app.include_router(share_router)
         logger.info("Share routes registered at /web/shares")
     except Exception as e:
@@ -178,37 +176,37 @@ def _register_share_routes() -> None:
 
 
 # Configure OpenAPI metadata
-app.title = "SHANDY API"
-app.version = "1.0.0"
-app.description = "REST API for Scientific Hypothesis Agent for Novel Discovery"
+_APP_TITLE = "SHANDY API"
+_APP_VERSION = "1.0.0"
+_APP_DESCRIPTION = "REST API for Scientific Hypothesis Agent for Novel Discovery"
 
 
-def _register_openapi_docs() -> None:
+def _register_openapi_docs(host_app: FastAPI) -> None:
     """Register OpenAPI documentation routes (Swagger UI and ReDoc).
 
     NiceGUI disables FastAPI's built-in docs, so we add them manually.
     """
 
-    @app.get("/api-docs", include_in_schema=False)
+    @host_app.get("/api-docs", include_in_schema=False)
     async def swagger_ui_html() -> HTMLResponse:
         """Swagger UI documentation."""
         return get_swagger_ui_html(
             openapi_url="/openapi.json",
-            title=f"{app.title} - Swagger UI",
+            title=f"{host_app.title} - Swagger UI",
         )
 
-    @app.get("/api-redoc", include_in_schema=False)
+    @host_app.get("/api-redoc", include_in_schema=False)
     async def redoc_html() -> HTMLResponse:
         """ReDoc documentation."""
         return get_redoc_html(
             openapi_url="/openapi.json",
-            title=f"{app.title} - ReDoc",
+            title=f"{host_app.title} - ReDoc",
         )
 
-    @app.get("/openapi.json", include_in_schema=False)
+    @host_app.get("/openapi.json", include_in_schema=False)
     async def openapi_json() -> JSONResponse:
         """OpenAPI schema as JSON, filtered to only include /api/v1/* paths."""
-        schema = app.openapi()
+        schema = host_app.openapi()
         # Filter to only include API paths
         filtered_paths = {
             path: ops for path, ops in schema.get("paths", {}).items() if path.startswith("/api/")
@@ -219,23 +217,13 @@ def _register_openapi_docs() -> None:
     logger.info("OpenAPI documentation registered at /api-docs and /api-redoc")
 
 
-_register_openapi_docs()
+def _register_health_endpoint(host_app: FastAPI) -> None:
+    """Register a lightweight health endpoint for container checks."""
 
-
-# Lightweight health endpoint — returns JSON without touching NiceGUI storage,
-# so the Docker health check doesn't trigger watchfiles reload events.
-@app.get("/health", include_in_schema=False)
-def health_check() -> JSONResponse:
-    return JSONResponse({"status": "ok"})
-
-
-# Import page modules to register routes
-# Must be imported after _state is defined so pages can access it
-# Import auth routes first
-_register_oauth_routes()
-_register_api_routes()
-_register_share_routes()
-importlib.import_module("shandy.webapp_components.pages")
+    @host_app.get("/health", include_in_schema=False)
+    def health_check() -> JSONResponse:
+        # Return JSON without touching NiceGUI storage to avoid reload churn.
+        return JSONResponse({"status": "ok"})
 
 
 def get_job_manager() -> JobManager:
@@ -254,11 +242,6 @@ def get_job_manager() -> JobManager:
             jobs_dir=_state.jobs_dir,
             max_concurrent=get_settings().max_concurrent_jobs,
         )
-        # Add static file serving
-        try:
-            app.add_static_files("/jobs", str(_state.jobs_dir))
-        except (RuntimeError, ValueError) as e:
-            logger.debug("Static files already registered: %s", e)
     return _state.job_manager
 
 
@@ -379,45 +362,109 @@ async def _start_background_tasks(engine: Any) -> None:
 
 
 def _initialize_job_manager_runtime(jobs_dir: Path) -> None:
+    if _state.job_manager is not None:
+        return
     _state.job_manager = JobManager(
         jobs_dir=jobs_dir,
         max_concurrent=get_settings().max_concurrent_jobs,
     )
-    # Add static file serving for job plots
-    app.add_static_files("/jobs", str(jobs_dir))
-    # Add static file serving for assets (icons, etc.)
-    app.add_static_files("/assets", str(ASSETS_DIR))
 
 
-def init_app(jobs_dir: Path = Path("jobs")) -> None:
-    """Initialize the web application."""
-    _state.jobs_dir = jobs_dir
+def _register_nicegui_static_files(jobs_dir: Path) -> None:
+    """Register static files on the mounted NiceGUI app.
 
-    if _state.job_manager is not None:
-        logger.info("Web app already initialized, skipping re-initialization")
+    This preserves existing routing behavior where the `/jobs` UI page
+    wins for the exact path, while `/jobs/*` serves generated artifacts.
+    """
+    for mount, directory in (("/jobs", jobs_dir), ("/assets", ASSETS_DIR)):
+        try:
+            app.add_static_files(mount, str(directory))
+        except (RuntimeError, ValueError) as e:
+            logger.debug("Static files already registered for %s: %s", mount, e)
+
+
+def _jobs_dir_from_env(default: Path = Path("jobs")) -> Path:
+    return Path(os.getenv(JOBS_DIR_ENV, str(default)))
+
+
+def _create_lifespan():
+    @asynccontextmanager
+    async def lifespan(_host_app: FastAPI):
+        try:
+            from shandy.database.engine import get_engine
+
+            engine = get_engine()
+            await _start_background_tasks(engine)
+        except Exception as e:
+            logger.error("Failed to initialize database: %s", e)
+            logger.warning("Application will continue but database features may not work")
+        yield
+
+    return lifespan
+
+
+def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
+    """Configure middleware, routes, and mounted NiceGUI app before startup."""
+    if _state.app_configured:
         return
 
-    try:
-        from shandy.database.engine import get_engine
-
-        engine = get_engine()
-
-        async def start_background_tasks_for_engine() -> None:
-            await _start_background_tasks(engine)
-
-        # Defer background tasks to NiceGUI's startup event to ensure they run
-        # in the correct event loop. Running them before ui.run() causes connections
-        # to be bound to a temporary event loop, leading to "Future attached to a
-        # different loop" errors when NiceGUI's Uvicorn loop tries to close them.
-        app.on_startup(start_background_tasks_for_engine)
-
-    except Exception as e:
-        logger.error("Failed to initialize database: %s", e)
-        logger.warning("Application will continue but database features may not work")
+    # Middleware and routes must be registered before startup.
+    register_scanner_block_middleware(host_app)
+    _register_openapi_docs(host_app)
+    _register_health_endpoint(host_app)
+    _register_api_routes(host_app)
+    _register_oauth_routes()
+    _register_share_routes()
 
     _initialize_job_manager_runtime(jobs_dir)
 
+    # Import page modules so @ui.page decorators are registered.
+    importlib.import_module("shandy.webapp_components.pages")
+    _register_nicegui_static_files(jobs_dir)
+
+    ui.run_with(
+        host_app,
+        mount_path="/",
+        title="SHANDY",
+        favicon=ASSETS_DIR / "favicon.ico",
+        storage_secret=STORAGE_SECRET,
+    )
+
+    _state.app_configured = True
     logger.info("Web app initialized with jobs_dir=%s", jobs_dir)
+
+
+def create_app(jobs_dir: Path | None = None) -> FastAPI:
+    """Create a host FastAPI app and mount NiceGUI at root."""
+    resolved_jobs_dir = Path(jobs_dir) if jobs_dir is not None else _jobs_dir_from_env()
+
+    if _state.host_app is not None:
+        if _state.jobs_dir != resolved_jobs_dir:
+            logger.warning(
+                "create_app called with jobs_dir=%s after initialization; using existing jobs_dir=%s",
+                resolved_jobs_dir,
+                _state.jobs_dir,
+            )
+        return _state.host_app
+
+    _state.jobs_dir = resolved_jobs_dir
+    host_app = FastAPI(
+        title=_APP_TITLE,
+        version=_APP_VERSION,
+        description=_APP_DESCRIPTION,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=_create_lifespan(),
+    )
+    _configure_host_app(host_app, resolved_jobs_dir)
+    _state.host_app = host_app
+    return host_app
+
+
+def init_app(jobs_dir: Path = Path("jobs")) -> None:
+    """Backward-compatible initialization wrapper."""
+    create_app(jobs_dir=jobs_dir)
 
 
 def main(
@@ -468,23 +515,30 @@ def main(
     from shandy.settings import get_settings
 
     reload = get_settings().dev.dev_mode
-
-    # Initialize app BEFORE ui.run() to ensure job_manager is set
-    # This must happen before any page is accessed
-    init_app(jobs_dir=jobs_dir)
+    os.environ[JOBS_DIR_ENV] = str(jobs_dir)
 
     logger.info("Starting NiceGUI server on %s:%s (reload=%s)", host, port, reload)
 
-    # Run NiceGUI
-    ui.run(
+    if reload:
+        # Reload mode requires an import string application target.
+        uvicorn.run(
+            "shandy.web_app:create_app",
+            host=host,
+            port=port,
+            reload=True,
+            factory=True,
+            reload_excludes=[".nicegui", "jobs"],
+            log_level="warning",
+        )
+        return
+
+    host_app = create_app(jobs_dir=jobs_dir)
+    uvicorn.run(
+        host_app,
         host=host,
         port=port,
-        title="SHANDY",
-        favicon=ASSETS_DIR / "favicon.ico",
-        reload=reload,
-        uvicorn_reload_excludes=".nicegui,jobs",  # Don't reload on storage/job changes
-        show=False,  # Don't auto-open browser in Docker
-        storage_secret=STORAGE_SECRET,  # Required for app.storage.user
+        reload=False,
+        log_level="warning",
     )
 
 
@@ -494,8 +548,8 @@ if __name__ in {"__main__", "__mp_main__"}:
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
     parser.add_argument("--jobs-dir", default="jobs", help="Jobs directory")
 
-    # Use parse_known_args so NiceGUI's internally-injected flags (e.g. --reload
-    # added by watchfiles in dev mode) don't cause "unrecognised arguments" crashes.
+    # Use parse_known_args so reload/watcher-injected flags do not cause
+    # "unrecognised arguments" crashes in wrapped launch contexts.
     args, _ = parser.parse_known_args()
 
     main(host=args.host, port=args.port, jobs_dir=Path(args.jobs_dir))
