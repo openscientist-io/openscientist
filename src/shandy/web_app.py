@@ -489,6 +489,8 @@ if __name__ in {"__main__", "__mp_main__"}:
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
     parser.add_argument("--jobs-dir", default="jobs", help="Jobs directory")
 
-    args = parser.parse_args()
+    # Use parse_known_args so NiceGUI's internally-injected flags (e.g. --reload
+    # added by watchfiles in dev mode) don't cause "unrecognised arguments" crashes.
+    args, _ = parser.parse_known_args()
 
     main(host=args.host, port=args.port, jobs_dir=Path(args.jobs_dir))
