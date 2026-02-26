@@ -573,6 +573,7 @@ class JobManager:
             logger.info("Agent container launched for job %s", job_id)
 
             # Poll the database until the container's agent writes a terminal status.
+            # Also check if the container has exited unexpectedly (crash before DB write).
             timeout_seconds = 4 * 3600
             elapsed = 0
             while elapsed < timeout_seconds:
@@ -590,6 +591,22 @@ class JobManager:
                 except Exception as poll_err:
                     logger.warning("DB poll failed for job %s: %s", job_id, poll_err)
 
+                # If the container has exited but the DB still shows running,
+                # the agent crashed before writing a terminal status — fail fast.
+                exit_code = runner.get_exit_code(job_id)
+                if exit_code is not None and exit_code != 0:
+                    logger.error(
+                        "Agent container for job %s exited with code %d before writing terminal status",
+                        job_id,
+                        exit_code,
+                    )
+                    self._update_job_status(
+                        job_id,
+                        JobStatus.FAILED,
+                        error_message=f"Agent container exited with code {exit_code}",
+                    )
+                    return
+
             # Hard timeout reached.
             logger.error("Container job %s timed out after 4 hours", job_id)
             self._update_job_status(
@@ -603,7 +620,7 @@ class JobManager:
             self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
 
         finally:
-            runner.cleanup(job_id)
+            runner.cleanup(job_id, log_dir=job_dir)
             with self._lock:
                 self._running_jobs.pop(job_id, None)
             self._start_next_queued_job()

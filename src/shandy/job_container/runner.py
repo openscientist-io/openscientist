@@ -4,7 +4,7 @@ JobContainerRunner — launches and manages per-job Docker containers.
 Each agent job runs in its own ephemeral Docker container for security
 isolation.  The container:
 - Runs the shandy-agent image (contains claude-agent-sdk + Node.js)
-- Mounts the job directory as /agent/job
+- Mounts the job directory as /agent/jobs/<job_id>
 - Receives provider credentials via env vars
 - Communicates status back to the web server via PostgreSQL only
 
@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -60,24 +61,33 @@ class JobContainerRunner:
         settings = get_settings()
         cs = settings.container
 
-        # Translate job_dir from container-internal path to host path,
-        # then resolve to an absolute path — Docker requires absolute paths
-        # for bind mounts; relative paths are misinterpreted as named volumes.
-        job_dir_host = self._to_host_path(job_dir, cs).resolve()
+        # Translate job_dir from container-internal path to host path.
+        # Must resolve to absolute FIRST (so relative paths like "jobs/uuid" become
+        # "/app/jobs/uuid" inside the web container), then translate to the host
+        # path.  Docker requires absolute paths for bind mounts; relative paths
+        # are misinterpreted as named volumes.
+        job_dir_host = self._to_host_path(job_dir.resolve(), cs)
 
         provider_env = settings.provider.get_container_env_vars()
         database_url = settings.database.effective_database_url
 
+        # Mount at a path whose final component IS the job UUID so that
+        # orchestrator code can derive the job ID from job_dir.name.
+        job_mount = f"/agent/jobs/{job_id}"
+
         env: dict[str, str] = {
             "JOB_ID": job_id,
-            "JOB_DIR": "/agent/job",
+            "JOB_DIR": job_mount,
             "DATABASE_URL": database_url,
+            "SHANDY_SECRET_KEY": settings.secret_key,
             **provider_env,
         }
 
-        # GCP credentials: mount the file if configured
+        # GCP credentials: mount the file if configured.
+        # Also mount the Docker socket so the agent can spawn executor containers.
         volumes: dict[str, dict[str, str]] = {
-            str(job_dir_host): {"bind": "/agent/job", "mode": "rw"},
+            str(job_dir_host): {"bind": job_mount, "mode": "rw"},
+            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
         }
         gcp_path = settings.provider.google_application_credentials
         if gcp_path:
@@ -85,6 +95,12 @@ class JobContainerRunner:
             container_gcp_path = "/agent/gcp-credentials.json"
             volumes[str(gcp_host_path)] = {"bind": container_gcp_path, "mode": "ro"}
             env["GOOGLE_APPLICATION_CREDENTIALS"] = container_gcp_path
+
+        # Pass the docker socket GID so the agent container can use it.
+        # We read the GID from the socket itself rather than /etc/group since
+        # the docker group may not be present inside the web server container.
+        _sock = Path("/var/run/docker.sock")
+        docker_gid = str(os.stat(_sock).st_gid) if _sock.exists() else None
 
         short_id = job_id[:SHORT_COMMIT_LENGTH]
         container = self._docker.containers.run(
@@ -98,6 +114,7 @@ class JobContainerRunner:
             mem_limit=cs.agent_memory,
             nano_cpus=int(cs.agent_cpu * 1e9),
             security_opt=["no-new-privileges:true"],
+            group_add=[docker_gid] if docker_gid else [],
             labels={
                 "shandy.job_id": job_id,
                 "shandy.type": "agent",
@@ -117,15 +134,42 @@ class JobContainerRunner:
             except Exception as e:
                 logger.warning("Failed to stop container for job %s: %s", job_id, e)
 
-    def cleanup(self, job_id: str) -> None:
-        """Remove the container for a job."""
+    def cleanup(self, job_id: str, log_dir: Path | None = None) -> None:
+        """Remove the container for a job, optionally saving its logs first."""
         container = self._find_container(job_id)
         if container:
             try:
+                if log_dir is not None:
+                    try:
+                        logs = container.logs(stdout=True, stderr=True).decode(
+                            "utf-8", errors="replace"
+                        )
+                        (log_dir / "agent-container.log").write_text(logs)
+                    except Exception as log_err:
+                        logger.warning(
+                            "Failed to save container logs for job %s: %s", job_id, log_err
+                        )
                 container.remove(force=True)
                 logger.info("Removed container for job %s", job_id)
             except Exception as e:
                 logger.warning("Failed to remove container for job %s: %s", job_id, e)
+
+    def get_exit_code(self, job_id: str) -> int | None:
+        """
+        Return the exit code of the agent container if it has stopped, else None.
+
+        Returns None if the container is still running or cannot be found.
+        """
+        container = self._find_container(job_id)
+        if container is None:
+            return None
+        try:
+            container.reload()
+            if container.status in ("exited", "dead"):
+                return container.attrs["State"]["ExitCode"]
+        except Exception as e:
+            logger.warning("Failed to get exit code for job %s: %s", job_id, e)
+        return None
 
     def _find_container(self, job_id: str) -> Any | None:
         """Find the running container for a job by label."""
