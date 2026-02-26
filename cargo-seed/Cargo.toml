@@ -1,0 +1,20 @@
+[package]
+name = "seed"
+version = "0.1.0"
+edition = "2021"
+
+# Pre-seeded crates available to every Rust execution.
+# These are downloaded and compiled into the executor image so agent code
+# can use them without any network access or compile-time download penalty.
+[dependencies]
+rayon = "1"          # parallel iteration
+ndarray = "0.16"     # N-dimensional arrays (numpy-like)
+ndarray-stats = "0.6" # statistics on ndarray (mean, std, quantiles, etc.)
+statrs = "0.18"      # statistical distributions and tests
+rand = "0.9"         # random number generation
+serde = { version = "1", features = ["derive"] }  # serialization
+serde_json = "1"     # JSON
+csv = "1"            # CSV parsing
+anyhow = "1"         # ergonomic error handling
+itertools = "0.14"   # extra iterator combinators
+num-traits = "0.2"   # numeric traits (Float, Zero, One, etc.)

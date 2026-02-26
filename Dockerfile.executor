@@ -15,7 +15,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libhdf5-dev \
     pkg-config \
     rustc \
+    cargo \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Shared cargo home — registry and pre-built artifacts live here and are
+# baked into the image so agent Rust code starts compiling immediately.
+ENV CARGO_HOME=/usr/local/cargo
+ENV CARGO_TARGET_DIR=/usr/local/cargo/target
+ENV PATH="$CARGO_HOME/bin:$PATH"
+
+# Pre-seed the cargo registry and compile all dependencies.
+# The compiled artifacts are kept in CARGO_TARGET_DIR so subsequent
+# cargo builds (same dep versions) reuse them without recompiling.
+COPY cargo-seed /tmp/cargo-seed
+RUN cargo build --manifest-path /tmp/cargo-seed/Cargo.toml \
+    && rm -rf /tmp/cargo-seed \
+    && chmod -R a+rwX $CARGO_HOME
 
 # Install Python dependencies using uv
 COPY requirements-executor.txt .
