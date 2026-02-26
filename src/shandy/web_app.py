@@ -27,6 +27,7 @@ from shandy.version import get_version_string
 ASSETS_DIR = Path(__file__).parent / "assets"
 JOBS_DIR_ENV = "SHANDY_JOBS_DIR"
 
+
 # ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
 # When a container (e.g. feedback_container) is .clear()-ed, child timers
 # lose their parent slot but keep firing until on_disconnect cleanup runs.
