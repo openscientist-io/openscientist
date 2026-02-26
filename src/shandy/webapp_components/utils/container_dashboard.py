@@ -67,7 +67,6 @@ class DashboardData:
     """Complete payload for the containers dashboard."""
 
     docker_available: bool = False
-    container_isolation_enabled: bool = False
     job_groups: list[JobContainerGroup] = field(default_factory=list)
     orphan_containers: list[ContainerInfo] = field(default_factory=list)
     totals: DashboardTotals = field(default_factory=DashboardTotals)
@@ -202,13 +201,9 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
     Returns:
         DashboardData with containers grouped by job.
     """
-    # Deferred import for mockability
-    from shandy.settings import get_settings
-
-    settings = get_settings()
     data = DashboardData()
 
-    ready, client = await _prepare_dashboard_client(data, settings)
+    ready, client = await _prepare_dashboard_client(data)
     if not ready:
         return data
 
@@ -225,11 +220,7 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
     return data
 
 
-async def _prepare_dashboard_client(data: DashboardData, settings: Any) -> tuple[bool, Any | None]:
-    data.container_isolation_enabled = settings.container.use_container_isolation
-    if not data.container_isolation_enabled:
-        return False, None
-
+async def _prepare_dashboard_client(data: DashboardData) -> tuple[bool, Any | None]:
     client = await asyncio.to_thread(_get_docker_client)
     if client is None:
         data.error_message = "Docker daemon is not reachable."

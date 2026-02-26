@@ -484,7 +484,6 @@ class TestContainerSettings:
     def test_default_values(self):
         """Default container settings are reasonable."""
         settings = ContainerSettings()
-        assert settings.use_container_isolation is False
         assert settings.executor_image == "shandy-executor:latest"
         assert settings.executor_memory == "2g"
         assert settings.executor_cpu == 0.5
@@ -493,13 +492,11 @@ class TestContainerSettings:
     def test_custom_values(self):
         """Custom container settings are applied."""
         settings = ContainerSettings(
-            SHANDY_USE_CONTAINER_ISOLATION=True,
             SHANDY_EXECUTOR_IMAGE="custom-executor:v1",
             SHANDY_EXECUTOR_MEMORY="4g",
             SHANDY_EXECUTOR_CPU=1.0,
             SHANDY_EXECUTOR_TIMEOUT=300,
         )
-        assert settings.use_container_isolation is True
         assert settings.executor_image == "custom-executor:v1"
         assert settings.executor_memory == "4g"
         assert settings.executor_cpu == 1.0

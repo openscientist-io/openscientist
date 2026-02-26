@@ -503,7 +503,6 @@ class ContainerSettings(BaseSettings):
         extra="ignore",
     )
 
-    use_container_isolation: bool = Field(default=False, alias="SHANDY_USE_CONTAINER_ISOLATION")
     executor_image: str = Field(default="shandy-executor:latest", alias="SHANDY_EXECUTOR_IMAGE")
     executor_memory: str = Field(default="2g", alias="SHANDY_EXECUTOR_MEMORY")
     executor_cpu: float = Field(default=0.5, alias="SHANDY_EXECUTOR_CPU")

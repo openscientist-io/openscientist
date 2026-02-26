@@ -511,16 +511,6 @@ def _job_status_color(status: str) -> str:
 
 
 def _render_dashboard_unavailable_state(data: DashboardData) -> bool:
-    if not data.container_isolation_enabled:
-        render_alert_banner(
-            title="Container Isolation Disabled",
-            message=(
-                "Container isolation is not enabled. Set "
-                "SHANDY_USE_CONTAINER_ISOLATION=true to use per-job containers."
-            ),
-            severity="info",
-        )
-        return True
     if not data.docker_available:
         render_alert_banner(
             title="Docker Unavailable",

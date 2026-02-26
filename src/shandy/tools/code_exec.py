@@ -90,15 +90,10 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         Returns:
             Formatted execution result with output, plots (Python only), and any errors
         """
-        from shandy.code_executor import execute_code as exec_code
-        from shandy.code_executor import (
-            execute_rust_code,
-            execute_sparql_code,
-            format_execution_result,
-        )
+        from shandy.code_executor import format_execution_result
+        from shandy.container_manager import get_container_manager
         from shandy.file_loader import get_file_info
         from shandy.knowledge_state import KnowledgeState
-        from shandy.settings import get_settings
 
         if language not in ("python", "rust", "sparql"):
             return f"❌ ERROR: Unsupported language '{language}'. Supported: 'python', 'rust', 'sparql'"
@@ -127,40 +122,9 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         provenance_dir = ctx.job_dir / "provenance"
         provenance_dir.mkdir(parents=True, exist_ok=True)
 
-        if language in ("rust", "sparql"):
-            if get_settings().container.use_container_isolation:
-                from shandy.container_manager import get_container_manager
+        container_mgr = get_container_manager()
 
-                container_mgr = get_container_manager()
-                result = container_mgr.execute_code(
-                    code=code,
-                    job_id=ctx.job_dir.name,
-                    output_dir=provenance_dir,
-                    timeout=60,
-                    description=description,
-                    iteration=int(ks.data["iteration"]),
-                    language=language,
-                )
-            elif language == "rust":
-                result = execute_rust_code(
-                    code,
-                    provenance_dir,
-                    timeout=60,
-                    description=description,
-                    iteration=int(ks.data["iteration"]),
-                )
-            else:
-                result = execute_sparql_code(
-                    code,
-                    provenance_dir,
-                    timeout=60,
-                    description=description,
-                    iteration=int(ks.data["iteration"]),
-                )
-        else:
-            data = _DATA_CACHE.get(str(ctx.job_dir))
-
-            # Build data_files metadata list from all data files in context
+        if language == "python":
             data_files = []
             for df_path in ctx.data_files:
                 if not df_path.exists():
@@ -169,34 +133,27 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
 
             primary_data_path = str(ctx.data_files[0]) if ctx.data_files else None
 
-            if get_settings().container.use_container_isolation:
-                from shandy.container_manager import get_container_manager
-
-                container_mgr = get_container_manager()
-                result = container_mgr.execute_code(
-                    code=code,
-                    job_id=ctx.job_dir.name,
-                    data_path=primary_data_path,
-                    output_dir=provenance_dir,
-                    timeout=60,
-                    description=description,
-                    iteration=int(ks.data["iteration"]),
-                    data_files=data_files,
-                    language="python",
-                )
-            else:
-                import pandas as pd
-
-                df_data: pd.DataFrame | None = data if isinstance(data, pd.DataFrame) else None
-                result = exec_code(
-                    code,
-                    df_data,
-                    provenance_dir,
-                    timeout=60,
-                    description=description,
-                    iteration=int(ks.data["iteration"]),
-                    data_files=data_files,
-                )
+            result = container_mgr.execute_code(
+                code=code,
+                job_id=ctx.job_dir.name,
+                data_path=primary_data_path,
+                output_dir=provenance_dir,
+                timeout=60,
+                description=description,
+                iteration=int(ks.data["iteration"]),
+                data_files=data_files,
+                language="python",
+            )
+        else:
+            result = container_mgr.execute_code(
+                code=code,
+                job_id=ctx.job_dir.name,
+                output_dir=provenance_dir,
+                timeout=60,
+                description=description,
+                iteration=int(ks.data["iteration"]),
+                language=language,
+            )
 
         ks.log_analysis(
             action="execute_code",

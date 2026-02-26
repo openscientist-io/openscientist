@@ -8,7 +8,6 @@ import pytest
 
 from shandy.webapp_components.ui_components import format_uptime
 from shandy.webapp_components.utils.container_dashboard import (
-    DashboardData,
     _parse_container_stats,
     collect_dashboard_data,
 )
@@ -123,28 +122,6 @@ class TestParseContainerStats:
 
 
 # ---------------------------------------------------------------------------
-# collect_dashboard_data — isolation disabled
-# ---------------------------------------------------------------------------
-
-
-class TestCollectDashboardDisabled:
-    @pytest.mark.asyncio
-    async def test_returns_disabled_when_isolation_off(self):
-        mock_settings = MagicMock()
-        mock_settings.container.use_container_isolation = False
-
-        with patch(
-            "shandy.settings.get_settings",
-            return_value=mock_settings,
-        ):
-            data = await collect_dashboard_data()
-
-        assert isinstance(data, DashboardData)
-        assert data.container_isolation_enabled is False
-        assert data.docker_available is False
-
-
-# ---------------------------------------------------------------------------
 # collect_dashboard_data — Docker unavailable
 # ---------------------------------------------------------------------------
 
@@ -152,22 +129,12 @@ class TestCollectDashboardDisabled:
 class TestCollectDashboardDockerDown:
     @pytest.mark.asyncio
     async def test_returns_unavailable_when_docker_down(self):
-        mock_settings = MagicMock()
-        mock_settings.container.use_container_isolation = True
-
-        with (
-            patch(
-                "shandy.settings.get_settings",
-                return_value=mock_settings,
-            ),
-            patch(
-                "shandy.webapp_components.utils.container_dashboard._get_docker_client",
-                return_value=None,
-            ),
+        with patch(
+            "shandy.webapp_components.utils.container_dashboard._get_docker_client",
+            return_value=None,
         ):
             data = await collect_dashboard_data()
 
-        assert data.container_isolation_enabled is True
         assert data.docker_available is False
         assert data.error_message is not None
 
@@ -198,7 +165,6 @@ class TestCollectDashboardGrouping:
         job_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
         mock_settings = MagicMock()
-        mock_settings.container.use_container_isolation = True
 
         agent = _make_mock_container(
             "abc123", "shandy-agent-abc", {"shandy.type": "agent", "shandy.job_id": job_id}
@@ -257,7 +223,6 @@ class TestCollectDashboardGrouping:
         orphan_job_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
         mock_settings = MagicMock()
-        mock_settings.container.use_container_isolation = True
 
         container = _make_mock_container(
             "xyz789",
