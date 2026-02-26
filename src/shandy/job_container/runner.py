@@ -60,8 +60,10 @@ class JobContainerRunner:
         settings = get_settings()
         cs = settings.container
 
-        # Translate job_dir from container-internal path to host path
-        job_dir_host = self._to_host_path(job_dir, cs)
+        # Translate job_dir from container-internal path to host path,
+        # then resolve to an absolute path — Docker requires absolute paths
+        # for bind mounts; relative paths are misinterpreted as named volumes.
+        job_dir_host = self._to_host_path(job_dir, cs).resolve()
 
         provider_env = settings.provider.get_container_env_vars()
         database_url = settings.database.effective_database_url
