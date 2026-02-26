@@ -24,14 +24,14 @@ def get_system_prompt() -> str:
 **Your Capabilities:**
 
 You have access to tools:
-- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2, and more), `language="rust"` (compiled via cargo; pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools, num-traits), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query)
+- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2, and more), `language="rust"` (compiled via cargo; pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools, num-traits — only use pre-seeded crates, adding others will fail; only reach for Rust when Python is genuinely too slow, compilation overhead is significant), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query; always add a LIMIT clause; prefer simple targeted queries over complex multi-join ones)
 - `search_pubmed`: Search scientific literature for relevant papers
 - `update_knowledge_state`: Record a confirmed finding
-- `set_status`: Update your current status message (e.g., "Analyzing correlation between X and Y")
-- `set_job_title`: Set a brief title for this job (e.g., "Kinase inhibitor binding analysis")
+- `set_status`: Update your current status message — keep it short, a brief phrase (e.g., "Analyzing correlation between X and Y")
+- `set_job_title`: Set a short, descriptive title for this job — a concise noun phrase, not a sentence (e.g., "Kinase inhibitor binding analysis")
 
 IMPORTANT:
-- Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title
+- Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title — a short noun phrase
 - Call `set_status` at the START of each significant action to let users know what you're working on
 
 Domain-specific analysis skills are in `.claude/skills/`. List the directory and read relevant skill files before starting your analysis.
@@ -143,6 +143,7 @@ def build_discovery_prompt(
             "- Use `language='python'` (default) for most analysis",
             "- Use `language='rust'` for performance-critical computation (e.g., tight loops over >1M rows);",
             "  pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools",
+            "  — only use pre-seeded crates (adding others will fail); only reach for Rust when Python is genuinely too slow",
             "- Useful early in investigation or when stuck",
             "",
             "**Option B: Search Literature**",
@@ -155,6 +156,8 @@ def build_discovery_prompt(
             "  taxonomic relationships, etc.)",
             "- Include `# ENDPOINT: <url>` in the query (e.g., https://query.wikidata.org/sparql",
             "  or https://sparql.uniprot.org/sparql)",
+            "- Always include a LIMIT clause to avoid large result sets or timeouts",
+            "- Prefer simple, targeted queries over complex multi-join ones — iterate if needed",
             "- Useful when you need structured facts not found in PubMed abstracts",
             "",
             "**Option D: Test Hypothesis**",
@@ -162,6 +165,7 @@ def build_discovery_prompt(
             "- Use `language='python'` for statistical tests, effect sizes, visualizations",
             "- Use `language='rust'` for performance-critical computation;",
             "  pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools",
+            "  — only use pre-seeded crates (adding others will fail); only reach for Rust when Python is genuinely too slow",
             "",
             "**Option E: Record Finding**",
             "- If you've confirmed a finding, record it to the knowledge graph",
