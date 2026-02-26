@@ -234,7 +234,6 @@ class FoundryProvider(BaseProvider):
             )
 
         try:
-            from azure.identity import DefaultAzureCredential  # noqa: PLC0415
             from azure.mgmt.costmanagement import CostManagementClient  # noqa: PLC0415
         except ImportError:
             logger.warning(
@@ -253,6 +252,23 @@ class FoundryProvider(BaseProvider):
                 ),
             )
 
+        tenant_id = settings.provider.azure_tenant_id
+        client_id = settings.provider.azure_client_id
+        client_secret = settings.provider.azure_client_secret
+
+        if not (tenant_id and client_id and client_secret):
+            return CostInfo(
+                provider_name="Azure AI Foundry",
+                total_spend_usd=None,
+                recent_spend_usd=None,
+                recent_period_hours=lookback_hours,
+                last_updated=now,
+                data_lag_note=(
+                    "Set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET "
+                    "to enable Azure Cost Management tracking."
+                ),
+            )
+
         resource_group = settings.provider.azure_resource_group
         if resource_group:
             scope = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
@@ -260,7 +276,13 @@ class FoundryProvider(BaseProvider):
             scope = f"/subscriptions/{subscription_id}"
 
         try:
-            credential = DefaultAzureCredential()
+            from azure.identity import ClientSecretCredential  # noqa: PLC0415
+
+            credential = ClientSecretCredential(
+                tenant_id=tenant_id,
+                client_id=client_id,
+                client_secret=client_secret,
+            )
             client = CostManagementClient(credential)
 
             # Total spend: current calendar month (month-to-date)
@@ -293,7 +315,10 @@ class FoundryProvider(BaseProvider):
                 recent_spend_usd=None,
                 recent_period_hours=lookback_hours,
                 last_updated=now,
-                data_lag_note=f"Cost query failed: {e}",
+                data_lag_note=(
+                    "Azure Cost Management unavailable. "
+                    "Check Azure credentials. See server logs for details."
+                ),
             )
 
     async def send_message(
