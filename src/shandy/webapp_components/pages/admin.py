@@ -479,20 +479,23 @@ async def render_users_panel() -> None:
 
 async def render_containers_panel() -> None:
     """Render the real-time container dashboard panel."""
-    from shandy.webapp_components.utils.container_dashboard import collect_dashboard_data
+    from shandy.webapp_components.utils.container_dashboard import (
+        collect_dashboard_data,
+    )
 
     _active_timers = setup_timer_cleanup()
 
     @ui.refreshable
-    async def render_dashboard() -> None:
-        data = await collect_dashboard_data()
+    def render_dashboard(data: DashboardData) -> None:
         _render_dashboard_content(data)
 
-    await render_dashboard()
+    data = await collect_dashboard_data()
+    render_dashboard(data)
 
     @guard_client
     async def guarded_refresh() -> None:
-        await render_dashboard.refresh()
+        new_data = await collect_dashboard_data()
+        render_dashboard.refresh(new_data)
 
     timer = ui.timer(3.0, guarded_refresh)
     _active_timers.append(timer)
