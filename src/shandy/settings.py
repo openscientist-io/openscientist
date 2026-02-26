@@ -104,6 +104,10 @@ class ProviderSettings(BaseSettings):
     # Azure Cost Management (optional, enables billing data for foundry provider)
     azure_subscription_id: str | None = Field(default=None, alias="AZURE_SUBSCRIPTION_ID")
     azure_resource_group: str | None = Field(default=None, alias="AZURE_RESOURCE_GROUP")
+    # Azure AD service principal (for Cost Management API)
+    azure_tenant_id: str | None = Field(default=None, alias="AZURE_TENANT_ID")
+    azure_client_id: str | None = Field(default=None, alias="AZURE_CLIENT_ID")
+    azure_client_secret: str | None = Field(default=None, alias="AZURE_CLIENT_SECRET")
 
     @staticmethod
     def _warn_if_missing(value: str | None, message: str, warnings: list[str]) -> None:
