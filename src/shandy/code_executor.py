@@ -475,28 +475,57 @@ def execute_sparql_code(
     }
 
 
+# Cargo.toml template used for every agent Rust execution.
+# All listed crates are pre-compiled into the executor image (cargo-seed/),
+# so cargo reuses the artifacts without downloading or recompiling them.
+_RUST_CARGO_TOML = """\
+[package]
+name = "analysis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rayon = "1"
+ndarray = "0.16"
+ndarray-stats = "0.6"
+statrs = "0.18"
+rand = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+csv = "1"
+anyhow = "1"
+itertools = "0.14"
+num-traits = "0.2"
+"""
+
+
 def execute_rust_code(
     code: str,
     plots_dir: Path,
-    timeout: int = 60,
+    timeout: int = 300,
     description: str = "",
     iteration: int = 0,
     data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
-    Execute Rust code by compiling with rustc and running the binary.
+    Execute Rust code using cargo run.
+
+    The code is placed in src/main.rs of a temporary cargo project whose
+    Cargo.toml includes all pre-seeded crates. The executor image pre-compiles
+    these crates so incremental builds are fast.
 
     Args:
-        code: Rust source code to compile and run
-        plots_dir: Directory for any output files (not used for Rust, for API consistency)
-        timeout: Max total time (compile + run) in seconds (default: 60)
+        code: Rust source code (full src/main.rs content)
+        plots_dir: Unused, kept for API consistency
+        timeout: Max total time (compile + run) in seconds (default: 300)
         description: Optional description of what's being investigated
         iteration: Current iteration number
-        data_files: Unused, kept for API consistency with execute_code
+        data_files: Unused, kept for API consistency
 
     Returns:
         Dictionary with execution results (no plots for Rust)
     """
+    import os
     import subprocess
     import tempfile
 
@@ -504,55 +533,40 @@ def execute_rust_code(
     start_time = time.time()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        src_path = Path(tmpdir) / "main.rs"
-        bin_path = Path(tmpdir) / "main"
-        src_path.write_text(code, encoding="utf-8")
+        project = Path(tmpdir) / "analysis"
+        src_dir = project / "src"
+        src_dir.mkdir(parents=True)
+        (project / "Cargo.toml").write_text(_RUST_CARGO_TOML, encoding="utf-8")
+        (src_dir / "main.rs").write_text(code, encoding="utf-8")
 
-        # Compile
+        env = os.environ.copy()
+        # Inside the executor Docker image, /usr/local/cargo holds the pre-seeded
+        # registry and pre-compiled dependency artifacts. Use them when available
+        # so cargo skips downloading and recompiling. Outside the container (e.g.
+        # on the developer host) cargo falls back to ~/.cargo as normal.
+        _seeded_cargo = Path("/usr/local/cargo")
+        if _seeded_cargo.exists():
+            env.setdefault("CARGO_HOME", str(_seeded_cargo))
+            env.setdefault("CARGO_TARGET_DIR", str(_seeded_cargo / "target"))
+
         try:
-            compile_result = subprocess.run(
-                ["rustc", str(src_path), "-o", str(bin_path)],
+            run_result = subprocess.run(
+                ["cargo", "run"],
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                cwd=project,
+                env=env,
                 check=False,
             )
         except FileNotFoundError:
             return {
                 "success": False,
-                "error": "Rust compiler (rustc) not found. Install Rust to use Rust code execution.",
+                "error": "cargo not found. Ensure Rust toolchain is installed.",
                 "output": "",
                 "plots": [],
                 "execution_time": time.time() - start_time,
             }
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "error": f"Rust compilation timed out after {timeout} seconds",
-                "output": "",
-                "plots": [],
-                "execution_time": float(timeout),
-            }
-
-        if compile_result.returncode != 0:
-            return {
-                "success": False,
-                "error": f"Compilation error:\n{compile_result.stderr}",
-                "output": compile_result.stdout,
-                "plots": [],
-                "execution_time": time.time() - start_time,
-            }
-
-        # Run with remaining budget
-        remaining = max(1, timeout - int(time.time() - start_time))
-        try:
-            run_result = subprocess.run(
-                [str(bin_path)],
-                capture_output=True,
-                text=True,
-                timeout=remaining,
-                check=False,
-            )
         except subprocess.TimeoutExpired:
             return {
                 "success": False,
@@ -564,18 +578,23 @@ def execute_rust_code(
 
         execution_time = time.time() - start_time
         output = run_result.stdout
-        if run_result.stderr:
-            output += f"\nstderr:\n{run_result.stderr}"
+        if run_result.returncode != 0:
+            # Include stderr (compile errors / runtime errors) on failure
+            if run_result.stderr:
+                output += f"\nstderr:\n{run_result.stderr}"
+            return {
+                "success": False,
+                "error": f"Process exited with code {run_result.returncode}\n{run_result.stderr}",
+                "output": output,
+                "plots": [],
+                "execution_time": execution_time,
+            }
 
         return {
-            "success": run_result.returncode == 0,
+            "success": True,
             "output": output,
             "plots": [],
-            "error": (
-                None
-                if run_result.returncode == 0
-                else f"Process exited with code {run_result.returncode}\n{run_result.stderr}"
-            ),
+            "error": None,
             "execution_time": execution_time,
         }
 

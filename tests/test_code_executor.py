@@ -18,7 +18,7 @@ from shandy.code_executor import (
     validate_imports,
 )
 
-rustc_available = pytest.mark.skipif(shutil.which("rustc") is None, reason="rustc not installed")
+cargo_available = pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed")
 
 # ─── validate_imports ─────────────────────────────────────────────────
 
@@ -245,7 +245,7 @@ class TestExecuteRustCode:
         assert "not found" in result["error"]
         assert result["plots"] == []
 
-    @rustc_available
+    @cargo_available
     def test_hello_world(self, plots_dir):
         code = 'fn main() { println!("hello from rust"); }'
         result = execute_rust_code(code, plots_dir)
@@ -253,27 +253,31 @@ class TestExecuteRustCode:
         assert "hello from rust" in result["output"]
         assert result["plots"] == []
 
-    @rustc_available
+    @cargo_available
     def test_compilation_error_captured(self, plots_dir):
         result = execute_rust_code("fn main() { this is not rust }", plots_dir)
         assert result["success"] is False
-        assert "Compilation error" in result["error"]
+        assert result["error"] is not None
+        # cargo outputs compiler diagnostics to stderr; the error or output should
+        # contain something useful (e.g. rustc's "error[E...]" lines)
+        combined = (result["error"] or "") + (result["output"] or "")
+        assert "error" in combined.lower()
 
-    @rustc_available
+    @cargo_available
     def test_runtime_exit_code_nonzero(self, plots_dir):
         code = "fn main() { std::process::exit(1); }"
         result = execute_rust_code(code, plots_dir)
         assert result["success"] is False
         assert "exit" in result["error"].lower() or "1" in result["error"]
 
-    @rustc_available
+    @cargo_available
     def test_execution_time_tracked(self, plots_dir):
         code = 'fn main() { println!("done"); }'
         result = execute_rust_code(code, plots_dir)
         assert result["success"] is True
         assert result["execution_time"] >= 0.0
 
-    @rustc_available
+    @cargo_available
     def test_no_plots_produced(self, plots_dir):
         code = 'fn main() { println!("no plots here"); }'
         result = execute_rust_code(code, plots_dir)
