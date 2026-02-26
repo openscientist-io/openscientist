@@ -7,6 +7,7 @@ reducing log noise and unnecessary database sessions.
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -62,3 +63,20 @@ class ScannerBlockMiddleware(BaseHTTPMiddleware):
             logger.debug("Blocked scanner probe: %s %s", request.method, path)
             return Response(status_code=404)
         return await call_next(request)
+
+
+def register_scanner_block_middleware(app: Any) -> bool:
+    """Register scanner middleware if possible.
+
+    Returns:
+        True if middleware is present (already registered or newly added).
+    """
+    existing_middleware = getattr(app, "user_middleware", [])
+    if any(
+        getattr(middleware, "cls", None) is ScannerBlockMiddleware
+        for middleware in existing_middleware
+    ):
+        return True
+
+    app.add_middleware(ScannerBlockMiddleware)
+    return True
