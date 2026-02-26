@@ -467,21 +467,21 @@ class TestContainerManagerIntegration:
         assert result["success"] is True
         assert "(3, 1)" in result["output"]
 
-    def test_network_disabled(self):
-        """Test that network access is blocked."""
+    def test_network_enabled(self):
+        """Test that network access is available (needed for requests, SPARQL, cargo, etc.)."""
         from shandy.container_manager import ContainerManager
 
         manager = ContainerManager()
 
         with tempfile.TemporaryDirectory() as tmpdir:
             result = manager.execute_code(
-                code='import requests; requests.get("https://google.com")',
+                code='import requests; r = requests.get("https://httpbin.org/get", timeout=5); print(r.status_code)',
                 job_id="integration-test-4",
                 output_dir=tmpdir,
             )
 
-        # Should fail due to network being disabled
-        assert result["success"] is False
+        assert result["success"] is True
+        assert "200" in result["output"]
 
     def test_timeout_enforcement(self):
         """Test that timeout is enforced."""

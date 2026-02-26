@@ -24,7 +24,7 @@ def get_system_prompt() -> str:
 **Your Capabilities:**
 
 You have access to tools:
-- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, networkx), `language="rust"` (compiled via rustc, useful for performance-critical computation), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query)
+- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2, and more), `language="rust"` (compiled via cargo; pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools, num-traits), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query)
 - `search_pubmed`: Search scientific literature for relevant papers
 - `update_knowledge_state`: Record a confirmed finding
 - `set_status`: Update your current status message (e.g., "Analyzing correlation between X and Y")
@@ -47,7 +47,7 @@ Domain-specific analysis skills are in `.claude/skills/`. List the directory and
 
 **Important Principles:**
 
-- Write clear, well-documented Python code
+- Write clear, well-documented code; use Python by default, Rust for performance-critical computation, SPARQL for knowledge base queries
 - Always check assumptions (normality, homoscedasticity, etc.)
 - Report effect sizes, not just p-values
 - Negative results are valuable - they rule out hypotheses
@@ -139,18 +139,31 @@ def build_discovery_prompt(
             "Choose ONE of these actions:",
             "",
             "**Option A: Explore Data**",
-            "- Write Python code to examine data structure, distributions, correlations",
+            "- Write code to examine data structure, distributions, correlations",
+            "- Use `language='python'` (default) for most analysis",
+            "- Use `language='rust'` for performance-critical computation (e.g., tight loops over >1M rows);",
+            "  pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools",
             "- Useful early in investigation or when stuck",
             "",
             "**Option B: Search Literature**",
             "- Query PubMed for papers related to your research question or a specific pattern",
             "- Use this proactively to generate mechanistic hypotheses",
             "",
-            "**Option C: Test Hypothesis**",
-            "- Write Python code to test a specific hypothesis",
-            "- Include appropriate statistical tests, effect size calculations, visualizations",
+            "**Option C: Query Knowledge Base**",
+            "- Use `language='sparql'` to query structured knowledge bases for biological,",
+            "  chemical, or scientific facts (gene functions, protein interactions, drug targets,",
+            "  taxonomic relationships, etc.)",
+            "- Include `# ENDPOINT: <url>` in the query (e.g., https://query.wikidata.org/sparql",
+            "  or https://sparql.uniprot.org/sparql)",
+            "- Useful when you need structured facts not found in PubMed abstracts",
             "",
-            "**Option D: Record Finding**",
+            "**Option D: Test Hypothesis**",
+            "- Write code to test a specific hypothesis",
+            "- Use `language='python'` for statistical tests, effect sizes, visualizations",
+            "- Use `language='rust'` for performance-critical computation;",
+            "  pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools",
+            "",
+            "**Option E: Record Finding**",
             "- If you've confirmed a finding, record it to the knowledge graph",
             "- Include: title, evidence (stats), supporting hypotheses, plots",
             "",
@@ -160,7 +173,7 @@ def build_discovery_prompt(
     if skills_available:
         prompt_parts.extend(
             [
-                "**Option E: Use Skill**",
+                "**Option F: Use Skill**",
                 "- Invoke a skill workflow for structured guidance",
                 f"{skills_available}",
                 "",

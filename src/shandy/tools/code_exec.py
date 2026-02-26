@@ -72,15 +72,29 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         Execute code to analyze data.
 
         Supported languages:
-        - "python" (default): Has access to 'data' (DataFrame), 'data_files', pandas,
-          numpy, matplotlib, seaborn, scipy, sklearn, and more. Plots are automatically
-          saved to the job's plots directory.
-        - "rust": Compiles and runs Rust code with rustc. Useful for performance-critical
-          computation. No data or plot integration; use stdout for output.
-        - "sparql": Executes a SPARQL SELECT query against a remote endpoint. The query
-          must include a comment specifying the endpoint URL, e.g.:
+        - "python" (default): Use for data analysis, statistical testing, and
+          visualization. Has access to 'data' (DataFrame), 'data_files', pandas,
+          polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin,
+          sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2,
+          and more. Plots are automatically saved to the job's plots directory.
+          Choose Python unless a specific reason (performance, structured knowledge
+          lookup) justifies another language.
+        - "rust": Use when Python is too slow — e.g., tight inner loops over >1M rows,
+          custom numerical algorithms, or performance-critical computation. Compiled and
+          run with cargo. Pre-seeded crates available without imports or downloads:
+          rayon (parallel iteration), ndarray + ndarray-stats (N-dimensional arrays and
+          statistics), statrs (statistical distributions), rand (random numbers),
+          serde + serde_json (serialization), csv (CSV parsing), anyhow (error handling),
+          itertools (iterator combinators), num-traits (Float, Zero, One, etc.).
+          No data or plot integration; write results to stdout.
+        - "sparql": Use to query structured knowledge bases for biological, chemical, or
+          scientific facts (e.g., gene functions, protein interactions, drug targets,
+          taxonomic relationships). The query must include a comment specifying the
+          endpoint URL, e.g.:
               # ENDPOINT: https://query.wikidata.org/sparql
-          Results are returned as a formatted table. No data or plot integration.
+          Other common endpoints: https://sparql.uniprot.org/sparql (proteins),
+          https://bio2rdf.org/sparql (life sciences). Results are returned as a
+          formatted table. No data or plot integration.
 
         Args:
             code: Code or query to execute
@@ -149,7 +163,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
                 code=code,
                 job_id=ctx.job_dir.name,
                 output_dir=provenance_dir,
-                timeout=60,
+                timeout=300 if language == "rust" else 60,
                 description=description,
                 iteration=int(ks.data["iteration"]),
                 language=language,

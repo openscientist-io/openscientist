@@ -68,7 +68,7 @@ class TestBuildDiscoveryPrompt:
             max_iterations=10,
             skills_available="- hypothesis-generation\n- result-interpretation",
         )
-        assert "Option E: Use Skill" in prompt
+        assert "Option F: Use Skill" in prompt
         assert "hypothesis-generation" in prompt
 
     def test_skills_option_hidden_when_not_provided(self):
@@ -77,7 +77,7 @@ class TestBuildDiscoveryPrompt:
             iteration=1,
             max_iterations=10,
         )
-        assert "Option E" not in prompt
+        assert "Option F" not in prompt
 
     def test_knowledge_graph_summary_included(self):
         prompt = build_discovery_prompt(

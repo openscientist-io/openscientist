@@ -287,7 +287,6 @@ class ContainerManager:
                 mem_limit=self.memory_limit,
                 nano_cpus=int(self.cpu_limit * 1e9),
                 # Security settings
-                network_disabled=True,
                 read_only=False,  # Need write access for plots
                 security_opt=["no-new-privileges:true"],
                 user="executor",
