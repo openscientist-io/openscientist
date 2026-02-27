@@ -38,11 +38,6 @@ RUN uv pip install --system -e .
 # Copy agent entrypoint
 COPY docker/agent-entrypoint.py /agent-entrypoint.py
 
-# Install CLAUDE.md for the agent user (picked up by Claude Code as the user-level CLAUDE.md)
-RUN mkdir -p /home/agent/.claude
-COPY JOB_CLAUDE.md /home/agent/.claude/CLAUDE.md
-RUN chown -R agent:agent /home/agent/.claude
-
 # Switch to non-root user
 USER agent
 

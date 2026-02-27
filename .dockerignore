@@ -34,7 +34,6 @@ notes/
 *.md
 !CLAUDE.md
 !README.md
-!JOB_CLAUDE.md
 !CHAT_CLAUDE.md
 
 # Environment
