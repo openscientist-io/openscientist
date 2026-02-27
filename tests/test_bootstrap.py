@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,16 +21,7 @@ from shandy.database.models import (
     Literature,
     Plot,
 )
-
-
-def _fake_admin_session(session_obj):
-    """Build an async context manager yielding the provided session."""
-
-    @asynccontextmanager
-    async def _ctx():
-        yield session_obj
-
-    return _ctx
+from tests.helpers import fake_admin_session
 
 
 def _write_json(path, payload: dict) -> None:
@@ -48,7 +38,7 @@ async def test_bootstrap_creates_job_and_syncs_modern_knowledge_state(
 ):
     monkeypatch.setattr(
         "shandy.bootstrap.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     job_id = str(uuid4())
@@ -195,7 +185,7 @@ async def test_bootstrap_migrates_legacy_knowledge_state_format(
 ):
     monkeypatch.setattr(
         "shandy.bootstrap.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     job_id = str(uuid4())
@@ -310,7 +300,7 @@ async def test_bootstrap_dry_run_counts_orphaned_jobs(
 ):
     monkeypatch.setattr(
         "shandy.bootstrap.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     job_id = str(uuid4())
@@ -348,7 +338,7 @@ async def test_bootstrap_is_idempotent(
 ):
     monkeypatch.setattr(
         "shandy.bootstrap.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     job_id = str(uuid4())
@@ -413,7 +403,7 @@ async def test_bootstrap_migrates_iteration_summaries_for_multiple_jobs(
 ):
     monkeypatch.setattr(
         "shandy.bootstrap.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     job_ids = [str(uuid4()), str(uuid4())]

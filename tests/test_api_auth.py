@@ -1,6 +1,5 @@
 """Tests for API key authentication dependency logic."""
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -11,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from shandy.api import auth as api_auth
 from shandy.database.models import APIKey, User
+from tests.helpers import fake_admin_session
 
 
 class _FakeResult:
@@ -21,16 +21,6 @@ class _FakeResult:
 
     def scalar_one_or_none(self):
         return self._value
-
-
-def _fake_admin_session(session_obj):
-    """Build an async context manager returning the provided fake session."""
-
-    @asynccontextmanager
-    async def _ctx():
-        yield session_obj
-
-    return _ctx
 
 
 @pytest.mark.asyncio
@@ -53,7 +43,7 @@ async def test_api_key_authentication_queries_by_secret_hash(monkeypatch: pytest
         commit=AsyncMock(),
     )
 
-    monkeypatch.setattr(api_auth, "get_admin_session", _fake_admin_session(fake_session))
+    monkeypatch.setattr(api_auth, "get_admin_session", fake_admin_session(fake_session))
     monkeypatch.setattr(api_auth, "hash_secret", lambda _secret: "hashed-secret")
 
     credentials = HTTPAuthorizationCredentials(
@@ -83,7 +73,7 @@ async def test_api_key_authentication_rejects_name_mismatch(monkeypatch: pytest.
         commit=AsyncMock(),
     )
 
-    monkeypatch.setattr(api_auth, "get_admin_session", _fake_admin_session(fake_session))
+    monkeypatch.setattr(api_auth, "get_admin_session", fake_admin_session(fake_session))
     monkeypatch.setattr(api_auth, "hash_secret", lambda _secret: "hashed-secret")
 
     credentials = HTTPAuthorizationCredentials(

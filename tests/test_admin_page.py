@@ -4,7 +4,6 @@ Tests for admin page functionality.
 Tests orphaned job management, user assignment, and job claiming.
 """
 
-from contextlib import asynccontextmanager
 from datetime import UTC
 from uuid import uuid4
 
@@ -18,16 +17,7 @@ from shandy.webapp_components.pages.admin import (
     _filter_users_for_admin_table,
     set_user_approval_status,
 )
-
-
-def _fake_admin_session(session_obj):
-    """Build an async context manager yielding the provided session."""
-
-    @asynccontextmanager
-    async def _ctx():
-        yield session_obj
-
-    return _ctx
+from tests.helpers import fake_admin_session
 
 
 @pytest.mark.asyncio
@@ -396,7 +386,7 @@ async def test_set_user_approval_status_can_remove_approval(
     """Admin helper can remove approval from an approved user."""
     monkeypatch.setattr(
         "shandy.webapp_components.pages.admin.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     user = User(
@@ -424,7 +414,7 @@ async def test_set_user_approval_status_rejects_self_unapprove(
     """Admin helper should reject removing approval from the current user."""
     monkeypatch.setattr(
         "shandy.webapp_components.pages.admin.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     user = User(
@@ -457,7 +447,7 @@ async def test_set_user_approval_status_noop_when_already_pending(
     """Admin helper should report noop when user is already pending."""
     monkeypatch.setattr(
         "shandy.webapp_components.pages.admin.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     user = User(
@@ -482,7 +472,7 @@ async def test_set_user_approval_status_handles_missing_user(
     """Admin helper should return not found for unknown user IDs."""
     monkeypatch.setattr(
         "shandy.webapp_components.pages.admin.get_admin_session",
-        _fake_admin_session(db_session),
+        fake_admin_session(db_session),
     )
 
     success, message = await set_user_approval_status(uuid4(), is_approved=False)
