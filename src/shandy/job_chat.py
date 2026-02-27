@@ -299,6 +299,13 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
     provider = get_provider()
     provider.setup_environment()
 
+    # Overwrite CLAUDE.md with chat-specific content (discovery wrote JOB_CLAUDE.md here)
+    from shandy.orchestrator.discovery import _write_chat_claude_md
+
+    claude_dir = job_dir / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    _write_chat_claude_md(claude_dir)
+
     executor = SDKAgentExecutor(
         job_dir=job_dir,
         data_file=None,
