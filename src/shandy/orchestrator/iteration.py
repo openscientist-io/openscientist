@@ -19,7 +19,7 @@ from shandy.database.models import User
 from shandy.database.models.job import Job as JobModel
 from shandy.database.session import AsyncSessionLocal
 from shandy.job.types import JobStatus
-from shandy.knowledge_state import KnowledgeState
+from shandy.knowledge_state import KS_FILENAME, KnowledgeState
 from shandy.ntfy import notify_job_status_change
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,7 @@ async def update_job_status(
 ) -> None:
     """Update job status in the database and notify on feedback wait transitions."""
     job_id = job_dir.name
-    ks_path = job_dir / "knowledge_state.json"
+    ks_path = job_dir / KS_FILENAME
 
     job_uuid = _parse_job_uuid(job_id)
     if job_uuid is None:
@@ -335,7 +335,7 @@ async def wait_for_feedback_or_timeout(
             - outcome="continued" when user resumes without feedback
     """
     job_id = job_dir.name
-    ks_path = job_dir / "knowledge_state.json"
+    ks_path = job_dir / KS_FILENAME
 
     start_time = time.monotonic()
 

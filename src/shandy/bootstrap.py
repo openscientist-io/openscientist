@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shandy.database.models import Job, JobDataFile, Plot, User
 from shandy.database.session import get_admin_session
 from shandy.file_loader import get_file_info
-from shandy.knowledge_state import KnowledgeState
+from shandy.knowledge_state import KS_FILENAME, KnowledgeState
 
 logger = logging.getLogger(__name__)
 
@@ -954,7 +954,7 @@ def _load_job_payload(
         directory does not contain migratable payload files.
     """
     config = _load_json(job_dir / "config.json", result, context=context)
-    ks_data = _load_json(job_dir / "knowledge_state.json", result, context=context)
+    ks_data = _load_json(job_dir / KS_FILENAME, result, context=context)
     if config is None and ks_data is None:
         result.skipped_empty_directory += 1
         return None

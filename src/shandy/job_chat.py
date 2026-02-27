@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Job, JobChatMessage
 from shandy.database.session import AsyncSessionLocal
+from shandy.knowledge_state import KS_FILENAME
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ def _append_iteration_summaries(parts: list[str], summaries: list[Any]) -> None:
 
 
 def _load_knowledge_state(job_id: str, job_dir: Path) -> dict[str, Any] | None:
-    ks_path = job_dir / "knowledge_state.json"
+    ks_path = job_dir / KS_FILENAME
     if not ks_path.exists():
         return None
     try:

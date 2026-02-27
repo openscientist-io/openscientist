@@ -28,6 +28,8 @@ from shandy.database.models.literature import Literature
 from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 
+KS_FILENAME = "knowledge_state.json"
+
 
 class KnowledgeState:
     """

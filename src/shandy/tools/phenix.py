@@ -72,7 +72,7 @@ def _log_phenix_execution(
     """Record Phenix tool execution in knowledge state."""
     from shandy.knowledge_state import KnowledgeState
 
-    ks = KnowledgeState.load(ctx.job_dir / "knowledge_state.json")
+    ks = KnowledgeState.load(ctx.ks_path)
     ks.log_analysis(
         action="run_phenix_tool",
         tool_name=tool_name,
@@ -80,7 +80,7 @@ def _log_phenix_execution(
         description=description,
         success=success,
     )
-    ks.save(ctx.job_dir / "knowledge_state.json")
+    ks.save(ctx.ks_path)
 
 
 def _run_phenix_tool_impl(

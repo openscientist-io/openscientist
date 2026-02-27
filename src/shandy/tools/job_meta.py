@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -18,14 +17,10 @@ _MAX_TITLE_LENGTH = 100
 _MIN_TITLE_LENGTH = 3
 
 
-def _status_path(ctx: ToolContext) -> Path:
-    return ctx.job_dir / "knowledge_state.json"
-
-
 def _set_status_impl(ctx: ToolContext, message: str) -> str:
     from shandy.knowledge_state import KnowledgeState
 
-    ks_path = _status_path(ctx)
+    ks_path = ctx.ks_path
     trimmed = message[:80]
     ks = KnowledgeState.load(ks_path)
     ks.set_agent_status(trimmed)
@@ -107,7 +102,7 @@ def _set_job_title_impl(ctx: ToolContext, title: str) -> str:
 def _save_iteration_summary_impl(ctx: ToolContext, summary: str, strapline: str = "") -> str:
     from shandy.knowledge_state import KnowledgeState
 
-    ks_path = _status_path(ctx)
+    ks_path = ctx.ks_path
     ks = KnowledgeState.load(ks_path)
     ks.add_iteration_summary(
         iteration=ks.data["iteration"],
@@ -121,7 +116,7 @@ def _save_iteration_summary_impl(ctx: ToolContext, summary: str, strapline: str 
 def _set_consensus_answer_impl(ctx: ToolContext, answer: str) -> str:
     from shandy.knowledge_state import KnowledgeState
 
-    ks_path = _status_path(ctx)
+    ks_path = ctx.ks_path
     ks = KnowledgeState.load(ks_path)
     ks.data["consensus_answer"] = answer.strip()
     ks.save(ks_path)

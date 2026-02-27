@@ -32,11 +32,11 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         from shandy.knowledge_state import KnowledgeState
         from shandy.literature import search_pubmed as search_pm
 
-        ks = KnowledgeState.load(ctx.job_dir / "knowledge_state.json")
+        ks = KnowledgeState.load(ctx.ks_path)
 
         short_query = query[:60] + "..." if len(query) > 60 else query
         ks.set_agent_status(f"Searching PubMed: {short_query}")
-        ks.save(ctx.job_dir / "knowledge_state.json")
+        ks.save(ctx.ks_path)
 
         papers = search_pm(query, max_results=max_results)
 
@@ -54,7 +54,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
             results_count=len(papers),
             description=description,
         )
-        ks.save(ctx.job_dir / "knowledge_state.json")
+        ks.save(ctx.ks_path)
 
         if not papers:
             return f"No papers found for query: '{query}'"

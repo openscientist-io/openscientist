@@ -152,6 +152,13 @@ class ToolContext:
     data_file: Path | None = None
     data_files: tuple[Path, ...] = ()
 
+    @property
+    def ks_path(self) -> Path:
+        """Path to the knowledge_state.json file for this job."""
+        from shandy.knowledge_state import KS_FILENAME
+
+        return self.job_dir / KS_FILENAME
+
 
 def build_tool_list(
     job_dir: Path,

@@ -17,7 +17,7 @@ from shandy.async_tasks import create_background_task
 from shandy.database.models import JobDataFile
 from shandy.database.session import AsyncSessionLocal
 from shandy.file_loader import get_file_info
-from shandy.knowledge_state import KnowledgeState
+from shandy.knowledge_state import KS_FILENAME, KnowledgeState
 from shandy.orchestrator.discovery import sync_knowledge_state_to_db
 
 logger = logging.getLogger(__name__)
@@ -144,7 +144,7 @@ def create_job(
     else:
         ks.set_data_summary({"files": [], "file_type": "none", "file_size_mb": 0})
 
-    ks_path = job_dir / "knowledge_state.json"
+    ks_path = job_dir / KS_FILENAME
     ks.save(ks_path)
     # chmod so the agent container (non-root UID) can read and update it.
     ks_path.chmod(0o666)

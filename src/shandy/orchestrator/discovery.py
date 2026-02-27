@@ -23,7 +23,7 @@ from shandy.database.models import JobDataFile
 from shandy.database.models.job import Job as JobModel
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ShandyError
-from shandy.knowledge_state import KnowledgeState
+from shandy.knowledge_state import KS_FILENAME, KnowledgeState
 from shandy.orchestrator.iteration import (
     FeedbackWaitResult,
     _get_job_status,
@@ -275,7 +275,7 @@ async def _run_report_generation_phase(
     research_question: str,
 ) -> _ReportOutcome:
     """Run final report generation iteration and output artifact handling."""
-    ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+    ks = KnowledgeState.load(job_dir / KS_FILENAME)
     report_prompt = build_report_prompt(research_question, ks)
     logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
     report_result = await executor.run_iteration(report_prompt, reset_session=True)
@@ -401,7 +401,7 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) 
     try:
         job_id = job_dir.name
         if ks is None:
-            ks_path = job_dir / "knowledge_state.json"
+            ks_path = job_dir / KS_FILENAME
             if ks_path.exists():
                 ks = KnowledgeState.load(ks_path)
             else:
@@ -528,7 +528,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     )
     logger.info("Created agent executor for job %s", job_id)
 
-    ks_path = job_dir / "knowledge_state.json"
+    ks_path = job_dir / KS_FILENAME
     provenance_dir = job_dir / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
     log_file = job_dir / "claude_iterations.log"
@@ -650,7 +650,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
             research_question=runtime["research_question"],
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
-        ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+        ks = KnowledgeState.load(job_dir / KS_FILENAME)
         sync_knowledge_state_to_db(job_dir, ks)
 
         return {

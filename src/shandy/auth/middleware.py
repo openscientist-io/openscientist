@@ -7,8 +7,7 @@ Supports cookie-backed session authentication.
 
 import inspect
 import logging
-import threading
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from functools import wraps
@@ -19,47 +18,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from shandy.async_tasks import run_sync
 from shandy.database.models import Session, User
 from shandy.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
-
-
-def _run_awaitable_sync[T](awaitable: Coroutine[object, object, T]) -> T:
-    """Run an awaitable safely from sync code.
-
-    NiceGUI page handlers may execute while an event loop is already running.
-    In that case we run in a short-lived thread to avoid nested-loop errors.
-    """
-    try:
-        import asyncio
-
-        asyncio.get_running_loop()
-    except RuntimeError:
-        import asyncio
-
-        return asyncio.run(awaitable)
-
-    result: dict[str, T] = {}
-    error: dict[str, Exception] = {}
-
-    def _runner() -> None:
-        try:
-            import asyncio
-
-            result["value"] = asyncio.run(awaitable)
-        except Exception as exc:
-            error["value"] = exc
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join(timeout=15)
-
-    if thread.is_alive():
-        raise TimeoutError("Timed out validating session in sync auth path")
-    if "value" in error:
-        raise error["value"]
-    return result["value"]
 
 
 async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
@@ -232,7 +195,7 @@ def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
             return None
 
         try:
-            user_info = _run_awaitable_sync(validate_session(session_token))
+            user_info = run_sync(validate_session(session_token))
         except Exception:
             logger.error("Session validation failed in sync auth path", exc_info=True)
             user_info = None

@@ -5,8 +5,6 @@ Handles job lifecycle, status tracking, and cleanup.
 """
 
 import argparse
-import asyncio
-import concurrent.futures
 import json
 import logging
 import shutil
@@ -29,6 +27,7 @@ from shandy.database.rls import set_current_user
 from shandy.database.session import AsyncSessionLocal
 from shandy.exceptions import ProviderError
 from shandy.job.types import JobInfo, JobStatus, JobStatusUpdateResult
+from shandy.knowledge_state import KS_FILENAME
 from shandy.ntfy import notify_job_status_change
 from shandy.orchestrator import create_job
 from shandy.orchestrator import regenerate_report as _regenerate_report
@@ -239,30 +238,14 @@ async def _db_delete_job(job_id: str, user_id: UUID | None = None) -> None:
 
 
 def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
-    """Helper to run async code from sync context.
+    """Run async code from sync context.
 
-    When called from within a running event loop (e.g., NiceGUI handlers),
-    this runs the coroutine in a separate thread with its own event loop
-    and a fresh database session to avoid connection pool conflicts.
+    Thin wrapper around :func:`shandy.async_tasks.run_sync` kept for
+    internal compatibility within this module.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
+    from shandy.async_tasks import run_sync
 
-    if loop is not None:
-        # We're inside a running event loop - run in a separate thread
-        # with a fresh event loop. The coroutine will create its own
-        # database session via AsyncSessionLocal context manager.
-        def run_in_thread() -> T:
-            return asyncio.run(coro)
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_in_thread)
-            return future.result(timeout=30)
-    else:
-        # No running loop - create one
-        return asyncio.run(coro)
+    return run_sync(coro)
 
 
 class JobManager:
@@ -648,7 +631,7 @@ class JobManager:
                 f"(current status: {job_info.status.value})"
             )
 
-        ks_path = self.jobs_dir / job_id / "knowledge_state.json"
+        ks_path = self.jobs_dir / job_id / KS_FILENAME
         if not ks_path.exists():
             raise ValueError(
                 f"Job {job_id} has no knowledge state — nothing to generate a report from"
@@ -977,7 +960,7 @@ class JobManager:
         # (database sync may be async and not yet committed)
         job_id = str(job_model.id)
         job_dir = self.jobs_dir / job_id
-        ks_path = job_dir / "knowledge_state.json"
+        ks_path = job_dir / KS_FILENAME
         iterations_completed, findings_count = _load_progress_from_knowledge_state(
             ks_path=ks_path,
             status=job_model.status,

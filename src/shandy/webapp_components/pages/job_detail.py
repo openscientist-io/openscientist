@@ -17,13 +17,14 @@ from uuid import UUID
 from nicegui import ui
 
 from shandy.artifact_packager import create_artifacts_zip
+from shandy.async_tasks import run_sync
 from shandy.auth import get_current_user_id, require_auth
 from shandy.database.rls import set_current_user
 from shandy.database.session import get_session_ctx
 from shandy.job.types import JobStatus
 from shandy.job_chat import get_chat_history, send_chat_message
-from shandy.job_manager import _db_get_job, _db_get_share_permission, _run_async
-from shandy.knowledge_state import KnowledgeState
+from shandy.job_manager import _db_get_job, _db_get_share_permission
+from shandy.knowledge_state import KS_FILENAME, KnowledgeState
 from shandy.orchestrator.iteration import update_job_status
 from shandy.pdf_generator import markdown_to_pdf
 from shandy.webapp_components.error_handler import get_user_friendly_error
@@ -509,13 +510,13 @@ def _next_iteration_for_feedback(ks_path: Path) -> int:
 def _submit_feedback_and_continue(
     job_dir: Path, job_id: str, completed_iter: int, feedback_text: str
 ) -> None:
-    ks = KnowledgeState.load(job_dir / "knowledge_state.json")
+    ks = KnowledgeState.load(job_dir / KS_FILENAME)
     if feedback_text.strip():
         ks.add_feedback(feedback_text.strip(), completed_iter)
-        ks.save(job_dir / "knowledge_state.json")
+        ks.save(job_dir / KS_FILENAME)
 
     try:
-        _run_async(update_job_status(job_dir, "running"))
+        run_sync(update_job_status(job_dir, "running"))
     except Exception:
         ui.notify("Failed to continue job. Please try again.", type="negative")
         return
@@ -671,7 +672,7 @@ def _render_job_not_found() -> None:
 
 def _load_db_job_for_user(job_id: str, user_id: str) -> Any:
     try:
-        return _run_async(_db_get_job(job_id, user_id=UUID(user_id)))
+        return run_sync(_db_get_job(job_id, user_id=UUID(user_id)))
     except ValueError:
         return None
     except Exception:
@@ -688,7 +689,7 @@ def _resolve_job_permissions(job_id: str, user_id: str, db_job: Any) -> tuple[bo
     is_owner = db_job.owner_id == UUID(user_id)
     if is_owner:
         return True, True
-    share_permission = _run_async(_db_get_share_permission(job_id, UUID(user_id)))
+    share_permission = run_sync(_db_get_share_permission(job_id, UUID(user_id)))
     return False, share_permission == "edit"
 
 
@@ -737,7 +738,7 @@ def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         return None
 
     job_dir = job_manager.jobs_dir / job_id
-    ks_path = job_dir / "knowledge_state.json"
+    ks_path = job_dir / KS_FILENAME
     ks_data, ks_load_error = _load_knowledge_state(ks_path)
     active_timers = setup_timer_cleanup()
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
