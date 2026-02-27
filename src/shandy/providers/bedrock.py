@@ -160,7 +160,7 @@ class BedrockProvider(BaseProvider):
             data_lag_note = "boto3 not installed (pip install boto3)"
 
         except Exception as e:
-            logger.warning(f"Could not fetch AWS cost data: {e}")
+            logger.warning("Could not fetch AWS cost data: %s", e)
             total_spend = None
             recent_spend = None
             data_lag_note = f"Cost data unavailable: {e}"

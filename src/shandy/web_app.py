@@ -8,7 +8,8 @@ import argparse
 import importlib
 import logging
 import os
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -388,9 +389,9 @@ def _jobs_dir_from_env(default: Path = Path("jobs")) -> Path:
     return Path(os.getenv(JOBS_DIR_ENV, str(default)))
 
 
-def _create_lifespan():
+def _create_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     @asynccontextmanager
-    async def lifespan(_host_app: FastAPI):
+    async def lifespan(_host_app: FastAPI) -> AsyncIterator[None]:
         try:
             from shandy.database.engine import get_engine
 

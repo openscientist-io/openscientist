@@ -5,7 +5,7 @@ Base provider interface and shared types.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from shandy.exceptions import ProviderError
@@ -34,7 +34,7 @@ class CostInfo:
     budget_remaining_usd: float | None = None
 
     # Data freshness
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(default_factory=lambda: datetime.now(UTC))
     data_lag_note: str | None = None  # e.g., "Data current as of 6:35 AM ET"
 
     # Provider-specific extras
@@ -159,7 +159,7 @@ class BaseProvider(ABC):
         if cost_info.budget_remaining_usd is not None:
             if cost_info.budget_remaining_usd <= 0:
                 errors.append(
-                    f"{self.name} budget exhausted (${cost_info.budget_limit_usd:.2f} limit)"
+                    f"{self.name} budget exhausted (${cost_info.budget_limit_usd or 0:.2f} limit)"
                 )
             elif cost_info.budget_remaining_usd < 10:
                 warnings.append(

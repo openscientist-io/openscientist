@@ -142,8 +142,8 @@ def send_anthropic_message_with_tools(
     response = client.messages.create(
         model=effective_model,
         max_tokens=max_tokens,
-        system=build_system_blocks(system),  # type: ignore[arg-type]
-        messages=messages,  # type: ignore[arg-type]
+        system=build_system_blocks(system),
+        messages=messages,
         tools=build_tool_params(tools),
     )
     return {

@@ -157,7 +157,9 @@ async def get_current_user_from_api_key(
             await session.execute(update_stmt)
             await session.commit()
         except Exception as e:
-            # Non-critical, log and continue
+            # Non-critical, log and continue — but rollback so the session
+            # is usable for the subsequent user lookup.
+            await session.rollback()
             logger.warning("Failed to update API key usage stats: %s", e)
 
         # Load user

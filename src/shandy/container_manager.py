@@ -241,7 +241,7 @@ class ContainerManager:
         """
         import docker.errors
 
-        timeout = timeout or self.timeout
+        timeout = timeout if timeout is not None else self.timeout
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
 

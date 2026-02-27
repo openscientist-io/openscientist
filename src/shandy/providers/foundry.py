@@ -163,7 +163,7 @@ class FoundryProvider(BaseProvider):
 
         settings = get_settings()
         auth_method = "API key" if settings.provider.anthropic_foundry_api_key else "Entra ID"
-        logger.info(f"Azure Foundry provider initialized (using {auth_method} authentication)")
+        logger.info("Azure Foundry provider initialized (using %s authentication)", auth_method)
 
     @staticmethod
     def _build_base_url_from_resource(resource: str) -> str:
