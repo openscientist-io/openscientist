@@ -35,6 +35,7 @@ from shandy.orchestrator.iteration import (
     wait_for_feedback_or_timeout,
 )
 from shandy.prompts import (
+    generate_job_claude_md,
     get_enabled_skills,
     get_system_prompt,
 )
@@ -357,13 +358,13 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     }
 
 
-async def _write_skills_to_claude_dir(job_dir: Path) -> None:
+async def _write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = False) -> None:
     """Write CLAUDE.md and enabled skill files into job_dir/.claude/."""
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
-    # Always write the chat-agent CLAUDE.md so the chat agent finds it via cwd
-    _write_chat_claude_md(claude_dir)
+    # Write the discovery-agent JOB_CLAUDE.md (hypothesis sections conditional)
+    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses)
 
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
@@ -394,6 +395,16 @@ def _write_chat_claude_md(claude_dir: Path) -> None:
         logger.debug("Wrote chat CLAUDE.md to %s", dest)
     except Exception as e:
         logger.warning("Failed to write chat CLAUDE.md: %s", e)
+
+
+def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
+    """Write generated JOB_CLAUDE.md content to claude_dir/CLAUDE.md."""
+    try:
+        dest = claude_dir / "CLAUDE.md"
+        dest.write_text(generate_job_claude_md(use_hypotheses=use_hypotheses), encoding="utf-8")
+        logger.debug("Wrote job CLAUDE.md to %s (use_hypotheses=%s)", dest, use_hypotheses)
+    except Exception as e:
+        logger.warning("Failed to write job CLAUDE.md: %s", e)
 
 
 def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) -> None:
@@ -519,7 +530,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
 
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir)
+    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
@@ -635,7 +646,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
 
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir)
+    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),

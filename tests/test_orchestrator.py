@@ -512,7 +512,7 @@ class TestWriteSkillsToClaudeDir:
         assert "Stop when done." in content
 
     @pytest.mark.asyncio
-    async def test_always_writes_chat_claude_md(self, tmp_path):
+    async def test_always_writes_job_claude_md(self, tmp_path):
         from shandy.orchestrator.discovery import _write_skills_to_claude_dir
 
         with (
@@ -532,8 +532,8 @@ class TestWriteSkillsToClaudeDir:
         claude_md = tmp_path / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
-        assert "SHANDY Job Chat Assistant" in content
-        assert "knowledge_state.json" in content
+        assert "SHANDY: Scientific Hypothesis Agent for Novel Discovery" in content
+        assert "execute_code" in content
 
     @pytest.mark.asyncio
     async def test_writes_multiple_skill_files(self, tmp_path):

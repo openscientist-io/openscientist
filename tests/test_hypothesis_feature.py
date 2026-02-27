@@ -882,3 +882,145 @@ class TestEndToEndHypothesesFlow:
             )
             call_kwargs = mock_get_executor.call_args[1]
             assert call_kwargs["use_hypotheses"] is False
+
+
+# ---------------------------------------------------------------------------
+# 14. generate_job_claude_md — dynamic JOB_CLAUDE.md generation
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateJobClaudeMd:
+    """generate_job_claude_md() produces correct content based on use_hypotheses."""
+
+    def test_with_hypotheses_contains_hypothesis_tools(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=True)
+        assert "add_hypothesis" in content
+        assert "update_hypothesis" in content
+        assert "Hypothesis Tracking Workflow" in content
+
+    def test_without_hypotheses_omits_hypothesis_tools(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=False)
+        assert "add_hypothesis" not in content
+        assert "update_hypothesis" not in content
+        assert "Hypothesis Tracking Workflow" not in content
+
+    def test_without_hypotheses_still_contains_core_tools(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=False)
+        assert "execute_code" in content
+        assert "search_pubmed" in content
+        assert "update_knowledge_state" in content
+        assert "save_iteration_summary" in content
+        assert "set_status" in content
+        assert "set_job_title" in content
+        assert "set_consensus_answer" in content
+        assert "read_document" in content
+        assert "search_skills" in content
+
+    def test_with_hypotheses_still_contains_core_tools(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=True)
+        assert "execute_code" in content
+        assert "search_pubmed" in content
+        assert "update_knowledge_state" in content
+        assert "save_iteration_summary" in content
+
+    def test_default_is_no_hypotheses(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md()
+        assert "add_hypothesis" not in content
+        assert "update_hypothesis" not in content
+
+    def test_with_hypotheses_includes_hypothesis_approach_steps(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=True)
+        assert "Use `add_hypothesis` to formally record each hypothesis" in content
+        assert "Use `update_hypothesis` to record results" in content
+        assert 'Update hypothesis to `"supported"`' in content
+        assert 'Update hypothesis to `"refuted"`' in content
+
+    def test_without_hypotheses_omits_hypothesis_approach_steps(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=False)
+        assert "Use `add_hypothesis` to formally record" not in content
+        assert "Use `update_hypothesis` to record results" not in content
+        assert 'Update hypothesis to `"supported"`' not in content
+
+    def test_without_hypotheses_has_alternative_interpret_steps(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(use_hypotheses=False)
+        assert "Record confirmed findings to the knowledge state" in content
+        assert "Negative results are also valuable" in content
+
+    def test_returns_string(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        assert isinstance(generate_job_claude_md(use_hypotheses=True), str)
+        assert isinstance(generate_job_claude_md(use_hypotheses=False), str)
+
+    def test_both_variants_have_mission_and_footer(self) -> None:
+        from shandy.prompts import generate_job_claude_md
+
+        for flag in (True, False):
+            content = generate_job_claude_md(use_hypotheses=flag)
+            assert "# SHANDY: Scientific Hypothesis Agent for Novel Discovery" in content
+            assert "You are autonomous" in content
+
+
+# ---------------------------------------------------------------------------
+# 15. _write_skills_to_claude_dir writes JOB_CLAUDE.md
+# ---------------------------------------------------------------------------
+
+
+class TestWriteSkillsToClaudeDirJobClaudeMd:
+    """_write_skills_to_claude_dir writes the correct CLAUDE.md based on use_hypotheses."""
+
+    async def test_writes_job_claude_md_with_hypotheses(self, tmp_path: Path) -> None:
+        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
+
+        with patch(
+            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            side_effect=Exception("no db"),
+        ):
+            await _write_skills_to_claude_dir(tmp_path, use_hypotheses=True)
+
+        claude_md = (tmp_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "add_hypothesis" in claude_md
+        assert "update_hypothesis" in claude_md
+        assert "Hypothesis Tracking Workflow" in claude_md
+
+    async def test_writes_job_claude_md_without_hypotheses(self, tmp_path: Path) -> None:
+        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
+
+        with patch(
+            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            side_effect=Exception("no db"),
+        ):
+            await _write_skills_to_claude_dir(tmp_path, use_hypotheses=False)
+
+        claude_md = (tmp_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "add_hypothesis" not in claude_md
+        assert "update_hypothesis" not in claude_md
+        assert "execute_code" in claude_md
+
+    async def test_default_use_hypotheses_is_false(self, tmp_path: Path) -> None:
+        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
+
+        with patch(
+            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            side_effect=Exception("no db"),
+        ):
+            await _write_skills_to_claude_dir(tmp_path)
+
+        claude_md = (tmp_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "add_hypothesis" not in claude_md
