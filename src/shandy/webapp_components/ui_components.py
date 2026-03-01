@@ -309,8 +309,11 @@ def _get_job_id_badge_html(job_id: str, truncate: bool = True) -> str:
     tooltip = f"View job {job_id}"
 
     # Simple work/document icon
+    # Note: Explicit width/height/style attributes ensure proper sizing even if CSS not loaded
     job_icon = (
-        '<svg class="job-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+        '<svg class="job-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
+        'width="14" height="14" '
+        'style="width:14px;height:14px;min-width:14px;min-height:14px;flex-shrink:0;">'
         '<path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>'
         "</svg>"
     )
@@ -359,7 +362,7 @@ def render_job_id_slot(field_name: str = "job_id") -> str:
                 style="display:inline-flex;align-items:center;padding:2px 8px;background-color:#f3f4f6;border:1px solid #9ca3af;border-radius:4px;text-decoration:none;color:#374151;font-size:0.8em;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-weight:500;cursor:pointer;white-space:nowrap;"
                 @click="$parent.$emit('view-job', props.row.{field_name})"
             >
-                <svg style="width:14px;height:14px;margin-right:4px;fill:currentColor;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <svg width="14" height="14" style="width:14px;height:14px;min-width:14px;min-height:14px;margin-right:4px;fill:currentColor;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                     <path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>
                 </svg>
                 {{{{ props.row.{field_name}.substring(0, 8) }}}}
@@ -1065,7 +1068,9 @@ def _render_navigation_brand() -> None:
         with ui.element("div").classes(
             "w-10 h-10 rounded-full bg-white flex items-center justify-center"
         ):
-            ui.image("/assets/logo.svg").classes("w-8 h-8")
+            ui.image("/assets/logo.svg").classes("w-8 h-8").style(
+                "width:32px;height:32px;min-width:32px;min-height:32px;"
+            )
         ui.label("SHANDY").classes("text-white text-h5 font-bold")
 
 
@@ -2130,7 +2135,9 @@ def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
         "items-center gap-3 py-3 px-4 bg-cyan-50 rounded-lg border border-cyan-200"
     ) as container:
         # Animated SHANDY logo (compact size)
-        ui.html(SHANDY_THINKING_SVG, sanitize=False).classes("w-6 h-6")
+        ui.html(SHANDY_THINKING_SVG, sanitize=False).classes("w-6 h-6").style(
+            "width:24px;height:24px;min-width:24px;min-height:24px;flex-shrink:0;"
+        )
         # Status text
         ui.label(status_text).classes("text-cyan-700 italic thinking-label")
 
