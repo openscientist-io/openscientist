@@ -49,6 +49,32 @@ uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 ```
 
+## Legacy Job Migration (Filesystem -> DB)
+
+Use this when migrating old on-disk jobs (from pre-user versions) into the
+database-backed model.
+
+### Prerequisites
+
+- Database is running (for local dev: `docker compose -f docker-compose.yml up -d postgres`)
+- Dependencies are installed (`uv sync`)
+- Legacy job folders exist (default path: `jobs/`)
+
+### Trigger Migration
+
+```bash
+# Safe preview (no database writes)
+uv run python -m shandy.job_manager bootstrap --jobs-dir jobs --dry-run
+
+# Apply migration
+uv run python -m shandy.job_manager bootstrap --jobs-dir jobs
+```
+
+The bootstrap command currently supports:
+- `--jobs-dir`
+- `--dry-run`
+
+
 ## Docker
 
 ```bash

@@ -252,16 +252,10 @@ missing DB rows and migrate metadata:
 python -m shandy.job_manager bootstrap --jobs-dir jobs
 ```
 
-Keep unresolved ownership as orphaned (`owner_id=NULL`) by default, or assign
-orphans to a legacy placeholder user:
+Current bootstrap flags: `--jobs-dir`, `--dry-run`.
 
-```bash
-python -m shandy.job_manager bootstrap \
-  --jobs-dir jobs \
-  --legacy-user-email legacy@example.com \
-  --legacy-user-name "Legacy User" \
-  --assign-orphans-to-legacy
-```
+Jobs with unresolved ownership are migrated as orphaned (`owner_id=NULL`) and
+can be assigned later from the admin UI.
 
 Preview only (no writes):
 
