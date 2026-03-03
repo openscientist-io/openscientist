@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from nicegui import app, ui
-from sqlalchemy import String, select
+from sqlalchemy import select
 
+from shandy.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from shandy.auth.middleware import get_current_user_id, require_admin, require_auth
 from shandy.database.models import Job, User
 from shandy.database.session import get_admin_session
@@ -154,20 +155,7 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = "") -> No
     try:
         # Use admin session to query all orphaned jobs regardless of current user
         async with get_admin_session() as session:
-            # Query orphaned jobs (owner_id IS NULL)
-            stmt = select(Job).where(Job.owner_id.is_(None))
-
-            # Add search filter if provided
-            if search_query:
-                stmt = stmt.where(
-                    Job.title.ilike(f"%{search_query}%")
-                    | Job.id.cast(String).ilike(f"%{search_query}%")
-                )
-
-            stmt = stmt.order_by(Job.created_at.desc())
-
-            result = await session.execute(stmt)
-            orphaned_jobs = result.scalars().all()
+            orphaned_jobs = await list_orphaned_jobs(session, search_query=search_query)
 
         if not orphaned_jobs:
             with container:
@@ -269,22 +257,33 @@ async def show_assign_dialog(job_id: str) -> None:
                 return
 
             try:
+                selected_user_id = UUID(str(selected_user["id"]))
                 async with get_admin_session() as session:
-                    stmt = select(Job).where(Job.id == UUID(job_id))
-                    result = await session.execute(stmt)
-                    job = result.scalar_one_or_none()
+                    result = await assign_orphaned_job(
+                        session=session,
+                        job_id=UUID(job_id),
+                        user_id=selected_user_id,
+                    )
 
-                    if not job:
-                        ui.notify("Job not found", color="negative")
-                        return
+                if result.ok:
+                    ui.notify("Job assigned successfully", color="positive")
+                    dialog.close()
+                    ui.navigate.reload()
+                    return
 
-                    job.owner_id = selected_user["id"]
-                    await session.commit()
+                if result.reason == "job_not_found":
+                    ui.notify("Job not found", color="negative")
+                    return
+                if result.reason == "already_owned":
+                    ui.notify("Job is no longer orphaned", color="warning")
+                    return
+                if result.reason == "user_not_found":
+                    ui.notify("Selected user was not found", color="negative")
+                    return
 
-                ui.notify("Job assigned successfully", color="positive")
-                dialog.close()
-                ui.navigate.reload()
-
+                ui.notify("Failed to assign job", color="negative")
+            except (TypeError, KeyError, ValueError):
+                ui.notify("Invalid user selection", color="negative")
             except Exception as e:
                 logger.error("Error assigning job: %s", e, exc_info=True)
                 ui.notify("Failed to assign job. Check server logs.", color="negative")
