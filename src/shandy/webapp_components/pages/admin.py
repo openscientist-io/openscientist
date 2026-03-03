@@ -103,7 +103,7 @@ async def admin_page() -> None:
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
 
-        with ui.tab_panels(tabs, value=orphaned_tab).classes("w-full"):
+        with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
             # Orphaned Jobs Panel
             with ui.tab_panel(orphaned_tab):
                 await render_orphaned_jobs_panel()

@@ -15,6 +15,7 @@ from shandy.database.models import Job, User
 from shandy.database.rls import set_current_user
 from shandy.webapp_components.pages.admin import (
     _filter_users_for_admin_table,
+    admin_page,
     set_user_approval_status,
 )
 from tests.helpers import fake_admin_session
@@ -500,3 +501,11 @@ def test_filter_users_for_admin_table_hides_current_user():
     )
 
     assert [user.id for user in filtered] == [other_user.id]
+
+
+def test_admin_page_defaults_to_users_tab():
+    """Admin page should open on Users tab for quick approvals."""
+    import inspect
+
+    source = inspect.getsource(admin_page)
+    assert "with ui.tab_panels(tabs, value=users_tab).classes(\"w-full\"):" in source
