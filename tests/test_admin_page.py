@@ -508,4 +508,4 @@ def test_admin_page_defaults_to_users_tab():
     import inspect
 
     source = inspect.getsource(admin_page)
-    assert "with ui.tab_panels(tabs, value=users_tab).classes(\"w-full\"):" in source
+    assert 'with ui.tab_panels(tabs, value=users_tab).classes("w-full"):' in source
