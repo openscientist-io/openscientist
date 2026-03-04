@@ -2,11 +2,11 @@
 
 ## Overview
 
-This document describes how to implement an automatic safety mechanism to prevent runaway costs when using SHANDY with Google Vertex AI. The safety net automatically disables the service account when spending exceeds budget limits.
+This document describes how to implement an automatic safety mechanism to prevent runaway costs when using Open Scientist with Google Vertex AI. The safety net automatically disables the service account when spending exceeds budget limits.
 
 **Status**: Not yet implemented. This is a planned enhancement for production deployments.
 
-**Why this is needed**: While SHANDY has application-level budget controls (`MAX_PROJECT_SPEND_TOTAL_USD`, `MAX_PROJECT_SPEND_24H_USD`), these rely on billing data being available via BigQuery export. If billing export is not enabled or has significant lag, costs could exceed limits before detection. This GCP-side safety net provides a hard stop at the infrastructure level.
+**Why this is needed**: While Open Scientist has application-level budget controls (`MAX_PROJECT_SPEND_TOTAL_USD`, `MAX_PROJECT_SPEND_24H_USD`), these rely on billing data being available via BigQuery export. If billing export is not enabled or has significant lag, costs could exceed limits before detection. This GCP-side safety net provides a hard stop at the infrastructure level.
 
 ## Architecture
 
@@ -37,18 +37,18 @@ The safety net uses Google Cloud's native budget alerting integrated with automa
 1. GCP Billing sends alert to Pub/Sub topic
 2. Cloud Run service receives Pub/Sub message
 3. Service disables the service account JSON key via IAM API
-4. SHANDY can no longer make Vertex AI API calls
+4. Open Scientist can no longer make Vertex AI API calls
 5. Admin is notified and can investigate
 
 **Recovery:**
 - Keys can be re-enabled via `gcloud` CLI or Cloud Console
-- No data loss - SHANDY jobs fail gracefully
+- No data loss - Open Scientist jobs fail gracefully
 - Service can resume once budget is addressed
 
 ## Prerequisites
 
 - GCP project with billing enabled
-- Service account created for SHANDY (from VERTEX_SETUP.md)
+- Service account created for Open Scientist (from VERTEX_SETUP.md)
 - Billing Account Admin role (to create budget alerts)
 - Cloud Run API enabled
 - Pub/Sub API enabled
@@ -197,7 +197,7 @@ gcloud run deploy budget-enforcer \
     --platform managed \
     --region us-central1 \
     --allow-unauthenticated \
-    --set-env-vars SERVICE_ACCOUNT_EMAIL=shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com,GCP_PROJECT_ID=${PROJECT_ID}
+    --set-env-vars SERVICE_ACCOUNT_EMAIL=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com,GCP_PROJECT_ID=${PROJECT_ID}
 
 # Note the service URL from deployment output
 ```
@@ -246,7 +246,7 @@ gcloud pubsub subscriptions create budget-alerts-sub \
 1. Go to [Cloud Console > Billing > Budgets & alerts](https://console.cloud.google.com/billing/budgets)
 2. Click **Create Budget**
 3. **Scope**:
-   - Projects: Select your SHANDY project
+   - Projects: Select your Open Scientist project
    - Services: Select "Vertex AI" only
 4. **Amount**:
    - Budget type: Specified amount
@@ -267,7 +267,7 @@ export BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
 # Create budget (example: $100 USD)
 gcloud billing budgets create \
     --billing-account=$BILLING_ACCOUNT_ID \
-    --display-name="SHANDY Vertex AI Budget" \
+    --display-name="Open Scientist Vertex AI Budget" \
     --budget-amount=100USD \
     --threshold-rule=percent=100 \
     --filter-projects=projects/$PROJECT_ID \
@@ -285,7 +285,7 @@ Set a very low budget (e.g., $1) to test the mechanism without spending much:
 # Create test budget
 gcloud billing budgets create \
     --billing-account=$BILLING_ACCOUNT_ID \
-    --display-name="SHANDY Test Budget" \
+    --display-name="Open Scientist Test Budget" \
     --budget-amount=1USD \
     --threshold-rule=percent=100 \
     --filter-projects=projects/$PROJECT_ID \
@@ -293,10 +293,10 @@ gcloud billing budgets create \
     --pubsub-topic=projects/$PROJECT_ID/topics/budget-alerts
 ```
 
-Run a SHANDY job and monitor:
+Run a Open Scientist job and monitor:
 1. Check Cloud Run logs for incoming budget alerts
 2. Verify service account key is disabled when $1 threshold crossed
-3. Confirm SHANDY job fails with authentication error
+3. Confirm Open Scientist job fails with authentication error
 
 ### Manual Testing
 
@@ -320,7 +320,7 @@ Check if keys are disabled:
 
 ```bash
 gcloud iam service-accounts keys list \
-    --iam-account=shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 ## Recovery Procedure
@@ -341,19 +341,19 @@ Check spending in [GCP Billing Reports](https://console.cloud.google.com/billing
 ```bash
 # List keys (will show disabled keys)
 gcloud iam service-accounts keys list \
-    --iam-account=shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 
 # Note the KEY_ID from the output
 
 # Re-enable the key
 gcloud iam service-accounts keys enable KEY_ID \
-    --iam-account=shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 **Via Cloud Console:**
 
 1. Go to [IAM & Admin > Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
-2. Click on `shandy-vertex@...`
+2. Click on `open_scientist-vertex@...`
 3. Go to **Keys** tab
 4. Find the disabled key
 5. Click **Enable**
@@ -369,10 +369,10 @@ gcloud billing budgets update BUDGET_ID \
     --budget-amount=500USD
 ```
 
-### 4. Resume SHANDY Operations
+### 4. Resume Open Scientist Operations
 
 Once the key is re-enabled:
-- SHANDY can immediately resume making Vertex AI calls
+- Open Scientist can immediately resume making Vertex AI calls
 - Queued jobs will automatically retry
 - No application restart needed
 
@@ -410,7 +410,7 @@ In addition to the automatic key disabling, configure email alerts:
 
 ### Service Disruption
 
-- **Impact**: When keys are disabled, ALL SHANDY jobs fail immediately
+- **Impact**: When keys are disabled, ALL Open Scientist jobs fail immediately
 - **Data loss**: Jobs in progress will fail, potentially losing partial results
 - **Recovery time**: Minutes (time to investigate + re-enable key)
 
@@ -423,12 +423,12 @@ GCP billing data has a lag (typically 1-6 hours). The safety net triggers based 
 **Implication**: If you make $200 in API calls in 5 minutes, the budget alert may not trigger for hours. By then, spending could be much higher.
 
 **Mitigation**:
-1. Use application-level controls (SHANDY's `MAX_PROJECT_SPEND_24H_USD`) for real-time protection
+1. Use application-level controls (Open Scientist's `MAX_PROJECT_SPEND_24H_USD`) for real-time protection
 2. Set GCP budget as a hard backstop, not primary protection
 
 ### Multiple Environments
 
-If running multiple SHANDY instances (dev, staging, prod):
+If running multiple Open Scientist instances (dev, staging, prod):
 
 **Option 1**: Separate projects (recommended)
 - Each environment in its own GCP project

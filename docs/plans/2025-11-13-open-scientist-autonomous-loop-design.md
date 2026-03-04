@@ -1,4 +1,4 @@
-# SHANDY: Scientific Hypothesis Agent for Novel Discovery
+# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
 ## Autonomous Loop Architecture Design
 
 **Date:** 2025-11-13
@@ -9,7 +9,7 @@
 
 ## Overview
 
-**SHANDY** is an autonomous scientific discovery agent that:
+**Open Scientist** is an autonomous scientific discovery agent that:
 1. Accepts data files and a research question
 2. Runs for N iterations autonomously (hours, not minutes)
 3. Generates hypotheses, tests them, searches literature
@@ -73,12 +73,12 @@
 
 **User workflow:**
 ```bash
-# Start SHANDY container
+# Start Open Scientist container
 docker run -p 8602:8602 \
            -v ./my-data:/data \
            -v ./results:/jobs \
            -e ANTHROPIC_AUTH_TOKEN=$CBORG_API_KEY \
-           shandy
+           open_scientist
 
 # Access web UI
 open http://localhost:8602
@@ -731,7 +731,7 @@ Current Job:
 
 ```python
 #!/usr/bin/env python
-"""SHANDY - Scientific Hypothesis Agent for Novel Discovery"""
+"""Open Scientist - Scientific Hypothesis Agent for Novel Discovery"""
 
 import asyncio
 import logging
@@ -760,7 +760,7 @@ async def index():
     """Main page - job creation and management"""
 
     # Header
-    ui.markdown("# SHANDY")
+    ui.markdown("# Open Scientist")
     ui.markdown("_Scientific Hypothesis Agent for Novel Discovery_")
 
     # Budget display
@@ -906,7 +906,7 @@ async def job_page(job_id: str):
 
 if __name__ == "__main__":
     ui.run(
-        title="SHANDY - Autonomous Discovery Agent",
+        title="Open Scientist - Autonomous Discovery Agent",
         port=PORT,
         storage_secret=STORAGE_SECRET
     )
@@ -917,7 +917,7 @@ if __name__ == "__main__":
 ## Project Structure
 
 ```
-shandy/                          # Renamed from ad-swarm
+open_scientist/                          # Renamed from ad-swarm
 ├── app.py                       # NiceGUI web interface
 ├── Dockerfile                   # Single container for entire system
 ├── docker-compose.yml
@@ -979,7 +979,7 @@ shandy/                          # Renamed from ad-swarm
 │
 ├── docs/
 │   ├── plans/
-│   │   └── 2025-11-13-shandy-autonomous-loop-design.md  # This document
+│   │   └── 2025-11-13-open_scientist-autonomous-loop-design.md  # This document
 │   └── user_guide.md
 │
 └── notes/                       # Keep existing notes
@@ -1030,7 +1030,7 @@ PORT := $(shell grep '^PORT=' .env 2>/dev/null | cut -d '=' -f 2)
 
 start:
 	docker-compose up -d
-	@echo "SHANDY running at http://localhost:$(PORT)"
+	@echo "Open Scientist running at http://localhost:$(PORT)"
 
 stop:
 	docker-compose down
@@ -1052,7 +1052,7 @@ deploy:
 version: '3.8'
 
 services:
-  shandy:
+  open_scientist:
     build: .
     ports:
       - "${PORT}:${PORT}"
@@ -1075,7 +1075,7 @@ services:
 **Goal:** Validate agent's autonomous discovery capabilities on real scientific datasets
 
 **Success criteria:**
-1. Run SHANDY on metabolomics datasets with known biological phenomena
+1. Run Open Scientist on metabolomics datasets with known biological phenomena
 2. Agent autonomously discovers mechanistic insights
 3. Domain experts review final report and validate:
    - Are findings biologically plausible?
@@ -1157,7 +1157,7 @@ Migrate from direct Python function tools to MCP servers:
 ## Next Steps
 
 1. ✅ **Design complete** (this document)
-2. ⬜ Set up project structure (`shandy/` repository)
+2. ⬜ Set up project structure (`open_scientist/` repository)
 3. ⬜ Implement core orchestrator loop
 4. ⬜ Implement code executor with sandboxing
 5. ⬜ Create minimal workflow skills

@@ -1,4 +1,4 @@
-# SHANDY-Phenix Integration Design
+# Open Scientist-Phenix Integration Design
 
 **Date:** 2025-11-20
 **Author:** Justin Reese
@@ -7,7 +7,7 @@
 
 ## Overview
 
-This document describes the integration of Phenix (macromolecular structure determination software) into SHANDY as a proof of concept for autonomous structural biology analysis.
+This document describes the integration of Phenix (macromolecular structure determination software) into Open Scientist as a proof of concept for autonomous structural biology analysis.
 
 ### Problem Statement
 
@@ -21,7 +21,7 @@ This is time-consuming and requires deep expertise. An autonomous agent can iter
 
 ### Key Use Case (Proof of Concept)
 
-Given an experimental PDB/mmCIF file and an AlphaFold prediction, SHANDY-Phenix will:
+Given an experimental PDB/mmCIF file and an AlphaFold prediction, Open Scientist-Phenix will:
 1. Compare structures and identify regions of disagreement
 2. Generate hypotheses about why discrepancies exist
 3. Test hypotheses using Phenix validation tools
@@ -40,13 +40,13 @@ Given an experimental PDB/mmCIF file and an AlphaFold prediction, SHANDY-Phenix 
 
 ### Integration Approach
 
-**Domain extension (not fork)** - SHANDY-Phenix extends SHANDY as a new domain, similar to how metabolomics and genomics are handled. This keeps the codebase unified while allowing domain-specific capabilities.
+**Domain extension (not fork)** - Open Scientist-Phenix extends Open Scientist as a new domain, similar to how metabolomics and genomics are handled. This keeps the codebase unified while allowing domain-specific capabilities.
 
 ### New Components
 
 #### 1. MCP Tools
 
-**Location:** `src/shandy/mcp_server/phenix_tools.py` (new file)
+**Location:** `src/open_scientist/mcp_server/phenix_tools.py` (new file)
 
 Add three new MCP tools for Phenix operations:
 
@@ -72,7 +72,7 @@ Add three new MCP tools for Phenix operations:
 Tools are conditionally registered only if `PHENIX_PATH` is configured:
 
 ```python
-# In src/shandy/mcp_server/server.py
+# In src/open_scientist/mcp_server/server.py
 phenix_path = os.getenv('PHENIX_PATH')
 if phenix_path:
     from . import phenix_tools
@@ -97,7 +97,7 @@ These skills provide the agent with structural biology domain knowledge.
 
 #### 3. File Upload Handling
 
-**Location:** `src/shandy/web_app.py`
+**Location:** `src/open_scientist/web_app.py`
 
 Extend file upload to support PDB/mmCIF formats:
 
@@ -122,13 +122,13 @@ Update file handling logic:
 # If not set, Phenix tools will be unavailable
 PHENIX_PATH=/Applications/phenix-1.21.2-5419
 
-# Note: Allowed file extensions are configured in src/shandy/web_app.py
+# Note: Allowed file extensions are configured in src/open_scientist/web_app.py
 # Currently supports: .csv, .tsv, .pdb, .cif, .ent, .mmcif
 ```
 
 **Phenix environment setup:**
 
-Create `src/shandy/phenix_setup.py`:
+Create `src/open_scientist/phenix_setup.py`:
 
 ```python
 import os
@@ -233,7 +233,7 @@ While the agent is fully autonomous, a typical workflow might follow this patter
 
 **File structure:**
 ```
-src/shandy/mcp_server/
+src/open_scientist/mcp_server/
 ├── __init__.py
 ├── server.py           # Core tools (execute_code, search_pubmed, etc.)
 ├── phenix_tools.py     # Phenix-specific tools (new)
@@ -247,7 +247,7 @@ async def run_phenix_tool(tool_name: str, input_files: list[str],
     """Execute a Phenix command-line tool"""
 
     # Get Phenix environment
-    from shandy.phenix_setup import setup_phenix_env
+    from open_scientist.phenix_setup import setup_phenix_env
     phenix_env = setup_phenix_env()
     if not phenix_env:
         return [types.TextContent(
@@ -396,7 +396,7 @@ Create `tests/test_phenix_integration.py`:
 
 ## Migration Path
 
-### Current SHANDY Users
+### Current Open Scientist Users
 - **No impact** - Phenix tools only load if `PHENIX_PATH` set
 - Existing metabolomics/genomics jobs work unchanged
 - Can add structural biology by setting environment variable

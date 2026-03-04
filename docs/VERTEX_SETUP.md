@@ -1,17 +1,17 @@
-# Google Vertex AI Setup for SHANDY
+# Google Vertex AI Setup for Open Scientist
 
-This guide explains how to configure SHANDY to use Google Cloud Vertex AI instead of CBORG for model access.
+This guide explains how to configure Open Scientist to use Google Cloud Vertex AI instead of CBORG for model access.
 
 ## Overview
 
-Vertex AI provides access to Claude models through Google Cloud. SHANDY integrates with Vertex AI for model calls and optionally uses BigQuery billing export for cost tracking.
+Vertex AI provides access to Claude models through Google Cloud. Open Scientist integrates with Vertex AI for model calls and optionally uses BigQuery billing export for cost tracking.
 
 ### What is BigQuery Billing Export?
 
-**Purpose**: BigQuery billing export is used for **cost tracking** in SHANDY. Unlike CBORG (which provides real-time cost APIs), Vertex AI doesn't have a direct cost API. Instead, GCP exports billing data to BigQuery tables, which SHANDY queries to show your spending.
+**Purpose**: BigQuery billing export is used for **cost tracking** in Open Scientist. Unlike CBORG (which provides real-time cost APIs), Vertex AI doesn't have a direct cost API. Instead, GCP exports billing data to BigQuery tables, which Open Scientist queries to show your spending.
 
 **Is it required?** **NO** - BigQuery billing export is **completely optional**:
-- ✅ **Without it**: SHANDY works perfectly fine. Jobs will run normally using Vertex AI. You just won't see cost information in the web UI.
+- ✅ **Without it**: Open Scientist works perfectly fine. Jobs will run normally using Vertex AI. You just won't see cost information in the web UI.
 - ✅ **With it**: You get cost tracking in the web UI (total spend, last 24h spend, budget warnings)
 
 **Data lag**: GCP billing data has a 1-6 hour lag. The web UI displays an estimated data freshness timestamp when billing export is configured.
@@ -42,7 +42,7 @@ gcloud config set project $PROJECT_ID
 gcloud services enable aiplatform.googleapis.com
 
 # Enable Cloud Billing API (REQUIRED - to list billing accounts)
-# This allows SHANDY to query your billing account ID
+# This allows Open Scientist to query your billing account ID
 gcloud services enable cloudbilling.googleapis.com
 
 # Enable BigQuery API (OPTIONAL - only if you want cost tracking)
@@ -57,36 +57,36 @@ Create a service account with permissions to call Vertex AI and read billing dat
 
 ```bash
 # Create service account
-gcloud iam service-accounts create shandy-vertex \
-    --display-name="SHANDY Vertex AI Service Account"
+gcloud iam service-accounts create open_scientist-vertex \
+    --display-name="Open Scientist Vertex AI Service Account"
 
 # Grant Vertex AI User role
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/aiplatform.user"
 
 # Grant BigQuery Data Viewer role (for billing data)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/bigquery.dataViewer"
 
 # Grant BigQuery Job User role (to run queries)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/bigquery.jobUser"
 
 # Download service account key
-gcloud iam service-accounts keys create ~/shandy-vertex-key.json \
-    --iam-account=shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+gcloud iam service-accounts keys create ~/open_scientist-vertex-key.json \
+    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 **Security Note**: Store the service account key securely. Do not commit it to git.
 
 ## Step 3: Enable BigQuery Billing Export (OPTIONAL)
 
-**This step is optional.** If you skip this, SHANDY will work fine but won't display cost information in the web UI.
+**This step is optional.** If you skip this, Open Scientist will work fine but won't display cost information in the web UI.
 
-Cost tracking in SHANDY uses BigQuery billing export:
+Cost tracking in Open Scientist uses BigQuery billing export:
 
 ### 3.1 Enable Billing Export in Console
 
@@ -154,7 +154,7 @@ Recommended regions for Claude models:
 - **us-central1**: Alternative region
 - **europe-west1**: European alternative
 
-## Step 5: Configure SHANDY Environment
+## Step 5: Configure Open Scientist Environment
 
 Create or update your `.env` file:
 
@@ -168,7 +168,7 @@ CLAUDE_PROVIDER=vertex
 
 # Vertex AI configuration
 ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/shandy-vertex-key.json
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/open_scientist-vertex-key.json
 CLOUD_ML_REGION=us-east5
 VERTEX_REGION_CLAUDE_4_5_SONNET=us-east5
 VERTEX_REGION_CLAUDE_4_5_HAIKU=us-east5
@@ -185,7 +185,7 @@ MAX_PROJECT_SPEND_TOTAL_USD=1000
 MAX_PROJECT_SPEND_24H_USD=50
 
 # Dev mode - enables mock OAuth login for development
-SHANDY_DEV_MODE=true
+OPEN_SCIENTIST_DEV_MODE=true
 ```
 
 ### Environment Variable Reference
@@ -209,7 +209,7 @@ SHANDY_DEV_MODE=true
 ```bash
 # Activate service account
 gcloud auth activate-service-account \
-    --key-file=/path/to/shandy-vertex-key.json
+    --key-file=/path/to/open_scientist-vertex-key.json
 
 # Test Vertex AI access
 gcloud ai models list --region=us-east5 --limit=5
@@ -218,14 +218,14 @@ gcloud ai models list --region=us-east5 --limit=5
 bq ls billing_export
 ```
 
-### 6.2 Test SHANDY Provider
+### 6.2 Test Open Scientist Provider
 
-Start SHANDY and check the logs:
+Start Open Scientist and check the logs:
 
 ```bash
 # With Docker
 docker-compose up -d
-docker logs shandy-shandy-1
+docker logs open_scientist-open_scientist-1
 
 # You should see:
 # INFO - Vertex AI provider environment configured
@@ -248,7 +248,7 @@ Visit http://localhost:8080/new and check the budget information card. It should
 Monitor the logs for Vertex AI API calls:
 
 ```bash
-docker logs -f shandy-shandy-1
+docker logs -f open_scientist-open_scientist-1
 ```
 
 ## Troubleshooting
@@ -261,7 +261,7 @@ docker logs -f shandy-shandy-1
 ```bash
 # Re-add IAM roles
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:shandy-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/aiplatform.user"
 ```
 
@@ -269,7 +269,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 **Symptom**: Logs show "Failed to fetch cost info from Vertex AI" or web UI doesn't display cost information.
 
-**Is this a problem?** **NO** - This is completely normal if you haven't set up BigQuery billing export (Step 3). SHANDY will work fine; you just won't see cost tracking in the web UI.
+**Is this a problem?** **NO** - This is completely normal if you haven't set up BigQuery billing export (Step 3). Open Scientist will work fine; you just won't see cost tracking in the web UI.
 
 **If you want cost tracking:**
 1. Verify billing export is enabled in Cloud Console (see Step 3.1)
@@ -313,7 +313,7 @@ bq query --project_id=$PROJECT_ID \
 
 ## Budget Protection: Quotas and Safety Nets
 
-SHANDY uses a **two-layer protection system** to prevent runaway costs on Vertex AI:
+Open Scientist uses a **two-layer protection system** to prevent runaway costs on Vertex AI:
 
 1. **Layer 1: GCP Quotas** (instant enforcement, hard limits)
 2. **Layer 2: Pub/Sub Budget Safety Net** (monthly backstop, auto-disables service account)
@@ -500,7 +500,7 @@ gcloud run deploy budget-enforcer \
   --platform managed \
   --region us-east5 \
   --allow-unauthenticated \
-  --set-env-vars SERVICE_ACCOUNT_EMAIL=shandy-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com,GCP_PROJECT_ID=YOUR_PROJECT_ID \
+  --set-env-vars SERVICE_ACCOUNT_EMAIL=open_scientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com,GCP_PROJECT_ID=YOUR_PROJECT_ID \
   --project=YOUR_PROJECT_ID
 ```
 
@@ -595,13 +595,13 @@ When the safety net triggers, you must manually re-enable the key:
 ```bash
 # 1. List keys to find the disabled one
 gcloud iam service-accounts keys list \
-  --iam-account=shandy-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
+  --iam-account=open_scientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
 
 # Output shows KEY_ID and status
 
 # 2. Re-enable the key (replace KEY_ID with actual ID from above)
 gcloud iam service-accounts keys enable KEY_ID \
-  --iam-account=shandy-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
+  --iam-account=open_scientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
 **Via Console UI:**
@@ -646,7 +646,7 @@ gcloud logging read \
 - **Use Haiku for simple tasks**: Set `ANTHROPIC_SMALL_FAST_MODEL` appropriately
 - **Set budget limits**: Use `MAX_PROJECT_SPEND_*` variables to prevent overruns
 - **Monitor in GCP Console**: [Billing Reports](https://console.cloud.google.com/billing) shows real-time trends
-- **Clean up old jobs**: Run `python -m shandy.job_manager cleanup --days 7`
+- **Clean up old jobs**: Run `python -m open_scientist.job_manager cleanup --days 7`
 - **Review quotas regularly**: Adjust based on actual usage patterns
 
 ## Additional Resources
@@ -662,5 +662,5 @@ gcloud logging read \
 1. **Least Privilege**: Service account has only required roles
 2. **Key Rotation**: Rotate service account keys regularly
 3. **Key Storage**: Never commit `.json` keys to git (already in `.gitignore`)
-4. **Budget Alerts**: Set up GCP budget alerts in addition to SHANDY limits. For production deployments, consider implementing the automatic safety net described in [VERTEX_BUDGET_SAFETY.md](VERTEX_BUDGET_SAFETY.md) to automatically disable service account keys when budget is exceeded
+4. **Budget Alerts**: Set up GCP budget alerts in addition to Open Scientist limits. For production deployments, consider implementing the automatic safety net described in [VERTEX_BUDGET_SAFETY.md](VERTEX_BUDGET_SAFETY.md) to automatically disable service account keys when budget is exceeded
 5. **Audit Logs**: Enable Cloud Audit Logs for Vertex AI API calls

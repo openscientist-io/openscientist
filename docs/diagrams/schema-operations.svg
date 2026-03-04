@@ -23,7 +23,7 @@
   <symbol id="icon-coins" viewBox="0 0 24 24"><path d="M12 2C6.5 2 2 4.2 2 7s4.5 5 10 5 10-2.2 10-5-4.5-5-10-5ZM2 10c0 2.8 4.5 5 10 5s10-2.2 10-5v4c0 2.8-4.5 5-10 5S2 16.8 2 14ZM2 17c0 2.8 4.5 5 10 5s10-2.2 10-5v3c0 2.8-4.5 5-10 5S2 22.8 2 20Z"/></symbol>
   <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M2 2v18a2 2 0 0 0 2 2h18v-2H4V2ZM8 18h3V10H8ZM14 18h3V6h-3Z"/></symbol>
   <symbol id="icon-rotate" viewBox="0 0 24 24"><path d="M12 4V1l5 4-5 4V6a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8Z"/></symbol>
-<text x="456" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">SHANDY — Operations &amp; Logging</text>
+<text x="456" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">Open Scientist — Operations &amp; Logging</text>
 <text x="456" y="48" font-size="10" fill="#616161" text-anchor="middle">7 tables  ·  RLS enabled  ·  PostgreSQL 18 UUIDv7</text>
 <path d="M 280 535 C 310 530, 325 478, 355 474" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
 <circle cx="355" cy="474" r="3" fill="#607D8B" opacity="0.8"/>
@@ -215,7 +215,7 @@
 <use href="#icon-chart" x="821" y="1003" width="12" height="12" fill="#616161"/>
 <text x="837" y="1012" font-size="9" fill="#616161" text-anchor="start">plots</text>
 <text x="40" y="1044" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Overview</text>
-<text x="52" y="1060" font-size="9" fill="#616161" text-anchor="start">Operational tables record every artefact produced during a SHANDY analysis run — uploaded data, dialogue, billing, step-by-step logs, iteration metrics, user feedback and generated plots.</text>
+<text x="52" y="1060" font-size="9" fill="#616161" text-anchor="start">Operational tables record every artefact produced during a Open Scientist analysis run — uploaded data, dialogue, billing, step-by-step logs, iteration metrics, user feedback and generated plots.</text>
 <text x="40" y="1088" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Tables</text>
 <use href="#icon-file" x="40" y="1097" width="12" height="12" fill="#616161"/>
 <text x="60" y="1106" font-size="9" fill="#212121" text-anchor="start" font-weight="600">JOB_DATA_FILES</text>

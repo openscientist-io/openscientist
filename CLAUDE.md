@@ -1,11 +1,11 @@
-# SHANDY Development Guide
+# Open Scientist Development Guide
 
-SHANDY (Scientific Hypothesis Agent for Novel Discovery) is a web application that runs autonomous AI agents for scientific data analysis and hypothesis testing.
+Open Scientist (Scientific Hypothesis Agent for Novel Discovery) is a web application that runs autonomous AI agents for scientific data analysis and hypothesis testing.
 
 ## Project Structure
 
 ```text
-src/shandy/
+src/open_scientist/
 ├── agent/            # AgentExecutor protocol and SDKAgentExecutor
 ├── api/              # FastAPI REST endpoints
 ├── auth/             # Authentication (OAuth, sessions, middleware)
@@ -30,14 +30,14 @@ uv sync
 
 # Set up environment variables (see .env.example)
 export DATABASE_URL="postgresql+asyncpg://..."
-export SHANDY_SECRET_KEY="$(openssl rand -hex 32)"
+export OPEN_SCIENTIST_SECRET_KEY="$(openssl rand -hex 32)"
 export ANTHROPIC_API_KEY="..."  # or other provider credentials
 
 # Run database migrations
 uv run alembic upgrade head
 
 # Start development server
-uv run python -m shandy.web_app --reload
+uv run python -m open_scientist.web_app --reload
 ```
 
 ## Testing
@@ -47,7 +47,7 @@ uv run python -m shandy.web_app --reload
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=shandy
+uv run pytest --cov=open_scientist
 ```
 
 ### Testing Conventions
@@ -109,14 +109,14 @@ async with user_simulation(root=some_page) as browser:
 
 ## UI Component Reuse
 
-**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from `src/shandy/webapp_components/ui_components.py`.
+**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from `src/open_scientist/webapp_components/ui_components.py`.
 
 ### Error Banners
 
 Use these instead of creating inline error displays:
 
 ```python
-from shandy.webapp_components.ui_components import (
+from open_scientist.webapp_components.ui_components import (
     render_config_error_banner,  # Provider config errors
     render_alert_banner,         # Generic error/warning/info
 )
@@ -146,18 +146,18 @@ When you need a new UI pattern used in multiple places:
 
 ## Key Components
 
-### Authentication (`src/shandy/auth/`)
+### Authentication (`src/open_scientist/auth/`)
 
 - OAuth providers (Google, GitHub, mock for dev)
 - Session management with cookies
 - `@require_auth` decorator for protected pages
 
-### Providers (`src/shandy/providers/`)
+### Providers (`src/open_scientist/providers/`)
 
 - `check_provider_config()` - Validates LLM provider setup
 - Supports: Anthropic, CBORG, Vertex AI, Bedrock, Foundry, Codex
 
-### Web App (`src/shandy/webapp_components/`)
+### Web App (`src/open_scientist/webapp_components/`)
 
 - NiceGUI-based UI
 - Pages in `pages/` subdirectory
@@ -184,11 +184,11 @@ uv run python tools/tile_screenshots.py \
 | Variable               | Required | Description                         |
 | ---------------------- | -------- | ----------------------------------- |
 | `DATABASE_URL`         | Yes      | PostgreSQL connection string        |
-| `SHANDY_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
+| `OPEN_SCIENTIST_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
 | `CLAUDE_PROVIDER`      | No       | Provider name (default: anthropic)  |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
-| `SHANDY_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
-| `SHANDY_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
+| `OPEN_SCIENTIST_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
+| `OPEN_SCIENTIST_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
 
 ## Related Documentation
 

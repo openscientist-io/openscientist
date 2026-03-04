@@ -1,10 +1,10 @@
-# SHANDY: Scientific Hypothesis Agent for Novel Discovery
+# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
 
 An autonomous AI scientist that generates and tests hypotheses from scientific data.
 
 ## Overview
 
-SHANDY is a domain-agnostic autonomous discovery agent that:
+Open Scientist is a domain-agnostic autonomous discovery agent that:
 
 - Accepts data files and a research question
 - Runs for N iterations autonomously
@@ -40,7 +40,7 @@ SHANDY is a domain-agnostic autonomous discovery agent that:
 
 ### Structural Biology Support (Optional)
 
-SHANDY supports **Phenix integration** for protein structure analysis:
+Open Scientist supports **Phenix integration** for protein structure analysis:
 
 - Structure comparison and superposition
 - Validation metrics (clash score, backbone geometry)
@@ -65,7 +65,7 @@ SHANDY supports **Phenix integration** for protein structure analysis:
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd shandy
+cd open_scientist
 
 # Create .env file (copy from example and configure)
 cp .env.example .env
@@ -91,8 +91,8 @@ Open your browser to `http://localhost:8080`
 ## Project Structure
 
 ```
-shandy/
-├── src/shandy/            # Core Python package
+open_scientist/
+├── src/open_scientist/            # Core Python package
 │   ├── agent/             # AgentExecutor protocol and SDKAgentExecutor
 │   ├── job/               # Job lifecycle, scheduling, and types
 │   ├── orchestrator/      # Discovery orchestration (setup, iteration, report)
@@ -120,7 +120,7 @@ shandy/
 
 ### Model Providers
 
-SHANDY supports multiple model providers. Choose one and configure it in your `.env` file:
+Open Scientist supports multiple model providers. Choose one and configure it in your `.env` file:
 
 #### Option 1: CBORG (Lawrence Berkeley National Lab)
 
@@ -233,12 +233,12 @@ Budget limits are checked before job creation. The web UI displays:
 
 ```bash
 # Dev mode - enables mock OAuth login for development
-SHANDY_DEV_MODE=true
+OPEN_SCIENTIST_DEV_MODE=true
 ```
 
 ### Job Manager Settings
 
-In `src/shandy/web_app.py`:
+In `src/open_scientist/web_app.py`:
 
 - `max_concurrent`: Maximum concurrent jobs (default: 1)
 - `jobs_dir`: Directory for job data (default: `jobs/`)
@@ -248,8 +248,8 @@ In `src/shandy/web_app.py`:
 If you have pre-database jobs on disk, run:
 
 ```bash
-docker compose exec shandy python -m shandy.job_manager bootstrap --jobs-dir /app/jobs --dry-run
-docker compose exec shandy python -m shandy.job_manager bootstrap --jobs-dir /app/jobs
+docker compose exec open_scientist python -m open_scientist.job_manager bootstrap --jobs-dir /app/jobs --dry-run
+docker compose exec open_scientist python -m open_scientist.job_manager bootstrap --jobs-dir /app/jobs
 ```
 
 Jobs with unresolved ownership are migrated as orphaned (`owner_id=NULL`) and

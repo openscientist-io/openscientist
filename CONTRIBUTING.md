@@ -1,4 +1,4 @@
-# Contributing to SHANDY
+# Contributing to Open Scientist
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ cp .env.example .env
 
 # Edit .env and uncomment the DATABASE_URL line
 # For local development, use:
-# DATABASE_URL=postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy
+# DATABASE_URL=postgresql+asyncpg://open_scientist:open_scientist_dev_password@localhost:5434/open_scientist
 
 # Start the database with Docker
 docker compose -f docker-compose.yml up -d postgres
@@ -36,13 +36,13 @@ uv sync
 uv run pytest
 
 # Run tests with coverage
-uv run pytest --cov=src/shandy --cov-report=term-missing
+uv run pytest --cov=src/open_scientist --cov-report=term-missing
 
 # Run webapp tests
 uv run pytest tests/webapp/
 
 # Type checking
-uv run mypy src/shandy/ tests/
+uv run mypy src/open_scientist/ tests/
 
 # Lint and format
 uv run ruff check src/ tests/
@@ -64,10 +64,10 @@ database-backed model.
 
 ```bash
 # Safe preview (no database writes)
-uv run python -m shandy.job_manager bootstrap --jobs-dir jobs --dry-run
+uv run python -m open_scientist.job_manager bootstrap --jobs-dir jobs --dry-run
 
 # Apply migration
-uv run python -m shandy.job_manager bootstrap --jobs-dir jobs
+uv run python -m open_scientist.job_manager bootstrap --jobs-dir jobs
 ```
 
 The bootstrap command currently supports:
@@ -113,6 +113,6 @@ All PRs must pass:
 
 ```bash
 uv run ruff check src/ tests/   # lint
-uv run mypy src/shandy/ tests/  # types
+uv run mypy src/open_scientist/ tests/  # types
 uv run pytest                   # tests (60% coverage minimum)
 ```

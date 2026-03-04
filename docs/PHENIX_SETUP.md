@@ -1,10 +1,10 @@
-# Phenix Setup for SHANDY
+# Phenix Setup for Open Scientist
 
-SHANDY supports Phenix integration for structural biology analyses. Phenix is **optional** - SHANDY works fine without it, but you won't have access to structural biology tools.
+Open Scientist supports Phenix integration for structural biology analyses. Phenix is **optional** - Open Scientist works fine without it, but you won't have access to structural biology tools.
 
 ## What is Phenix?
 
-Phenix is a comprehensive software suite for macromolecular crystallography, providing tools for structure determination, refinement, and validation. SHANDY uses Phenix for:
+Phenix is a comprehensive software suite for macromolecular crystallography, providing tools for structure determination, refinement, and validation. Open Scientist uses Phenix for:
 
 - Structure comparison and alignment (phenix.superpose_pdbs)
 - Validation metrics (phenix.clashscore, phenix.cablam_validate)
@@ -22,7 +22,7 @@ Phenix is a comprehensive software suite for macromolecular crystallography, pro
 **You DON'T need Phenix if:**
 - Only analyzing metabolomics, genomics, or tabular data
 - Not working with macromolecular structures
-- Just want to test SHANDY's general discovery capabilities
+- Just want to test Open Scientist's general discovery capabilities
 
 ## Installation Options
 
@@ -60,7 +60,7 @@ Phenix is pre-installed in the Docker image. You just need to provide the instal
    docker compose up --build
 
    # For deployment to x86_64 Linux server:
-   docker build --platform linux/amd64 -t shandy .
+   docker build --platform linux/amd64 -t open_scientist .
    ```
 
 #### Deployment to GASSH
@@ -69,7 +69,7 @@ Phenix is pre-installed in the Docker image. You just need to provide the instal
 # 1. Transfer installer to server (one-time)
 rsync -avz --progress \
   phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz \
-  gassh:~/shandy/data/
+  gassh:~/open_scientist/data/
 
 # 2. Deploy normally
 make deploy
@@ -93,7 +93,7 @@ For local development without Docker:
    ./install --prefix=/Applications
    ```
 
-3. **Configure SHANDY**:
+3. **Configure Open Scientist**:
    ```bash
    # Add to .env
    echo "PHENIX_PATH=/Applications/phenix-1.21.2-5419" >> .env
@@ -119,7 +119,7 @@ For local development without Docker:
    ./install --prefix=/opt
    ```
 
-3. **Configure SHANDY**:
+3. **Configure Open Scientist**:
    ```bash
    # Add to .env
    echo "PHENIX_PATH=/opt/phenix-1.21.2-5419" >> .env
@@ -133,19 +133,19 @@ After installation, verify Phenix is working:
 
 ```bash
 # Check Phenix installed in container
-docker exec shandy-shandy-1 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && \
+docker exec open_scientist-open_scientist-1 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && \
   echo "✅ Phenix installed" || echo "❌ Phenix NOT found"
 
-# Check SHANDY detects Phenix
-docker exec shandy-shandy-1 python -c "
+# Check Open Scientist detects Phenix
+docker exec open_scientist-open_scientist-1 python -c "
 import os
 os.environ['PHENIX_PATH'] = '/opt/phenix-1.21.2-5419'
-from shandy.phenix_setup import check_phenix_available
+from open_scientist.phenix_setup import check_phenix_available
 print('✅ Phenix available' if check_phenix_available() else '❌ Phenix not available')
 "
 
 # Check MCP server registers Phenix tools
-docker logs shandy-shandy-1 2>&1 | grep -i phenix
+docker logs open_scientist-open_scientist-1 2>&1 | grep -i phenix
 # Should see: "✅ Phenix tools registered"
 ```
 
@@ -158,14 +158,14 @@ echo $PHENIX_PATH
 
 # Test Phenix setup
 python -c "
-from shandy.phenix_setup import check_phenix_available
+from open_scientist.phenix_setup import check_phenix_available
 print('✅ Phenix available' if check_phenix_available() else '❌ Phenix not available')
 "
 ```
 
 ## Running Without Phenix
 
-SHANDY gracefully handles missing Phenix:
+Open Scientist gracefully handles missing Phenix:
 
 - **MCP server startup**: Logs "⚠️ Phenix tools not available" but continues
 - **Tool availability**: Phenix tools (run_phenix_tool, compare_structures, parse_alphafold_confidence) won't be registered
@@ -200,7 +200,7 @@ ls -la $PHENIX_PATH/phenix_env.sh
 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && echo "Found" || echo "Missing"
 
 # Check environment variable is set
-docker exec shandy-shandy-1 env | grep PHENIX_PATH
+docker exec open_scientist-open_scientist-1 env | grep PHENIX_PATH
 ```
 
 ### Docker build fails: "No such file"
@@ -244,4 +244,4 @@ Phenix is free for academic use. See https://phenix-online.org/license/ for deta
 
 **Phenix installation issues**: https://phenix-online.org/documentation/install-setup-run.html
 
-**SHANDY Phenix integration issues**: Check GitHub issues or deployment logs
+**Open Scientist Phenix integration issues**: Check GitHub issues or deployment logs

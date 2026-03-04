@@ -1,6 +1,6 @@
-# SHANDY Deployment Guide
+# Open Scientist Deployment Guide
 
-This guide explains how to deploy SHANDY using Docker.
+This guide explains how to deploy Open Scientist using Docker.
 
 ## Prerequisites
 
@@ -56,29 +56,29 @@ The Docker setup mounts the following directories:
 ### View jobs
 
 ```bash
-docker-compose exec shandy python -m shandy.job_manager list
+docker-compose exec open_scientist python -m open_scientist.job_manager list
 ```
 
 ### Get job details
 
 ```bash
-docker-compose exec shandy python -m shandy.job_manager get <job_id>
+docker-compose exec open_scientist python -m open_scientist.job_manager get <job_id>
 ```
 
 ### Delete a job
 
 ```bash
-docker-compose exec shandy python -m shandy.job_manager delete <job_id>
+docker-compose exec open_scientist python -m open_scientist.job_manager delete <job_id>
 ```
 
 ### Clean up old jobs
 
 ```bash
 # Delete jobs older than 7 days (keep completed)
-docker-compose exec shandy python -m shandy.job_manager cleanup --days 7
+docker-compose exec open_scientist python -m open_scientist.job_manager cleanup --days 7
 
 # Delete all old jobs including completed
-docker-compose exec shandy python -m shandy.job_manager cleanup --days 7 --delete-completed
+docker-compose exec open_scientist python -m open_scientist.job_manager cleanup --days 7 --delete-completed
 ```
 
 ## Monitoring
@@ -104,7 +104,7 @@ docker-compose ps
 The container includes a health check that pings the web interface every 30 seconds.
 
 ```bash
-docker inspect shandy-shandy-1 --format='{{.State.Health.Status}}'
+docker inspect open_scientist-open_scientist-1 --format='{{.State.Health.Status}}'
 ```
 
 ## Backup and Restore
@@ -113,20 +113,20 @@ docker inspect shandy-shandy-1 --format='{{.State.Health.Status}}'
 
 ```bash
 # Create backup
-tar -czf shandy-jobs-backup-$(date +%Y%m%d).tar.gz jobs/
+tar -czf open_scientist-jobs-backup-$(date +%Y%m%d).tar.gz jobs/
 
 # Copy out of container
-docker cp shandy-shandy-1:/app/jobs ./jobs-backup
+docker cp open_scientist-open_scientist-1:/app/jobs ./jobs-backup
 ```
 
 ### Restore jobs
 
 ```bash
 # Extract backup
-tar -xzf shandy-jobs-backup-YYYYMMDD.tar.gz
+tar -xzf open_scientist-jobs-backup-YYYYMMDD.tar.gz
 
 # Copy into container
-docker cp ./jobs shandy-shandy-1:/app/
+docker cp ./jobs open_scientist-open_scientist-1:/app/
 ```
 
 ## Troubleshooting
@@ -155,14 +155,14 @@ docker cp ./jobs shandy-shandy-1:/app/
 Check your budget:
 
 ```bash
-docker-compose exec shandy python -c "from shandy.cost_tracker import get_budget_info; print(get_budget_info())"
+docker-compose exec open_scientist python -c "from open_scientist.cost_tracker import get_budget_info; print(get_budget_info())"
 ```
 
 ### Job stuck in "running" state
 
 1. Check job manager:
    ```bash
-   docker-compose exec shandy python -m shandy.job_manager get <job_id>
+   docker-compose exec open_scientist python -m open_scientist.job_manager get <job_id>
    ```
 
 2. Check job logs:
@@ -172,7 +172,7 @@ docker-compose exec shandy python -c "from shandy.cost_tracker import get_budget
 
 3. Cancel the job:
    ```bash
-   docker-compose exec shandy python -c "from shandy.job_manager import JobManager; JobManager().cancel_job('<job_id>')"
+   docker-compose exec open_scientist python -c "from open_scientist.job_manager import JobManager; JobManager().cancel_job('<job_id>')"
    ```
 
 ## Production Deployment
@@ -188,7 +188,7 @@ docker-compose exec shandy python -c "from shandy.cost_tracker import get_budget
 2. **Restrict access**: Use a reverse proxy (nginx) with authentication
    ```nginx
    location / {
-       auth_basic "SHANDY";
+       auth_basic "Open Scientist";
        auth_basic_user_file /etc/nginx/.htpasswd;
        proxy_pass http://localhost:8080;
    }
@@ -196,7 +196,7 @@ docker-compose exec shandy python -c "from shandy.cost_tracker import get_budget
 
 3. **Use HTTPS**: Set up SSL/TLS certificates
    ```bash
-   certbot --nginx -d shandy.yourdomain.com
+   certbot --nginx -d open-scientist.yourdomain.com
    ```
 
 4. **Limit resource usage**: Add resource limits to docker-compose.yml
@@ -225,7 +225,7 @@ Set up monitoring with Prometheus/Grafana:
 2. Configure Prometheus to scrape metrics
 3. Create Grafana dashboards for job status, costs, etc.
 
-## Updating SHANDY
+## Updating Open Scientist
 
 ```bash
 # Pull latest code
@@ -247,7 +247,7 @@ docker-compose down
 docker-compose down -v
 
 # Remove images
-docker rmi shandy-shandy
+docker rmi open_scientist-open_scientist
 ```
 
 ## Support

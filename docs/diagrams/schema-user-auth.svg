@@ -22,7 +22,7 @@
   <symbol id="icon-key" viewBox="0 0 24 24"><path d="M12 0a5 5 0 1 1 0 10 5 5 0 0 1 0-10ZM12 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM10.5 10h3v13h-3ZM7.5 17h3v2h-3ZM7.5 21h3v2h-3Z"/></symbol>
   <symbol id="icon-briefcase" viewBox="0 0 24 24"><path d="M8 4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v1h5v7H3V5h5ZM3 14h18v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
   <symbol id="icon-grid" viewBox="0 0 24 24"><path d="M2 2h9v9H2ZM13 2h9v9h-9ZM2 13h9v9H2ZM13 13h9v9h-9Z"/></symbol>
-<text x="456" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">SHANDY — User Authentication &amp; Authorization</text>
+<text x="456" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">Open Scientist — User Authentication &amp; Authorization</text>
 <text x="456" y="48" font-size="10" fill="#616161" text-anchor="middle">4 tables  ·  RLS enabled  ·  PostgreSQL 18 UUIDv7</text>
 <path d="M 281 292 C 303 288, 315 312, 337 307" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
 <circle cx="337" cy="307" r="3" fill="#607D8B" opacity="0.8"/>
@@ -128,7 +128,7 @@
 <use href="#icon-key" x="369" y="831" width="12" height="12" fill="#616161"/>
 <text x="385" y="840" font-size="9" fill="#616161" text-anchor="start">api keys</text>
 <text x="40" y="858" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Overview</text>
-<text x="52" y="874" font-size="9" fill="#616161" text-anchor="start">Identity and credential management for every person who interacts with SHANDY. Users sign in through OAuth providers, receive a browser session, and may optionally create API keys for</text>
+<text x="52" y="874" font-size="9" fill="#616161" text-anchor="start">Identity and credential management for every person who interacts with Open Scientist. Users sign in through OAuth providers, receive a browser session, and may optionally create API keys for</text>
 <text x="52" y="888" font-size="9" fill="#616161" text-anchor="start">programmatic access.</text>
 <text x="40" y="916" font-size="11" fill="#212121" text-anchor="start" font-weight="600">Tables</text>
 <use href="#icon-user" x="40" y="925" width="12" height="12" fill="#616161"/>

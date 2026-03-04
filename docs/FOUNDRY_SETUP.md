@@ -1,10 +1,10 @@
-# Azure AI Foundry Setup for SHANDY
+# Azure AI Foundry Setup for Open Scientist
 
 **Last Updated**: February 14, 2026
 
 > **Note**: Azure's UI and processes change frequently. If the steps below don't match what you see in the Azure portal, check the [official Microsoft documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/how-to/use-foundry-models-claude) for the latest instructions.
 
-This guide walks you through setting up Azure AI Foundry (Microsoft Foundry) to use Claude models with SHANDY.
+This guide walks you through setting up Azure AI Foundry (Microsoft Foundry) to use Claude models with Open Scientist.
 
 ## Prerequisites
 
@@ -105,10 +105,10 @@ After deploying a model:
    - **Base URL**: `https://<resource-name>.services.ai.azure.com/anthropic`
 
 **Example**:
-- Resource name: `cloudbank-shandy-claude-resource`
-- Base URL: `https://cloudbank-shandy-claude-resource.services.ai.azure.com/anthropic`
+- Resource name: `cloudbank-open-scientist-claude-resource`
+- Base URL: `https://cloudbank-open-scientist-claude-resource.services.ai.azure.com/anthropic`
 
-## SHANDY Configuration
+## Open Scientist Configuration
 
 ### Environment Variables
 
@@ -150,7 +150,7 @@ The `docker-compose.yml` automatically passes these environment variables to the
 Start the application and check the provider status on the admin page, or run:
 
 ```bash
-uv run python -c "from shandy.providers import get_provider; p = get_provider(); print(p.provider_name, p._validate_required_config())"
+uv run python -c "from open_scientist.providers import get_provider; p = get_provider(); print(p.provider_name, p._validate_required_config())"
 ```
 
 ## Rate Limits and Quotas
@@ -196,7 +196,7 @@ ANTHROPIC_FOUNDRY_API_KEY=your-api-key
 
 ## Cost Tracking
 
-Azure Foundry cost tracking via Azure Cost Management API is planned but not yet fully implemented in SHANDY.
+Azure Foundry cost tracking via Azure Cost Management API is planned but not yet fully implemented in Open Scientist.
 
 **Current workaround**: View costs in Azure Portal:
 1. Go to **Cost Management + Billing**
@@ -220,12 +220,12 @@ Azure Foundry cost tracking via Azure Cost Management API is planned but not yet
 
 ### "No Authentication Configured" Error
 
-**Symptom**: SHANDY shows "No Authentication Configured"
+**Symptom**: Open Scientist shows "No Authentication Configured"
 
 **Solution**:
 1. Check `.env` has `CLAUDE_PROVIDER=foundry` and `CLAUDE_CODE_USE_FOUNDRY=1`
 2. Verify `ANTHROPIC_FOUNDRY_RESOURCE` and `ANTHROPIC_FOUNDRY_API_KEY` are set
-3. Restart SHANDY: `docker compose restart` or `uv run python -m shandy.web_app`
+3. Restart Open Scientist: `docker compose restart` or `uv run python -m open_scientist.web_app`
 
 ### 403 Forbidden Error
 
