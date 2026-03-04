@@ -1,6 +1,6 @@
 """Tests for error handler module."""
 
-from shandy.webapp_components.error_handler import (
+from open_scientist.webapp_components.error_handler import (
     CATEGORY_CONFIGURATION,
     CATEGORY_PROVIDER,
     CATEGORY_RESEARCH,

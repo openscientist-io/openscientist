@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from shandy.pdf_generator import ReportPDF, markdown_to_pdf
+from open_scientist.pdf_generator import ReportPDF, markdown_to_pdf
 
 
 class TestProcessInlineFormatting:
@@ -55,7 +55,7 @@ class TestMarkdownToPdf:
         with pytest.raises(FileNotFoundError):
             markdown_to_pdf(tmp_path / "nonexistent.md")
 
-    @patch("shandy.pdf_generator.ReportPDF")
+    @patch("open_scientist.pdf_generator.ReportPDF")
     def test_calls_correct_methods(self, mock_pdf_cls, sample_md, tmp_path):
         """Verify that the parser calls the right PDF methods for each element."""
         mock_pdf = mock_pdf_cls.return_value
@@ -77,26 +77,26 @@ class TestMarkdownToPdf:
         # Should have paragraph
         mock_pdf.add_paragraph.assert_called()
         # Footer
-        mock_pdf.add_shandy_footer.assert_called_once()
+        mock_pdf.add_footer.assert_called_once()
 
-    @patch("shandy.pdf_generator.ReportPDF")
+    @patch("open_scientist.pdf_generator.ReportPDF")
     def test_no_footer_option(self, mock_pdf_cls, sample_md, tmp_path):
         mock_pdf = mock_pdf_cls.return_value
         markdown_to_pdf(sample_md, pdf_path=tmp_path / "out.pdf", add_footer=False)
-        mock_pdf.add_shandy_footer.assert_not_called()
+        mock_pdf.add_footer.assert_not_called()
 
-    @patch("shandy.pdf_generator.ReportPDF")
+    @patch("open_scientist.pdf_generator.ReportPDF")
     def test_default_pdf_path(self, _mock_pdf_cls, sample_md):
         result = markdown_to_pdf(sample_md)
         assert result == sample_md.with_suffix(".pdf")
 
-    @patch("shandy.pdf_generator.ReportPDF")
+    @patch("open_scientist.pdf_generator.ReportPDF")
     def test_custom_pdf_path(self, _mock_pdf_cls, sample_md, tmp_path):
         custom = tmp_path / "custom_name.pdf"
         result = markdown_to_pdf(sample_md, pdf_path=custom)
         assert result == custom
 
-    @patch("shandy.pdf_generator.ReportPDF")
+    @patch("open_scientist.pdf_generator.ReportPDF")
     def test_horizontal_rule_parsed(self, mock_pdf_cls, tmp_path):
         md = tmp_path / "hr.md"
         md.write_text("Text above\n\n---\n\nText below\n")

@@ -12,8 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from shandy.database.models import Administrator, OAuthAccount, Session, User
-from shandy.settings import get_settings
+from open_scientist.database.models import Administrator, OAuthAccount, Session, User
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

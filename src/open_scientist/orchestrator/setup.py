@@ -1,5 +1,5 @@
 """
-Job filesystem setup for SHANDY discovery.
+Job filesystem setup for Open Scientist discovery.
 
 create_job() initializes the job directory structure, knowledge state,
 and knowledge_state.json.
@@ -13,12 +13,12 @@ import shutil
 from pathlib import Path
 from uuid import UUID
 
-from shandy.async_tasks import create_background_task
-from shandy.database.models import JobDataFile
-from shandy.database.session import AsyncSessionLocal
-from shandy.file_loader import get_file_info
-from shandy.knowledge_state import KS_FILENAME, KnowledgeState
-from shandy.orchestrator.discovery import sync_knowledge_state_to_db
+from open_scientist.async_tasks import create_background_task
+from open_scientist.database.models import JobDataFile
+from open_scientist.database.session import AsyncSessionLocal
+from open_scientist.file_loader import get_file_info
+from open_scientist.knowledge_state import KS_FILENAME, KnowledgeState
+from open_scientist.orchestrator.discovery import sync_knowledge_state_to_db
 
 logger = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ from uuid import UUID
 from nicegui import app, ui
 from sqlalchemy import select
 
-from shandy.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
-from shandy.auth.middleware import get_current_user_id, require_admin, require_auth
-from shandy.database.models import Job, User
-from shandy.database.session import get_admin_session
-from shandy.webapp_components.pages.billing import render_billing_panel
-from shandy.webapp_components.ui_components import (
+from open_scientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
+from open_scientist.auth.middleware import get_current_user_id, require_admin, require_auth
+from open_scientist.database.models import Job, User
+from open_scientist.database.session import get_admin_session
+from open_scientist.webapp_components.pages.billing import render_billing_panel
+from open_scientist.webapp_components.ui_components import (
     format_uptime,
     make_action_button_slot,
     render_alert_banner,
@@ -28,10 +28,13 @@ from shandy.webapp_components.ui_components import (
     render_stat_badges,
     render_user_search,
 )
-from shandy.webapp_components.utils import guard_client, setup_timer_cleanup
+from open_scientist.webapp_components.utils import guard_client, setup_timer_cleanup
 
 if TYPE_CHECKING:
-    from shandy.webapp_components.utils.container_dashboard import ContainerInfo, DashboardData
+    from open_scientist.webapp_components.utils.container_dashboard import (
+        ContainerInfo,
+        DashboardData,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -478,7 +481,7 @@ async def render_users_panel() -> None:
 
 async def render_containers_panel() -> None:
     """Render the real-time container dashboard panel."""
-    from shandy.webapp_components.utils.container_dashboard import (
+    from open_scientist.webapp_components.utils.container_dashboard import (
         collect_dashboard_data,
     )
 
@@ -596,7 +599,7 @@ def _render_dashboard_content(data: DashboardData) -> None:
         return
     _render_dashboard_totals(data)
     if not data.job_groups and not data.orphan_containers:
-        render_empty_state("No SHANDY containers are currently running.")
+        render_empty_state("No Open Scientist containers are currently running.")
         return
     _render_dashboard_job_groups(data)
     _render_dashboard_orphan_containers(data)

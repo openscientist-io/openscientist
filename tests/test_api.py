@@ -11,9 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.api.auth import generate_api_key_secret, hash_secret, verify_secret
-from shandy.database.models import APIKey, Job, User
-from shandy.database.rls import set_current_user
+from open_scientist.api.auth import generate_api_key_secret, hash_secret, verify_secret
+from open_scientist.database.models import APIKey, Job, User
+from open_scientist.database.rls import set_current_user
 from tests.helpers import enable_rls
 
 

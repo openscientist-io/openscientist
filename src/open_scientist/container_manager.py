@@ -1,5 +1,5 @@
 """
-Container manager for SHANDY sibling container isolation.
+Container manager for Open Scientist sibling container isolation.
 
 Manages the lifecycle of executor containers for isolated code execution.
 Each job's code runs in a separate Docker container with strict resource limits.
@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 if TYPE_CHECKING:
     import docker as _docker_module
@@ -265,7 +265,7 @@ class ContainerManager:
         )
 
         # Container name includes job_id for cleanup
-        container_name = f"shandy-exec-{job_id}-{os.urandom(4).hex()}"
+        container_name = f"open_scientist-exec-{job_id}-{os.urandom(4).hex()}"
 
         logger.info(
             "Spawning executor container: %s (image=%s, mem=%s, cpu=%.2f)",
@@ -292,8 +292,8 @@ class ContainerManager:
                 user="executor",
                 # Labels for cleanup
                 labels={
-                    "shandy.job_id": job_id,
-                    "shandy.type": "executor",
+                    "open_scientist.job_id": job_id,
+                    "open_scientist.type": "executor",
                 },
                 # Volume mounts
                 volumes=volumes,
@@ -305,7 +305,7 @@ class ContainerManager:
                 command=[
                     "sh",
                     "-c",
-                    f"echo {input_b64} | base64 -d | python -m shandy_executor",
+                    f"echo {input_b64} | base64 -d | python -m open_scientist_executor",
                 ],
             )
 
@@ -372,7 +372,7 @@ class ContainerManager:
         try:
             containers = self.client.containers.list(
                 all=True,
-                filters={"label": f"shandy.job_id={job_id}"},
+                filters={"label": f"open_scientist.job_id={job_id}"},
             )
 
             for container in containers:
@@ -404,7 +404,7 @@ class ContainerManager:
         try:
             containers = self.client.containers.list(
                 all=True,
-                filters={"label": "shandy.type=executor"},
+                filters={"label": "open_scientist.type=executor"},
             )
 
             now = datetime.now(UTC)

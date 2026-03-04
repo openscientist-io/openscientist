@@ -5,10 +5,10 @@ import logging
 from nicegui import ui
 from sqlalchemy import select
 
-from shandy.database.models import CostRecord
-from shandy.database.session import get_admin_session
-from shandy.providers import get_provider
-from shandy.webapp_components.ui_components import render_empty_state, render_stat_badges
+from open_scientist.database.models import CostRecord
+from open_scientist.database.session import get_admin_session
+from open_scientist.providers import get_provider
+from open_scientist.webapp_components.ui_components import render_empty_state, render_stat_badges
 
 logger = logging.getLogger(__name__)
 

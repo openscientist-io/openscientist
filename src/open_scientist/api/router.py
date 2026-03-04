@@ -1,5 +1,5 @@
 """
-Main API router for SHANDY REST API.
+Main API router for Open Scientist REST API.
 
 Combines all API endpoints and adds middleware for rate limiting,
 CORS, and error handling.
@@ -41,5 +41,5 @@ async def health_check(request: Request) -> dict[str, str]:
     return {
         "status": "ok",
         "version": "v1",
-        "api": "shandy",
+        "api": "open-scientist",
     }

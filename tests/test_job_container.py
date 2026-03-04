@@ -1,11 +1,11 @@
-"""Tests for shandy.job_container module."""
+"""Tests for open_scientist.job_container module."""
 
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shandy.job_container.runner import JobContainerRunner
+from open_scientist.job_container.runner import JobContainerRunner
 
 
 class TestJobContainerRunner:

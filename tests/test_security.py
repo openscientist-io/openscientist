@@ -1,7 +1,7 @@
 import pytest
 from fastapi import FastAPI
 
-from shandy.security import ScannerBlockMiddleware, register_scanner_block_middleware
+from open_scientist.security import ScannerBlockMiddleware, register_scanner_block_middleware
 
 
 def _scanner_middleware_count(app: FastAPI) -> int:

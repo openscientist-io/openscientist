@@ -2,8 +2,8 @@
 
 from nicegui import ui
 
-from shandy.auth import require_auth
-from shandy.webapp_components.ui_components import render_navigator
+from open_scientist.auth import require_auth
+from open_scientist.webapp_components.ui_components import render_navigator
 
 
 @ui.page("/docs")
@@ -15,18 +15,18 @@ def docs_page() -> None:
     with ui.column().classes("w-full max-w-4xl mx-auto mt-8 gap-4"), ui.card().classes("w-full"):
         ui.markdown(
             """
-# SHANDY Documentation
+# Open Scientist Documentation
 
 **Scientific Hypothesis Agent for Novel Discovery**
 
-## What is SHANDY?
+## What is Open Scientist?
 
-SHANDY is an autonomous AI scientist that analyzes scientific data to discover mechanistic insights through iterative hypothesis testing.
+Open Scientist is an autonomous AI scientist that analyzes scientific data to discover mechanistic insights through iterative hypothesis testing.
 
 ## How It Works
 
 1. **Submit a Job**: Provide a research question and optionally upload data files
-2. **Autonomous Discovery**: SHANDY runs for N iterations, analyzing data and searching literature
+2. **Autonomous Discovery**: Open Scientist runs for N iterations, analyzing data and searching literature
 3. **View Results**: Track progress in the Timeline view, see key findings in Summary, and download the final Report
 
 ## Features
@@ -39,7 +39,7 @@ SHANDY is an autonomous AI scientist that analyzes scientific data to discover m
 
 ## Supported Data Formats
 
-SHANDY accepts various file types:
+Open Scientist accepts various file types:
 
 - **Tabular**: CSV, TSV, Excel (.xlsx), Parquet, JSON
 - **Structures**: PDB, mmCIF (for structural biology)
@@ -71,7 +71,7 @@ Download as Markdown or PDF.
 
 ## API Documentation
 
-SHANDY provides a REST API for programmatic access. Create an API key from the
+Open Scientist provides a REST API for programmatic access. Create an API key from the
 [API Keys](/api-keys) page, then use it with the `Authorization: Bearer <name>:<secret>` header.
 
 **Interactive API documentation:**

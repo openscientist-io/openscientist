@@ -8,14 +8,14 @@ from typing import Any
 
 from nicegui import ui
 
-from shandy.auth import can_current_user_start_jobs, get_current_user_id, require_auth
-from shandy.providers import check_provider_config
-from shandy.webapp_components.ui_components import (
+from open_scientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
+from open_scientist.providers import check_provider_config
+from open_scientist.webapp_components.ui_components import (
     render_config_error_banner,
     render_navigator,
     render_pending_approval_notice,
 )
-from shandy.webapp_components.utils.session import (
+from open_scientist.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
     get_uploaded_files,
@@ -118,7 +118,7 @@ async def _handle_upload(e: Any, session_id: str) -> None:
 @require_auth
 def new_job_page() -> None:
     """Job submission form."""
-    from shandy import web_app
+    from open_scientist import web_app
 
     job_manager = web_app.get_job_manager()
     user_can_start_jobs = can_current_user_start_jobs()

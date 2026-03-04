@@ -1,5 +1,5 @@
 """
-Database models for SHANDY.
+Database models for Open Scientist.
 
 This package contains SQLAlchemy ORM models for all database tables.
 Models are organized by domain:

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shandy.webapp_components.ui_components import format_uptime
-from shandy.webapp_components.utils.container_dashboard import (
+from open_scientist.webapp_components.ui_components import format_uptime
+from open_scientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
 )
@@ -130,7 +130,7 @@ class TestCollectDashboardDockerDown:
     @pytest.mark.asyncio
     async def test_returns_unavailable_when_docker_down(self):
         with patch(
-            "shandy.webapp_components.utils.container_dashboard._get_docker_client",
+            "open_scientist.webapp_components.utils.container_dashboard._get_docker_client",
             return_value=None,
         ):
             data = await collect_dashboard_data()
@@ -167,10 +167,14 @@ class TestCollectDashboardGrouping:
         mock_settings = MagicMock()
 
         agent = _make_mock_container(
-            "abc123", "shandy-agent-abc", {"shandy.type": "agent", "shandy.job_id": job_id}
+            "abc123",
+            "open_scientist-agent-abc",
+            {"open_scientist.type": "agent", "open_scientist.job_id": job_id},
         )
         executor = _make_mock_container(
-            "def456", "shandy-exec-def", {"shandy.type": "executor", "shandy.job_id": job_id}
+            "def456",
+            "open_scientist-exec-def",
+            {"open_scientist.type": "executor", "open_scientist.job_id": job_id},
         )
 
         mock_client = MagicMock()
@@ -187,23 +191,23 @@ class TestCollectDashboardGrouping:
 
         with (
             patch(
-                "shandy.settings.get_settings",
+                "open_scientist.settings.get_settings",
                 return_value=mock_settings,
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._get_docker_client",
+                "open_scientist.webapp_components.utils.container_dashboard._get_docker_client",
                 return_value=mock_client,
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._list_shandy_containers",
+                "open_scientist.webapp_components.utils.container_dashboard._list_open_scientist_containers",
                 return_value=[agent, executor],
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._get_active_jobs_map",
+                "open_scientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
                 return_value=job_map,
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._get_container_stats",
+                "open_scientist.webapp_components.utils.container_dashboard._get_container_stats",
                 return_value={},
             ),
         ):
@@ -213,7 +217,7 @@ class TestCollectDashboardGrouping:
         group = data.job_groups[0]
         assert group.job_id == job_id
         assert group.agent_container is not None
-        assert group.agent_container.name == "shandy-agent-abc"
+        assert group.agent_container.name == "open_scientist-agent-abc"
         assert len(group.executor_containers) == 1
         assert data.orphan_containers == []
 
@@ -226,8 +230,8 @@ class TestCollectDashboardGrouping:
 
         container = _make_mock_container(
             "xyz789",
-            "shandy-agent-xyz",
-            {"shandy.type": "agent", "shandy.job_id": orphan_job_id},
+            "open_scientist-agent-xyz",
+            {"open_scientist.type": "agent", "open_scientist.job_id": orphan_job_id},
             status="exited",
         )
 
@@ -235,19 +239,19 @@ class TestCollectDashboardGrouping:
 
         with (
             patch(
-                "shandy.settings.get_settings",
+                "open_scientist.settings.get_settings",
                 return_value=mock_settings,
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._get_docker_client",
+                "open_scientist.webapp_components.utils.container_dashboard._get_docker_client",
                 return_value=mock_client,
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._list_shandy_containers",
+                "open_scientist.webapp_components.utils.container_dashboard._list_open_scientist_containers",
                 return_value=[container],
             ),
             patch(
-                "shandy.webapp_components.utils.container_dashboard._get_active_jobs_map",
+                "open_scientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
                 return_value={},  # empty — job doesn't exist in DB
             ),
         ):
@@ -255,4 +259,4 @@ class TestCollectDashboardGrouping:
 
         assert len(data.job_groups) == 0
         assert len(data.orphan_containers) == 1
-        assert data.orphan_containers[0].name == "shandy-agent-xyz"
+        assert data.orphan_containers[0].name == "open_scientist-agent-xyz"

@@ -7,8 +7,8 @@ Providers handle:
 - Provider-specific authentication and setup
 """
 
-from shandy.providers.base import BaseProvider, CostInfo
-from shandy.settings import get_settings
+from open_scientist.providers.base import BaseProvider, CostInfo
+from open_scientist.settings import get_settings
 
 
 def get_provider() -> BaseProvider:
@@ -30,27 +30,27 @@ def get_provider() -> BaseProvider:
     provider_name = settings.provider.claude_provider.lower()
 
     if provider_name == "anthropic":
-        from shandy.providers.anthropic import AnthropicProvider
+        from open_scientist.providers.anthropic import AnthropicProvider
 
         return AnthropicProvider()
     if provider_name == "cborg":
-        from shandy.providers.cborg import CborgProvider
+        from open_scientist.providers.cborg import CborgProvider
 
         return CborgProvider()
     if provider_name == "vertex":
-        from shandy.providers.vertex import VertexProvider
+        from open_scientist.providers.vertex import VertexProvider
 
         return VertexProvider()
     if provider_name == "bedrock":
-        from shandy.providers.bedrock import BedrockProvider
+        from open_scientist.providers.bedrock import BedrockProvider
 
         return BedrockProvider()
     if provider_name == "codex":
-        from shandy.providers.codex import CodexProvider
+        from open_scientist.providers.codex import CodexProvider
 
         return CodexProvider()
     if provider_name == "foundry":
-        from shandy.providers.foundry import FoundryProvider
+        from open_scientist.providers.foundry import FoundryProvider
 
         return FoundryProvider()
     raise ValueError(

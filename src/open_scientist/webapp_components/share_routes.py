@@ -14,11 +14,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.auth.middleware import get_current_user_id
-from shandy.database.models import JobShare, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_admin_session, get_session
-from shandy.share_service import (
+from open_scientist.auth.middleware import get_current_user_id
+from open_scientist.database.models import JobShare, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_admin_session, get_session
+from open_scientist.share_service import (
     create_or_update_share,
     list_shares_for_owned_job,
     revoke_share_for_owned_job,

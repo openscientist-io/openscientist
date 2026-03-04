@@ -1,9 +1,9 @@
-# Dockerfile for SHANDY
-# Builds on shandy-base which includes Python, Node.js, uv, and Claude CLI
-FROM shandy-base:latest
+# Dockerfile for Open Scientist
+# Builds on open_scientist-base which includes Python, Node.js, uv, and Claude CLI
+FROM open_scientist-base:latest
 
 # Build args
-ARG SHANDY_COMMIT=unknown
+ARG OPEN_SCIENTIST_COMMIT=unknown
 ARG BUILD_TIME=unknown
 
 # Optionally install Phenix for structural biology
@@ -32,9 +32,9 @@ EXPOSE 8080
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV SHANDY_COMMIT=${SHANDY_COMMIT}
-ENV SHANDY_BUILD_TIME=${BUILD_TIME}
+ENV OPEN_SCIENTIST_COMMIT=${OPEN_SCIENTIST_COMMIT}
+ENV OPEN_SCIENTIST_BUILD_TIME=${BUILD_TIME}
 # Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
-CMD ["python", "-m", "shandy.web_app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "open_scientist.web_app", "--host", "0.0.0.0", "--port", "8080"]

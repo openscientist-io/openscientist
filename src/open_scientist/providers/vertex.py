@@ -9,9 +9,9 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from shandy.exceptions import ProviderError
-from shandy.providers.base import BaseProvider, CostInfo
-from shandy.settings import get_settings
+from open_scientist.exceptions import ProviderError
+from open_scientist.providers.base import BaseProvider, CostInfo
+from open_scientist.settings import get_settings
 
 from ._anthropic_common import (
     send_anthropic_message,

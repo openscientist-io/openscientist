@@ -4,7 +4,7 @@ import uuid
 
 from nicegui import ui
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 
 @ui.page("/mock-login-form")

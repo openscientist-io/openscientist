@@ -1,5 +1,5 @@
 """
-Version information for SHANDY.
+Version information for Open Scientist.
 
 Provides build metadata from Docker build args or git.
 """
@@ -26,7 +26,7 @@ def get_commit() -> str:
         return _commit
 
     # Try environment variable first (set during Docker build)
-    commit = os.environ.get("SHANDY_COMMIT", "")  # env-ok
+    commit = os.environ.get("OPEN_SCIENTIST_COMMIT", "")  # env-ok
     if commit and commit != "unknown":
         _commit = commit[:SHORT_COMMIT_LENGTH]
         return _commit
@@ -56,7 +56,7 @@ def get_build_time() -> str:
     if _build_time is not None:
         return _build_time
 
-    build_time = os.environ.get("SHANDY_BUILD_TIME", "")  # env-ok
+    build_time = os.environ.get("OPEN_SCIENTIST_BUILD_TIME", "")  # env-ok
     if build_time and build_time != "unknown":
         _build_time = build_time
         return _build_time
@@ -67,4 +67,4 @@ def get_build_time() -> str:
 
 def get_version_string() -> str:
     """Get a full version string with commit and build time."""
-    return f"SHANDY v{__version__} (commit: {get_commit()}, built: {get_build_time()})"
+    return f"Open Scientist v{__version__} (commit: {get_commit()}, built: {get_build_time()})"

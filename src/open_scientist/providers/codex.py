@@ -7,7 +7,7 @@ This provider is a placeholder for future OpenAI Codex support.
 import logging
 from typing import Any
 
-from shandy.providers.base import BaseProvider, CostInfo
+from open_scientist.providers.base import BaseProvider, CostInfo
 
 logger = logging.getLogger(__name__)
 

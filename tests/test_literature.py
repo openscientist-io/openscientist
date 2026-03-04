@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from shandy.literature import (
+from open_scientist.literature import (
     _parse_pubmed_xml,
     format_literature_for_prompt,
     search_pubmed,
@@ -90,8 +90,8 @@ class TestParsePubmedXml:
 class TestSearchPubmed:
     """Tests for PubMed search with mocked HTTP."""
 
-    @patch("shandy.literature.requests.get")
-    @patch("shandy.literature.time.sleep")
+    @patch("open_scientist.literature.requests.get")
+    @patch("open_scientist.literature.time.sleep")
     def test_search_and_fetch(self, _mock_sleep, mock_get):
         # Mock esearch response
         search_resp = MagicMock()
@@ -109,7 +109,7 @@ class TestSearchPubmed:
         assert len(papers) >= 1
         assert papers[0]["pmid"] == "12345678"
 
-    @patch("shandy.literature.requests.get")
+    @patch("open_scientist.literature.requests.get")
     def test_no_results_returns_empty(self, mock_get):
         resp = MagicMock()
         resp.json.return_value = {"esearchresult": {"idlist": []}}

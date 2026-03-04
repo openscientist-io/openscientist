@@ -1,5 +1,5 @@
 """
-Row-Level Security (RLS) utilities for SHANDY.
+Row-Level Security (RLS) utilities for Open Scientist.
 
 Provides middleware and utilities for PostgreSQL Row-Level Security enforcement.
 RLS policies control access to database rows based on the current user context.

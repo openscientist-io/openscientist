@@ -1,5 +1,5 @@
 """
-Prompt templates for SHANDY orchestrator.
+Prompt templates for Open Scientist orchestrator.
 
 System prompts and discovery iteration prompts for the autonomous agent.
 """
@@ -238,7 +238,7 @@ def generate_job_claude_md(*, use_hypotheses: bool = False) -> str:
 
     # --- Header and mission ---
     parts.append("""\
-# SHANDY: Scientific Hypothesis Agent for Novel Discovery
+# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
 
 You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 

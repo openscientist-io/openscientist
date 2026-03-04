@@ -9,18 +9,18 @@ from nicegui import ui
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from shandy.api.auth import generate_api_key_secret, hash_secret
-from shandy.auth import get_current_user_id, is_current_user_admin, require_auth
-from shandy.database.models import APIKey, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_admin_session, get_session_ctx
-from shandy.webapp_components.ui_components import (
+from open_scientist.api.auth import generate_api_key_secret, hash_secret
+from open_scientist.auth import get_current_user_id, is_current_user_admin, require_auth
+from open_scientist.database.models import APIKey, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_admin_session, get_session_ctx
+from open_scientist.webapp_components.ui_components import (
     format_relative_time,
     render_dialog_actions,
     render_empty_state,
     render_navigator,
 )
-from shandy.webapp_components.utils import setup_timer_cleanup
+from open_scientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +320,7 @@ def _api_keys_intro(is_admin: bool) -> str:
     """Return intro markdown text for API keys page."""
     admin_prefix = "**Admin view**: You can see all API keys across all users. " if is_admin else ""
     return (
-        admin_prefix + "API keys allow programmatic access to the SHANDY REST API. "
+        admin_prefix + "API keys allow programmatic access to the Open Scientist REST API. "
         "Keys use the format `name:secret` for authentication."
     )
 
@@ -410,7 +410,7 @@ def _make_load_keys_handler(
 @require_auth
 async def api_keys_page() -> None:
     """API Keys management page."""
-    ui.page_title("API Keys - SHANDY")
+    ui.page_title("API Keys - Open Scientist")
     _active_timers = setup_timer_cleanup()
     is_admin = is_current_user_admin()
     render_navigator(active_page="api-keys")

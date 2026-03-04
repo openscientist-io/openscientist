@@ -1,5 +1,5 @@
 """
-Shared types for SHANDY job management.
+Shared types for Open Scientist job management.
 
 JobStatus, JobInfo, and JobStatusUpdateResult live here to avoid circular
 imports between job/lifecycle.py and job_manager.py.

@@ -1,7 +1,7 @@
 """Container dashboard data collection for the admin page.
 
 Queries Docker API and database to build a real-time view of all
-SHANDY-managed containers (agent + executor) grouped by job.
+Open Scientist-managed containers (agent + executor) grouped by job.
 """
 
 from __future__ import annotations
@@ -91,12 +91,12 @@ def _get_docker_client() -> Any:
         return None
 
 
-def _list_shandy_containers(client: Any) -> list[Any]:
-    """List all containers with a ``shandy.type`` label."""
+def _list_open_scientist_containers(client: Any) -> list[Any]:
+    """List all containers with a ``open_scientist.type`` label."""
     return list(
         client.containers.list(
             all=True,
-            filters={"label": ["shandy.type"]},
+            filters={"label": ["open_scientist.type"]},
         )
     )
 
@@ -175,8 +175,8 @@ def _build_container_info(
     return ContainerInfo(
         container_id=container.short_id,
         name=container.name,
-        container_type=labels.get("shandy.type", "unknown"),
-        job_id=labels.get("shandy.job_id"),
+        container_type=labels.get("open_scientist.type", "unknown"),
+        job_id=labels.get("open_scientist.job_id"),
         status=container.status,
         created_at=created_at,
         uptime_seconds=uptime_seconds,
@@ -235,7 +235,7 @@ async def _fetch_dashboard_sources(
 ) -> tuple[list[Any], dict[str, dict[str, Any]]] | None:
     try:
         containers_list, job_map = await asyncio.gather(
-            asyncio.to_thread(_list_shandy_containers, client),
+            asyncio.to_thread(_list_open_scientist_containers, client),
             _get_active_jobs_map(),
         )
     except Exception as exc:
@@ -341,8 +341,8 @@ async def _get_active_jobs_map() -> dict[str, dict[str, Any]]:
     """
     from sqlalchemy import select
 
-    from shandy.database.models import Job, User
-    from shandy.database.session import get_admin_session
+    from open_scientist.database.models import Job, User
+    from open_scientist.database.session import get_admin_session
 
     result_map: dict[str, dict[str, Any]] = {}
 

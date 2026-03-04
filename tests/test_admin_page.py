@@ -11,9 +11,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Job, User
-from shandy.database.rls import set_current_user
-from shandy.webapp_components.pages.admin import (
+from open_scientist.database.models import Job, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.webapp_components.pages.admin import (
     _filter_users_for_admin_table,
     admin_page,
     set_user_approval_status,
@@ -386,7 +386,7 @@ async def test_set_user_approval_status_can_remove_approval(
 ):
     """Admin helper can remove approval from an approved user."""
     monkeypatch.setattr(
-        "shandy.webapp_components.pages.admin.get_admin_session",
+        "open_scientist.webapp_components.pages.admin.get_admin_session",
         fake_admin_session(db_session),
     )
 
@@ -414,7 +414,7 @@ async def test_set_user_approval_status_rejects_self_unapprove(
 ):
     """Admin helper should reject removing approval from the current user."""
     monkeypatch.setattr(
-        "shandy.webapp_components.pages.admin.get_admin_session",
+        "open_scientist.webapp_components.pages.admin.get_admin_session",
         fake_admin_session(db_session),
     )
 
@@ -428,7 +428,7 @@ async def test_set_user_approval_status_rejects_self_unapprove(
     await db_session.refresh(user)
 
     monkeypatch.setattr(
-        "shandy.webapp_components.pages.admin.get_current_user_id",
+        "open_scientist.webapp_components.pages.admin.get_current_user_id",
         lambda: str(user.id),
     )
 
@@ -447,7 +447,7 @@ async def test_set_user_approval_status_noop_when_already_pending(
 ):
     """Admin helper should report noop when user is already pending."""
     monkeypatch.setattr(
-        "shandy.webapp_components.pages.admin.get_admin_session",
+        "open_scientist.webapp_components.pages.admin.get_admin_session",
         fake_admin_session(db_session),
     )
 
@@ -472,7 +472,7 @@ async def test_set_user_approval_status_handles_missing_user(
 ):
     """Admin helper should return not found for unknown user IDs."""
     monkeypatch.setattr(
-        "shandy.webapp_components.pages.admin.get_admin_session",
+        "open_scientist.webapp_components.pages.admin.get_admin_session",
         fake_admin_session(db_session),
     )
 

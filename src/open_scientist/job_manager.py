@@ -1,5 +1,5 @@
 """
-Job manager for SHANDY discovery jobs.
+Job manager for Open Scientist discovery jobs.
 
 Handles job lifecycle, status tracking, and cleanup.
 """
@@ -19,20 +19,20 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.container_manager import get_container_manager
-from shandy.database.models import User
-from shandy.database.models.job import Job as JobModel
-from shandy.database.models.job_share import JobShare
-from shandy.database.rls import set_current_user
-from shandy.database.session import AsyncSessionLocal
-from shandy.exceptions import ProviderError
-from shandy.job.types import JobInfo, JobStatus, JobStatusUpdateResult
-from shandy.knowledge_state import KS_FILENAME
-from shandy.ntfy import notify_job_status_change
-from shandy.orchestrator import create_job
-from shandy.orchestrator import regenerate_report as _regenerate_report
-from shandy.providers import get_provider
-from shandy.version import get_version_string
+from open_scientist.container_manager import get_container_manager
+from open_scientist.database.models import User
+from open_scientist.database.models.job import Job as JobModel
+from open_scientist.database.models.job_share import JobShare
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import AsyncSessionLocal
+from open_scientist.exceptions import ProviderError
+from open_scientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
+from open_scientist.knowledge_state import KS_FILENAME
+from open_scientist.ntfy import notify_job_status_change
+from open_scientist.orchestrator import create_job
+from open_scientist.orchestrator import regenerate_report as _regenerate_report
+from open_scientist.providers import get_provider
+from open_scientist.version import get_version_string
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ async def _apply_rls_context(session: AsyncSession, user_id: UUID | None) -> Non
     """Apply user-scoped RLS context when a user id is provided."""
     if user_id is None:
         return
-    await session.execute(text("SET ROLE shandy_app"))
+    await session.execute(text("SET ROLE open_scientist_app"))
     await set_current_user(session, user_id)
 
 
@@ -131,7 +131,7 @@ async def _db_create_job(
 async def _db_get_job(job_id: str, user_id: UUID | None = None) -> JobModel | None:
     """Get a job from the database (thread-safe for worker threads).
 
-    When user_id is provided, drops to shandy_app role so RLS policies
+    When user_id is provided, drops to open_scientist_app role so RLS policies
     are enforced. Without user_id, runs as the connection user (superuser)
     which bypasses RLS — use only for internal/system operations.
     """
@@ -240,17 +240,17 @@ async def _db_delete_job(job_id: str, user_id: UUID | None = None) -> None:
 def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run async code from sync context.
 
-    Thin wrapper around :func:`shandy.async_tasks.run_sync` kept for
+    Thin wrapper around :func:`open_scientist.async_tasks.run_sync` kept for
     internal compatibility within this module.
     """
-    from shandy.async_tasks import run_sync
+    from open_scientist.async_tasks import run_sync
 
     return run_sync(coro)
 
 
 class JobManager:
     """
-    Manages SHANDY discovery jobs.
+    Manages Open Scientist discovery jobs.
 
     Features:
     - Create and queue jobs
@@ -321,7 +321,7 @@ class JobManager:
 
                 # Stop any orphaned agent container for this stale job.
                 try:
-                    from shandy.job_container import JobContainerRunner
+                    from open_scientist.job_container import JobContainerRunner
 
                     JobContainerRunner().cleanup(job_id)
                 except Exception as e:
@@ -542,7 +542,7 @@ class JobManager:
 
     def _run_job_in_container(self, job_id: str) -> None:
         """Launch an agent container for the job and block until it reaches a terminal status."""
-        from shandy.job_container import JobContainerRunner
+        from open_scientist.job_container import JobContainerRunner
 
         poll_interval = 5
         terminal_statuses = {"completed", "failed", "cancelled"}
@@ -732,7 +732,7 @@ class JobManager:
         # keep burning resources until the polling loop notices the DB change.
         if job_info.status == JobStatus.RUNNING:
             try:
-                from shandy.job_container import JobContainerRunner
+                from open_scientist.job_container import JobContainerRunner
 
                 JobContainerRunner().stop(job_id)
             except Exception as e:
@@ -1028,7 +1028,7 @@ class JobManager:
 
 def main() -> None:
     """CLI entry point for job manager."""
-    parser = argparse.ArgumentParser(description="SHANDY Job Manager")
+    parser = argparse.ArgumentParser(description="Open Scientist Job Manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # List jobs
@@ -1079,7 +1079,7 @@ def main() -> None:
     )
 
     if args.command == "bootstrap":
-        from shandy.bootstrap import bootstrap_jobs_from_filesystem_sync
+        from open_scientist.bootstrap import bootstrap_jobs_from_filesystem_sync
 
         result = bootstrap_jobs_from_filesystem_sync(
             jobs_dir=Path(args.jobs_dir),

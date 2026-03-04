@@ -1,5 +1,5 @@
 """
-SHANDY Executor main entry point.
+Open Scientist Executor main entry point.
 
 Reads execution requests from stdin JSON and writes execution results to stdout JSON.
 """
@@ -9,7 +9,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from shandy.code_executor import (
+from open_scientist.code_executor import (
     execute_code,
     execute_rust_code,
     execute_sparql_code,

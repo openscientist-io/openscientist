@@ -1,7 +1,7 @@
 [project]
-name = "shandy"
+name = "open_scientist"
 version = "0.1.0"
-description = "SHANDY - Scientific Hypothesis Agent for Novel Discovery"
+description = "Open Scientist - Scientific Hypothesis Agent for Novel Discovery"
 authors = [
     {name = "Justin Reese", email = "justinreese@lbl.gov"}
 ]
@@ -104,7 +104,7 @@ select = ["B", "E", "F", "I", "N", "W"]
 ignore = ["E501"]  # Line too long (handled by formatter)
 
 [tool.ruff.lint.per-file-ignores]
-"src/shandy/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
+"src/open_scientist/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
 
 [tool.mypy]
 python_version = "3.12"
@@ -130,7 +130,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["src/shandy"]
+source = ["src/open_scientist"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
@@ -164,7 +164,7 @@ directory = "htmlcov"
 output = "coverage.xml"
 
 [tool.coverage.paths]
-source = ["src/shandy"]
+source = ["src/open_scientist"]
 
 [dependency-groups]
 dev = [

@@ -1,5 +1,5 @@
 """
-Security middleware for SHANDY.
+Security middleware for Open Scientist.
 
 Blocks automated scanner probes before they reach NiceGUI routing,
 reducing log noise and unnecessary database sessions.

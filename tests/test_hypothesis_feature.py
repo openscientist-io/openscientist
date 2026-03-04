@@ -18,9 +18,9 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import User
-from shandy.database.models.job import Job as JobModel
-from shandy.job.types import JobInfo, JobStatus
+from open_scientist.database.models import User
+from open_scientist.database.models.job import Job as JobModel
+from open_scientist.job.types import JobInfo, JobStatus
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -190,8 +190,8 @@ class TestKnowledgeMakeTools:
         return {t.name for t in tools}
 
     def test_use_hypotheses_true_includes_all_three_tools(self, tmp_path: Path) -> None:
-        from shandy.tools.knowledge import make_tools
-        from shandy.tools.registry import ToolContext
+        from open_scientist.tools.knowledge import make_tools
+        from open_scientist.tools.registry import ToolContext
 
         ctx = ToolContext(job_dir=tmp_path)
         tools = make_tools(ctx, use_hypotheses=True)
@@ -202,8 +202,8 @@ class TestKnowledgeMakeTools:
         assert len(tools) == 3
 
     def test_use_hypotheses_false_only_update_knowledge_state(self, tmp_path: Path) -> None:
-        from shandy.tools.knowledge import make_tools
-        from shandy.tools.registry import ToolContext
+        from open_scientist.tools.knowledge import make_tools
+        from open_scientist.tools.registry import ToolContext
 
         ctx = ToolContext(job_dir=tmp_path)
         tools = make_tools(ctx, use_hypotheses=False)
@@ -215,8 +215,8 @@ class TestKnowledgeMakeTools:
 
     def test_default_excludes_hypothesis_tools(self, tmp_path: Path) -> None:
         """Default use_hypotheses=False means hypothesis tools are opt-in."""
-        from shandy.tools.knowledge import make_tools
-        from shandy.tools.registry import ToolContext
+        from open_scientist.tools.knowledge import make_tools
+        from open_scientist.tools.registry import ToolContext
 
         ctx = ToolContext(job_dir=tmp_path)
         tools = make_tools(ctx)
@@ -232,8 +232,8 @@ class TestKnowledgeMakeTools:
         except ImportError:
             pytest.skip("claude_agent_sdk not installed")
 
-        from shandy.tools.knowledge import make_tools
-        from shandy.tools.registry import ToolContext
+        from open_scientist.tools.knowledge import make_tools
+        from open_scientist.tools.registry import ToolContext
 
         ctx = ToolContext(job_dir=tmp_path)
         for flag in (True, False):
@@ -254,7 +254,7 @@ class TestBuildToolListHypotheses:
         return {t.name for t in tools}
 
     def test_use_hypotheses_false_excludes_hypothesis_tools(self, tmp_path: Path) -> None:
-        from shandy.tools.registry import build_tool_list
+        from open_scientist.tools.registry import build_tool_list
 
         tools = build_tool_list(tmp_path, use_hypotheses=False)
         names = self._tool_names(tools)
@@ -263,7 +263,7 @@ class TestBuildToolListHypotheses:
         assert "update_knowledge_state" in names
 
     def test_use_hypotheses_true_includes_hypothesis_tools(self, tmp_path: Path) -> None:
-        from shandy.tools.registry import build_tool_list
+        from open_scientist.tools.registry import build_tool_list
 
         tools = build_tool_list(tmp_path, use_hypotheses=True)
         names = self._tool_names(tools)
@@ -273,7 +273,7 @@ class TestBuildToolListHypotheses:
 
     def test_default_excludes_hypothesis_tools(self, tmp_path: Path) -> None:
         """Default use_hypotheses=False so new jobs don't get hypothesis tools by accident."""
-        from shandy.tools.registry import build_tool_list
+        from open_scientist.tools.registry import build_tool_list
 
         tools = build_tool_list(tmp_path)
         names = self._tool_names(tools)
@@ -281,7 +281,7 @@ class TestBuildToolListHypotheses:
         assert "update_hypothesis" not in names
 
     def test_all_tools_have_unique_names(self, tmp_path: Path) -> None:
-        from shandy.tools.registry import build_tool_list
+        from open_scientist.tools.registry import build_tool_list
 
         for flag in (True, False):
             tools = build_tool_list(tmp_path, use_hypotheses=flag)
@@ -298,7 +298,7 @@ class TestSDKAgentExecutorHypotheses:
     """SDKAgentExecutor must build tool list with correct use_hypotheses."""
 
     def test_use_hypotheses_false_tools_lack_hypothesis_tools(self, tmp_path: Path) -> None:
-        from shandy.agent.sdk_executor import SDKAgentExecutor
+        from open_scientist.agent.sdk_executor import SDKAgentExecutor
 
         exe = SDKAgentExecutor(
             job_dir=tmp_path,
@@ -311,7 +311,7 @@ class TestSDKAgentExecutorHypotheses:
         assert "update_hypothesis" not in names
 
     def test_use_hypotheses_true_tools_include_hypothesis_tools(self, tmp_path: Path) -> None:
-        from shandy.agent.sdk_executor import SDKAgentExecutor
+        from open_scientist.agent.sdk_executor import SDKAgentExecutor
 
         exe = SDKAgentExecutor(
             job_dir=tmp_path,
@@ -325,7 +325,7 @@ class TestSDKAgentExecutorHypotheses:
 
     def test_default_use_hypotheses_is_false(self, tmp_path: Path) -> None:
         """SDKAgentExecutor default should not expose hypothesis tools."""
-        from shandy.agent.sdk_executor import SDKAgentExecutor
+        from open_scientist.agent.sdk_executor import SDKAgentExecutor
 
         exe = SDKAgentExecutor(
             job_dir=tmp_path,
@@ -345,7 +345,7 @@ class TestGetAgentExecutorHypotheses:
     """get_agent_executor() must pass use_hypotheses through to SDKAgentExecutor."""
 
     def test_use_hypotheses_false_propagates(self, tmp_path: Path) -> None:
-        from shandy.agent.factory import get_agent_executor
+        from open_scientist.agent.factory import get_agent_executor
 
         executor = get_agent_executor(
             job_dir=tmp_path,
@@ -357,7 +357,7 @@ class TestGetAgentExecutorHypotheses:
         assert "add_hypothesis" not in names
 
     def test_use_hypotheses_true_propagates(self, tmp_path: Path) -> None:
-        from shandy.agent.factory import get_agent_executor
+        from open_scientist.agent.factory import get_agent_executor
 
         executor = get_agent_executor(
             job_dir=tmp_path,
@@ -370,7 +370,7 @@ class TestGetAgentExecutorHypotheses:
         assert "update_hypothesis" in names
 
     def test_default_does_not_include_hypothesis_tools(self, tmp_path: Path) -> None:
-        from shandy.agent.factory import get_agent_executor
+        from open_scientist.agent.factory import get_agent_executor
 
         executor = get_agent_executor(
             job_dir=tmp_path,
@@ -418,14 +418,14 @@ class TestLoadRuntimeContextHypotheses:
         return job, job_id
 
     async def test_use_hypotheses_true_in_runtime(self, tmp_path: Path) -> None:
-        from shandy.orchestrator.discovery import _load_runtime_context
+        from open_scientist.orchestrator.discovery import _load_runtime_context
 
         job, job_id = self._make_db_job(use_hypotheses=True)
         job_dir = tmp_path / str(job_id)
         job_dir.mkdir()
 
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             return_value=_make_mock_session_for_job(job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -433,14 +433,14 @@ class TestLoadRuntimeContextHypotheses:
         assert runtime["use_hypotheses"] is True
 
     async def test_use_hypotheses_false_in_runtime(self, tmp_path: Path) -> None:
-        from shandy.orchestrator.discovery import _load_runtime_context
+        from open_scientist.orchestrator.discovery import _load_runtime_context
 
         job, job_id = self._make_db_job(use_hypotheses=False)
         job_dir = tmp_path / str(job_id)
         job_dir.mkdir()
 
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             return_value=_make_mock_session_for_job(job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -449,14 +449,14 @@ class TestLoadRuntimeContextHypotheses:
 
     async def test_runtime_keys_complete(self, tmp_path: Path) -> None:
         """Runtime context must include all required keys."""
-        from shandy.orchestrator.discovery import _load_runtime_context
+        from open_scientist.orchestrator.discovery import _load_runtime_context
 
         job, job_id = self._make_db_job(use_hypotheses=True)
         job_dir = tmp_path / str(job_id)
         job_dir.mkdir()
 
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             return_value=_make_mock_session_for_job(job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -496,12 +496,12 @@ class TestDbCreateJobHypotheses:
         return mock_cm, captured
 
     async def test_creates_job_with_use_hypotheses_true(self) -> None:
-        from shandy.job_manager import _db_create_job
+        from open_scientist.job_manager import _db_create_job
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("shandy.job_manager.AsyncSessionLocal", return_value=mock_cm):
+        with patch("open_scientist.job_manager.AsyncSessionLocal", return_value=mock_cm):
             await _db_create_job(
                 job_id,
                 "Research with hypotheses",
@@ -513,12 +513,12 @@ class TestDbCreateJobHypotheses:
         assert captured[0].use_hypotheses is True
 
     async def test_creates_job_with_use_hypotheses_false(self) -> None:
-        from shandy.job_manager import _db_create_job
+        from open_scientist.job_manager import _db_create_job
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("shandy.job_manager.AsyncSessionLocal", return_value=mock_cm):
+        with patch("open_scientist.job_manager.AsyncSessionLocal", return_value=mock_cm):
             await _db_create_job(
                 job_id,
                 "Research without hypotheses",
@@ -531,12 +531,12 @@ class TestDbCreateJobHypotheses:
 
     async def test_creates_job_with_default_use_hypotheses_false(self) -> None:
         """Default must be False so existing callers are not surprised."""
-        from shandy.job_manager import _db_create_job
+        from open_scientist.job_manager import _db_create_job
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("shandy.job_manager.AsyncSessionLocal", return_value=mock_cm):
+        with patch("open_scientist.job_manager.AsyncSessionLocal", return_value=mock_cm):
             await _db_create_job(
                 job_id,
                 "Default hypotheses test",
@@ -570,14 +570,14 @@ class TestStatsBadgesHypotheses:
         )
 
     def test_no_hypotheses_badge_when_count_is_zero(self) -> None:
-        from shandy.webapp_components.pages.job_detail import _stats_badges
+        from open_scientist.webapp_components.pages.job_detail import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=3, hyp_count=0)
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
 
     def test_hypotheses_badge_appears_when_count_nonzero(self) -> None:
-        from shandy.webapp_components.pages.job_detail import _stats_badges
+        from open_scientist.webapp_components.pages.job_detail import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=3, hyp_count=5)
         badge = self._get_badge(badges, "Hypotheses")
@@ -586,7 +586,7 @@ class TestStatsBadgesHypotheses:
         assert badge[2] == "orange"
 
     def test_findings_badge_still_present_alongside_hypotheses(self) -> None:
-        from shandy.webapp_components.pages.job_detail import _stats_badges
+        from open_scientist.webapp_components.pages.job_detail import _stats_badges
 
         badges = _stats_badges(self._make_job(findings=4), lit_count=2, hyp_count=3)
         labels = self._get_labels(badges)
@@ -594,7 +594,7 @@ class TestStatsBadgesHypotheses:
         assert "Hypotheses" in labels
 
     def test_default_hyp_count_zero_omits_badge(self) -> None:
-        from shandy.webapp_components.pages.job_detail import _stats_badges
+        from open_scientist.webapp_components.pages.job_detail import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=0)
         labels = self._get_labels(badges)
@@ -734,7 +734,7 @@ class TestNewJobPageStructure:
     def test_submit_job_accepts_use_hypotheses(self) -> None:
         import inspect
 
-        from shandy.webapp_components.pages.new_job import _submit_job
+        from open_scientist.webapp_components.pages.new_job import _submit_job
 
         sig = inspect.signature(_submit_job)
         assert "use_hypotheses" in sig.parameters
@@ -742,7 +742,7 @@ class TestNewJobPageStructure:
     def test_submit_job_accepts_coinvestigate_mode(self) -> None:
         import inspect
 
-        from shandy.webapp_components.pages.new_job import _submit_job
+        from open_scientist.webapp_components.pages.new_job import _submit_job
 
         sig = inspect.signature(_submit_job)
         assert "coinvestigate_mode" in sig.parameters
@@ -750,7 +750,7 @@ class TestNewJobPageStructure:
     def test_all_required_params_present(self) -> None:
         import inspect
 
-        from shandy.webapp_components.pages.new_job import _submit_job
+        from open_scientist.webapp_components.pages.new_job import _submit_job
 
         sig = inspect.signature(_submit_job)
         required_params = {
@@ -778,7 +778,7 @@ class TestEndToEndHypothesesFlow:
         self, tmp_path: Path
     ) -> None:
         """_create_db_job_record(use_hypotheses=True) calls _db_create_job with use_hypotheses=True."""
-        from shandy.job_manager import JobManager
+        from open_scientist.job_manager import JobManager
 
         job_id = str(uuid4())
         jobs_dir = tmp_path / "jobs"
@@ -786,7 +786,9 @@ class TestEndToEndHypothesesFlow:
 
         jm = JobManager(jobs_dir=jobs_dir)
 
-        with patch("shandy.job_manager._db_create_job", new_callable=AsyncMock) as mock_db_create:
+        with patch(
+            "open_scientist.job_manager._db_create_job", new_callable=AsyncMock
+        ) as mock_db_create:
             jm._create_db_job_record(
                 job_id=job_id,
                 research_question="Test",
@@ -805,7 +807,7 @@ class TestEndToEndHypothesesFlow:
 
     async def test_runtime_context_true_via_mock(self, tmp_path: Path) -> None:
         """Jobs with use_hypotheses=True produce runtime['use_hypotheses'] = True."""
-        from shandy.orchestrator.discovery import _load_runtime_context
+        from open_scientist.orchestrator.discovery import _load_runtime_context
 
         job_id = uuid4()
         job_dir = tmp_path / str(job_id)
@@ -819,7 +821,7 @@ class TestEndToEndHypothesesFlow:
             investigation_mode="autonomous",
         )
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             return_value=_make_mock_session_for_job(fake_job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -829,7 +831,7 @@ class TestEndToEndHypothesesFlow:
 
     async def test_runtime_context_false_via_mock(self, tmp_path: Path) -> None:
         """Jobs with use_hypotheses=False produce runtime['use_hypotheses'] = False."""
-        from shandy.orchestrator.discovery import _load_runtime_context
+        from open_scientist.orchestrator.discovery import _load_runtime_context
 
         job_id = uuid4()
         job_dir = tmp_path / str(job_id)
@@ -843,7 +845,7 @@ class TestEndToEndHypothesesFlow:
             investigation_mode="autonomous",
         )
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             return_value=_make_mock_session_for_job(fake_job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -854,11 +856,11 @@ class TestEndToEndHypothesesFlow:
         self, tmp_path: Path
     ) -> None:
         """_build_agent_executor(use_hypotheses=True) passes it to get_agent_executor."""
-        from shandy.orchestrator.discovery import _build_agent_executor
+        from open_scientist.orchestrator.discovery import _build_agent_executor
 
         with (
-            patch("shandy.orchestrator.discovery.get_agent_executor") as mock_get_executor,
-            patch("shandy.orchestrator.discovery.get_system_prompt", return_value="prompt"),
+            patch("open_scientist.orchestrator.discovery.get_agent_executor") as mock_get_executor,
+            patch("open_scientist.orchestrator.discovery.get_system_prompt", return_value="prompt"),
         ):
             _build_agent_executor(
                 job_dir=tmp_path,
@@ -869,11 +871,11 @@ class TestEndToEndHypothesesFlow:
             assert call_kwargs["use_hypotheses"] is True
 
     async def test_build_agent_executor_false_passes_false(self, tmp_path: Path) -> None:
-        from shandy.orchestrator.discovery import _build_agent_executor
+        from open_scientist.orchestrator.discovery import _build_agent_executor
 
         with (
-            patch("shandy.orchestrator.discovery.get_agent_executor") as mock_get_executor,
-            patch("shandy.orchestrator.discovery.get_system_prompt", return_value="prompt"),
+            patch("open_scientist.orchestrator.discovery.get_agent_executor") as mock_get_executor,
+            patch("open_scientist.orchestrator.discovery.get_system_prompt", return_value="prompt"),
         ):
             _build_agent_executor(
                 job_dir=tmp_path,
@@ -893,7 +895,7 @@ class TestGenerateJobClaudeMd:
     """generate_job_claude_md() produces correct content based on use_hypotheses."""
 
     def test_with_hypotheses_contains_hypothesis_tools(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=True)
         assert "add_hypothesis" in content
@@ -901,7 +903,7 @@ class TestGenerateJobClaudeMd:
         assert "Hypothesis Tracking Workflow" in content
 
     def test_without_hypotheses_omits_hypothesis_tools(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=False)
         assert "add_hypothesis" not in content
@@ -909,7 +911,7 @@ class TestGenerateJobClaudeMd:
         assert "Hypothesis Tracking Workflow" not in content
 
     def test_without_hypotheses_still_contains_core_tools(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=False)
         assert "execute_code" in content
@@ -923,7 +925,7 @@ class TestGenerateJobClaudeMd:
         assert "search_skills" in content
 
     def test_with_hypotheses_still_contains_core_tools(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=True)
         assert "execute_code" in content
@@ -932,14 +934,14 @@ class TestGenerateJobClaudeMd:
         assert "save_iteration_summary" in content
 
     def test_default_is_no_hypotheses(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md()
         assert "add_hypothesis" not in content
         assert "update_hypothesis" not in content
 
     def test_with_hypotheses_includes_hypothesis_approach_steps(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=True)
         assert "Use `add_hypothesis` to formally record each hypothesis" in content
@@ -948,7 +950,7 @@ class TestGenerateJobClaudeMd:
         assert 'Update hypothesis to `"refuted"`' in content
 
     def test_without_hypotheses_omits_hypothesis_approach_steps(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=False)
         assert "Use `add_hypothesis` to formally record" not in content
@@ -956,24 +958,24 @@ class TestGenerateJobClaudeMd:
         assert 'Update hypothesis to `"supported"`' not in content
 
     def test_without_hypotheses_has_alternative_interpret_steps(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         content = generate_job_claude_md(use_hypotheses=False)
         assert "Record confirmed findings to the knowledge state" in content
         assert "Negative results are also valuable" in content
 
     def test_returns_string(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         assert isinstance(generate_job_claude_md(use_hypotheses=True), str)
         assert isinstance(generate_job_claude_md(use_hypotheses=False), str)
 
     def test_both_variants_have_mission_and_footer(self) -> None:
-        from shandy.prompts import generate_job_claude_md
+        from open_scientist.prompts import generate_job_claude_md
 
         for flag in (True, False):
             content = generate_job_claude_md(use_hypotheses=flag)
-            assert "# SHANDY: Scientific Hypothesis Agent for Novel Discovery" in content
+            assert "# Open Scientist: Scientific Hypothesis Agent for Novel Discovery" in content
             assert "You are autonomous" in content
 
 
@@ -986,10 +988,10 @@ class TestWriteSkillsToClaudeDirJobClaudeMd:
     """_write_skills_to_claude_dir writes the correct CLAUDE.md based on use_hypotheses."""
 
     async def test_writes_job_claude_md_with_hypotheses(self, tmp_path: Path) -> None:
-        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
+        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             side_effect=Exception("no db"),
         ):
             await _write_skills_to_claude_dir(tmp_path, use_hypotheses=True)
@@ -1000,10 +1002,10 @@ class TestWriteSkillsToClaudeDirJobClaudeMd:
         assert "Hypothesis Tracking Workflow" in claude_md
 
     async def test_writes_job_claude_md_without_hypotheses(self, tmp_path: Path) -> None:
-        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
+        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             side_effect=Exception("no db"),
         ):
             await _write_skills_to_claude_dir(tmp_path, use_hypotheses=False)
@@ -1014,10 +1016,10 @@ class TestWriteSkillsToClaudeDirJobClaudeMd:
         assert "execute_code" in claude_md
 
     async def test_default_use_hypotheses_is_false(self, tmp_path: Path) -> None:
-        from shandy.orchestrator.discovery import _write_skills_to_claude_dir
+        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         with patch(
-            "shandy.orchestrator.discovery.AsyncSessionLocal",
+            "open_scientist.orchestrator.discovery.AsyncSessionLocal",
             side_effect=Exception("no db"),
         ):
             await _write_skills_to_claude_dir(tmp_path)

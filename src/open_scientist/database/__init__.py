@@ -1,5 +1,5 @@
 """
-Database package for SHANDY.
+Database package for Open Scientist.
 
 Provides SQLAlchemy ORM models, session management, and database utilities.
 

@@ -1,5 +1,5 @@
 """
-Centralized settings module for SHANDY.
+Centralized settings module for Open Scientist.
 
 Validates all environment variables at startup using Pydantic v2 BaseSettings.
 Provides clear error messages when configuration is invalid.
@@ -28,7 +28,7 @@ class DevSettings(BaseSettings):
         extra="ignore",
     )
 
-    dev_mode: bool = Field(default=False, alias="SHANDY_DEV_MODE")
+    dev_mode: bool = Field(default=False, alias="OPEN_SCIENTIST_DEV_MODE")
     simulate_provider_error: bool = Field(default=False, alias="SIMULATE_PROVIDER_ERROR")
 
 
@@ -363,7 +363,7 @@ class AuthSettings(BaseSettings):
     app_url: str = Field(default="http://localhost:8080", alias="APP_URL")
     session_duration_days: int = Field(default=30, alias="SESSION_DURATION_DAYS")
 
-    # Derived from SHANDY_SECRET_KEY (populated by Settings.derive_secrets)
+    # Derived from OPEN_SCIENTIST_SECRET_KEY (populated by Settings.derive_secrets)
     storage_secret: str = Field(default="")
     token_encryption_key: str | None = Field(default=None)
 
@@ -503,23 +503,25 @@ class ContainerSettings(BaseSettings):
         extra="ignore",
     )
 
-    executor_image: str = Field(default="shandy-executor:latest", alias="SHANDY_EXECUTOR_IMAGE")
-    executor_memory: str = Field(default="2g", alias="SHANDY_EXECUTOR_MEMORY")
-    executor_cpu: float = Field(default=0.5, alias="SHANDY_EXECUTOR_CPU")
-    executor_timeout: int = Field(default=120, alias="SHANDY_EXECUTOR_TIMEOUT")
+    executor_image: str = Field(
+        default="open_scientist-executor:latest", alias="OPEN_SCIENTIST_EXECUTOR_IMAGE"
+    )
+    executor_memory: str = Field(default="2g", alias="OPEN_SCIENTIST_EXECUTOR_MEMORY")
+    executor_cpu: float = Field(default=0.5, alias="OPEN_SCIENTIST_EXECUTOR_CPU")
+    executor_timeout: int = Field(default=120, alias="OPEN_SCIENTIST_EXECUTOR_TIMEOUT")
 
     # Agent container resource limits
-    agent_memory: str = Field(default="8g", alias="SHANDY_AGENT_MEMORY")
-    agent_cpu: float = Field(default=2.0, alias="SHANDY_AGENT_CPU")
+    agent_memory: str = Field(default="8g", alias="OPEN_SCIENTIST_AGENT_MEMORY")
+    agent_cpu: float = Field(default=2.0, alias="OPEN_SCIENTIST_AGENT_CPU")
 
     # Host path mapping for sibling container volume mounts (executor containers)
     # When the main container runs inside Docker and spawns sibling containers,
     # paths need to be translated from container paths to host paths.
-    # Example: /app inside container maps to /home/user/shandy on host
-    container_app_dir: str = Field(default="/app", alias="SHANDY_CONTAINER_APP_DIR")
+    # Example: /app inside container maps to /home/user/open_scientist on host
+    container_app_dir: str = Field(default="/app", alias="OPEN_SCIENTIST_CONTAINER_APP_DIR")
     host_project_dir: str | None = Field(
         default=None,
-        alias="SHANDY_HOST_PROJECT_DIR",
+        alias="OPEN_SCIENTIST_HOST_PROJECT_DIR",
         description="Host path for project directory. Required when using agent containers.",
     )
 
@@ -625,15 +627,15 @@ class Settings(BaseSettings):
     )
 
     # Master secret — all auth secrets are derived from this via HMAC-SHA256
-    secret_key: str = Field(alias="SHANDY_SECRET_KEY")
+    secret_key: str = Field(alias="OPEN_SCIENTIST_SECRET_KEY")
 
     # Server settings
     port: int = Field(default=8080, alias="PORT")
-    max_concurrent_jobs: int = Field(default=1, alias="SHANDY_MAX_CONCURRENT_JOBS")
+    max_concurrent_jobs: int = Field(default=1, alias="OPEN_SCIENTIST_MAX_CONCURRENT_JOBS")
     base_url: str = Field(
         default="http://localhost:8080",
-        alias="SHANDY_BASE_URL",
-        description="Base URL for SHANDY (used in notifications and share links)",
+        alias="OPEN_SCIENTIST_BASE_URL",
+        description="Base URL for Open Scientist (used in notifications and share links)",
     )
 
     # Nested settings
@@ -650,7 +652,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":
-        """Derive auth secrets from the master SHANDY_SECRET_KEY via HMAC-SHA256."""
+        """Derive auth secrets from the master OPEN_SCIENTIST_SECRET_KEY via HMAC-SHA256."""
         key = self.secret_key.encode()
         self.auth.storage_secret = hmac.new(key, b"storage_secret", hashlib.sha256).hexdigest()
         self.auth.token_encryption_key = hmac.new(

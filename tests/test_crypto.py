@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shandy.database.crypto import (
+from open_scientist.database.crypto import (
     EncryptionError,
     decrypt,
     encrypt,
@@ -15,12 +15,12 @@ from shandy.database.crypto import (
 
 def _patch_encryption_key(key: str | None):
     """Return a context manager that patches the token_encryption_key setting."""
-    from shandy.database import crypto
+    from open_scientist.database import crypto
 
     crypto._get_fernet.cache_clear()
     mock_settings = MagicMock()
     mock_settings.auth.token_encryption_key = key
-    return patch("shandy.database.crypto.get_settings", return_value=mock_settings)
+    return patch("open_scientist.database.crypto.get_settings", return_value=mock_settings)
 
 
 class TestEncryptionAvailable:
@@ -28,7 +28,7 @@ class TestEncryptionAvailable:
 
     def test_available_when_key_set(self):
         """Encryption is available when key is configured."""
-        from shandy.database import crypto
+        from open_scientist.database import crypto
 
         crypto._get_fernet.cache_clear()
         assert encryption_available() is True
@@ -45,7 +45,7 @@ class TestEncryptDecrypt:
     @pytest.fixture(autouse=True)
     def setup_encryption_key(self):
         """Set up a test encryption key for each test."""
-        from shandy.database import crypto
+        from open_scientist.database import crypto
 
         crypto._get_fernet.cache_clear()
         yield

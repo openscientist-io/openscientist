@@ -2,7 +2,7 @@
 
 import logging
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

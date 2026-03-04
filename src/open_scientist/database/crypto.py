@@ -12,7 +12,7 @@ from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def encrypt(plaintext: str) -> str:
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
-            "Encryption key not configured. Set SHANDY_SECRET_KEY environment variable."
+            "Encryption key not configured. Set OPEN_SCIENTIST_SECRET_KEY environment variable."
         )
 
     encrypted = fernet.encrypt(plaintext.encode())
@@ -94,7 +94,7 @@ def decrypt(ciphertext: str) -> str:
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
-            "Encryption key not configured. Set SHANDY_SECRET_KEY environment variable."
+            "Encryption key not configured. Set OPEN_SCIENTIST_SECRET_KEY environment variable."
         )
 
     try:

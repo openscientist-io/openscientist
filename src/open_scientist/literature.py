@@ -1,5 +1,5 @@
 """
-Literature search via PubMed API for SHANDY.
+Literature search via PubMed API for Open Scientist.
 
 Proactive literature integration to inform hypothesis generation.
 """

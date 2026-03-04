@@ -1,17 +1,17 @@
-# Dockerfile.agent — shandy-agent image
+# Dockerfile.agent — open-scientist-agent image
 #
-# Runs a single SHANDY job in an isolated container.
-# Builds on shandy-base (Python 3.12, uv, git) and installs the full
-# shandy package so the agent can import orchestrator/discovery code.
+# Runs a single Open Scientist job in an isolated container.
+# Builds on open_scientist-base (Python 3.12, uv, git) and installs the full
+# open_scientist package so the agent can import orchestrator/discovery code.
 #
 # Build:
-#   docker build -f Dockerfile.agent -t shandy-agent:latest .
+#   docker build -f Dockerfile.agent -t open-scientist-agent:latest .
 #
 # Labels:
-#   shandy.job_id=<uuid>   set by JobContainerRunner at runtime
-#   shandy.type=agent
+#   open_scientist.job_id=<uuid>   set by JobContainerRunner at runtime
+#   open_scientist.type=agent
 
-FROM shandy-base:latest
+FROM open_scientist-base:latest
 
 # Install system dependencies for native extensions (scipy, h5py, scanpy, etc.) and Rust
 RUN apt-get update && apt-get install -y --no-install-recommends \

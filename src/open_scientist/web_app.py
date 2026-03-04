@@ -1,5 +1,5 @@
 """
-NiceGUI web interface for SHANDY.
+NiceGUI web interface for Open Scientist.
 
 Provides web UI for job submission, monitoring, and results viewing.
 """
@@ -20,13 +20,13 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
 from nicegui import app, ui
 
-from shandy.job_manager import JobManager
-from shandy.security import register_scanner_block_middleware
-from shandy.version import get_version_string
+from open_scientist.job_manager import JobManager
+from open_scientist.security import register_scanner_block_middleware
+from open_scientist.version import get_version_string
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
-JOBS_DIR_ENV = "SHANDY_JOBS_DIR"
+JOBS_DIR_ENV = "OPEN_SCIENTIST_JOBS_DIR"
 
 
 # ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
@@ -67,7 +67,7 @@ logger = logging.getLogger(__name__)
 # Validate settings at import time (but don't fail yet - defer to main())
 _settings_error: str | None = None
 try:
-    from shandy.settings import get_settings
+    from open_scientist.settings import get_settings
 
     _loaded_settings = get_settings()
     STORAGE_SECRET = _loaded_settings.auth.storage_secret
@@ -147,7 +147,7 @@ _state = _AppState()
 def _register_oauth_routes() -> None:
     """Register OAuth authentication routes with the mounted NiceGUI app."""
     try:
-        from shandy.auth.fastapi_routes import router as auth_router
+        from open_scientist.auth.fastapi_routes import router as auth_router
 
         app.include_router(auth_router)
         logger.info("OAuth authentication routes registered")
@@ -158,7 +158,7 @@ def _register_oauth_routes() -> None:
 def _register_api_routes(host_app: FastAPI) -> None:
     """Register REST API routes with the host FastAPI app."""
     try:
-        from shandy.api import api_router
+        from open_scientist.api import api_router
 
         host_app.include_router(api_router)
         logger.info("REST API routes registered at /api/v1")
@@ -169,7 +169,7 @@ def _register_api_routes(host_app: FastAPI) -> None:
 def _register_share_routes() -> None:
     """Register web share routes for session-based job sharing."""
     try:
-        from shandy.webapp_components.share_routes import router as share_router
+        from open_scientist.webapp_components.share_routes import router as share_router
 
         app.include_router(share_router)
         logger.info("Share routes registered at /web/shares")
@@ -178,7 +178,7 @@ def _register_share_routes() -> None:
 
 
 # Configure OpenAPI metadata
-_APP_TITLE = "SHANDY API"
+_APP_TITLE = "Open Scientist API"
 _APP_VERSION = "1.0.0"
 _APP_DESCRIPTION = "REST API for Scientific Hypothesis Agent for Novel Discovery"
 
@@ -276,28 +276,30 @@ async def _verify_db_connection_and_rls(engine: Any) -> None:
             else:
                 logger.info("RLS CHECK: jobs table has RLS enabled and forced")
 
-            # Verify shandy_app role exists and is not superuser
+            # Verify open_scientist_app role exists and is not superuser
             role_result = await conn.execute(
-                text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'shandy_app'")
+                text(
+                    "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'open_scientist_app'"
+                )
             )
             role_row = role_result.first()
             if role_row is None:
                 logger.error(
-                    "RLS CHECK FAILED: 'shandy_app' role does not exist — "
+                    "RLS CHECK FAILED: 'open_scientist_app' role does not exist — "
                     "run 'alembic upgrade head' to create it"
                 )
             elif role_row[0]:
                 logger.error(
-                    "RLS CHECK FAILED: 'shandy_app' role is a SUPERUSER — "
+                    "RLS CHECK FAILED: 'open_scientist_app' role is a SUPERUSER — "
                     "this bypasses all RLS policies"
                 )
             elif role_row[1]:
                 logger.error(
-                    "RLS CHECK FAILED: 'shandy_app' role has BYPASSRLS — "
+                    "RLS CHECK FAILED: 'open_scientist_app' role has BYPASSRLS — "
                     "this bypasses all RLS policies"
                 )
             else:
-                logger.info("RLS CHECK: shandy_app role is correctly configured")
+                logger.info("RLS CHECK: open_scientist_app role is correctly configured")
     except Exception as e:
         logger.error("Database connection failed: %s", e)
         logger.warning("Application will continue but database features may not work")
@@ -307,8 +309,8 @@ async def _ensure_default_skill_sources() -> None:
     """Ensure default skill sources exist in the database."""
     from sqlalchemy import select
 
-    from shandy.database.models import SkillSource
-    from shandy.database.session import get_admin_session
+    from open_scientist.database.models import SkillSource
+    from open_scientist.database.session import get_admin_session
 
     default_sources = [
         {
@@ -321,7 +323,7 @@ async def _ensure_default_skill_sources() -> None:
         },
         {
             "source_type": "local",
-            "name": "SHANDY Built-in Skills",
+            "name": "Open Scientist Built-in Skills",
             "path": "skills",
             "is_enabled": True,
         },
@@ -355,7 +357,7 @@ async def _start_background_tasks(engine: Any) -> None:
 
     # Start skill sync scheduler
     try:
-        from shandy.skill_scheduler import start_skill_scheduler
+        from open_scientist.skill_scheduler import start_skill_scheduler
 
         await start_skill_scheduler()
         logger.info("Skill sync scheduler started")
@@ -393,7 +395,7 @@ def _create_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]
     @asynccontextmanager
     async def lifespan(_host_app: FastAPI) -> AsyncIterator[None]:
         try:
-            from shandy.database.engine import get_engine
+            from open_scientist.database.engine import get_engine
 
             engine = get_engine()
             await _start_background_tasks(engine)
@@ -421,13 +423,13 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _initialize_job_manager_runtime(jobs_dir)
 
     # Import page modules so @ui.page decorators are registered.
-    importlib.import_module("shandy.webapp_components.pages")
+    importlib.import_module("open_scientist.webapp_components.pages")
     _register_nicegui_static_files(jobs_dir)
 
     ui.run_with(
         host_app,
         mount_path="/",
-        title="SHANDY",
+        title="Open Scientist",
         favicon=ASSETS_DIR / "favicon.ico",
         storage_secret=STORAGE_SECRET,
     )
@@ -504,7 +506,7 @@ def main(
         ui.run(
             host=host,
             port=port,
-            title="SHANDY - Server Error",
+            title="Open Scientist - Server Error",
             favicon=ASSETS_DIR / "favicon.ico",
             reload=False,  # No reload in error mode
             show=False,
@@ -514,7 +516,7 @@ def main(
 
     logger.info("Settings validated successfully")
 
-    from shandy.settings import get_settings
+    from open_scientist.settings import get_settings
 
     reload = get_settings().dev.dev_mode
     os.environ[JOBS_DIR_ENV] = str(jobs_dir)
@@ -524,7 +526,7 @@ def main(
     if reload:
         # Reload mode requires an import string application target.
         uvicorn.run(
-            "shandy.web_app:create_app",
+            "open_scientist.web_app:create_app",
             host=host,
             port=port,
             reload=True,
@@ -545,7 +547,7 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SHANDY Web Interface")
+    parser = argparse.ArgumentParser(description="Open Scientist Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
     parser.add_argument("--jobs-dir", default="jobs", help="Jobs directory")

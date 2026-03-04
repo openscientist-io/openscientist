@@ -3,7 +3,7 @@ JobContainerRunner — launches and manages per-job Docker containers.
 
 Each agent job runs in its own ephemeral Docker container for security
 isolation.  The container:
-- Runs the shandy-agent image (contains claude-agent-sdk + Node.js)
+- Runs the open-scientist-agent image (contains claude-agent-sdk + Node.js)
 - Mounts the job directory as /agent/jobs/<job_id>
 - Receives provider credentials via env vars
 - Communicates status back to the web server via PostgreSQL only
@@ -23,12 +23,12 @@ import os
 from pathlib import Path
 from typing import Any
 
-from shandy.version import SHORT_COMMIT_LENGTH
+from open_scientist.version import SHORT_COMMIT_LENGTH
 
 logger = logging.getLogger(__name__)
 
-AGENT_IMAGE = "shandy-agent:latest"
-AGENT_NETWORK = "shandy_default"
+AGENT_IMAGE = "open-scientist-agent:latest"
+AGENT_NETWORK = "open_scientist_default"
 
 
 class JobContainerRunner:
@@ -56,7 +56,7 @@ class JobContainerRunner:
         Raises:
             RuntimeError: If Docker is unavailable or launch fails
         """
-        from shandy.settings import get_settings
+        from open_scientist.settings import get_settings
 
         settings = get_settings()
         cs = settings.container
@@ -79,7 +79,7 @@ class JobContainerRunner:
             "JOB_ID": job_id,
             "JOB_DIR": job_mount,
             "DATABASE_URL": database_url,
-            "SHANDY_SECRET_KEY": settings.secret_key,
+            "OPEN_SCIENTIST_SECRET_KEY": settings.secret_key,
             **provider_env,
         }
 
@@ -105,7 +105,7 @@ class JobContainerRunner:
         short_id = job_id[:SHORT_COMMIT_LENGTH]
         container = self._docker.containers.run(
             image=AGENT_IMAGE,
-            name=f"shandy-agent-{short_id}",
+            name=f"open_scientist-agent-{short_id}",
             detach=True,
             remove=False,
             environment=env,
@@ -116,8 +116,8 @@ class JobContainerRunner:
             security_opt=["no-new-privileges:true"],
             group_add=[docker_gid] if docker_gid else [],
             labels={
-                "shandy.job_id": job_id,
-                "shandy.type": "agent",
+                "open_scientist.job_id": job_id,
+                "open_scientist.type": "agent",
             },
         )
 
@@ -187,7 +187,7 @@ class JobContainerRunner:
         try:
             containers = self._docker.containers.list(
                 all=True,
-                filters={"label": f"shandy.job_id={job_id}"},
+                filters={"label": f"open_scientist.job_id={job_id}"},
             )
             return containers[0] if containers else None
         except Exception as e:

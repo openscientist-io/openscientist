@@ -1,5 +1,5 @@
 """
-Orchestrator subpackage for SHANDY discovery.
+Orchestrator subpackage for Open Scientist discovery.
 
 Module layout:
 - discovery.py  — run_discovery_async(), sync_knowledge_state_to_db(), helpers
@@ -7,7 +7,7 @@ Module layout:
 - setup.py      — create_job (filesystem initialization)
 
 All public names are re-exported here to keep a stable import surface
-for ``from shandy.orchestrator import create_job, run_discovery``.
+for ``from open_scientist.orchestrator import create_job, run_discovery``.
 """
 
 from __future__ import annotations
@@ -18,18 +18,18 @@ from pathlib import Path
 from typing import Any
 
 # Re-export all public names from submodules
-from shandy.orchestrator.discovery import (
+from open_scientist.orchestrator.discovery import (
     get_version_metadata,
     regenerate_report_async,
     run_discovery_async,
     sync_knowledge_state_to_db,
 )
-from shandy.orchestrator.iteration import (
+from open_scientist.orchestrator.iteration import (
     increment_ks_iteration,
     update_job_status,
     wait_for_feedback_or_timeout,
 )
-from shandy.orchestrator.setup import create_job
+from open_scientist.orchestrator.setup import create_job
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
 """
-Document text extraction for SHANDY.
+Document text extraction for Open Scientist.
 
 Extracts text from binary document formats (PDF, DOCX, XLSX) that cannot
 be read directly by Claude's Read tool without returning garbled content.

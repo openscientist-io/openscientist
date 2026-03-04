@@ -1,5 +1,5 @@
 """
-Iteration helpers for the SHANDY discovery loop.
+Iteration helpers for the Open Scientist discovery loop.
 
 Prompt construction, iteration counter management, and status updates.
 """
@@ -15,12 +15,12 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from shandy.database.models import User
-from shandy.database.models.job import Job as JobModel
-from shandy.database.session import AsyncSessionLocal
-from shandy.job.types import JobStatus
-from shandy.knowledge_state import KS_FILENAME, KnowledgeState
-from shandy.ntfy import notify_job_status_change
+from open_scientist.database.models import User
+from open_scientist.database.models.job import Job as JobModel
+from open_scientist.database.session import AsyncSessionLocal
+from open_scientist.job.types import JobStatus
+from open_scientist.knowledge_state import KS_FILENAME, KnowledgeState
+from open_scientist.ntfy import notify_job_status_change
 
 logger = logging.getLogger(__name__)
 

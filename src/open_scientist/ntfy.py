@@ -13,9 +13,9 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 
-from shandy.database.models import User
-from shandy.database.session import AsyncSessionLocal
-from shandy.settings import get_settings
+from open_scientist.database.models import User
+from open_scientist.database.session import AsyncSessionLocal
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -82,9 +82,9 @@ def generate_topic_for_user(user_id: UUID) -> str:
     """
     # Create a hash combining user ID and random bytes for uniqueness
     random_part = secrets.token_hex(8)
-    hash_input = f"shandy-{user_id}-{random_part}"
+    hash_input = f"open_scientist-{user_id}-{random_part}"
     topic_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
-    return f"shandy-{topic_hash}"
+    return f"open_scientist-{topic_hash}"
 
 
 def get_subscription_url(topic: str) -> str:

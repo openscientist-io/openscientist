@@ -12,12 +12,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
-from shandy.auth.oauth import get_oauth_client
-from shandy.auth.providers import GitHubProvider, GoogleProvider, MockProvider
-from shandy.auth.routes import create_or_update_user, create_session
-from shandy.database.models import Administrator, Session
-from shandy.database.session import get_admin_session
-from shandy.settings import get_settings
+from open_scientist.auth.oauth import get_oauth_client
+from open_scientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider
+from open_scientist.auth.routes import create_or_update_user, create_session
+from open_scientist.database.models import Administrator, Session
+from open_scientist.database.session import get_admin_session
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

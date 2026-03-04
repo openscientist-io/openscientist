@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from shandy.auth import middleware
+from open_scientist.auth import middleware
 
 
 def _make_fake_context(session_token: str | None = None):

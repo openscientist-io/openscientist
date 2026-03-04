@@ -1,6 +1,6 @@
 """Tests for transcript parsing utilities."""
 
-from shandy.webapp_components.utils.transcript_parser import (
+from open_scientist.webapp_components.utils.transcript_parser import (
     get_action_description,
     parse_transcript_actions,
 )
@@ -12,7 +12,7 @@ class TestGetActionDescription:
     def test_explicit_description(self):
         """Test that explicit description is used when provided."""
         tool_use = {
-            "name": "shandy__load_data",
+            "name": "open_scientist__load_data",
             "input": {"description": "Loading test dataset"},
         }
         assert get_action_description(tool_use) == "Loading test dataset"
@@ -20,7 +20,7 @@ class TestGetActionDescription:
     def test_search_pubmed_fallback(self):
         """Test fallback for search_pubmed tool."""
         tool_use = {
-            "name": "shandy__search_pubmed",
+            "name": "open_scientist__search_pubmed",
             "input": {"query": "cancer treatment"},
         }
         assert get_action_description(tool_use) == "Search: cancer treatment"
@@ -28,7 +28,7 @@ class TestGetActionDescription:
     def test_update_knowledge_state_fallback(self):
         """Test fallback for update_knowledge_state tool."""
         tool_use = {
-            "name": "shandy__update_knowledge_state",
+            "name": "open_scientist__update_knowledge_state",
             "input": {"title": "Important finding"},
         }
         assert get_action_description(tool_use) == "Finding: Important finding"
@@ -36,7 +36,7 @@ class TestGetActionDescription:
     def test_save_iteration_summary_fallback(self):
         """Test fallback for save_iteration_summary tool with truncation."""
         tool_use = {
-            "name": "shandy__save_iteration_summary",
+            "name": "open_scientist__save_iteration_summary",
             "input": {
                 "summary": "This is a very long summary that should be truncated to fifty characters"
             },
@@ -50,7 +50,7 @@ class TestGetActionDescription:
     def test_execute_code_fallback(self):
         """Test fallback for execute_code tool."""
         tool_use = {
-            "name": "shandy__execute_code",
+            "name": "open_scientist__execute_code",
             "input": {"code": "print('hello')"},
         }
         assert get_action_description(tool_use) == "Code execution"
@@ -58,7 +58,7 @@ class TestGetActionDescription:
     def test_tool_name_with_double_underscore(self):
         """Test tool name extraction when no fallback matches."""
         tool_use = {
-            "name": "shandy__custom_tool",
+            "name": "open_scientist__custom_tool",
             "input": {},
         }
         assert get_action_description(tool_use) == "custom_tool"
@@ -74,7 +74,7 @@ class TestGetActionDescription:
     def test_empty_input(self):
         """Test handling of empty input."""
         tool_use = {
-            "name": "shandy__some_tool",
+            "name": "open_scientist__some_tool",
             "input": {},
         }
         assert get_action_description(tool_use) == "some_tool"
@@ -98,7 +98,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_123",
-                            "name": "shandy__load_data",
+                            "name": "open_scientist__load_data",
                             "input": {
                                 "description": "Loading data",
                                 "path": "data.csv",
@@ -124,7 +124,7 @@ class TestParseTranscriptActions:
         actions = parse_transcript_actions(transcript)
 
         assert len(actions) == 1
-        assert actions[0]["tool_name"] == "shandy__load_data"
+        assert actions[0]["tool_name"] == "open_scientist__load_data"
         assert actions[0]["short_name"] == "load_data"
         assert actions[0]["description"] == "Loading data"
         assert actions[0]["input"]["path"] == "data.csv"
@@ -141,7 +141,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_456",
-                            "name": "shandy__analyze",
+                            "name": "open_scientist__analyze",
                             "input": {"method": "correlation"},
                         }
                     ]
@@ -164,7 +164,7 @@ class TestParseTranscriptActions:
         actions = parse_transcript_actions(transcript)
 
         assert len(actions) == 1
-        assert actions[0]["tool_name"] == "shandy__analyze"
+        assert actions[0]["tool_name"] == "open_scientist__analyze"
         assert actions[0]["success"] is False
         assert "failed" in actions[0]["result"].lower()
 
@@ -178,7 +178,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_789",
-                            "name": "shandy__load_data",
+                            "name": "open_scientist__load_data",
                             "input": {"path": "data.csv"},
                         }
                     ]
@@ -213,7 +213,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_invalid",
-                            "name": "shandy__test",
+                            "name": "open_scientist__test",
                             "input": {},
                         }
                     ]
@@ -249,7 +249,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_list",
-                            "name": "shandy__test",
+                            "name": "open_scientist__test",
                             "input": {},
                         }
                     ]
@@ -277,8 +277,8 @@ class TestParseTranscriptActions:
         assert "item2" in actions[0]["result"]
         assert "item3" in actions[0]["result"]
 
-    def test_non_shandy_tools_filtered(self):
-        """Test that non-shandy tools are filtered out."""
+    def test_non_open_scientist_tools_filtered(self):
+        """Test that non-open_scientist tools are filtered out."""
         transcript = [
             {
                 "type": "assistant",
@@ -292,8 +292,8 @@ class TestParseTranscriptActions:
                         },
                         {
                             "type": "tool_use",
-                            "id": "tool_shandy",
-                            "name": "shandy__analyze",
+                            "id": "tool_open_scientist",
+                            "name": "open_scientist__analyze",
                             "input": {"method": "test"},
                         },
                     ]
@@ -310,7 +310,7 @@ class TestParseTranscriptActions:
                         },
                         {
                             "type": "tool_result",
-                            "tool_use_id": "tool_shandy",
+                            "tool_use_id": "tool_open_scientist",
                             "content": "analysis result",
                         },
                     ]
@@ -320,9 +320,9 @@ class TestParseTranscriptActions:
 
         actions = parse_transcript_actions(transcript)
 
-        # Only shandy tool should be included
+        # Only open_scientist tool should be included
         assert len(actions) == 1
-        assert actions[0]["tool_name"] == "shandy__analyze"
+        assert actions[0]["tool_name"] == "open_scientist__analyze"
 
     def test_multiple_actions_with_mixed_results(self):
         """Test parsing multiple actions with mixed success/failure."""
@@ -334,7 +334,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_1",
-                            "name": "shandy__load_data",
+                            "name": "open_scientist__load_data",
                             "input": {"path": "data1.csv"},
                         }
                     ]
@@ -359,7 +359,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_2",
-                            "name": "shandy__analyze",
+                            "name": "open_scientist__analyze",
                             "input": {"method": "test"},
                         }
                     ]
@@ -395,7 +395,7 @@ class TestParseTranscriptActions:
                         {
                             "type": "tool_use",
                             "id": "tool_missing",
-                            "name": "shandy__test",
+                            "name": "open_scientist__test",
                             "input": {},
                         }
                     ]
@@ -411,7 +411,7 @@ class TestParseTranscriptActions:
         assert actions[0]["success"] is True
 
     def test_sdk_transcript_format_bare_tool_names(self):
-        """Test parsing SDK transcript format with bare tool names (no shandy prefix)."""
+        """Test parsing SDK transcript format with bare tool names (no open_scientist prefix)."""
         transcript = [
             {
                 "type": "assistant",
@@ -451,8 +451,8 @@ class TestParseTranscriptActions:
         assert actions[1]["tool_name"] == "search_pubmed"
         assert actions[1]["description"] == "Search: cancer therapy"
 
-    def test_sdk_transcript_non_shandy_tools_still_filtered(self):
-        """Test that non-shandy tools are filtered even with bare names."""
+    def test_sdk_transcript_non_open_scientist_tools_still_filtered(self):
+        """Test that non-open_scientist tools are filtered even with bare names."""
         transcript = [
             {
                 "type": "assistant",
@@ -483,6 +483,6 @@ class TestParseTranscriptActions:
 
         actions = parse_transcript_actions(transcript)
 
-        # Only execute_code should be included (known SHANDY tool)
+        # Only execute_code should be included (known Open Scientist tool)
         assert len(actions) == 1
         assert actions[0]["tool_name"] == "execute_code"

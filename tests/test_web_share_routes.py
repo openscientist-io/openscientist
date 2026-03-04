@@ -9,11 +9,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.auth.middleware import get_current_user_id
-from shandy.database.models import Job, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
-from shandy.webapp_components.share_routes import router
+from open_scientist.auth.middleware import get_current_user_id
+from open_scientist.database.models import Job, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session
+from open_scientist.webapp_components.share_routes import router
 from tests.helpers import enable_rls
 
 
@@ -52,18 +52,20 @@ async def test_web_share_create_uses_admin_lookup_for_target_user(
     @asynccontextmanager
     async def mock_get_admin_session():
         # Temporarily elevate the same session for cross-user lookup.
-        await db_session.execute(text("SET ROLE shandy_admin"))
+        await db_session.execute(text("SET ROLE open_scientist_admin"))
         try:
             yield db_session
         finally:
-            await db_session.execute(text("SET ROLE shandy_app"))
+            await db_session.execute(text("SET ROLE open_scientist_app"))
             await set_current_user(db_session, test_user.id)
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_current_user_id] = override_get_current_user_id
     app.include_router(router)
 
-    with patch("shandy.webapp_components.share_routes.get_admin_session", mock_get_admin_session):
+    with patch(
+        "open_scientist.webapp_components.share_routes.get_admin_session", mock_get_admin_session
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -114,18 +116,20 @@ async def test_web_share_create_rejects_inactive_target_user(
 
     @asynccontextmanager
     async def mock_get_admin_session():
-        await db_session.execute(text("SET ROLE shandy_admin"))
+        await db_session.execute(text("SET ROLE open_scientist_admin"))
         try:
             yield db_session
         finally:
-            await db_session.execute(text("SET ROLE shandy_app"))
+            await db_session.execute(text("SET ROLE open_scientist_app"))
             await set_current_user(db_session, test_user.id)
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_current_user_id] = override_get_current_user_id
     app.include_router(router)
 
-    with patch("shandy.webapp_components.share_routes.get_admin_session", mock_get_admin_session):
+    with patch(
+        "open_scientist.webapp_components.share_routes.get_admin_session", mock_get_admin_session
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",

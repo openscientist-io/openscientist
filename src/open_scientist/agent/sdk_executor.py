@@ -29,7 +29,7 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
 )
 
-from shandy.agent.protocol import IterationResult, TokenUsage
+from open_scientist.agent.protocol import IterationResult, TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def _install_parse_message_patch() -> None:
     import claude_agent_sdk._internal.message_parser as _mp
     from claude_agent_sdk._errors import MessageParseError
 
-    if getattr(_mp.parse_message, "__shandy_tolerant_patch__", False):
+    if getattr(_mp.parse_message, "__open_scientist_tolerant_patch__", False):
         return
 
     _original_parse = _mp.parse_message
@@ -66,7 +66,7 @@ def _install_parse_message_patch() -> None:
                     return _Sentinel(msg_type)
             raise
 
-    _tolerant_parse.__shandy_tolerant_patch__ = True  # type: ignore[attr-defined]
+    _tolerant_parse.__open_scientist_tolerant_patch__ = True  # type: ignore[attr-defined]
     _mp.parse_message = _tolerant_parse
 
 
@@ -95,7 +95,7 @@ class SDKAgentExecutor:
     """
     AgentExecutor that wraps the claude-agent-sdk ClaudeSDKClient.
 
-    Uses @tool-decorated Python callables (from shandy.tools) exposed
+    Uses @tool-decorated Python callables (from open_scientist.tools) exposed
     via an in-process MCP server.  The SDK handles the agentic loop
     internally.
 
@@ -113,7 +113,7 @@ class SDKAgentExecutor:
         use_hypotheses: bool = False,
         data_files: list[Path] | None = None,
     ) -> None:
-        from shandy.tools.registry import build_tool_list
+        from open_scientist.tools.registry import build_tool_list
 
         self._job_dir = job_dir
         self._data_file = data_file
@@ -143,17 +143,17 @@ class SDKAgentExecutor:
 
     def _build_options(self) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions with tools exposed via an in-process MCP server."""
-        from shandy.settings import get_settings
+        from open_scientist.settings import get_settings
 
         settings = get_settings()
-        server = create_sdk_mcp_server("shandy-tools", tools=self._tools)
+        server = create_sdk_mcp_server("open_scientist-tools", tools=self._tools)
 
         # Pass OAuth beta header to the CLI when using OAuth token
         extra_args: dict[str, str | None] = {}
 
         return ClaudeAgentOptions(
             system_prompt=self._system_prompt,
-            mcp_servers={"shandy-tools": server},
+            mcp_servers={"open_scientist-tools": server},
             model=settings.provider.anthropic_model,
             can_use_tool=self._allow_all_tools,
             cwd=str(self._job_dir),

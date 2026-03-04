@@ -1,7 +1,7 @@
-# SHANDY Executor Container
+# Open Scientist Executor Container
 # Minimal image for isolated Python code execution
 
-FROM shandy-base:latest
+FROM open_scientist-base:latest
 
 # Create non-root user for security
 RUN useradd --create-home executor
@@ -41,11 +41,11 @@ RUN uv pip install --system -r requirements-executor.txt
 RUN mkdir -p /data /output && chown executor:executor /data /output
 
 # Copy executor module
-COPY src/shandy_executor /app/shandy_executor
-COPY src/shandy /app/shandy
+COPY src/open_scientist_executor /app/open_scientist_executor
+COPY src/open_scientist /app/open_scientist
 
 # Switch to non-root user
 USER executor
 
 # Run the executor module
-ENTRYPOINT ["python", "-m", "shandy_executor"]
+ENTRYPOINT ["python", "-m", "open_scientist_executor"]

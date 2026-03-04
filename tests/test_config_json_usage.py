@@ -3,15 +3,15 @@
 from pathlib import Path
 
 _ALLOWED_REFERENCES = {
-    Path("src/shandy/bootstrap.py"),  # migration-only read source
-    Path("src/shandy/artifact_packager.py"),  # explicit archive exclusion list
+    Path("src/open_scientist/bootstrap.py"),  # migration-only read source
+    Path("src/open_scientist/artifact_packager.py"),  # explicit archive exclusion list
 }
 
 
 def test_config_json_references_are_limited_to_migration_paths() -> None:
     """config.json must not become a runtime source outside migration code."""
     repo_root = Path(__file__).resolve().parents[1]
-    source_root = repo_root / "src" / "shandy"
+    source_root = repo_root / "src" / "open_scientist"
     offenders: list[Path] = []
 
     for file_path in source_root.rglob("*.py"):

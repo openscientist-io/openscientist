@@ -1,11 +1,11 @@
 """
-Authentication and authorization for SHANDY.
+Authentication and authorization for Open Scientist.
 
 Provides OAuth-based authentication with GitHub and Google providers,
 session management, and user context for RLS.
 """
 
-from shandy.auth.middleware import (
+from open_scientist.auth.middleware import (
     can_current_user_start_jobs,
     get_current_user_id,
     is_current_user_admin,
@@ -13,7 +13,7 @@ from shandy.auth.middleware import (
     require_admin,
     require_auth,
 )
-from shandy.auth.oauth import get_oauth_client, is_oauth_configured
+from open_scientist.auth.oauth import get_oauth_client, is_oauth_configured
 
 __all__ = [
     "can_current_user_start_jobs",

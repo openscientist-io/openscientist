@@ -1,6 +1,6 @@
 """Tests for prompts module."""
 
-from shandy.prompts import (
+from open_scientist.prompts import (
     build_discovery_prompt,
     format_skills_list,
     get_system_prompt,

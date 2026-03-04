@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from shandy.settings import (
+from open_scientist.settings import (
     AuthSettings,
     BudgetSettings,
     ContainerSettings,
@@ -29,7 +29,7 @@ class TestProviderSettings:
 
     def test_anthropic_missing_api_key_warns(self, caplog):
         """Anthropic provider warns when no credentials are set."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(
                 CLAUDE_PROVIDER="anthropic",
                 ANTHROPIC_API_KEY=None,
@@ -49,7 +49,7 @@ class TestProviderSettings:
 
     def test_anthropic_valid_with_oauth_token(self, caplog):
         """Anthropic provider accepts CLAUDE_CODE_OAUTH_TOKEN as alternative."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(
                 CLAUDE_PROVIDER="anthropic",
                 ANTHROPIC_API_KEY=None,
@@ -60,7 +60,7 @@ class TestProviderSettings:
 
     def test_cborg_missing_auth_token_warns(self, caplog):
         """CBORG provider warns when ANTHROPIC_AUTH_TOKEN is missing."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(
                 CLAUDE_PROVIDER="cborg",
                 ANTHROPIC_AUTH_TOKEN=None,
@@ -70,7 +70,7 @@ class TestProviderSettings:
 
     def test_cborg_missing_base_url_warns(self, caplog):
         """CBORG provider warns when ANTHROPIC_BASE_URL is missing."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(
                 CLAUDE_PROVIDER="cborg",
                 ANTHROPIC_AUTH_TOKEN="test-token",
@@ -94,7 +94,7 @@ class TestProviderSettings:
             patch("os.path.exists", return_value=True),
             caplog.at_level(
                 logging.WARNING,
-                logger="shandy.settings",
+                logger="open_scientist.settings",
             ),
         ):
             settings = ProviderSettings(
@@ -113,7 +113,7 @@ class TestProviderSettings:
             patch("os.path.exists", return_value=False),
             caplog.at_level(
                 logging.WARNING,
-                logger="shandy.settings",
+                logger="open_scientist.settings",
             ),
         ):
             settings = ProviderSettings(
@@ -128,7 +128,7 @@ class TestProviderSettings:
 
     def test_bedrock_missing_region_warns(self, caplog):
         """Bedrock provider warns when AWS_REGION is missing."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(
                 CLAUDE_PROVIDER="bedrock",
                 AWS_REGION=None,
@@ -140,7 +140,7 @@ class TestProviderSettings:
 
     def test_bedrock_missing_credentials_warns(self, caplog):
         """Bedrock provider warns when no credential method is set."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(
                 CLAUDE_PROVIDER="bedrock",
                 AWS_REGION="us-east-1",
@@ -173,7 +173,7 @@ class TestProviderSettings:
 
     def test_unknown_provider_warns(self, caplog):
         """Unknown provider logs a warning (does not raise)."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(CLAUDE_PROVIDER="unknown-provider")
         assert settings.claude_provider == "unknown-provider"
         assert "Unknown provider" in caplog.text
@@ -185,7 +185,7 @@ class TestProviderSettings:
 
     def test_foundry_accepted_as_valid_provider(self, caplog):
         """Foundry is a recognized provider with no warnings."""
-        with caplog.at_level(logging.WARNING, logger="shandy.settings"):
+        with caplog.at_level(logging.WARNING, logger="open_scientist.settings"):
             settings = ProviderSettings(CLAUDE_PROVIDER="foundry")
         assert settings.claude_provider == "foundry"
         assert caplog.text == ""
@@ -484,7 +484,7 @@ class TestContainerSettings:
     def test_default_values(self):
         """Default container settings are reasonable."""
         settings = ContainerSettings()
-        assert settings.executor_image == "shandy-executor:latest"
+        assert settings.executor_image == "open_scientist-executor:latest"
         assert settings.executor_memory == "2g"
         assert settings.executor_cpu == 0.5
         assert settings.executor_timeout == 120
@@ -492,10 +492,10 @@ class TestContainerSettings:
     def test_custom_values(self):
         """Custom container settings are applied."""
         settings = ContainerSettings(
-            SHANDY_EXECUTOR_IMAGE="custom-executor:v1",
-            SHANDY_EXECUTOR_MEMORY="4g",
-            SHANDY_EXECUTOR_CPU=1.0,
-            SHANDY_EXECUTOR_TIMEOUT=300,
+            OPEN_SCIENTIST_EXECUTOR_IMAGE="custom-executor:v1",
+            OPEN_SCIENTIST_EXECUTOR_MEMORY="4g",
+            OPEN_SCIENTIST_EXECUTOR_CPU=1.0,
+            OPEN_SCIENTIST_EXECUTOR_TIMEOUT=300,
         )
         assert settings.executor_image == "custom-executor:v1"
         assert settings.executor_memory == "4g"

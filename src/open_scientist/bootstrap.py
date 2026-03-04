@@ -22,10 +22,10 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Job, JobDataFile, Plot, User
-from shandy.database.session import get_admin_session
-from shandy.file_loader import get_file_info
-from shandy.knowledge_state import KS_FILENAME, KnowledgeState
+from open_scientist.database.models import Job, JobDataFile, Plot, User
+from open_scientist.database.session import get_admin_session
+from open_scientist.file_loader import get_file_info
+from open_scientist.knowledge_state import KS_FILENAME, KnowledgeState
 
 logger = logging.getLogger(__name__)
 

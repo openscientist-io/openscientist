@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from shandy.tools.registry import ToolContext, tool
+from open_scientist.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         Returns:
             Confirmation with finding number
         """
-        from shandy.knowledge_state import KnowledgeState
+        from open_scientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState.load(ctx.ks_path)
         finding_id = ks.add_finding(title=title, evidence=evidence)
@@ -62,7 +62,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         Returns:
             Confirmation with hypothesis ID
         """
-        from shandy.knowledge_state import KnowledgeState
+        from open_scientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState.load(ctx.ks_path)
         hyp_id = ks.add_hypothesis(statement=statement, proposed_by="agent")
@@ -96,7 +96,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         Returns:
             Confirmation of update
         """
-        from shandy.knowledge_state import KnowledgeState
+        from open_scientist.knowledge_state import KnowledgeState
 
         valid_statuses = ["pending", "testing", "supported", "rejected"]
         if status not in valid_statuses:

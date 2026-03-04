@@ -4,7 +4,7 @@ Revision ID: init_full_schema
 Revises:
 Create Date: 2026-02-14 15:00:00.000000+00:00
 
-This migration creates the complete SHANDY database schema including:
+This migration creates the complete Open Scientist database schema including:
 - User authentication (users, oauth_accounts, sessions, api_keys)
 - Jobs and knowledge state
 - Skills and skill sources
@@ -30,7 +30,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create the complete SHANDY database schema."""
+    """Create the complete Open Scientist database schema."""
 
     # =========================================================================
     # EXTENSIONS
@@ -1638,64 +1638,64 @@ def upgrade() -> None:
     )
 
     # =========================================================================
-    # CREATE SHANDY_APP ROLE (subject to RLS)
+    # CREATE OPEN_SCIENTIST_APP ROLE (subject to RLS)
     # =========================================================================
-    # get_session() does SET ROLE shandy_app to drop superuser privileges.
+    # get_session() does SET ROLE open_scientist_app to drop superuser privileges.
     # Without this role, RLS policies are silently bypassed.
     op.execute(
         """
         DO $$
         BEGIN
-            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'shandy_app') THEN
-                CREATE ROLE shandy_app NOLOGIN;
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'open_scientist_app') THEN
+                CREATE ROLE open_scientist_app NOLOGIN;
             END IF;
         END
         $$
         """
     )
-    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO shandy_app")
-    op.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO shandy_app")
-    op.execute("GRANT USAGE ON SCHEMA public TO shandy_app")
+    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO open_scientist_app")
+    op.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO open_scientist_app")
+    op.execute("GRANT USAGE ON SCHEMA public TO open_scientist_app")
     op.execute(
         """
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
-            GRANT ALL PRIVILEGES ON TABLES TO shandy_app
+            GRANT ALL PRIVILEGES ON TABLES TO open_scientist_app
         """
     )
     op.execute(
         """
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
-            GRANT ALL PRIVILEGES ON SEQUENCES TO shandy_app
+            GRANT ALL PRIVILEGES ON SEQUENCES TO open_scientist_app
         """
     )
 
     # =========================================================================
-    # CREATE SHANDY_ADMIN ROLE WITH BYPASSRLS
+    # CREATE OPEN_SCIENTIST_ADMIN ROLE WITH BYPASSRLS
     # =========================================================================
     op.execute(
         """
         DO $$
         BEGIN
-            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'shandy_admin') THEN
-                CREATE ROLE shandy_admin WITH LOGIN PASSWORD 'shandy_dev_password' BYPASSRLS;
+            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'open_scientist_admin') THEN
+                CREATE ROLE open_scientist_admin WITH LOGIN PASSWORD 'open_scientist_dev_password' BYPASSRLS;
             END IF;
         END
         $$
         """
     )
-    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO shandy_admin")
-    op.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO shandy_admin")
-    op.execute("GRANT USAGE ON SCHEMA public TO shandy_admin")
+    op.execute("GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO open_scientist_admin")
+    op.execute("GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO open_scientist_admin")
+    op.execute("GRANT USAGE ON SCHEMA public TO open_scientist_admin")
     op.execute(
         """
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
-            GRANT ALL PRIVILEGES ON TABLES TO shandy_admin
+            GRANT ALL PRIVILEGES ON TABLES TO open_scientist_admin
         """
     )
     op.execute(
         """
         ALTER DEFAULT PRIVILEGES IN SCHEMA public
-            GRANT ALL PRIVILEGES ON SEQUENCES TO shandy_admin
+            GRANT ALL PRIVILEGES ON SEQUENCES TO open_scientist_admin
         """
     )
 

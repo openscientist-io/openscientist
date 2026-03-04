@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from shandy.providers.vertex import VertexProvider
-from shandy.settings import clear_settings_cache
+from open_scientist.providers.vertex import VertexProvider
+from open_scientist.settings import clear_settings_cache
 
 
 class TestVertexProviderValidation:
@@ -57,7 +57,7 @@ class TestVertexProviderValidation:
         mock_settings.provider.vertex_region_claude_4_5_haiku = None
 
         with (
-            patch("shandy.providers.vertex.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.vertex.get_settings", return_value=mock_settings),
             patch("os.path.exists", return_value=True),
             pytest.raises(ValueError, match="ANTHROPIC_VERTEX_PROJECT_ID"),
         ):
@@ -76,7 +76,7 @@ class TestVertexProviderValidation:
         mock_settings.provider.vertex_region_claude_4_5_haiku = None
 
         with (
-            patch("shandy.providers.vertex.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.vertex.get_settings", return_value=mock_settings),
             pytest.raises(
                 ValueError,
                 match="GOOGLE_APPLICATION_CREDENTIALS",
@@ -112,7 +112,7 @@ class TestVertexProviderValidation:
         mock_settings.provider.vertex_region_claude_4_5_haiku = None
 
         with (
-            patch("shandy.providers.vertex.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.vertex.get_settings", return_value=mock_settings),
             patch("os.path.exists", return_value=True),
         ):
             # Should not raise — optional warnings don't prevent init

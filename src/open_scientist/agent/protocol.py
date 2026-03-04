@@ -1,5 +1,5 @@
 """
-AgentExecutor protocol definition for SHANDY.
+AgentExecutor protocol definition for Open Scientist.
 
 Defines the interface that all agent executors must implement,
 allowing the orchestrator to be decoupled from any specific provider

@@ -1,19 +1,19 @@
 """
-SHANDY - Scientific Hypothesis Agent for Novel Discovery
+Open Scientist - Scientific Hypothesis Agent for Novel Discovery
 
 An autonomous AI scientist that generates and tests hypotheses from scientific data.
 """
 
-from shandy.exceptions import (
+from open_scientist.exceptions import (
     BudgetExceededError,
     CodeExecutionError,
     CodeExecutionTimeoutError,
     FileLoadError,
     FileTooBigError,
     ForbiddenImportError,
+    OpenScientistError,
     PDFGenerationError,
     ProviderError,
-    ShandyError,
     UnsupportedFileTypeError,
 )
 
@@ -26,6 +26,6 @@ __all__ = [
     "ForbiddenImportError",
     "PDFGenerationError",
     "ProviderError",
-    "ShandyError",
+    "OpenScientistError",
     "UnsupportedFileTypeError",
 ]

@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import String, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Job, User
+from open_scientist.database.models import Job, User
 
 AssignOrphanedJobReason = Literal["assigned", "job_not_found", "already_owned", "user_not_found"]
 

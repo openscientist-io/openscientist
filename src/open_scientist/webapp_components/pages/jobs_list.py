@@ -8,18 +8,18 @@ from uuid import UUID
 from nicegui import ui
 from sqlalchemy import select
 
-from shandy.auth import (
+from open_scientist.auth import (
     can_current_user_start_jobs,
     get_current_user_id,
     is_current_user_admin,
     require_auth,
 )
-from shandy.database.models import Job, JobShare, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_admin_session, get_session_ctx
-from shandy.job.types import JobStatus
-from shandy.providers import check_provider_config
-from shandy.webapp_components.ui_components import (
+from open_scientist.database.models import Job, JobShare, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_admin_session, get_session_ctx
+from open_scientist.job.types import JobStatus
+from open_scientist.providers import check_provider_config
+from open_scientist.webapp_components.ui_components import (
     render_actions_slot_with_delete,
     render_config_error_banner,
     render_delete_dialog,
@@ -31,7 +31,7 @@ from shandy.webapp_components.ui_components import (
     render_stat_badges,
     render_status_cell_slot,
 )
-from shandy.webapp_components.utils import setup_timer_cleanup
+from open_scientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +205,7 @@ def _show_delete_dialog(
 @require_auth
 def jobs_page() -> None:
     """Jobs list page."""
-    from shandy import web_app
+    from open_scientist import web_app
 
     job_manager = web_app.get_job_manager()
     is_configured, provider_name, config_errors = check_provider_config()

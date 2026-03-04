@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from shandy.tools.registry import ToolContext, tool
+from open_scientist.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         """
         from pathlib import Path as _Path
 
-        from shandy.document_reader import read_document as read_doc
+        from open_scientist.document_reader import read_document as read_doc
 
         path = _Path(file_path)
         if not path.is_absolute():

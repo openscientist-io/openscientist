@@ -15,9 +15,9 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.api.utils import parse_uuid
-from shandy.database.models import Job, JobShare, User
-from shandy.database.session import get_admin_session
+from open_scientist.api.utils import parse_uuid
+from open_scientist.database.models import Job, JobShare, User
+from open_scientist.database.session import get_admin_session
 
 AdminSessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 

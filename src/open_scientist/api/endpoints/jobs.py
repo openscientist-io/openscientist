@@ -2,7 +2,7 @@
 Job management endpoints.
 
 Provides REST API endpoints for creating, listing, monitoring, and managing
-SHANDY scientific analysis jobs.
+Open Scientist scientific analysis jobs.
 """
 
 import logging
@@ -29,14 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from shandy.api.auth import get_current_user_from_api_key
-from shandy.api.utils import parse_uuid
-from shandy.artifact_packager import create_artifacts_zip_file
-from shandy.database.models import Job, JobShare, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
-from shandy.file_loader import FileTooBigError, validate_uploaded_file
-from shandy.job_manager import JobManager
+from open_scientist.api.auth import get_current_user_from_api_key
+from open_scientist.api.utils import parse_uuid
+from open_scientist.artifact_packager import create_artifacts_zip_file
+from open_scientist.database.models import Job, JobShare, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session
+from open_scientist.file_loader import FileTooBigError, validate_uploaded_file
+from open_scientist.job_manager import JobManager
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ async def get_job_by_id(
 def _get_job_manager() -> JobManager:
     """Get the job manager instance."""
     # Import lazily to avoid circular import with web_app
-    from shandy.web_app import get_job_manager
+    from open_scientist.web_app import get_job_manager
 
     return get_job_manager()
 
@@ -379,7 +379,7 @@ async def create_job(
     job_uuid = uuid4()
     job_manager = _get_job_manager()
     try:
-        with tempfile.TemporaryDirectory(prefix="shandy_api_upload_") as upload_tmp:
+        with tempfile.TemporaryDirectory(prefix="open_scientist_api_upload_") as upload_tmp:
             data_files = await _persist_uploaded_files(upload_files, Path(upload_tmp))
             job_manager.create_job(
                 job_id=str(job_uuid),
@@ -671,7 +671,7 @@ async def download_report(
         pdf_path = job_dir / pdf_name
         if md_path.exists():
             try:
-                from shandy.pdf_generator import markdown_to_pdf
+                from open_scientist.pdf_generator import markdown_to_pdf
 
                 markdown_to_pdf(md_path, pdf_path)
             except Exception:
@@ -730,7 +730,7 @@ async def download_artifacts(
     # Build ZIP archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
-        prefix=f"shandy_{job.id}_",
+        prefix=f"open_scientist_{job.id}_",
         delete=False,
     ) as tmp_file:
         archive_path = Path(tmp_file.name)

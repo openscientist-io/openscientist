@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from shandy.exceptions import ProviderError
-from shandy.settings import get_settings
+from open_scientist.exceptions import ProviderError
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 

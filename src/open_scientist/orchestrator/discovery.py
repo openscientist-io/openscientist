@@ -1,5 +1,5 @@
 """
-Async discovery loop for SHANDY autonomous research.
+Async discovery loop for Open Scientist autonomous research.
 
 The public entry point is run_discovery_async(), which the JobManager thread
 calls via asyncio.run().
@@ -16,15 +16,15 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from shandy.agent.factory import get_agent_executor
-from shandy.agent.protocol import AgentExecutor, IterationResult, TokenUsage
-from shandy.async_tasks import create_background_task
-from shandy.database.models import JobDataFile
-from shandy.database.models.job import Job as JobModel
-from shandy.database.session import AsyncSessionLocal
-from shandy.exceptions import ShandyError
-from shandy.knowledge_state import KS_FILENAME, KnowledgeState
-from shandy.orchestrator.iteration import (
+from open_scientist.agent.factory import get_agent_executor
+from open_scientist.agent.protocol import AgentExecutor, IterationResult, TokenUsage
+from open_scientist.async_tasks import create_background_task
+from open_scientist.database.models import JobDataFile
+from open_scientist.database.models.job import Job as JobModel
+from open_scientist.database.session import AsyncSessionLocal
+from open_scientist.exceptions import OpenScientistError
+from open_scientist.knowledge_state import KS_FILENAME, KnowledgeState
+from open_scientist.orchestrator.iteration import (
     FeedbackWaitResult,
     _get_job_status,
     build_initial_prompt,
@@ -34,14 +34,14 @@ from shandy.orchestrator.iteration import (
     update_job_status,
     wait_for_feedback_or_timeout,
 )
-from shandy.prompts import (
+from open_scientist.prompts import (
     generate_job_claude_md,
     get_enabled_skills,
     get_system_prompt,
 )
-from shandy.providers import get_provider
-from shandy.settings import get_settings
-from shandy.version import get_version_string
+from open_scientist.providers import get_provider
+from open_scientist.settings import get_settings
+from open_scientist.version import get_version_string
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +265,7 @@ def _ensure_report_written(report_path: Path, report_result: IterationResult) ->
 
 def _try_generate_report_pdf(report_path: Path) -> None:
     """Generate PDF from markdown report when possible."""
-    from shandy.pdf_generator import markdown_to_pdf
+    from open_scientist.pdf_generator import markdown_to_pdf
 
     markdown_to_pdf(report_path, add_footer=True)
 
@@ -288,7 +288,7 @@ async def _run_report_generation_phase(
     if report_success:
         try:
             _try_generate_report_pdf(report_path)
-        except (ValueError, OSError, ShandyError) as exc:
+        except (ValueError, OSError, OpenScientistError) as exc:
             logger.warning("PDF generation failed: %s", exc)
 
     return _ReportOutcome(success=report_success, error=report_result.error)
@@ -442,20 +442,20 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) 
 
 
 def get_version_metadata() -> dict[str, str]:
-    """Get SHANDY version metadata for reproducibility."""
+    """Get Open Scientist version metadata for reproducibility."""
     import os
 
-    from shandy.version import SHORT_COMMIT_LENGTH, get_commit
+    from open_scientist.version import SHORT_COMMIT_LENGTH, get_commit
 
     metadata: dict[str, str] = {}
 
     commit = get_commit()
     if commit != "unknown":
-        metadata["shandy_commit"] = commit
+        metadata["open_scientist_commit"] = commit
 
-    shandy_build_time = os.environ.get("SHANDY_BUILD_TIME")  # env-ok
-    if shandy_build_time and shandy_build_time != "unknown":
-        metadata["shandy_build_time"] = shandy_build_time
+    open_scientist_build_time = os.environ.get("OPEN_SCIENTIST_BUILD_TIME")  # env-ok
+    if open_scientist_build_time and open_scientist_build_time != "unknown":
+        metadata["open_scientist_build_time"] = open_scientist_build_time
 
     try:
         if Path("/.dockerenv").exists():
@@ -486,8 +486,8 @@ async def _persist_job_cost_record(
     operation_type: str = "discovery",
 ) -> None:
     """Write a CostRecord for the completed job execution."""
-    from shandy.database.models import CostRecord
-    from shandy.providers.pricing import estimate_cost_usd
+    from open_scientist.database.models import CostRecord
+    from open_scientist.providers.pricing import estimate_cost_usd
 
     cost_usd = estimate_cost_usd(model_name, tokens.input_tokens, tokens.output_tokens)
     async with AsyncSessionLocal(thread_safe=True) as session:

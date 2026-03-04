@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from shandy.tools.registry import ToolContext, tool
+from open_scientist.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def _ensure_data_loaded(ctx: ToolContext) -> str | None:
     try:
         import sys
 
-        from shandy.file_loader import load_data_file
+        from open_scientist.file_loader import load_data_file
 
         file_size_mb = ctx.data_file.stat().st_size / (1024 * 1024)
         print(
@@ -104,10 +104,10 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         Returns:
             Formatted execution result with output, plots (Python only), and any errors
         """
-        from shandy.code_executor import format_execution_result
-        from shandy.container_manager import get_container_manager
-        from shandy.file_loader import get_file_info
-        from shandy.knowledge_state import KnowledgeState
+        from open_scientist.code_executor import format_execution_result
+        from open_scientist.container_manager import get_container_manager
+        from open_scientist.file_loader import get_file_info
+        from open_scientist.knowledge_state import KnowledgeState
 
         if language not in ("python", "rust", "sparql"):
             return f"❌ ERROR: Unsupported language '{language}'. Supported: 'python', 'rust', 'sparql'"

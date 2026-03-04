@@ -6,11 +6,11 @@ from uuid import UUID
 from nicegui import ui
 from sqlalchemy import select
 
-from shandy.auth import get_current_user_id, require_auth
-from shandy.database.models import Skill, SkillSource
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session_ctx
-from shandy.webapp_components.ui_components import (
+from open_scientist.auth import get_current_user_id, require_auth
+from open_scientist.database.models import Skill, SkillSource
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session_ctx
+from open_scientist.webapp_components.ui_components import (
     format_relative_time,
     get_category_color,
     render_error_state,
@@ -18,7 +18,7 @@ from shandy.webapp_components.ui_components import (
     render_navigator,
     render_not_found_state,
 )
-from shandy.webapp_components.utils import setup_timer_cleanup
+from open_scientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ async def skill_detail_page(category: str, slug: str) -> None:
                 skill, source = row
 
                 # Set page title
-                ui.page_title(f"{skill.name} - SHANDY")
+                ui.page_title(f"{skill.name} - Open Scientist")
 
                 cat_color = get_category_color(skill.category)
 

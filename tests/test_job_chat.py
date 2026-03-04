@@ -15,10 +15,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.agent.protocol import IterationResult
-from shandy.database.models import Job, JobChatMessage, User
-from shandy.database.rls import set_current_user
-from shandy.job_chat import get_chat_history, load_job_context, send_chat_message
+from open_scientist.agent.protocol import IterationResult
+from open_scientist.database.models import Job, JobChatMessage, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.job_chat import get_chat_history, load_job_context, send_chat_message
 from tests.helpers import enable_rls
 
 
@@ -462,8 +462,8 @@ async def test_send_chat_message_success(
     )
 
     with (
-        patch("shandy.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
-        patch("shandy.providers.get_provider") as mock_get_provider,
+        patch("open_scientist.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("open_scientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
 
@@ -504,8 +504,8 @@ async def test_send_chat_message_raises_on_executor_failure(
     )
 
     with (
-        patch("shandy.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
-        patch("shandy.providers.get_provider") as mock_get_provider,
+        patch("open_scientist.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("open_scientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
 
@@ -538,8 +538,8 @@ async def test_send_chat_message_raises_generic_on_empty_error(
     )
 
     with (
-        patch("shandy.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
-        patch("shandy.providers.get_provider") as mock_get_provider,
+        patch("open_scientist.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("open_scientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
 
@@ -585,8 +585,8 @@ async def test_system_prompt_does_not_include_job_context(
             pass
 
     with (
-        patch("shandy.agent.sdk_executor.SDKAgentExecutor", FakeExecutor),
-        patch("shandy.providers.get_provider") as mock_get_provider,
+        patch("open_scientist.agent.sdk_executor.SDKAgentExecutor", FakeExecutor),
+        patch("open_scientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
 

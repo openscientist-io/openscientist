@@ -11,10 +11,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.auth.routes import create_or_update_user, create_session
-from shandy.database.models import Administrator, OAuthAccount, User
-from shandy.database.models import Session as DBSession
-from shandy.settings import clear_settings_cache
+from open_scientist.auth.routes import create_or_update_user, create_session
+from open_scientist.database.models import Administrator, OAuthAccount, User
+from open_scientist.database.models import Session as DBSession
+from open_scientist.settings import clear_settings_cache
 
 
 @pytest.fixture(autouse=True)

@@ -6,8 +6,8 @@ from contextlib import suppress
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from shandy.job_manager import JobStatus
-from shandy.webapp_components.ui_components import (
+from open_scientist.job_manager import JobStatus
+from open_scientist.webapp_components.ui_components import (
     STATUS_COLORS,
     STATUS_ICONS,
     get_status_badge_props,
@@ -159,10 +159,10 @@ class TestRenderStatusCellSlot:
 class TestRenderErrorCard:
     """Tests for render_error_card function (basic structure testing)."""
 
-    @patch("shandy.webapp_components.ui_components.ui")
+    @patch("open_scientist.webapp_components.ui_components.ui")
     def test_render_error_card_called(self, mock_ui):
         """Test that render_error_card can be called without errors."""
-        from shandy.webapp_components.ui_components import render_error_card
+        from open_scientist.webapp_components.ui_components import render_error_card
 
         # Mock UI components
         mock_ui.card.return_value.__enter__ = Mock()

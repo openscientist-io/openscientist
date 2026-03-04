@@ -9,18 +9,18 @@ from nicegui import ui
 from sqlalchemy import func, select
 from sqlalchemy.sql.elements import ColumnElement
 
-from shandy.auth import get_current_user_id, require_auth
-from shandy.database.models import Skill, SkillSource
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session_ctx
-from shandy.webapp_components.ui_components import (
+from open_scientist.auth import get_current_user_id, require_auth
+from open_scientist.database.models import Skill, SkillSource
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session_ctx
+from open_scientist.webapp_components.ui_components import (
     format_relative_time,
     get_category_color,
     render_empty_state,
     render_navigator,
     render_skill_name_slot,
 )
-from shandy.webapp_components.utils import setup_timer_cleanup
+from open_scientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +157,7 @@ def _apply_table_visibility(
 @require_auth
 async def skills_page() -> None:
     """Skills list page."""
-    ui.page_title("Skills - SHANDY")
+    ui.page_title("Skills - Open Scientist")
     _active_timers = setup_timer_cleanup()
     render_navigator(active_page="skills")
 

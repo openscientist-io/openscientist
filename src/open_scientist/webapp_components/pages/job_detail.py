@@ -16,19 +16,19 @@ from uuid import UUID
 
 from nicegui import ui
 
-from shandy.artifact_packager import create_artifacts_zip
-from shandy.async_tasks import run_sync
-from shandy.auth import get_current_user_id, require_auth
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session_ctx
-from shandy.job.types import JobStatus
-from shandy.job_chat import get_chat_history, send_chat_message
-from shandy.job_manager import _db_get_job, _db_get_share_permission
-from shandy.knowledge_state import KS_FILENAME, KnowledgeState
-from shandy.orchestrator.iteration import update_job_status
-from shandy.pdf_generator import markdown_to_pdf
-from shandy.webapp_components.error_handler import get_user_friendly_error
-from shandy.webapp_components.ui_components import (
+from open_scientist.artifact_packager import create_artifacts_zip
+from open_scientist.async_tasks import run_sync
+from open_scientist.auth import get_current_user_id, require_auth
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session_ctx
+from open_scientist.job.types import JobStatus
+from open_scientist.job_chat import get_chat_history, send_chat_message
+from open_scientist.job_manager import _db_get_job, _db_get_share_permission
+from open_scientist.knowledge_state import KS_FILENAME, KnowledgeState
+from open_scientist.orchestrator.iteration import update_job_status
+from open_scientist.pdf_generator import markdown_to_pdf
+from open_scientist.webapp_components.error_handler import get_user_friendly_error
+from open_scientist.webapp_components.ui_components import (
     STATUS_COLORS,
     _inject_pubmed_badge_styles,
     render_delete_dialog,
@@ -44,7 +44,7 @@ from shandy.webapp_components.ui_components import (
     render_thinking_status,
     transform_pmid_references,
 )
-from shandy.webapp_components.utils import (
+from open_scientist.webapp_components.utils import (
     ClientGuard,
     guard_client,
     is_client_connected,
@@ -723,7 +723,7 @@ def _create_page_dialogs(job_id: str, job_manager: Any, user_id: str) -> tuple[A
 
 
 def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
-    from shandy import web_app
+    from open_scientist import web_app
 
     job_manager = web_app.get_job_manager()
     user_id = get_current_user_id()
@@ -1506,7 +1506,7 @@ def job_detail_page(job_id: str) -> None:
         _render_job_not_found()
         return
 
-    ui.page_title(f"{_job_page_title(context.job_info)} - SHANDY")
+    ui.page_title(f"{_job_page_title(context.job_info)} - Open Scientist")
     render_navigator()
     _render_job_status_notices(context)
     _render_job_tabs(context)

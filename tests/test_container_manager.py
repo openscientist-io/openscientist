@@ -18,17 +18,17 @@ class TestContainerManagerUnit:
 
     def test_init_defaults(self):
         """Test ContainerManager initializes with default values."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
-        assert manager.image == "shandy-executor:latest"
+        assert manager.image == "open_scientist-executor:latest"
         assert manager.memory_limit == "2g"
         assert manager.cpu_limit == 0.5
         assert manager.timeout == 120
 
     def test_init_custom_values(self):
         """Test ContainerManager accepts custom values."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager(
             image="custom:latest",
@@ -43,7 +43,7 @@ class TestContainerManagerUnit:
 
     def test_execute_code_success(self):
         """Test successful code execution returns correct result."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -81,7 +81,7 @@ class TestContainerManagerUnit:
 
     def test_execute_code_failure(self):
         """Test failed code execution returns error."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -116,7 +116,7 @@ class TestContainerManagerUnit:
         """Test handling of missing executor image."""
         import docker.errors
 
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -136,7 +136,7 @@ class TestContainerManagerUnit:
 
     def test_cleanup_job_containers(self):
         """Test cleanup of containers by job ID."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -145,9 +145,9 @@ class TestContainerManagerUnit:
 
         # Mock list of containers for the job
         mock_container1 = MagicMock()
-        mock_container1.name = "shandy-exec-job123-abc"
+        mock_container1.name = "open_scientist-exec-job123-abc"
         mock_container2 = MagicMock()
-        mock_container2.name = "shandy-exec-job123-def"
+        mock_container2.name = "open_scientist-exec-job123-def"
         mock_client.containers.list.return_value = [mock_container1, mock_container2]
 
         removed = manager.cleanup_job_containers("job123")
@@ -160,7 +160,7 @@ class TestContainerManagerUnit:
         """Test cleanup of old orphaned containers."""
         from datetime import datetime, timedelta
 
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -172,11 +172,11 @@ class TestContainerManagerUnit:
         recent_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
         old_container = MagicMock()
-        old_container.name = "shandy-exec-old"
+        old_container.name = "open_scientist-exec-old"
         old_container.attrs = {"Created": old_time}
 
         recent_container = MagicMock()
-        recent_container.name = "shandy-exec-recent"
+        recent_container.name = "open_scientist-exec-recent"
         recent_container.attrs = {"Created": recent_time}
 
         mock_client.containers.list.return_value = [old_container, recent_container]
@@ -189,7 +189,7 @@ class TestContainerManagerUnit:
 
     def test_check_image_available_true(self):
         """Test image availability check when image exists."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -203,7 +203,7 @@ class TestContainerManagerUnit:
         """Test image availability check when image doesn't exist."""
         import docker.errors
 
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -215,7 +215,7 @@ class TestContainerManagerUnit:
 
     def test_is_available_true(self):
         """Test Docker availability check when Docker is running."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -227,7 +227,7 @@ class TestContainerManagerUnit:
 
     def test_is_available_false(self):
         """Test Docker availability check when Docker is not running."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -242,7 +242,7 @@ class TestBuildVolumes:
     """Unit tests for _build_volumes and _remap_paths."""
 
     def _make_manager(self):
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         return ContainerManager()
 
@@ -380,7 +380,7 @@ class TestGetContainerManager:
 
     def test_get_container_manager_returns_same_instance(self):
         """Test that get_container_manager returns a singleton."""
-        from shandy import container_manager
+        from open_scientist import container_manager
 
         # Reset global instance
         container_manager._container_manager = None
@@ -404,7 +404,7 @@ class TestContainerManagerIntegration:
     @pytest.fixture(autouse=True)
     def check_docker(self):
         """Skip if Docker is not available."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
         if not manager.is_available():
@@ -413,7 +413,7 @@ class TestContainerManagerIntegration:
     @pytest.fixture(autouse=True)
     def check_image(self):
         """Skip if executor image is not built."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
         if not manager.check_image_available():
@@ -421,7 +421,7 @@ class TestContainerManagerIntegration:
 
     def test_execute_simple_code(self):
         """Test executing simple Python code."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -437,7 +437,7 @@ class TestContainerManagerIntegration:
 
     def test_execute_with_numpy(self):
         """Test that numpy is available."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -453,7 +453,7 @@ class TestContainerManagerIntegration:
 
     def test_execute_with_pandas(self):
         """Test that pandas is available."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -469,7 +469,7 @@ class TestContainerManagerIntegration:
 
     def test_network_enabled(self):
         """Test that network access is available (needed for requests, SPARQL, cargo, etc.)."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
@@ -485,7 +485,7 @@ class TestContainerManagerIntegration:
 
     def test_timeout_enforcement(self):
         """Test that timeout is enforced."""
-        from shandy.container_manager import ContainerManager
+        from open_scientist.container_manager import ContainerManager
 
         manager = ContainerManager(timeout=5)
 

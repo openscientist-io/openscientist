@@ -155,7 +155,7 @@ class ToolContext:
     @property
     def ks_path(self) -> Path:
         """Path to the knowledge_state.json file for this job."""
-        from shandy.knowledge_state import KS_FILENAME
+        from open_scientist.knowledge_state import KS_FILENAME
 
         return self.job_dir / KS_FILENAME
 
@@ -187,11 +187,11 @@ def build_tool_list(
         resolved_files = ()
     ctx = ToolContext(job_dir=job_dir, data_file=data_file, data_files=resolved_files)
 
-    from shandy.tools.code_exec import make_tools as code_tools
-    from shandy.tools.document import make_tools as doc_tools
-    from shandy.tools.job_meta import make_tools as meta_tools
-    from shandy.tools.knowledge import make_tools as knowledge_tools
-    from shandy.tools.pubmed import make_tools as pubmed_tools
+    from open_scientist.tools.code_exec import make_tools as code_tools
+    from open_scientist.tools.document import make_tools as doc_tools
+    from open_scientist.tools.job_meta import make_tools as meta_tools
+    from open_scientist.tools.knowledge import make_tools as knowledge_tools
+    from open_scientist.tools.pubmed import make_tools as pubmed_tools
 
     tools: list[Any] = []
     tools.extend(pubmed_tools(ctx))
@@ -202,7 +202,7 @@ def build_tool_list(
 
     # Phenix tools are optional (only if Phenix is configured)
     try:
-        from shandy.tools.phenix import make_tools as phenix_tools
+        from open_scientist.tools.phenix import make_tools as phenix_tools
 
         tools.extend(phenix_tools(ctx))
     except ImportError:

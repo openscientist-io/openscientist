@@ -1,5 +1,5 @@
 """
-Alembic migration environment for SHANDY.
+Alembic migration environment for Open Scientist.
 
 This module configures the Alembic migration context to work with async SQLAlchemy
 and automatically discover all ORM models for migration generation.
@@ -15,11 +15,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import all models so Alembic autogenerate sees the full metadata graph.
-import shandy.database.models as models
+import open_scientist.database.models as models
 
 # Import the Base class and all models so Alembic can detect them
-from shandy.database.base import Base
-from shandy.settings import DatabaseSettings
+from open_scientist.database.base import Base
+from open_scientist.settings import DatabaseSettings
 
 # Alembic Config object provides access to alembic.ini values
 config = context.config
@@ -35,7 +35,7 @@ try:
 except ValidationError as exc:
     raise ValueError(
         "DATABASE_URL environment variable is required for migrations. "
-        "Example: postgresql+asyncpg://user:pass@localhost:5432/shandy"
+        "Example: postgresql+asyncpg://user:pass@localhost:5432/open_scientist"
     ) from exc
 
 # Set the sqlalchemy.url in the Alembic config

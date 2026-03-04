@@ -1,16 +1,16 @@
 """
-Structured exception hierarchy for SHANDY.
+Structured exception hierarchy for Open Scientist.
 """
 
 
-class ShandyError(Exception):
-    """Base exception for all SHANDY errors."""
+class OpenScientistError(Exception):
+    """Base exception for all Open Scientist errors."""
 
 
 # ── Code execution ────────────────────────────────────────────────────
 
 
-class CodeExecutionError(ShandyError):
+class CodeExecutionError(OpenScientistError):
     """Raised when user-submitted code execution fails."""
 
 
@@ -25,7 +25,7 @@ class ForbiddenImportError(CodeExecutionError):
 # ── File loading / upload ─────────────────────────────────────────────
 
 
-class FileLoadError(ShandyError):
+class FileLoadError(OpenScientistError):
     """Raised when a data file cannot be loaded or parsed."""
 
 
@@ -40,19 +40,19 @@ class UnsupportedFileTypeError(FileLoadError):
 # ── Budget / cost tracking ────────────────────────────────────────────
 
 
-class BudgetExceededError(ShandyError):
+class BudgetExceededError(OpenScientistError):
     """Raised when a job exceeds its budget limit."""
 
 
 # ── Provider errors ───────────────────────────────────────────────────
 
 
-class ProviderError(ShandyError):
+class ProviderError(OpenScientistError):
     """Raised when a model-provider operation (API call, billing query) fails."""
 
 
 # ── PDF generation ────────────────────────────────────────────────────
 
 
-class PDFGenerationError(ShandyError):
+class PDFGenerationError(OpenScientistError):
     """Raised when PDF report generation fails."""

@@ -43,7 +43,7 @@ jobs:
       - run: uv sync
 
       - name: Type check
-        run: uv run mypy src/shandy/ tests/
+        run: uv run mypy src/open_scientist/ tests/
 
   test:
     runs-on: ubuntu-latest
@@ -53,19 +53,19 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_USER: shandy
-          POSTGRES_PASSWORD: shandy_dev_password
-          POSTGRES_DB: shandy
+          POSTGRES_USER: open_scientist
+          POSTGRES_PASSWORD: open_scientist_dev_password
+          POSTGRES_DB: open_scientist
         ports:
           - 5434:5432
         options: >-
-          --health-cmd "pg_isready -U shandy -d shandy"
+          --health-cmd "pg_isready -U open_scientist -d open_scientist"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      DATABASE_URL: postgresql+asyncpg://shandy:shandy_dev_password@localhost:5434/shandy
+      DATABASE_URL: postgresql+asyncpg://open_scientist:open_scientist_dev_password@localhost:5434/open_scientist
 
     steps:
       - uses: actions/checkout@v4
@@ -81,4 +81,4 @@ jobs:
       - run: uv sync
 
       - name: Unit & Integration Tests
-        run: uv run pytest --cov=src/shandy --cov-report=term-missing
+        run: uv run pytest --cov=src/open_scientist --cov-report=term-missing

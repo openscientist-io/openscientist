@@ -1,5 +1,5 @@
 """
-File loading and type detection for SHANDY.
+File loading and type detection for Open Scientist.
 
 Handles multiple file formats with validation and magic number detection.
 """
@@ -10,8 +10,8 @@ from typing import Any
 
 import pandas as pd
 
-from shandy.exceptions import FileLoadError, FileTooBigError, UnsupportedFileTypeError
-from shandy.settings import get_settings
+from open_scientist.exceptions import FileLoadError, FileTooBigError, UnsupportedFileTypeError
+from open_scientist.settings import get_settings
 
 # Try to import python-magic, but make it optional
 try:
@@ -84,7 +84,7 @@ HDF5_EXTENSIONS = {
 }
 
 
-# Re-exported from shandy.exceptions for convenience at this import path
+# Re-exported from open_scientist.exceptions for convenience at this import path
 __all__ = ["FileTooBigError", "UnsupportedFileTypeError"]
 
 

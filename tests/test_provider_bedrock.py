@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shandy.providers.bedrock import BedrockProvider
+from open_scientist.providers.bedrock import BedrockProvider
 
 
 class TestBedrockProviderValidation:
@@ -22,7 +22,7 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
         with (
-            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings),
             pytest.raises(
                 ValueError,
                 match="AWS_REGION",
@@ -41,7 +41,7 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
         with (
-            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings),
             pytest.raises(
                 ValueError,
                 match="AWS credentials",
@@ -59,7 +59,7 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_model = "model"
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
-        with patch("shandy.providers.bedrock.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings):
             provider = BedrockProvider()
             assert "bedrock" in provider.name.lower()
 
@@ -73,7 +73,7 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_model = "model"
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
-        with patch("shandy.providers.bedrock.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings):
             provider = BedrockProvider()
             assert provider.name == "AWS Bedrock"
 
@@ -87,7 +87,7 @@ class TestBedrockProviderValidation:
         mock_settings.provider.anthropic_model = "model"
         mock_settings.provider.anthropic_small_fast_model = "haiku"
 
-        with patch("shandy.providers.bedrock.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings):
             provider = BedrockProvider()
             assert provider.name == "AWS Bedrock"
 
@@ -110,7 +110,7 @@ class TestBedrockSetupEnvironment:
         mock_settings = self._make_provider()
 
         with (
-            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings),
             patch.dict(os.environ, {}, clear=False),
         ):
             provider = BedrockProvider()
@@ -121,7 +121,7 @@ class TestBedrockSetupEnvironment:
         mock_settings = self._make_provider()
 
         with (
-            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings),
             patch.dict(
                 os.environ,
                 {
@@ -139,7 +139,7 @@ class TestBedrockSetupEnvironment:
         mock_settings = self._make_provider()
 
         with (
-            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings),
             patch.dict(
                 os.environ,
                 {
@@ -160,7 +160,7 @@ class TestBedrockSetupEnvironment:
         mock_settings = self._make_provider()
 
         with (
-            patch("shandy.providers.bedrock.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.bedrock.get_settings", return_value=mock_settings),
             patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}),
         ):
             provider = BedrockProvider()

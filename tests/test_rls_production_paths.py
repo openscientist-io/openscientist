@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Job, User
-from shandy.database.rls import set_current_user
+from open_scientist.database.models import Job, User
+from open_scientist.database.rls import set_current_user
 from tests.helpers import enable_rls
 
 
@@ -92,19 +92,19 @@ async def test_get_session_query_filters_by_owner(test_engine):
     """Reproduces exact jobs_list.py query path with SET ROLE + set_current_user.
 
     This test mirrors how get_session() works: connect as the main user,
-    SET ROLE shandy_app, then set_current_user. Verifies that RLS correctly
+    SET ROLE open_scientist_app, then set_current_user. Verifies that RLS correctly
     isolates each user's jobs.
     """
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from shandy.database.session import _set_app_role
+    from open_scientist.database.session import _set_app_role
 
     session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
     # Create test data as admin
     async with session_factory() as admin_session:
-        await admin_session.execute(text("SET ROLE shandy_admin"))
+        await admin_session.execute(text("SET ROLE open_scientist_admin"))
 
         alice = User(email="alice_gs_prod@example.com", name="Alice")
         bob = User(email="bob_gs_prod@example.com", name="Bob")
@@ -119,7 +119,7 @@ async def test_get_session_query_filters_by_owner(test_engine):
         alice_id = alice.id
         bob_id = bob.id
 
-    # Simulate get_session() path: SET ROLE shandy_app + set_current_user
+    # Simulate get_session() path: SET ROLE open_scientist_app + set_current_user
     async with session_factory() as user_session:
         await _set_app_role(user_session)
         await set_current_user(user_session, alice_id)

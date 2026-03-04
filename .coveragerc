@@ -1,5 +1,5 @@
 [run]
-source = src/shandy
+source = src/open_scientist
 omit =
     */tests/*
     */__pycache__/*
@@ -19,4 +19,4 @@ exclude_lines =
     @abstractmethod
 
 [paths]
-source = src/shandy
+source = src/open_scientist

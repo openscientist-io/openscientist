@@ -1,5 +1,5 @@
 """
-Artifact packager for SHANDY jobs.
+Artifact packager for Open Scientist jobs.
 
 Provides utilities for packaging job artifacts (reports, plots, logs, data)
 into downloadable archives in various formats (ZIP, Markdown, JSON).

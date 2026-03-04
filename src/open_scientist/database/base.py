@@ -1,5 +1,5 @@
 """
-Base model classes for SHANDY database models.
+Base model classes for Open Scientist database models.
 
 Provides declarative base and common mixins for all ORM models.
 """

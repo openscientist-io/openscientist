@@ -1,5 +1,5 @@
 """
-Knowledge state management for SHANDY.
+Knowledge state management for Open Scientist.
 
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
@@ -18,15 +18,15 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models.analysis_log import AnalysisLog
-from shandy.database.models.feedback_history import FeedbackHistory
-from shandy.database.models.finding import Finding
-from shandy.database.models.hypothesis import Hypothesis
-from shandy.database.models.iteration_summary import IterationSummary
-from shandy.database.models.job import Job as JobModel
-from shandy.database.models.literature import Literature
-from shandy.database.rls import set_current_user
-from shandy.database.session import AsyncSessionLocal
+from open_scientist.database.models.analysis_log import AnalysisLog
+from open_scientist.database.models.feedback_history import FeedbackHistory
+from open_scientist.database.models.finding import Finding
+from open_scientist.database.models.hypothesis import Hypothesis
+from open_scientist.database.models.iteration_summary import IterationSummary
+from open_scientist.database.models.job import Job as JobModel
+from open_scientist.database.models.literature import Literature
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import AsyncSessionLocal
 
 KS_FILENAME = "knowledge_state.json"
 
@@ -694,7 +694,7 @@ class KnowledgeState:
 
         Args:
             version_info: Dict with keys like 'claude_model', 'claude_code_version',
-                         'shandy_commit', 'docker_image_id'
+                         'open_scientist_commit', 'docker_image_id'
         """
         self.data["config"]["version_info"] = version_info
 

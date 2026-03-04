@@ -1,5 +1,5 @@
 """
-AgentExecutor factory for SHANDY.
+AgentExecutor factory for Open Scientist.
 
 Always returns an SDKAgentExecutor (backed by claude-agent-sdk).
 The provider's setup_environment() configures the correct env vars
@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from shandy.agent.protocol import AgentExecutor
-from shandy.agent.sdk_executor import SDKAgentExecutor
+from open_scientist.agent.protocol import AgentExecutor
+from open_scientist.agent.sdk_executor import SDKAgentExecutor
 
 logger = logging.getLogger(__name__)
 

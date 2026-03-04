@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI
 
-from shandy import web_app
+from open_scientist import web_app
 
 
 def _noop(*_args, **_kwargs) -> None:
@@ -41,7 +41,7 @@ def test_create_app_builds_host_app_once(monkeypatch, tmp_path: Path) -> None:
 def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(web_app, "_settings_error", None)
     monkeypatch.setattr(
-        "shandy.settings.get_settings",
+        "open_scientist.settings.get_settings",
         lambda: SimpleNamespace(dev=SimpleNamespace(dev_mode=True)),
     )
 
@@ -56,7 +56,7 @@ def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> 
 
     assert uvicorn_calls
     args, kwargs = uvicorn_calls[0]
-    assert args[0] == "shandy.web_app:create_app"
+    assert args[0] == "open_scientist.web_app:create_app"
     assert kwargs["factory"] is True
     assert kwargs["reload"] is True
     assert Path(web_app.os.environ[web_app.JOBS_DIR_ENV]) == tmp_path / "jobs"
@@ -65,7 +65,7 @@ def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> 
 def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(web_app, "_settings_error", None)
     monkeypatch.setattr(
-        "shandy.settings.get_settings",
+        "open_scientist.settings.get_settings",
         lambda: SimpleNamespace(dev=SimpleNamespace(dev_mode=False)),
     )
 

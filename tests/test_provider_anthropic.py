@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from shandy.providers.anthropic import AnthropicProvider
+from open_scientist.providers.anthropic import AnthropicProvider
 
 
 class TestAnthropicProviderValidation:
@@ -17,7 +17,7 @@ class TestAnthropicProviderValidation:
         mock_settings.provider.claude_code_oauth_token = None
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
         with (
-            patch("shandy.providers.anthropic.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings),
             pytest.raises(
                 ValueError,
                 match="ANTHROPIC_API_KEY",
@@ -30,7 +30,7 @@ class TestAnthropicProviderValidation:
         mock_settings.provider.anthropic_api_key = "sk-ant-test-key"
         mock_settings.provider.claude_code_oauth_token = None
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
-        with patch("shandy.providers.anthropic.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings):
             provider = AnthropicProvider()
             assert provider.name == "Anthropic"
 
@@ -39,7 +39,7 @@ class TestAnthropicProviderValidation:
         mock_settings.provider.anthropic_api_key = None
         mock_settings.provider.claude_code_oauth_token = "oauth-token"
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
-        with patch("shandy.providers.anthropic.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings):
             provider = AnthropicProvider()
             assert provider.name == "Anthropic"
 
@@ -48,7 +48,7 @@ class TestAnthropicProviderValidation:
         mock_settings.provider.anthropic_api_key = "key"
         mock_settings.provider.claude_code_oauth_token = None
         mock_settings.provider.anthropic_model = None
-        with patch("shandy.providers.anthropic.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings):
             provider = AnthropicProvider()
             # Provider should still initialize (warnings don't prevent init)
             assert provider.name == "Anthropic"
@@ -64,7 +64,7 @@ class TestAnthropicSetupEnvironment:
         mock_settings.provider.anthropic_model = "model"
 
         with (
-            patch("shandy.providers.anthropic.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings),
             patch.dict(
                 os.environ,
                 {
@@ -89,7 +89,7 @@ class TestAnthropicSetupEnvironment:
         mock_settings.provider.anthropic_model = "model"
 
         with (
-            patch("shandy.providers.anthropic.get_settings", return_value=mock_settings),
+            patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings),
             patch.dict(os.environ, {}, clear=False),
         ):
             provider = AnthropicProvider()
@@ -107,7 +107,7 @@ class TestAnthropicGetCostInfo:
         mock_settings.provider.claude_code_oauth_token = None
         mock_settings.provider.anthropic_model = "model"
 
-        with patch("shandy.providers.anthropic.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings):
             provider = AnthropicProvider()
             cost = provider.get_cost_info()
 
@@ -122,7 +122,7 @@ class TestAnthropicGetCostInfo:
         mock_settings.provider.claude_code_oauth_token = None
         mock_settings.provider.anthropic_model = "model"
 
-        with patch("shandy.providers.anthropic.get_settings", return_value=mock_settings):
+        with patch("open_scientist.providers.anthropic.get_settings", return_value=mock_settings):
             provider = AnthropicProvider()
             cost = provider.get_cost_info(lookback_hours=48)
 

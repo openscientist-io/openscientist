@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Session, User
+from open_scientist.database.models import Session, User
 
 
 @pytest.fixture(autouse=True)

@@ -2,12 +2,12 @@
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
-DEPLOY_DIR ?= ~/shandy
+DEPLOY_DIR ?= ~/open_scientist
 COMPOSE_FILE ?= docker-compose.yml
 
 # Default target
 help:
-	@echo "SHANDY - Makefile commands"
+	@echo "Open Scientist - Makefile commands"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build      - Build all Docker images (base, main, agent, executor)"
@@ -24,42 +24,42 @@ help:
 	@echo "  make deploy     - Deploy to production server"
 
 start:
-	@echo "Starting SHANDY..."
+	@echo "Starting Open Scientist..."
 	docker compose -f $(COMPOSE_FILE) up -d
-	@echo "SHANDY started at http://localhost:8080"
+	@echo "Open Scientist started at http://localhost:8080"
 
 stop:
-	@echo "Stopping SHANDY..."
+	@echo "Stopping Open Scientist..."
 	docker compose -f $(COMPOSE_FILE) down
-	@echo "SHANDY stopped"
+	@echo "Open Scientist stopped"
 
 restart: stop start
 
 build:
 	@echo "Building base image (Python, uv)..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t shandy-base:latest .
-	@echo "Building SHANDY main image..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t open_scientist-base:latest .
+	@echo "Building Open Scientist main image..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
-		--build-arg SHANDY_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		--build-arg OPEN_SCIENTIST_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	@echo "Building executor image..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t shandy-executor:latest .
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t open_scientist-executor:latest .
 	@echo "Building agent image..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t shandy-agent:latest .
-	@echo "All images built: shandy-base, shandy, shandy-executor, shandy-agent"
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t open-scientist-agent:latest .
+	@echo "All images built: open_scientist-base, open_scientist, open_scientist-executor, open-scientist-agent"
 
 rebuild: build
 	docker compose -f $(COMPOSE_FILE) down
 	docker compose -f $(COMPOSE_FILE) up -d
-	@echo "SHANDY rebuilt and started at http://localhost:8080"
+	@echo "Open Scientist rebuilt and started at http://localhost:8080"
 
 logs:
-	@echo "Tailing SHANDY logs (Ctrl+C to exit)..."
+	@echo "Tailing Open Scientist logs (Ctrl+C to exit)..."
 	docker compose -f $(COMPOSE_FILE) logs -f
 
 shell:
-	@echo "Opening shell in SHANDY container..."
-	docker compose -f $(COMPOSE_FILE) exec shandy /bin/bash
+	@echo "Opening shell in Open Scientist container..."
+	docker compose -f $(COMPOSE_FILE) exec open_scientist /bin/bash
 
 clean:
 	@echo "Removing containers and volumes..."
@@ -70,7 +70,7 @@ clean-jobs:
 	@echo "Cleaning up old job directories..."
 	@read -p "Delete jobs older than how many days? [7]: " days; \
 	days=$${days:-7}; \
-	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager cleanup --days $$days
+	docker compose -f $(COMPOSE_FILE) exec open_scientist python -m open_scientist.job_manager cleanup --days $$days
 	@echo "Job cleanup complete"
 
 reset-db:
@@ -82,11 +82,11 @@ reset-db:
 		echo "Starting containers..."; \
 		docker compose -f $(COMPOSE_FILE) up -d; \
 		echo "Waiting for postgres to be ready..."; \
-		until docker compose -f $(COMPOSE_FILE) exec postgres pg_isready -U shandy -d shandy 2>/dev/null; do \
+		until docker compose -f $(COMPOSE_FILE) exec postgres pg_isready -U open_scientist -d open_scientist 2>/dev/null; do \
 			sleep 1; \
 		done; \
 		echo "Running migrations..."; \
-		docker compose -f $(COMPOSE_FILE) exec shandy alembic upgrade head; \
+		docker compose -f $(COMPOSE_FILE) exec open_scientist alembic upgrade head; \
 		echo "Database reset complete!"; \
 	else \
 		echo "Aborted."; \
@@ -95,12 +95,12 @@ reset-db:
 # Show job status
 status:
 	@echo "Job status:"
-	docker compose -f $(COMPOSE_FILE) exec shandy python -m shandy.job_manager summary
+	docker compose -f $(COMPOSE_FILE) exec open_scientist python -m open_scientist.job_manager summary
 
 # Deploy to production server
 deploy:
 	@echo "========================================="
-	@echo "Deploying SHANDY to $(DEPLOY_HOST)"
+	@echo "Deploying Open Scientist to $(DEPLOY_HOST)"
 	@echo "========================================="
 	@echo ""
 	@echo "Step 1: Ensuring repository exists on $(DEPLOY_HOST)..."
@@ -131,7 +131,7 @@ deploy:
 	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && make rebuild"
 	@echo ""
 	@echo "Step 4: Running database migrations on $(DEPLOY_HOST)..."
-	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && docker compose exec shandy alembic upgrade head"
+	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && docker compose exec open_scientist alembic upgrade head"
 	@echo ""
 	@echo "========================================="
 	@echo "Deployment complete!"

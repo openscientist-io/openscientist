@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 
-from shandy.api.utils import parse_uuid
+from open_scientist.api.utils import parse_uuid
 
 
 def test_parse_uuid_valid_value() -> None:

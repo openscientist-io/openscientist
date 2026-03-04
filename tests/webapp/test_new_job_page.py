@@ -3,7 +3,7 @@
 import inspect
 from types import SimpleNamespace
 
-from shandy.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
+from open_scientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
 
 
 def test_build_upload_session_id_uses_user_and_client_id():

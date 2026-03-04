@@ -1,5 +1,5 @@
 """
-Job chat service for interactive Q&A about SHANDY jobs.
+Job chat service for interactive Q&A about Open Scientist jobs.
 
 Allows users to ask questions about their job results, findings, and
 analysis process. Uses SDKAgentExecutor for responses, giving the agent
@@ -15,9 +15,9 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import Job, JobChatMessage
-from shandy.database.session import AsyncSessionLocal
-from shandy.knowledge_state import KS_FILENAME
+from open_scientist.database.models import Job, JobChatMessage
+from open_scientist.database.session import AsyncSessionLocal
+from open_scientist.knowledge_state import KS_FILENAME
 
 logger = logging.getLogger(__name__)
 
@@ -253,8 +253,8 @@ async def _send_message_via_executor(
     tool access, allowing the agent to re-analyze data or search literature
     when answering follow-up questions.
     """
-    from shandy.agent.sdk_executor import SDKAgentExecutor
-    from shandy.providers import get_provider
+    from open_scientist.agent.sdk_executor import SDKAgentExecutor
+    from open_scientist.providers import get_provider
 
     # Get chat history for continuity
     history = await get_chat_history(session, job_id, limit=10)
@@ -262,7 +262,7 @@ async def _send_message_via_executor(
     # System prompt is kept small (it's passed as a CLI arg to the claude
     # subprocess, so large payloads hit the OS ARG_MAX limit).  The agent
     # can read job data files on demand via Claude Code's built-in Read tool.
-    system_prompt = """You are a research assistant helping a scientist discuss the results of their SHANDY literature review and hypothesis generation job.
+    system_prompt = """You are a research assistant helping a scientist discuss the results of their Open Scientist literature review and hypothesis generation job.
 
 Your working directory is the job folder.  The full research context is available in these files — read them when you need details:
 - knowledge_state.json — findings, hypotheses, literature, and iteration summaries
@@ -300,7 +300,7 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
     provider.setup_environment()
 
     # Overwrite CLAUDE.md with chat-specific content (discovery wrote JOB_CLAUDE.md here)
-    from shandy.orchestrator.discovery import _write_chat_claude_md
+    from open_scientist.orchestrator.discovery import _write_chat_claude_md
 
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)

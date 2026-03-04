@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from shandy.tools.registry import ToolContext, tool
+from open_scientist.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def _log_phenix_execution(
     success: bool,
 ) -> None:
     """Record Phenix tool execution in knowledge state."""
-    from shandy.knowledge_state import KnowledgeState
+    from open_scientist.knowledge_state import KnowledgeState
 
     ks = KnowledgeState.load(ctx.ks_path)
     ks.log_analysis(
@@ -91,7 +91,7 @@ def _run_phenix_tool_impl(
     description: str = "",
 ) -> str:
     """Execute a Phenix command-line tool."""
-    from shandy.phenix_setup import setup_phenix_env
+    from open_scientist.phenix_setup import setup_phenix_env
 
     phenix_env = setup_phenix_env()
     if not phenix_env:
@@ -251,7 +251,7 @@ def _parse_alphafold_confidence_impl(
 
 def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
     """Return Phenix tools bound to ctx. Empty list if Phenix unavailable."""
-    from shandy.phenix_setup import check_phenix_available
+    from open_scientist.phenix_setup import check_phenix_available
 
     if not check_phenix_available():
         return []

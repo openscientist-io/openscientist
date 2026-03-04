@@ -1,5 +1,5 @@
 """
-Authentication middleware for SHANDY.
+Authentication middleware for Open Scientist.
 
 Provides authentication decorators and user context management.
 Supports cookie-backed session authentication.
@@ -18,9 +18,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from shandy.async_tasks import run_sync
-from shandy.database.models import Session, User
-from shandy.database.session import get_admin_session
+from open_scientist.async_tasks import run_sync
+from open_scientist.database.models import Session, User
+from open_scientist.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
 

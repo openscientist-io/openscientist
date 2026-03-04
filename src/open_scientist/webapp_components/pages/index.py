@@ -2,7 +2,7 @@
 
 from nicegui import ui
 
-from shandy.auth import require_auth
+from open_scientist.auth import require_auth
 
 
 @ui.page("/")

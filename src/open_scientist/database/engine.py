@@ -1,5 +1,5 @@
 """
-Database engine configuration for SHANDY.
+Database engine configuration for Open Scientist.
 
 Provides async SQLAlchemy engine instances with PostgreSQL connection pooling.
 
@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 # Load environment variables from .env file
 load_dotenv()

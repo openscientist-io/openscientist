@@ -1,5 +1,5 @@
 """
-Code execution with sandboxing for SHANDY.
+Code execution with sandboxing for Open Scientist.
 
 Executes Python code with timeouts, import whitelisting, and safety measures.
 """
@@ -22,7 +22,7 @@ matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from shandy.exceptions import CodeExecutionTimeoutError, ForbiddenImportError
+from open_scientist.exceptions import CodeExecutionTimeoutError, ForbiddenImportError
 
 # Allowed imports for sandboxed Python execution.
 ALLOWED_IMPORTS = [

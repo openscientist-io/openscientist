@@ -17,9 +17,9 @@ async def enable_rls(session: AsyncSession) -> None:
     """Switch session from admin role to app role (enables RLS enforcement).
 
     Use this when you need to test RLS behavior within the same session
-    that created fixture data. Switches from shandy_admin to shandy_app.
+    that created fixture data. Switches from open_scientist_admin to open_scientist_app.
     """
-    await session.execute(text("SET ROLE shandy_app"))
+    await session.execute(text("SET ROLE open_scientist_app"))
 
 
 def fake_admin_session(session_obj: Any) -> Any:

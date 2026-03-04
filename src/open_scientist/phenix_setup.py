@@ -5,7 +5,7 @@ import subprocess
 import sys
 from typing import Any
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 
 class PhenixConfigError(ValueError):
@@ -135,7 +135,7 @@ def check_phenix_available() -> bool:
         bool: True if Phenix is available, False otherwise
     """
     try:
-        from shandy.settings import get_settings
+        from open_scientist.settings import get_settings
 
         return get_settings().phenix.is_available
     except Exception:

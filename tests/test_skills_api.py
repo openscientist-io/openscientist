@@ -14,8 +14,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.routing import Match
 
-from shandy.api.endpoints.skills import router
-from shandy.database.models import Skill, SkillSource, User
+from open_scientist.api.endpoints.skills import router
+from open_scientist.database.models import Skill, SkillSource, User
 from tests.helpers import enable_rls
 
 
@@ -45,7 +45,7 @@ def test_sources_route_is_not_shadowed_by_skill_id_route():
 def mock_auth_user(test_user: User):
     """Mock the authentication dependency."""
     with patch(
-        "shandy.api.endpoints.skills.get_current_user_from_api_key",
+        "open_scientist.api.endpoints.skills.get_current_user_from_api_key",
         return_value=test_user,
     ):
         yield test_user
@@ -58,7 +58,7 @@ def mock_session(db_session: AsyncSession):
     async def get_mock_session():
         yield db_session
 
-    with patch("shandy.api.endpoints.skills.get_session", get_mock_session):
+    with patch("open_scientist.api.endpoints.skills.get_session", get_mock_session):
         yield db_session
 
 
@@ -113,8 +113,8 @@ class TestSkillsListEndpoint:
         test_user: User,
     ):
         """Test listing skills when none exist."""
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skills
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -141,8 +141,8 @@ class TestSkillsListEndpoint:
     ):
         """Test listing skills returns all skills."""
         _ = (test_skill, test_skill2)
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skills
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -172,8 +172,8 @@ class TestSkillsListEndpoint:
     ):
         """Test searching skills."""
         _ = (test_skill, test_skill2)
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skills
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -198,8 +198,8 @@ class TestSkillsListEndpoint:
         test_skill_source: SkillSource,
     ):
         """Test search mode honors pagination offset and limit."""
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skills
+        from open_scientist.database.rls import set_current_user
 
         await _create_searchable_skill(
             db_session,
@@ -249,8 +249,8 @@ class TestSkillsListEndpoint:
         test_skill_source: SkillSource,
     ):
         """Test search mode total reports full match count, not page size."""
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skills
+        from open_scientist.database.rls import set_current_user
 
         await _create_searchable_skill(
             db_session,
@@ -294,8 +294,8 @@ class TestSkillsListEndpoint:
         test_skill_source: SkillSource,
     ):
         """Test search mode returns empty page with correct total when offset is past end."""
-        from shandy.api.endpoints.skills import list_skills
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skills
+        from open_scientist.database.rls import set_current_user
 
         await _create_searchable_skill(
             db_session,
@@ -337,8 +337,8 @@ class TestSkillsGetEndpoint:
         test_skill: Skill,
     ):
         """Test getting a skill by ID."""
-        from shandy.api.endpoints.skills import get_skill
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import get_skill
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -361,8 +361,8 @@ class TestSkillsGetEndpoint:
         """Test getting a non-existent skill."""
         from fastapi import HTTPException
 
-        from shandy.api.endpoints.skills import get_skill
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import get_skill
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -384,8 +384,8 @@ class TestSkillsGetEndpoint:
         """Test getting a skill with invalid ID format."""
         from fastapi import HTTPException
 
-        from shandy.api.endpoints.skills import get_skill
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import get_skill
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -411,8 +411,8 @@ class TestSkillsBySlugEndpoint:
         test_skill: Skill,
     ):
         """Test getting a skill by category and slug."""
-        from shandy.api.endpoints.skills import get_skill_by_slug
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import get_skill_by_slug
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -436,8 +436,8 @@ class TestSkillsBySlugEndpoint:
         """Test getting a non-existent skill by slug."""
         from fastapi import HTTPException
 
-        from shandy.api.endpoints.skills import get_skill_by_slug
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import get_skill_by_slug
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -465,8 +465,8 @@ class TestSkillsCategoriesEndpoint:
     ):
         """Test listing all categories."""
         _ = (test_skill, test_skill2)
-        from shandy.api.endpoints.skills import list_categories
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_categories
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_user.id)
 
@@ -491,8 +491,8 @@ class TestSkillSourcesEndpoints:
     ):
         """Test listing skill sources (requires admin)."""
         _ = test_skill_source
-        from shandy.api.endpoints.skills import list_skill_sources
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skill_sources
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_admin_user.id)
 
@@ -512,8 +512,8 @@ class TestSkillSourcesEndpoints:
         test_admin_user: User,
     ):
         """Test creating a skill source (requires admin)."""
-        from shandy.api.endpoints.skills import SkillSourceCreate, create_skill_source
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import SkillSourceCreate, create_skill_source
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_admin_user.id)
 
@@ -544,8 +544,8 @@ class TestSkillSourcesEndpoints:
         """Test creating a GitHub source without URL fails (requires admin)."""
         from fastapi import HTTPException
 
-        from shandy.api.endpoints.skills import SkillSourceCreate, create_skill_source
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import SkillSourceCreate, create_skill_source
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_admin_user.id)
 
@@ -574,12 +574,12 @@ class TestSkillSourcesEndpoints:
         """Test deleting a skill source (requires admin)."""
         from sqlalchemy import select
 
-        from shandy.api.endpoints.skills import (
+        from open_scientist.api.endpoints.skills import (
             SkillSourceCreate,
             create_skill_source,
             delete_skill_source,
         )
-        from shandy.database.rls import set_current_user
+        from open_scientist.database.rls import set_current_user
 
         await set_current_user(db_session, test_admin_user.id)
 
@@ -620,9 +620,9 @@ class TestSkillSourcesEndpoints:
         test_skill_source: SkillSource,
     ):
         """Test triggering a sync for a source (requires admin)."""
-        from shandy.api.endpoints.skills import sync_skill_source_endpoint
-        from shandy.database.rls import set_current_user
-        from shandy.skill_scheduler import SyncResult
+        from open_scientist.api.endpoints.skills import sync_skill_source_endpoint
+        from open_scientist.database.rls import set_current_user
+        from open_scientist.skill_scheduler import SyncResult
 
         await set_current_user(db_session, test_admin_user.id)
 
@@ -637,7 +637,7 @@ class TestSkillSourcesEndpoints:
             errors=0,
         )
 
-        with patch("shandy.skill_scheduler.get_scheduler") as mock_get_scheduler:
+        with patch("open_scientist.skill_scheduler.get_scheduler") as mock_get_scheduler:
             mock_scheduler = AsyncMock()
             mock_scheduler.sync_source_by_id.return_value = mock_result
             mock_get_scheduler.return_value = mock_scheduler
@@ -661,8 +661,8 @@ class TestSkillSourcesEndpoints:
     ):
         """Test that non-admin users get empty list when listing sources."""
         _ = test_skill_source
-        from shandy.api.endpoints.skills import list_skill_sources
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import list_skill_sources
+        from open_scientist.database.rls import set_current_user
 
         # Enable RLS before setting user context (superuser bypasses RLS)
         await enable_rls(db_session)
@@ -689,8 +689,8 @@ class TestSkillSourcesEndpoints:
         """Test that non-admin users get 404 when deleting a source."""
         from fastapi import HTTPException
 
-        from shandy.api.endpoints.skills import delete_skill_source
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import delete_skill_source
+        from open_scientist.database.rls import set_current_user
 
         # Enable RLS before setting user context (superuser bypasses RLS)
         await enable_rls(db_session)
@@ -718,8 +718,8 @@ class TestSkillSourcesEndpoints:
         """Test that non-admin users get 404 when syncing a source."""
         from fastapi import HTTPException
 
-        from shandy.api.endpoints.skills import sync_skill_source_endpoint
-        from shandy.database.rls import set_current_user
+        from open_scientist.api.endpoints.skills import sync_skill_source_endpoint
+        from open_scientist.database.rls import set_current_user
 
         # Enable RLS before setting user context (superuser bypasses RLS)
         await enable_rls(db_session)

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from shandy.tools.registry import ToolContext, tool
+from open_scientist.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ _MIN_TITLE_LENGTH = 3
 
 
 def _set_status_impl(ctx: ToolContext, message: str) -> str:
-    from shandy.knowledge_state import KnowledgeState
+    from open_scientist.knowledge_state import KnowledgeState
 
     ks_path = ctx.ks_path
     trimmed = message[:80]
@@ -45,8 +45,8 @@ def _job_uuid_or_error(ctx: ToolContext) -> tuple[UUID | None, str | None]:
 
 
 async def _update_job_title_in_db(job_uuid: UUID, title: str) -> bool:
-    from shandy.database.models.job import Job as JobModel
-    from shandy.database.session import AsyncSessionLocal
+    from open_scientist.database.models.job import Job as JobModel
+    from open_scientist.database.session import AsyncSessionLocal
 
     async with AsyncSessionLocal(thread_safe=True) as session:
         job = await session.get(JobModel, job_uuid)
@@ -60,7 +60,7 @@ async def _update_job_title_in_db(job_uuid: UUID, title: str) -> bool:
 def _persist_job_title(ctx: ToolContext, title: str) -> str | None:
     import asyncio
 
-    from shandy.async_tasks import create_background_task
+    from open_scientist.async_tasks import create_background_task
 
     job_uuid, error = _job_uuid_or_error(ctx)
     if error:
@@ -100,7 +100,7 @@ def _set_job_title_impl(ctx: ToolContext, title: str) -> str:
 
 
 def _save_iteration_summary_impl(ctx: ToolContext, summary: str, strapline: str = "") -> str:
-    from shandy.knowledge_state import KnowledgeState
+    from open_scientist.knowledge_state import KnowledgeState
 
     ks_path = ctx.ks_path
     ks = KnowledgeState.load(ks_path)
@@ -114,7 +114,7 @@ def _save_iteration_summary_impl(ctx: ToolContext, summary: str, strapline: str 
 
 
 def _set_consensus_answer_impl(ctx: ToolContext, answer: str) -> str:
-    from shandy.knowledge_state import KnowledgeState
+    from open_scientist.knowledge_state import KnowledgeState
 
     ks_path = ctx.ks_path
     ks = KnowledgeState.load(ks_path)

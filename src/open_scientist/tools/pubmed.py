@@ -8,7 +8,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from shandy.tools.registry import ToolContext, tool
+from open_scientist.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         Returns:
             Formatted list of papers with titles, abstracts, and PMIDs
         """
-        from shandy.knowledge_state import KnowledgeState
-        from shandy.literature import search_pubmed as search_pm
+        from open_scientist.knowledge_state import KnowledgeState
+        from open_scientist.literature import search_pubmed as search_pm
 
         ks = KnowledgeState.load(ctx.ks_path)
 

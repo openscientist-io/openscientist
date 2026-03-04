@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Agent container entrypoint for SHANDY.
+Agent container entrypoint for Open Scientist.
 
-This script runs inside the shandy-agent Docker container and executes
+This script runs inside the open_scientist-agent Docker container and executes
 the discovery loop for a single job.  It is the ONLY code running in
 the container — there is no web server or NiceGUI UI.
 
@@ -51,7 +51,7 @@ async def main() -> int:
     logger.info("Starting agent for job %s in %s", job_id, job_dir)
 
     try:
-        from shandy.orchestrator.discovery import run_discovery_async
+        from open_scientist.orchestrator.discovery import run_discovery_async
 
         result = await run_discovery_async(job_dir)
         logger.info(

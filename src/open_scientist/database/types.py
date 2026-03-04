@@ -1,5 +1,5 @@
 """
-Custom SQLAlchemy column types for SHANDY.
+Custom SQLAlchemy column types for Open Scientist.
 
 Provides encrypted column types for storing sensitive data at rest.
 """
@@ -10,7 +10,7 @@ from sqlalchemy import Text
 from sqlalchemy.engine import Dialect
 from sqlalchemy.types import TypeDecorator
 
-from shandy.database.crypto import decrypt, encrypt, encryption_available
+from open_scientist.database.crypto import decrypt, encrypt, encryption_available
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class EncryptedText(TypeDecorator[str]):
             nullable=True,
         )
 
-    Requires SHANDY_SECRET_KEY environment variable to be set.
+    Requires OPEN_SCIENTIST_SECRET_KEY environment variable to be set.
     If encryption is not available:
     - Reads will attempt decryption, falling back to plaintext for migration
     - Writes will raise an error (encryption required for new data)
@@ -47,7 +47,7 @@ class EncryptedText(TypeDecorator[str]):
 
         if not encryption_available():
             raise ValueError(
-                "Cannot store sensitive data: SHANDY_SECRET_KEY not configured. "
+                "Cannot store sensitive data: OPEN_SCIENTIST_SECRET_KEY not configured. "
                 "Set this environment variable to enable encryption."
             )
 
@@ -60,7 +60,9 @@ class EncryptedText(TypeDecorator[str]):
 
         if not encryption_available():
             # No encryption key - return as-is (might be plaintext from before migration)
-            logger.warning("SHANDY_SECRET_KEY not set - returning potentially unencrypted value")
+            logger.warning(
+                "OPEN_SCIENTIST_SECRET_KEY not set - returning potentially unencrypted value"
+            )
             return value
 
         try:

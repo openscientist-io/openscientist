@@ -8,8 +8,8 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
-from shandy.api import auth as api_auth
-from shandy.database.models import APIKey, User
+from open_scientist.api import auth as api_auth
+from open_scientist.database.models import APIKey, User
 from tests.helpers import fake_admin_session
 
 

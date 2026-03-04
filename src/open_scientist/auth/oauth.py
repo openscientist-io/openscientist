@@ -9,7 +9,7 @@ import logging
 from authlib.integrations.starlette_client import OAuth  # type: ignore[import-untyped]
 from starlette.config import Config
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def is_mock_auth_enabled() -> bool:
     Check if mock authentication is enabled (dev mode only).
 
     Returns:
-        True if SHANDY_DEV_MODE is enabled
+        True if OPEN_SCIENTIST_DEV_MODE is enabled
     """
     settings = get_settings()
     return settings.dev.dev_mode

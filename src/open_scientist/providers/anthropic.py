@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Any
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 from ._anthropic_common import (
     send_anthropic_message,

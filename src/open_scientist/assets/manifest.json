@@ -1,6 +1,6 @@
 {
-  "name": "SHANDY",
-  "short_name": "SHANDY",
+  "name": "Open Scientist",
+  "short_name": "Open Scientist",
   "description": "Scientific Hypothesis Agent for Novel Discovery",
   "start_url": "/",
   "display": "standalone",

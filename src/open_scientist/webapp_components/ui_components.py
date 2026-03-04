@@ -1,5 +1,5 @@
 """
-Reusable UI components for SHANDY web interface.
+Reusable UI components for Open Scientist web interface.
 
 Provides UI rendering functions for error displays, status badges,
 page headers, and other common interface elements.
@@ -17,17 +17,17 @@ from uuid import UUID
 from nicegui import app, ui
 from sqlalchemy import or_, select, update
 
-from shandy.auth import get_current_user_id
-from shandy.database.models import Job, JobShare, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_admin_session, get_session_ctx
-from shandy.job.types import JobInfo, JobStatus
-from shandy.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
+from open_scientist.auth import get_current_user_id
+from open_scientist.database.models import Job, JobShare, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_admin_session, get_session_ctx
+from open_scientist.job.types import JobInfo, JobStatus
+from open_scientist.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from shandy.job_manager import JobManager
+    from open_scientist.job_manager import JobManager
 
 
 def format_relative_time(dt: datetime | None) -> str:
@@ -1060,7 +1060,7 @@ def _render_mobile_drawer(
 
 
 def _render_navigation_brand() -> None:
-    """Render SHANDY brand/link in header left section."""
+    """Render Open Scientist brand/link in header left section."""
     with (
         ui.link(target="/jobs").classes("no-underline"),
         ui.row().classes("items-center gap-2 cursor-pointer"),
@@ -1071,7 +1071,7 @@ def _render_navigation_brand() -> None:
             ui.image("/assets/logo.svg").classes("w-8 h-8").style(
                 "width:32px;height:32px;min-width:32px;min-height:32px;"
             )
-        ui.label("SHANDY").classes("text-white text-h5 font-bold")
+        ui.label("Open Scientist").classes("text-white text-h5 font-bold")
 
 
 def _render_desktop_navigation(
@@ -1111,7 +1111,7 @@ def render_navigator(
     Render the standard navigation header for all authenticated pages.
 
     Provides consistent navigation across the application with links to
-    New Job, Billing, Docs, and Admin pages. The SHANDY logo/title acts
+    New Job, Billing, Docs, and Admin pages. The Open Scientist logo/title acts
     as a home button linking to the jobs list.
     """
     _inject_navigation_head_assets()
@@ -1829,7 +1829,7 @@ def _render_ntfy_test_button(ntfy_topic: str) -> None:
     async def send_test() -> None:
         success = await send_notification(
             topic=ntfy_topic,
-            title="SHANDY Test",
+            title="Open Scientist Test",
             message="Test notification - if you see this, it works!",
             tags=["white_check_mark"],
         )
@@ -2045,9 +2045,9 @@ def _inject_thinking_status_styles() -> None:
             color: #0891b2;
             font-size: 12px;
             font-weight: 500;
-            animation: shandy-pulse-text 1.5s ease-in-out infinite;
+            animation: open-scientist-pulse-text 1.5s ease-in-out infinite;
         }
-        @keyframes shandy-pulse-text {
+        @keyframes open-scientist-pulse-text {
             0%, 100% { opacity: 0.6; }
             50% { opacity: 1; }
         }
@@ -2059,9 +2059,9 @@ def _inject_thinking_status_styles() -> None:
 
 _ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
-# Animated SHANDY logo SVG — loaded from assets/thinking.svg at import time.
+# Animated Open Scientist logo SVG — loaded from assets/thinking.svg at import time.
 # Rendered inline (via ui.html) so SMIL animations work; <img> tags disable them.
-SHANDY_THINKING_SVG = (_ASSETS_DIR / "thinking.svg").read_text(encoding="utf-8")
+OPEN_SCIENTIST_THINKING_SVG = (_ASSETS_DIR / "thinking.svg").read_text(encoding="utf-8")
 
 
 def render_container_status_badge(status: str) -> None:
@@ -2110,12 +2110,12 @@ def format_uptime(seconds: float) -> str:
 
 def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
     """
-    Render an animated SHANDY thinking/status indicator.
+    Render an animated Open Scientist thinking/status indicator.
 
     Creates a visually distinctive status display with:
-    - Animated SHANDY logo with orbiting circles
+    - Animated Open Scientist logo with orbiting circles
     - Status text describing what the model is doing
-    - Cyan-themed styling consistent with SHANDY branding
+    - Cyan-themed styling consistent with Open Scientist branding
 
     Args:
         status_text: Text to display (e.g., "Analyzing literature...",
@@ -2134,8 +2134,8 @@ def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
     with ui.row().classes(
         "items-center gap-3 py-3 px-4 bg-cyan-50 rounded-lg border border-cyan-200"
     ) as container:
-        # Animated SHANDY logo (compact size)
-        ui.html(SHANDY_THINKING_SVG, sanitize=False).classes("w-6 h-6").style(
+        # Animated Open Scientist logo (compact size)
+        ui.html(OPEN_SCIENTIST_THINKING_SVG, sanitize=False).classes("w-6 h-6").style(
             "width:24px;height:24px;min-width:24px;min-height:24px;flex-shrink:0;"
         )
         # Status text

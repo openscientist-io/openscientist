@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from shandy.file_loader import (
+from open_scientist.file_loader import (
     FileTooBigError,
     UnsupportedFileTypeError,
     get_file_info,
@@ -62,7 +62,7 @@ class TestGetFileInfo:
         p = tmp_path / "big.csv"
         p.write_text("x" * 100)
         with (
-            patch("shandy.file_loader._get_max_file_size", return_value=10),
+            patch("open_scientist.file_loader._get_max_file_size", return_value=10),
             pytest.raises(
                 FileTooBigError,
                 match="exceeds limit",
@@ -169,7 +169,7 @@ class TestValidateUploadedFile:
     def test_file_too_big_raises(self, tmp_path):
         content = b"x" * 100
         with (
-            patch("shandy.file_loader._get_max_file_size", return_value=10),
+            patch("open_scientist.file_loader._get_max_file_size", return_value=10),
             pytest.raises(
                 FileTooBigError,
             ),
@@ -178,7 +178,7 @@ class TestValidateUploadedFile:
 
     def test_executable_content_raises(self, tmp_path):
         """Executable MIME types should be rejected."""
-        with patch("shandy.file_loader.magic") as mock_magic:
+        with patch("open_scientist.file_loader.magic") as mock_magic:
             mock_magic.from_buffer.return_value = "application/x-executable"
             with pytest.raises(ValueError, match="Executable file detected"):
                 validate_uploaded_file(tmp_path / "data.csv", b"fake-binary")
@@ -186,7 +186,7 @@ class TestValidateUploadedFile:
     def test_validation_works_without_python_magic(self, tmp_path):
         """When python-magic is unavailable, validation should use fallback MIME."""
         with (
-            patch("shandy.file_loader.HAS_MAGIC", False),
-            patch("shandy.file_loader.magic", None),
+            patch("open_scientist.file_loader.HAS_MAGIC", False),
+            patch("open_scientist.file_loader.magic", None),
         ):
             validate_uploaded_file(tmp_path / "data.csv", b"a,b\n1,2\n")

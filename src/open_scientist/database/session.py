@@ -1,16 +1,16 @@
 """
-Database session management for SHANDY.
+Database session management for Open Scientist.
 
 Provides async session factories and dependency injection for FastAPI/NiceGUI.
 
 Session Types:
-    - get_session(): Standard session with RLS enforced via SET ROLE shandy_app
+    - get_session(): Standard session with RLS enforced via SET ROLE open_scientist_app
     - get_admin_session(): Admin session that bypasses RLS via elevated role
     - AsyncSessionLocal(): Low-level session factory (also enforces RLS when used
       without thread_safe, or via SET ROLE in thread-safe mode)
 
 For the dual-engine pattern, get_session() connects as the main database user
-then immediately does SET ROLE shandy_app to drop privileges. The shandy_app
+then immediately does SET ROLE open_scientist_app to drop privileges. The open_scientist_app
 role is a non-superuser NOLOGIN role that is subject to RLS policies.
 """
 
@@ -22,7 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from shandy.settings import get_settings
+from open_scientist.settings import get_settings
 
 from .engine import get_admin_engine, get_engine
 
@@ -106,7 +106,7 @@ def async_session_local(thread_safe: bool = False) -> AsyncSession:
         A new AsyncSession instance.
 
     Note:
-        The returned session does NOT automatically SET ROLE shandy_app.
+        The returned session does NOT automatically SET ROLE open_scientist_app.
         Callers must use the session as a context manager and call
         set_current_user() to set RLS context, or use get_session() instead.
     """
@@ -120,17 +120,17 @@ AsyncSessionLocal = async_session_local
 
 
 async def _set_app_role(session: AsyncSession) -> None:
-    """Drop privileges to shandy_app role for RLS enforcement.
+    """Drop privileges to open_scientist_app role for RLS enforcement.
 
-    The main database user (shandy) is typically a superuser that bypasses
-    all RLS policies. By switching to shandy_app (a non-superuser NOLOGIN role),
+    The main database user (open_scientist) is typically a superuser that bypasses
+    all RLS policies. By switching to open_scientist_app (a non-superuser NOLOGIN role),
     the session becomes subject to RLS policies.
 
     This must be called on every new session before user-facing queries.
-    If the shandy_app role does not exist, this will raise — that's intentional.
+    If the open_scientist_app role does not exist, this will raise — that's intentional.
     A silent fallback to superuser would bypass all RLS.
     """
-    await session.execute(text("SET ROLE shandy_app"))
+    await session.execute(text("SET ROLE open_scientist_app"))
 
 
 async def _clear_rls_user_context(session: AsyncSession) -> None:
@@ -149,8 +149,8 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency to provide a database session with RLS enforced.
 
-    Connects as the main database user, then drops privileges to shandy_app
-    via SET ROLE. The shandy_app role is subject to RLS policies, ensuring
+    Connects as the main database user, then drops privileges to open_scientist_app
+    via SET ROLE. The open_scientist_app role is subject to RLS policies, ensuring
     that queries only return rows the current user is authorized to see.
 
     Callers must still call set_current_user(session, user_id) to set the
@@ -172,7 +172,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     factory = _get_session_factory()
     async with factory() as session:
         try:
-            # Drop to shandy_app role so RLS policies are enforced
+            # Drop to open_scientist_app role so RLS policies are enforced
             await _set_app_role(session)
             await _clear_rls_user_context(session)
             yield session
@@ -196,7 +196,7 @@ async def get_admin_session() -> AsyncGenerator[AsyncSession, None]:
     Dependency to provide a database session with admin privileges.
 
     Sessions from this factory bypass RLS policies by connecting with
-    the shandy_admin PostgreSQL role which has BYPASSRLS privilege.
+    the open_scientist_admin PostgreSQL role which has BYPASSRLS privilege.
 
     The role is created by docker/postgres/init.sql in production or by
     the test setup in tests/conftest.py.

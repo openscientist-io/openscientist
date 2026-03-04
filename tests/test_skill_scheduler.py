@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import SkillSource
-from shandy.skill_scheduler import SkillSyncScheduler
+from open_scientist.database.models import SkillSource
+from open_scientist.skill_scheduler import SkillSyncScheduler
 
 
 class TestSkillSyncSchedulerCaching:
@@ -75,12 +75,12 @@ class TestSkillSyncSchedulerCaching:
 
         with (
             patch(
-                "shandy.skill_scheduler.sync_skill_source",
+                "open_scientist.skill_scheduler.sync_skill_source",
                 new_callable=AsyncMock,
                 return_value=mock_stats,
             ) as mock_sync,
             patch(
-                "shandy.skill_scheduler.get_admin_session",
+                "open_scientist.skill_scheduler.get_admin_session",
             ) as mock_get_session,
         ):
             # Make get_admin_session return a context manager that yields our db_session

@@ -15,11 +15,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from shandy.api.auth import get_current_user_from_api_key
-from shandy.api.utils import parse_uuid
-from shandy.database.models import Skill, SkillSource, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
+from open_scientist.api.auth import get_current_user_from_api_key
+from open_scientist.api.utils import parse_uuid
+from open_scientist.database.models import Skill, SkillSource, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -452,7 +452,7 @@ async def sync_skill_source_endpoint(
             detail=f"Skill source {source_id} not found",
         )
 
-    from shandy.skill_scheduler import get_scheduler
+    from open_scientist.skill_scheduler import get_scheduler
 
     scheduler = get_scheduler()
     result = await scheduler.sync_source_by_id(source_id)

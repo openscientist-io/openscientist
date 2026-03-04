@@ -21,8 +21,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.database.models import APIKey, User
-from shandy.database.session import get_admin_session
+from open_scientist.database.models import APIKey, User
+from open_scientist.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
 

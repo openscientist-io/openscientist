@@ -5,10 +5,10 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
-# Known SHANDY tool names (bare names, without MCP server prefix).
-# Used to identify shandy tools in SDK transcripts where names are not
-# prefixed with "shandy-tools__".
-_SHANDY_TOOL_NAMES = frozenset(
+# Known Open Scientist tool names (bare names, without MCP server prefix).
+# Used to identify open_scientist tools in SDK transcripts where names are not
+# prefixed with "open_scientist-tools__".
+_OPEN_SCIENTIST_TOOL_NAMES = frozenset(
     {
         "execute_code",
         "search_pubmed",
@@ -49,9 +49,9 @@ def _short_tool_name(tool_name: str) -> str:
     return tool_name.split("__")[-1] if "__" in tool_name else tool_name
 
 
-def _is_shandy_tool(tool_name: str, short_name: str) -> bool:
-    """Return whether a tool belongs to the SHANDY toolset."""
-    return "shandy" in tool_name.lower() or short_name in _SHANDY_TOOL_NAMES
+def _is_open_scientist_tool(tool_name: str, short_name: str) -> bool:
+    """Return whether a tool belongs to the Open Scientist toolset."""
+    return "open_scientist" in tool_name.lower() or short_name in _OPEN_SCIENTIST_TOOL_NAMES
 
 
 def _extract_tool_result_text(result: Any) -> str:
@@ -153,7 +153,7 @@ def parse_transcript_actions(transcript: list[dict[str, Any]]) -> list[dict[str,
     for item in _iter_assistant_tool_uses(transcript):
         tool_name = item.get("name", "")
         short_name = _short_tool_name(tool_name)
-        if not _is_shandy_tool(tool_name, short_name):
+        if not _is_open_scientist_tool(tool_name, short_name):
             continue
 
         tool_use_id = item.get("id")
@@ -201,7 +201,7 @@ def extract_usage_summary(transcript: list[dict[str, Any]]) -> UsageSummary:
         elif "update_knowledge_state" in tool_name:
             summary.findings_recorded += 1
             summary.mcp_tool_calls += 1
-        elif _is_shandy_tool(tool_name, short_name):
+        elif _is_open_scientist_tool(tool_name, short_name):
             summary.mcp_tool_calls += 1
 
         if tool_name == "Skill":

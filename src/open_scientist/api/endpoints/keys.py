@@ -13,15 +13,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shandy.api.auth import (
+from open_scientist.api.auth import (
     generate_api_key_secret,
     get_api_key_by_id,
     get_current_user_from_api_key,
     hash_secret,
 )
-from shandy.database.models import APIKey, User
-from shandy.database.rls import set_current_user
-from shandy.database.session import get_session
+from open_scientist.database.models import APIKey, User
+from open_scientist.database.rls import set_current_user
+from open_scientist.database.session import get_session
 
 logger = logging.getLogger(__name__)
 
