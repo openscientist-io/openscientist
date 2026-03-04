@@ -293,6 +293,222 @@ async def test_bootstrap_migrates_legacy_knowledge_state_format(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "shandy.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    migrated_uuid = UUID("11111111-1111-4111-8111-111111111111")
+
+    async def _fake_uuidv7(_session: AsyncSession) -> UUID:
+        return migrated_uuid
+
+    monkeypatch.setattr("shandy.bootstrap._generate_uuidv7", _fake_uuidv7)
+
+    legacy_id = "job_deadbeef"
+    legacy_dir = temp_jobs_dir / legacy_id
+    (legacy_dir / "data").mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "provenance").mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "data" / "sample.csv").write_text("x,y\n1,2\n", encoding="utf-8")
+    (legacy_dir / "provenance" / "plot.png").write_bytes(b"png")
+
+    _write_json(
+        legacy_dir / "config.json",
+        {
+            "job_id": legacy_id,
+            "research_question": "Legacy non-UUID migration test",
+            "status": "completed",
+            "owner_id": None,
+        },
+    )
+    _write_json(
+        legacy_dir / "knowledge_state.json",
+        {
+            "config": {
+                "job_id": legacy_id,
+                "research_question": "Legacy non-UUID migration test",
+                "max_iterations": 3,
+            },
+            "iteration": 1,
+            "hypotheses": [],
+            "findings": [
+                {
+                    "id": "F001",
+                    "iteration_discovered": 1,
+                    "title": "Legacy finding",
+                    "plots": [f"jobs/{legacy_id}/provenance/plot.png"],
+                }
+            ],
+            "literature": [],
+            "analysis_log": [],
+            "iteration_summaries": [],
+            "feedback_history": [],
+            "plots": [
+                {
+                    "iteration": 1,
+                    "file_path": f"jobs/{legacy_id}/provenance/plot.png",
+                    "description": "Legacy plot",
+                }
+            ],
+        },
+    )
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir)
+
+    assert result.created_jobs == 1
+    assert result.skipped_invalid_job_id == 0
+    assert result.errors == []
+
+    migrated_dir = temp_jobs_dir / str(migrated_uuid)
+    assert migrated_dir.exists()
+    assert not legacy_dir.exists()
+
+    with open(migrated_dir / "config.json", encoding="utf-8") as f:
+        migrated_config = json.load(f)
+    with open(migrated_dir / "knowledge_state.json", encoding="utf-8") as f:
+        migrated_ks = json.load(f)
+
+    assert migrated_config["job_id"] == str(migrated_uuid)
+    assert migrated_ks["job_id"] == str(migrated_uuid)
+    assert migrated_ks["config"]["job_id"] == str(migrated_uuid)
+    assert migrated_ks["findings"][0]["plots"][0] == f"jobs/{migrated_uuid}/provenance/plot.png"
+
+    job = (await db_session.execute(select(Job).where(Job.id == migrated_uuid))).scalar_one()
+    assert job.owner_id is None
+
+    plot_paths = (
+        await db_session.execute(select(Plot.file_path).where(Plot.job_id == migrated_uuid))
+    ).scalars()
+    assert list(plot_paths) == ["provenance/plot.png"]
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_dry_run_non_uuid_legacy_does_not_rename_or_write(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "shandy.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    migrated_uuid = UUID("22222222-2222-4222-8222-222222222222")
+
+    async def _fake_uuidv7(_session: AsyncSession) -> UUID:
+        return migrated_uuid
+
+    monkeypatch.setattr("shandy.bootstrap._generate_uuidv7", _fake_uuidv7)
+
+    legacy_id = "job_cafebabe"
+    legacy_dir = temp_jobs_dir / legacy_id
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        legacy_dir / "config.json",
+        {
+            "job_id": legacy_id,
+            "research_question": "Dry-run legacy migration",
+            "status": "pending",
+            "owner_id": None,
+        },
+    )
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir, dry_run=True)
+
+    assert result.created_jobs == 1
+    assert result.skipped_invalid_job_id == 0
+    assert result.errors == []
+    assert legacy_dir.exists()
+    assert not (temp_jobs_dir / str(migrated_uuid)).exists()
+
+    with open(legacy_dir / "config.json", encoding="utf-8") as f:
+        config = json.load(f)
+    assert config["job_id"] == legacy_id
+
+    job = (
+        await db_session.execute(select(Job).where(Job.id == migrated_uuid))
+    ).scalar_one_or_none()
+    assert job is None
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_migrates_when_config_missing_but_ks_has_legacy_id(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "shandy.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    migrated_uuid = UUID("33333333-3333-4333-8333-333333333333")
+
+    async def _fake_uuidv7(_session: AsyncSession) -> UUID:
+        return migrated_uuid
+
+    monkeypatch.setattr("shandy.bootstrap._generate_uuidv7", _fake_uuidv7)
+
+    legacy_id = "job_feedface"
+    legacy_dir = temp_jobs_dir / legacy_id
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    _write_json(
+        legacy_dir / "knowledge_state.json",
+        {
+            "config": {
+                "job_id": legacy_id,
+                "research_question": "KS-only migration",
+                "max_iterations": 2,
+            },
+            "iteration": 1,
+            "hypotheses": [],
+            "findings": [],
+            "literature": [],
+            "analysis_log": [],
+            "iteration_summaries": [],
+            "feedback_history": [],
+        },
+    )
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir)
+
+    assert result.created_jobs == 1
+    assert result.errors == []
+    assert (temp_jobs_dir / str(migrated_uuid)).exists()
+    assert not legacy_dir.exists()
+
+    job = (await db_session.execute(select(Job).where(Job.id == migrated_uuid))).scalar_one()
+    assert job.title == "KS-only migration"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_skips_when_config_and_ks_are_both_invalid_json(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "shandy.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    legacy_dir = temp_jobs_dir / "job_badjson"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "config.json").write_text("{bad", encoding="utf-8")
+    (legacy_dir / "knowledge_state.json").write_text("{bad", encoding="utf-8")
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir)
+
+    assert result.created_jobs == 0
+    assert result.skipped_empty_directory == 1
+    assert len(result.errors) == 2
+    assert (await db_session.execute(select(func.count(Job.id)))).scalar_one() == 0
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_dry_run_counts_orphaned_jobs(
     db_session: AsyncSession,
     temp_jobs_dir,
