@@ -245,23 +245,15 @@ In `src/shandy/web_app.py`:
 
 ### Legacy Bootstrap (Filesystem -> DB)
 
-If you have pre-database jobs on disk, run the bootstrap command to create
-missing DB rows and migrate metadata:
+If you have pre-database jobs on disk, run:
 
 ```bash
-python -m shandy.job_manager bootstrap --jobs-dir jobs
+docker compose exec shandy python -m shandy.job_manager bootstrap --jobs-dir /app/jobs --dry-run
+docker compose exec shandy python -m shandy.job_manager bootstrap --jobs-dir /app/jobs
 ```
-
-Current bootstrap flags: `--jobs-dir`, `--dry-run`.
 
 Jobs with unresolved ownership are migrated as orphaned (`owner_id=NULL`) and
 can be assigned later from the admin UI.
-
-Preview only (no writes):
-
-```bash
-python -m shandy.job_manager bootstrap --jobs-dir jobs --dry-run
-```
 
 ## Development
 
