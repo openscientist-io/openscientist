@@ -96,7 +96,7 @@
   </foreignObject>
 
   <!-- ============ 1 · ENTRY POINTS ============ -->
-  <g id="s1">
+  <g id="s1" transform="translate(0 6)">
     <rect x="30" y="118" width="1340" height="95" rx="10" fill="#EFF6FF" stroke="#BFDBFE" stroke-width="1"/>
     <text x="52" y="154" class="sec-num" fill="#3B82F6">1</text>
     <text x="80" y="138" class="sec-title">Entry Points</text>
@@ -135,7 +135,7 @@
   </g>
 
   <!-- connector -->
-  <line x1="700" y1="213" x2="700" y2="231" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
+  <line x1="700" y1="219" x2="700" y2="231" stroke="#94A3B8" stroke-width="1.2" marker-end="url(#arr)"/>
 
   <!-- ============ 2 · AUTHENTICATION ============ -->
   <g id="s2">
