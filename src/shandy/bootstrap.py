@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shandy.database.models import Job, JobDataFile, Plot, User
@@ -65,6 +65,15 @@ class BootstrapResult:
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-serializable dictionary."""
         return asdict(self)
+
+
+@dataclass
+class MigrationTarget:
+    """Resolved migration target for a job directory."""
+
+    job_id: UUID
+    legacy_ids: set[str]
+    rename_directory: bool = False
 
 
 def _to_string(value: Any) -> str:
@@ -230,23 +239,211 @@ def _load_json(path: Path, result: BootstrapResult, context: str) -> dict[str, A
     return payload
 
 
-def _resolve_job_id(job_dir: Path, config: dict[str, Any] | None) -> UUID | None:
+def _extract_id_candidates(
+    job_dir: Path,
+    config: dict[str, Any] | None,
+    ks_data: dict[str, Any] | None,
+) -> dict[str, str | None]:
     """
-    Resolve job UUID from directory name or legacy config payload.
+    Extract potential ID values from directory/config/knowledge-state.
 
     Args:
         job_dir: Job directory being migrated.
         config: Optional parsed ``config.json`` payload.
+        ks_data: Optional parsed ``knowledge_state.json`` payload.
 
     Returns:
-        Resolved UUID, or ``None`` when no valid identifier exists.
+        Candidate ID values by source.
     """
-    by_dir = _parse_uuid(job_dir.name)
-    if by_dir:
-        return by_dir
-    if config:
-        return _parse_uuid(config.get("job_id"))
+    ks_config = _extract_ks_config(ks_data)
+    return {
+        "dir_name": _to_optional_string(job_dir.name),
+        "config_job_id": _to_optional_string((config or {}).get("job_id")),
+        "ks_config_job_id": _to_optional_string(ks_config.get("job_id")),
+        "ks_job_id": _to_optional_string((ks_data or {}).get("job_id")),
+    }
+
+
+def _extract_legacy_ids(candidates: dict[str, str | None]) -> set[str]:
+    """
+    Extract non-UUID legacy identifiers from candidate values.
+
+    Args:
+        candidates: Candidate ID values by source.
+
+    Returns:
+        Set of non-empty non-UUID identifier strings.
+    """
+    legacy_ids: set[str] = set()
+    for value in candidates.values():
+        if value is None:
+            continue
+        if _parse_uuid(value) is None:
+            legacy_ids.add(value)
+    return legacy_ids
+
+
+def _resolve_uuid_candidate(candidates: dict[str, str | None]) -> UUID | None:
+    """
+    Resolve UUID candidate from known ID sources in priority order.
+
+    Priority: directory name, config.job_id, ks.config.job_id, ks.job_id.
+
+    Args:
+        candidates: Candidate ID values by source.
+
+    Returns:
+        Parsed UUID, or ``None`` when none are valid UUIDs.
+    """
+    for key in ("dir_name", "config_job_id", "ks_config_job_id", "ks_job_id"):
+        value = candidates.get(key)
+        parsed = _parse_uuid(value)
+        if parsed is not None:
+            return parsed
     return None
+
+
+async def _generate_uuidv7(session: AsyncSession) -> UUID:
+    """
+    Generate a UUIDv7 value from PostgreSQL.
+
+    Args:
+        session: Active DB session.
+
+    Returns:
+        Generated UUIDv7 value.
+
+    Raises:
+        ValueError: If database result cannot be parsed as UUID.
+    """
+    generated = (await session.execute(text("SELECT uuidv7()"))).scalar_one()
+    parsed = _parse_uuid(generated)
+    if parsed is None:
+        raise ValueError(f"uuidv7() returned non-UUID value: {generated!r}")
+    return parsed
+
+
+def _rewrite_legacy_path_prefixes(value: str, legacy_ids: set[str], new_job_id: str) -> str:
+    """
+    Rewrite embedded ``jobs/<legacy_id>/...`` path prefixes to new UUID.
+
+    Args:
+        value: Candidate string value.
+        legacy_ids: Legacy identifiers to replace.
+        new_job_id: Canonical UUID string.
+
+    Returns:
+        Rewritten string value.
+    """
+    updated = value
+    for legacy_id in legacy_ids:
+        updated = updated.replace(f"jobs/{legacy_id}/", f"jobs/{new_job_id}/")
+        updated = updated.replace(f"/jobs/{legacy_id}/", f"/jobs/{new_job_id}/")
+    return updated
+
+
+def _rewrite_payload_paths(value: Any, legacy_ids: set[str], new_job_id: str) -> tuple[Any, bool]:
+    """
+    Recursively rewrite legacy ``jobs/<id>/...`` path prefixes in payloads.
+
+    Args:
+        value: Any JSON-serializable payload value.
+        legacy_ids: Legacy identifiers to replace.
+        new_job_id: Canonical UUID string.
+
+    Returns:
+        Tuple of ``(rewritten_value, changed)``.
+    """
+    if isinstance(value, dict):
+        changed = False
+        rewritten: dict[str, Any] = {}
+        for key, item in value.items():
+            updated_item, item_changed = _rewrite_payload_paths(item, legacy_ids, new_job_id)
+            rewritten[key] = updated_item
+            changed = changed or item_changed
+        return rewritten, changed
+
+    if isinstance(value, list):
+        changed = False
+        rewritten_list: list[Any] = []
+        for item in value:
+            updated_item, item_changed = _rewrite_payload_paths(item, legacy_ids, new_job_id)
+            rewritten_list.append(updated_item)
+            changed = changed or item_changed
+        return rewritten_list, changed
+
+    if isinstance(value, str):
+        updated = _rewrite_legacy_path_prefixes(value, legacy_ids, new_job_id)
+        return updated, updated != value
+
+    return value, False
+
+
+def _write_json(
+    path: Path,
+    payload: dict[str, Any],
+    result: BootstrapResult,
+    context: str,
+) -> bool:
+    """
+    Persist JSON payload to disk and record errors.
+
+    Args:
+        path: JSON file path.
+        payload: Parsed JSON object to write.
+        result: Aggregate bootstrap result for error collection.
+        context: Context string for logs/errors.
+
+    Returns:
+        ``True`` on success, ``False`` on write error.
+    """
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        return True
+    except OSError as e:
+        msg = f"{context}: failed to write {path}: {e}"
+        result.errors.append(msg)
+        logger.error(msg, exc_info=True)
+        return False
+
+
+def _rename_job_dir(
+    *,
+    job_dir: Path,
+    target_job_id: UUID,
+    result: BootstrapResult,
+    context: str,
+) -> Path | None:
+    """
+    Rename a legacy job directory to canonical UUID directory name.
+
+    Args:
+        job_dir: Current job directory.
+        target_job_id: Canonical UUID target.
+        result: Aggregate bootstrap result for error collection.
+        context: Context string for logs/errors.
+
+    Returns:
+        New job directory path or ``None`` on conflict/error.
+    """
+    target_dir = job_dir.with_name(str(target_job_id))
+    if target_dir == job_dir:
+        return job_dir
+    if target_dir.exists():
+        msg = f"{context}: cannot rename {job_dir} -> {target_dir} (target exists)"
+        result.errors.append(msg)
+        logger.warning(msg)
+        return None
+    try:
+        job_dir.rename(target_dir)
+    except OSError as e:
+        msg = f"{context}: failed to rename {job_dir} -> {target_dir}: {e}"
+        result.errors.append(msg)
+        logger.error(msg, exc_info=True)
+        return None
+    return target_dir
 
 
 def _derive_updated_at(config: dict[str, Any], created_at: datetime | None) -> datetime | None:
@@ -285,6 +482,15 @@ def _normalize_relative_path(job_id: UUID, raw_path: str) -> str:
     prefix = f"jobs/{job_id}/"
     if cleaned.startswith(prefix):
         return cleaned[len(prefix) :]
+    # Legacy payloads may still contain `jobs/<legacy-id>/...` paths.
+    if cleaned.startswith("/"):
+        cleaned = cleaned[1:]
+    if cleaned.startswith("jobs/"):
+        parts = cleaned.split("/", 2)
+        if len(parts) == 3:
+            return parts[2]
+        if len(parts) == 2:
+            return parts[1]
     return cleaned.lstrip("/")
 
 
@@ -961,32 +1167,151 @@ def _load_job_payload(
     return config, ks_data
 
 
-def _resolve_migration_job_id(
+async def _resolve_migration_target(
+    session: AsyncSession,
+    *,
     job_dir: Path,
     config: dict[str, Any] | None,
+    ks_data: dict[str, Any] | None,
+    legacy_id_map: dict[str, UUID],
     result: BootstrapResult,
     context: str,
-) -> UUID | None:
+) -> MigrationTarget | None:
     """
-    Resolve job UUID for migration and record invalid-ID skips.
+    Resolve canonical migration target for mixed UUID/legacy job IDs.
 
     Args:
+        session: Active DB session.
         job_dir: Job directory being migrated.
         config: Optional parsed ``config.json`` payload.
+        ks_data: Optional parsed ``knowledge_state.json`` payload.
+        legacy_id_map: In-memory legacy-id to UUID map for this run.
         result: Aggregate bootstrap result (for counters/errors).
         context: Context string for logging/error collection.
 
     Returns:
-        Resolved job UUID, or ``None`` when invalid/unresolvable.
+        Resolved migration target, or ``None`` when no usable identifier exists.
     """
-    job_id = _resolve_job_id(job_dir, config)
+    candidates = _extract_id_candidates(job_dir, config, ks_data)
+    legacy_ids = _extract_legacy_ids(candidates)
+    job_id = _resolve_uuid_candidate(candidates)
+    dir_is_uuid = _parse_uuid(job_dir.name) is not None
+
     if job_id is not None:
-        return job_id
-    result.skipped_invalid_job_id += 1
-    msg = f"{context}: skipped (invalid UUID job id)"
-    result.errors.append(msg)
-    logger.warning(msg)
-    return None
+        # Bind legacy aliases to the resolved UUID for consistency within this run.
+        for legacy_id in legacy_ids:
+            legacy_id_map.setdefault(legacy_id, job_id)
+        return MigrationTarget(
+            job_id=job_id, legacy_ids=legacy_ids, rename_directory=not dir_is_uuid
+        )
+
+    if not legacy_ids:
+        result.skipped_invalid_job_id += 1
+        msg = f"{context}: skipped (missing/invalid job id)"
+        result.errors.append(msg)
+        logger.warning(msg)
+        return None
+
+    mapped_id = next((legacy_id_map[item] for item in legacy_ids if item in legacy_id_map), None)
+    if mapped_id is None:
+        try:
+            mapped_id = await _generate_uuidv7(session)
+        except Exception as e:
+            result.skipped_invalid_job_id += 1
+            msg = f"{context}: skipped (failed to allocate uuidv7): {e}"
+            result.errors.append(msg)
+            logger.error(msg, exc_info=True)
+            return None
+
+    for legacy_id in legacy_ids:
+        legacy_id_map[legacy_id] = mapped_id
+
+    return MigrationTarget(job_id=mapped_id, legacy_ids=legacy_ids, rename_directory=True)
+
+
+def _prepare_migration_filesystem(
+    *,
+    job_dir: Path,
+    config: dict[str, Any] | None,
+    ks_data: dict[str, Any] | None,
+    target: MigrationTarget,
+    result: BootstrapResult,
+    context: str,
+) -> tuple[Path, dict[str, Any] | None, dict[str, Any] | None] | None:
+    """
+    Apply legacy filesystem/payload rewrites needed before metadata sync.
+
+    Args:
+        job_dir: Current job directory.
+        config: Optional parsed ``config.json`` payload.
+        ks_data: Optional parsed ``knowledge_state.json`` payload.
+        target: Resolved migration target.
+        result: Aggregate bootstrap result (for counters/errors).
+        context: Context string for logging/error collection.
+
+    Returns:
+        Tuple of ``(effective_job_dir, config, ks_data)`` on success, else ``None``.
+    """
+    effective_job_dir = job_dir
+    target_id_text = str(target.job_id)
+
+    if target.rename_directory:
+        renamed = _rename_job_dir(
+            job_dir=job_dir,
+            target_job_id=target.job_id,
+            result=result,
+            context=context,
+        )
+        if renamed is None:
+            return None
+        effective_job_dir = renamed
+
+    config_changed = False
+    ks_changed = False
+
+    if config is not None:
+        if _to_optional_string(config.get("job_id")) != target_id_text:
+            config["job_id"] = target_id_text
+            config_changed = True
+        rewritten_config, rewrote_config_paths = _rewrite_payload_paths(
+            config,
+            target.legacy_ids,
+            target_id_text,
+        )
+        config = rewritten_config
+        config_changed = config_changed or rewrote_config_paths
+
+    if ks_data is not None:
+        if _to_optional_string(ks_data.get("job_id")) != target_id_text:
+            ks_data["job_id"] = target_id_text
+            ks_changed = True
+
+        ks_config = ks_data.get("config")
+        if not isinstance(ks_config, dict):
+            ks_config = {}
+            ks_data["config"] = ks_config
+            ks_changed = True
+        if _to_optional_string(ks_config.get("job_id")) != target_id_text:
+            ks_config["job_id"] = target_id_text
+            ks_changed = True
+
+        rewritten_ks, rewrote_ks_paths = _rewrite_payload_paths(
+            ks_data,
+            target.legacy_ids,
+            target_id_text,
+        )
+        ks_data = rewritten_ks
+        ks_changed = ks_changed or rewrote_ks_paths
+
+    if config is not None and config_changed:
+        if not _write_json(effective_job_dir / "config.json", config, result, context):
+            return None
+
+    if ks_data is not None and ks_changed:
+        if not _write_json(effective_job_dir / KS_FILENAME, ks_data, result, context):
+            return None
+
+    return effective_job_dir, config, ks_data
 
 
 async def _get_or_create_job(
@@ -1130,6 +1455,7 @@ async def bootstrap_jobs_from_filesystem(
     async with get_admin_session() as session:
         users = list((await session.execute(select(User))).scalars())
         users_by_id = {u.id: u for u in users}
+        legacy_id_map: dict[str, UUID] = {}
 
         for job_dir in sorted(p for p in jobs_dir.iterdir() if p.is_dir()):
             result.scanned_directories += 1
@@ -1140,13 +1466,35 @@ async def bootstrap_jobs_from_filesystem(
                 continue
             config, ks_data = payload
 
-            job_id = _resolve_migration_job_id(job_dir, config, result, context)
-            if job_id is None:
+            target = await _resolve_migration_target(
+                session,
+                job_dir=job_dir,
+                config=config,
+                ks_data=ks_data,
+                legacy_id_map=legacy_id_map,
+                result=result,
+                context=context,
+            )
+            if target is None:
                 continue
+
+            effective_job_dir = job_dir
+            if not dry_run:
+                prepared = _prepare_migration_filesystem(
+                    job_dir=job_dir,
+                    config=config,
+                    ks_data=ks_data,
+                    target=target,
+                    result=result,
+                    context=context,
+                )
+                if prepared is None:
+                    continue
+                effective_job_dir, config, ks_data = prepared
 
             job = await _get_or_create_job(
                 session,
-                job_id=job_id,
+                job_id=target.job_id,
                 config=config,
                 ks_data=ks_data,
                 users_by_id=users_by_id,
@@ -1161,7 +1509,7 @@ async def bootstrap_jobs_from_filesystem(
                 session,
                 result=result,
                 job=job,
-                job_dir=job_dir,
+                job_dir=effective_job_dir,
                 ks_data=ks_data,
                 context=context,
             )
