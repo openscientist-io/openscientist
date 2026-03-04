@@ -25,12 +25,12 @@ help:
 
 start:
 	@echo "Starting Open Scientist..."
-	docker compose -f $(COMPOSE_FILE) up -d
+	docker compose -f $(COMPOSE_FILE) up -d --remove-orphans
 	@echo "Open Scientist started at http://localhost:8080"
 
 stop:
 	@echo "Stopping Open Scientist..."
-	docker compose -f $(COMPOSE_FILE) down
+	docker compose -f $(COMPOSE_FILE) down --remove-orphans
 	@echo "Open Scientist stopped"
 
 restart: stop start
@@ -49,8 +49,8 @@ build:
 	@echo "All images built: open_scientist-base, open_scientist, open_scientist-executor, open-scientist-agent"
 
 rebuild: build
-	docker compose -f $(COMPOSE_FILE) down
-	docker compose -f $(COMPOSE_FILE) up -d
+	docker compose -f $(COMPOSE_FILE) down --remove-orphans
+	docker compose -f $(COMPOSE_FILE) up -d --remove-orphans
 	@echo "Open Scientist rebuilt and started at http://localhost:8080"
 
 logs:
@@ -63,7 +63,7 @@ shell:
 
 clean:
 	@echo "Removing containers and volumes..."
-	docker compose -f $(COMPOSE_FILE) down -v
+	docker compose -f $(COMPOSE_FILE) down -v --remove-orphans
 	@echo "Cleaned up"
 
 clean-jobs:
@@ -77,16 +77,19 @@ reset-db:
 	@echo "WARNING: This will delete all database data!"
 	@read -p "Are you sure? [y/N]: " confirm; \
 	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		set -e; \
 		echo "Stopping containers and removing volumes..."; \
-		docker compose -f $(COMPOSE_FILE) down -v; \
-		echo "Starting containers..."; \
-		docker compose -f $(COMPOSE_FILE) up -d; \
+		docker compose -f $(COMPOSE_FILE) down -v --remove-orphans; \
+		echo "Starting postgres..."; \
+		docker compose -f $(COMPOSE_FILE) up -d postgres; \
 		echo "Waiting for postgres to be ready..."; \
-		until docker compose -f $(COMPOSE_FILE) exec postgres pg_isready -U open_scientist -d open_scientist 2>/dev/null; do \
+		until docker compose -f $(COMPOSE_FILE) exec -T postgres pg_isready -U $${POSTGRES_USER:-open_scientist} -d $${POSTGRES_DB:-open_scientist} >/dev/null 2>&1; do \
 			sleep 1; \
 		done; \
 		echo "Running migrations..."; \
-		docker compose -f $(COMPOSE_FILE) exec open_scientist alembic upgrade head; \
+		docker compose -f $(COMPOSE_FILE) run --rm --no-deps open_scientist alembic upgrade head; \
+		echo "Starting application..."; \
+		docker compose -f $(COMPOSE_FILE) up -d --remove-orphans open_scientist; \
 		echo "Database reset complete!"; \
 	else \
 		echo "Aborted."; \
