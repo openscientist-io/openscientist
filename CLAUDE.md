@@ -5,7 +5,7 @@ OpenScientist (Scientific Hypothesis Agent for Novel Discovery) is a web applica
 ## Project Structure
 
 ```text
-src/open_scientist/
+src/openscientist/
 ├── agent/            # AgentExecutor protocol and SDKAgentExecutor
 ├── api/              # FastAPI REST endpoints
 ├── auth/             # Authentication (OAuth, sessions, middleware)
@@ -30,14 +30,14 @@ uv sync
 
 # Set up environment variables (see .env.example)
 export DATABASE_URL="postgresql+asyncpg://..."
-export OPEN_SCIENTIST_SECRET_KEY="$(openssl rand -hex 32)"
+export OPENSCIENTIST_SECRET_KEY="$(openssl rand -hex 32)"
 export ANTHROPIC_API_KEY="..."  # or other provider credentials
 
 # Run database migrations
 uv run alembic upgrade head
 
 # Start development server
-uv run python -m open_scientist.web_app --reload
+uv run python -m openscientist.web_app --reload
 ```
 
 ## Testing
@@ -47,7 +47,7 @@ uv run python -m open_scientist.web_app --reload
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=open_scientist
+uv run pytest --cov=openscientist
 ```
 
 ### Testing Conventions
@@ -109,14 +109,14 @@ async with user_simulation(root=some_page) as browser:
 
 ## UI Component Reuse
 
-**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from `src/open_scientist/webapp_components/ui_components.py`.
+**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from `src/openscientist/webapp_components/ui_components.py`.
 
 ### Error Banners
 
 Use these instead of creating inline error displays:
 
 ```python
-from open_scientist.webapp_components.ui_components import (
+from openscientist.webapp_components.ui_components import (
     render_config_error_banner,  # Provider config errors
     render_alert_banner,         # Generic error/warning/info
 )
@@ -146,18 +146,18 @@ When you need a new UI pattern used in multiple places:
 
 ## Key Components
 
-### Authentication (`src/open_scientist/auth/`)
+### Authentication (`src/openscientist/auth/`)
 
 - OAuth providers (Google, GitHub, mock for dev)
 - Session management with cookies
 - `@require_auth` decorator for protected pages
 
-### Providers (`src/open_scientist/providers/`)
+### Providers (`src/openscientist/providers/`)
 
 - `check_provider_config()` - Validates LLM provider setup
 - Supports: Anthropic, CBORG, Vertex AI, Bedrock, Foundry, Codex
 
-### Web App (`src/open_scientist/webapp_components/`)
+### Web App (`src/openscientist/webapp_components/`)
 
 - NiceGUI-based UI
 - Pages in `pages/` subdirectory
@@ -184,11 +184,11 @@ uv run python tools/tile_screenshots.py \
 | Variable               | Required | Description                         |
 | ---------------------- | -------- | ----------------------------------- |
 | `DATABASE_URL`         | Yes      | PostgreSQL connection string        |
-| `OPEN_SCIENTIST_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
+| `OPENSCIENTIST_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
 | `CLAUDE_PROVIDER`      | No       | Provider name (default: anthropic)  |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
-| `OPEN_SCIENTIST_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
-| `OPEN_SCIENTIST_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
+| `OPENSCIENTIST_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
+| `OPENSCIENTIST_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
 
 ## Related Documentation
 

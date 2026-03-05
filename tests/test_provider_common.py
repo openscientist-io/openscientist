@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from open_scientist.providers._anthropic_common import (
+from openscientist.providers._anthropic_common import (
     build_system_blocks,
     build_tool_params,
     build_usage_dict,

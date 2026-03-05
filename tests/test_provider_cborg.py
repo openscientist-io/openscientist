@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from open_scientist.providers.cborg import CborgProvider
-from open_scientist.settings import clear_settings_cache
+from openscientist.providers.cborg import CborgProvider
+from openscientist.settings import clear_settings_cache
 
 
 class TestCborgProviderValidation:
@@ -33,7 +33,7 @@ class TestCborgProviderValidation:
         mock_settings.provider.anthropic_base_url = "https://api.cborg.lbl.gov"
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
         with (
-            patch("open_scientist.providers.cborg.get_settings", return_value=mock_settings),
+            patch("openscientist.providers.cborg.get_settings", return_value=mock_settings),
             pytest.raises(
                 ValueError,
                 match="ANTHROPIC_AUTH_TOKEN",
@@ -48,7 +48,7 @@ class TestCborgProviderValidation:
         mock_settings.provider.anthropic_base_url = None
         mock_settings.provider.anthropic_model = "claude-sonnet-4-6"
         with (
-            patch("open_scientist.providers.cborg.get_settings", return_value=mock_settings),
+            patch("openscientist.providers.cborg.get_settings", return_value=mock_settings),
             pytest.raises(
                 ValueError,
                 match="ANTHROPIC_BASE_URL",
@@ -77,7 +77,7 @@ class TestCborgSetupEnvironment:
 class TestCborgGetCostInfo:
     """Tests for CBORG cost info retrieval."""
 
-    @patch("open_scientist.providers.cborg.requests.get")
+    @patch("openscientist.providers.cborg.requests.get")
     def test_returns_cost_info(self, mock_get):
         with patch.dict(
             os.environ,
@@ -112,7 +112,7 @@ class TestCborgGetCostInfo:
             assert cost.budget_remaining_usd == 150.0
             assert cost.key_expires == "2026-12-31"
 
-    @patch("open_scientist.providers.cborg.requests.get")
+    @patch("openscientist.providers.cborg.requests.get")
     def test_activity_failure_falls_back(self, mock_get):
         with patch.dict(
             os.environ,
@@ -143,7 +143,7 @@ class TestCborgGetCostInfo:
             assert cost.recent_spend_usd is None
             assert "unavailable" in (cost.data_lag_note or "").lower()
 
-    @patch("open_scientist.providers.cborg.requests.get")
+    @patch("openscientist.providers.cborg.requests.get")
     def test_no_max_budget(self, mock_get):
         with patch.dict(
             os.environ,

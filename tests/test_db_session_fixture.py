@@ -4,8 +4,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.api.auth import hash_secret
-from open_scientist.database.models import APIKey, User
+from openscientist.api.auth import hash_secret
+from openscientist.database.models import APIKey, User
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
-from open_scientist.code_executor import (
+from openscientist.code_executor import (
     ForbiddenImportError,
     execute_code,
     execute_rust_code,

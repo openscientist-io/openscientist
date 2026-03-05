@@ -60,7 +60,7 @@ Phenix is pre-installed in the Docker image. You just need to provide the instal
    docker compose up --build
 
    # For deployment to x86_64 Linux server:
-   docker build --platform linux/amd64 -t open_scientist .
+   docker build --platform linux/amd64 -t openscientist .
    ```
 
 #### Deployment to GASSH
@@ -69,7 +69,7 @@ Phenix is pre-installed in the Docker image. You just need to provide the instal
 # 1. Transfer installer to server (one-time)
 rsync -avz --progress \
   phenix-installer-1.21.2-5419-intel-linux-2.6-x86_64-centos6.tar.gz \
-  gassh:~/open_scientist/data/
+  gassh:~/openscientist/data/
 
 # 2. Deploy normally
 make deploy
@@ -133,19 +133,19 @@ After installation, verify Phenix is working:
 
 ```bash
 # Check Phenix installed in container
-docker exec open_scientist-open_scientist-1 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && \
+docker exec openscientist-openscientist-1 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && \
   echo "✅ Phenix installed" || echo "❌ Phenix NOT found"
 
 # Check OpenScientist detects Phenix
-docker exec open_scientist-open_scientist-1 python -c "
+docker exec openscientist-openscientist-1 python -c "
 import os
 os.environ['PHENIX_PATH'] = '/opt/phenix-1.21.2-5419'
-from open_scientist.phenix_setup import check_phenix_available
+from openscientist.phenix_setup import check_phenix_available
 print('✅ Phenix available' if check_phenix_available() else '❌ Phenix not available')
 "
 
 # Check MCP server registers Phenix tools
-docker logs open_scientist-open_scientist-1 2>&1 | grep -i phenix
+docker logs openscientist-openscientist-1 2>&1 | grep -i phenix
 # Should see: "✅ Phenix tools registered"
 ```
 
@@ -158,7 +158,7 @@ echo $PHENIX_PATH
 
 # Test Phenix setup
 python -c "
-from open_scientist.phenix_setup import check_phenix_available
+from openscientist.phenix_setup import check_phenix_available
 print('✅ Phenix available' if check_phenix_available() else '❌ Phenix not available')
 "
 ```
@@ -200,7 +200,7 @@ ls -la $PHENIX_PATH/phenix_env.sh
 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && echo "Found" || echo "Missing"
 
 # Check environment variable is set
-docker exec open_scientist-open_scientist-1 env | grep PHENIX_PATH
+docker exec openscientist-openscientist-1 env | grep PHENIX_PATH
 ```
 
 ### Docker build fails: "No such file"

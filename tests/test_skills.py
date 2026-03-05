@@ -8,8 +8,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.database.models import Skill, SkillSource, User
-from open_scientist.database.rls import set_current_user
+from openscientist.database.models import Skill, SkillSource, User
+from openscientist.database.rls import set_current_user
 
 
 @pytest.mark.asyncio

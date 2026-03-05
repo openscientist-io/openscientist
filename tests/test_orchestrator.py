@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import pytest
 
-from open_scientist.orchestrator import (
+from openscientist.orchestrator import (
     get_version_metadata,
     increment_ks_iteration,
     update_job_status,
@@ -27,28 +27,28 @@ class TestGetVersionMetadata:
     @patch.dict(
         os.environ,
         {
-            "OPEN_SCIENTIST_COMMIT": "abc123def456",
-            "OPEN_SCIENTIST_BUILD_TIME": "2026-02-01T00:00:00",
+            "OPENSCIENTIST_COMMIT": "abc123def456",
+            "OPENSCIENTIST_BUILD_TIME": "2026-02-01T00:00:00",
         },
     )
     def test_from_env_vars(self):
         info = get_version_metadata()
-        assert info["open_scientist_commit"] == "abc123def456"
-        assert info["open_scientist_build_time"] == "2026-02-01T00:00:00"
+        assert info["openscientist_commit"] == "abc123def456"
+        assert info["openscientist_build_time"] == "2026-02-01T00:00:00"
 
-    @patch.dict(os.environ, {"OPEN_SCIENTIST_COMMIT": "unknown"}, clear=False)
-    @patch("open_scientist.version._commit", None)
+    @patch.dict(os.environ, {"OPENSCIENTIST_COMMIT": "unknown"}, clear=False)
+    @patch("openscientist.version._commit", None)
     @patch("subprocess.run")
     def test_falls_back_to_git(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="abcdef123456789\n")
         # Remove build time so it doesn't appear
-        with patch.dict(os.environ, {"OPEN_SCIENTIST_BUILD_TIME": "unknown"}):
+        with patch.dict(os.environ, {"OPENSCIENTIST_BUILD_TIME": "unknown"}):
             info = get_version_metadata()
-        assert info.get("open_scientist_commit", "").startswith("abcdef12")
+        assert info.get("openscientist_commit", "").startswith("abcdef12")
 
     @patch.dict(os.environ, {}, clear=True)
     @patch("subprocess.run", side_effect=FileNotFoundError)
-    @patch("open_scientist.orchestrator.discovery.Path")
+    @patch("openscientist.orchestrator.discovery.Path")
     def test_empty_when_no_info_available(self, mock_path_cls, _mock_run):
         mock_path_cls.return_value.exists.return_value = False
         info = get_version_metadata()
@@ -76,7 +76,7 @@ class TestUpdateJobStatus:
         job_result = MagicMock()
         job_result.scalar_one_or_none.return_value = job
 
-        with patch("open_scientist.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls:
+        with patch("openscientist.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls:
             mock_session = AsyncMock()
             mock_session.execute = AsyncMock(return_value=job_result)
             mock_cm = AsyncMock()
@@ -114,9 +114,9 @@ class TestUpdateJobStatus:
         user_result.first.return_value = user_row
 
         with (
-            patch("open_scientist.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.iteration.notify_job_status_change",
+                "openscientist.orchestrator.iteration.notify_job_status_change",
                 new_callable=AsyncMock,
             ) as mock_notify,
         ):
@@ -158,9 +158,9 @@ class TestUpdateJobStatus:
         user_result.first.return_value = user_row
 
         with (
-            patch("open_scientist.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.iteration.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.iteration.notify_job_status_change",
+                "openscientist.orchestrator.iteration.notify_job_status_change",
                 new_callable=AsyncMock,
             ) as mock_notify,
         ):
@@ -184,7 +184,7 @@ class TestDiscoveryCancellationAndFailure:
 
     @pytest.mark.asyncio
     async def test_cancelled_feedback_wait_does_not_resume_running(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _wait_for_coinvestigate_feedback
+        from openscientist.orchestrator.discovery import _wait_for_coinvestigate_feedback
 
         job_id = str(uuid4())
         job_dir = tmp_path / job_id
@@ -197,10 +197,10 @@ class TestDiscoveryCancellationAndFailure:
 
         with (
             patch(
-                "open_scientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock
+                "openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock
             ) as mock_update,
             patch(
-                "open_scientist.orchestrator.discovery.wait_for_feedback_or_timeout",
+                "openscientist.orchestrator.discovery.wait_for_feedback_or_timeout",
                 new_callable=AsyncMock,
                 return_value=wait_outcome,
             ),
@@ -219,14 +219,14 @@ class TestDiscoveryCancellationAndFailure:
 
     @pytest.mark.asyncio
     async def test_run_discovery_stops_when_cancelled_before_next_iteration(self, tmp_path):
-        from open_scientist.agent.protocol import IterationResult, TokenUsage
-        from open_scientist.orchestrator.discovery import run_discovery_async
+        from openscientist.agent.protocol import IterationResult, TokenUsage
+        from openscientist.orchestrator.discovery import run_discovery_async
 
         job_id = str(uuid4())
         job_dir = tmp_path / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
-        from open_scientist.knowledge_state import KnowledgeState
+        from openscientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState(job_id, "Question?", 3)
         ks.save(job_dir / "knowledge_state.json")
@@ -259,36 +259,34 @@ class TestDiscoveryCancellationAndFailure:
 
         with (
             patch(
-                "open_scientist.orchestrator.discovery._load_runtime_context",
+                "openscientist.orchestrator.discovery._load_runtime_context",
                 new_callable=AsyncMock,
                 return_value=runtime,
             ),
-            patch("open_scientist.orchestrator.discovery.get_provider", return_value=mock_provider),
+            patch("openscientist.orchestrator.discovery.get_provider", return_value=mock_provider),
             patch(
-                "open_scientist.orchestrator.discovery._write_skills_to_claude_dir",
+                "openscientist.orchestrator.discovery._write_skills_to_claude_dir",
                 new_callable=AsyncMock,
             ),
             patch(
-                "open_scientist.orchestrator.discovery._build_agent_executor",
+                "openscientist.orchestrator.discovery._build_agent_executor",
                 return_value=mock_executor,
             ),
             patch(
-                "open_scientist.orchestrator.discovery._run_report_generation_phase",
+                "openscientist.orchestrator.discovery._run_report_generation_phase",
                 new_callable=AsyncMock,
             ) as mock_report_phase,
             patch(
-                "open_scientist.orchestrator.discovery._persist_final_status",
+                "openscientist.orchestrator.discovery._persist_final_status",
                 new_callable=AsyncMock,
                 return_value="cancelled",
             ),
+            patch("openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
+            patch("openscientist.orchestrator.discovery.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
+            patch("openscientist.orchestrator.discovery._sync_version_metadata_if_available"),
             patch(
-                "open_scientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock
-            ),
-            patch("open_scientist.orchestrator.discovery.sync_knowledge_state_to_db"),
-            patch("open_scientist.orchestrator.discovery._append_iteration_artifacts"),
-            patch("open_scientist.orchestrator.discovery._sync_version_metadata_if_available"),
-            patch(
-                "open_scientist.orchestrator.discovery._get_job_status",
+                "openscientist.orchestrator.discovery._get_job_status",
                 new_callable=AsyncMock,
                 side_effect=["running", "cancelled"],
                 create=True,
@@ -302,14 +300,14 @@ class TestDiscoveryCancellationAndFailure:
 
     @pytest.mark.asyncio
     async def test_run_discovery_marks_failed_when_iteration_fails(self, tmp_path):
-        from open_scientist.agent.protocol import IterationResult, TokenUsage
-        from open_scientist.orchestrator.discovery import run_discovery_async
+        from openscientist.agent.protocol import IterationResult, TokenUsage
+        from openscientist.orchestrator.discovery import run_discovery_async
 
         job_id = str(uuid4())
         job_dir = tmp_path / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
-        from open_scientist.knowledge_state import KnowledgeState
+        from openscientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState(job_id, "Question?", 3)
         ks.save(job_dir / "knowledge_state.json")
@@ -348,36 +346,34 @@ class TestDiscoveryCancellationAndFailure:
 
         with (
             patch(
-                "open_scientist.orchestrator.discovery._load_runtime_context",
+                "openscientist.orchestrator.discovery._load_runtime_context",
                 new_callable=AsyncMock,
                 return_value=runtime,
             ),
-            patch("open_scientist.orchestrator.discovery.get_provider", return_value=mock_provider),
+            patch("openscientist.orchestrator.discovery.get_provider", return_value=mock_provider),
             patch(
-                "open_scientist.orchestrator.discovery._write_skills_to_claude_dir",
+                "openscientist.orchestrator.discovery._write_skills_to_claude_dir",
                 new_callable=AsyncMock,
             ),
             patch(
-                "open_scientist.orchestrator.discovery._build_agent_executor",
+                "openscientist.orchestrator.discovery._build_agent_executor",
                 return_value=mock_executor,
             ),
             patch(
-                "open_scientist.orchestrator.discovery._run_report_generation_phase",
+                "openscientist.orchestrator.discovery._run_report_generation_phase",
                 new_callable=AsyncMock,
             ) as mock_report_phase,
             patch(
-                "open_scientist.orchestrator.discovery._persist_final_status",
+                "openscientist.orchestrator.discovery._persist_final_status",
                 new_callable=AsyncMock,
                 return_value="failed",
             ),
+            patch("openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
+            patch("openscientist.orchestrator.discovery.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
+            patch("openscientist.orchestrator.discovery._sync_version_metadata_if_available"),
             patch(
-                "open_scientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock
-            ),
-            patch("open_scientist.orchestrator.discovery.sync_knowledge_state_to_db"),
-            patch("open_scientist.orchestrator.discovery._append_iteration_artifacts"),
-            patch("open_scientist.orchestrator.discovery._sync_version_metadata_if_available"),
-            patch(
-                "open_scientist.orchestrator.discovery._get_job_status",
+                "openscientist.orchestrator.discovery._get_job_status",
                 new_callable=AsyncMock,
                 return_value="running",
                 create=True,
@@ -436,7 +432,7 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_writes_skill_files(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         skill = self._make_skill(
             name="Hypothesis Generation",
@@ -447,9 +443,9 @@ class TestWriteSkillsToClaudeDir:
         )
 
         with (
-            patch("open_scientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = [skill]
@@ -472,12 +468,12 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_no_skills_does_not_create_skills_dir(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         with (
-            patch("open_scientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = []
@@ -494,7 +490,7 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_skill_without_description(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         skill = self._make_skill(
             name="Stopping Criteria",
@@ -505,9 +501,9 @@ class TestWriteSkillsToClaudeDir:
         )
 
         with (
-            patch("open_scientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = [skill]
@@ -526,12 +522,12 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_always_writes_job_claude_md(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         with (
-            patch("open_scientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = []
@@ -550,7 +546,7 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_writes_multiple_skill_files(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
 
         skills = [
             self._make_skill(name="Skill A", category="cat1", slug="skill-a", content="Content A"),
@@ -558,9 +554,9 @@ class TestWriteSkillsToClaudeDir:
         ]
 
         with (
-            patch("open_scientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "open_scientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = skills
@@ -584,15 +580,15 @@ class TestCreateJob:
     """Tests for job creation."""
 
     def test_creates_job_directory(self, tmp_path):
-        from open_scientist.orchestrator import create_job
+        from openscientist.orchestrator import create_job
 
         job_id = str(uuid4())
         data_file = tmp_path / "test.csv"
         data_file.write_text("a,b\n1,2\n")
 
         with (
-            patch("open_scientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("open_scientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
+            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
         ):
             job_dir = create_job(
                 job_id=job_id,
@@ -609,15 +605,15 @@ class TestCreateJob:
         assert (job_dir / "provenance").is_dir()
 
     def test_knowledge_state_contents(self, tmp_path):
-        from open_scientist.orchestrator import create_job
+        from openscientist.orchestrator import create_job
 
         job_id = str(uuid4())
         data_file = tmp_path / "test.csv"
         data_file.write_text("a,b\n1,2\n")
 
         with (
-            patch("open_scientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("open_scientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
+            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
         ):
             job_dir = create_job(
                 job_id=job_id,
@@ -635,15 +631,15 @@ class TestCreateJob:
         assert ks["config"]["max_iterations"] == 15
 
     def test_copies_data_file(self, tmp_path):
-        from open_scientist.orchestrator import create_job
+        from openscientist.orchestrator import create_job
 
         job_id = str(uuid4())
         data_file = tmp_path / "input_data.csv"
         data_file.write_text("x,y\n1,2\n3,4\n")
 
         with (
-            patch("open_scientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("open_scientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
+            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
         ):
             job_dir = create_job(
                 job_id=job_id,
@@ -658,11 +654,11 @@ class TestCreateJob:
         assert copied.read_text() == "x,y\n1,2\n3,4\n"
 
     def test_no_data_files(self, tmp_path):
-        from open_scientist.orchestrator import create_job
+        from openscientist.orchestrator import create_job
 
         with (
-            patch("open_scientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("open_scientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
+            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
         ):
             job_dir = create_job(
                 job_id=str(uuid4()),
@@ -685,8 +681,8 @@ class TestBuildReportPrompt:
     """Tests for report prompt construction."""
 
     def test_uses_concise_outline(self):
-        from open_scientist.knowledge_state import KnowledgeState
-        from open_scientist.orchestrator.iteration import build_report_prompt
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
 
         ks = KnowledgeState("j1", "What causes X?", 10)
 
@@ -724,7 +720,7 @@ class TestSaveTranscript:
     """Tests for _save_transcript()."""
 
     def test_writes_json_list(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _save_transcript
+        from openscientist.orchestrator.discovery import _save_transcript
 
         path = tmp_path / "transcript.json"
         transcript = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
@@ -746,7 +742,7 @@ class TestAppendLog:
     """Tests for _append_log()."""
 
     def test_creates_file_in_write_mode(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _append_log
+        from openscientist.orchestrator.discovery import _append_log
 
         log_file = tmp_path / "log.txt"
         _append_log(log_file, 1, "prompt1", "output1", 5, write=True)
@@ -758,7 +754,7 @@ class TestAppendLog:
         assert "Tool calls: 5" in content
 
     def test_appends_to_existing_file(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _append_log
+        from openscientist.orchestrator.discovery import _append_log
 
         log_file = tmp_path / "log.txt"
         _append_log(log_file, 1, "p1", "o1", 3, write=True)
@@ -776,7 +772,7 @@ class TestWriteChatClaudeMd:
     """Tests for _write_chat_claude_md()."""
 
     def test_writes_chat_claude_md(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_chat_claude_md
+        from openscientist.orchestrator.discovery import _write_chat_claude_md
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -786,7 +782,7 @@ class TestWriteChatClaudeMd:
         chat_src = tmp_path / "CHAT_CLAUDE.md"
         chat_src.write_text("# Chat Claude\nInstructions here", encoding="utf-8")
 
-        with patch("open_scientist.orchestrator.discovery.Path") as mock_path_cls:
+        with patch("openscientist.orchestrator.discovery.Path") as mock_path_cls:
             # Make Path(__file__) chain return our test source
             mock_file_path = MagicMock()
             mock_file_path.parent.parent.parent.parent.__truediv__ = lambda _self, _name: chat_src
@@ -803,7 +799,7 @@ class TestWriteChatClaudeMd:
         assert "Chat Claude" in content
 
     def test_missing_source_no_crash(self, tmp_path):
-        from open_scientist.orchestrator.discovery import _write_chat_claude_md
+        from openscientist.orchestrator.discovery import _write_chat_claude_md
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
@@ -821,8 +817,8 @@ class TestBuildInitialPrompt:
     """Tests for build_initial_prompt()."""
 
     def test_with_data_files(self):
-        from open_scientist.knowledge_state import KnowledgeState
-        from open_scientist.orchestrator.iteration import build_initial_prompt
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_initial_prompt
 
         ks = KnowledgeState("j1", "Why X?", 10)
         ks.set_data_summary({"columns": ["a", "b"], "n_samples": 100, "files": ["data.csv"]})
@@ -833,8 +829,8 @@ class TestBuildInitialPrompt:
         assert "10 iterations" in prompt
 
     def test_no_data_files(self):
-        from open_scientist.knowledge_state import KnowledgeState
-        from open_scientist.orchestrator.iteration import build_initial_prompt
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_initial_prompt
 
         ks = KnowledgeState("j1", "Lit only?", 5)
 
@@ -850,8 +846,8 @@ class TestBuildIterationPrompt:
     """Tests for build_iteration_prompt()."""
 
     def test_with_feedback(self):
-        from open_scientist.knowledge_state import KnowledgeState
-        from open_scientist.orchestrator.iteration import build_iteration_prompt
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_iteration_prompt
 
         ks = KnowledgeState("j1", "Q?", 10)
         prompt = build_iteration_prompt(3, 10, ks, pending_feedback="Focus on X")
@@ -859,8 +855,8 @@ class TestBuildIterationPrompt:
         assert "Focus on X" in prompt
 
     def test_no_feedback(self):
-        from open_scientist.knowledge_state import KnowledgeState
-        from open_scientist.orchestrator.iteration import build_iteration_prompt
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_iteration_prompt
 
         ks = KnowledgeState("j1", "Q?", 10)
         prompt = build_iteration_prompt(2, 10, ks, pending_feedback=None)

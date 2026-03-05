@@ -2,7 +2,7 @@
 
 **Date:** 2025-11-22
 **Status:** Design Complete
-**Issue:** [#8 Migrate to Vertex AI for model access](https://github.com/justaddcoffee/open_scientist/issues/8)
+**Issue:** [#8 Migrate to Vertex AI for model access](https://github.com/justaddcoffee/openscientist/issues/8)
 
 ## Overview
 
@@ -34,7 +34,7 @@ This design adds support for multiple AI model providers (CBORG, Vertex AI, AWS 
 ### Provider Structure
 
 ```
-src/open_scientist/providers/
+src/openscientist/providers/
 ├── __init__.py       # Provider factory: get_provider()
 ├── base.py           # BaseProvider interface + CostInfo dataclass
 ├── cborg.py          # CborgProvider (migrated from cost_tracker.py)
@@ -53,7 +53,7 @@ Environment variable `CLAUDE_PROVIDER` determines which provider to use:
 
 ```python
 # In orchestrator.py
-from open_scientist.providers import get_provider
+from openscientist.providers import get_provider
 
 provider = get_provider()  # Loads based on CLAUDE_PROVIDER env var
 provider.setup_environment()  # Configures Claude CLI env vars
@@ -299,36 +299,36 @@ WARN_PROJECT_SPEND_24H_USD=50.00
 
 ### Files to Create
 
-- `src/open_scientist/providers/__init__.py` - Provider factory
-- `src/open_scientist/providers/base.py` - BaseProvider + CostInfo
-- `src/open_scientist/providers/cborg.py` - CborgProvider implementation
-- `src/open_scientist/providers/vertex.py` - VertexProvider implementation
-- `src/open_scientist/providers/bedrock.py` - BedrockProvider stub
+- `src/openscientist/providers/__init__.py` - Provider factory
+- `src/openscientist/providers/base.py` - BaseProvider + CostInfo
+- `src/openscientist/providers/cborg.py` - CborgProvider implementation
+- `src/openscientist/providers/vertex.py` - VertexProvider implementation
+- `src/openscientist/providers/bedrock.py` - BedrockProvider stub
 - `docs/VERTEX_SETUP.md` - Vertex AI setup guide
 
 ### Files to Modify
 
-**`src/open_scientist/orchestrator.py`:**
+**`src/openscientist/orchestrator.py`:**
 - Remove `cost_tracker` imports
 - Remove lines 33-36 (Vertex disable code)
 - Add `from .providers import get_provider`
 - Call `provider.setup_environment()` at start of `run_discovery()`
 - Remove per-job cost tracking (lines 451-456, 464, 478, 516-517)
 
-**`src/open_scientist/job_manager.py`:**
+**`src/openscientist/job_manager.py`:**
 - Remove `cost_usd` field from `JobInfo` dataclass (line 46)
 - Remove cost loading in `_load_job_info()` (line 431)
 - Remove `cost_usd` from JobInfo creation (line 457)
 - Update `summary()` to use provider cost info instead of job costs (line 395)
 - Add budget check in `start_job()` before starting jobs
 
-**`src/open_scientist/web_app.py`:**
+**`src/openscientist/web_app.py`:**
 - Add project cost dashboard to `index()` page
 - Remove per-job cost displays (lines 264, 377)
 - Update summary cost display (line 295) to use provider cost info
 - Display budget warnings/errors if present
 
-**`src/open_scientist/cost_tracker.py`:**
+**`src/openscientist/cost_tracker.py`:**
 - **Deprecate** - Add deprecation notice at top
 - Keep file temporarily for backward compatibility (can delete later)
 
@@ -343,7 +343,7 @@ WARN_PROJECT_SPEND_24H_USD=50.00
 
 ### Files to Delete (later)
 
-- `src/open_scientist/cost_tracker.py` - After confirming providers work
+- `src/openscientist/cost_tracker.py` - After confirming providers work
 
 ## UI Changes
 
@@ -396,7 +396,7 @@ curl "https://api.cborg.lbl.gov/user/daily/activity?..." \
 
 **Test 2: Provider initialization**
 ```python
-from open_scientist.providers import get_provider
+from openscientist.providers import get_provider
 provider = get_provider()  # Should load CBORG
 cost_info = provider.get_cost_info(lookback_hours=24)
 print(f"Total: ${cost_info.total_spend_usd:.2f}")
@@ -424,7 +424,7 @@ export CLAUDE_PROVIDER=vertex
 
 **Test 2: Provider initialization**
 ```python
-from open_scientist.providers import get_provider
+from openscientist.providers import get_provider
 provider = get_provider()  # Should load VertexProvider
 cost_info = provider.get_cost_info(lookback_hours=24)
 print(f"Provider: {cost_info.provider_name}")
@@ -531,7 +531,7 @@ None - design is complete and ready for implementation.
 
 ## References
 
-- Issue: [#8 Migrate to Vertex AI](https://github.com/justaddcoffee/open_scientist/issues/8)
+- Issue: [#8 Migrate to Vertex AI](https://github.com/justaddcoffee/openscientist/issues/8)
 - CBORG API: https://api.cborg.lbl.gov/docs
 - GCP Billing API: https://cloud.google.com/billing/docs
 - Vertex AI Pricing: https://cloud.google.com/vertex-ai/pricing

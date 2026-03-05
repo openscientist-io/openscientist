@@ -197,7 +197,7 @@ gcloud run deploy budget-enforcer \
     --platform managed \
     --region us-central1 \
     --allow-unauthenticated \
-    --set-env-vars SERVICE_ACCOUNT_EMAIL=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com,GCP_PROJECT_ID=${PROJECT_ID}
+    --set-env-vars SERVICE_ACCOUNT_EMAIL=openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com,GCP_PROJECT_ID=${PROJECT_ID}
 
 # Note the service URL from deployment output
 ```
@@ -320,7 +320,7 @@ Check if keys are disabled:
 
 ```bash
 gcloud iam service-accounts keys list \
-    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+    --iam-account=openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 ## Recovery Procedure
@@ -341,19 +341,19 @@ Check spending in [GCP Billing Reports](https://console.cloud.google.com/billing
 ```bash
 # List keys (will show disabled keys)
 gcloud iam service-accounts keys list \
-    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+    --iam-account=openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 
 # Note the KEY_ID from the output
 
 # Re-enable the key
 gcloud iam service-accounts keys enable KEY_ID \
-    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+    --iam-account=openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 **Via Cloud Console:**
 
 1. Go to [IAM & Admin > Service Accounts](https://console.cloud.google.com/iam-admin/serviceaccounts)
-2. Click on `open_scientist-vertex@...`
+2. Click on `openscientist-vertex@...`
 3. Go to **Keys** tab
 4. Find the disabled key
 5. Click **Enable**

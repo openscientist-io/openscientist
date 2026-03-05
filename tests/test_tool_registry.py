@@ -11,32 +11,32 @@ class TestBridgeHelpers:
     """Tests for _build_input_schema, _extract_description, _python_type_to_json_schema."""
 
     def test_python_type_to_json_schema_str(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(str) == {"type": "string"}
 
     def test_python_type_to_json_schema_int(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(int) == {"type": "integer"}
 
     def test_python_type_to_json_schema_float(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(float) == {"type": "number"}
 
     def test_python_type_to_json_schema_bool(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(bool) == {"type": "boolean"}
 
     def test_python_type_to_json_schema_list(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(list) == {"type": "array"}
 
     def test_python_type_to_json_schema_list_str(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(list[str]) == {
             "type": "array",
@@ -44,22 +44,22 @@ class TestBridgeHelpers:
         }
 
     def test_python_type_to_json_schema_dict(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(dict) == {"type": "object"}
 
     def test_python_type_to_json_schema_optional_str(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(str | None) == {"type": "string"}
 
     def test_python_type_to_json_schema_optional_dict(self) -> None:
-        from open_scientist.tools.registry import _python_type_to_json_schema
+        from openscientist.tools.registry import _python_type_to_json_schema
 
         assert _python_type_to_json_schema(dict | None) == {"type": "object"}
 
     def test_extract_description_from_docstring(self) -> None:
-        from open_scientist.tools.registry import _extract_description
+        from openscientist.tools.registry import _extract_description
 
         def my_func() -> str:
             """Execute Python code to analyze data.
@@ -74,7 +74,7 @@ class TestBridgeHelpers:
         assert _extract_description(my_func) == "Execute Python code to analyze data."
 
     def test_extract_description_no_docstring(self) -> None:
-        from open_scientist.tools.registry import _extract_description
+        from openscientist.tools.registry import _extract_description
 
         def bare_func() -> str:
             return ""
@@ -82,7 +82,7 @@ class TestBridgeHelpers:
         assert _extract_description(bare_func) == "bare_func"
 
     def test_extract_description_single_line(self) -> None:
-        from open_scientist.tools.registry import _extract_description
+        from openscientist.tools.registry import _extract_description
 
         def simple() -> str:
             """A simple tool."""
@@ -91,7 +91,7 @@ class TestBridgeHelpers:
         assert _extract_description(simple) == "A simple tool."
 
     def test_build_input_schema_required_params(self) -> None:
-        from open_scientist.tools.registry import _build_input_schema
+        from openscientist.tools.registry import _build_input_schema
 
         def my_tool(query: str, count: int) -> str:
             """A tool."""
@@ -105,7 +105,7 @@ class TestBridgeHelpers:
         assert schema["required"] == ["query", "count"]
 
     def test_build_input_schema_with_defaults(self) -> None:
-        from open_scientist.tools.registry import _build_input_schema
+        from openscientist.tools.registry import _build_input_schema
 
         def my_tool(query: str, max_results: int = 10, desc: str = "") -> str:
             """A tool."""
@@ -118,7 +118,7 @@ class TestBridgeHelpers:
         assert "desc" in schema["properties"]
 
     def test_build_input_schema_complex_types(self) -> None:
-        from open_scientist.tools.registry import _build_input_schema
+        from openscientist.tools.registry import _build_input_schema
 
         def my_tool(
             files: list[str],
@@ -151,7 +151,7 @@ class TestToolBridge:
         except ImportError:
             pytest.skip("claude_agent_sdk not installed")
 
-        from open_scientist.tools.registry import tool
+        from openscientist.tools.registry import tool
 
         @tool
         def greet(name: str) -> str:
@@ -172,7 +172,7 @@ class TestToolBridge:
         except ImportError:
             pytest.skip("claude_agent_sdk not installed")
 
-        from open_scientist.tools.registry import tool
+        from openscientist.tools.registry import tool
 
         call_log: list[dict] = []
 
@@ -193,7 +193,7 @@ class TestToolBridge:
         if not importlib.util.find_spec("claude_agent_sdk"):
             pytest.skip("claude_agent_sdk not installed")
 
-        from open_scientist.tools.registry import tool
+        from openscientist.tools.registry import tool
 
         @tool
         def echo(msg: str) -> str:
@@ -208,7 +208,7 @@ class TestToolBridge:
         if not importlib.util.find_spec("claude_agent_sdk"):
             pytest.skip("claude_agent_sdk not installed")
 
-        from open_scientist.tools.registry import tool
+        from openscientist.tools.registry import tool
 
         @tool
         def search(query: str, limit: int = 10, desc: str = "") -> str:
@@ -226,7 +226,7 @@ class TestToolBridge:
         except ImportError:
             pytest.skip("claude_agent_sdk not installed")
 
-        from open_scientist.tools.registry import tool
+        from openscientist.tools.registry import tool
 
         @tool
         def complex_tool(code: str) -> str:
@@ -254,7 +254,7 @@ class TestToolBridge:
         except ImportError:
             pytest.skip("claude_agent_sdk not installed")
 
-        from open_scientist.tools.registry import tool
+        from openscientist.tools.registry import tool
 
         @tool
         async def async_tool(query: str) -> str:
@@ -271,7 +271,7 @@ class TestRegistryHelpers:
 
     def test_extract_description_and_build_schema(self) -> None:
         """Helper functions correctly extract metadata from typed functions."""
-        from open_scientist.tools.registry import _build_input_schema, _extract_description
+        from openscientist.tools.registry import _build_input_schema, _extract_description
 
         def my_func(x: str) -> str:
             """Do something."""

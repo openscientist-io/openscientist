@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from open_scientist.phenix_setup import (
+from openscientist.phenix_setup import (
     PhenixConfigError,
     check_phenix_available,
     setup_phenix_env,
     validate_phenix_path,
 )
-from open_scientist.settings import clear_settings_cache
+from openscientist.settings import clear_settings_cache
 
 
 class TestValidatePhenixPath:
@@ -20,9 +20,9 @@ class TestValidatePhenixPath:
     def test_absolute_path_valid(self):
         """Absolute path passes basic validation (existence checked separately)."""
         with (
-            patch("open_scientist.phenix_setup.os.path.exists", return_value=True),
+            patch("openscientist.phenix_setup.os.path.exists", return_value=True),
             patch(
-                "open_scientist.phenix_setup.os.path.isdir",
+                "openscientist.phenix_setup.os.path.isdir",
                 return_value=True,
             ),
         ):
@@ -45,9 +45,9 @@ class TestValidatePhenixPath:
     def test_path_traversal_rejected(self):
         """Paths with .. must be rejected."""
         with (
-            patch("open_scientist.phenix_setup.os.path.exists", return_value=True),
+            patch("openscientist.phenix_setup.os.path.exists", return_value=True),
             patch(
-                "open_scientist.phenix_setup.os.path.isdir",
+                "openscientist.phenix_setup.os.path.isdir",
                 return_value=True,
             ),
         ):
@@ -65,9 +65,9 @@ class TestValidatePhenixPath:
     def test_file_instead_of_directory_rejected(self):
         """Files (not directories) must be rejected."""
         with (
-            patch("open_scientist.phenix_setup.os.path.exists", return_value=True),
+            patch("openscientist.phenix_setup.os.path.exists", return_value=True),
             patch(
-                "open_scientist.phenix_setup.os.path.isdir",
+                "openscientist.phenix_setup.os.path.isdir",
                 return_value=False,
             ),
         ):
@@ -83,7 +83,7 @@ class TestSetupPhenixEnv:
         with patch.dict(
             os.environ,
             {
-                "OPEN_SCIENTIST_SECRET_KEY": "test",
+                "OPENSCIENTIST_SECRET_KEY": "test",
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
             },
             clear=True,
@@ -105,7 +105,7 @@ class TestSetupPhenixEnv:
         with patch.dict(
             os.environ,
             {
-                "OPEN_SCIENTIST_SECRET_KEY": "test",
+                "OPENSCIENTIST_SECRET_KEY": "test",
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
             },
             clear=True,
@@ -122,7 +122,7 @@ class TestSetupPhenixEnv:
             clear_settings_cache()
             # The settings validation rejects relative paths
             with pytest.raises(PydanticValidationError, match="absolute path"):
-                from open_scientist.settings import get_settings
+                from openscientist.settings import get_settings
 
                 get_settings()
 
@@ -134,9 +134,9 @@ class TestSetupPhenixEnv:
                 setup_phenix_env(raise_on_error=True)
             assert "does not exist" in str(exc_info.value)
 
-    @patch("open_scientist.phenix_setup.subprocess.run")
-    @patch("open_scientist.phenix_setup.os.path.isdir")
-    @patch("open_scientist.phenix_setup.os.path.exists")
+    @patch("openscientist.phenix_setup.subprocess.run")
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
     def test_successful_setup(self, mock_exists, mock_isdir, mock_run):
         mock_exists.return_value = True
         mock_isdir.return_value = True
@@ -149,9 +149,9 @@ class TestSetupPhenixEnv:
             assert result is not None
             assert "PHENIX_HOME" in result
 
-    @patch("open_scientist.phenix_setup.subprocess.run")
-    @patch("open_scientist.phenix_setup.os.path.isdir")
-    @patch("open_scientist.phenix_setup.os.path.exists")
+    @patch("openscientist.phenix_setup.subprocess.run")
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_timeout_returns_none(self, mock_exists, mock_isdir, mock_run):
         import subprocess
@@ -162,9 +162,9 @@ class TestSetupPhenixEnv:
         result = setup_phenix_env()
         assert result is None
 
-    @patch("open_scientist.phenix_setup.subprocess.run")
-    @patch("open_scientist.phenix_setup.os.path.isdir")
-    @patch("open_scientist.phenix_setup.os.path.exists")
+    @patch("openscientist.phenix_setup.subprocess.run")
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_generic_exception_returns_none(self, mock_exists, mock_isdir, mock_run):
         mock_exists.return_value = True
@@ -173,8 +173,8 @@ class TestSetupPhenixEnv:
         result = setup_phenix_env()
         assert result is None
 
-    @patch("open_scientist.phenix_setup.os.path.isdir")
-    @patch("open_scientist.phenix_setup.os.path.exists")
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_missing_env_script_returns_none(self, mock_exists, mock_isdir):
         """Missing phenix_env.sh should return None."""
@@ -188,8 +188,8 @@ class TestSetupPhenixEnv:
         result = setup_phenix_env()
         assert result is None
 
-    @patch("open_scientist.phenix_setup.os.path.isdir")
-    @patch("open_scientist.phenix_setup.os.path.exists")
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_missing_env_script_raises_with_flag(self, mock_exists, mock_isdir):
         """Missing phenix_env.sh should raise when raise_on_error=True."""
@@ -215,7 +215,7 @@ class TestCheckPhenixAvailable:
         (phenix_dir / "phenix_env.sh").write_text("# phenix env")
 
         # Clear settings cache and set PHENIX_PATH
-        from open_scientist.settings import clear_settings_cache
+        from openscientist.settings import clear_settings_cache
 
         clear_settings_cache()
         monkeypatch.chdir(tmp_path)  # Avoid picking up .env
@@ -227,7 +227,7 @@ class TestCheckPhenixAvailable:
 
     def test_unavailable_when_phenix_not_configured(self, monkeypatch, tmp_path):
         """check_phenix_available returns False when Phenix is not configured."""
-        from open_scientist.settings import clear_settings_cache
+        from openscientist.settings import clear_settings_cache
 
         clear_settings_cache()
         monkeypatch.chdir(tmp_path)  # Avoid picking up .env
@@ -237,11 +237,11 @@ class TestCheckPhenixAvailable:
 
         clear_settings_cache()
 
-    @patch("open_scientist.phenix_setup.setup_phenix_env")
+    @patch("openscientist.phenix_setup.setup_phenix_env")
     def test_fallback_to_setup_phenix_env(self, mock_setup):
         """Falls back to setup_phenix_env when settings can't be loaded."""
         # Force settings to fail by making get_settings raise
-        with patch("open_scientist.settings.get_settings", side_effect=Exception("Settings error")):
+        with patch("openscientist.settings.get_settings", side_effect=Exception("Settings error")):
             mock_setup.return_value = {"PATH": "/usr/bin"}
             assert check_phenix_available() is True
 

@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from open_scientist.webapp_components.ui_components import format_uptime
-from open_scientist.webapp_components.utils.container_dashboard import (
+from openscientist.webapp_components.ui_components import format_uptime
+from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
 )
@@ -130,7 +130,7 @@ class TestCollectDashboardDockerDown:
     @pytest.mark.asyncio
     async def test_returns_unavailable_when_docker_down(self):
         with patch(
-            "open_scientist.webapp_components.utils.container_dashboard._get_docker_client",
+            "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
             return_value=None,
         ):
             data = await collect_dashboard_data()
@@ -168,13 +168,13 @@ class TestCollectDashboardGrouping:
 
         agent = _make_mock_container(
             "abc123",
-            "open_scientist-agent-abc",
-            {"open_scientist.type": "agent", "open_scientist.job_id": job_id},
+            "openscientist-agent-abc",
+            {"openscientist.type": "agent", "openscientist.job_id": job_id},
         )
         executor = _make_mock_container(
             "def456",
-            "open_scientist-exec-def",
-            {"open_scientist.type": "executor", "open_scientist.job_id": job_id},
+            "openscientist-exec-def",
+            {"openscientist.type": "executor", "openscientist.job_id": job_id},
         )
 
         mock_client = MagicMock()
@@ -191,23 +191,23 @@ class TestCollectDashboardGrouping:
 
         with (
             patch(
-                "open_scientist.settings.get_settings",
+                "openscientist.settings.get_settings",
                 return_value=mock_settings,
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._get_docker_client",
+                "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
                 return_value=mock_client,
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._list_open_scientist_containers",
+                "openscientist.webapp_components.utils.container_dashboard._list_openscientist_containers",
                 return_value=[agent, executor],
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
+                "openscientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
                 return_value=job_map,
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._get_container_stats",
+                "openscientist.webapp_components.utils.container_dashboard._get_container_stats",
                 return_value={},
             ),
         ):
@@ -217,7 +217,7 @@ class TestCollectDashboardGrouping:
         group = data.job_groups[0]
         assert group.job_id == job_id
         assert group.agent_container is not None
-        assert group.agent_container.name == "open_scientist-agent-abc"
+        assert group.agent_container.name == "openscientist-agent-abc"
         assert len(group.executor_containers) == 1
         assert data.orphan_containers == []
 
@@ -230,8 +230,8 @@ class TestCollectDashboardGrouping:
 
         container = _make_mock_container(
             "xyz789",
-            "open_scientist-agent-xyz",
-            {"open_scientist.type": "agent", "open_scientist.job_id": orphan_job_id},
+            "openscientist-agent-xyz",
+            {"openscientist.type": "agent", "openscientist.job_id": orphan_job_id},
             status="exited",
         )
 
@@ -239,19 +239,19 @@ class TestCollectDashboardGrouping:
 
         with (
             patch(
-                "open_scientist.settings.get_settings",
+                "openscientist.settings.get_settings",
                 return_value=mock_settings,
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._get_docker_client",
+                "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
                 return_value=mock_client,
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._list_open_scientist_containers",
+                "openscientist.webapp_components.utils.container_dashboard._list_openscientist_containers",
                 return_value=[container],
             ),
             patch(
-                "open_scientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
+                "openscientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
                 return_value={},  # empty — job doesn't exist in DB
             ),
         ):
@@ -259,4 +259,4 @@ class TestCollectDashboardGrouping:
 
         assert len(data.job_groups) == 0
         assert len(data.orphan_containers) == 1
-        assert data.orphan_containers[0].name == "open_scientist-agent-xyz"
+        assert data.orphan_containers[0].name == "openscientist-agent-xyz"

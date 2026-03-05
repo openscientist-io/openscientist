@@ -1,7 +1,7 @@
 # OpenScientist Executor Container
 # Minimal image for isolated Python code execution
 
-FROM open_scientist-base:latest
+FROM openscientist-base:latest
 
 # Create non-root user for security
 RUN useradd --create-home executor
@@ -41,11 +41,11 @@ RUN uv pip install --system -r requirements-executor.txt
 RUN mkdir -p /data /output && chown executor:executor /data /output
 
 # Copy executor module
-COPY src/open_scientist_executor /app/open_scientist_executor
-COPY src/open_scientist /app/open_scientist
+COPY src/openscientist_executor /app/openscientist_executor
+COPY src/openscientist /app/openscientist
 
 # Switch to non-root user
 USER executor
 
 # Run the executor module
-ENTRYPOINT ["python", "-m", "open_scientist_executor"]
+ENTRYPOINT ["python", "-m", "openscientist_executor"]

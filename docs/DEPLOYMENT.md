@@ -56,29 +56,29 @@ The Docker setup mounts the following directories:
 ### View jobs
 
 ```bash
-docker-compose exec open_scientist python -m open_scientist.job_manager list
+docker-compose exec openscientist python -m openscientist.job_manager list
 ```
 
 ### Get job details
 
 ```bash
-docker-compose exec open_scientist python -m open_scientist.job_manager get <job_id>
+docker-compose exec openscientist python -m openscientist.job_manager get <job_id>
 ```
 
 ### Delete a job
 
 ```bash
-docker-compose exec open_scientist python -m open_scientist.job_manager delete <job_id>
+docker-compose exec openscientist python -m openscientist.job_manager delete <job_id>
 ```
 
 ### Clean up old jobs
 
 ```bash
 # Delete jobs older than 7 days (keep completed)
-docker-compose exec open_scientist python -m open_scientist.job_manager cleanup --days 7
+docker-compose exec openscientist python -m openscientist.job_manager cleanup --days 7
 
 # Delete all old jobs including completed
-docker-compose exec open_scientist python -m open_scientist.job_manager cleanup --days 7 --delete-completed
+docker-compose exec openscientist python -m openscientist.job_manager cleanup --days 7 --delete-completed
 ```
 
 ## Monitoring
@@ -104,7 +104,7 @@ docker-compose ps
 The container includes a health check that pings the web interface every 30 seconds.
 
 ```bash
-docker inspect open_scientist-open_scientist-1 --format='{{.State.Health.Status}}'
+docker inspect openscientist-openscientist-1 --format='{{.State.Health.Status}}'
 ```
 
 ## Backup and Restore
@@ -113,20 +113,20 @@ docker inspect open_scientist-open_scientist-1 --format='{{.State.Health.Status}
 
 ```bash
 # Create backup
-tar -czf open_scientist-jobs-backup-$(date +%Y%m%d).tar.gz jobs/
+tar -czf openscientist-jobs-backup-$(date +%Y%m%d).tar.gz jobs/
 
 # Copy out of container
-docker cp open_scientist-open_scientist-1:/app/jobs ./jobs-backup
+docker cp openscientist-openscientist-1:/app/jobs ./jobs-backup
 ```
 
 ### Restore jobs
 
 ```bash
 # Extract backup
-tar -xzf open_scientist-jobs-backup-YYYYMMDD.tar.gz
+tar -xzf openscientist-jobs-backup-YYYYMMDD.tar.gz
 
 # Copy into container
-docker cp ./jobs open_scientist-open_scientist-1:/app/
+docker cp ./jobs openscientist-openscientist-1:/app/
 ```
 
 ## Troubleshooting
@@ -155,14 +155,14 @@ docker cp ./jobs open_scientist-open_scientist-1:/app/
 Check your budget:
 
 ```bash
-docker-compose exec open_scientist python -c "from open_scientist.cost_tracker import get_budget_info; print(get_budget_info())"
+docker-compose exec openscientist python -c "from openscientist.cost_tracker import get_budget_info; print(get_budget_info())"
 ```
 
 ### Job stuck in "running" state
 
 1. Check job manager:
    ```bash
-   docker-compose exec open_scientist python -m open_scientist.job_manager get <job_id>
+   docker-compose exec openscientist python -m openscientist.job_manager get <job_id>
    ```
 
 2. Check job logs:
@@ -172,7 +172,7 @@ docker-compose exec open_scientist python -c "from open_scientist.cost_tracker i
 
 3. Cancel the job:
    ```bash
-   docker-compose exec open_scientist python -c "from open_scientist.job_manager import JobManager; JobManager().cancel_job('<job_id>')"
+   docker-compose exec openscientist python -c "from openscientist.job_manager import JobManager; JobManager().cancel_job('<job_id>')"
    ```
 
 ## Production Deployment
@@ -196,7 +196,7 @@ docker-compose exec open_scientist python -c "from open_scientist.cost_tracker i
 
 3. **Use HTTPS**: Set up SSL/TLS certificates
    ```bash
-   certbot --nginx -d open-scientist.yourdomain.com
+   certbot --nginx -d openscientist.yourdomain.com
    ```
 
 4. **Limit resource usage**: Add resource limits to docker-compose.yml
@@ -247,7 +247,7 @@ docker-compose down
 docker-compose down -v
 
 # Remove images
-docker rmi open_scientist-open_scientist
+docker rmi openscientist-openscientist
 ```
 
 ## Support

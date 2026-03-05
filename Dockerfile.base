@@ -24,7 +24,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 
 # Stub package so uv can do the editable install
-RUN mkdir -p src/open_scientist && touch src/open_scientist/__init__.py
+RUN mkdir -p src/openscientist && touch src/openscientist/__init__.py
 
 # Install all deps — cached until pyproject.toml or uv.lock changes
 RUN uv pip install --system -e .

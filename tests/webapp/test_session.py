@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 
-from open_scientist.webapp_components.utils.session import (
+from openscientist.webapp_components.utils.session import (
     _uploaded_files,
     add_uploaded_file,
     clear_uploaded_files,

@@ -13,8 +13,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.database.models import Skill, SkillSource
-from open_scientist.skill_ingestion import (
+from openscientist.database.models import Skill, SkillSource
+from openscientist.skill_ingestion import (
     GitHubSkillIngester,
     LocalSkillIngester,
     SkillParseError,

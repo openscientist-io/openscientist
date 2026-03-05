@@ -12,12 +12,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.database import (
+from openscientist.database import (
     list_rls_policies,
     set_current_user,
     verify_rls_enabled,
 )
-from open_scientist.database.models import Job, JobShare, User
+from openscientist.database.models import Job, JobShare, User
 from tests.helpers import enable_rls
 
 
@@ -283,22 +283,22 @@ async def test_orphaned_jobs_visible(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_session_enforces_rls(test_engine):
-    """get_session() must enforce RLS via SET ROLE open_scientist_app.
+    """get_session() must enforce RLS via SET ROLE openscientist_app.
 
     Verifies that the standard session factory (get_session) drops privileges
-    to open_scientist_app so that RLS policies are actually enforced. Without this,
+    to openscientist_app so that RLS policies are actually enforced. Without this,
     a superuser or BYPASSRLS connection silently skips all RLS policies.
     """
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from open_scientist.database.session import _set_app_role
+    from openscientist.database.session import _set_app_role
 
     # Create test data using admin session (bypasses RLS)
     session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
     async with session_factory() as admin_session:
-        await admin_session.execute(text("SET ROLE open_scientist_admin"))
+        await admin_session.execute(text("SET ROLE openscientist_admin"))
 
         alice = User(email="alice_gs@example.com", name="Alice")
         bob = User(email="bob_gs@example.com", name="Bob")
@@ -312,7 +312,7 @@ async def test_get_session_enforces_rls(test_engine):
 
         alice_id = alice.id
 
-    # Now simulate get_session() behavior: SET ROLE open_scientist_app + set_current_user
+    # Now simulate get_session() behavior: SET ROLE openscientist_app + set_current_user
     async with session_factory() as user_session:
         await _set_app_role(user_session)  # This is what get_session() now does
         await set_current_user(user_session, alice_id)
@@ -323,7 +323,7 @@ async def test_get_session_enforces_rls(test_engine):
         # With RLS enforced, Alice should only see her own job
         assert len(visible) == 1, (
             f"RLS NOT ENFORCED: Alice sees {len(visible)} jobs instead of 1. "
-            f"get_session() must SET ROLE open_scientist_app for RLS to work."
+            f"get_session() must SET ROLE openscientist_app for RLS to work."
         )
         assert visible[0].title == "Alice get_session job"
 
@@ -338,7 +338,7 @@ async def test_get_session_enforces_rls(test_engine):
 async def test_bypassrls_role_sees_all_jobs(test_engine):
     """Verify that admin/BYPASSRLS role can see all jobs (sanity check).
 
-    Without SET ROLE open_scientist_app, the session role bypasses RLS even when
+    Without SET ROLE openscientist_app, the session role bypasses RLS even when
     set_current_user() is called. This test documents that behavior.
     """
     from sqlalchemy import text
@@ -347,7 +347,7 @@ async def test_bypassrls_role_sees_all_jobs(test_engine):
     session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
 
     async with session_factory() as admin_session:
-        await admin_session.execute(text("SET ROLE open_scientist_admin"))
+        await admin_session.execute(text("SET ROLE openscientist_admin"))
 
         alice = User(email="alice_bypass@example.com", name="Alice")
         bob = User(email="bob_bypass@example.com", name="Bob")
@@ -363,7 +363,7 @@ async def test_bypassrls_role_sees_all_jobs(test_engine):
 
     # Use admin role (BYPASSRLS) — RLS is NOT enforced
     async with session_factory() as admin_session:
-        await admin_session.execute(text("SET ROLE open_scientist_admin"))
+        await admin_session.execute(text("SET ROLE openscientist_admin"))
         await set_current_user(admin_session, alice_id)
 
         result = await admin_session.execute(select(Job))
@@ -394,11 +394,11 @@ def test_oauth_callback_uses_admin_session():
 
     User creation/update during OAuth login is a cross-tenant operation
     (no user context exists yet). Using get_session() would fail because
-    SET ROLE open_scientist_app + no set_current_user = zero rows visible.
+    SET ROLE openscientist_app + no set_current_user = zero rows visible.
     """
     import inspect
 
-    from open_scientist.auth.fastapi_routes import oauth_callback
+    from openscientist.auth.fastapi_routes import oauth_callback
 
     source = inspect.getsource(oauth_callback)
     assert "get_admin_session" in source, (
@@ -420,7 +420,7 @@ def test_auth_middleware_uses_admin_session():
     """
     import inspect
 
-    from open_scientist.auth.middleware import validate_session
+    from openscientist.auth.middleware import validate_session
 
     source = inspect.getsource(validate_session)
     assert "get_admin_session" in source, (
@@ -432,16 +432,16 @@ def test_auth_middleware_uses_admin_session():
 def test_get_session_sets_app_role():
     """get_session() must call _set_app_role to enforce RLS.
 
-    Without SET ROLE open_scientist_app, the main database user (typically a
+    Without SET ROLE openscientist_app, the main database user (typically a
     superuser) bypasses all RLS policies silently.
     """
     import inspect
 
-    from open_scientist.database.session import get_session
+    from openscientist.database.session import get_session
 
     source = inspect.getsource(get_session)
     assert "_set_app_role" in source, (
-        "get_session() must call _set_app_role() to SET ROLE open_scientist_app. "
+        "get_session() must call _set_app_role() to SET ROLE openscientist_app. "
         "Without this, superuser connections bypass all RLS policies."
     )
 
@@ -453,7 +453,7 @@ def test_mock_login_uses_admin_session():
     """
     import inspect
 
-    from open_scientist.auth.fastapi_routes import mock_admin_oauth_login, mock_oauth_login
+    from openscientist.auth.fastapi_routes import mock_admin_oauth_login, mock_oauth_login
 
     for fn in [mock_oauth_login, mock_admin_oauth_login]:
         source = inspect.getsource(fn)
@@ -471,7 +471,7 @@ def test_logout_uses_admin_session():
     """
     import inspect
 
-    from open_scientist.auth.fastapi_routes import logout
+    from openscientist.auth.fastapi_routes import logout
 
     source = inspect.getsource(logout)
     assert "get_admin_session" in source, (
@@ -483,18 +483,18 @@ def test_logout_uses_admin_session():
 def test_set_app_role_must_not_swallow_errors():
     """_set_app_role must raise if SET ROLE fails, never silently continue.
 
-    If _set_app_role catches exceptions (e.g. missing open_scientist_app role) and
+    If _set_app_role catches exceptions (e.g. missing openscientist_app role) and
     continues, the session stays as superuser and ALL RLS is bypassed.
     This is the exact bug that let users see each other's jobs.
     """
     import inspect
 
-    from open_scientist.database.session import _set_app_role
+    from openscientist.database.session import _set_app_role
 
     source = inspect.getsource(_set_app_role)
     assert "except" not in source, (
         "_set_app_role must NOT catch exceptions. A silent fallback to "
-        "superuser bypasses all RLS policies. If SET ROLE open_scientist_app fails, "
+        "superuser bypasses all RLS policies. If SET ROLE openscientist_app fails, "
         "the error must propagate so the request fails loudly."
     )
 
@@ -503,20 +503,20 @@ def test_user_facing_pages_use_get_session():
     """User-facing pages must use get_session(), not bare AsyncSessionLocal().
 
     AsyncSessionLocal() (without thread_safe=True) creates sessions on the
-    main engine as the database superuser. Without SET ROLE open_scientist_app, the
+    main engine as the database superuser. Without SET ROLE openscientist_app, the
     superuser bypasses all RLS policies. Pages must use get_session() which
     automatically drops privileges.
 
     Note: AsyncSessionLocal(thread_safe=True) in job_manager._db_* functions
-    is acceptable because those functions manually call SET ROLE open_scientist_app
+    is acceptable because those functions manually call SET ROLE openscientist_app
     when a user_id is provided.
     """
     import ast
     from pathlib import Path
 
     # Files to inspect: all webapp_components pages + ui_components
-    pages_dir = Path("src/open_scientist/webapp_components/pages")
-    ui_components = Path("src/open_scientist/webapp_components/ui_components.py")
+    pages_dir = Path("src/openscientist/webapp_components/pages")
+    ui_components = Path("src/openscientist/webapp_components/ui_components.py")
 
     files_to_check = [*list(pages_dir.glob("*.py")), ui_components]
     violations = []
@@ -560,6 +560,6 @@ def test_user_facing_pages_use_get_session():
 
     assert not violations, (
         "AsyncSessionLocal() (without thread_safe=True) found in user-facing code. "
-        "Use get_session() instead to enforce RLS via SET ROLE open_scientist_app.\n"
+        "Use get_session() instead to enforce RLS via SET ROLE openscientist_app.\n"
         "Violations:\n" + "\n".join(f"  - {v}" for v in violations)
     )

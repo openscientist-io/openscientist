@@ -1,11 +1,11 @@
-"""Tests for open_scientist.job_container module."""
+"""Tests for openscientist.job_container module."""
 
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from open_scientist.job_container.runner import JobContainerRunner
+from openscientist.job_container.runner import JobContainerRunner
 
 
 class TestJobContainerRunner:

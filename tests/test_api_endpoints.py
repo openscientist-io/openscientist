@@ -16,8 +16,8 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.api.auth import hash_secret
-from open_scientist.database.models import APIKey, Job, User
+from openscientist.api.auth import hash_secret
+from openscientist.database.models import APIKey, Job, User
 from tests.helpers import enable_rls
 
 
@@ -135,10 +135,10 @@ def _build_authenticated_app(db_session: AsyncSession, user: User):
     """Create an app with authenticated user + RLS-aware session overrides."""
     from fastapi import FastAPI
 
-    from open_scientist.api.auth import get_current_user_from_api_key
-    from open_scientist.api.router import api_router as router
-    from open_scientist.database.rls import set_current_user
-    from open_scientist.database.session import get_session
+    from openscientist.api.auth import get_current_user_from_api_key
+    from openscientist.api.router import api_router as router
+    from openscientist.database.rls import set_current_user
+    from openscientist.database.session import get_session
 
     app = FastAPI()
 
@@ -164,7 +164,7 @@ class TestHealthEndpoint:
         # Create a minimal FastAPI app for testing
         from fastapi import FastAPI
 
-        from open_scientist.api.router import api_router as router
+        from openscientist.api.router import api_router as router
 
         app = FastAPI()
         app.include_router(router)
@@ -178,7 +178,7 @@ class TestHealthEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
-        assert data["api"] == "open-scientist"
+        assert data["api"] == "openscientist"
 
 
 class TestAPIKeyEndpoints:
@@ -189,7 +189,7 @@ class TestAPIKeyEndpoints:
         """Creating an API key requires authentication."""
         from fastapi import FastAPI
 
-        from open_scientist.api.router import api_router as router
+        from openscientist.api.router import api_router as router
 
         app = FastAPI()
         app.include_router(router)
@@ -216,9 +216,9 @@ class TestAPIKeyEndpoints:
         """Create a new API key successfully."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -262,9 +262,9 @@ class TestAPIKeyEndpoints:
         """List API keys for authenticated user."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         _api_key, full_key = test_api_key_db
 
@@ -308,9 +308,9 @@ class TestAPIKeyEndpoints:
         """Revoke an API key."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         _api_key, full_key = test_api_key_db
 
@@ -362,9 +362,9 @@ class TestAPIKeyEndpoints:
         """Duplicate API key name for same user is rejected."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         _api_key, full_key = test_api_key_db
 
@@ -400,7 +400,7 @@ class TestJobEndpoints:
 
     def test_jobs_endpoint_docstrings_are_domain_agnostic(self):
         """Jobs endpoint docs should not be restricted to crystallography wording."""
-        from open_scientist.api.endpoints import jobs as jobs_endpoints
+        from openscientist.api.endpoints import jobs as jobs_endpoints
 
         module_doc = (jobs_endpoints.__doc__ or "").lower()
         create_doc = (jobs_endpoints.create_job.__doc__ or "").lower()
@@ -420,10 +420,10 @@ class TestJobEndpoints:
         _ = test_job_db
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -467,10 +467,10 @@ class TestJobEndpoints:
         """Get job details."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -513,10 +513,10 @@ class TestJobEndpoints:
         """Job detail should use DB fields for research metadata."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -558,10 +558,10 @@ class TestJobEndpoints:
         """Get job status (lightweight endpoint)."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -604,10 +604,10 @@ class TestJobEndpoints:
         """Getting a non-existent job returns 404."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -647,10 +647,10 @@ class TestJobEndpoints:
         """Malformed job IDs should return client errors, not 500s."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -690,10 +690,10 @@ class TestJobEndpoints:
         """Users cannot access jobs they don't own."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -764,7 +764,7 @@ class TestJobEndpoints:
         mock_job_manager.cancel_job = MagicMock()
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -803,7 +803,7 @@ class TestJobEndpoints:
         mock_job_manager.cancel_job = MagicMock()
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -842,7 +842,7 @@ class TestJobEndpoints:
         mock_job_manager.cancel_job = MagicMock()
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -895,10 +895,10 @@ class TestJobEndpoints:
 
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -933,10 +933,10 @@ class TestJobEndpoints:
 
         with (
             patch(
-                "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+                "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
             ),
             patch(
-                "open_scientist.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
+                "openscientist.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
             ) as mock_get_job,
         ):
             mock_get_job.return_value = mock_loaded_job
@@ -976,10 +976,10 @@ class TestJobEndpoints:
 
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1021,10 +1021,10 @@ class TestJobEndpoints:
 
         with (
             patch(
-                "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+                "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
             ),
             patch(
-                "open_scientist.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
+                "openscientist.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
             ) as mock_get_job,
         ):
             mock_get_job.return_value = mock_loaded_job
@@ -1071,10 +1071,10 @@ class TestJobEndpoints:
 
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1114,10 +1114,10 @@ class TestJobEndpoints:
 
         with (
             patch(
-                "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+                "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
             ),
             patch(
-                "open_scientist.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
+                "openscientist.api.endpoints.jobs.get_job_by_id", new_callable=AsyncMock
             ) as mock_get_job,
         ):
             mock_get_job.return_value = mock_loaded_job
@@ -1156,7 +1156,7 @@ class TestJobEndpoints:
         mock_job_manager.create_job = MagicMock(side_effect=ValueError("Cannot create job: limit"))
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1187,9 +1187,9 @@ class TestJobEndpoints:
         """Unapproved users cannot start jobs via the API."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1212,7 +1212,7 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        with patch("open_scientist.api.endpoints.jobs._get_job_manager") as mock_get_job_manager:
+        with patch("openscientist.api.endpoints.jobs._get_job_manager") as mock_get_job_manager:
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1247,10 +1247,10 @@ class TestJobEndpoints:
         _ = (test_job_db, completed_job_db)
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1293,10 +1293,10 @@ class TestJobEndpoints:
         """Report endpoint requires a completed job."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1338,10 +1338,10 @@ class TestJobEndpoints:
         """Report endpoint returns report for completed job."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1365,7 +1365,7 @@ class TestJobEndpoints:
         app.include_router(router)
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"
+            "openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1390,10 +1390,10 @@ class TestJobEndpoints:
         """Report endpoint should read artifacts from configured JobManager jobs_dir."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1419,7 +1419,7 @@ class TestJobEndpoints:
         app.include_router(router)
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1478,7 +1478,7 @@ class TestJobEndpoints:
         app = _build_authenticated_app(db_session, test_user_db)
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"
+            "openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1513,7 +1513,7 @@ class TestJobEndpoints:
         app = _build_authenticated_app(db_session, test_user_db)
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"
+            "openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path / "jobs"
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1554,7 +1554,7 @@ class TestJobEndpoints:
         mock_job_manager.jobs_dir = custom_jobs_dir
 
         with patch(
-            "open_scientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
@@ -1588,10 +1588,10 @@ class TestJobSharingEndpoints:
 
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1613,7 +1613,7 @@ class TestJobSharingEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        with patch("open_scientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1649,10 +1649,10 @@ class TestJobSharingEndpoints:
 
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1674,7 +1674,7 @@ class TestJobSharingEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        with patch("open_scientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1704,11 +1704,11 @@ class TestJobSharingEndpoints:
         from fastapi import FastAPI
         from sqlalchemy import select
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.models import JobShare
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.models import JobShare
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1733,7 +1733,7 @@ class TestJobSharingEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        with patch("open_scientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -1769,11 +1769,11 @@ class TestJobSharingEndpoints:
 
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.models import JobShare
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.models import JobShare
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1827,10 +1827,10 @@ class TestJobSharingEndpoints:
         """Non-owner cannot list shares for a job."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1884,11 +1884,11 @@ class TestJobSharingEndpoints:
         """Revoke a job share."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.models import JobShare
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.models import JobShare
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -1938,11 +1938,11 @@ class TestJobSharingEndpoints:
         """Non-owner cannot revoke a share."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.models import JobShare
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.models import JobShare
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -2001,10 +2001,10 @@ class TestJobSharingEndpoints:
         """Malformed share IDs should return client errors, not 500s."""
         from fastapi import FastAPI
 
-        from open_scientist.api.auth import get_current_user_from_api_key
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.rls import set_current_user
-        from open_scientist.database.session import get_session
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.rls import set_current_user
+        from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
 
@@ -2045,8 +2045,8 @@ class TestAuthenticationFlow:
         """Invalid API key format returns 401."""
         from fastapi import FastAPI
 
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         app = FastAPI()
 
@@ -2076,9 +2076,9 @@ class TestAuthenticationFlow:
         """Non-existent API key returns 401."""
         from fastapi import FastAPI
 
-        from open_scientist.api import auth as api_auth
-        from open_scientist.api.router import api_router as router
-        from open_scientist.database.session import get_session
+        from openscientist.api import auth as api_auth
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
 
         app = FastAPI()
 

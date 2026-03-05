@@ -46,7 +46,7 @@ Given an experimental PDB/mmCIF file and an AlphaFold prediction, OpenScientist-
 
 #### 1. MCP Tools
 
-**Location:** `src/open_scientist/mcp_server/phenix_tools.py` (new file)
+**Location:** `src/openscientist/mcp_server/phenix_tools.py` (new file)
 
 Add three new MCP tools for Phenix operations:
 
@@ -72,7 +72,7 @@ Add three new MCP tools for Phenix operations:
 Tools are conditionally registered only if `PHENIX_PATH` is configured:
 
 ```python
-# In src/open_scientist/mcp_server/server.py
+# In src/openscientist/mcp_server/server.py
 phenix_path = os.getenv('PHENIX_PATH')
 if phenix_path:
     from . import phenix_tools
@@ -97,7 +97,7 @@ These skills provide the agent with structural biology domain knowledge.
 
 #### 3. File Upload Handling
 
-**Location:** `src/open_scientist/web_app.py`
+**Location:** `src/openscientist/web_app.py`
 
 Extend file upload to support PDB/mmCIF formats:
 
@@ -122,13 +122,13 @@ Update file handling logic:
 # If not set, Phenix tools will be unavailable
 PHENIX_PATH=/Applications/phenix-1.21.2-5419
 
-# Note: Allowed file extensions are configured in src/open_scientist/web_app.py
+# Note: Allowed file extensions are configured in src/openscientist/web_app.py
 # Currently supports: .csv, .tsv, .pdb, .cif, .ent, .mmcif
 ```
 
 **Phenix environment setup:**
 
-Create `src/open_scientist/phenix_setup.py`:
+Create `src/openscientist/phenix_setup.py`:
 
 ```python
 import os
@@ -233,7 +233,7 @@ While the agent is fully autonomous, a typical workflow might follow this patter
 
 **File structure:**
 ```
-src/open_scientist/mcp_server/
+src/openscientist/mcp_server/
 ├── __init__.py
 ├── server.py           # Core tools (execute_code, search_pubmed, etc.)
 ├── phenix_tools.py     # Phenix-specific tools (new)
@@ -247,7 +247,7 @@ async def run_phenix_tool(tool_name: str, input_files: list[str],
     """Execute a Phenix command-line tool"""
 
     # Get Phenix environment
-    from open_scientist.phenix_setup import setup_phenix_env
+    from openscientist.phenix_setup import setup_phenix_env
     phenix_env = setup_phenix_env()
     if not phenix_env:
         return [types.TextContent(

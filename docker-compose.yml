@@ -1,32 +1,32 @@
 # Docker Compose for OpenScientist
 #
 # Usage:
-#   Development: Set OPEN_SCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth
+#   Development: Set OPENSCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth
 #
-#   Production:  docker compose up  (OPEN_SCIENTIST_DEV_MODE unset or false)
+#   Production:  docker compose up  (OPENSCIENTIST_DEV_MODE unset or false)
 
 services:
   postgres:
     image: postgres:18
-    restart: ${OPEN_SCIENTIST_RESTART_POLICY:-unless-stopped}
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-open_scientist}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-open_scientist_dev_password}
-      POSTGRES_DB: ${POSTGRES_DB:-open_scientist}
+      POSTGRES_USER: ${POSTGRES_USER:-openscientist}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openscientist_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-openscientist}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
-      # Init script creates open_scientist_admin role for RLS bypass
+      # Init script creates openscientist_admin role for RLS bypass
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-open_scientist} -d ${POSTGRES_DB:-open_scientist}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openscientist} -d ${POSTGRES_DB:-openscientist}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
-  open_scientist:
+  openscientist:
     stdin_open: true # docker run -i
     tty: true        # docker run -t
     platform: linux/amd64
@@ -37,15 +37,15 @@ services:
     ports:
       - "${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
-    restart: ${OPEN_SCIENTIST_RESTART_POLICY:-unless-stopped}
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # All credentials and settings come from .env (ANTHROPIC_API_KEY, CLAUDE_PROVIDER, etc.)
     env_file:
       - path: .env
         required: false
     environment:
       # Database URLs use the 'postgres' service hostname — must override any .env value
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-open_scientist}:${POSTGRES_PASSWORD:-open_scientist_dev_password}@postgres:5432/${POSTGRES_DB:-open_scientist}
-      ADMIN_DATABASE_URL: postgresql+asyncpg://open_scientist_admin:${POSTGRES_PASSWORD:-open_scientist_dev_password}@postgres:5432/${POSTGRES_DB:-open_scientist}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-openscientist}:${POSTGRES_PASSWORD:-openscientist_dev_password}@postgres:5432/${POSTGRES_DB:-openscientist}
+      ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_PASSWORD:-openscientist_dev_password}@postgres:5432/${POSTGRES_DB:-openscientist}
       PORT: ${PORT:-8080}
 
       # Phenix: host path (from .env) is mounted at /opt/phenix inside the container
@@ -56,16 +56,16 @@ services:
       GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
 
       # Container isolation defaults
-      OPEN_SCIENTIST_USE_CONTAINER_ISOLATION: ${OPEN_SCIENTIST_USE_CONTAINER_ISOLATION:-true}
-      OPEN_SCIENTIST_EXECUTOR_IMAGE: ${OPEN_SCIENTIST_EXECUTOR_IMAGE:-open_scientist-executor:latest}
-      OPEN_SCIENTIST_EXECUTOR_MEMORY: ${OPEN_SCIENTIST_EXECUTOR_MEMORY:-2g}
-      OPEN_SCIENTIST_EXECUTOR_CPU: ${OPEN_SCIENTIST_EXECUTOR_CPU:-0.5}
-      OPEN_SCIENTIST_AGENT_MEMORY: ${OPEN_SCIENTIST_AGENT_MEMORY:-8g}
-      OPEN_SCIENTIST_AGENT_CPU: ${OPEN_SCIENTIST_AGENT_CPU:-2.0}
-      OPEN_SCIENTIST_HOST_PROJECT_DIR: ${OPEN_SCIENTIST_HOST_PROJECT_DIR:-}
+      OPENSCIENTIST_USE_CONTAINER_ISOLATION: ${OPENSCIENTIST_USE_CONTAINER_ISOLATION:-true}
+      OPENSCIENTIST_EXECUTOR_IMAGE: ${OPENSCIENTIST_EXECUTOR_IMAGE:-openscientist-executor:latest}
+      OPENSCIENTIST_EXECUTOR_MEMORY: ${OPENSCIENTIST_EXECUTOR_MEMORY:-2g}
+      OPENSCIENTIST_EXECUTOR_CPU: ${OPENSCIENTIST_EXECUTOR_CPU:-0.5}
+      OPENSCIENTIST_AGENT_MEMORY: ${OPENSCIENTIST_AGENT_MEMORY:-8g}
+      OPENSCIENTIST_AGENT_CPU: ${OPENSCIENTIST_AGENT_CPU:-2.0}
+      OPENSCIENTIST_HOST_PROJECT_DIR: ${OPENSCIENTIST_HOST_PROJECT_DIR:-}
 
       # Derived settings not expressible in .env
-      PYTHONDONTWRITEBYTECODE: ${OPEN_SCIENTIST_DEV_MODE:+1}
+      PYTHONDONTWRITEBYTECODE: ${OPENSCIENTIST_DEV_MODE:+1}
 
     volumes:
       - ./jobs:/app/jobs
@@ -95,23 +95,23 @@ services:
       start_period: 40s
 
     labels:
-      - "open_scientist.mode=${OPEN_SCIENTIST_DEV_MODE:-production}"
+      - "openscientist.mode=${OPENSCIENTIST_DEV_MODE:-production}"
 
-  # open-scientist-agent: build-only service — never started by compose.
+  # openscientist-agent: build-only service — never started by compose.
   # Agent containers are spawned at runtime by JobContainerRunner.
-  # Build with:  docker compose build open-scientist-agent
-  #          or  docker build -f Dockerfile.agent -t open-scientist-agent:latest .
-  open-scientist-agent:
+  # Build with:  docker compose build openscientist-agent
+  #          or  docker build -f Dockerfile.agent -t openscientist-agent:latest .
+  openscientist-agent:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: open-scientist-agent:latest
+    image: openscientist-agent:latest
     profiles: ["build-only"]  # Excluded from `docker compose up`
-    entrypoint: ["echo", "open-scientist-agent image built"]
+    entrypoint: ["echo", "openscientist-agent image built"]
 
 networks:
   default:
-    name: open_scientist_default
+    name: openscientist_default
 
 volumes:
   postgres_data:

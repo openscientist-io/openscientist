@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from open_scientist.document_reader import (
+from openscientist.document_reader import (
     extract_text_from_docx,
     extract_text_from_pdf,
     extract_text_from_xlsx,

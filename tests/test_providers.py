@@ -7,15 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from open_scientist.exceptions import ProviderError
-from open_scientist.providers import get_provider
-from open_scientist.providers.anthropic import AnthropicProvider
-from open_scientist.providers.base import BaseProvider, CostInfo
-from open_scientist.providers.bedrock import BedrockProvider
-from open_scientist.providers.cborg import CborgProvider
-from open_scientist.providers.foundry import FoundryProvider
-from open_scientist.providers.vertex import VertexProvider
-from open_scientist.settings import clear_settings_cache
+from openscientist.exceptions import ProviderError
+from openscientist.providers import get_provider
+from openscientist.providers.anthropic import AnthropicProvider
+from openscientist.providers.base import BaseProvider, CostInfo
+from openscientist.providers.bedrock import BedrockProvider
+from openscientist.providers.cborg import CborgProvider
+from openscientist.providers.foundry import FoundryProvider
+from openscientist.providers.vertex import VertexProvider
+from openscientist.settings import clear_settings_cache
 
 # ─── Concrete stub for testing BaseProvider ───────────────────────────
 
@@ -300,7 +300,7 @@ class TestCheckProviderConfig:
 
     @patch.dict(os.environ, {"SIMULATE_PROVIDER_ERROR": "true"})
     def test_simulate_error(self):
-        from open_scientist.providers import check_provider_config
+        from openscientist.providers import check_provider_config
 
         ok, name, errors = check_provider_config()
         assert ok is False
@@ -310,7 +310,7 @@ class TestCheckProviderConfig:
 
     @patch.dict(os.environ, {"CLAUDE_PROVIDER": "totally_bogus"})
     def test_unknown_provider(self):
-        from open_scientist.providers import check_provider_config
+        from openscientist.providers import check_provider_config
 
         ok, name, errors = check_provider_config()
         assert ok is False
@@ -325,7 +325,7 @@ class TestCheckProviderConfig:
         },
     )
     def test_valid_anthropic(self):
-        from open_scientist.providers import check_provider_config
+        from openscientist.providers import check_provider_config
 
         ok, name, errors = check_provider_config()
         assert ok is True
@@ -341,7 +341,7 @@ class TestCheckProviderConfig:
         },
     )
     def test_valid_cborg(self):
-        from open_scientist.providers import check_provider_config
+        from openscientist.providers import check_provider_config
 
         ok, name, errors = check_provider_config()
         assert ok is True
@@ -477,25 +477,25 @@ class TestProviderEnvironmentSwitching:
         [
             (
                 AnthropicProvider,
-                "open_scientist.providers.anthropic.get_settings",
+                "openscientist.providers.anthropic.get_settings",
                 "_anthropic_settings",
                 False,
             ),
             (
                 CborgProvider,
-                "open_scientist.providers.cborg.get_settings",
+                "openscientist.providers.cborg.get_settings",
                 "_cborg_settings",
                 False,
             ),
             (
                 VertexProvider,
-                "open_scientist.providers.vertex.get_settings",
+                "openscientist.providers.vertex.get_settings",
                 "_vertex_settings",
                 False,
             ),
             (
                 BedrockProvider,
-                "open_scientist.providers.bedrock.get_settings",
+                "openscientist.providers.bedrock.get_settings",
                 "_bedrock_settings",
                 True,
             ),
@@ -510,7 +510,7 @@ class TestProviderEnvironmentSwitching:
     ) -> None:
         with patch.dict(os.environ, {}, clear=True):
             with patch(
-                "open_scientist.providers.foundry.get_settings",
+                "openscientist.providers.foundry.get_settings",
                 return_value=self._foundry_settings(),
             ):
                 FoundryProvider().setup_environment()
@@ -521,7 +521,7 @@ class TestProviderEnvironmentSwitching:
             patchers = [patch(settings_patch_target, return_value=settings_factory())]
             if provider_cls is VertexProvider:
                 patchers.append(
-                    patch("open_scientist.providers.vertex.os.path.exists", return_value=True)
+                    patch("openscientist.providers.vertex.os.path.exists", return_value=True)
                 )
 
             with ExitStack() as stack:

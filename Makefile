@@ -2,7 +2,7 @@
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
-DEPLOY_DIR ?= ~/open_scientist
+DEPLOY_DIR ?= ~/openscientist
 COMPOSE_FILE ?= docker-compose.yml
 
 # Default target
@@ -37,16 +37,16 @@ restart: stop start
 
 build:
 	@echo "Building base image (Python, uv)..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t open_scientist-base:latest .
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t openscientist-base:latest .
 	@echo "Building OpenScientist main image..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
-		--build-arg OPEN_SCIENTIST_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+		--build-arg OPENSCIENTIST_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	@echo "Building executor image..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t open_scientist-executor:latest .
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t openscientist-executor:latest .
 	@echo "Building agent image..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t open-scientist-agent:latest .
-	@echo "All images built: open_scientist-base, open_scientist, open_scientist-executor, open-scientist-agent"
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t openscientist-agent:latest .
+	@echo "All images built: openscientist-base, openscientist, openscientist-executor, openscientist-agent"
 
 rebuild: build
 	docker compose -f $(COMPOSE_FILE) down --remove-orphans
@@ -59,7 +59,7 @@ logs:
 
 shell:
 	@echo "Opening shell in OpenScientist container..."
-	docker compose -f $(COMPOSE_FILE) exec open_scientist /bin/bash
+	docker compose -f $(COMPOSE_FILE) exec openscientist /bin/bash
 
 clean:
 	@echo "Removing containers and volumes..."
@@ -70,7 +70,7 @@ clean-jobs:
 	@echo "Cleaning up old job directories..."
 	@read -p "Delete jobs older than how many days? [7]: " days; \
 	days=$${days:-7}; \
-	docker compose -f $(COMPOSE_FILE) exec open_scientist python -m open_scientist.job_manager cleanup --days $$days
+	docker compose -f $(COMPOSE_FILE) exec openscientist python -m openscientist.job_manager cleanup --days $$days
 	@echo "Job cleanup complete"
 
 reset-db:
@@ -83,13 +83,13 @@ reset-db:
 		echo "Starting postgres..."; \
 		docker compose -f $(COMPOSE_FILE) up -d postgres; \
 		echo "Waiting for postgres to be ready..."; \
-		until docker compose -f $(COMPOSE_FILE) exec -T postgres pg_isready -U $${POSTGRES_USER:-open_scientist} -d $${POSTGRES_DB:-open_scientist} >/dev/null 2>&1; do \
+		until docker compose -f $(COMPOSE_FILE) exec -T postgres pg_isready -U $${POSTGRES_USER:-openscientist} -d $${POSTGRES_DB:-openscientist} >/dev/null 2>&1; do \
 			sleep 1; \
 		done; \
 		echo "Running migrations..."; \
-		docker compose -f $(COMPOSE_FILE) run --rm --no-deps open_scientist alembic upgrade head; \
+		docker compose -f $(COMPOSE_FILE) run --rm --no-deps openscientist alembic upgrade head; \
 		echo "Starting application..."; \
-		docker compose -f $(COMPOSE_FILE) up -d --remove-orphans open_scientist; \
+		docker compose -f $(COMPOSE_FILE) up -d --remove-orphans openscientist; \
 		echo "Database reset complete!"; \
 	else \
 		echo "Aborted."; \
@@ -98,7 +98,7 @@ reset-db:
 # Show job status
 status:
 	@echo "Job status:"
-	docker compose -f $(COMPOSE_FILE) exec open_scientist python -m open_scientist.job_manager summary
+	docker compose -f $(COMPOSE_FILE) exec openscientist python -m openscientist.job_manager summary
 
 # Deploy to production server
 deploy:
@@ -134,7 +134,7 @@ deploy:
 	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && make rebuild"
 	@echo ""
 	@echo "Step 4: Running database migrations on $(DEPLOY_HOST)..."
-	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && docker compose exec open_scientist alembic upgrade head"
+	@ssh $(DEPLOY_HOST) "cd $(DEPLOY_DIR) && docker compose exec openscientist alembic upgrade head"
 	@echo ""
 	@echo "========================================="
 	@echo "Deployment complete!"

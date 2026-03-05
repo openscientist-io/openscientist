@@ -9,11 +9,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.auth.middleware import get_current_user_id
-from open_scientist.database.models import Job, User
-from open_scientist.database.rls import set_current_user
-from open_scientist.database.session import get_session
-from open_scientist.webapp_components.share_routes import router
+from openscientist.auth.middleware import get_current_user_id
+from openscientist.database.models import Job, User
+from openscientist.database.rls import set_current_user
+from openscientist.database.session import get_session
+from openscientist.webapp_components.share_routes import router
 from tests.helpers import enable_rls
 
 
@@ -52,11 +52,11 @@ async def test_web_share_create_uses_admin_lookup_for_target_user(
     @asynccontextmanager
     async def mock_get_admin_session():
         # Temporarily elevate the same session for cross-user lookup.
-        await db_session.execute(text("SET ROLE open_scientist_admin"))
+        await db_session.execute(text("SET ROLE openscientist_admin"))
         try:
             yield db_session
         finally:
-            await db_session.execute(text("SET ROLE open_scientist_app"))
+            await db_session.execute(text("SET ROLE openscientist_app"))
             await set_current_user(db_session, test_user.id)
 
     app.dependency_overrides[get_session] = override_get_session
@@ -64,7 +64,7 @@ async def test_web_share_create_uses_admin_lookup_for_target_user(
     app.include_router(router)
 
     with patch(
-        "open_scientist.webapp_components.share_routes.get_admin_session", mock_get_admin_session
+        "openscientist.webapp_components.share_routes.get_admin_session", mock_get_admin_session
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -116,11 +116,11 @@ async def test_web_share_create_rejects_inactive_target_user(
 
     @asynccontextmanager
     async def mock_get_admin_session():
-        await db_session.execute(text("SET ROLE open_scientist_admin"))
+        await db_session.execute(text("SET ROLE openscientist_admin"))
         try:
             yield db_session
         finally:
-            await db_session.execute(text("SET ROLE open_scientist_app"))
+            await db_session.execute(text("SET ROLE openscientist_app"))
             await set_current_user(db_session, test_user.id)
 
     app.dependency_overrides[get_session] = override_get_session
@@ -128,7 +128,7 @@ async def test_web_share_create_rejects_inactive_target_user(
     app.include_router(router)
 
     with patch(
-        "open_scientist.webapp_components.share_routes.get_admin_session", mock_get_admin_session
+        "openscientist.webapp_components.share_routes.get_admin_session", mock_get_admin_session
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app),

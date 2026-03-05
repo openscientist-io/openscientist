@@ -57,27 +57,27 @@ Create a service account with permissions to call Vertex AI and read billing dat
 
 ```bash
 # Create service account
-gcloud iam service-accounts create open_scientist-vertex \
+gcloud iam service-accounts create openscientist-vertex \
     --display-name="OpenScientist Vertex AI Service Account"
 
 # Grant Vertex AI User role
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/aiplatform.user"
 
 # Grant BigQuery Data Viewer role (for billing data)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/bigquery.dataViewer"
 
 # Grant BigQuery Job User role (to run queries)
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/bigquery.jobUser"
 
 # Download service account key
-gcloud iam service-accounts keys create ~/open_scientist-vertex-key.json \
-    --iam-account=open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
+gcloud iam service-accounts keys create ~/openscientist-vertex-key.json \
+    --iam-account=openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
 **Security Note**: Store the service account key securely. Do not commit it to git.
@@ -168,7 +168,7 @@ CLAUDE_PROVIDER=vertex
 
 # Vertex AI configuration
 ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/open_scientist-vertex-key.json
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/openscientist-vertex-key.json
 CLOUD_ML_REGION=us-east5
 VERTEX_REGION_CLAUDE_4_5_SONNET=us-east5
 VERTEX_REGION_CLAUDE_4_5_HAIKU=us-east5
@@ -185,7 +185,7 @@ MAX_PROJECT_SPEND_TOTAL_USD=1000
 MAX_PROJECT_SPEND_24H_USD=50
 
 # Dev mode - enables mock OAuth login for development
-OPEN_SCIENTIST_DEV_MODE=true
+OPENSCIENTIST_DEV_MODE=true
 ```
 
 ### Environment Variable Reference
@@ -209,7 +209,7 @@ OPEN_SCIENTIST_DEV_MODE=true
 ```bash
 # Activate service account
 gcloud auth activate-service-account \
-    --key-file=/path/to/open_scientist-vertex-key.json
+    --key-file=/path/to/openscientist-vertex-key.json
 
 # Test Vertex AI access
 gcloud ai models list --region=us-east5 --limit=5
@@ -225,7 +225,7 @@ Start OpenScientist and check the logs:
 ```bash
 # With Docker
 docker-compose up -d
-docker logs open_scientist-open_scientist-1
+docker logs openscientist-openscientist-1
 
 # You should see:
 # INFO - Vertex AI provider environment configured
@@ -248,7 +248,7 @@ Visit http://localhost:8080/new and check the budget information card. It should
 Monitor the logs for Vertex AI API calls:
 
 ```bash
-docker logs -f open_scientist-open_scientist-1
+docker logs -f openscientist-openscientist-1
 ```
 
 ## Troubleshooting
@@ -261,7 +261,7 @@ docker logs -f open_scientist-open_scientist-1
 ```bash
 # Re-add IAM roles
 gcloud projects add-iam-policy-binding $PROJECT_ID \
-    --member="serviceAccount:open_scientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --member="serviceAccount:openscientist-vertex@${PROJECT_ID}.iam.gserviceaccount.com" \
     --role="roles/aiplatform.user"
 ```
 
@@ -500,7 +500,7 @@ gcloud run deploy budget-enforcer \
   --platform managed \
   --region us-east5 \
   --allow-unauthenticated \
-  --set-env-vars SERVICE_ACCOUNT_EMAIL=open_scientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com,GCP_PROJECT_ID=YOUR_PROJECT_ID \
+  --set-env-vars SERVICE_ACCOUNT_EMAIL=openscientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com,GCP_PROJECT_ID=YOUR_PROJECT_ID \
   --project=YOUR_PROJECT_ID
 ```
 
@@ -595,13 +595,13 @@ When the safety net triggers, you must manually re-enable the key:
 ```bash
 # 1. List keys to find the disabled one
 gcloud iam service-accounts keys list \
-  --iam-account=open_scientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
+  --iam-account=openscientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
 
 # Output shows KEY_ID and status
 
 # 2. Re-enable the key (replace KEY_ID with actual ID from above)
 gcloud iam service-accounts keys enable KEY_ID \
-  --iam-account=open_scientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
+  --iam-account=openscientist-vertex@YOUR_PROJECT_ID.iam.gserviceaccount.com
 ```
 
 **Via Console UI:**
@@ -646,7 +646,7 @@ gcloud logging read \
 - **Use Haiku for simple tasks**: Set `ANTHROPIC_SMALL_FAST_MODEL` appropriately
 - **Set budget limits**: Use `MAX_PROJECT_SPEND_*` variables to prevent overruns
 - **Monitor in GCP Console**: [Billing Reports](https://console.cloud.google.com/billing) shows real-time trends
-- **Clean up old jobs**: Run `python -m open_scientist.job_manager cleanup --days 7`
+- **Clean up old jobs**: Run `python -m openscientist.job_manager cleanup --days 7`
 - **Review quotas regularly**: Adjust based on actual usage patterns
 
 ## Additional Resources

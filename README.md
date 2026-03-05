@@ -65,7 +65,7 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd open_scientist
+cd openscientist
 
 # Create .env file (copy from example and configure)
 cp .env.example .env
@@ -91,8 +91,8 @@ Open your browser to `http://localhost:8080`
 ## Project Structure
 
 ```
-open_scientist/
-├── src/open_scientist/            # Core Python package
+openscientist/
+├── src/openscientist/            # Core Python package
 │   ├── agent/             # AgentExecutor protocol and SDKAgentExecutor
 │   ├── job/               # Job lifecycle, scheduling, and types
 │   ├── orchestrator/      # Discovery orchestration (setup, iteration, report)
@@ -233,12 +233,12 @@ Budget limits are checked before job creation. The web UI displays:
 
 ```bash
 # Dev mode - enables mock OAuth login for development
-OPEN_SCIENTIST_DEV_MODE=true
+OPENSCIENTIST_DEV_MODE=true
 ```
 
 ### Job Manager Settings
 
-In `src/open_scientist/web_app.py`:
+In `src/openscientist/web_app.py`:
 
 - `max_concurrent`: Maximum concurrent jobs (default: 1)
 - `jobs_dir`: Directory for job data (default: `jobs/`)
@@ -248,8 +248,8 @@ In `src/open_scientist/web_app.py`:
 If you have pre-database jobs on disk, run:
 
 ```bash
-docker compose exec open_scientist python -m open_scientist.job_manager bootstrap --jobs-dir /app/jobs --dry-run
-docker compose exec open_scientist python -m open_scientist.job_manager bootstrap --jobs-dir /app/jobs
+docker compose exec openscientist python -m openscientist.job_manager bootstrap --jobs-dir /app/jobs --dry-run
+docker compose exec openscientist python -m openscientist.job_manager bootstrap --jobs-dir /app/jobs
 ```
 
 Jobs with unresolved ownership are migrated as orphaned (`owner_id=NULL`) and

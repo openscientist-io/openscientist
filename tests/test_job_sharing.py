@@ -11,8 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.database.models import Job, JobShare, User
-from open_scientist.database.rls import set_current_user
+from openscientist.database.models import Job, JobShare, User
+from openscientist.database.rls import set_current_user
 from tests.helpers import enable_rls
 
 

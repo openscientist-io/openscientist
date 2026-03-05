@@ -2,7 +2,7 @@
 
 import pytest
 
-from open_scientist.knowledge_state import KnowledgeState
+from openscientist.knowledge_state import KnowledgeState
 
 
 @pytest.fixture
@@ -257,7 +257,7 @@ class TestVersionInfo:
     """Tests for version info metadata."""
 
     def test_set_version_info(self, ks):
-        ks.set_version_info({"claude_model": "claude-4", "open_scientist_commit": "abc123"})
+        ks.set_version_info({"claude_model": "claude-4", "openscientist_commit": "abc123"})
         assert ks.data["config"]["version_info"]["claude_model"] == "claude-4"
 
 

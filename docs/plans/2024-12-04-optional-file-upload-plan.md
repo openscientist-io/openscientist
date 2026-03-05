@@ -26,14 +26,14 @@ This plan outlines the changes needed to make file uploads optional while mainta
 
 ## Files to Modify
 
-1. `src/open_scientist/web_app.py` - Remove validation, update UI labels
-2. `src/open_scientist/orchestrator.py` - Handle empty data_files list
-3. `src/open_scientist/mcp_server/server.py` - Make --data-file optional
-4. `src/open_scientist/job_manager.py` - Allow empty data_files in validation
+1. `src/openscientist/web_app.py` - Remove validation, update UI labels
+2. `src/openscientist/orchestrator.py` - Handle empty data_files list
+3. `src/openscientist/mcp_server/server.py` - Make --data-file optional
+4. `src/openscientist/job_manager.py` - Allow empty data_files in validation
 
 ## Detailed Implementation Steps
 
-### Step 1: Update Web UI (`src/open_scientist/web_app.py`)
+### Step 1: Update Web UI (`src/openscientist/web_app.py`)
 
 **Location:** Lines 118-121, 197-202
 
@@ -82,7 +82,7 @@ This plan outlines the changes needed to make file uploads optional while mainta
 
 ---
 
-### Step 2: Update Job Creation (`src/open_scientist/orchestrator.py`)
+### Step 2: Update Job Creation (`src/openscientist/orchestrator.py`)
 
 **Location:** Lines 83-93, 106-116, 156
 
@@ -155,17 +155,17 @@ This plan outlines the changes needed to make file uploads optional while mainta
    # CHANGE from:
    mcp_config = {
        "mcpServers": {
-           "open_scientist-tools": {
+           "openscientist-tools": {
                "command": "python",
                "args": [
-                   "-m", "open_scientist.mcp_server",
+                   "-m", "openscientist.mcp_server",
                    "--job-dir", str(job_dir.absolute()),
                    "--data-file", str(data_file.absolute())
                ],
 
    # TO:
    mcp_args = [
-       "-m", "open_scientist.mcp_server",
+       "-m", "openscientist.mcp_server",
        "--job-dir", str(job_dir.absolute()),
    ]
    if data_file:
@@ -173,7 +173,7 @@ This plan outlines the changes needed to make file uploads optional while mainta
 
    mcp_config = {
        "mcpServers": {
-           "open_scientist-tools": {
+           "openscientist-tools": {
                "command": "python",
                "args": mcp_args,
    ```
@@ -201,7 +201,7 @@ This plan outlines the changes needed to make file uploads optional while mainta
 
 ---
 
-### Step 3: Update MCP Server (`src/open_scientist/mcp_server/server.py`)
+### Step 3: Update MCP Server (`src/openscientist/mcp_server/server.py`)
 
 **Location:** Lines 229, 238-248, 42-88
 
@@ -305,7 +305,7 @@ This plan outlines the changes needed to make file uploads optional while mainta
 
 ---
 
-### Step 4: Update Job Manager Validation (`src/open_scientist/job_manager.py`)
+### Step 4: Update Job Manager Validation (`src/openscientist/job_manager.py`)
 
 **Location:** Lines 96-97
 

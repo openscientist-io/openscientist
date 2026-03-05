@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from open_scientist.tools.phenix import _extract_ca_confidence, _find_low_confidence_regions
+from openscientist.tools.phenix import _extract_ca_confidence, _find_low_confidence_regions
 
 
 def test_find_low_confidence_regions_tracks_contiguous_ranges() -> None:

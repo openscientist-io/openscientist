@@ -1,5 +1,5 @@
 [project]
-name = "open_scientist"
+name = "openscientist"
 version = "0.1.0"
 description = "OpenScientist - Scientific Hypothesis Agent for Novel Discovery"
 authors = [
@@ -104,7 +104,7 @@ select = ["B", "E", "F", "I", "N", "W"]
 ignore = ["E501"]  # Line too long (handled by formatter)
 
 [tool.ruff.lint.per-file-ignores]
-"src/open_scientist/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
+"src/openscientist/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
 
 [tool.mypy]
 python_version = "3.12"
@@ -130,7 +130,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["src/open_scientist"]
+source = ["src/openscientist"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
@@ -164,7 +164,7 @@ directory = "htmlcov"
 output = "coverage.xml"
 
 [tool.coverage.paths]
-source = ["src/open_scientist"]
+source = ["src/openscientist"]
 
 [dependency-groups]
 dev = [

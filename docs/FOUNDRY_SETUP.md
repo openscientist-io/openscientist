@@ -105,8 +105,8 @@ After deploying a model:
    - **Base URL**: `https://<resource-name>.services.ai.azure.com/anthropic`
 
 **Example**:
-- Resource name: `cloudbank-open-scientist-claude-resource`
-- Base URL: `https://cloudbank-open-scientist-claude-resource.services.ai.azure.com/anthropic`
+- Resource name: `cloudbank-openscientist-claude-resource`
+- Base URL: `https://cloudbank-openscientist-claude-resource.services.ai.azure.com/anthropic`
 
 ## OpenScientist Configuration
 
@@ -150,7 +150,7 @@ The `docker-compose.yml` automatically passes these environment variables to the
 Start the application and check the provider status on the admin page, or run:
 
 ```bash
-uv run python -c "from open_scientist.providers import get_provider; p = get_provider(); print(p.provider_name, p._validate_required_config())"
+uv run python -c "from openscientist.providers import get_provider; p = get_provider(); print(p.provider_name, p._validate_required_config())"
 ```
 
 ## Rate Limits and Quotas
@@ -225,7 +225,7 @@ Azure Foundry cost tracking via Azure Cost Management API is planned but not yet
 **Solution**:
 1. Check `.env` has `CLAUDE_PROVIDER=foundry` and `CLAUDE_CODE_USE_FOUNDRY=1`
 2. Verify `ANTHROPIC_FOUNDRY_RESOURCE` and `ANTHROPIC_FOUNDRY_API_KEY` are set
-3. Restart OpenScientist: `docker compose restart` or `uv run python -m open_scientist.web_app`
+3. Restart OpenScientist: `docker compose restart` or `uv run python -m openscientist.web_app`
 
 ### 403 Forbidden Error
 

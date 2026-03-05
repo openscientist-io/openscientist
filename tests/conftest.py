@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
-from open_scientist.database.models import (
+from openscientist.database.models import (
     Administrator,
     APIKey,
     Job,
@@ -29,11 +29,11 @@ from open_scientist.database.models import (
 
 
 # Clear any cached settings after environment setup
-# This must be done after open_scientist imports to access the cache_clear function
+# This must be done after openscientist imports to access the cache_clear function
 def _clear_settings_cache():
     """Clear settings cache - called after imports."""
     try:
-        from open_scientist.settings import clear_settings_cache
+        from openscientist.settings import clear_settings_cache
 
         clear_settings_cache()
     except ImportError:
@@ -42,8 +42,8 @@ def _clear_settings_cache():
 
 # Set up required env vars for Settings validation at import time.
 # The real DATABASE_URL comes from the testcontainer later.
-if "OPEN_SCIENTIST_SECRET_KEY" not in os.environ:
-    os.environ["OPEN_SCIENTIST_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
+if "OPENSCIENTIST_SECRET_KEY" not in os.environ:
+    os.environ["OPENSCIENTIST_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
 
@@ -81,9 +81,9 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
     # Uses same credentials as dev environment
     with PostgresContainer(
         image="postgres:18",
-        username="open_scientist",
-        password="open_scientist_dev_password",
-        dbname="open_scientist",
+        username="openscientist",
+        password="openscientist_dev_password",
+        dbname="openscientist",
     ) as postgres:
         yield postgres
 
@@ -116,35 +116,35 @@ def _apply_migrations_once(test_database_url: str) -> None:
         engine = create_async_engine(test_database_url, echo=False)
 
         # Create roles to match production environment:
-        # - open_scientist_app: Non-superuser role subject to RLS (used by get_session)
-        # - open_scientist_admin: Role with BYPASSRLS (used by get_admin_session)
+        # - openscientist_app: Non-superuser role subject to RLS (used by get_session)
+        # - openscientist_admin: Role with BYPASSRLS (used by get_admin_session)
         async with engine.begin() as conn:
             # App role - subject to RLS
             await conn.execute(
                 text(
-                    "DO $$ BEGIN CREATE ROLE open_scientist_app NOLOGIN; "
+                    "DO $$ BEGIN CREATE ROLE openscientist_app NOLOGIN; "
                     "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
                 )
             )
             await conn.execute(
-                text("GRANT ALL ON ALL TABLES IN SCHEMA public TO open_scientist_app")
+                text("GRANT ALL ON ALL TABLES IN SCHEMA public TO openscientist_app")
             )
             await conn.execute(
-                text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO open_scientist_app")
+                text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO openscientist_app")
             )
 
             # Admin role - bypasses RLS (matches docker/postgres/init.sql)
             await conn.execute(
                 text(
-                    "DO $$ BEGIN CREATE ROLE open_scientist_admin NOLOGIN BYPASSRLS; "
+                    "DO $$ BEGIN CREATE ROLE openscientist_admin NOLOGIN BYPASSRLS; "
                     "EXCEPTION WHEN duplicate_object THEN NULL; END $$"
                 )
             )
             await conn.execute(
-                text("GRANT ALL ON ALL TABLES IN SCHEMA public TO open_scientist_admin")
+                text("GRANT ALL ON ALL TABLES IN SCHEMA public TO openscientist_admin")
             )
             await conn.execute(
-                text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO open_scientist_admin")
+                text("GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO openscientist_admin")
             )
 
         await engine.dispose()
@@ -278,7 +278,7 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
     Uses the transaction rollback pattern: each test runs inside a transaction
     that is rolled back at the end, restoring the database to its initial state.
 
-    The session runs as open_scientist_admin role which has BYPASSRLS privilege.
+    The session runs as openscientist_admin role which has BYPASSRLS privilege.
     This matches how get_admin_session() works in production.
 
     For most tests, this is the right fixture to use. Tests can then call
@@ -295,9 +295,9 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
         )
 
         async with async_session_maker() as session:
-            # Run as open_scientist_admin (BYPASSRLS) - matches get_admin_session()
+            # Run as openscientist_admin (BYPASSRLS) - matches get_admin_session()
             # This allows fixtures to create data across tenants
-            await session.execute(text("SET ROLE open_scientist_admin"))
+            await session.execute(text("SET ROLE openscientist_admin"))
 
             # Clear RLS context for test isolation
             await session.execute(text("SELECT set_config('app.current_user_id', NULL, false)"))
@@ -319,7 +319,7 @@ async def db_session_rls(
 ) -> AsyncGenerator[AsyncSession, None]:
     """Create a database session with RLS enforced (for testing RLS behavior).
 
-    Uses open_scientist_app role which is subject to RLS policies.
+    Uses openscientist_app role which is subject to RLS policies.
     Use this fixture for tests that specifically verify RLS blocks access.
 
     Remember to call set_current_user() to set which user's view to test.
@@ -334,8 +334,8 @@ async def db_session_rls(
         )
 
         async with async_session_maker() as session:
-            # Run as open_scientist_app (subject to RLS) - matches get_session()
-            await session.execute(text("SET ROLE open_scientist_app"))
+            # Run as openscientist_app (subject to RLS) - matches get_session()
+            await session.execute(text("SET ROLE openscientist_app"))
 
             # Clear RLS context
             await session.execute(text("SELECT set_config('app.current_user_id', NULL, false)"))

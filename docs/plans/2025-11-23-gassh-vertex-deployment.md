@@ -1,7 +1,7 @@
 # OpenScientist Deployment Plan: gassh → Vertex AI
 
 **Date:** 2025-11-23
-**Target:** open-scientist.alzassistant.org (gassh server)
+**Target:** openscientist.alzassistant.org (gassh server)
 **Goal:** Update production OpenScientist to use Vertex AI instead of CBORG
 
 ## Current State
@@ -15,7 +15,7 @@
 ### Remote Server (gassh)
 - Running older version of OpenScientist
 - Currently using CBORG
-- URL: https://open-scientist.alzassistant.org
+- URL: https://openscientist.alzassistant.org
 - Needs: Code update + Vertex AI configuration
 
 ### Shared Infrastructure (Option A)
@@ -84,7 +84,7 @@ Tested with:
 git push origin vertex-budget-enforcer
 
 # 9. Create Pull Request on GitHub
-# - Go to: https://github.com/your-repo/open_scientist/pulls
+# - Go to: https://github.com/your-repo/openscientist/pulls
 # - Click "New Pull Request"
 # - Base: main <- Compare: vertex-budget-enforcer
 # - Review changes, add description, create PR
@@ -113,7 +113,7 @@ The service account JSON key must be securely copied to gassh:
 # On local machine:
 # Copy service account key to gassh
 scp /Users/jtr4v/vertexai-project-covid-19-277821-b9a24f9376ca.json \
-    gassh:/path/to/open_scientist/.credentials/
+    gassh:/path/to/openscientist/.credentials/
 
 # SSH to gassh
 ssh gassh
@@ -131,7 +131,7 @@ On gassh server, update OpenScientist's `.env` file:
 
 ```bash
 # On gassh:
-cd /path/to/open_scientist
+cd /path/to/openscientist
 
 # Backup current .env
 cp .env .env.backup-cborg-$(date +%Y%m%d)
@@ -158,7 +158,7 @@ CLAUDE_PROVIDER=vertex
 
 # Add Vertex AI config
 ANTHROPIC_VERTEX_PROJECT_ID=test-project-covid-19-277821
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/open_scientist/.credentials/vertexai-project-covid-19-277821-b9a24f9376ca.json
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/openscientist/.credentials/vertexai-project-covid-19-277821-b9a24f9376ca.json
 CLOUD_ML_REGION=us-east5
 VERTEX_REGION_CLAUDE_4_5_SONNET=us-east5
 VERTEX_REGION_CLAUDE_4_5_HAIKU=us-east5
@@ -206,7 +206,7 @@ gcloud auth application-default print-access-token
 
 ```bash
 # On gassh:
-cd /path/to/open_scientist
+cd /path/to/openscientist
 
 # Backup current version
 git rev-parse HEAD > .last-deployment-$(date +%Y%m%d-%H%M%S).txt
@@ -228,7 +228,7 @@ git log -1 --oneline
 
 ```bash
 # On gassh:
-cd /path/to/open_scientist
+cd /path/to/openscientist
 
 # Stop current containers
 docker-compose down
@@ -237,7 +237,7 @@ docker-compose down
 docker-compose build --no-cache
 
 # Verify images built
-docker images | grep open_scientist
+docker images | grep openscientist
 ```
 
 ### 3.3: Start Updated Containers
@@ -268,11 +268,11 @@ curl -I http://localhost:8080
 # Should return: HTTP/1.1 200 OK
 
 # 2. Check container health
-docker inspect open_scientist-open_scientist-1 --format='{{.State.Health.Status}}'
+docker inspect openscientist-openscientist-1 --format='{{.State.Health.Status}}'
 # Should return: healthy
 
 # 3. Test Vertex AI connectivity from container
-docker-compose exec open_scientist python -c "
+docker-compose exec openscientist python -c "
 from anthropic import AnthropicVertex
 client = AnthropicVertex(
     project_id='test-project-covid-19-277821',
@@ -288,7 +288,7 @@ print('✓ Vertex AI client initialized')
 ### 4.1: Test Discovery Job
 
 **Via Web UI:**
-1. Navigate to https://open-scientist.alzassistant.org
+1. Navigate to https://openscientist.alzassistant.org
 2. Upload a small test dataset (e.g., 10-row CSV)
 3. Create discovery job with:
    - Max iterations: 5
@@ -306,7 +306,7 @@ print('✓ Vertex AI client initialized')
 **Logs to check:**
 ```bash
 # On gassh:
-docker-compose logs -f open_scientist
+docker-compose logs -f openscientist
 
 # Look for:
 # - "Using Vertex AI provider"
@@ -321,8 +321,8 @@ After job completes:
 
 ```bash
 # On gassh - check if BigQuery billing export is enabled
-docker-compose exec open_scientist python -c "
-from open_scientist.cost_tracker import get_current_spend
+docker-compose exec openscientist python -c "
+from openscientist.cost_tracker import get_current_spend
 spend = get_current_spend()
 print(f'Current spend: {spend}')
 "
@@ -376,14 +376,14 @@ gcloud logging read \
 3. **Performance**:
    ```bash
    # On gassh:
-   docker stats open_scientist-open_scientist-1
+   docker stats openscientist-openscientist-1
    # Monitor CPU, memory usage
    ```
 
 4. **Logs**:
    ```bash
    # On gassh:
-   docker-compose logs --tail=100 open_scientist | grep -i error
+   docker-compose logs --tail=100 openscientist | grep -i error
    # Should be minimal/no errors
    ```
 
@@ -401,7 +401,7 @@ This supplements the automatic key disabling at 100%.
 ### 5.3: Success Criteria
 
 ✅ **Deployment successful if:**
-- Web UI accessible at https://open-scientist.alzassistant.org
+- Web UI accessible at https://openscientist.alzassistant.org
 - Discovery jobs complete successfully
 - Using Vertex AI (not CBORG) - check logs
 - No authentication errors
@@ -420,7 +420,7 @@ If deployment fails and you need to revert:
 
 ```bash
 # On gassh:
-cd /path/to/open_scientist
+cd /path/to/openscientist
 
 # 1. Stop new version
 docker-compose down
@@ -459,7 +459,7 @@ echo "Budget enforcer: ACTIVE ($5,000/month limit)" >> DEPLOYMENT_HISTORY.txt
 ### 7.2: Share Access
 
 Document for team members:
-- URL: https://open-scientist.alzassistant.org
+- URL: https://openscientist.alzassistant.org
 - Auth: OAuth (Google/GitHub) or mock auth in dev mode
 - Budget: $5,000/month shared between test + production
 - Recovery contact: (your email for budget alerts)
@@ -480,7 +480,7 @@ Because test and production share the same $5,000/month budget:
 - **Both environments go down**
 
 **Scenario 2: Production spike**
-- Heavy usage on open-scientist.alzassistant.org
+- Heavy usage on openscientist.alzassistant.org
 - Production hits $5,000 budget
 - Budget enforcer triggers
 - Production AND your local testing both stop working
@@ -509,7 +509,7 @@ If shared budget becomes problematic:
 - Clearer cost attribution
 
 **Implementation:**
-1. Create new service account: `open_scientist-prod@test-project-covid-19-277821.iam.gserviceaccount.com`
+1. Create new service account: `openscientist-prod@test-project-covid-19-277821.iam.gserviceaccount.com`
 2. Create new JSON key
 3. Deploy separate budget enforcer for prod SA
 4. Set up separate $5,000 budget for prod
@@ -566,7 +566,7 @@ If shared budget becomes problematic:
 
 **If issues arise:**
 
-1. **Check logs:** `docker-compose logs -f open_scientist`
+1. **Check logs:** `docker-compose logs -f openscientist`
 2. **Check this plan:** Review relevant phase
 3. **Check test plan:** `notes/budget-enforcer-test-plan.md`
 4. **Rollback if critical:** Follow Phase 6

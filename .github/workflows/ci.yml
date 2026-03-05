@@ -43,7 +43,7 @@ jobs:
       - run: uv sync
 
       - name: Type check
-        run: uv run mypy src/open_scientist/ tests/
+        run: uv run mypy src/openscientist/ tests/
 
   test:
     runs-on: ubuntu-latest
@@ -53,19 +53,19 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_USER: open_scientist
-          POSTGRES_PASSWORD: open_scientist_dev_password
-          POSTGRES_DB: open_scientist
+          POSTGRES_USER: openscientist
+          POSTGRES_PASSWORD: openscientist_dev_password
+          POSTGRES_DB: openscientist
         ports:
           - 5434:5432
         options: >-
-          --health-cmd "pg_isready -U open_scientist -d open_scientist"
+          --health-cmd "pg_isready -U openscientist -d openscientist"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      DATABASE_URL: postgresql+asyncpg://open_scientist:open_scientist_dev_password@localhost:5434/open_scientist
+      DATABASE_URL: postgresql+asyncpg://openscientist:openscientist_dev_password@localhost:5434/openscientist
 
     steps:
       - uses: actions/checkout@v4
@@ -81,4 +81,4 @@ jobs:
       - run: uv sync
 
       - name: Unit & Integration Tests
-        run: uv run pytest --cov=src/open_scientist --cov-report=term-missing
+        run: uv run pytest --cov=src/openscientist --cov-report=term-missing

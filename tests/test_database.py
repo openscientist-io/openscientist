@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.database.models import (
+from openscientist.database.models import (
     AnalysisLog,
     APIKey,
     CostRecord,
@@ -25,7 +25,7 @@ from open_scientist.database.models import (
     Plot,
     User,
 )
-from open_scientist.database.models import (
+from openscientist.database.models import (
     Session as DBSession,
 )
 

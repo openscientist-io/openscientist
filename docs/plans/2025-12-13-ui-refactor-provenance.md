@@ -21,7 +21,7 @@ Following the existing pattern for plots, save a metadata JSON for every code ex
 
 ### Changes Required
 
-#### 1. `src/open_scientist/code_executor.py` - Save analysis metadata
+#### 1. `src/openscientist/code_executor.py` - Save analysis metadata
 
 After code execution completes (success or failure), save metadata JSON:
 
@@ -53,7 +53,7 @@ Key points:
 - Includes all info needed for display
 - Links to any plots generated during this execution
 
-#### 2. `src/open_scientist/web_app.py` - Display analyses in timeline
+#### 2. `src/openscientist/web_app.py` - Display analyses in timeline
 
 Read analysis JSON files and display in timeline:
 
@@ -322,7 +322,7 @@ def get_description(tool_use):
         return "Code execution"
 
     # 3. Just the tool name
-    return name.split("__")[-1]  # strip mcp__open_scientist-tools__ prefix
+    return name.split("__")[-1]  # strip mcp__openscientist-tools__ prefix
 ```
 
 Benefits:
@@ -391,32 +391,32 @@ Timeline becomes a unified stream of actions, not separate sections.
 
 ## Files to Modify
 
-1. `src/open_scientist/orchestrator.py`:
+1. `src/openscientist/orchestrator.py`:
    - Add `--verbose` flag to Claude CLI calls (to get full transcript)
    - Save full JSON array to `provenance/iterN_transcript.json`
    - Rename `knowledge_graph.json` references to `knowledge_state.json`
-2. `src/open_scientist/code_executor.py` - Save plots to `provenance/` instead of `plots/`
-3. `src/open_scientist/mcp_server/server.py`:
+2. `src/openscientist/code_executor.py` - Save plots to `provenance/` instead of `plots/`
+3. `src/openscientist/mcp_server/server.py`:
    - Add `description` param to `search_pubmed`, `update_knowledge_state`
    - Add `strapline` param to `save_iteration_summary`
    - Rename `knowledge_graph.json` references to `knowledge_state.json`
-4. `src/open_scientist/knowledge_graph.py`:
+4. `src/openscientist/knowledge_graph.py`:
    - Rename file to `knowledge_state.py`
    - Rename class `KnowledgeGraph` to `KnowledgeState`
    - Add `strapline` field to iteration_summaries
-5. `src/open_scientist/web_app.py`:
+5. `src/openscientist/web_app.py`:
    - Read transcripts and display reasoning + actions
    - `get_description` fallback logic
    - `provenance/` with `plots/` fallback
    - Rename `knowledge_graph.json` references to `knowledge_state.json`
-6. `src/open_scientist/job_manager.py` - Rename `knowledge_graph.json` references
+6. `src/openscientist/job_manager.py` - Rename `knowledge_graph.json` references
 7. All other files referencing `knowledge_graph` - update imports and references
 
 ## Migration Strategy: Clean Break
 
 **Decision:** No backwards compat fallback logic. Instead, migrate all existing jobs with a one-off bootstrap procedure.
 
-### Bootstrap Procedure (`python -m open_scientist.job_manager bootstrap`)
+### Bootstrap Procedure (`python -m openscientist.job_manager bootstrap`)
 
 1. **Backup first** - copy jobs/ to jobs_backup/
 2. **For each job:**
@@ -518,7 +518,7 @@ def parse_stream_json(stdout: str) -> list:
 6. Rename `knowledge_graph` to `knowledge_state` throughout codebase
 
 ### Phase 2: Migration
-7. Write bootstrap procedure (`python -m open_scientist.job_manager bootstrap`)
+7. Write bootstrap procedure (`python -m openscientist.job_manager bootstrap`)
 8. Test migration on copy of jobs/
 9. Run migration on production jobs/
 
@@ -562,7 +562,7 @@ def parse_stream_json(stdout: str) -> list:
 
 ### Phase 2: Migration - ✅ COMPLETE
 
-- Added bootstrap command `python -m open_scientist.job_manager bootstrap`
+- Added bootstrap command `python -m openscientist.job_manager bootstrap`
 - Migrated 93 existing jobs:
   - Renamed `knowledge_graph.json` → `knowledge_state.json`
   - Renamed `plots/` → `provenance/`

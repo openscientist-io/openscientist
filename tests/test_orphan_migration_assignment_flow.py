@@ -9,10 +9,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from open_scientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
-from open_scientist.bootstrap import bootstrap_jobs_from_filesystem
-from open_scientist.database.models import Job, User
-from open_scientist.database.rls import set_current_user
+from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
+from openscientist.bootstrap import bootstrap_jobs_from_filesystem
+from openscientist.database.models import Job, User
+from openscientist.database.rls import set_current_user
 from tests.helpers import enable_rls, fake_admin_session
 
 
@@ -30,7 +30,7 @@ async def test_bootstrap_orphan_then_assign_changes_visibility(
 ):
     """Legacy filesystem jobs should migrate as orphaned and then be claimable."""
     monkeypatch.setattr(
-        "open_scientist.bootstrap.get_admin_session",
+        "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
     )
 

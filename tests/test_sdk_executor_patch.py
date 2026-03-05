@@ -6,7 +6,7 @@ from claude_agent_sdk._internal import (
     message_parser as sdk_message_parser,  # type: ignore[import-not-found]
 )
 
-from open_scientist.agent import sdk_executor
+from openscientist.agent import sdk_executor
 
 
 def test_unknown_message_type_returns_sentinel() -> None:

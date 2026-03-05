@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from open_scientist.providers.foundry import FoundryProvider
+from openscientist.providers.foundry import FoundryProvider
 
 
 def _settings_for_foundry(
@@ -54,7 +54,7 @@ async def test_send_message_derives_foundry_base_url_from_resource():
 
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None)
     with (
-        patch("open_scientist.providers.foundry.get_settings", return_value=settings),
+        patch("openscientist.providers.foundry.get_settings", return_value=settings),
         patch.dict(sys.modules, {"anthropic": fake_anthropic, "anthropic.types": fake_types}),
     ):
         provider = FoundryProvider()
@@ -96,7 +96,7 @@ async def test_send_message_uses_entra_id_token_when_no_api_key():
 
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None, api_key=None)
     with (
-        patch("open_scientist.providers.foundry.get_settings", return_value=settings),
+        patch("openscientist.providers.foundry.get_settings", return_value=settings),
         patch.dict(
             sys.modules,
             {
@@ -156,7 +156,7 @@ async def test_send_message_with_tools_uses_entra_id_token_when_no_api_key():
 
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None, api_key=None)
     with (
-        patch("open_scientist.providers.foundry.get_settings", return_value=settings),
+        patch("openscientist.providers.foundry.get_settings", return_value=settings),
         patch.dict(
             sys.modules,
             {

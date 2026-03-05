@@ -1,9 +1,9 @@
-"""Tests for open_scientist.artifact_packager module."""
+"""Tests for openscientist.artifact_packager module."""
 
 import stat
 import zipfile
 
-from open_scientist.artifact_packager import create_artifacts_zip, create_artifacts_zip_file
+from openscientist.artifact_packager import create_artifacts_zip, create_artifacts_zip_file
 
 
 class TestCreateArtifactsZip:

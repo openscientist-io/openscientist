@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from open_scientist.database.crypto import (
+from openscientist.database.crypto import (
     EncryptionError,
     decrypt,
     encrypt,
@@ -15,12 +15,12 @@ from open_scientist.database.crypto import (
 
 def _patch_encryption_key(key: str | None):
     """Return a context manager that patches the token_encryption_key setting."""
-    from open_scientist.database import crypto
+    from openscientist.database import crypto
 
     crypto._get_fernet.cache_clear()
     mock_settings = MagicMock()
     mock_settings.auth.token_encryption_key = key
-    return patch("open_scientist.database.crypto.get_settings", return_value=mock_settings)
+    return patch("openscientist.database.crypto.get_settings", return_value=mock_settings)
 
 
 class TestEncryptionAvailable:
@@ -28,7 +28,7 @@ class TestEncryptionAvailable:
 
     def test_available_when_key_set(self):
         """Encryption is available when key is configured."""
-        from open_scientist.database import crypto
+        from openscientist.database import crypto
 
         crypto._get_fernet.cache_clear()
         assert encryption_available() is True
@@ -45,7 +45,7 @@ class TestEncryptDecrypt:
     @pytest.fixture(autouse=True)
     def setup_encryption_key(self):
         """Set up a test encryption key for each test."""
-        from open_scientist.database import crypto
+        from openscientist.database import crypto
 
         crypto._get_fernet.cache_clear()
         yield
