@@ -1,5 +1,5 @@
 """
-Main API router for Open Scientist REST API.
+Main API router for OpenScientist REST API.
 
 Combines all API endpoints and adds middleware for rate limiting,
 CORS, and error handling.

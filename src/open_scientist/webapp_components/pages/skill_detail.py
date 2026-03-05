@@ -73,7 +73,7 @@ async def skill_detail_page(category: str, slug: str) -> None:
                 skill, source = row
 
                 # Set page title
-                ui.page_title(f"{skill.name} - Open Scientist")
+                ui.page_title(f"{skill.name} - OpenScientist")
 
                 cat_color = get_category_color(skill.category)
 

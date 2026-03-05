@@ -1,4 +1,4 @@
-# Contributing to Open Scientist
+# Contributing to OpenScientist
 
 ## Prerequisites
 

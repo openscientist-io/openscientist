@@ -1,4 +1,4 @@
-# Open Scientist Base Image
+# OpenScientist Base Image
 # Common dependencies shared across main and executor containers
 #
 # Contains: Python 3.12, uv

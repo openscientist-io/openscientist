@@ -244,7 +244,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         if self._client is None:
             headers = {
                 "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "Open Scientist-SkillIngester",
+                "User-Agent": "OpenScientist-SkillIngester",
             }
             if self.github_token:
                 headers["Authorization"] = f"Bearer {self.github_token}"

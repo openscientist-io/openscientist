@@ -1,7 +1,7 @@
 """Container dashboard data collection for the admin page.
 
 Queries Docker API and database to build a real-time view of all
-Open Scientist-managed containers (agent + executor) grouped by job.
+OpenScientist-managed containers (agent + executor) grouped by job.
 """
 
 from __future__ import annotations

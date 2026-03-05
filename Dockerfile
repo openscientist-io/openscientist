@@ -1,4 +1,4 @@
-# Dockerfile for Open Scientist
+# Dockerfile for OpenScientist
 # Builds on open_scientist-base which includes Python, Node.js, uv, and Claude CLI
 FROM open_scientist-base:latest
 

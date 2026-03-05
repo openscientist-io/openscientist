@@ -1,5 +1,5 @@
 """
-Version information for Open Scientist.
+Version information for OpenScientist.
 
 Provides build metadata from Docker build args or git.
 """
@@ -67,4 +67,4 @@ def get_build_time() -> str:
 
 def get_version_string() -> str:
     """Get a full version string with commit and build time."""
-    return f"Open Scientist v{__version__} (commit: {get_commit()}, built: {get_build_time()})"
+    return f"OpenScientist v{__version__} (commit: {get_commit()}, built: {get_build_time()})"

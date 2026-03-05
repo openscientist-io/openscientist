@@ -1,4 +1,4 @@
-# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
+# OpenScientist: Scientific Hypothesis Agent for Novel Discovery
 ## Autonomous Loop Architecture Design
 
 **Date:** 2025-11-13
@@ -9,7 +9,7 @@
 
 ## Overview
 
-**Open Scientist** is an autonomous scientific discovery agent that:
+**OpenScientist** is an autonomous scientific discovery agent that:
 1. Accepts data files and a research question
 2. Runs for N iterations autonomously (hours, not minutes)
 3. Generates hypotheses, tests them, searches literature
@@ -73,7 +73,7 @@
 
 **User workflow:**
 ```bash
-# Start Open Scientist container
+# Start OpenScientist container
 docker run -p 8602:8602 \
            -v ./my-data:/data \
            -v ./results:/jobs \
@@ -731,7 +731,7 @@ Current Job:
 
 ```python
 #!/usr/bin/env python
-"""Open Scientist - Scientific Hypothesis Agent for Novel Discovery"""
+"""OpenScientist - Scientific Hypothesis Agent for Novel Discovery"""
 
 import asyncio
 import logging
@@ -760,7 +760,7 @@ async def index():
     """Main page - job creation and management"""
 
     # Header
-    ui.markdown("# Open Scientist")
+    ui.markdown("# OpenScientist")
     ui.markdown("_Scientific Hypothesis Agent for Novel Discovery_")
 
     # Budget display
@@ -906,7 +906,7 @@ async def job_page(job_id: str):
 
 if __name__ == "__main__":
     ui.run(
-        title="Open Scientist - Autonomous Discovery Agent",
+        title="OpenScientist - Autonomous Discovery Agent",
         port=PORT,
         storage_secret=STORAGE_SECRET
     )
@@ -1030,7 +1030,7 @@ PORT := $(shell grep '^PORT=' .env 2>/dev/null | cut -d '=' -f 2)
 
 start:
 	docker-compose up -d
-	@echo "Open Scientist running at http://localhost:$(PORT)"
+	@echo "OpenScientist running at http://localhost:$(PORT)"
 
 stop:
 	docker-compose down
@@ -1075,7 +1075,7 @@ services:
 **Goal:** Validate agent's autonomous discovery capabilities on real scientific datasets
 
 **Success criteria:**
-1. Run Open Scientist on metabolomics datasets with known biological phenomena
+1. Run OpenScientist on metabolomics datasets with known biological phenomena
 2. Agent autonomously discovers mechanistic insights
 3. Domain experts review final report and validate:
    - Are findings biologically plausible?

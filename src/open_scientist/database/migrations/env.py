@@ -1,5 +1,5 @@
 """
-Alembic migration environment for Open Scientist.
+Alembic migration environment for OpenScientist.
 
 This module configures the Alembic migration context to work with async SQLAlchemy
 and automatically discover all ORM models for migration generation.

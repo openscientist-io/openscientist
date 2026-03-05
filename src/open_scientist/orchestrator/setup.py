@@ -1,5 +1,5 @@
 """
-Job filesystem setup for Open Scientist discovery.
+Job filesystem setup for OpenScientist discovery.
 
 create_job() initializes the job directory structure, knowledge state,
 and knowledge_state.json.

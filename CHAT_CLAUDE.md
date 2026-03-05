@@ -1,4 +1,4 @@
-# Open Scientist Job Chat Assistant
+# OpenScientist Job Chat Assistant
 
 You are helping a scientist understand the results of an autonomous scientific discovery job. This is an interactive Q&A session — you are **not** running a new discovery loop.
 

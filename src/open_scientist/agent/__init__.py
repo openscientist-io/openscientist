@@ -1,5 +1,5 @@
 """
-Agent executor package for Open Scientist.
+Agent executor package for OpenScientist.
 
 Provides the AgentExecutor protocol and the SDKAgentExecutor implementation
 (backed by claude-agent-sdk).  Use get_agent_executor() from agent.factory

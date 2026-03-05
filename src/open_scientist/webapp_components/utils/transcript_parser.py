@@ -5,7 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
-# Known Open Scientist tool names (bare names, without MCP server prefix).
+# Known OpenScientist tool names (bare names, without MCP server prefix).
 # Used to identify open_scientist tools in SDK transcripts where names are not
 # prefixed with "open_scientist-tools__".
 _OPEN_SCIENTIST_TOOL_NAMES = frozenset(
@@ -50,7 +50,7 @@ def _short_tool_name(tool_name: str) -> str:
 
 
 def _is_open_scientist_tool(tool_name: str, short_name: str) -> bool:
-    """Return whether a tool belongs to the Open Scientist toolset."""
+    """Return whether a tool belongs to the OpenScientist toolset."""
     return "open_scientist" in tool_name.lower() or short_name in _OPEN_SCIENTIST_TOOL_NAMES
 
 

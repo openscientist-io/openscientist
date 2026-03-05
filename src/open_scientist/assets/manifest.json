@@ -1,6 +1,6 @@
 {
-  "name": "Open Scientist",
-  "short_name": "Open Scientist",
+  "name": "OpenScientist",
+  "short_name": "OpenScientist",
   "description": "Scientific Hypothesis Agent for Novel Discovery",
   "start_url": "/",
   "display": "standalone",

@@ -5,7 +5,7 @@
 
 ## Problem Statement
 
-Open Scientist currently runs autonomously without scientist input during execution. Scientists may want to:
+OpenScientist currently runs autonomously without scientist input during execution. Scientists may want to:
 - Redirect the agent when it's going down a wrong path
 - Inject domain expertise the agent might miss
 - Reprioritize investigations based on early results

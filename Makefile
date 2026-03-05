@@ -7,7 +7,7 @@ COMPOSE_FILE ?= docker-compose.yml
 
 # Default target
 help:
-	@echo "Open Scientist - Makefile commands"
+	@echo "OpenScientist - Makefile commands"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build      - Build all Docker images (base, main, agent, executor)"
@@ -24,21 +24,21 @@ help:
 	@echo "  make deploy     - Deploy to production server"
 
 start:
-	@echo "Starting Open Scientist..."
+	@echo "Starting OpenScientist..."
 	docker compose -f $(COMPOSE_FILE) up -d --remove-orphans
-	@echo "Open Scientist started at http://localhost:8080"
+	@echo "OpenScientist started at http://localhost:8080"
 
 stop:
-	@echo "Stopping Open Scientist..."
+	@echo "Stopping OpenScientist..."
 	docker compose -f $(COMPOSE_FILE) down --remove-orphans
-	@echo "Open Scientist stopped"
+	@echo "OpenScientist stopped"
 
 restart: stop start
 
 build:
 	@echo "Building base image (Python, uv)..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t open_scientist-base:latest .
-	@echo "Building Open Scientist main image..."
+	@echo "Building OpenScientist main image..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
 		--build-arg OPEN_SCIENTIST_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -51,14 +51,14 @@ build:
 rebuild: build
 	docker compose -f $(COMPOSE_FILE) down --remove-orphans
 	docker compose -f $(COMPOSE_FILE) up -d --remove-orphans
-	@echo "Open Scientist rebuilt and started at http://localhost:8080"
+	@echo "OpenScientist rebuilt and started at http://localhost:8080"
 
 logs:
-	@echo "Tailing Open Scientist logs (Ctrl+C to exit)..."
+	@echo "Tailing OpenScientist logs (Ctrl+C to exit)..."
 	docker compose -f $(COMPOSE_FILE) logs -f
 
 shell:
-	@echo "Opening shell in Open Scientist container..."
+	@echo "Opening shell in OpenScientist container..."
 	docker compose -f $(COMPOSE_FILE) exec open_scientist /bin/bash
 
 clean:
@@ -103,7 +103,7 @@ status:
 # Deploy to production server
 deploy:
 	@echo "========================================="
-	@echo "Deploying Open Scientist to $(DEPLOY_HOST)"
+	@echo "Deploying OpenScientist to $(DEPLOY_HOST)"
 	@echo "========================================="
 	@echo ""
 	@echo "Step 1: Ensuring repository exists on $(DEPLOY_HOST)..."

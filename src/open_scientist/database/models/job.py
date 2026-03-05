@@ -1,7 +1,7 @@
 """
 Job model for scientific analysis jobs.
 
-The Job model represents a complete Open Scientist analysis workflow, tracking
+The Job model represents a complete OpenScientist analysis workflow, tracking
 status, configuration, and relationships to all job artifacts.
 """
 
@@ -28,7 +28,7 @@ class Job(UUIDv7Mixin, Base):
     """
     Scientific analysis job.
 
-    Represents a complete Open Scientist workflow from data upload through
+    Represents a complete OpenScientist workflow from data upload through
     iterative analysis to final report generation.
 
     Attributes:

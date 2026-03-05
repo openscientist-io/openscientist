@@ -1,5 +1,5 @@
 """
-Iteration helpers for the Open Scientist discovery loop.
+Iteration helpers for the OpenScientist discovery loop.
 
 Prompt construction, iteration counter management, and status updates.
 """

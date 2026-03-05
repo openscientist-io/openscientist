@@ -1,5 +1,5 @@
 """
-Open Scientist - Scientific Hypothesis Agent for Novel Discovery
+OpenScientist - Scientific Hypothesis Agent for Novel Discovery
 
 An autonomous AI scientist that generates and tests hypotheses from scientific data.
 """

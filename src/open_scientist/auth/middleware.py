@@ -1,5 +1,5 @@
 """
-Authentication middleware for Open Scientist.
+Authentication middleware for OpenScientist.
 
 Provides authentication decorators and user context management.
 Supports cookie-backed session authentication.

@@ -1,5 +1,5 @@
 """
-Async discovery loop for Open Scientist autonomous research.
+Async discovery loop for OpenScientist autonomous research.
 
 The public entry point is run_discovery_async(), which the JobManager thread
 calls via asyncio.run().
@@ -442,7 +442,7 @@ def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) 
 
 
 def get_version_metadata() -> dict[str, str]:
-    """Get Open Scientist version metadata for reproducibility."""
+    """Get OpenScientist version metadata for reproducibility."""
     import os
 
     from open_scientist.version import SHORT_COMMIT_LENGTH, get_commit

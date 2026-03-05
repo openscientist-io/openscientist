@@ -6,7 +6,7 @@
 
 ## Overview
 
-Currently, Open Scientist requires users to upload at least one data file to create a discovery job. This requirement prevents users from running purely literature-based or computational investigations that don't need input data.
+Currently, OpenScientist requires users to upload at least one data file to create a discovery job. This requirement prevents users from running purely literature-based or computational investigations that don't need input data.
 
 This plan outlines the changes needed to make file uploads optional while maintaining backward compatibility for jobs that do include data files.
 

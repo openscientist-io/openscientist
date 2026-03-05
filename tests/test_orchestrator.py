@@ -545,7 +545,7 @@ class TestWriteSkillsToClaudeDir:
         claude_md = tmp_path / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
-        assert "Open Scientist: Scientific Hypothesis Agent for Novel Discovery" in content
+        assert "OpenScientist: Scientific Hypothesis Agent for Novel Discovery" in content
         assert "execute_code" in content
 
     @pytest.mark.asyncio

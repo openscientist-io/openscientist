@@ -1,4 +1,4 @@
-"""Global pytest fixtures for Open Scientist tests."""
+"""Global pytest fixtures for OpenScientist tests."""
 
 import asyncio
 import os

@@ -1,5 +1,5 @@
 """
-Prompt templates for Open Scientist orchestrator.
+Prompt templates for OpenScientist orchestrator.
 
 System prompts and discovery iteration prompts for the autonomous agent.
 """
@@ -238,7 +238,7 @@ def generate_job_claude_md(*, use_hypotheses: bool = False) -> str:
 
     # --- Header and mission ---
     parts.append("""\
-# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
+# OpenScientist: Scientific Hypothesis Agent for Novel Discovery
 
 You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 

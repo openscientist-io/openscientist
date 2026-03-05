@@ -1,5 +1,5 @@
 """
-Container manager for Open Scientist sibling container isolation.
+Container manager for OpenScientist sibling container isolation.
 
 Manages the lifecycle of executor containers for isolated code execution.
 Each job's code runs in a separate Docker container with strict resource limits.

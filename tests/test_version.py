@@ -117,7 +117,7 @@ class TestGetVersionString:
         result = version_mod.get_version_string()
         assert (
             result
-            == f"Open Scientist v{version_mod.__version__} (commit: abc123def456, built: 2026-01-01)"
+            == f"OpenScientist v{version_mod.__version__} (commit: abc123def456, built: 2026-01-01)"
         )
 
     @patch.dict(os.environ, {}, clear=True)

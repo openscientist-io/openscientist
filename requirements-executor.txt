@@ -1,4 +1,4 @@
-# Scientific dependencies for Open Scientist executor container
+# Scientific dependencies for OpenScientist executor container
 # This is a minimal set - no web framework, no database
 
 # Core scientific computing

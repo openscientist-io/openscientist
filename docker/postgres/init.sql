@@ -1,4 +1,4 @@
--- PostgreSQL initialization script for Open Scientist
+-- PostgreSQL initialization script for OpenScientist
 -- This script runs once when the postgres container is first created.
 --
 -- Creates two roles for the dual-engine pattern:

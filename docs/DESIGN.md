@@ -1,4 +1,4 @@
-# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
+# OpenScientist: Scientific Hypothesis Agent for Novel Discovery
 
 ## Design Document
 
@@ -7,9 +7,9 @@
 
 ---
 
-## What is Open Scientist?
+## What is OpenScientist?
 
-Open Scientist is an **autonomous AI scientist** that discovers mechanistic insights from scientific data through iterative hypothesis testing. Given a research question and optional data files, Open Scientist:
+OpenScientist is an **autonomous AI scientist** that discovers mechanistic insights from scientific data through iterative hypothesis testing. Given a research question and optional data files, OpenScientist:
 
 1. Explores the data to understand its structure and patterns
 2. Searches scientific literature (PubMed) for domain knowledge
@@ -17,7 +17,7 @@ Open Scientist is an **autonomous AI scientist** that discovers mechanistic insi
 4. Records findings with supporting evidence and visualizations
 5. Produces a final report synthesizing all discoveries
 
-Open Scientist runs **autonomously for N iterations**, making its own decisions about what to investigate next. It can also operate in **coinvestigate mode**, pausing after each iteration to receive guidance from a human scientist.
+OpenScientist runs **autonomously for N iterations**, making its own decisions about what to investigate next. It can also operate in **coinvestigate mode**, pausing after each iteration to receive guidance from a human scientist.
 
 ---
 
@@ -25,7 +25,7 @@ Open Scientist runs **autonomously for N iterations**, making its own decisions 
 
 ### Domain-Agnostic
 
-Open Scientist is not tied to any specific scientific domain. It works with:
+OpenScientist is not tied to any specific scientific domain. It works with:
 - Genomics and transcriptomics
 - Proteomics
 - Structural biology (protein structures)
@@ -37,14 +37,14 @@ Domain-specific knowledge is provided through a **skills system** rather than ha
 
 ### Code-Writing Agent
 
-Rather than providing pre-defined statistical functions, Open Scientist writes Python code to analyze data. This gives it:
+Rather than providing pre-defined statistical functions, OpenScientist writes Python code to analyze data. This gives it:
 - **Flexibility**: Can invent novel analyses on the fly
 - **Transparency**: All analysis code is logged and reproducible
 - **Autonomy**: Not limited to anticipated use cases
 
 ### Literature-Grounded Discovery
 
-Open Scientist proactively searches PubMed to inform hypothesis generation and interpret results. Literature provides:
+OpenScientist proactively searches PubMed to inform hypothesis generation and interpret results. Literature provides:
 - Mechanistic context for observations
 - Known pathways and regulatory relationships
 - Validation of unexpected findings
@@ -55,7 +55,7 @@ Open Scientist proactively searches PubMed to inform hypothesis generation and i
 
 ### How It Works
 
-Open Scientist uses an **agentic coding assistant** as its reasoning engine. The current implementation uses Claude Code CLI in headless mode, though the architecture is designed to potentially support other agentic frameworks in the future.
+OpenScientist uses an **agentic coding assistant** as its reasoning engine. The current implementation uses Claude Code CLI in headless mode, though the architecture is designed to potentially support other agentic frameworks in the future.
 
 The orchestrator spawns the agent with:
 - A system prompt containing the research question and context
@@ -64,7 +64,7 @@ The orchestrator spawns the agent with:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Open Scientist CONTAINER                                           │
+│  OpenScientist CONTAINER                                           │
 │                                                             │
 │  ┌─────────────────────┐    ┌─────────────────────────┐    │
 │  │   NiceGUI Web UI    │    │    Job Manager          │    │
@@ -124,7 +124,7 @@ For each iteration (1 to N):
     8. [Coinvestigate mode: wait for scientist feedback]
 ```
 
-At completion, Open Scientist generates a final report synthesizing all findings.
+At completion, OpenScientist generates a final report synthesizing all findings.
 
 ---
 
@@ -145,7 +145,7 @@ At completion, Open Scientist generates a final report synthesizing all findings
 
 ### Multi-Provider Support
 
-Open Scientist supports multiple LLM providers:
+OpenScientist supports multiple LLM providers:
 
 | Provider | Use Case |
 |----------|----------|
@@ -200,7 +200,7 @@ Every action is logged for reproducibility:
 
 ## Web Interface
 
-Open Scientist provides a NiceGUI-based web interface:
+OpenScientist provides a NiceGUI-based web interface:
 
 - **Job submission**: Upload data, enter research question, configure parameters
 - **Progress monitoring**: Live status updates, iteration timeline
@@ -214,7 +214,7 @@ The timeline view uses **progressive disclosure** - showing high-level summaries
 
 ## Supported Data Formats
 
-Open Scientist has been tested with various scientific file formats:
+OpenScientist has been tested with various scientific file formats:
 
 | Category | Tested Formats |
 |----------|----------------|
@@ -223,13 +223,13 @@ Open Scientist has been tested with various scientific file formats:
 | Images | PNG, JPG, TIFF |
 | Sequence | FASTA |
 
-The agent is generally good at understanding data in many formats beyond those listed here. Data files are optional - Open Scientist can also run **literature-only investigations**.
+The agent is generally good at understanding data in many formats beyond those listed here. Data files are optional - OpenScientist can also run **literature-only investigations**.
 
 ---
 
 ## Deployment
 
-Open Scientist runs as a Docker container:
+OpenScientist runs as a Docker container:
 
 ```bash
 make build            # Build the Docker image

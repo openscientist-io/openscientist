@@ -1,5 +1,5 @@
 """
-Open Scientist Executor main entry point.
+OpenScientist Executor main entry point.
 
 Reads execution requests from stdin JSON and writes execution results to stdout JSON.
 """

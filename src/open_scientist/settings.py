@@ -1,5 +1,5 @@
 """
-Centralized settings module for Open Scientist.
+Centralized settings module for OpenScientist.
 
 Validates all environment variables at startup using Pydantic v2 BaseSettings.
 Provides clear error messages when configuration is invalid.
@@ -635,7 +635,7 @@ class Settings(BaseSettings):
     base_url: str = Field(
         default="http://localhost:8080",
         alias="OPEN_SCIENTIST_BASE_URL",
-        description="Base URL for Open Scientist (used in notifications and share links)",
+        description="Base URL for OpenScientist (used in notifications and share links)",
     )
 
     # Nested settings

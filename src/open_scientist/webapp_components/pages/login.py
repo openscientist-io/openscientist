@@ -53,13 +53,13 @@ def login_page() -> None:
         ui.column().classes("absolute-center items-center"),
         ui.card().classes("login-card p-8 items-center gap-6"),
     ):
-        # Animated Open Scientist logo
+        # Animated OpenScientist logo
         ui.html(OPEN_SCIENTIST_THINKING_SVG, sanitize=False).classes("w-16 h-16").style(
             "width:64px;height:64px;min-width:64px;min-height:64px;"
         )
 
         # Title and subtitle
-        ui.label("Open Scientist").classes("text-3xl font-bold text-cyan-800")
+        ui.label("OpenScientist").classes("text-3xl font-bold text-cyan-800")
         ui.label("Scientific Hypothesis Agent for Novel Discovery").classes(
             "text-sm text-cyan-600 text-center max-w-xs"
         )

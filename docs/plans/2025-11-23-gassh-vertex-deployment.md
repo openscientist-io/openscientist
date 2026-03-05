@@ -1,8 +1,8 @@
-# Open Scientist Deployment Plan: gassh → Vertex AI
+# OpenScientist Deployment Plan: gassh → Vertex AI
 
 **Date:** 2025-11-23
 **Target:** open-scientist.alzassistant.org (gassh server)
-**Goal:** Update production Open Scientist to use Vertex AI instead of CBORG
+**Goal:** Update production OpenScientist to use Vertex AI instead of CBORG
 
 ## Current State
 
@@ -13,7 +13,7 @@
 - Budget: $5,000/month with automatic key disabling at 100%
 
 ### Remote Server (gassh)
-- Running older version of Open Scientist
+- Running older version of OpenScientist
 - Currently using CBORG
 - URL: https://open-scientist.alzassistant.org
 - Needs: Code update + Vertex AI configuration
@@ -127,7 +127,7 @@ ssh gassh
 
 ### 2.2: Update .env on gassh
 
-On gassh server, update Open Scientist's `.env` file:
+On gassh server, update OpenScientist's `.env` file:
 
 ```bash
 # On gassh:
@@ -165,7 +165,7 @@ VERTEX_REGION_CLAUDE_4_5_HAIKU=us-east5
 ANTHROPIC_MODEL=claude-sonnet-4-5@20250929
 ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4-5@20251001
 
-# Billing (optional - for cost tracking in Open Scientist UI)
+# Billing (optional - for cost tracking in OpenScientist UI)
 GCP_BILLING_ACCOUNT_ID=015426-0B5674-83F27C
 
 # Application-level budget limits
@@ -368,7 +368,7 @@ gcloud logging read \
    - Check Vertex AI spending
    - Compare to budget ($5,000/month)
 
-2. **Jobs** (Open Scientist UI):
+2. **Jobs** (OpenScientist UI):
    - Track job success rate
    - Monitor iteration counts
    - Check for API errors
@@ -392,7 +392,7 @@ gcloud logging read \
 Set up email alerts for budget thresholds:
 
 1. Go to [GCP Budgets](https://console.cloud.google.com/billing/budgets)
-2. Find: "Open Scientist - test-project-covid-19-277821"
+2. Find: "OpenScientist - test-project-covid-19-277821"
 3. Edit → Actions → Add email recipients
 4. Add your email for alerts at: 50%, 80%, 90%, 100%
 

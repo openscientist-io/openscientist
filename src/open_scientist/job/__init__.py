@@ -1,5 +1,5 @@
 """
-Job management subpackage for Open Scientist.
+Job management subpackage for OpenScientist.
 
 Module layout:
 - types.py — JobStatus, JobInfo, JobStatusUpdateResult

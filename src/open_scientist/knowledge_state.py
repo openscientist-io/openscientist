@@ -1,5 +1,5 @@
 """
-Knowledge state management for Open Scientist.
+Knowledge state management for OpenScientist.
 
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """

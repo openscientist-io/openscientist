@@ -1,5 +1,5 @@
 """
-Web application subpackage for Open Scientist.
+Web application subpackage for OpenScientist.
 
 Contains modular UI components and utilities for the NiceGUI web interface.
 """

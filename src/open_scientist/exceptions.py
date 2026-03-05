@@ -1,10 +1,10 @@
 """
-Structured exception hierarchy for Open Scientist.
+Structured exception hierarchy for OpenScientist.
 """
 
 
 class OpenScientistError(Exception):
-    """Base exception for all Open Scientist errors."""
+    """Base exception for all OpenScientist errors."""
 
 
 # ── Code execution ────────────────────────────────────────────────────

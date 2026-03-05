@@ -1,4 +1,4 @@
-# Docker Compose for Open Scientist
+# Docker Compose for OpenScientist
 #
 # Usage:
 #   Development: Set OPEN_SCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth

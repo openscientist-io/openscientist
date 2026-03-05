@@ -1,4 +1,4 @@
-# Open Scientist Executor Container
+# OpenScientist Executor Container
 # Minimal image for isolated Python code execution
 
 FROM open_scientist-base:latest

@@ -1,5 +1,5 @@
 """
-Error parsing and user-friendly message generation for Open Scientist web interface.
+Error parsing and user-friendly message generation for OpenScientist web interface.
 
 Parses raw error messages (API responses, JSON output, etc.) and provides
 categorized, actionable error information for display to users.
@@ -354,16 +354,16 @@ def get_user_friendly_error(raw_error: str) -> dict[str, Any]:
     # Generate user-friendly title and message based on category
     if category == CATEGORY_CONFIGURATION:
         title = "Configuration Error"
-        message = "Open Scientist could not start due to missing or incorrect configuration. This typically requires administrator intervention to resolve."
+        message = "OpenScientist could not start due to missing or incorrect configuration. This typically requires administrator intervention to resolve."
     elif category == CATEGORY_PROVIDER:
         title = "Cloud Provider Error"
         message = "There was an issue with your cloud provider (authentication, billing, or quotas). Check the billing page or contact your administrator."
     elif category == CATEGORY_RUNTIME:
         title = "Runtime Error"
-        message = "Open Scientist encountered an error during execution. This may be temporary - try running the job again."
+        message = "OpenScientist encountered an error during execution. This may be temporary - try running the job again."
     elif category == CATEGORY_RESEARCH:
         title = "Data Processing Error"
-        message = "Open Scientist had trouble processing your data files. Check that files are properly formatted and match the expected structure."
+        message = "OpenScientist had trouble processing your data files. Check that files are properly formatted and match the expected structure."
     else:
         title = "Unexpected Error"
         message = "An unexpected error occurred during job execution."

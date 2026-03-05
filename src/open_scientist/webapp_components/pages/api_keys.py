@@ -320,7 +320,7 @@ def _api_keys_intro(is_admin: bool) -> str:
     """Return intro markdown text for API keys page."""
     admin_prefix = "**Admin view**: You can see all API keys across all users. " if is_admin else ""
     return (
-        admin_prefix + "API keys allow programmatic access to the Open Scientist REST API. "
+        admin_prefix + "API keys allow programmatic access to the OpenScientist REST API. "
         "Keys use the format `name:secret` for authentication."
     )
 
@@ -410,7 +410,7 @@ def _make_load_keys_handler(
 @require_auth
 async def api_keys_page() -> None:
     """API Keys management page."""
-    ui.page_title("API Keys - Open Scientist")
+    ui.page_title("API Keys - OpenScientist")
     _active_timers = setup_timer_cleanup()
     is_admin = is_current_user_admin()
     render_navigator(active_page="api-keys")

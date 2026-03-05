@@ -1,5 +1,5 @@
 """
-Database models for Open Scientist.
+Database models for OpenScientist.
 
 This package contains SQLAlchemy ORM models for all database tables.
 Models are organized by domain:

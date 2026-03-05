@@ -1,5 +1,5 @@
 """
-Custom SQLAlchemy column types for Open Scientist.
+Custom SQLAlchemy column types for OpenScientist.
 
 Provides encrypted column types for storing sensitive data at rest.
 """

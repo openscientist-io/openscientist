@@ -1,5 +1,5 @@
 """
-OAuth provider implementations for Open Scientist.
+OAuth provider implementations for OpenScientist.
 
 Each provider module handles the OAuth flow specifics and user info extraction
 for a particular authentication provider.

@@ -2,7 +2,7 @@
 Job management endpoints.
 
 Provides REST API endpoints for creating, listing, monitoring, and managing
-Open Scientist scientific analysis jobs.
+OpenScientist scientific analysis jobs.
 """
 
 import logging

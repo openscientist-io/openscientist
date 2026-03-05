@@ -1,5 +1,5 @@
 """
-Authentication and authorization for Open Scientist.
+Authentication and authorization for OpenScientist.
 
 Provides OAuth-based authentication with GitHub and Google providers,
 session management, and user context for RLS.

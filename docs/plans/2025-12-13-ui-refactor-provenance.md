@@ -2,7 +2,7 @@
 
 ## Goal
 
-Refactor Open Scientist job detail UI to faithfully show:
+Refactor OpenScientist job detail UI to faithfully show:
 1. **What the agent did** - code executions, outputs, searches, findings
 2. **What the agent was thinking** - reasoning between actions (Phase 2)
 

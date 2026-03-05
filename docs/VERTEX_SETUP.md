@@ -1,17 +1,17 @@
-# Google Vertex AI Setup for Open Scientist
+# Google Vertex AI Setup for OpenScientist
 
-This guide explains how to configure Open Scientist to use Google Cloud Vertex AI instead of CBORG for model access.
+This guide explains how to configure OpenScientist to use Google Cloud Vertex AI instead of CBORG for model access.
 
 ## Overview
 
-Vertex AI provides access to Claude models through Google Cloud. Open Scientist integrates with Vertex AI for model calls and optionally uses BigQuery billing export for cost tracking.
+Vertex AI provides access to Claude models through Google Cloud. OpenScientist integrates with Vertex AI for model calls and optionally uses BigQuery billing export for cost tracking.
 
 ### What is BigQuery Billing Export?
 
-**Purpose**: BigQuery billing export is used for **cost tracking** in Open Scientist. Unlike CBORG (which provides real-time cost APIs), Vertex AI doesn't have a direct cost API. Instead, GCP exports billing data to BigQuery tables, which Open Scientist queries to show your spending.
+**Purpose**: BigQuery billing export is used for **cost tracking** in OpenScientist. Unlike CBORG (which provides real-time cost APIs), Vertex AI doesn't have a direct cost API. Instead, GCP exports billing data to BigQuery tables, which OpenScientist queries to show your spending.
 
 **Is it required?** **NO** - BigQuery billing export is **completely optional**:
-- ✅ **Without it**: Open Scientist works perfectly fine. Jobs will run normally using Vertex AI. You just won't see cost information in the web UI.
+- ✅ **Without it**: OpenScientist works perfectly fine. Jobs will run normally using Vertex AI. You just won't see cost information in the web UI.
 - ✅ **With it**: You get cost tracking in the web UI (total spend, last 24h spend, budget warnings)
 
 **Data lag**: GCP billing data has a 1-6 hour lag. The web UI displays an estimated data freshness timestamp when billing export is configured.
@@ -42,7 +42,7 @@ gcloud config set project $PROJECT_ID
 gcloud services enable aiplatform.googleapis.com
 
 # Enable Cloud Billing API (REQUIRED - to list billing accounts)
-# This allows Open Scientist to query your billing account ID
+# This allows OpenScientist to query your billing account ID
 gcloud services enable cloudbilling.googleapis.com
 
 # Enable BigQuery API (OPTIONAL - only if you want cost tracking)
@@ -58,7 +58,7 @@ Create a service account with permissions to call Vertex AI and read billing dat
 ```bash
 # Create service account
 gcloud iam service-accounts create open_scientist-vertex \
-    --display-name="Open Scientist Vertex AI Service Account"
+    --display-name="OpenScientist Vertex AI Service Account"
 
 # Grant Vertex AI User role
 gcloud projects add-iam-policy-binding $PROJECT_ID \
@@ -84,9 +84,9 @@ gcloud iam service-accounts keys create ~/open_scientist-vertex-key.json \
 
 ## Step 3: Enable BigQuery Billing Export (OPTIONAL)
 
-**This step is optional.** If you skip this, Open Scientist will work fine but won't display cost information in the web UI.
+**This step is optional.** If you skip this, OpenScientist will work fine but won't display cost information in the web UI.
 
-Cost tracking in Open Scientist uses BigQuery billing export:
+Cost tracking in OpenScientist uses BigQuery billing export:
 
 ### 3.1 Enable Billing Export in Console
 
@@ -154,7 +154,7 @@ Recommended regions for Claude models:
 - **us-central1**: Alternative region
 - **europe-west1**: European alternative
 
-## Step 5: Configure Open Scientist Environment
+## Step 5: Configure OpenScientist Environment
 
 Create or update your `.env` file:
 
@@ -218,9 +218,9 @@ gcloud ai models list --region=us-east5 --limit=5
 bq ls billing_export
 ```
 
-### 6.2 Test Open Scientist Provider
+### 6.2 Test OpenScientist Provider
 
-Start Open Scientist and check the logs:
+Start OpenScientist and check the logs:
 
 ```bash
 # With Docker
@@ -269,7 +269,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 **Symptom**: Logs show "Failed to fetch cost info from Vertex AI" or web UI doesn't display cost information.
 
-**Is this a problem?** **NO** - This is completely normal if you haven't set up BigQuery billing export (Step 3). Open Scientist will work fine; you just won't see cost tracking in the web UI.
+**Is this a problem?** **NO** - This is completely normal if you haven't set up BigQuery billing export (Step 3). OpenScientist will work fine; you just won't see cost tracking in the web UI.
 
 **If you want cost tracking:**
 1. Verify billing export is enabled in Cloud Console (see Step 3.1)
@@ -313,7 +313,7 @@ bq query --project_id=$PROJECT_ID \
 
 ## Budget Protection: Quotas and Safety Nets
 
-Open Scientist uses a **two-layer protection system** to prevent runaway costs on Vertex AI:
+OpenScientist uses a **two-layer protection system** to prevent runaway costs on Vertex AI:
 
 1. **Layer 1: GCP Quotas** (instant enforcement, hard limits)
 2. **Layer 2: Pub/Sub Budget Safety Net** (monthly backstop, auto-disables service account)
@@ -662,5 +662,5 @@ gcloud logging read \
 1. **Least Privilege**: Service account has only required roles
 2. **Key Rotation**: Rotate service account keys regularly
 3. **Key Storage**: Never commit `.json` keys to git (already in `.gitignore`)
-4. **Budget Alerts**: Set up GCP budget alerts in addition to Open Scientist limits. For production deployments, consider implementing the automatic safety net described in [VERTEX_BUDGET_SAFETY.md](VERTEX_BUDGET_SAFETY.md) to automatically disable service account keys when budget is exceeded
+4. **Budget Alerts**: Set up GCP budget alerts in addition to OpenScientist limits. For production deployments, consider implementing the automatic safety net described in [VERTEX_BUDGET_SAFETY.md](VERTEX_BUDGET_SAFETY.md) to automatically disable service account keys when budget is exceeded
 5. **Audit Logs**: Enable Cloud Audit Logs for Vertex AI API calls

@@ -1,5 +1,5 @@
 """
-AgentExecutor factory for Open Scientist.
+AgentExecutor factory for OpenScientist.
 
 Always returns an SDKAgentExecutor (backed by claude-agent-sdk).
 The provider's setup_environment() configures the correct env vars

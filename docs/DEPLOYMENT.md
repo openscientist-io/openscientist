@@ -1,6 +1,6 @@
-# Open Scientist Deployment Guide
+# OpenScientist Deployment Guide
 
-This guide explains how to deploy Open Scientist using Docker.
+This guide explains how to deploy OpenScientist using Docker.
 
 ## Prerequisites
 
@@ -188,7 +188,7 @@ docker-compose exec open_scientist python -c "from open_scientist.cost_tracker i
 2. **Restrict access**: Use a reverse proxy (nginx) with authentication
    ```nginx
    location / {
-       auth_basic "Open Scientist";
+       auth_basic "OpenScientist";
        auth_basic_user_file /etc/nginx/.htpasswd;
        proxy_pass http://localhost:8080;
    }
@@ -225,7 +225,7 @@ Set up monitoring with Prometheus/Grafana:
 2. Configure Prometheus to scrape metrics
 3. Create Grafana dashboards for job status, costs, etc.
 
-## Updating Open Scientist
+## Updating OpenScientist
 
 ```bash
 # Pull latest code

@@ -975,7 +975,7 @@ class TestGenerateJobClaudeMd:
 
         for flag in (True, False):
             content = generate_job_claude_md(use_hypotheses=flag)
-            assert "# Open Scientist: Scientific Hypothesis Agent for Novel Discovery" in content
+            assert "# OpenScientist: Scientific Hypothesis Agent for Novel Discovery" in content
             assert "You are autonomous" in content
 
 

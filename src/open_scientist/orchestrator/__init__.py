@@ -1,5 +1,5 @@
 """
-Orchestrator subpackage for Open Scientist discovery.
+Orchestrator subpackage for OpenScientist discovery.
 
 Module layout:
 - discovery.py  — run_discovery_async(), sync_knowledge_state_to_db(), helpers

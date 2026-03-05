@@ -1,5 +1,5 @@
 """
-Database session management for Open Scientist.
+Database session management for OpenScientist.
 
 Provides async session factories and dependency injection for FastAPI/NiceGUI.
 

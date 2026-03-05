@@ -1,10 +1,10 @@
-# Open Scientist: Scientific Hypothesis Agent for Novel Discovery
+# OpenScientist: Scientific Hypothesis Agent for Novel Discovery
 
 An autonomous AI scientist that generates and tests hypotheses from scientific data.
 
 ## Overview
 
-Open Scientist is a domain-agnostic autonomous discovery agent that:
+OpenScientist is a domain-agnostic autonomous discovery agent that:
 
 - Accepts data files and a research question
 - Runs for N iterations autonomously
@@ -40,7 +40,7 @@ Open Scientist is a domain-agnostic autonomous discovery agent that:
 
 ### Structural Biology Support (Optional)
 
-Open Scientist supports **Phenix integration** for protein structure analysis:
+OpenScientist supports **Phenix integration** for protein structure analysis:
 
 - Structure comparison and superposition
 - Validation metrics (clash score, backbone geometry)
@@ -120,7 +120,7 @@ open_scientist/
 
 ### Model Providers
 
-Open Scientist supports multiple model providers. Choose one and configure it in your `.env` file:
+OpenScientist supports multiple model providers. Choose one and configure it in your `.env` file:
 
 #### Option 1: CBORG (Lawrence Berkeley National Lab)
 

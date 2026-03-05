@@ -1,5 +1,5 @@
 """
-Database package for Open Scientist.
+Database package for OpenScientist.
 
 Provides SQLAlchemy ORM models, session management, and database utilities.
 

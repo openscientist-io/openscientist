@@ -599,7 +599,7 @@ def _render_dashboard_content(data: DashboardData) -> None:
         return
     _render_dashboard_totals(data)
     if not data.job_groups and not data.orphan_containers:
-        render_empty_state("No Open Scientist containers are currently running.")
+        render_empty_state("No OpenScientist containers are currently running.")
         return
     _render_dashboard_job_groups(data)
     _render_dashboard_orphan_containers(data)

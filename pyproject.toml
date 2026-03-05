@@ -1,7 +1,7 @@
 [project]
 name = "open_scientist"
 version = "0.1.0"
-description = "Open Scientist - Scientific Hypothesis Agent for Novel Discovery"
+description = "OpenScientist - Scientific Hypothesis Agent for Novel Discovery"
 authors = [
     {name = "Justin Reese", email = "justinreese@lbl.gov"}
 ]

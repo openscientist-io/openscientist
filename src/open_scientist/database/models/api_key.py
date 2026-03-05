@@ -1,7 +1,7 @@
 """
 API key model for REST API authentication.
 
-API keys allow programmatic access to the Open Scientist REST API.
+API keys allow programmatic access to the OpenScientist REST API.
 Users can create multiple API keys with descriptive names.
 """
 

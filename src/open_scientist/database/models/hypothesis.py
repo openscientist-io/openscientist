@@ -1,7 +1,7 @@
 """
 Hypothesis model for analysis hypotheses.
 
-Hypotheses are central to the Open Scientist workflow, representing testable
+Hypotheses are central to the OpenScientist workflow, representing testable
 explanations for crystallographic observations that drive analysis.
 """
 

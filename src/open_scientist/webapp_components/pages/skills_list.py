@@ -157,7 +157,7 @@ def _apply_table_visibility(
 @require_auth
 async def skills_page() -> None:
     """Skills list page."""
-    ui.page_title("Skills - Open Scientist")
+    ui.page_title("Skills - OpenScientist")
     _active_timers = setup_timer_cleanup()
     render_navigator(active_page="skills")
 

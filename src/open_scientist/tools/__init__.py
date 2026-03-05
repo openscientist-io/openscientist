@@ -1,5 +1,5 @@
 """
-Tools subpackage for the Open Scientist SDK agent path.
+Tools subpackage for the OpenScientist SDK agent path.
 
 Each module exports make_tools(ctx: ToolContext) -> list[Callable].
 Use build_tool_list() from tools.registry to get all tools for a job.

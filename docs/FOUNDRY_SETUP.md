@@ -1,10 +1,10 @@
-# Azure AI Foundry Setup for Open Scientist
+# Azure AI Foundry Setup for OpenScientist
 
 **Last Updated**: February 14, 2026
 
 > **Note**: Azure's UI and processes change frequently. If the steps below don't match what you see in the Azure portal, check the [official Microsoft documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/how-to/use-foundry-models-claude) for the latest instructions.
 
-This guide walks you through setting up Azure AI Foundry (Microsoft Foundry) to use Claude models with Open Scientist.
+This guide walks you through setting up Azure AI Foundry (Microsoft Foundry) to use Claude models with OpenScientist.
 
 ## Prerequisites
 
@@ -108,7 +108,7 @@ After deploying a model:
 - Resource name: `cloudbank-open-scientist-claude-resource`
 - Base URL: `https://cloudbank-open-scientist-claude-resource.services.ai.azure.com/anthropic`
 
-## Open Scientist Configuration
+## OpenScientist Configuration
 
 ### Environment Variables
 
@@ -196,7 +196,7 @@ ANTHROPIC_FOUNDRY_API_KEY=your-api-key
 
 ## Cost Tracking
 
-Azure Foundry cost tracking via Azure Cost Management API is planned but not yet fully implemented in Open Scientist.
+Azure Foundry cost tracking via Azure Cost Management API is planned but not yet fully implemented in OpenScientist.
 
 **Current workaround**: View costs in Azure Portal:
 1. Go to **Cost Management + Billing**
@@ -220,12 +220,12 @@ Azure Foundry cost tracking via Azure Cost Management API is planned but not yet
 
 ### "No Authentication Configured" Error
 
-**Symptom**: Open Scientist shows "No Authentication Configured"
+**Symptom**: OpenScientist shows "No Authentication Configured"
 
 **Solution**:
 1. Check `.env` has `CLAUDE_PROVIDER=foundry` and `CLAUDE_CODE_USE_FOUNDRY=1`
 2. Verify `ANTHROPIC_FOUNDRY_RESOURCE` and `ANTHROPIC_FOUNDRY_API_KEY` are set
-3. Restart Open Scientist: `docker compose restart` or `uv run python -m open_scientist.web_app`
+3. Restart OpenScientist: `docker compose restart` or `uv run python -m open_scientist.web_app`
 
 ### 403 Forbidden Error
 

@@ -1,5 +1,5 @@
 """
-NiceGUI web interface for Open Scientist.
+NiceGUI web interface for OpenScientist.
 
 Provides web UI for job submission, monitoring, and results viewing.
 """
@@ -178,7 +178,7 @@ def _register_share_routes() -> None:
 
 
 # Configure OpenAPI metadata
-_APP_TITLE = "Open Scientist API"
+_APP_TITLE = "OpenScientist API"
 _APP_VERSION = "1.0.0"
 _APP_DESCRIPTION = "REST API for Scientific Hypothesis Agent for Novel Discovery"
 
@@ -323,7 +323,7 @@ async def _ensure_default_skill_sources() -> None:
         },
         {
             "source_type": "local",
-            "name": "Open Scientist Built-in Skills",
+            "name": "OpenScientist Built-in Skills",
             "path": "skills",
             "is_enabled": True,
         },
@@ -429,7 +429,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     ui.run_with(
         host_app,
         mount_path="/",
-        title="Open Scientist",
+        title="OpenScientist",
         favicon=ASSETS_DIR / "favicon.ico",
         storage_secret=STORAGE_SECRET,
     )
@@ -506,7 +506,7 @@ def main(
         ui.run(
             host=host,
             port=port,
-            title="Open Scientist - Server Error",
+            title="OpenScientist - Server Error",
             favicon=ASSETS_DIR / "favicon.ico",
             reload=False,  # No reload in error mode
             show=False,
@@ -547,7 +547,7 @@ def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Open Scientist Web Interface")
+    parser = argparse.ArgumentParser(description="OpenScientist Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=8080, help="Port to bind to")
     parser.add_argument("--jobs-dir", default="jobs", help="Jobs directory")

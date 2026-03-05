@@ -1,5 +1,5 @@
 """
-Database engine configuration for Open Scientist.
+Database engine configuration for OpenScientist.
 
 Provides async SQLAlchemy engine instances with PostgreSQL connection pooling.
 

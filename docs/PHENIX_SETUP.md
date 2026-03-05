@@ -1,10 +1,10 @@
-# Phenix Setup for Open Scientist
+# Phenix Setup for OpenScientist
 
-Open Scientist supports Phenix integration for structural biology analyses. Phenix is **optional** - Open Scientist works fine without it, but you won't have access to structural biology tools.
+OpenScientist supports Phenix integration for structural biology analyses. Phenix is **optional** - OpenScientist works fine without it, but you won't have access to structural biology tools.
 
 ## What is Phenix?
 
-Phenix is a comprehensive software suite for macromolecular crystallography, providing tools for structure determination, refinement, and validation. Open Scientist uses Phenix for:
+Phenix is a comprehensive software suite for macromolecular crystallography, providing tools for structure determination, refinement, and validation. OpenScientist uses Phenix for:
 
 - Structure comparison and alignment (phenix.superpose_pdbs)
 - Validation metrics (phenix.clashscore, phenix.cablam_validate)
@@ -22,7 +22,7 @@ Phenix is a comprehensive software suite for macromolecular crystallography, pro
 **You DON'T need Phenix if:**
 - Only analyzing metabolomics, genomics, or tabular data
 - Not working with macromolecular structures
-- Just want to test Open Scientist's general discovery capabilities
+- Just want to test OpenScientist's general discovery capabilities
 
 ## Installation Options
 
@@ -93,7 +93,7 @@ For local development without Docker:
    ./install --prefix=/Applications
    ```
 
-3. **Configure Open Scientist**:
+3. **Configure OpenScientist**:
    ```bash
    # Add to .env
    echo "PHENIX_PATH=/Applications/phenix-1.21.2-5419" >> .env
@@ -119,7 +119,7 @@ For local development without Docker:
    ./install --prefix=/opt
    ```
 
-3. **Configure Open Scientist**:
+3. **Configure OpenScientist**:
    ```bash
    # Add to .env
    echo "PHENIX_PATH=/opt/phenix-1.21.2-5419" >> .env
@@ -136,7 +136,7 @@ After installation, verify Phenix is working:
 docker exec open_scientist-open_scientist-1 test -f /opt/phenix-1.21.2-5419/phenix_env.sh && \
   echo "✅ Phenix installed" || echo "❌ Phenix NOT found"
 
-# Check Open Scientist detects Phenix
+# Check OpenScientist detects Phenix
 docker exec open_scientist-open_scientist-1 python -c "
 import os
 os.environ['PHENIX_PATH'] = '/opt/phenix-1.21.2-5419'
@@ -165,7 +165,7 @@ print('✅ Phenix available' if check_phenix_available() else '❌ Phenix not av
 
 ## Running Without Phenix
 
-Open Scientist gracefully handles missing Phenix:
+OpenScientist gracefully handles missing Phenix:
 
 - **MCP server startup**: Logs "⚠️ Phenix tools not available" but continues
 - **Tool availability**: Phenix tools (run_phenix_tool, compare_structures, parse_alphafold_confidence) won't be registered
@@ -244,4 +244,4 @@ Phenix is free for academic use. See https://phenix-online.org/license/ for deta
 
 **Phenix installation issues**: https://phenix-online.org/documentation/install-setup-run.html
 
-**Open Scientist Phenix integration issues**: Check GitHub issues or deployment logs
+**OpenScientist Phenix integration issues**: Check GitHub issues or deployment logs

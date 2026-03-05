@@ -4,7 +4,7 @@ Revision ID: init_full_schema
 Revises:
 Create Date: 2026-02-14 15:00:00.000000+00:00
 
-This migration creates the complete Open Scientist database schema including:
+This migration creates the complete OpenScientist database schema including:
 - User authentication (users, oauth_accounts, sessions, api_keys)
 - Jobs and knowledge state
 - Skills and skill sources
@@ -30,7 +30,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Create the complete Open Scientist database schema."""
+    """Create the complete OpenScientist database schema."""
 
     # =========================================================================
     # EXTENSIONS

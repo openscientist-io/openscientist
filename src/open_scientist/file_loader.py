@@ -1,5 +1,5 @@
 """
-File loading and type detection for Open Scientist.
+File loading and type detection for OpenScientist.
 
 Handles multiple file formats with validation and magic number detection.
 """

@@ -1,5 +1,5 @@
 """
-Code execution with sandboxing for Open Scientist.
+Code execution with sandboxing for OpenScientist.
 
 Executes Python code with timeouts, import whitelisting, and safety measures.
 """

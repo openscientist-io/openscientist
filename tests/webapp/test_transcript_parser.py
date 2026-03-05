@@ -483,6 +483,6 @@ class TestParseTranscriptActions:
 
         actions = parse_transcript_actions(transcript)
 
-        # Only execute_code should be included (known Open Scientist tool)
+        # Only execute_code should be included (known OpenScientist tool)
         assert len(actions) == 1
         assert actions[0]["tool_name"] == "execute_code"

@@ -1,5 +1,5 @@
 """
-Job chat service for interactive Q&A about Open Scientist jobs.
+Job chat service for interactive Q&A about OpenScientist jobs.
 
 Allows users to ask questions about their job results, findings, and
 analysis process. Uses SDKAgentExecutor for responses, giving the agent
@@ -262,7 +262,7 @@ async def _send_message_via_executor(
     # System prompt is kept small (it's passed as a CLI arg to the claude
     # subprocess, so large payloads hit the OS ARG_MAX limit).  The agent
     # can read job data files on demand via Claude Code's built-in Read tool.
-    system_prompt = """You are a research assistant helping a scientist discuss the results of their Open Scientist literature review and hypothesis generation job.
+    system_prompt = """You are a research assistant helping a scientist discuss the results of their OpenScientist literature review and hypothesis generation job.
 
 Your working directory is the job folder.  The full research context is available in these files — read them when you need details:
 - knowledge_state.json — findings, hypotheses, literature, and iteration summaries

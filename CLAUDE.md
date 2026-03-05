@@ -1,6 +1,6 @@
-# Open Scientist Development Guide
+# OpenScientist Development Guide
 
-Open Scientist (Scientific Hypothesis Agent for Novel Discovery) is a web application that runs autonomous AI agents for scientific data analysis and hypothesis testing.
+OpenScientist (Scientific Hypothesis Agent for Novel Discovery) is a web application that runs autonomous AI agents for scientific data analysis and hypothesis testing.
 
 ## Project Structure
 

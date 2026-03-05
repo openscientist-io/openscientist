@@ -1506,7 +1506,7 @@ def job_detail_page(job_id: str) -> None:
         _render_job_not_found()
         return
 
-    ui.page_title(f"{_job_page_title(context.job_info)} - Open Scientist")
+    ui.page_title(f"{_job_page_title(context.job_info)} - OpenScientist")
     render_navigator()
     _render_job_status_notices(context)
     _render_job_tabs(context)

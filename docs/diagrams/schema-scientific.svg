@@ -23,7 +23,7 @@
   <symbol id="icon-book" viewBox="0 0 24 24"><path d="M4 2a2 2 0 0 1 2-2h14v17H6a3 3 0 0 0-2 .8ZM4 20a2 2 0 0 1 2-2h14v4H6a2 2 0 0 1-2-2Z"/></symbol>
   <symbol id="icon-link" viewBox="0 0 24 24"><path d="M8 7H6a5 5 0 0 0 0 10h2v-2H6a3 3 0 0 1 0-6h2ZM16 7h2a5 5 0 0 1 0 10h-2v-2h2a3 3 0 0 0 0-6h-2ZM8 11h8v2H8Z"/></symbol>
   <symbol id="icon-branch" viewBox="0 0 24 24"><path d="M6 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM18 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM12 17a3 3 0 1 1 0 6 3 3 0 0 1 0-6ZM11.2 17V12l-4.5-4.5 1.1-1.1L12 10.8l4.2-4.4 1.1 1.1L12.8 12v5Z"/></symbol>
-<text x="448" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">Open Scientist — Scientific Knowledge Graph</text>
+<text x="448" y="28" font-size="16" fill="#212121" text-anchor="middle" font-weight="600">OpenScientist — Scientific Knowledge Graph</text>
 <text x="448" y="48" font-size="10" fill="#616161" text-anchor="middle">6 tables  ·  RLS enabled  ·  PostgreSQL 18 UUIDv7</text>
 <path d="M 232 606 C 192 606, 192 497, 420 497" fill="none" stroke="#607D8B" stroke-width="1.4" opacity="0.8"/>
 <circle cx="420" cy="497" r="3" fill="#607D8B" opacity="0.8"/>

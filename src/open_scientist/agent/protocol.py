@@ -1,5 +1,5 @@
 """
-AgentExecutor protocol definition for Open Scientist.
+AgentExecutor protocol definition for OpenScientist.
 
 Defines the interface that all agent executors must implement,
 allowing the orchestrator to be decoupled from any specific provider

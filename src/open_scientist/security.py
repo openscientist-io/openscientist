@@ -1,5 +1,5 @@
 """
-Security middleware for Open Scientist.
+Security middleware for OpenScientist.
 
 Blocks automated scanner probes before they reach NiceGUI routing,
 reducing log noise and unnecessary database sessions.

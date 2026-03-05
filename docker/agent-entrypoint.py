@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Agent container entrypoint for Open Scientist.
+Agent container entrypoint for OpenScientist.
 
 This script runs inside the open_scientist-agent Docker container and executes
 the discovery loop for a single job.  It is the ONLY code running in

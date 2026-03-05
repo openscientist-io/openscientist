@@ -1,5 +1,5 @@
 """
-Job container management for Open Scientist.
+Job container management for OpenScientist.
 
 Each agent job runs in its own Docker container:
 - runner.py — JobContainerRunner: launch/stop/cleanup containers

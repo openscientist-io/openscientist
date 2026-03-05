@@ -84,14 +84,14 @@
     <circle cx="78" cy="60" r="10" fill="#06b6d4"/>
     <circle cx="22" cy="60" r="10" fill="#0e7490"/>
   </g>
-  <text x="752" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#fff" letter-spacing="1.5">Open Scientist</text>
+  <text x="752" y="28" text-anchor="middle" font-size="18" font-weight="700" fill="#fff" letter-spacing="1.5">OpenScientist</text>
   <text x="700" y="46" text-anchor="middle" font-size="10" fill="#fff" letter-spacing="0.8">Scientific Hypothesis Agent for Novel Discovery — System Architecture</text>
 
   <!-- ============ ABSTRACT ============ -->
   <rect x="30" y="62" width="1340" height="54" rx="8" fill="#F1F5F9" stroke="#E2E8F0" stroke-width="1"/>
   <foreignObject x="40" y="66" width="1320" height="48">
     <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" class="fo-justify fo-text fo-abstract">
-      Open Scientist is an autonomous scientific discovery platform that orchestrates AI agents to analyze research data. It iteratively explores datasets, formulates and tests hypotheses through statistical analysis and PubMed literature review, generates visualizations, and produces comprehensive research reports with full provenance. <xhtml:b>Core features:</xhtml:b> OAuth authentication ("Sign in with GitHub/Google"-style secure login), API keys for programmatic automation, job sharing with granular read/edit permissions, and cost tracking across LLM providers. <xhtml:b>New capabilities:</xhtml:b> Job Chat for interactive Q&amp;A with agentic code execution, ntfy.sh push notifications for real-time job alerts on any device, an extensible skills system for agent capabilities, and MCP (Model Context Protocol) tools. <xhtml:b>Security:</xhtml:b> Per-job sibling containers via Docker socket provide isolated execution environments; PostgreSQL row-level security ensures each user sees only their own data.
+      OpenScientist is an autonomous scientific discovery platform that orchestrates AI agents to analyze research data. It iteratively explores datasets, formulates and tests hypotheses through statistical analysis and PubMed literature review, generates visualizations, and produces comprehensive research reports with full provenance. <xhtml:b>Core features:</xhtml:b> OAuth authentication ("Sign in with GitHub/Google"-style secure login), API keys for programmatic automation, job sharing with granular read/edit permissions, and cost tracking across LLM providers. <xhtml:b>New capabilities:</xhtml:b> Job Chat for interactive Q&amp;A with agentic code execution, ntfy.sh push notifications for real-time job alerts on any device, an extensible skills system for agent capabilities, and MCP (Model Context Protocol) tools. <xhtml:b>Security:</xhtml:b> Per-job sibling containers via Docker socket provide isolated execution environments; PostgreSQL row-level security ensures each user sees only their own data.
     </xhtml:div>
   </foreignObject>
 
@@ -629,7 +629,7 @@
     <rect x="610" y="1407" width="250" height="44" rx="7" fill="#fff" stroke="#E2E8F0" stroke-width="1"/>
     <rect x="610" y="1407" width="4" height="44" rx="2" fill="#6B7280"/>
     <use href="#icon-python" x="834" y="1413" width="14" height="14" fill="#3B82F6"/>
-    <text x="626" y="1424" class="card-title">Open Scientist App Container</text>
+    <text x="626" y="1424" class="card-title">OpenScientist App Container</text>
     <text x="626" y="1437" class="card-sub">Python 3.10+ · NiceGUI · port 8080</text>
 
     <!-- Executor containers (green) -->
@@ -743,6 +743,6 @@
   <!-- ============ FOOTER ============ -->
   <g id="footer">
     <rect x="0" y="1794" width="1400" height="26" fill="#F1F5F9"/>
-    <text x="700" y="1811" text-anchor="middle" class="card-tech" style="fill:#64748B; font-size:9px">Open Scientist · Lawrence Berkeley National Laboratory · Commit a834f70 · Generated 2026-02-17T00:00:00Z</text>
+    <text x="700" y="1811" text-anchor="middle" class="card-tech" style="fill:#64748B; font-size:9px">OpenScientist · Lawrence Berkeley National Laboratory · Commit a834f70 · Generated 2026-02-17T00:00:00Z</text>
   </g>
 </svg>

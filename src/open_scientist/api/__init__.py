@@ -1,5 +1,5 @@
 """
-REST API for Open Scientist.
+REST API for OpenScientist.
 
 Provides programmatic access to job management and API key management.
 All endpoints require API key authentication via Bearer token.

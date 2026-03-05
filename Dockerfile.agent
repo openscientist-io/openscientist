@@ -1,6 +1,6 @@
 # Dockerfile.agent — open-scientist-agent image
 #
-# Runs a single Open Scientist job in an isolated container.
+# Runs a single OpenScientist job in an isolated container.
 # Builds on open_scientist-base (Python 3.12, uv, git) and installs the full
 # open_scientist package so the agent can import orchestrator/discovery code.
 #

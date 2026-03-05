@@ -1,5 +1,5 @@
 """
-Literature search via PubMed API for Open Scientist.
+Literature search via PubMed API for OpenScientist.
 
 Proactive literature integration to inform hypothesis generation.
 """

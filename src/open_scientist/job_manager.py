@@ -1,5 +1,5 @@
 """
-Job manager for Open Scientist discovery jobs.
+Job manager for OpenScientist discovery jobs.
 
 Handles job lifecycle, status tracking, and cleanup.
 """
@@ -250,7 +250,7 @@ def _run_async[T](coro: Coroutine[Any, Any, T]) -> T:
 
 class JobManager:
     """
-    Manages Open Scientist discovery jobs.
+    Manages OpenScientist discovery jobs.
 
     Features:
     - Create and queue jobs
@@ -1028,7 +1028,7 @@ class JobManager:
 
 def main() -> None:
     """CLI entry point for job manager."""
-    parser = argparse.ArgumentParser(description="Open Scientist Job Manager")
+    parser = argparse.ArgumentParser(description="OpenScientist Job Manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # List jobs

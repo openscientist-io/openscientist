@@ -1,4 +1,4 @@
-# Open Scientist-Phenix Integration Design
+# OpenScientist-Phenix Integration Design
 
 **Date:** 2025-11-20
 **Author:** Justin Reese
@@ -7,7 +7,7 @@
 
 ## Overview
 
-This document describes the integration of Phenix (macromolecular structure determination software) into Open Scientist as a proof of concept for autonomous structural biology analysis.
+This document describes the integration of Phenix (macromolecular structure determination software) into OpenScientist as a proof of concept for autonomous structural biology analysis.
 
 ### Problem Statement
 
@@ -21,7 +21,7 @@ This is time-consuming and requires deep expertise. An autonomous agent can iter
 
 ### Key Use Case (Proof of Concept)
 
-Given an experimental PDB/mmCIF file and an AlphaFold prediction, Open Scientist-Phenix will:
+Given an experimental PDB/mmCIF file and an AlphaFold prediction, OpenScientist-Phenix will:
 1. Compare structures and identify regions of disagreement
 2. Generate hypotheses about why discrepancies exist
 3. Test hypotheses using Phenix validation tools
@@ -40,7 +40,7 @@ Given an experimental PDB/mmCIF file and an AlphaFold prediction, Open Scientist
 
 ### Integration Approach
 
-**Domain extension (not fork)** - Open Scientist-Phenix extends Open Scientist as a new domain, similar to how metabolomics and genomics are handled. This keeps the codebase unified while allowing domain-specific capabilities.
+**Domain extension (not fork)** - OpenScientist-Phenix extends OpenScientist as a new domain, similar to how metabolomics and genomics are handled. This keeps the codebase unified while allowing domain-specific capabilities.
 
 ### New Components
 
@@ -396,7 +396,7 @@ Create `tests/test_phenix_integration.py`:
 
 ## Migration Path
 
-### Current Open Scientist Users
+### Current OpenScientist Users
 - **No impact** - Phenix tools only load if `PHENIX_PATH` set
 - Existing metabolomics/genomics jobs work unchanged
 - Can add structural biology by setting environment variable

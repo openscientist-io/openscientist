@@ -15,18 +15,18 @@ def docs_page() -> None:
     with ui.column().classes("w-full max-w-4xl mx-auto mt-8 gap-4"), ui.card().classes("w-full"):
         ui.markdown(
             """
-# Open Scientist Documentation
+# OpenScientist Documentation
 
 **Scientific Hypothesis Agent for Novel Discovery**
 
-## What is Open Scientist?
+## What is OpenScientist?
 
-Open Scientist is an autonomous AI scientist that analyzes scientific data to discover mechanistic insights through iterative hypothesis testing.
+OpenScientist is an autonomous AI scientist that analyzes scientific data to discover mechanistic insights through iterative hypothesis testing.
 
 ## How It Works
 
 1. **Submit a Job**: Provide a research question and optionally upload data files
-2. **Autonomous Discovery**: Open Scientist runs for N iterations, analyzing data and searching literature
+2. **Autonomous Discovery**: OpenScientist runs for N iterations, analyzing data and searching literature
 3. **View Results**: Track progress in the Timeline view, see key findings in Summary, and download the final Report
 
 ## Features
@@ -39,7 +39,7 @@ Open Scientist is an autonomous AI scientist that analyzes scientific data to di
 
 ## Supported Data Formats
 
-Open Scientist accepts various file types:
+OpenScientist accepts various file types:
 
 - **Tabular**: CSV, TSV, Excel (.xlsx), Parquet, JSON
 - **Structures**: PDB, mmCIF (for structural biology)
@@ -71,7 +71,7 @@ Download as Markdown or PDF.
 
 ## API Documentation
 
-Open Scientist provides a REST API for programmatic access. Create an API key from the
+OpenScientist provides a REST API for programmatic access. Create an API key from the
 [API Keys](/api-keys) page, then use it with the `Authorization: Bearer <name>:<secret>` header.
 
 **Interactive API documentation:**
