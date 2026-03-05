@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -612,18 +612,18 @@ wheels = [
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.1.37"
+version = "0.1.46"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "mcp" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b9/12/c5b09c7fe50cc54bf3a4316059c0e2fb7653fb739f6fb35c9a2e8a363493/claude_agent_sdk-0.1.37.tar.gz", hash = "sha256:5a021582b8b44ca735415b85a2dd8732490f22bc3d51452ede82d7f2db4ee592", size = 61610, upload-time = "2026-02-16T21:50:42.115Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/c8/27a7838a0c5c05057f2ecce6d5c8ee755d9a854fa46f3003c85d72dfbc12/claude_agent_sdk-0.1.46.tar.gz", hash = "sha256:7c2b6f3062ca6f016dacb8660660b4afe80935f4eabe0db677649edaddeef2ec", size = 86673, upload-time = "2026-03-05T00:36:27.36Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/61/fdc15695a89cc1f3c4b0e0d714593e00a89094b95fc5dcbec6972a602197/claude_agent_sdk-0.1.37-py3-none-macosx_11_0_arm64.whl", hash = "sha256:c810592bfb2927ba619d01c5588ead0c052452a51052a548fda885ca0dbca7ab", size = 54799463, upload-time = "2026-02-16T21:50:28.258Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/3f/8057bd6f2dc6a077c32b9065336ced45c18aff602575c656b492b95b2428/claude_agent_sdk-0.1.37-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:61e821ba330ffc66fe9870c1ae3a76b05f69ac47da4446928ca6fe0569e1d42e", size = 69543239, upload-time = "2026-02-16T21:50:31.642Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/7f/d13c843edea7418747127dc5d511968c5f83709737e296e54be40098299e/claude_agent_sdk-0.1.37-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:9814fbf52dd6a3aa070da023187184cf6fc679e88d8b3fd69d72dac55f8cc319", size = 70142154, upload-time = "2026-02-16T21:50:35.353Z" },
-    { url = "https://files.pythonhosted.org/packages/62/37/4ef55c5202246ac7c9319bc0b11896be5fd976051eff35109b95a039b76f/claude_agent_sdk-0.1.37-py3-none-win_amd64.whl", hash = "sha256:0934f5eba7598b613ce386cc57b985c7a9f6f1c4a1fba94e587ad84130374258", size = 72673142, upload-time = "2026-02-16T21:50:39.531Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/16/bb883b6c39d1eba6ffe7cab421f5d91ce1b4937f6222dad3dd73641a40c5/claude_agent_sdk-0.1.46-py3-none-macosx_11_0_arm64.whl", hash = "sha256:66aed2199234d751a0f8c605ba34d1b3d93e94b4e939526ee04ca243ba74cf62", size = 59414852, upload-time = "2026-03-05T00:36:10.715Z" },
+    { url = "https://files.pythonhosted.org/packages/99/f3/0c65254ee57940a17ccff1d9a4291d6f856fbf9f87de108e866c7de2fe86/claude_agent_sdk-0.1.46-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:440f0923811f9e1c6c992655beadb527eb2ed4024059880018fd6ec92846d429", size = 75211569, upload-time = "2026-03-05T00:36:15.222Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/a1/3f34e77042eca1d4a12b90e643f7aa5f64201f9259e138c5ba62751194e4/claude_agent_sdk-0.1.46-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:460ab0ad549331dc35ef1bc212a7cd8e8b4d2876b10df7bfa9f4000c95b94c15", size = 75916106, upload-time = "2026-03-05T00:36:19.651Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/0a/2c2cfd0f39de1bb864d6804db0094453ae4270de4a76e44343459e28b9e8/claude_agent_sdk-0.1.46-py3-none-win_amd64.whl", hash = "sha256:4d0d5b14ad04d6e8fbe5b1ffe3e48d0da38d2602e9efc4f21f0e4593987cf67a", size = 77103700, upload-time = "2026-03-05T00:36:24.449Z" },
 ]
 
 [[package]]
@@ -2674,6 +2674,139 @@ wheels = [
 ]
 
 [[package]]
+name = "openscientist"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "alembic" },
+    { name = "anndata" },
+    { name = "anthropic" },
+    { name = "asyncpg" },
+    { name = "authlib" },
+    { name = "azure-identity" },
+    { name = "azure-mgmt-costmanagement" },
+    { name = "bcrypt" },
+    { name = "boto3" },
+    { name = "claude-agent-sdk" },
+    { name = "docker" },
+    { name = "fpdf2" },
+    { name = "google-cloud-bigquery" },
+    { name = "h5py" },
+    { name = "httpx" },
+    { name = "linkml-store", extra = ["dremio"] },
+    { name = "markdown" },
+    { name = "matplotlib" },
+    { name = "mcp", extra = ["cli"] },
+    { name = "networkx" },
+    { name = "nicegui" },
+    { name = "numpy" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pydantic-settings" },
+    { name = "pymupdf" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+    { name = "python-jose", extra = ["cryptography"] },
+    { name = "python-magic" },
+    { name = "requests" },
+    { name = "scanpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "seaborn" },
+    { name = "slowapi" },
+    { name = "sparqlwrapper" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "statsmodels" },
+    { name = "typing-extensions" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "cairosvg" },
+    { name = "mypy" },
+    { name = "pandas-stubs" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "testcontainers" },
+    { name = "types-docker" },
+    { name = "types-fpdf2" },
+    { name = "types-openpyxl" },
+    { name = "types-requests" },
+    { name = "types-seaborn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.13.0" },
+    { name = "anndata", specifier = ">=0.12.0" },
+    { name = "anthropic", specifier = ">=0.78.0" },
+    { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "authlib", specifier = ">=1.3.0" },
+    { name = "azure-identity", specifier = ">=1.15.0" },
+    { name = "azure-mgmt-costmanagement", specifier = ">=4.0.0" },
+    { name = "bcrypt", specifier = ">=4.0.0" },
+    { name = "boto3", specifier = ">=1.34.0" },
+    { name = "claude-agent-sdk", specifier = ">=0.1.46" },
+    { name = "docker", specifier = ">=7.0.0" },
+    { name = "fpdf2", specifier = ">=2.7.0" },
+    { name = "google-cloud-bigquery", specifier = ">=3.11.0" },
+    { name = "h5py", specifier = ">=3.10.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "linkml-store", extras = ["dremio"], specifier = ">=0.2.0" },
+    { name = "markdown", specifier = ">=3.5.0" },
+    { name = "matplotlib", specifier = ">=3.7.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
+    { name = "networkx", specifier = ">=3.0" },
+    { name = "nicegui", specifier = ">=3.7.1" },
+    { name = "numpy", specifier = ">=2.2.0,<2.4" },
+    { name = "openpyxl", specifier = ">=3.1.0" },
+    { name = "pandas", specifier = ">=3.0.0" },
+    { name = "pyarrow", specifier = ">=14.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
+    { name = "pymupdf", specifier = ">=1.24.0" },
+    { name = "python-docx", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3.0" },
+    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "requests", specifier = ">=2.31.0" },
+    { name = "scanpy", specifier = ">=1.12.0" },
+    { name = "scikit-learn", specifier = ">=1.6.0" },
+    { name = "scipy", specifier = ">=1.15.0" },
+    { name = "seaborn", specifier = ">=0.12.0" },
+    { name = "slowapi", specifier = ">=0.1.9" },
+    { name = "sparqlwrapper", specifier = ">=2.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
+    { name = "statsmodels", specifier = ">=0.14.0" },
+    { name = "typing-extensions", specifier = ">=4.8.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "cairosvg", specifier = ">=2.8.2" },
+    { name = "mypy", specifier = ">=1.5.0" },
+    { name = "pandas-stubs", specifier = ">=3.0.0" },
+    { name = "pre-commit", specifier = ">=3.5.0" },
+    { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "pytest-mock", specifier = ">=3.12.0" },
+    { name = "pytest-xdist", specifier = ">=3.5.0" },
+    { name = "ruff", specifier = ">=0.1.0" },
+    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.0.0" },
+    { name = "types-docker", specifier = ">=7.0.0" },
+    { name = "types-fpdf2", specifier = ">=2.7.0" },
+    { name = "types-openpyxl", specifier = ">=3.1.0" },
+    { name = "types-requests", specifier = ">=2.31.0" },
+    { name = "types-seaborn", specifier = ">=0.13.0" },
+]
+
+[[package]]
 name = "orjson"
 version = "3.11.7"
 source = { registry = "https://pypi.org/simple" }
@@ -3956,139 +4089,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/15/10/69ce3918322efdef80decd989f983532306ad10e5c66c42c70dfdd564ab8/session_info2-0.3.tar.gz", hash = "sha256:70500cf970d4eca3bc9e1e14a849a31a5bb626637d8e801d95ca51296c876100", size = 24727, upload-time = "2025-12-22T14:39:21.08Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/36/6a/04e51cb67eba95e0fc74b6d370ddf76cde8bcc4191398d43d30a339a9e44/session_info2-0.3-py3-none-any.whl", hash = "sha256:95cbacef200cd7ff84e6010fdc957007c8692bd9517dc57e91ad2c8831e87d61", size = 17599, upload-time = "2025-12-22T14:39:19.896Z" },
-]
-
-[[package]]
-name = "openscientist"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "alembic" },
-    { name = "anndata" },
-    { name = "anthropic" },
-    { name = "asyncpg" },
-    { name = "authlib" },
-    { name = "azure-identity" },
-    { name = "azure-mgmt-costmanagement" },
-    { name = "bcrypt" },
-    { name = "boto3" },
-    { name = "claude-agent-sdk" },
-    { name = "docker" },
-    { name = "fpdf2" },
-    { name = "google-cloud-bigquery" },
-    { name = "h5py" },
-    { name = "httpx" },
-    { name = "linkml-store", extra = ["dremio"] },
-    { name = "markdown" },
-    { name = "matplotlib" },
-    { name = "mcp", extra = ["cli"] },
-    { name = "networkx" },
-    { name = "nicegui" },
-    { name = "numpy" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "pyarrow" },
-    { name = "pydantic-settings" },
-    { name = "pymupdf" },
-    { name = "python-docx" },
-    { name = "python-dotenv" },
-    { name = "python-jose", extra = ["cryptography"] },
-    { name = "python-magic" },
-    { name = "requests" },
-    { name = "scanpy" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "seaborn" },
-    { name = "slowapi" },
-    { name = "sparqlwrapper" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "statsmodels" },
-    { name = "typing-extensions" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "cairosvg" },
-    { name = "mypy" },
-    { name = "pandas-stubs" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "testcontainers" },
-    { name = "types-docker" },
-    { name = "types-fpdf2" },
-    { name = "types-openpyxl" },
-    { name = "types-requests" },
-    { name = "types-seaborn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.13.0" },
-    { name = "anndata", specifier = ">=0.12.0" },
-    { name = "anthropic", specifier = ">=0.78.0" },
-    { name = "asyncpg", specifier = ">=0.29.0" },
-    { name = "authlib", specifier = ">=1.3.0" },
-    { name = "azure-identity", specifier = ">=1.15.0" },
-    { name = "azure-mgmt-costmanagement", specifier = ">=4.0.0" },
-    { name = "bcrypt", specifier = ">=4.0.0" },
-    { name = "boto3", specifier = ">=1.34.0" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.37" },
-    { name = "docker", specifier = ">=7.0.0" },
-    { name = "fpdf2", specifier = ">=2.7.0" },
-    { name = "google-cloud-bigquery", specifier = ">=3.11.0" },
-    { name = "h5py", specifier = ">=3.10.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
-    { name = "linkml-store", extras = ["dremio"], specifier = ">=0.2.0" },
-    { name = "markdown", specifier = ">=3.5.0" },
-    { name = "matplotlib", specifier = ">=3.7.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.0.0" },
-    { name = "networkx", specifier = ">=3.0" },
-    { name = "nicegui", specifier = ">=3.7.1" },
-    { name = "numpy", specifier = ">=2.2.0,<2.4" },
-    { name = "openpyxl", specifier = ">=3.1.0" },
-    { name = "pandas", specifier = ">=3.0.0" },
-    { name = "pyarrow", specifier = ">=14.0.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0" },
-    { name = "pymupdf", specifier = ">=1.24.0" },
-    { name = "python-docx", specifier = ">=1.1.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
-    { name = "requests", specifier = ">=2.31.0" },
-    { name = "scanpy", specifier = ">=1.12.0" },
-    { name = "scikit-learn", specifier = ">=1.6.0" },
-    { name = "scipy", specifier = ">=1.15.0" },
-    { name = "seaborn", specifier = ">=0.12.0" },
-    { name = "slowapi", specifier = ">=0.1.9" },
-    { name = "sparqlwrapper", specifier = ">=2.0.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
-    { name = "statsmodels", specifier = ">=0.14.0" },
-    { name = "typing-extensions", specifier = ">=4.8.0" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "cairosvg", specifier = ">=2.8.2" },
-    { name = "mypy", specifier = ">=1.5.0" },
-    { name = "pandas-stubs", specifier = ">=3.0.0" },
-    { name = "pre-commit", specifier = ">=3.5.0" },
-    { name = "pytest", specifier = ">=9.0.0" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "pytest-mock", specifier = ">=3.12.0" },
-    { name = "pytest-xdist", specifier = ">=3.5.0" },
-    { name = "ruff", specifier = ">=0.1.0" },
-    { name = "testcontainers", extras = ["postgres"], specifier = ">=4.0.0" },
-    { name = "types-docker", specifier = ">=7.0.0" },
-    { name = "types-fpdf2", specifier = ">=2.7.0" },
-    { name = "types-openpyxl", specifier = ">=3.1.0" },
-    { name = "types-requests", specifier = ">=2.31.0" },
-    { name = "types-seaborn", specifier = ">=0.13.0" },
 ]
 
 [[package]]

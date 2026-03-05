@@ -85,7 +85,7 @@ dependencies = [
     "docker>=7.0.0",
 
     # Claude Agent SDK (required – powers the agent execution path)
-    "claude-agent-sdk>=0.1.37",
+    "claude-agent-sdk>=0.1.46",
 
     # SPARQL queries against remote endpoints
     "SPARQLWrapper>=2.0.0",
