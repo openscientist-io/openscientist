@@ -275,6 +275,10 @@ class ContainerManager:
             self.cpu_limit,
         )
 
+        from openscientist.job_container import resolve_docker_network
+
+        network = resolve_docker_network(self.client, get_settings().container.agent_network)
+
         try:
             # Run container
             result = self.client.containers.run(
@@ -283,6 +287,7 @@ class ContainerManager:
                 stdin_open=True,
                 remove=False,  # We remove manually after getting logs
                 detach=False,
+                network=network,
                 # Resource limits
                 mem_limit=self.memory_limit,
                 nano_cpus=int(self.cpu_limit * 1e9),

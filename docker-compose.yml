@@ -109,9 +109,5 @@ services:
     profiles: ["build-only"]  # Excluded from `docker compose up`
     entrypoint: ["echo", "openscientist-agent image built"]
 
-networks:
-  default:
-    name: openscientist_default
-
 volumes:
   postgres_data:

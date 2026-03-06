@@ -513,6 +513,11 @@ class ContainerSettings(BaseSettings):
     # Agent container resource limits
     agent_memory: str = Field(default="8g", alias="OPENSCIENTIST_AGENT_MEMORY")
     agent_cpu: float = Field(default=2.0, alias="OPENSCIENTIST_AGENT_CPU")
+    agent_network: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AGENT_NETWORK",
+        description="Docker network for agent containers. Auto-detected from the web server container if not set.",
+    )
 
     # Host path mapping for sibling container volume mounts (executor containers)
     # When the main container runs inside Docker and spawns sibling containers,

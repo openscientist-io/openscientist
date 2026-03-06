@@ -28,7 +28,6 @@ from openscientist.version import SHORT_COMMIT_LENGTH
 logger = logging.getLogger(__name__)
 
 AGENT_IMAGE = "openscientist-agent:latest"
-AGENT_NETWORK = "openscientist_default"
 
 
 class JobContainerRunner:
@@ -38,6 +37,12 @@ class JobContainerRunner:
         import docker
 
         self._docker: docker.DockerClient = docker.from_env()
+
+    def _get_network(self, configured_network: str | None) -> str:
+        """Resolve the Docker network for agent containers."""
+        from openscientist.job_container import resolve_docker_network
+
+        return resolve_docker_network(self._docker, configured_network)
 
     def launch(self, job_id: str, job_dir: Path) -> Any:
         """
@@ -70,6 +75,7 @@ class JobContainerRunner:
 
         provider_env = settings.provider.get_container_env_vars()
         database_url = settings.database.effective_database_url
+        network = self._get_network(cs.agent_network)
 
         # Mount at a path whose final component IS the job UUID so that
         # orchestrator code can derive the job ID from job_dir.name.
@@ -110,7 +116,7 @@ class JobContainerRunner:
             remove=False,
             environment=env,
             volumes=volumes,
-            network=AGENT_NETWORK,
+            network=network,
             mem_limit=cs.agent_memory,
             nano_cpus=int(cs.agent_cpu * 1e9),
             security_opt=["no-new-privileges:true"],
