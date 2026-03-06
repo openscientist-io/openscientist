@@ -55,16 +55,21 @@ def _install_parse_message_patch() -> None:
 
     def _tolerant_parse(data: Any) -> Any:
         try:
-            return _original_parse(data)
+            result = _original_parse(data)
         except MessageParseError:
             if isinstance(data, dict):
                 msg_type = data.get("type")
                 if isinstance(msg_type, str) and msg_type not in known_types:
                     logger.debug("Skipping unrecognised SDK message type: %s", msg_type)
-                    # Return a lightweight object that receive_response will ignore
-                    # (it only acts on ResultMessage / AssistantMessage / etc.)
                     return _Sentinel(msg_type)
             raise
+        # SDK >=0.1.46 returns None for unknown types instead of raising.
+        if result is None and isinstance(data, dict):
+            msg_type = data.get("type")
+            if isinstance(msg_type, str) and msg_type not in known_types:
+                logger.debug("Skipping unrecognised SDK message type: %s", msg_type)
+                return _Sentinel(msg_type)
+        return result
 
     _tolerant_parse.__openscientist_tolerant_patch__ = True  # type: ignore[attr-defined]
     _mp.parse_message = _tolerant_parse

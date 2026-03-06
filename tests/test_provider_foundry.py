@@ -29,7 +29,7 @@ def _settings_for_foundry(
 
 @pytest.mark.asyncio
 async def test_send_message_derives_foundry_base_url_from_resource():
-    expected_url = "https://lab-foundry.services.ai.azure.com/api/anthropic"
+    expected_url = "https://lab-foundry.services.ai.azure.com/anthropic"
     seen: dict[str, str | None] = {"base_url": None, "api_key": None}
 
     class FakeTextBlock:
