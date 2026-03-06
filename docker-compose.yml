@@ -29,7 +29,7 @@ services:
   openscientist:
     stdin_open: true # docker run -i
     tty: true        # docker run -t
-    platform: linux/amd64
+    platform: ${OPENSCIENTIST_PLATFORM:-}
     build: .
     depends_on:
       postgres:

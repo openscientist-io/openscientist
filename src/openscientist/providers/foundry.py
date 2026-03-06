@@ -168,7 +168,7 @@ class FoundryProvider(BaseProvider):
     @staticmethod
     def _build_base_url_from_resource(resource: str) -> str:
         """Build Azure Foundry Anthropic endpoint URL from resource name."""
-        return f"https://{resource}.services.ai.azure.com/api/anthropic"
+        return f"https://{resource}.services.ai.azure.com/anthropic"
 
     def _resolve_api_key(self) -> str:
         """Return bearer token for Anthropic client.

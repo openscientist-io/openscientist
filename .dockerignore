@@ -14,6 +14,8 @@ ENV/
 # Jobs and data (mounted as volumes)
 jobs/
 data/
+backups/
+reports/
 
 # Git
 .git/
