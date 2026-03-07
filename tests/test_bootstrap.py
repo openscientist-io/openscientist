@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import openscientist.bootstrap as bootstrap_module
 from openscientist.bootstrap import bootstrap_jobs_from_filesystem
 from openscientist.database.models import (
     AnalysisLog,
@@ -28,6 +31,40 @@ def _write_json(path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
+
+
+def test_derive_uuidv7_seed_time_from_filesystem_uses_earliest_fallback_timestamp(temp_jobs_dir):
+    job_dir = temp_jobs_dir / "job_seed_fallback"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    older_file = job_dir / "older.txt"
+    newer_file = job_dir / "newer.txt"
+    older_file.write_text("old", encoding="utf-8")
+    newer_file.write_text("new", encoding="utf-8")
+
+    older_epoch = 1_700_000_000
+    newer_epoch = 1_700_001_000
+    os.utime(older_file, (older_epoch, older_epoch))
+    os.utime(newer_file, (newer_epoch, newer_epoch))
+
+    seed_time = bootstrap_module._derive_uuidv7_seed_time_from_filesystem(job_dir)
+
+    assert seed_time == datetime.fromtimestamp(older_epoch, tz=UTC)
+
+
+@pytest.mark.asyncio
+async def test_generate_uuidv7_uses_seed_time_when_provided(db_session: AsyncSession):
+    seed_time = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    generated = await bootstrap_module._generate_uuidv7(db_session, seed_time=seed_time)
+    extracted = (
+        await db_session.execute(
+            text("SELECT uuid_extract_timestamp(CAST(:uuid_value AS uuid))"),
+            {"uuid_value": str(generated)},
+        )
+    ).scalar_one()
+
+    assert extracted is not None
+    normalized = extracted.astimezone(UTC) if extracted.tzinfo else extracted.replace(tzinfo=UTC)
+    assert abs((normalized - seed_time).total_seconds()) < 1
 
 
 @pytest.mark.asyncio
@@ -304,7 +341,8 @@ async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
     )
     migrated_uuid = UUID("11111111-1111-4111-8111-111111111111")
 
-    async def _fake_uuidv7(_session: AsyncSession) -> UUID:
+    async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
+        _ = seed_time
         return migrated_uuid
 
     monkeypatch.setattr("openscientist.bootstrap._generate_uuidv7", _fake_uuidv7)
@@ -398,7 +436,8 @@ async def test_bootstrap_dry_run_non_uuid_legacy_does_not_rename_or_write(
     )
     migrated_uuid = UUID("22222222-2222-4222-8222-222222222222")
 
-    async def _fake_uuidv7(_session: AsyncSession) -> UUID:
+    async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
+        _ = seed_time
         return migrated_uuid
 
     monkeypatch.setattr("openscientist.bootstrap._generate_uuidv7", _fake_uuidv7)
@@ -446,7 +485,8 @@ async def test_bootstrap_migrates_when_config_missing_but_ks_has_legacy_id(
     )
     migrated_uuid = UUID("33333333-3333-4333-8333-333333333333")
 
-    async def _fake_uuidv7(_session: AsyncSession) -> UUID:
+    async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
+        _ = seed_time
         return migrated_uuid
 
     monkeypatch.setattr("openscientist.bootstrap._generate_uuidv7", _fake_uuidv7)
@@ -482,6 +522,107 @@ async def test_bootstrap_migrates_when_config_missing_but_ks_has_legacy_id(
 
     job = (await db_session.execute(select(Job).where(Job.id == migrated_uuid))).scalar_one()
     assert job.title == "KS-only migration"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_seeds_uuidv7_time_from_filesystem(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "openscientist.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    expected_seed = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    observed_seed_times: list[datetime | None] = []
+    migrated_uuid = UUID("44444444-4444-4444-8444-444444444444")
+
+    def _fake_seed(_job_dir) -> datetime:
+        return expected_seed
+
+    async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
+        observed_seed_times.append(seed_time)
+        return migrated_uuid
+
+    monkeypatch.setattr(
+        "openscientist.bootstrap._derive_uuidv7_seed_time_from_filesystem",
+        _fake_seed,
+    )
+    monkeypatch.setattr("openscientist.bootstrap._generate_uuidv7", _fake_uuidv7)
+
+    legacy_id = "job_seeded_time"
+    legacy_dir = temp_jobs_dir / legacy_id
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        legacy_dir / "config.json",
+        {
+            "job_id": legacy_id,
+            "research_question": "Filesystem seed test",
+            "status": "pending",
+            "owner_id": None,
+        },
+    )
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir, dry_run=True)
+
+    assert result.created_jobs == 1
+    assert result.errors == []
+    assert observed_seed_times == [expected_seed]
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_offsets_colliding_seed_times_deterministically(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        "openscientist.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    base_seed = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    observed_seed_times: list[datetime | None] = []
+    generated_ids = iter(
+        [
+            UUID("55555555-5555-4555-8555-555555555555"),
+            UUID("66666666-6666-4666-8666-666666666666"),
+        ]
+    )
+
+    def _fake_seed(_job_dir) -> datetime:
+        return base_seed
+
+    async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
+        observed_seed_times.append(seed_time)
+        return next(generated_ids)
+
+    monkeypatch.setattr(
+        "openscientist.bootstrap._derive_uuidv7_seed_time_from_filesystem",
+        _fake_seed,
+    )
+    monkeypatch.setattr("openscientist.bootstrap._generate_uuidv7", _fake_uuidv7)
+
+    for legacy_id in ("job_a", "job_b"):
+        legacy_dir = temp_jobs_dir / legacy_id
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        _write_json(
+            legacy_dir / "config.json",
+            {
+                "job_id": legacy_id,
+                "research_question": f"Collision test {legacy_id}",
+                "status": "pending",
+                "owner_id": None,
+            },
+        )
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir, dry_run=True)
+
+    assert result.created_jobs == 2
+    assert result.errors == []
+    assert observed_seed_times == [base_seed, base_seed + timedelta(milliseconds=1)]
 
 
 @pytest.mark.asyncio
