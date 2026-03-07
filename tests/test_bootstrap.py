@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -568,59 +568,6 @@ async def test_bootstrap_seeds_uuidv7_time_from_filesystem(
     assert result.created_jobs == 1
     assert result.errors == []
     assert observed_seed_times == [expected_seed]
-
-
-@pytest.mark.asyncio
-async def test_bootstrap_offsets_colliding_seed_times_deterministically(
-    db_session: AsyncSession,
-    temp_jobs_dir,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setattr(
-        "openscientist.bootstrap.get_admin_session",
-        fake_admin_session(db_session),
-    )
-
-    base_seed = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
-    observed_seed_times: list[datetime | None] = []
-    generated_ids = iter(
-        [
-            UUID("55555555-5555-4555-8555-555555555555"),
-            UUID("66666666-6666-4666-8666-666666666666"),
-        ]
-    )
-
-    def _fake_seed(_job_dir) -> datetime:
-        return base_seed
-
-    async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
-        observed_seed_times.append(seed_time)
-        return next(generated_ids)
-
-    monkeypatch.setattr(
-        "openscientist.bootstrap._derive_uuidv7_seed_time_from_filesystem",
-        _fake_seed,
-    )
-    monkeypatch.setattr("openscientist.bootstrap._generate_uuidv7", _fake_uuidv7)
-
-    for legacy_id in ("job_a", "job_b"):
-        legacy_dir = temp_jobs_dir / legacy_id
-        legacy_dir.mkdir(parents=True, exist_ok=True)
-        _write_json(
-            legacy_dir / "config.json",
-            {
-                "job_id": legacy_id,
-                "research_question": f"Collision test {legacy_id}",
-                "status": "pending",
-                "owner_id": None,
-            },
-        )
-
-    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir, dry_run=True)
-
-    assert result.created_jobs == 2
-    assert result.errors == []
-    assert observed_seed_times == [base_seed, base_seed + timedelta(days=1)]
 
 
 @pytest.mark.asyncio

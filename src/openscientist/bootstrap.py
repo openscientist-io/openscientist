@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
 from typing import Any
@@ -337,32 +337,6 @@ def _derive_uuidv7_seed_time_from_filesystem(job_dir: Path) -> datetime | None:
     if timestamp is None:
         return None
     return datetime.fromtimestamp(timestamp, tz=UTC)
-
-
-def _offset_colliding_seed_time(
-    seed_time: datetime, seed_time_counts_by_ms: dict[int, int]
-) -> datetime:
-    """
-    Ensure deterministic ordering when multiple jobs resolve to the same ms seed.
-
-    Colliding seed times are spread by 1 day per collision so that migrated
-    UUIDs have visually distinct prefixes (UUIDv7 encodes ms timestamp in the
-    high bits, so sub-second offsets produce near-identical hex prefixes).
-
-    Args:
-        seed_time: Candidate seed timestamp.
-        seed_time_counts_by_ms: Per-millisecond collision counters for this run.
-
-    Returns:
-        Original timestamp or timestamp shifted by a deterministic day offset.
-    """
-    normalized = seed_time.astimezone(UTC) if seed_time.tzinfo else seed_time.replace(tzinfo=UTC)
-    seed_ms = int(normalized.timestamp() * 1000)
-    offset_ms = seed_time_counts_by_ms.get(seed_ms, 0)
-    seed_time_counts_by_ms[seed_ms] = offset_ms + 1
-    if offset_ms == 0:
-        return normalized
-    return normalized + timedelta(days=offset_ms)
 
 
 async def _generate_uuidv7(session: AsyncSession, seed_time: datetime | None = None) -> UUID:
@@ -1252,7 +1226,6 @@ async def _resolve_migration_target(
     config: dict[str, Any] | None,
     ks_data: dict[str, Any] | None,
     legacy_id_map: dict[str, UUID],
-    seed_time_counts_by_ms: dict[int, int],
     result: BootstrapResult,
     context: str,
 ) -> MigrationTarget | None:
@@ -1265,7 +1238,6 @@ async def _resolve_migration_target(
         config: Optional parsed ``config.json`` payload.
         ks_data: Optional parsed ``knowledge_state.json`` payload.
         legacy_id_map: In-memory legacy-id to UUID map for this run.
-        seed_time_counts_by_ms: In-memory seed-time collision counters for this run.
         result: Aggregate bootstrap result (for counters/errors).
         context: Context string for logging/error collection.
 
@@ -1295,8 +1267,6 @@ async def _resolve_migration_target(
     mapped_id = next((legacy_id_map[item] for item in legacy_ids if item in legacy_id_map), None)
     if mapped_id is None:
         seed_time = _derive_uuidv7_seed_time_from_filesystem(job_dir)
-        if seed_time is not None:
-            seed_time = _offset_colliding_seed_time(seed_time, seed_time_counts_by_ms)
         try:
             mapped_id = await _generate_uuidv7(session, seed_time=seed_time)
         except Exception as e:
@@ -1541,7 +1511,6 @@ async def bootstrap_jobs_from_filesystem(
         users = list((await session.execute(select(User))).scalars())
         users_by_id = {u.id: u for u in users}
         legacy_id_map: dict[str, UUID] = {}
-        seed_time_counts_by_ms: dict[int, int] = {}
 
         for job_dir in sorted(p for p in jobs_dir.iterdir() if p.is_dir()):
             result.scanned_directories += 1
@@ -1558,7 +1527,6 @@ async def bootstrap_jobs_from_filesystem(
                 config=config,
                 ks_data=ks_data,
                 legacy_id_map=legacy_id_map,
-                seed_time_counts_by_ms=seed_time_counts_by_ms,
                 result=result,
                 context=context,
             )
