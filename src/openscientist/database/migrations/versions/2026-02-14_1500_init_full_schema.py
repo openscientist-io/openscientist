@@ -468,6 +468,24 @@ def upgrade() -> None:
             comment="Consensus answer to the research question if one was reached",
         ),
         sa.Column(
+            "data_summary",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+            comment="Structured data summary used for prompting and UI",
+        ),
+        sa.Column(
+            "agent_status",
+            sa.Text(),
+            nullable=True,
+            comment="Current agent status message for live UI updates",
+        ),
+        sa.Column(
+            "agent_status_updated_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            comment="Timestamp when agent_status was last updated",
+        ),
+        sa.Column(
             "id",
             sa.UUID(),
             server_default=sa.text("uuidv7()"),
@@ -1042,6 +1060,12 @@ def upgrade() -> None:
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=True,
             comment="Structured metrics (e.g., R-factors, completeness)",
+        ),
+        sa.Column(
+            "strapline",
+            sa.String(length=200),
+            nullable=True,
+            comment="Optional one-line headline for this iteration",
         ),
         sa.Column(
             "id",

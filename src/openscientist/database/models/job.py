@@ -5,10 +5,11 @@ The Job model represents a complete OpenScientist analysis workflow, tracking
 status, configuration, and relationships to all job artifacts.
 """
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -147,6 +148,24 @@ class Job(UUIDv7Mixin, Base):
         JSONB,
         nullable=True,
         comment="LLM configuration (model, temperature, etc.)",
+    )
+
+    data_summary: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Structured data summary used for prompting and UI",
+    )
+
+    agent_status: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Current agent status message for live UI updates",
+    )
+
+    agent_status_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp when agent_status was last updated",
     )
 
     error_message: Mapped[str | None] = mapped_column(

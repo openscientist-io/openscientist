@@ -8,7 +8,7 @@ decisions, and progress toward the goal.
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -67,6 +67,12 @@ class IterationSummary(UUIDv7Mixin, Base):
         Text,
         nullable=False,
         comment="Natural language summary of iteration",
+    )
+
+    strapline: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        comment="Optional one-line headline for this iteration",
     )
 
     key_findings: Mapped[list[Any] | None] = mapped_column(
