@@ -7,7 +7,7 @@ Each agent job runs in its own Docker container:
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openscientist.job_container.runner import JobContainerRunner
 
@@ -33,11 +33,12 @@ def resolve_docker_network(
     try:
         hostname = Path("/etc/hostname").read_text().strip()
         container = client.containers.get(hostname)
-        networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
-        for name in networks:
-            if name != "bridge":
-                return name
+        networks_raw: Any = container.attrs.get("NetworkSettings", {}).get("Networks", {})
+        if isinstance(networks_raw, dict):
+            for name in networks_raw:
+                if isinstance(name, str) and name != "bridge":
+                    return name
     except Exception as e:
         logger.warning("Failed to auto-detect Docker network: %s", e)
 
-    return "openscientist_default"
+    return "bridge"
