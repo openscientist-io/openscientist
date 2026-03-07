@@ -398,6 +398,8 @@ async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
     result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir)
 
     assert result.created_jobs == 1
+    assert result.synced_knowledge_state == 1
+    assert result.deleted_knowledge_state_files == 1
     assert result.skipped_invalid_job_id == 0
     assert result.errors == []
 
@@ -407,13 +409,9 @@ async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
 
     with open(migrated_dir / "config.json", encoding="utf-8") as f:
         migrated_config = json.load(f)
-    with open(migrated_dir / "knowledge_state.json", encoding="utf-8") as f:
-        migrated_ks = json.load(f)
 
     assert migrated_config["job_id"] == str(migrated_uuid)
-    assert migrated_ks["job_id"] == str(migrated_uuid)
-    assert migrated_ks["config"]["job_id"] == str(migrated_uuid)
-    assert migrated_ks["findings"][0]["plots"][0] == f"jobs/{migrated_uuid}/provenance/plot.png"
+    assert not (migrated_dir / "knowledge_state.json").exists()
 
     job = (await db_session.execute(select(Job).where(Job.id == migrated_uuid))).scalar_one()
     assert job.owner_id is None
@@ -743,9 +741,11 @@ async def test_bootstrap_is_idempotent(
 
     assert first.created_jobs == 1
     assert first.synced_knowledge_state == 1
+    assert first.deleted_knowledge_state_files == 1
     assert second.created_jobs == 0
     assert second.existing_jobs == 1
-    assert second.synced_knowledge_state == 1
+    assert second.synced_knowledge_state == 0
+    assert second.deleted_knowledge_state_files == 0
     assert second.errors == []
 
     assert (await db_session.execute(select(func.count(Job.id)))).scalar_one() == 1

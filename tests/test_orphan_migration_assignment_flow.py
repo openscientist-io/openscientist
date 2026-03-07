@@ -6,12 +6,12 @@ import json
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.bootstrap import bootstrap_jobs_from_filesystem
-from openscientist.database.models import Job, User
+from openscientist.database.models import AnalysisLog, Finding, IterationSummary, Job, User
 from openscientist.database.rls import set_current_user
 from tests.helpers import enable_rls, fake_admin_session
 
@@ -46,14 +46,66 @@ async def test_bootstrap_orphan_then_assign_changes_visibility(
             "owner_id": None,
         },
     )
+    _write_json(
+        job_dir / "knowledge_state.json",
+        {
+            "config": {
+                "job_id": job_id,
+                "research_question": "Orphan migration assignment flow",
+                "max_iterations": 3,
+            },
+            "iteration": 1,
+            "analysis_log": [
+                {
+                    "iteration": 1,
+                    "action": "execute_code",
+                    "timestamp": "2026-03-01T10:00:00",
+                    "code": "print('orphan')",
+                    "output": "orphan",
+                }
+            ],
+            "findings": [
+                {
+                    "id": "F001",
+                    "iteration_discovered": 1,
+                    "title": "Orphan finding",
+                    "evidence": "Evidence",
+                    "supporting_hypotheses": [],
+                    "literature_support": [],
+                    "plots": [],
+                }
+            ],
+            "iteration_summaries": [{"iteration": 1, "summary": "Orphan iteration summary"}],
+        },
+    )
 
     bootstrap_result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir)
     assert bootstrap_result.created_jobs == 1
     assert bootstrap_result.orphan_jobs == 1
+    assert bootstrap_result.synced_knowledge_state == 1
+    assert bootstrap_result.deleted_knowledge_state_files == 1
     assert bootstrap_result.errors == []
 
     job = (await db_session.execute(select(Job).where(Job.id == UUID(job_id)))).scalar_one()
     assert job.owner_id is None
+
+    # Verify KS data was migrated into DB tables
+    assert (
+        await db_session.execute(
+            select(func.count(AnalysisLog.id)).where(AnalysisLog.job_id == job.id)
+        )
+    ).scalar_one() == 1
+    assert (
+        await db_session.execute(select(func.count(Finding.id)).where(Finding.job_id == job.id))
+    ).scalar_one() == 1
+    assert (
+        await db_session.execute(
+            select(func.count(IterationSummary.id)).where(IterationSummary.job_id == job.id)
+        )
+    ).scalar_one() == 1
+
+    # knowledge_state.json should have been deleted after migration
+    assert not (job_dir / "knowledge_state.json").exists()
 
     owner_user = User(email="owner-flow@example.com", name="Owner User")
     other_user = User(email="other-flow@example.com", name="Other User")
@@ -80,6 +132,13 @@ async def test_bootstrap_orphan_then_assign_changes_visibility(
     job_uuid = job.id
     owner_user_id = owner_user.id
     other_user_id = other_user.id
+
+    # Verify migrated data survives assignment
+    assert (
+        await db_session.execute(
+            select(func.count(AnalysisLog.id)).where(AnalysisLog.job_id == job_uuid)
+        )
+    ).scalar_one() == 1
 
     await enable_rls(db_session)
     await set_current_user(db_session, owner_user_id)

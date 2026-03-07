@@ -59,6 +59,7 @@ class BootstrapResult:
     existing_jobs: int = 0
     orphan_jobs: int = 0
     synced_knowledge_state: int = 0
+    deleted_knowledge_state_files: int = 0
     data_files_added: int = 0
     plots_added: int = 0
     errors: list[str] = field(default_factory=list)
@@ -901,6 +902,8 @@ def _normalize_analysis_log(raw_ks: dict[str, Any]) -> list[dict[str, Any]]:
                 "timestamp": _to_optional_string(raw_log.get("timestamp")) or now_iso,
                 "code": _to_optional_string(raw_log.get("code")),
                 "output": _to_optional_string(raw_log.get("output")),
+                "description": _to_optional_string(raw_log.get("description")),
+                "success": _to_string(raw_log.get("status")) != "failed",
                 "details": raw_log.get("details"),
                 "status": _to_optional_string(raw_log.get("status")),
             }
@@ -929,6 +932,7 @@ def _normalize_iteration_summaries(raw_ks: dict[str, Any]) -> list[dict[str, Any
             {
                 "iteration": _coerce_int(raw_summary.get("iteration"), default=1, minimum=1),
                 "summary": summary,
+                "strapline": _to_string(raw_summary.get("strapline")),
             }
         )
     return summaries
@@ -1480,7 +1484,7 @@ async def _sync_knowledge_state_payload(
     job: Job,
     ks_data: dict[str, Any],
     context: str,
-) -> None:
+) -> bool:
     """
     Normalize and persist legacy knowledge-state payload into DB tables.
 
@@ -1502,11 +1506,13 @@ async def _sync_knowledge_state_payload(
         ks.data = normalized_ks
         await ks.save_to_database(str(job.id), job.owner_id, session=session)
         result.synced_knowledge_state += 1
+        return True
     except Exception as e:
         await session.rollback()
         msg = f"{context}: failed while syncing knowledge state: {e}"
         result.errors.append(msg)
         logger.error(msg, exc_info=True)
+        return False
 
 
 async def bootstrap_jobs_from_filesystem(
@@ -1594,13 +1600,22 @@ async def bootstrap_jobs_from_filesystem(
                 continue
 
             if ks_data:
-                await _sync_knowledge_state_payload(
+                sync_ok = await _sync_knowledge_state_payload(
                     session,
                     result=result,
                     job=job,
                     ks_data=ks_data,
                     context=context,
                 )
+                ks_file = effective_job_dir / KS_FILENAME
+                if sync_ok and ks_file.exists():
+                    try:
+                        ks_file.unlink()
+                        result.deleted_knowledge_state_files += 1
+                    except OSError as e:
+                        msg = f"{context}: failed to delete {KS_FILENAME}: {e}"
+                        result.errors.append(msg)
+                        logger.warning(msg)
 
     return result
 
