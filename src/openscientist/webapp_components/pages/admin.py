@@ -190,7 +190,7 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = "") -> No
 
         rows = [
             {
-                "id": str(job.id)[:8] + "...",
+                "id": "..." + str(job.id)[-8:],
                 "full_id": str(job.id),
                 "title": job.title[:50] + ("..." if len(job.title) > 50 else ""),
                 "status": job.status,

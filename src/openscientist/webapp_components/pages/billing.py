@@ -64,7 +64,7 @@ async def _render_db_cost_section() -> None:
     rows = [
         {
             "id": str(r.id),
-            "job_id": str(r.job_id)[:8] + "...",
+            "job_id": "..." + str(r.job_id)[-8:],
             "model": r.model,
             "provider": r.provider,
             "input_tokens": r.input_tokens,

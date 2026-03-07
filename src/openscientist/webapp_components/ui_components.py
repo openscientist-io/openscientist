@@ -300,12 +300,12 @@ def _get_job_id_badge_html(job_id: str, truncate: bool = True) -> str:
 
     Args:
         job_id: The job UUID
-        truncate: If True, show only first 8 characters of UUID
+        truncate: If True, show only last 8 characters of UUID
 
     Returns:
         HTML string for the badge element
     """
-    display_id = job_id[:8] if truncate and len(job_id) > 8 else job_id
+    display_id = job_id[-8:] if truncate and len(job_id) > 8 else job_id
     tooltip = f"View job {job_id}"
 
     # Simple work/document icon
@@ -333,7 +333,7 @@ def render_job_id_badge(job_id: str, truncate: bool = True) -> None:
 
     Args:
         job_id: The job UUID
-        truncate: If True, show only first 8 characters of UUID (default True)
+        truncate: If True, show only last 8 characters of UUID (default True)
     """
     _inject_job_id_badge_styles()
     badge_html = _get_job_id_badge_html(job_id, truncate)
@@ -365,7 +365,7 @@ def render_job_id_slot(field_name: str = "job_id") -> str:
                 <svg width="14" height="14" style="width:14px;height:14px;min-width:14px;min-height:14px;margin-right:4px;fill:currentColor;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                     <path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>
                 </svg>
-                {{{{ props.row.{field_name}.substring(0, 8) }}}}
+                {{{{ props.row.{field_name}.slice(-8) }}}}
             </span>
         </q-td>
     """
@@ -2009,7 +2009,7 @@ def render_delete_dialog(
                     job_manager.cancel_job(job_id)
 
                 job_manager.delete_job(job_id)
-                short_id = job_id[:8] if len(job_id) > 8 else job_id
+                short_id = job_id[-8:] if len(job_id) > 8 else job_id
                 ui.notify(f"Job {short_id} deleted successfully", type="positive")
                 if on_deleted:
                     result = on_deleted()
