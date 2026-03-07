@@ -620,7 +620,7 @@ async def test_bootstrap_offsets_colliding_seed_times_deterministically(
 
     assert result.created_jobs == 2
     assert result.errors == []
-    assert observed_seed_times == [base_seed, base_seed + timedelta(milliseconds=1)]
+    assert observed_seed_times == [base_seed, base_seed + timedelta(days=1)]
 
 
 @pytest.mark.asyncio

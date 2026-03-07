@@ -345,12 +345,16 @@ def _offset_colliding_seed_time(
     """
     Ensure deterministic ordering when multiple jobs resolve to the same ms seed.
 
+    Colliding seed times are spread by 1 day per collision so that migrated
+    UUIDs have visually distinct prefixes (UUIDv7 encodes ms timestamp in the
+    high bits, so sub-second offsets produce near-identical hex prefixes).
+
     Args:
         seed_time: Candidate seed timestamp.
         seed_time_counts_by_ms: Per-millisecond collision counters for this run.
 
     Returns:
-        Original timestamp or timestamp shifted by a deterministic millisecond offset.
+        Original timestamp or timestamp shifted by a deterministic day offset.
     """
     normalized = seed_time.astimezone(UTC) if seed_time.tzinfo else seed_time.replace(tzinfo=UTC)
     seed_ms = int(normalized.timestamp() * 1000)
@@ -358,7 +362,7 @@ def _offset_colliding_seed_time(
     seed_time_counts_by_ms[seed_ms] = offset_ms + 1
     if offset_ms == 0:
         return normalized
-    return normalized + timedelta(milliseconds=offset_ms)
+    return normalized + timedelta(days=offset_ms)
 
 
 async def _generate_uuidv7(session: AsyncSession, seed_time: datetime | None = None) -> UUID:
