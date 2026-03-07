@@ -216,23 +216,42 @@ def test_database_url(postgres_container: PostgresContainer | None) -> str:
     Priority:
     1. TEST_DATABASE_URL if explicitly set
     2. Testcontainer PostgreSQL (auto-started)
+
+    Also propagates the real URL to env/settings so that code paths using
+    AsyncSessionLocal(thread_safe=True) connect to the testcontainer DB
+    instead of the dummy placeholder URL set at import time.
     """
     # Check for explicit test database URL
     test_url = os.getenv("TEST_DATABASE_URL")
     if test_url:
-        return test_url
-
-    # Use testcontainer - it should always be available at this point
-    if postgres_container is None:
+        url = test_url
+    elif postgres_container is None:
         raise RuntimeError(
             "No TEST_DATABASE_URL set and postgres_container fixture returned None. "
             "This should not happen - check the postgres_container fixture."
         )
+    else:
+        # Get connection URL from container and convert to asyncpg driver
+        # testcontainers returns psycopg2 URL, we need asyncpg
+        sync_url: str = postgres_container.get_connection_url()
+        url = sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
 
-    # Get connection URL from container and convert to asyncpg driver
-    # testcontainers returns psycopg2 URL, we need asyncpg
-    sync_url: str = postgres_container.get_connection_url()
-    return sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+    # Propagate the real URL so thread-safe session factories connect correctly
+    os.environ["DATABASE_URL"] = url
+    from openscientist.settings import clear_settings_cache
+
+    clear_settings_cache()
+
+    # Reset engine/session factory globals so they pick up the new URL
+    import openscientist.database.engine as engine_mod
+    import openscientist.database.session as session_mod
+
+    engine_mod._engine = None
+    engine_mod._admin_engine = None
+    session_mod._session_factory = None
+    session_mod._admin_session_factory = None
+
+    return url
 
 
 @pytest_asyncio.fixture

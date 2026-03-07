@@ -1,8 +1,8 @@
 """
 Job filesystem setup for OpenScientist discovery.
 
-create_job() initializes the job directory structure, knowledge state,
-and knowledge_state.json.
+create_job() initializes the job directory structure and database-backed
+knowledge state.
 """
 
 from __future__ import annotations
@@ -17,8 +17,7 @@ from openscientist.async_tasks import create_background_task
 from openscientist.database.models import JobDataFile
 from openscientist.database.session import AsyncSessionLocal
 from openscientist.file_loader import get_file_info
-from openscientist.knowledge_state import KS_FILENAME, KnowledgeState
-from openscientist.orchestrator.discovery import sync_knowledge_state_to_db
+from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +143,8 @@ def create_job(
     else:
         ks.set_data_summary({"files": [], "file_type": "none", "file_size_mb": 0})
 
-    ks_path = job_dir / KS_FILENAME
-    ks.save(ks_path)
-    # chmod so the agent container (non-root UID) can read and update it.
-    ks_path.chmod(0o666)
-    sync_knowledge_state_to_db(job_dir, ks)
+    owner_uuid = UUID(owner_id) if owner_id else None
+    ks.save_to_database_sync(job_id, owner_uuid)
 
     logger.info("Created job %s at %s", job_id, job_dir)
     return job_dir

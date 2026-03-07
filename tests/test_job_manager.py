@@ -1,6 +1,5 @@
 """Tests for job_manager module."""
 
-import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -144,6 +143,14 @@ def _new_manager(tmp_path: Path) -> JobManager:
 class TestJobManagerInit:
     """Tests for JobManager initialization."""
 
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
+        with patch(
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
+        ):
+            yield
+
     def test_creates_jobs_dir(self, tmp_path):
         d = tmp_path / "myjobs"
         assert not d.exists()
@@ -183,6 +190,14 @@ class TestJobManagerInit:
 
 class TestJobManagerListAndGet:
     """Tests for listing and getting jobs."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
+        with patch(
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
+        ):
+            yield
 
     @pytest.fixture
     def db_jobs(self):
@@ -248,6 +263,14 @@ class TestJobManagerListAndGet:
 
 class TestJobManagerDelete:
     """Tests for job deletion."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
+        with patch(
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
+        ):
+            yield
 
     def test_delete_completed_job(self, tmp_path):
         manager = _new_manager(tmp_path)
@@ -320,6 +343,14 @@ class TestJobManagerDelete:
 
 class TestJobManagerStatusUpdate:
     """Tests for status update logic."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
+        with patch(
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
+        ):
+            yield
 
     def test_update_status_calls_database(self, tmp_path):
         manager = _new_manager(tmp_path)
@@ -401,13 +432,16 @@ class TestJobManagerKSProgress:
             "iteration": 5,
             "findings": [{"id": "F001"}, {"id": "F002"}],
         }
-        (tmp_path / job_id / "knowledge_state.json").write_text(
-            json.dumps(ks_data), encoding="utf-8"
-        )
         db_job = _make_db_job("running", "2026-02-01T00:00:00", job_id=job_id)
 
-        with patch(
-            "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
+        with (
+            patch(
+                "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
+            ),
+            patch(
+                "openscientist.job_manager.KnowledgeState.load_from_database_sync",
+                return_value=MagicMock(data=ks_data),
+            ),
         ):
             job = manager.get_job(job_id)
 
@@ -418,6 +452,14 @@ class TestJobManagerKSProgress:
 
 class TestJobManagerCoinvestigate:
     """Tests for co-investigate mode helpers."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
+        with patch(
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
+        ):
+            yield
 
     def test_start_next_queued_job_uses_db_jobs(self, tmp_path):
         manager = _new_manager(tmp_path)
@@ -545,6 +587,14 @@ class TestJobManagerCancellationConcurrency:
 
 class TestJobManagerCleanup:
     """Tests for old job cleanup."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
+        with patch(
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
+        ):
+            yield
 
     def test_cleanup_old_jobs(self, tmp_path):
         manager = _new_manager(tmp_path)

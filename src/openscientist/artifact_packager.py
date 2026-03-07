@@ -58,7 +58,6 @@ def create_artifacts_zip(job_dir: Path, job_id: str) -> BytesIO:
     Includes:
     - Final reports (PDF, Markdown)
     - Plots and visualizations
-    - Knowledge state
     - Data files
     - Provenance logs
 

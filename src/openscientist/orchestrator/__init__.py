@@ -2,7 +2,7 @@
 Orchestrator subpackage for OpenScientist discovery.
 
 Module layout:
-- discovery.py  — run_discovery_async(), sync_knowledge_state_to_db(), helpers
+- discovery.py  — run_discovery_async(), helpers
 - iteration.py  — prompt builders, increment_ks_iteration, update_job_status
 - setup.py      — create_job (filesystem initialization)
 
@@ -22,7 +22,6 @@ from openscientist.orchestrator.discovery import (
     get_version_metadata,
     regenerate_report_async,
     run_discovery_async,
-    sync_knowledge_state_to_db,
 )
 from openscientist.orchestrator.iteration import (
     increment_ks_iteration,
@@ -73,7 +72,6 @@ __all__ = [
     "regenerate_report_async",
     "run_discovery",
     "run_discovery_async",
-    "sync_knowledge_state_to_db",
     "update_job_status",
     "wait_for_feedback_or_timeout",
 ]

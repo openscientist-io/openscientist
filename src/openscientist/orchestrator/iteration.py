@@ -19,7 +19,7 @@ from openscientist.database.models import User
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import AsyncSessionLocal
 from openscientist.job.types import JobStatus
-from openscientist.knowledge_state import KS_FILENAME, KnowledgeState
+from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import notify_job_status_change
 
 logger = logging.getLogger(__name__)
@@ -134,8 +134,8 @@ The file must contain the FULL text of every section — not a table of contents
 not a summary of sections, not a pointer to another file.  If `final_report.md`
 already exists, overwrite it entirely.
 
-Read `knowledge_state.json` for the full data (findings, hypotheses, literature,
-iteration summaries) and incorporate it into the report.
+Use the provided knowledge summary below for findings, hypotheses, literature,
+and iteration summaries.
 
 1. **Write the full report** to `final_report.md` in the current directory.
    The report should be comprehensive and detailed — typically 2,000+ words for
@@ -169,16 +169,11 @@ It must be a complete, self-contained document — not a summary or index.
 """
 
 
-def increment_ks_iteration(ks_path: Path) -> None:
-    """
-    Safely increment the knowledge graph iteration counter.
-
-    Uses atomic write (temp file + rename) so a crash mid-write never
-    corrupts the knowledge state file.
-    """
-    ks = KnowledgeState.load(ks_path)
+def increment_ks_iteration(job_id: str) -> None:
+    """Increment the persisted knowledge-state iteration counter."""
+    ks = KnowledgeState.load_from_database_sync(job_id)
     ks.data["iteration"] += 1
-    ks.save(ks_path)
+    ks.save_to_database_sync(job_id)
 
 
 async def _get_job_status(job_id: str) -> str | None:
@@ -207,10 +202,11 @@ async def _persist_job_status(
     job_uuid: UUID,
     status: str,
     error_message: str | None,
-) -> tuple[str | None, UUID | None, str | None, bool, str | None] | None:
+) -> tuple[str | None, UUID | None, str | None, int, bool, str | None] | None:
     old_status: str | None = None
     owner_id: UUID | None = None
     job_title: str | None = None
+    current_iteration = 1
     ntfy_enabled = False
     ntfy_topic: str | None = None
 
@@ -231,6 +227,12 @@ async def _persist_job_status(
 
             owner_id = job.owner_id
             job_title = job.short_title or job.title
+            try:
+                current_iteration = int(job.current_iteration)
+                if current_iteration < 1:
+                    current_iteration = 1
+            except (TypeError, ValueError):
+                current_iteration = 1
 
             if owner_id is not None:
                 user_result = await session.execute(
@@ -246,7 +248,7 @@ async def _persist_job_status(
         logger.warning("Failed to update status for job %s: %s", job_id, e)
         return None
 
-    return old_status, owner_id, job_title, ntfy_enabled, ntfy_topic
+    return old_status, owner_id, job_title, current_iteration, ntfy_enabled, ntfy_topic
 
 
 def _should_notify_awaiting_feedback(
@@ -262,20 +264,6 @@ def _should_notify_awaiting_feedback(
     return bool(owner_id and ntfy_enabled and job_title)
 
 
-def _get_feedback_iteration(ks_path: Path) -> int:
-    if not ks_path.exists():
-        return 1
-    try:
-        ks = KnowledgeState.load(ks_path)
-        iteration_value = ks.data.get("iteration", 1)
-        if isinstance(iteration_value, int):
-            return iteration_value
-        return int(iteration_value)
-    except Exception as e:
-        logger.warning("Failed to read iteration for feedback notification: %s", e)
-        return 1
-
-
 async def update_job_status(
     job_dir: Path,
     status: str,
@@ -283,7 +271,6 @@ async def update_job_status(
 ) -> None:
     """Update job status in the database and notify on feedback wait transitions."""
     job_id = job_dir.name
-    ks_path = job_dir / KS_FILENAME
 
     job_uuid = _parse_job_uuid(job_id)
     if job_uuid is None:
@@ -293,7 +280,7 @@ async def update_job_status(
     if db_result is None:
         return
 
-    old_status, owner_id, job_title, ntfy_enabled, ntfy_topic = db_result
+    old_status, owner_id, job_title, current_iteration, ntfy_enabled, ntfy_topic = db_result
     if not _should_notify_awaiting_feedback(
         status=status,
         old_status=old_status,
@@ -306,15 +293,13 @@ async def update_job_status(
     if owner_id is None or not job_title:
         return
 
-    iteration = _get_feedback_iteration(ks_path)
-
     try:
         await notify_job_status_change(
             user_id=owner_id,
             job_id=job_id,
             job_title=job_title,
             new_status="awaiting_feedback",
-            iteration=iteration,
+            iteration=current_iteration,
             ntfy_topic=ntfy_topic,
         )
     except Exception as e:
@@ -335,11 +320,10 @@ async def wait_for_feedback_or_timeout(
             - outcome="continued" when user resumes without feedback
     """
     job_id = job_dir.name
-    ks_path = job_dir / KS_FILENAME
 
     start_time = time.monotonic()
 
-    ks = KnowledgeState.load(ks_path)
+    ks = await KnowledgeState.load_from_database(job_id)
     current_iteration = ks.data["iteration"]
     last_feedback_count = len(ks.data.get("feedback_history", []))
 
@@ -360,7 +344,7 @@ async def wait_for_feedback_or_timeout(
             logger.info("Continue signal received (no feedback)")
             return {"outcome": "continued", "feedback_text": None}
 
-        ks = KnowledgeState.load(ks_path)
+        ks = await KnowledgeState.load_from_database(job_id)
         feedback_history = ks.data.get("feedback_history", [])
 
         if len(feedback_history) > last_feedback_count:

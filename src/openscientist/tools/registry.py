@@ -154,7 +154,7 @@ class ToolContext:
 
     @property
     def ks_path(self) -> Path:
-        """Path to the knowledge_state.json file for this job."""
+        """Legacy knowledge-state reference path used to derive job id."""
         from openscientist.knowledge_state import KS_FILENAME
 
         return self.job_dir / KS_FILENAME

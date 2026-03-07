@@ -7,6 +7,7 @@ unit testing.
 
 import json
 import os
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -95,7 +96,6 @@ class TestUpdateJobStatus:
         job_id = str(uuid4())
         job_dir = tmp_path / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
-        (job_dir / "knowledge_state.json").write_text(json.dumps({"iteration": 4}))
 
         owner_id = uuid4()
         job = MagicMock()
@@ -103,6 +103,7 @@ class TestUpdateJobStatus:
         job.owner_id = owner_id
         job.short_title = "Short title"
         job.title = "Long title"
+        job.current_iteration = 4
 
         job_result = MagicMock()
         job_result.scalar_one_or_none.return_value = job
@@ -229,7 +230,6 @@ class TestDiscoveryCancellationAndFailure:
         from openscientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState(job_id, "Question?", 3)
-        ks.save(job_dir / "knowledge_state.json")
 
         runtime = {
             "job_id": job_id,
@@ -282,9 +282,13 @@ class TestDiscoveryCancellationAndFailure:
                 return_value="cancelled",
             ),
             patch("openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
-            patch("openscientist.orchestrator.discovery.sync_knowledge_state_to_db"),
             patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
             patch("openscientist.orchestrator.discovery._sync_version_metadata_if_available"),
+            patch(
+                "openscientist.orchestrator.discovery.KnowledgeState.load_from_database_sync",
+                return_value=ks,
+            ),
+            patch("openscientist.orchestrator.discovery.increment_ks_iteration"),
             patch(
                 "openscientist.orchestrator.discovery._get_job_status",
                 new_callable=AsyncMock,
@@ -310,7 +314,6 @@ class TestDiscoveryCancellationAndFailure:
         from openscientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState(job_id, "Question?", 3)
-        ks.save(job_dir / "knowledge_state.json")
 
         runtime = {
             "job_id": job_id,
@@ -369,9 +372,13 @@ class TestDiscoveryCancellationAndFailure:
                 return_value="failed",
             ),
             patch("openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
-            patch("openscientist.orchestrator.discovery.sync_knowledge_state_to_db"),
             patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
             patch("openscientist.orchestrator.discovery._sync_version_metadata_if_available"),
+            patch(
+                "openscientist.orchestrator.discovery.KnowledgeState.load_from_database_sync",
+                return_value=ks,
+            ),
+            patch("openscientist.orchestrator.discovery.increment_ks_iteration"),
             patch(
                 "openscientist.orchestrator.discovery._get_job_status",
                 new_callable=AsyncMock,
@@ -391,28 +398,48 @@ class TestDiscoveryCancellationAndFailure:
 class TestIncrementKsIteration:
     """Tests for atomic iteration increment."""
 
-    def test_increments_iteration(self, tmp_path):
-        ks_path = tmp_path / "knowledge_state.json"
-        ks_path.write_text(json.dumps({"iteration": 3, "findings": []}))
+    def test_increments_iteration(self):
+        from openscientist.knowledge_state import KnowledgeState
 
-        increment_ks_iteration(ks_path)
+        ks = KnowledgeState("job1", "Q?", 10)
+        ks.data["iteration"] = 3
 
-        with open(ks_path, encoding="utf-8") as f:
-            data = json.load(f)
-        assert data["iteration"] == 4
+        with (
+            patch(
+                "openscientist.orchestrator.iteration.KnowledgeState.load_from_database_sync",
+                return_value=ks,
+            ),
+            patch(
+                "openscientist.orchestrator.iteration.KnowledgeState.save_to_database_sync",
+            ) as mock_save,
+        ):
+            increment_ks_iteration("job1")
 
-    def test_preserves_other_fields(self, tmp_path):
-        ks_path = tmp_path / "knowledge_state.json"
-        ks_path.write_text(
-            json.dumps({"iteration": 1, "findings": [{"id": "F001"}], "hypotheses": []})
-        )
+        assert ks.data["iteration"] == 4
+        mock_save.assert_called_once_with("job1")
 
-        increment_ks_iteration(ks_path)
+    def test_preserves_other_fields(self):
+        from openscientist.knowledge_state import KnowledgeState
 
-        with open(ks_path, encoding="utf-8") as f:
-            data = json.load(f)
-        assert len(data["findings"]) == 1
-        assert data["hypotheses"] == []
+        ks = KnowledgeState("job1", "Q?", 10)
+        ks.data["iteration"] = 1
+        ks.data["findings"] = [{"id": "F001"}]
+        ks.data["hypotheses"] = []
+
+        with (
+            patch(
+                "openscientist.orchestrator.iteration.KnowledgeState.load_from_database_sync",
+                return_value=ks,
+            ),
+            patch(
+                "openscientist.orchestrator.iteration.KnowledgeState.save_to_database_sync",
+            ),
+        ):
+            increment_ks_iteration("job1")
+
+        assert ks.data["iteration"] == 2
+        assert len(ks.data["findings"]) == 1
+        assert ks.data["hypotheses"] == []
 
 
 # ─── _write_skills_to_claude_dir ──────────────────────────────────────
@@ -588,7 +615,7 @@ class TestCreateJob:
 
         with (
             patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.setup.KnowledgeState.save_to_database_sync"),
         ):
             job_dir = create_job(
                 job_id=job_id,
@@ -600,7 +627,7 @@ class TestCreateJob:
 
         assert job_dir.exists()
         assert not (job_dir / "config.json").exists()
-        assert (job_dir / "knowledge_state.json").exists()
+        assert not (job_dir / "knowledge_state.json").exists()
         assert (job_dir / "data").is_dir()
         assert (job_dir / "provenance").is_dir()
 
@@ -611,11 +638,20 @@ class TestCreateJob:
         data_file = tmp_path / "test.csv"
         data_file.write_text("a,b\n1,2\n")
 
+        captured: dict[str, Any] = {}
+
+        def _capture_save(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            captured["data"] = self.to_dict()
+
         with (
             patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch(
+                "openscientist.orchestrator.setup.KnowledgeState.save_to_database_sync",
+                autospec=True,
+                side_effect=_capture_save,
+            ),
         ):
-            job_dir = create_job(
+            create_job(
                 job_id=job_id,
                 research_question="What is X?",
                 data_files=[data_file],
@@ -623,8 +659,7 @@ class TestCreateJob:
                 jobs_dir=tmp_path,
             )
 
-        with open(job_dir / "knowledge_state.json", encoding="utf-8") as f:
-            ks = json.load(f)
+        ks = captured["data"]
 
         assert ks["config"]["job_id"] == job_id
         assert ks["config"]["research_question"] == "What is X?"
@@ -639,7 +674,7 @@ class TestCreateJob:
 
         with (
             patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch("openscientist.orchestrator.setup.KnowledgeState.save_to_database_sync"),
         ):
             job_dir = create_job(
                 job_id=job_id,
@@ -656,11 +691,20 @@ class TestCreateJob:
     def test_no_data_files(self, tmp_path):
         from openscientist.orchestrator import create_job
 
+        captured: dict[str, Any] = {}
+
+        def _capture_save(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            captured["data"] = self.to_dict()
+
         with (
             patch("openscientist.orchestrator.setup._persist_data_files_to_db"),
-            patch("openscientist.orchestrator.setup.sync_knowledge_state_to_db"),
+            patch(
+                "openscientist.orchestrator.setup.KnowledgeState.save_to_database_sync",
+                autospec=True,
+                side_effect=_capture_save,
+            ),
         ):
-            job_dir = create_job(
+            create_job(
                 job_id=str(uuid4()),
                 research_question="Literature only?",
                 data_files=[],
@@ -668,8 +712,7 @@ class TestCreateJob:
                 jobs_dir=tmp_path,
             )
 
-        with open(job_dir / "knowledge_state.json", encoding="utf-8") as f:
-            ks = json.load(f)
+        ks = captured["data"]
         assert ks["data_summary"]["files"] == []
         assert ks["data_summary"]["file_type"] == "none"
 
@@ -705,8 +748,8 @@ class TestBuildReportPrompt:
         assert "Hypothesis A test" in prompt
         assert "Investigation Timeline" in prompt
 
-        # Must instruct agent to read knowledge_state.json for full details
-        assert "knowledge_state.json" in prompt
+        # Prompt should no longer instruct file-based context loading.
+        assert "knowledge_state.json" not in prompt
 
         # Standard report instructions should still be present
         assert "Executive Summary" in prompt
@@ -725,8 +768,6 @@ class TestSaveTranscript:
         path = tmp_path / "transcript.json"
         transcript = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
         _save_transcript(path, transcript)
-
-        import json
 
         with open(path, encoding="utf-8") as f:
             data = json.load(f)

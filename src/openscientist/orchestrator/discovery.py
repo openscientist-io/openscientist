@@ -7,7 +7,6 @@ calls via asyncio.run().
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,12 +17,11 @@ from sqlalchemy import select
 
 from openscientist.agent.factory import get_agent_executor
 from openscientist.agent.protocol import AgentExecutor, IterationResult, TokenUsage
-from openscientist.async_tasks import create_background_task
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import AsyncSessionLocal
 from openscientist.exceptions import OpenScientistError
-from openscientist.knowledge_state import KS_FILENAME, KnowledgeState
+from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
     _get_job_status,
@@ -107,15 +105,14 @@ def _append_iteration_artifacts(
     )
 
 
-def _sync_version_metadata_if_available(job_dir: Path, ks_path: Path) -> None:
+def _sync_version_metadata_if_available(job_id: str) -> None:
     """Store runtime version metadata in knowledge state when available."""
     version_info = get_version_metadata()
     if not version_info:
         return
-    ks = KnowledgeState.load(ks_path)
+    ks = KnowledgeState.load_from_database_sync(job_id)
     ks.set_version_info(version_info)
-    ks.save(ks_path)
-    sync_knowledge_state_to_db(job_dir, ks)
+    ks.save_to_database_sync(job_id)
 
 
 async def _wait_for_coinvestigate_feedback(
@@ -146,7 +143,6 @@ async def _run_primary_discovery_loop(
     executor: AgentExecutor,
     job_dir: Path,
     runtime: dict[str, Any],
-    ks_path: Path,
     provenance_dir: Path,
     log_file: Path,
 ) -> None:
@@ -156,7 +152,7 @@ async def _run_primary_discovery_loop(
     data_files = runtime["data_files"]
     investigation_mode = runtime["investigation_mode"]
 
-    ks = KnowledgeState.load(ks_path)
+    ks = KnowledgeState.load_from_database_sync(job_id)
     initial_prompt = build_initial_prompt(
         runtime["research_question"], max_iterations, data_files, ks
     )
@@ -168,7 +164,7 @@ async def _run_primary_discovery_loop(
         raise RuntimeError(f"Agent loop failed: {result.error}")
     logger.info("Iteration 1 completed (tool_calls=%d)", result.tool_calls)
 
-    _sync_version_metadata_if_available(job_dir, ks_path)
+    _sync_version_metadata_if_available(job_id)
     _append_iteration_artifacts(
         provenance_dir=provenance_dir,
         log_file=log_file,
@@ -178,7 +174,7 @@ async def _run_primary_discovery_loop(
         overwrite_log=True,
     )
     if max_iterations > 1:
-        increment_ks_iteration(ks_path)
+        increment_ks_iteration(job_id)
     await _assert_job_not_cancelled(job_id)
 
     pending_feedback_result = await _wait_for_coinvestigate_feedback(
@@ -198,7 +194,7 @@ async def _run_primary_discovery_loop(
 
     for iteration in range(2, max_iterations + 1):
         await _assert_job_not_cancelled(job_id)
-        ks = KnowledgeState.load(ks_path)
+        ks = KnowledgeState.load_from_database_sync(job_id)
         if pending_feedback is None:
             pending_feedback = ks.get_feedback_for_iteration(iteration)
 
@@ -227,7 +223,7 @@ async def _run_primary_discovery_loop(
         )
 
         if iteration < max_iterations:
-            increment_ks_iteration(ks_path)
+            increment_ks_iteration(job_id)
         await _assert_job_not_cancelled(job_id)
         pending_feedback_result = await _wait_for_coinvestigate_feedback(
             job_dir,
@@ -276,7 +272,7 @@ async def _run_report_generation_phase(
     research_question: str,
 ) -> _ReportOutcome:
     """Run final report generation iteration and output artifact handling."""
-    ks = KnowledgeState.load(job_dir / KS_FILENAME)
+    ks = KnowledgeState.load_from_database_sync(job_dir.name)
     report_prompt = build_report_prompt(research_question, ks)
     logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
     report_result = await executor.run_iteration(report_prompt, reset_session=True)
@@ -309,19 +305,6 @@ async def _persist_final_status(
             error_message=f"Report generation failed: {report_outcome.error}",
         )
     return final_status
-
-
-async def _get_job_owner_id(job_id: str) -> UUID | None:
-    """Load job owner id from the database."""
-    try:
-        async with AsyncSessionLocal(thread_safe=True) as session:
-            result = await session.execute(
-                select(JobModel.owner_id).where(JobModel.id == UUID(job_id))
-            )
-            return result.scalar_one_or_none()
-    except Exception as e:
-        logger.warning("Failed to load owner_id for job %s: %s", job_id, e)
-        return None
 
 
 async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
@@ -405,40 +388,6 @@ def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> N
         logger.debug("Wrote job CLAUDE.md to %s (use_hypotheses=%s)", dest, use_hypotheses)
     except Exception as e:
         logger.warning("Failed to write job CLAUDE.md: %s", e)
-
-
-def sync_knowledge_state_to_db(job_dir: Path, ks: KnowledgeState | None = None) -> None:
-    """Sync knowledge state to database (non-blocking background task)."""
-    try:
-        job_id = job_dir.name
-        if ks is None:
-            ks_path = job_dir / KS_FILENAME
-            if ks_path.exists():
-                ks = KnowledgeState.load(ks_path)
-            else:
-                logger.warning("Knowledge state file not found: %s", ks_path)
-                return
-
-        async def _save_with_error_handling() -> None:
-            try:
-                owner_id = await _get_job_owner_id(job_id)
-                await ks.save_to_database(job_id, owner_id)
-            except Exception as e:
-                logger.warning("Background database sync failed for job %s: %s", job_id, e)
-
-        try:
-            asyncio.get_running_loop()
-            create_background_task(
-                _save_with_error_handling(),
-                name=f"sync-knowledge-state-{job_id}",
-                logger=logger,
-            )
-        except RuntimeError:
-            asyncio.run(_save_with_error_handling())
-
-        logger.debug("Synced knowledge state to database for job %s", job_id)
-    except Exception as e:
-        logger.warning("Failed to sync knowledge state to database: %s", e)
 
 
 def get_version_metadata() -> dict[str, str]:
@@ -539,7 +488,6 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     )
     logger.info("Created agent executor for job %s", job_id)
 
-    ks_path = job_dir / KS_FILENAME
     provenance_dir = job_dir / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
     log_file = job_dir / "claude_iterations.log"
@@ -549,7 +497,6 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             executor=executor,
             job_dir=job_dir,
             runtime=runtime,
-            ks_path=ks_path,
             provenance_dir=provenance_dir,
             log_file=log_file,
         )
@@ -559,8 +506,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             research_question=runtime["research_question"],
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
-        ks = KnowledgeState.load(ks_path)
-        sync_knowledge_state_to_db(job_dir, ks)
+        ks = KnowledgeState.load_from_database_sync(job_id)
         return {
             "job_id": job_id,
             "status": final_status,
@@ -570,8 +516,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
 
     except _DiscoveryCancelledError:
         logger.info("Discovery cancelled for job %s", job_id)
-        ks = KnowledgeState.load(ks_path)
-        sync_knowledge_state_to_db(job_dir, ks)
+        ks = KnowledgeState.load_from_database_sync(job_id)
         return {
             "job_id": job_id,
             "status": "cancelled",
@@ -586,7 +531,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
         except Exception as status_error:
             logger.warning("Failed to persist failure status for job %s: %s", job_id, status_error)
         try:
-            ks = KnowledgeState.load(ks_path)
+            ks = KnowledgeState.load_from_database_sync(job_id)
             iterations = ks.data["iteration"]
             findings = len(ks.data["findings"])
         except Exception:
@@ -628,7 +573,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     session, and generates a new final_report.md + PDF.
 
     Args:
-        job_dir: Path to job directory (must contain knowledge_state.json)
+        job_dir: Path to job directory
 
     Returns:
         Dict: {job_id, status, report_success}
@@ -661,8 +606,6 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
             research_question=runtime["research_question"],
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
-        ks = KnowledgeState.load(job_dir / KS_FILENAME)
-        sync_knowledge_state_to_db(job_dir, ks)
 
         return {
             "job_id": job_id,

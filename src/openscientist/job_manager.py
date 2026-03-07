@@ -27,7 +27,7 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import AsyncSessionLocal
 from openscientist.exceptions import ProviderError
 from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
-from openscientist.knowledge_state import KS_FILENAME
+from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import notify_job_status_change
 from openscientist.orchestrator import create_job
 from openscientist.orchestrator import regenerate_report as _regenerate_report
@@ -49,22 +49,16 @@ async def _apply_rls_context(session: AsyncSession, user_id: UUID | None) -> Non
 
 
 def _load_progress_from_knowledge_state(
-    ks_path: Path,
+    job_id: str,
     status: str,
     default_iterations: int,
     default_findings: int,
-    job_id: str,
 ) -> tuple[int, int]:
-    """Load iteration and findings progress from knowledge_state.json when available."""
-    if not ks_path.exists():
-        return default_iterations, default_findings
-
+    """Load iteration and findings progress from persisted knowledge state."""
     try:
-        with open(ks_path, encoding="utf-8") as f:
-            ks = json.load(f)
-
+        ks = KnowledgeState.load_from_database_sync(job_id).data
         findings_count = len(ks.get("findings", []))
-        ks_iteration = ks.get("iteration", 1)
+        ks_iteration = int(ks.get("iteration", 1))
 
         if status in ("running", "awaiting_feedback"):
             iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
@@ -72,7 +66,7 @@ def _load_progress_from_knowledge_state(
             iterations_completed = ks_iteration
 
         return iterations_completed, findings_count
-    except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
+    except Exception as e:
         logger.warning("Failed to load KS for job %s: %s", job_id, e)
         return default_iterations, default_findings
 
@@ -612,14 +606,14 @@ class JobManager:
         """
         Re-run report generation for a completed or failed job.
 
-        Validates that the job exists, is in a terminal state, and has
-        a knowledge_state.json. Spawns a background thread.
+        Validates that the job exists and is in a terminal state.
+        Spawns a background thread.
 
         Args:
             job_id: Job ID
 
         Raises:
-            ValueError: If job not found, not in valid state, or missing KS
+            ValueError: If job not found or not in valid state
         """
         job_info = self.get_job(job_id)
         if job_info is None:
@@ -629,12 +623,6 @@ class JobManager:
             raise ValueError(
                 f"Can only regenerate report for completed or failed jobs "
                 f"(current status: {job_info.status.value})"
-            )
-
-        ks_path = self.jobs_dir / job_id / KS_FILENAME
-        if not ks_path.exists():
-            raise ValueError(
-                f"Job {job_id} has no knowledge state — nothing to generate a report from"
             )
 
         with self._lock:
@@ -956,17 +944,13 @@ class JobManager:
 
     def _db_model_to_job_info(self, job_model: JobModel) -> JobInfo:
         """Convert a database JobModel to JobInfo with real-time progress from KS."""
-        # Load progress from knowledge_state.json for all jobs
-        # (database sync may be async and not yet committed)
+        # Load progress from persisted knowledge state for all jobs.
         job_id = str(job_model.id)
-        job_dir = self.jobs_dir / job_id
-        ks_path = job_dir / KS_FILENAME
         iterations_completed, findings_count = _load_progress_from_knowledge_state(
-            ks_path=ks_path,
+            job_id=job_id,
             status=job_model.status,
             default_iterations=job_model.current_iteration,
             default_findings=0,
-            job_id=job_id,
         )
 
         return JobInfo.from_db_model(job_model, iterations_completed, findings_count)

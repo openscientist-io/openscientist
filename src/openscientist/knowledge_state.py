@@ -4,12 +4,7 @@ Knowledge state management for OpenScientist.
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
 
-import asyncio
-import fcntl
 import json
-import os
-import tempfile
-from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,7 +28,7 @@ KS_FILENAME = "knowledge_state.json"
 
 class KnowledgeState:
     """
-    JSON-based knowledge state for storing agent state.
+    Database-backed knowledge state for storing agent state.
 
     Structure:
         - config: Job configuration
@@ -44,6 +39,29 @@ class KnowledgeState:
         - literature: Retrieved papers from PubMed
         - analysis_log: History of all executed analyses
     """
+
+    @staticmethod
+    def _job_id_from_path(file_path: Path) -> str:
+        """Resolve job id from a historical knowledge_state path argument."""
+        # Most callsites still pass "<job_dir>/knowledge_state.json".
+        if file_path.name == KS_FILENAME:
+            return file_path.parent.name
+        return file_path.name
+
+    @staticmethod
+    def _load_from_json_path(file_path: Path) -> "KnowledgeState":
+        """Legacy helper used in tests/migrations for non-DB JSON payloads."""
+        with open(file_path, encoding="utf-8") as f:
+            data = json.load(f)
+        ks = KnowledgeState.__new__(KnowledgeState)
+        ks.data = data
+        return ks
+
+    def _save_to_json_path(self, file_path: Path) -> None:
+        """Legacy helper used in tests/migrations for non-DB JSON payloads."""
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
 
     def __init__(
         self,
@@ -84,43 +102,30 @@ class KnowledgeState:
 
     @classmethod
     def load(cls, file_path: Path) -> "KnowledgeState":
-        """Load knowledge graph from JSON file with shared lock."""
-        with open(file_path, encoding="utf-8") as f:
-            # Acquire shared lock - blocks while exclusive lock is held
-            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
-            try:
-                data = json.load(f)
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
-        # Create instance and set data
-        ks = cls.__new__(cls)
-        ks.data = data
-        return ks
+        """Load knowledge state from database using a legacy file-path argument."""
+        if file_path.name != KS_FILENAME:
+            return cls._load_from_json_path(file_path)
+        job_id = cls._job_id_from_path(file_path)
+        try:
+            UUID(job_id)
+        except ValueError:
+            if file_path.exists():
+                return cls._load_from_json_path(file_path)
+            raise
+        return cls.load_from_database_sync(job_id)
 
     def save(self, file_path: Path) -> None:
-        """Save knowledge graph to JSON file atomically.
-
-        Writes to a temporary file first, then renames. This ensures the
-        target file is always complete — a crash mid-write only corrupts
-        the temp file, leaving the previous version intact.
-        """
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Write to temp file in same directory (same filesystem = atomic rename)
-        fd, tmp_path = tempfile.mkstemp(dir=file_path.parent, suffix=".tmp", prefix=".ks_")
+        """Persist knowledge state to database using a legacy file-path argument."""
+        if file_path.name != KS_FILENAME:
+            self._save_to_json_path(file_path)
+            return
+        job_id = self._job_id_from_path(file_path)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            # Atomic rename (POSIX guarantees this on same filesystem)
-            os.rename(tmp_path, file_path)
-        except BaseException:
-            # Clean up temp file on any failure
-            with suppress(OSError):
-                os.unlink(tmp_path)
-            raise
+            UUID(job_id)
+        except ValueError:
+            self._save_to_json_path(file_path)
+            return
+        self.save_to_database_sync(job_id)
 
     def set_data_summary(self, summary: dict[str, Any]) -> None:
         """Set data summary (files, samples, features, etc.)."""
@@ -626,8 +631,7 @@ class KnowledgeState:
 
         Unlike get_report_summary() which includes full detail (abstracts, evidence
         strings, etc.), this returns a compact overview: finding titles, hypothesis
-        outcomes, iteration straplines, and literature titles only.  The report agent
-        should read knowledge_state.json from disk for the full data.
+        outcomes, iteration straplines, and literature titles only.
         """
         parts: list[str] = [
             f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
@@ -734,10 +738,19 @@ class KnowledgeState:
         job = await self._first_scalar(session, select(JobModel).where(JobModel.id == job_uuid))
         if not job:
             return
-        job.current_iteration = self.data["iteration"]
+        job.current_iteration = int(self.data.get("iteration", 1))
+        job.data_summary = self.data.get("data_summary") or {}
+        job.agent_status = self.data.get("agent_status")
+        updated_at_raw = self.data.get("agent_status_updated_at")
+        if isinstance(updated_at_raw, str):
+            try:
+                job.agent_status_updated_at = datetime.fromisoformat(updated_at_raw)
+            except ValueError:
+                job.agent_status_updated_at = None
+        else:
+            job.agent_status_updated_at = None
         consensus_answer = self.data.get("consensus_answer")
-        if consensus_answer:
-            job.consensus_answer = consensus_answer
+        job.consensus_answer = consensus_answer if isinstance(consensus_answer, str) else None
 
     async def _upsert_hypotheses(self, session: AsyncSession, job_uuid: UUID) -> None:
         """Create or update hypotheses rows from knowledge state."""
@@ -846,13 +859,29 @@ class KnowledgeState:
     async def _upsert_analysis_log(self, session: AsyncSession, job_uuid: UUID) -> None:
         """Insert analysis log rows that are not already persisted."""
         for log_entry in self.data["analysis_log"]:
+            timestamp = datetime.fromisoformat(log_entry["timestamp"])
+            description = str(log_entry.get("description") or log_entry.get("action", ""))
+            input_data = {
+                key: value
+                for key, value in log_entry.items()
+                if key
+                not in {
+                    "iteration",
+                    "action",
+                    "timestamp",
+                    "output",
+                    "success",
+                    "execution_time",
+                }
+            }
+            output_data = {"output": log_entry.get("output")} if log_entry.get("output") else None
             existing = await self._first_scalar(
                 session,
                 select(AnalysisLog).where(
                     AnalysisLog.job_id == job_uuid,
                     AnalysisLog.iteration == log_entry["iteration"],
-                    AnalysisLog.description == log_entry.get("action", ""),
-                    AnalysisLog.created_at >= datetime.fromisoformat(log_entry["timestamp"]),
+                    AnalysisLog.description == description,
+                    AnalysisLog.created_at == timestamp,
                 ),
             )
             if existing:
@@ -863,12 +892,16 @@ class KnowledgeState:
                     iteration=log_entry["iteration"],
                     step_number=1,
                     action_type=log_entry["action"],
-                    description=log_entry.get("action", ""),
-                    input_data=({"code": log_entry.get("code")} if log_entry.get("code") else None),
-                    output_data=(
-                        {"output": log_entry.get("output")} if log_entry.get("output") else None
+                    description=description,
+                    input_data=input_data or None,
+                    output_data=output_data,
+                    duration_seconds=(
+                        float(log_entry["execution_time"])
+                        if log_entry.get("execution_time") is not None
+                        else None
                     ),
-                    success=True,
+                    success=bool(log_entry.get("success", True)),
+                    created_at=timestamp,
                 )
             )
 
@@ -888,10 +921,12 @@ class KnowledgeState:
                         job_id=job_uuid,
                         iteration=summary_data["iteration"],
                         summary_text=summary_data["summary"],
+                        strapline=summary_data.get("strapline"),
                     )
                 )
                 continue
             existing.summary_text = summary_data["summary"]
+            existing.strapline = summary_data.get("strapline")
 
     async def _upsert_feedback_history(self, session: AsyncSession, job_uuid: UUID) -> None:
         """Insert feedback history rows when missing."""
@@ -989,7 +1024,7 @@ class KnowledgeState:
                 "use_skills": True,
                 "started_at": job.created_at.isoformat(),
             },
-            "data_summary": {},
+            "data_summary": job.data_summary or {},
             "iteration": job.current_iteration,
             "hypotheses": [],
             "findings": [],
@@ -997,6 +1032,11 @@ class KnowledgeState:
             "analysis_log": [],
             "iteration_summaries": [],
             "feedback_history": [],
+            "agent_status": job.agent_status,
+            "agent_status_updated_at": (
+                job.agent_status_updated_at.isoformat() if job.agent_status_updated_at else None
+            ),
+            "consensus_answer": job.consensus_answer,
         }
         return ks
 
@@ -1087,11 +1127,15 @@ class KnowledgeState:
                 "iteration": log_entry.iteration,
                 "action": log_entry.action_type,
                 "timestamp": log_entry.created_at.isoformat(),
+                "description": log_entry.description,
+                "success": bool(log_entry.success),
             }
-            if log_entry.input_data and log_entry.input_data.get("code"):
-                serialized["code"] = log_entry.input_data["code"]
-            if log_entry.output_data and log_entry.output_data.get("output"):
-                serialized["output"] = log_entry.output_data["output"]
+            if log_entry.duration_seconds is not None:
+                serialized["execution_time"] = log_entry.duration_seconds
+            if log_entry.input_data:
+                serialized.update(log_entry.input_data)
+            if log_entry.output_data:
+                serialized.update(log_entry.output_data)
             ks.data["analysis_log"].append(serialized)
 
     @classmethod
@@ -1109,6 +1153,7 @@ class KnowledgeState:
                 {
                     "iteration": summary.iteration,
                     "summary": summary.summary_text,
+                    "strapline": summary.strapline or "",
                     "created_at": summary.created_at.isoformat(),
                 }
             )
@@ -1134,19 +1179,13 @@ class KnowledgeState:
 
     def save_to_database_sync(self, job_id: str, user_id: UUID | None = None) -> None:
         """Synchronous wrapper for save_to_database."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self.save_to_database(job_id, user_id))
-        finally:
-            loop.close()
+        from openscientist.async_tasks import run_sync
+
+        run_sync(self.save_to_database(job_id, user_id))
 
     @classmethod
     def load_from_database_sync(cls, job_id: str, user_id: UUID | None = None) -> "KnowledgeState":
         """Synchronous wrapper for load_from_database."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(cls.load_from_database(job_id, user_id))
-        finally:
-            loop.close()
+        from openscientist.async_tasks import run_sync
+
+        return run_sync(cls.load_from_database(job_id, user_id))
