@@ -216,43 +216,6 @@ class TestGetSummary:
         assert "Bad idea" in summary
 
 
-class TestSaveAndLoad:
-    """Tests for file persistence with locking."""
-
-    def test_save_and_load_roundtrip(self, tmp_path):
-        ks = KnowledgeState("j1", "Question?", 10)
-        ks.add_hypothesis("Hyp 1")
-        ks.add_finding("Find 1", "evidence")
-
-        fp = tmp_path / "ks.json"
-        ks.save(fp)
-
-        loaded = KnowledgeState.load(fp)
-        assert loaded.data["config"]["job_id"] == "j1"
-        assert len(loaded.data["hypotheses"]) == 1
-        assert len(loaded.data["findings"]) == 1
-
-    def test_save_creates_parent_dirs(self, tmp_path):
-        ks = KnowledgeState("j1", "Q?", 5)
-        fp = tmp_path / "deep" / "nested" / "ks.json"
-        ks.save(fp)
-        assert fp.exists()
-
-    def test_save_overwrites_existing(self, tmp_path):
-        fp = tmp_path / "ks.json"
-
-        ks1 = KnowledgeState("j1", "Q?", 5)
-        ks1.add_hypothesis("Original")
-        ks1.save(fp)
-
-        ks2 = KnowledgeState.load(fp)
-        ks2.add_hypothesis("New")
-        ks2.save(fp)
-
-        loaded = KnowledgeState.load(fp)
-        assert len(loaded.data["hypotheses"]) == 2
-
-
 class TestVersionInfo:
     """Tests for version info metadata."""
 

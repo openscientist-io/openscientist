@@ -15,8 +15,6 @@ The current directory is the job directory. It contains:
 
 | Path | Contents |
 |------|----------|
-| `config.json` | Research question, settings, job status |
-| `knowledge_state.json` | All findings (F001, F002, …), hypotheses (H001, H002, …), literature, iteration summaries |
 | `final_report.md` | Agent's synthesis report (if job completed) |
 | `data/` | Uploaded data files |
 | `provenance/` | Per-iteration transcripts (`iter1_transcript.json`, …) and analysis records |
@@ -24,7 +22,7 @@ The current directory is the job directory. It contains:
 
 ## Answering Questions
 
-1. **Read `knowledge_state.json` first** — it has structured findings, hypotheses, and summaries
+1. **Use the context sections injected in the system prompt** — they contain structured findings, hypotheses, literature, and iteration summaries from the database
 2. **Read `final_report.md`** — it has the agent's synthesis and consensus answer
 3. Reference findings by ID (`F001`, `F002`, …) and hypotheses by ID (`H001`, `H002`, …)
 4. Cite specific statistical evidence when discussing results
@@ -56,7 +54,7 @@ Always set `description` to explain what you're computing.
 
 - Do not call `add_hypothesis`, `update_hypothesis`, or `update_knowledge_state` — the discovery job is already complete (or in progress independently)
 - Do not call `save_iteration_summary`, `set_status`, or `set_job_title`
-- Do not write to `knowledge_state.json` or `final_report.md`
+- Do not write to `final_report.md`
 - Do not run speculative analyses the user hasn't asked for
 
 ## Tone and Style

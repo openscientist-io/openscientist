@@ -11,7 +11,6 @@ class TestCreateArtifactsZip:
 
     def test_creates_valid_zip(self, tmp_path):
         (tmp_path / "report.md").write_text("# Report")
-        (tmp_path / "knowledge_state.json").write_text("{}")
         (tmp_path / "config.json").write_text('{"job_id": "j1"}')
 
         buf = create_artifacts_zip(tmp_path, "j1")
@@ -19,7 +18,6 @@ class TestCreateArtifactsZip:
         with zipfile.ZipFile(buf) as zf:
             names = zf.namelist()
             assert "report.md" in names
-            assert "knowledge_state.json" in names
             assert "config.json" not in names
 
     def test_excludes_git_and_pycache(self, tmp_path):

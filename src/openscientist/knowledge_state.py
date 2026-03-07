@@ -4,9 +4,7 @@ Knowledge state management for OpenScientist.
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
 
-import json
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -39,29 +37,6 @@ class KnowledgeState:
         - literature: Retrieved papers from PubMed
         - analysis_log: History of all executed analyses
     """
-
-    @staticmethod
-    def _job_id_from_path(file_path: Path) -> str:
-        """Resolve job id from a historical knowledge_state path argument."""
-        # Most callsites still pass "<job_dir>/knowledge_state.json".
-        if file_path.name == KS_FILENAME:
-            return file_path.parent.name
-        return file_path.name
-
-    @staticmethod
-    def _load_from_json_path(file_path: Path) -> "KnowledgeState":
-        """Legacy helper used in tests/migrations for non-DB JSON payloads."""
-        with open(file_path, encoding="utf-8") as f:
-            data = json.load(f)
-        ks = KnowledgeState.__new__(KnowledgeState)
-        ks.data = data
-        return ks
-
-    def _save_to_json_path(self, file_path: Path) -> None:
-        """Legacy helper used in tests/migrations for non-DB JSON payloads."""
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2)
 
     def __init__(
         self,
@@ -99,33 +74,6 @@ class KnowledgeState:
             "agent_status_updated_at": None,  # When status was last updated
             "consensus_answer": None,  # Consensus answer to research question (if reached)
         }
-
-    @classmethod
-    def load(cls, file_path: Path) -> "KnowledgeState":
-        """Load knowledge state from database using a legacy file-path argument."""
-        if file_path.name != KS_FILENAME:
-            return cls._load_from_json_path(file_path)
-        job_id = cls._job_id_from_path(file_path)
-        try:
-            UUID(job_id)
-        except ValueError:
-            if file_path.exists():
-                return cls._load_from_json_path(file_path)
-            raise
-        return cls.load_from_database_sync(job_id)
-
-    def save(self, file_path: Path) -> None:
-        """Persist knowledge state to database using a legacy file-path argument."""
-        if file_path.name != KS_FILENAME:
-            self._save_to_json_path(file_path)
-            return
-        job_id = self._job_id_from_path(file_path)
-        try:
-            UUID(job_id)
-        except ValueError:
-            self._save_to_json_path(file_path)
-            return
-        self.save_to_database_sync(job_id)
 
     def set_data_summary(self, summary: dict[str, Any]) -> None:
         """Set data summary (files, samples, features, etc.)."""

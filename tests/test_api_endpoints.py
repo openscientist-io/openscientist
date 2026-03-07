@@ -1508,7 +1508,6 @@ class TestJobEndpoints:
         job_dir = tmp_path / "jobs" / str(test_job_db.id)
         job_dir.mkdir(parents=True)
         (job_dir / "config.json").write_text('{"legacy": true}', encoding="utf-8")
-        (job_dir / "knowledge_state.json").write_text("{}", encoding="utf-8")
 
         app = _build_authenticated_app(db_session, test_user_db)
 
@@ -1528,7 +1527,6 @@ class TestJobEndpoints:
 
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
             names = zf.namelist()
-            assert "knowledge_state.json" in names
             assert "config.json" not in names
 
     @pytest.mark.asyncio
