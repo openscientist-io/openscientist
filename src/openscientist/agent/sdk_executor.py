@@ -124,7 +124,7 @@ class SDKAgentExecutor:
         self._data_file = data_file
         self._system_prompt = system_prompt
         self._tools = build_tool_list(
-            job_dir, data_file, use_hypotheses=use_hypotheses, data_files=data_files
+            job_dir.name, job_dir, data_file, use_hypotheses=use_hypotheses, data_files=data_files
         )
         self._token_usage = TokenUsage()
         self._client: ClaudeSDKClient | None = None

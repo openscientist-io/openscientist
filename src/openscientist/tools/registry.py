@@ -148,19 +148,21 @@ def tool(fn: Callable[..., Any]) -> Any:
 class ToolContext:
     """Per-job context captured in tool closures."""
 
+    job_id: str
     job_dir: Path
     data_file: Path | None = None
     data_files: tuple[Path, ...] = ()
 
     @property
     def ks_path(self) -> Path:
-        """Legacy knowledge-state reference path used to derive job id."""
+        """Legacy knowledge-state path shim kept for staged migration."""
         from openscientist.knowledge_state import KS_FILENAME
 
         return self.job_dir / KS_FILENAME
 
 
 def build_tool_list(
+    job_id: str,
     job_dir: Path,
     data_file: Path | None = None,
     use_hypotheses: bool = False,
@@ -185,7 +187,9 @@ def build_tool_list(
         resolved_files = (data_file,)
     else:
         resolved_files = ()
-    ctx = ToolContext(job_dir=job_dir, data_file=data_file, data_files=resolved_files)
+    ctx = ToolContext(
+        job_id=job_id, job_dir=job_dir, data_file=data_file, data_files=resolved_files
+    )
 
     from openscientist.tools.code_exec import make_tools as code_tools
     from openscientist.tools.document import make_tools as doc_tools

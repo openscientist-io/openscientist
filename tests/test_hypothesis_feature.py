@@ -193,7 +193,7 @@ class TestKnowledgeMakeTools:
         from openscientist.tools.knowledge import make_tools
         from openscientist.tools.registry import ToolContext
 
-        ctx = ToolContext(job_dir=tmp_path)
+        ctx = ToolContext(job_id="test-id", job_dir=tmp_path)
         tools = make_tools(ctx, use_hypotheses=True)
         names = self._get_tool_names(tools)
         assert "update_knowledge_state" in names
@@ -205,7 +205,7 @@ class TestKnowledgeMakeTools:
         from openscientist.tools.knowledge import make_tools
         from openscientist.tools.registry import ToolContext
 
-        ctx = ToolContext(job_dir=tmp_path)
+        ctx = ToolContext(job_id="test-id", job_dir=tmp_path)
         tools = make_tools(ctx, use_hypotheses=False)
         names = self._get_tool_names(tools)
         assert "update_knowledge_state" in names
@@ -218,7 +218,7 @@ class TestKnowledgeMakeTools:
         from openscientist.tools.knowledge import make_tools
         from openscientist.tools.registry import ToolContext
 
-        ctx = ToolContext(job_dir=tmp_path)
+        ctx = ToolContext(job_id="test-id", job_dir=tmp_path)
         tools = make_tools(ctx)
         names = self._get_tool_names(tools)
         assert "add_hypothesis" not in names
@@ -235,7 +235,7 @@ class TestKnowledgeMakeTools:
         from openscientist.tools.knowledge import make_tools
         from openscientist.tools.registry import ToolContext
 
-        ctx = ToolContext(job_dir=tmp_path)
+        ctx = ToolContext(job_id="test-id", job_dir=tmp_path)
         for flag in (True, False):
             tools = make_tools(ctx, use_hypotheses=flag)
             for t in tools:
@@ -256,7 +256,7 @@ class TestBuildToolListHypotheses:
     def test_use_hypotheses_false_excludes_hypothesis_tools(self, tmp_path: Path) -> None:
         from openscientist.tools.registry import build_tool_list
 
-        tools = build_tool_list(tmp_path, use_hypotheses=False)
+        tools = build_tool_list("test-id", tmp_path, use_hypotheses=False)
         names = self._tool_names(tools)
         assert "add_hypothesis" not in names
         assert "update_hypothesis" not in names
@@ -265,7 +265,7 @@ class TestBuildToolListHypotheses:
     def test_use_hypotheses_true_includes_hypothesis_tools(self, tmp_path: Path) -> None:
         from openscientist.tools.registry import build_tool_list
 
-        tools = build_tool_list(tmp_path, use_hypotheses=True)
+        tools = build_tool_list("test-id", tmp_path, use_hypotheses=True)
         names = self._tool_names(tools)
         assert "add_hypothesis" in names
         assert "update_hypothesis" in names
@@ -275,7 +275,7 @@ class TestBuildToolListHypotheses:
         """Default use_hypotheses=False so new jobs don't get hypothesis tools by accident."""
         from openscientist.tools.registry import build_tool_list
 
-        tools = build_tool_list(tmp_path)
+        tools = build_tool_list("test-id", tmp_path)
         names = self._tool_names(tools)
         assert "add_hypothesis" not in names
         assert "update_hypothesis" not in names
@@ -284,7 +284,7 @@ class TestBuildToolListHypotheses:
         from openscientist.tools.registry import build_tool_list
 
         for flag in (True, False):
-            tools = build_tool_list(tmp_path, use_hypotheses=flag)
+            tools = build_tool_list("test-id", tmp_path, use_hypotheses=flag)
             names = [t.name for t in tools]
             assert len(names) == len(set(names)), f"Duplicate tool names with use_hypotheses={flag}"
 
