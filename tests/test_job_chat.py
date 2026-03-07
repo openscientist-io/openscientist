@@ -5,7 +5,6 @@ Tests chat message creation, conversation history, context loading,
 and executor error handling.
 """
 
-import json
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -232,85 +231,85 @@ async def test_cascade_delete_chat_messages(
 
 
 @pytest.mark.asyncio
-async def test_load_job_context_empty_dir(temp_jobs_dir: Path):
-    """Test loading context from an empty job directory."""
-    job_id = "test_job_123"
-    job_dir = temp_jobs_dir / job_id
-    job_dir.mkdir()
+async def test_load_job_context_empty_dir():
+    """Test loading context when no knowledge state exists in the DB."""
+    job_id = "not-a-valid-uuid"
 
-    context = await load_job_context(job_id, job_dir)
+    context = await load_job_context(job_id)
 
     # Should return empty or minimal context
     assert isinstance(context, str)
-    # Empty dir means no context loaded, but function shouldn't crash
+    # Missing DB record means no context loaded, but function shouldn't crash
 
 
 @pytest.mark.asyncio
-async def test_load_job_context_with_knowledge_state_config(temp_jobs_dir: Path):
+async def test_load_job_context_with_knowledge_state_config():
     """Test loading context with research question in knowledge state."""
+    from openscientist.knowledge_state import KnowledgeState
+
     job_id = "test_job_456"
-    job_dir = temp_jobs_dir / job_id
-    job_dir.mkdir()
 
-    with open(job_dir / "knowledge_state.json", "w") as f:
-        json.dump({"config": {"research_question": "What is the crystal structure?"}}, f)
+    ks = KnowledgeState(job_id, "What is the crystal structure?", 10)
 
-    context = await load_job_context(job_id, job_dir)
+    with patch(
+        "openscientist.job_chat.KnowledgeState.load_from_database_sync",
+        return_value=ks,
+    ):
+        context = await load_job_context(job_id)
 
     assert "What is the crystal structure?" in context
     assert "Research Question" in context
 
 
 @pytest.mark.asyncio
-async def test_load_job_context_with_knowledge_state(temp_jobs_dir: Path):
+async def test_load_job_context_with_knowledge_state():
     """Test loading context with knowledge state including findings."""
+    from openscientist.knowledge_state import KnowledgeState
+
     job_id = "test_job_789"
-    job_dir = temp_jobs_dir / job_id
-    job_dir.mkdir()
 
-    # Create knowledge state
-    knowledge_state = {
-        "findings": [
-            {
-                "content": "The protein shows high binding affinity",
-                "importance": "high",
-                "confidence": "strong",
-                "evidence": ["Data point 1", "Data point 2"],
-            },
-            {
-                "content": "Secondary structure is alpha-helical",
-                "importance": "medium",
-                "confidence": "moderate",
-                "evidence": ["Observation 1"],
-            },
-        ],
-        "hypotheses": [
-            {
-                "hypothesis": "The binding site is at position X",
-                "status": "active",
-                "rationale": "Based on structural analysis",
-            },
-        ],
-        "literature": [
-            {
-                "title": "Crystal Structures of Proteins",
-                "relevance_score": 0.92,
-                "key_findings": ["Finding 1", "Finding 2"],
-            },
-        ],
-        "iteration_summaries": [
-            {
-                "iteration": 1,
-                "strapline": "Initial analysis",
-                "summary": "Started with basic structure analysis",
-            },
-        ],
-    }
+    ks = KnowledgeState(job_id, "Protein analysis?", 10)
+    ks.data["findings"] = [
+        {
+            "content": "The protein shows high binding affinity",
+            "importance": "high",
+            "confidence": "strong",
+            "evidence": ["Data point 1", "Data point 2"],
+        },
+        {
+            "content": "Secondary structure is alpha-helical",
+            "importance": "medium",
+            "confidence": "moderate",
+            "evidence": ["Observation 1"],
+        },
+    ]
+    ks.data["hypotheses"] = [
+        {
+            "hypothesis": "The binding site is at position X",
+            "status": "active",
+            "rationale": "Based on structural analysis",
+        },
+    ]
+    ks.data["literature"] = [
+        {
+            "title": "Crystal Structures of Proteins",
+            "relevance_score": 0.92,
+            "key_findings": ["Finding 1", "Finding 2"],
+        },
+    ]
+    ks.data["iteration_summaries"] = [
+        {
+            "iteration": 1,
+            "strapline": "Initial analysis",
+            "summary": "Started with basic structure analysis",
+        },
+    ]
 
-    with open(job_dir / "knowledge_state.json", "w") as f:
-        json.dump(knowledge_state, f)
-
-    context = await load_job_context(job_id, job_dir)
+    with patch(
+        "openscientist.job_chat.KnowledgeState.load_from_database_sync",
+        return_value=ks,
+    ):
+        context = await load_job_context(job_id)
 
     # Check findings are included
     assert "The protein shows high binding affinity" in context
@@ -329,32 +328,32 @@ async def test_load_job_context_with_knowledge_state(temp_jobs_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_load_job_context_supports_modern_knowledge_state_keys(temp_jobs_dir: Path):
+async def test_load_job_context_supports_modern_knowledge_state_keys():
     """Context rendering should support modern finding/hypothesis key names."""
+    from openscientist.knowledge_state import KnowledgeState
+
     job_id = "test_job_modern_keys"
-    job_dir = temp_jobs_dir / job_id
-    job_dir.mkdir()
 
-    knowledge_state = {
-        "findings": [
-            {
-                "title": "Modern finding title",
-                "importance": "high",
-                "confidence": "strong",
-            }
-        ],
-        "hypotheses": [
-            {
-                "statement": "Modern hypothesis statement",
-                "status": "supported",
-            }
-        ],
-    }
+    ks = KnowledgeState(job_id, "Q?", 10)
+    ks.data["findings"] = [
+        {
+            "title": "Modern finding title",
+            "importance": "high",
+            "confidence": "strong",
+        }
+    ]
+    ks.data["hypotheses"] = [
+        {
+            "statement": "Modern hypothesis statement",
+            "status": "supported",
+        }
+    ]
 
-    with open(job_dir / "knowledge_state.json", "w", encoding="utf-8") as f:
-        json.dump(knowledge_state, f)
-
-    context = await load_job_context(job_id, job_dir)
+    with patch(
+        "openscientist.job_chat.KnowledgeState.load_from_database_sync",
+        return_value=ks,
+    ):
+        context = await load_job_context(job_id)
     assert "Modern finding title" in context
     assert "Modern hypothesis statement" in context
 
@@ -559,10 +558,11 @@ async def test_system_prompt_does_not_include_job_context(
     job_dir = temp_jobs_dir / str(test_job.id)
     job_dir.mkdir()
 
-    # Write a large knowledge state that would blow up ARG_MAX if embedded
-    large_ks = {"findings": [{"content": "x" * 50000}]}
-    with open(job_dir / "knowledge_state.json", "w") as f:
-        json.dump(large_ks, f)
+    from openscientist.knowledge_state import KnowledgeState
+
+    # Create a large knowledge state that would blow up ARG_MAX if embedded
+    large_ks = KnowledgeState(str(test_job.id), "Q?", 10)
+    large_ks.data["findings"] = [{"content": "x" * 50000}]
 
     captured_system_prompt = None
 
@@ -587,6 +587,10 @@ async def test_system_prompt_does_not_include_job_context(
     with (
         patch("openscientist.agent.sdk_executor.SDKAgentExecutor", FakeExecutor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
+        patch(
+            "openscientist.job_chat.KnowledgeState.load_from_database_sync",
+            return_value=large_ks,
+        ),
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
 
@@ -595,7 +599,7 @@ async def test_system_prompt_does_not_include_job_context(
     # System prompt should be small — just instructions, not embedded context
     assert captured_system_prompt is not None
     assert len(captured_system_prompt) < 2000
-    # Should reference files, not embed them
-    assert "knowledge_state.json" in captured_system_prompt
+    # Should not reference deprecated knowledge_state.json file
+    assert "knowledge_state.json" not in captured_system_prompt
     # Should NOT contain the large content
     assert "x" * 1000 not in captured_system_prompt

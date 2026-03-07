@@ -171,6 +171,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
 
         ks.log_analysis(
             action="execute_code",
+            code=code,
             description=description,
             output=result.get("output", ""),
             success=result["success"],

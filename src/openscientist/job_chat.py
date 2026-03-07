@@ -6,7 +6,6 @@ analysis process. Uses SDKAgentExecutor for responses, giving the agent
 access to tools (execute_code, search_pubmed, etc.) for follow-up analysis.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -17,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage
 from openscientist.database.session import AsyncSessionLocal
-from openscientist.knowledge_state import KS_FILENAME
+from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
 
@@ -122,20 +121,16 @@ def _append_iteration_summaries(parts: list[str], summaries: list[Any]) -> None:
     parts.append("")
 
 
-def _load_knowledge_state(job_id: str, job_dir: Path) -> dict[str, Any] | None:
-    ks_path = job_dir / KS_FILENAME
-    if not ks_path.exists():
-        return None
+def _load_knowledge_state(job_id: str) -> dict[str, Any] | None:
     try:
-        with open(ks_path, encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = KnowledgeState.load_from_database_sync(job_id).to_dict()
     except Exception as e:
         logger.warning("Failed to load knowledge state for job %s: %s", job_id, e)
         return None
     return payload if isinstance(payload, dict) else None
 
 
-async def load_job_context(job_id: str, job_dir: Path) -> str:
+async def load_job_context(job_id: str) -> str:
     """
     Load comprehensive job context for LLM chat.
 
@@ -144,7 +139,6 @@ async def load_job_context(job_id: str, job_dir: Path) -> str:
 
     Args:
         job_id: Job ID
-        job_dir: Path to job directory
 
     Returns:
         Formatted context string for LLM
@@ -154,7 +148,7 @@ async def load_job_context(job_id: str, job_dir: Path) -> str:
     if research_question:
         _append_research_question(context_parts, research_question)
 
-    ks = _load_knowledge_state(job_id, job_dir)
+    ks = _load_knowledge_state(job_id)
     if not ks:
         return "\n".join(context_parts)
 
@@ -264,8 +258,8 @@ async def _send_message_via_executor(
     # can read job data files on demand via Claude Code's built-in Read tool.
     system_prompt = """You are a research assistant helping a scientist discuss the results of their OpenScientist literature review and hypothesis generation job.
 
-Your working directory is the job folder.  The full research context is available in these files — read them when you need details:
-- knowledge_state.json — findings, hypotheses, literature, and iteration summaries
+Your working directory is the job folder. Use available tools to inspect artifacts
+and data when you need details.
 
 Your role is to:
 1. Discuss the findings from the literature review and their academic significance
@@ -277,8 +271,14 @@ Important: You are discussing published research and scientific literature. You 
 
 Be concise, accurate, and cite specific papers or findings when relevant. Focus on what the research literature indicates."""
 
-    # Build prompt with chat history
+    # Build prompt with job context and chat history
     prompt_parts = []
+
+    job_context = await load_job_context(str(job_id))
+    if job_context.strip():
+        prompt_parts.append(job_context)
+        prompt_parts.append("---")
+
     if history:
         prompt_parts.append("Previous conversation:")
         for msg in history:

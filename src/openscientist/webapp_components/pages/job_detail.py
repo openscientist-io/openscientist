@@ -24,7 +24,7 @@ from openscientist.database.session import get_session_ctx
 from openscientist.job.types import JobStatus
 from openscientist.job_chat import get_chat_history, send_chat_message
 from openscientist.job_manager import _db_get_job, _db_get_share_permission
-from openscientist.knowledge_state import KS_FILENAME, KnowledgeState
+from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.webapp_components.error_handler import get_user_friendly_error
@@ -48,7 +48,6 @@ from openscientist.webapp_components.utils import (
     ClientGuard,
     guard_client,
     is_client_connected,
-    parse_transcript_actions,
     safe_run_javascript,
     setup_timer_cleanup,
 )
@@ -56,16 +55,14 @@ from openscientist.webapp_components.utils import (
 logger = logging.getLogger(__name__)
 
 
-def _load_knowledge_state(ks_path: Path) -> tuple[dict[str, Any] | None, str | None]:
-    """Load knowledge state from file, returning (data, error_message)."""
-    if not ks_path.exists():
-        return None, None
+def _load_knowledge_state(job_id: str, user_id: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Load knowledge state from database, returning (data, error_message)."""
     try:
-        with open(ks_path, encoding="utf-8") as f:
-            return json.load(f), None
-    except json.JSONDecodeError as e:
-        logger.warning("Failed to parse knowledge_state.json: %s", e)
-        return None, "Knowledge state is being updated. Please refresh the page."
+        ks = KnowledgeState.load_from_database_sync(job_id, UUID(user_id))
+        return ks.to_dict(), None
+    except Exception as e:
+        logger.warning("Failed to load knowledge state from database for %s: %s", job_id, e)
+        return None, "Knowledge state is unavailable. Please refresh the page."
 
 
 def _show_no_timeline_activity() -> None:
@@ -133,18 +130,6 @@ def _timeline_header_text(strapline: str, summary_text: str, is_in_progress: boo
     return f"{base_text} [in progress]" if is_in_progress else base_text
 
 
-def _load_transcript_actions(transcript_path: Path, iter_num: int) -> list[Any]:
-    if not transcript_path.exists():
-        return []
-    try:
-        with open(transcript_path, encoding="utf-8") as transcript_file:
-            transcript = json.load(transcript_file)
-        return parse_transcript_actions(transcript)
-    except (OSError, json.JSONDecodeError, KeyError) as e:
-        logger.warning("Failed to load transcript for iter %d: %s", iter_num, e)
-        return []
-
-
 def _action_card_class(tool_name: str) -> str:
     if "execute_code" in tool_name:
         return "w-full mb-2 border-l-4 border-blue-300"
@@ -155,49 +140,45 @@ def _action_card_class(tool_name: str) -> str:
     return "w-full mb-2 border-l-4 border-gray-300"
 
 
-def _render_action_details(action: dict[str, Any], success: bool) -> None:
-    tool_name = action.get("tool_name", "")
-    action_input = action.get("input", {})
-    if "execute_code" in tool_name and action_input.get("code"):
+def _render_analysis_log_details(entry: dict[str, Any], success: bool) -> None:
+    action_type = entry.get("action", "")
+    code = entry.get("code")
+    if code and "execute_code" in action_type:
         with ui.expansion("Code", icon="code").classes("w-full mt-1"):
-            ui.code(action_input["code"], language="python").classes("text-xs")
+            ui.code(code, language="python").classes("text-xs")
 
-    if "search_pubmed" in tool_name and action_input.get("query"):
-        ui.label(f'Query: "{action_input["query"]}"').classes("text-xs text-gray-600 mt-1")
-
-    result_text = action.get("result", "")
-    if not result_text:
+    output = entry.get("output")
+    if not output:
         return
-    result_str = str(result_text)
-    if len(result_str) > 200:
+    output_str = str(output)
+    if len(output_str) > 200:
         with ui.expansion("Result", icon="output").classes("w-full mt-1"):
             ui.code(
-                result_str[:2000] + ("..." if len(result_str) > 2000 else ""),
+                output_str[:2000] + ("..." if len(output_str) > 2000 else ""),
                 language="text",
             ).classes("text-xs")
     elif not success:
-        ui.label(result_str).classes("text-xs text-red-600 mt-1")
+        ui.label(output_str).classes("text-xs text-red-600 mt-1")
 
 
-def _render_transcript_actions(transcript_actions: list[Any]) -> None:
-    if not transcript_actions:
+def _render_analysis_log_actions(entries: list[Any]) -> None:
+    if not entries:
         return
     with ui.expansion(
-        f"Actions ({len(transcript_actions)})",
+        f"Actions ({len(entries)})",
         icon="build",
     ).classes("w-full mt-2"):
-        for action in transcript_actions:
-            success = action.get("success", True)
-            tool_name = action.get("tool_name", "")
-            short_name = action.get("short_name", "")
-            description = action.get("description", short_name or "Unknown")
-            status_icon = "✅" if success else "❌"
+        for entry in entries:
+            success = entry.get("success", True)
+            action_type = entry.get("action", "")
+            description = entry.get("description", action_type or "Unknown")
+            status_icon = "\u2705" if success else "\u274c"
 
-            with ui.card().classes(_action_card_class(tool_name)):
+            with ui.card().classes(_action_card_class(action_type)):
                 with ui.row().classes("items-center gap-2"):
                     ui.label(f"{status_icon} {description}").classes("font-medium text-sm")
-                    ui.badge(short_name, color="gray").props("outline").classes("text-xs")
-                _render_action_details(action, success)
+                    ui.badge(action_type, color="gray").props("outline").classes("text-xs")
+                _render_analysis_log_details(entry, success)
 
 
 def _collect_iteration_plots(
@@ -390,8 +371,7 @@ def _load_iteration_content(
 
         _render_iteration_hypotheses(iter_ks_data, iter_num)
         _render_iteration_findings(iter_ks_data, iter_num)
-        transcript_path = iter_provenance_dir / f"iter{iter_num}_transcript.json"
-        _render_transcript_actions(_load_transcript_actions(transcript_path, iter_num))
+        _render_analysis_log_actions(iter_entries)
         _render_iteration_plots(iter_provenance_dir, iter_num)
         _render_iteration_literature(iter_entries, iter_ks_data, iter_num)
 
@@ -496,24 +476,20 @@ def _render_timeline_content(timeline_ks: dict[str, Any], latest_job: Any, job_d
             )
 
 
-def _next_iteration_for_feedback(ks_path: Path) -> int:
-    if not ks_path.exists():
-        return 1
-    try:
-        with open(ks_path, encoding="utf-8") as handle:
-            latest_ks = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+def _next_iteration_for_feedback(job_id: str, user_id: str) -> int:
+    latest_ks, _ = _load_knowledge_state(job_id, user_id)
+    if latest_ks is None:
         return 1
     return int(latest_ks.get("iteration", 1))
 
 
 def _submit_feedback_and_continue(
-    job_dir: Path, job_id: str, completed_iter: int, feedback_text: str
+    job_dir: Path, job_id: str, user_id: str, completed_iter: int, feedback_text: str
 ) -> None:
-    ks = KnowledgeState.load(job_dir / KS_FILENAME)
+    ks = KnowledgeState.load_from_database_sync(job_id, UUID(user_id))
     if feedback_text.strip():
         ks.add_feedback(feedback_text.strip(), completed_iter)
-        ks.save(job_dir / KS_FILENAME)
+        ks.save_to_database_sync(job_id, UUID(user_id))
 
     try:
         run_sync(update_job_status(job_dir, "running"))
@@ -573,13 +549,13 @@ def _render_feedback_panel(
     can_edit: bool,
     job_dir: Path,
     job_id: str,
-    ks_path: Path,
+    user_id: str,
     active_timers: list[Any],
 ) -> None:
     if latest_job.status != JobStatus.AWAITING_FEEDBACK:
         return
 
-    next_iter = _next_iteration_for_feedback(ks_path)
+    next_iter = _next_iteration_for_feedback(job_id, user_id)
     completed_iter = next_iter - 1 if next_iter > 1 else 1
     awaiting_since = latest_job.started_at
 
@@ -600,7 +576,7 @@ def _render_feedback_panel(
             ).classes("w-full")
 
             def submit_feedback(fi: Any = feedback_input, ci: int = completed_iter) -> None:
-                _submit_feedback_and_continue(job_dir, job_id, ci, fi.value)
+                _submit_feedback_and_continue(job_dir, job_id, user_id, ci, fi.value)
 
             with ui.row().classes("w-full gap-2 mt-2"):
                 ui.button(
@@ -625,9 +601,9 @@ def _refresh_feedback_panel(
     feedback_container: ui.column,
     job_manager: Any,
     job_id: str,
+    user_id: str,
     can_edit: bool,
     job_dir: Path,
-    ks_path: Path,
     active_timers: list[Any],
 ) -> None:
     feedback_container.clear()
@@ -640,7 +616,7 @@ def _refresh_feedback_panel(
         can_edit=can_edit,
         job_dir=job_dir,
         job_id=job_id,
-        ks_path=ks_path,
+        user_id=user_id,
         active_timers=active_timers,
     )
 
@@ -655,7 +631,6 @@ class _JobDetailContext:
     is_owner: bool
     can_edit: bool
     job_dir: Path
-    ks_path: Path
     ks_data: dict[str, Any] | None
     ks_load_error: str | None
     state: dict[str, Any]
@@ -738,8 +713,7 @@ def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         return None
 
     job_dir = job_manager.jobs_dir / job_id
-    ks_path = job_dir / KS_FILENAME
-    ks_data, ks_load_error = _load_knowledge_state(ks_path)
+    ks_data, ks_load_error = _load_knowledge_state(job_id, user_id)
     active_timers = setup_timer_cleanup()
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
         job_id,
@@ -756,7 +730,6 @@ def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         is_owner=is_owner,
         can_edit=can_edit,
         job_dir=job_dir,
-        ks_path=ks_path,
         ks_data=ks_data,
         ks_load_error=ks_load_error,
         state=_initial_job_state(job_info, ks_data),
@@ -816,7 +789,7 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     if latest_job is None:
         return
 
-    latest_ks, _ = _load_knowledge_state(context.ks_path)
+    latest_ks, _ = _load_knowledge_state(context.job_id, context.user_id)
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
@@ -854,7 +827,7 @@ def _render_timeline_content_for_context(context: _JobDetailContext) -> None:
     if not is_client_connected():
         return
 
-    timeline_ks, _ = _load_knowledge_state(context.ks_path)
+    timeline_ks, _ = _load_knowledge_state(context.job_id, context.user_id)
     latest_job = context.job_manager.get_job(context.job_id)
     if not timeline_ks or not latest_job:
         _show_no_timeline_activity()
@@ -945,7 +918,7 @@ def _check_and_refresh(
         _handle_missing_job_during_poll(stats_timer_holder)
         return
 
-    latest_ks, _ = _load_knowledge_state(context.ks_path)
+    latest_ks, _ = _load_knowledge_state(context.job_id, context.user_id)
     snapshot = _state_snapshot(latest_job, latest_ks)
     if _stats_changed(context.state, snapshot):
         _update_state_fields(context.state, snapshot)
@@ -977,9 +950,9 @@ def _render_timeline_tab(context: _JobDetailContext) -> None:
         feedback_container=feedback_container,
         job_manager=context.job_manager,
         job_id=context.job_id,
+        user_id=context.user_id,
         can_edit=context.can_edit,
         job_dir=context.job_dir,
-        ks_path=context.ks_path,
         active_timers=context.active_timers,
     )
 
@@ -1024,11 +997,7 @@ def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None
 
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
-        if (
-            context.can_edit
-            and context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]
-            and context.ks_path.exists()
-        ):
+        if context.can_edit and context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
             ui.button(
                 "Regenerate Report",
                 on_click=lambda: _start_report_regeneration(context),
@@ -1074,7 +1043,7 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
     if context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
         with ui.column().classes("gap-2"):
             ui.label("Report generation failed").classes("text-red-500")
-            if context.can_edit and context.ks_path.exists():
+            if context.can_edit:
                 ui.button(
                     "Regenerate Report",
                     on_click=lambda: _start_report_regeneration(context),
