@@ -34,7 +34,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         """
         from openscientist.knowledge_state import KnowledgeState
 
-        ks = KnowledgeState.load(ctx.ks_path)
+        ks = KnowledgeState.load_from_database_sync(ctx.job_id)
         finding_id = ks.add_finding(title=title, evidence=evidence)
         # Set biological_interpretation directly on the dict after creation
         for f in ks.data["findings"]:
@@ -47,7 +47,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
             title=title,
             description=description,
         )
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
         finding_count = len(ks.data["findings"])
         return f"✅ Finding #{finding_count} recorded: {title}"
 
@@ -64,10 +64,10 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         """
         from openscientist.knowledge_state import KnowledgeState
 
-        ks = KnowledgeState.load(ctx.ks_path)
+        ks = KnowledgeState.load_from_database_sync(ctx.job_id)
         hyp_id = ks.add_hypothesis(statement=statement, proposed_by="agent")
         ks.log_analysis(action="add_hypothesis", hypothesis_id=hyp_id, statement=statement)
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
         return f"✅ Hypothesis {hyp_id} added: {statement}"
 
     @tool
@@ -102,7 +102,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         if status not in valid_statuses:
             return f"❌ Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}"
 
-        ks = KnowledgeState.load(ctx.ks_path)
+        ks = KnowledgeState.load_from_database_sync(ctx.job_id)
 
         updates: dict[str, object] = {"status": status}
         if status in ("supported", "rejected"):
@@ -125,7 +125,7 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
             status=status,
             result_summary=result_summary,
         )
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
 
         status_emoji = {"testing": "🔬", "supported": "✅", "rejected": "❌"}.get(status, "📝")
         return f"{status_emoji} Hypothesis {hypothesis_id} updated to '{status}'"

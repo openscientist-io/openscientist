@@ -32,11 +32,11 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         from openscientist.knowledge_state import KnowledgeState
         from openscientist.literature import search_pubmed as search_pm
 
-        ks = KnowledgeState.load(ctx.ks_path)
+        ks = KnowledgeState.load_from_database_sync(ctx.job_id)
 
         short_query = query[:60] + "..." if len(query) > 60 else query
         ks.set_agent_status(f"Searching PubMed: {short_query}")
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
 
         papers = search_pm(query, max_results=max_results)
 
@@ -54,7 +54,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
             results_count=len(papers),
             description=description,
         )
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
 
         if not papers:
             return f"No papers found for query: '{query}'"

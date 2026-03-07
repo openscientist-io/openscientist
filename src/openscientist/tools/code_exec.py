@@ -116,7 +116,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         if load_error and language not in ("rust", "sparql"):
             return f"❌ ERROR: Cannot execute code - data file failed to load.\n\n{load_error}"
 
-        ks = KnowledgeState.load(ctx.ks_path)
+        ks = KnowledgeState.load_from_database_sync(ctx.job_id)
 
         # Auto-set status so the UI shows what's running without the model needing to call set_status
         lang_label = {"python": "Python", "rust": "Rust", "sparql": "SPARQL"}.get(
@@ -131,7 +131,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
                 f"Running {lang_label} {'query' if language == 'sparql' else 'script'}: {suffix}"
             )
         ks.set_agent_status(status_msg)
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
 
         provenance_dir = ctx.job_dir / "provenance"
         provenance_dir.mkdir(parents=True, exist_ok=True)
@@ -178,7 +178,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
             execution_time=result["execution_time"],
             plots=result.get("plots", []),
         )
-        ks.save(ctx.ks_path)
+        ks.save_to_database_sync(ctx.job_id)
 
         return format_execution_result(result)
 

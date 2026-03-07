@@ -20,11 +20,10 @@ _MIN_TITLE_LENGTH = 3
 def _set_status_impl(ctx: ToolContext, message: str) -> str:
     from openscientist.knowledge_state import KnowledgeState
 
-    ks_path = ctx.ks_path
     trimmed = message[:80]
-    ks = KnowledgeState.load(ks_path)
+    ks = KnowledgeState.load_from_database_sync(ctx.job_id)
     ks.set_agent_status(trimmed)
-    ks.save(ks_path)
+    ks.save_to_database_sync(ctx.job_id)
     return f"✅ Status updated: {trimmed}"
 
 
@@ -102,24 +101,22 @@ def _set_job_title_impl(ctx: ToolContext, title: str) -> str:
 def _save_iteration_summary_impl(ctx: ToolContext, summary: str, strapline: str = "") -> str:
     from openscientist.knowledge_state import KnowledgeState
 
-    ks_path = ctx.ks_path
-    ks = KnowledgeState.load(ks_path)
+    ks = KnowledgeState.load_from_database_sync(ctx.job_id)
     ks.add_iteration_summary(
         iteration=ks.data["iteration"],
         summary=summary,
         strapline=strapline,
     )
-    ks.save(ks_path)
+    ks.save_to_database_sync(ctx.job_id)
     return f"✅ Iteration summary saved: {summary[:100]}"
 
 
 def _set_consensus_answer_impl(ctx: ToolContext, answer: str) -> str:
     from openscientist.knowledge_state import KnowledgeState
 
-    ks_path = ctx.ks_path
-    ks = KnowledgeState.load(ks_path)
+    ks = KnowledgeState.load_from_database_sync(ctx.job_id)
     ks.data["consensus_answer"] = answer.strip()
-    ks.save(ks_path)
+    ks.save_to_database_sync(ctx.job_id)
     return "✅ Consensus answer set"
 
 

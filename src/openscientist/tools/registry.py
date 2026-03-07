@@ -153,13 +153,6 @@ class ToolContext:
     data_file: Path | None = None
     data_files: tuple[Path, ...] = ()
 
-    @property
-    def ks_path(self) -> Path:
-        """Legacy knowledge-state path shim kept for staged migration."""
-        from openscientist.knowledge_state import KS_FILENAME
-
-        return self.job_dir / KS_FILENAME
-
 
 def build_tool_list(
     job_id: str,

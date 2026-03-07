@@ -72,7 +72,7 @@ def _log_phenix_execution(
     """Record Phenix tool execution in knowledge state."""
     from openscientist.knowledge_state import KnowledgeState
 
-    ks = KnowledgeState.load(ctx.ks_path)
+    ks = KnowledgeState.load_from_database_sync(ctx.job_id)
     ks.log_analysis(
         action="run_phenix_tool",
         tool_name=tool_name,
@@ -80,7 +80,7 @@ def _log_phenix_execution(
         description=description,
         success=success,
     )
-    ks.save(ctx.ks_path)
+    ks.save_to_database_sync(ctx.job_id)
 
 
 def _run_phenix_tool_impl(
