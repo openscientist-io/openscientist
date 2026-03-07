@@ -4,6 +4,7 @@ Knowledge state management for OpenScientist.
 Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
 
+import math
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -22,6 +23,17 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import AsyncSessionLocal
 
 KS_FILENAME = "knowledge_state.json"
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Replace NaN/Infinity with None for JSONB compatibility."""
+    if isinstance(obj, float):
+        return None if math.isnan(obj) or math.isinf(obj) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(item) for item in obj]
+    return obj
 
 
 class KnowledgeState:
@@ -687,7 +699,7 @@ class KnowledgeState:
         if not job:
             return
         job.current_iteration = int(self.data.get("iteration", 1))
-        job.data_summary = self.data.get("data_summary") or {}
+        job.data_summary = _sanitize_for_json(self.data.get("data_summary") or {})
         job.agent_status = self.data.get("agent_status")
         updated_at_raw = self.data.get("agent_status_updated_at")
         if isinstance(updated_at_raw, str):
@@ -721,13 +733,17 @@ class KnowledgeState:
                         priority=None,
                         rationale=f"Proposed by {hypothesis_data.get('proposed_by', 'agent')}",
                         test_strategy=hypothesis_data.get("test_code"),
-                        supporting_evidence={"result": hypothesis_data.get("result")},
+                        supporting_evidence=_sanitize_for_json(
+                            {"result": hypothesis_data.get("result")}
+                        ),
                     )
                 )
                 continue
             existing.status = hypothesis_data["status"]
             existing.test_strategy = hypothesis_data.get("test_code")
-            existing.supporting_evidence = {"result": hypothesis_data.get("result")}
+            existing.supporting_evidence = _sanitize_for_json(
+                {"result": hypothesis_data.get("result")}
+            )
 
     @staticmethod
     def _finding_payload(finding_data: dict[str, Any]) -> dict[str, Any]:
@@ -758,7 +774,7 @@ class KnowledgeState:
                         text=finding_data["title"],
                         finding_type=finding_data.get("finding_type", "observation"),
                         source="code_execution",
-                        data=self._finding_payload(finding_data),
+                        data=_sanitize_for_json(self._finding_payload(finding_data)),
                     )
                 )
                 continue
@@ -841,8 +857,8 @@ class KnowledgeState:
                     step_number=1,
                     action_type=log_entry["action"],
                     description=description,
-                    input_data=input_data or None,
-                    output_data=output_data,
+                    input_data=_sanitize_for_json(input_data) or None,
+                    output_data=_sanitize_for_json(output_data),
                     duration_seconds=(
                         float(log_entry["execution_time"])
                         if log_entry.get("execution_time") is not None

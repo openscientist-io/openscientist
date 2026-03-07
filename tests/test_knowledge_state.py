@@ -2,7 +2,7 @@
 
 import pytest
 
-from openscientist.knowledge_state import KnowledgeState
+from openscientist.knowledge_state import KnowledgeState, _sanitize_for_json
 
 
 @pytest.fixture
@@ -392,6 +392,51 @@ class TestGetIterationSummaryNotFound:
     def test_missing_iteration_returns_none(self, ks):
         ks.add_iteration_summary(1, "Summary for iter 1")
         assert ks.get_iteration_summary(999) is None
+
+
+class TestSanitizeForJson:
+    """Tests for _sanitize_for_json helper."""
+
+    def test_nan_replaced_with_none(self):
+        assert _sanitize_for_json(float("nan")) is None
+
+    def test_inf_replaced_with_none(self):
+        assert _sanitize_for_json(float("inf")) is None
+
+    def test_neg_inf_replaced_with_none(self):
+        assert _sanitize_for_json(float("-inf")) is None
+
+    def test_normal_float_unchanged(self):
+        assert _sanitize_for_json(3.14) == 3.14
+
+    def test_zero_unchanged(self):
+        assert _sanitize_for_json(0.0) == 0.0
+
+    def test_non_float_types_unchanged(self):
+        assert _sanitize_for_json(42) == 42
+        assert _sanitize_for_json("hello") == "hello"
+        assert _sanitize_for_json(True) is True
+        assert _sanitize_for_json(None) is None
+
+    def test_nan_in_list(self):
+        result = _sanitize_for_json([1.0, float("nan"), 3.0])
+        assert result == [1.0, None, 3.0]
+
+    def test_nan_in_dict(self):
+        result = _sanitize_for_json({"a": float("nan"), "b": 2.0})
+        assert result == {"a": None, "b": 2.0}
+
+    def test_deeply_nested(self):
+        data = {"groups": [{"values": [float("nan"), float("inf"), 1.5]}]}
+        result = _sanitize_for_json(data)
+        assert result == {"groups": [{"values": [None, None, 1.5]}]}
+
+    def test_none_passthrough(self):
+        assert _sanitize_for_json(None) is None
+
+    def test_empty_containers(self):
+        assert _sanitize_for_json({}) == {}
+        assert _sanitize_for_json([]) == []
 
 
 class TestToDict:
