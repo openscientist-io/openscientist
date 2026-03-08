@@ -57,7 +57,7 @@ def build_initial_prompt(
 
 {research_question}
 
-You will run for a maximum of {max_iterations} iterations.
+**You are now on iteration 1 of {max_iterations}.** When writing summaries, always refer to this as "Iteration 1".
 
 {data_context}
 
@@ -97,7 +97,9 @@ the scientist's suggestions with your own analysis of what will be most producti
 
 ---
 """
-    return f"""# Iteration {iteration}/{max_iterations}
+    return f"""# Iteration {iteration} of {max_iterations}
+
+**You are now on iteration {iteration}.** When writing summaries, always refer to this as "Iteration {iteration}".
 {feedback_section}
 {ks.get_summary()}
 
