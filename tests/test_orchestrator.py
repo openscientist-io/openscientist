@@ -867,7 +867,7 @@ class TestBuildInitialPrompt:
         prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks)
         assert "Why X?" in prompt
         assert "data.csv" in prompt
-        assert "10 iterations" in prompt
+        assert "iteration 1 of 10" in prompt
 
     def test_no_data_files(self):
         from openscientist.knowledge_state import KnowledgeState
@@ -902,4 +902,4 @@ class TestBuildIterationPrompt:
         ks = KnowledgeState("j1", "Q?", 10)
         prompt = build_iteration_prompt(2, 10, ks, pending_feedback=None)
         assert "Scientist Feedback" not in prompt
-        assert "Iteration 2/10" in prompt
+        assert "Iteration 2 of 10" in prompt

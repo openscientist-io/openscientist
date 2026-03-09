@@ -531,7 +531,7 @@ def main(
             port=port,
             reload=True,
             factory=True,
-            reload_excludes=[".nicegui", "jobs"],
+            reload_excludes=[".nicegui", str(jobs_dir.resolve())],
             log_level="warning",
         )
         return
