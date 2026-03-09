@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -12,7 +13,7 @@ from sqlalchemy import select
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
-from openscientist.database.models import Job, User
+from openscientist.database.models import Job, ReviewToken, User
 from openscientist.database.session import get_admin_session
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.ui_components import (
@@ -103,6 +104,7 @@ async def admin_page() -> None:
         with ui.tabs().classes("w-full") as tabs:
             orphaned_tab = ui.tab("Orphaned Jobs", icon="work_off")
             users_tab = ui.tab("Users", icon="people")
+            review_tokens_tab = ui.tab("Review Tokens", icon="rate_review")
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
 
@@ -114,6 +116,10 @@ async def admin_page() -> None:
             # Users Panel
             with ui.tab_panel(users_tab):
                 await render_users_panel()
+
+            # Review Tokens Panel
+            with ui.tab_panel(review_tokens_tab):
+                await render_review_tokens_panel()
 
             # Containers Panel
             with ui.tab_panel(containers_tab):
@@ -627,3 +633,258 @@ def _render_container_row(ci: ContainerInfo, icon: str = "dns") -> None:
                     )
 
             ui.label(f"CPU {ci.cpu_percent:.1f}%").classes("text-xs text-gray-500")
+
+
+# =============================================================================
+# Review Tokens Panel
+# =============================================================================
+
+_REVIEW_TOKEN_STATUS_SLOT = r"""
+<q-td :props="props">
+    <q-badge
+        :color="{active: 'positive', redeemed: 'blue', expired: 'grey', revoked: 'negative'}[props.row.status] || 'grey'"
+        :label="props.row.status"
+    />
+</q-td>
+"""
+
+_REVIEW_TOKEN_ACTIONS_SLOT = r"""
+<q-td :props="props">
+    <q-btn
+        v-if="props.row.can_revoke"
+        flat
+        dense
+        color="negative"
+        icon="block"
+        label="Revoke"
+        @click="$parent.$emit('revoke', props.row)"
+    />
+    <span v-else class="text-grey">-</span>
+</q-td>
+"""
+
+
+def _review_token_columns() -> list[dict[str, Any]]:
+    return [
+        {"name": "label", "label": "Label", "field": "label", "align": "left"},
+        {"name": "status", "label": "Status", "field": "status", "align": "center"},
+        {"name": "created_at", "label": "Created", "field": "created_at", "align": "left"},
+        {"name": "expires_at", "label": "Expires", "field": "expires_at", "align": "left"},
+        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+    ]
+
+
+def _review_token_rows(tokens: list[ReviewToken]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for token in tokens:
+        rows.append(
+            {
+                "id": str(token.id),
+                "label": token.label,
+                "status": token.status,
+                "created_at": token.created_at.strftime("%Y-%m-%d %H:%M")
+                if token.created_at
+                else "N/A",
+                "expires_at": token.expires_at.strftime("%Y-%m-%d %H:%M")
+                if token.expires_at
+                else "Never",
+                "can_revoke": token.is_active and not token.is_redeemed,
+            }
+        )
+    return rows
+
+
+async def render_review_tokens_panel() -> None:
+    """Render the review tokens management panel."""
+    from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
+    from openscientist.settings import get_settings
+
+    with ui.column().classes("w-full gap-4"):
+        ui.markdown("## Review Tokens")
+        ui.markdown(
+            "Generate magic links for anonymous reviewers. "
+            "Each token creates an anonymous account on first use."
+        )
+
+        # Create section
+        with ui.card().classes("w-full"):
+            ui.label("Create Review Token").classes("text-lg font-bold mb-2")
+            with ui.row().classes("w-full gap-4 items-end"):
+                label_input = ui.input(
+                    label="Reviewer Label",
+                    placeholder="e.g., Reviewer 1, Nature Review Panel",
+                    validation={
+                        "Required": lambda v: bool(v and v.strip()),
+                        "Max 200 chars": lambda v: len(v) <= 200 if v else True,
+                    },
+                ).classes("flex-grow")
+                label_input.props("outlined dense")
+
+                expiry_input = ui.number(
+                    label="Expiry (days)",
+                    value=30,
+                    min=1,
+                    max=365,
+                ).classes("w-32")
+                expiry_input.props("outlined dense")
+
+                async def create_token() -> None:
+                    label = (label_input.value or "").strip()
+                    if not label:
+                        ui.notify("Reviewer label is required", type="negative")
+                        return
+
+                    current_user_id = get_current_user_id()
+                    if not current_user_id:
+                        ui.notify("You must be signed in", type="negative")
+                        return
+
+                    expiry_days = int(expiry_input.value or 30)
+                    expires_at = datetime.now(UTC) + timedelta(days=expiry_days)
+                    plaintext = generate_review_token()
+                    token_hash = _hash_token(plaintext)
+
+                    try:
+                        async with get_admin_session() as session:
+                            review_token = ReviewToken(
+                                token_hash=token_hash,
+                                label=label,
+                                created_by_id=UUID(current_user_id),
+                                expires_at=expires_at,
+                            )
+                            session.add(review_token)
+                            await session.commit()
+                    except Exception as exc:
+                        logger.error("Failed to create review token: %s", exc, exc_info=True)
+                        ui.notify("Failed to create token. Please try again.", type="negative")
+                        return
+
+                    settings = get_settings()
+                    magic_link = f"{settings.auth.app_url}/review/{plaintext}"
+                    await _show_token_created_dialog(magic_link)
+                    label_input.value = ""
+                    await load_tokens()
+
+                ui.button("Create", icon="add", on_click=create_token).props("color=primary")
+
+        # Tokens table
+        tokens_container = ui.column().classes("w-full mt-4")
+
+        async def load_tokens() -> None:
+            tokens_container.clear()
+            try:
+                async with get_admin_session() as session:
+                    stmt = select(ReviewToken).order_by(ReviewToken.created_at.desc())
+                    result = await session.execute(stmt)
+                    tokens = list(result.scalars().all())
+
+                if not tokens:
+                    with tokens_container:
+                        render_empty_state("No review tokens yet. Create one to get started.")
+                    return
+
+                rows = _review_token_rows(tokens)
+                with tokens_container:
+                    table = ui.table(
+                        columns=_review_token_columns(),
+                        rows=rows,
+                        row_key="id",
+                        pagination=20,
+                    ).classes("w-full")
+                    table.add_slot("body-cell-status", _REVIEW_TOKEN_STATUS_SLOT)
+                    table.add_slot("body-cell-actions", _REVIEW_TOKEN_ACTIONS_SLOT)
+
+                    async def handle_revoke(e: Any) -> None:
+                        token_id = e.args.get("id")
+                        if not token_id:
+                            return
+                        _open_revoke_token_dialog(
+                            token_id=token_id,
+                            token_label=e.args.get("label", ""),
+                            on_revoked=load_tokens,
+                        )
+
+                    table.on("revoke", handle_revoke)
+
+            except Exception as exc:
+                logger.error("Error loading review tokens: %s", exc, exc_info=True)
+                with tokens_container:
+                    render_alert_banner(
+                        title="Error",
+                        message="Failed to load review tokens. Check server logs.",
+                        severity="error",
+                    )
+
+        await load_tokens()
+
+
+async def _show_token_created_dialog(magic_link: str) -> None:
+    """Show one-time dialog with the magic link (shown only once)."""
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
+        ui.label("Review Token Created").classes("text-lg font-bold mb-2")
+        with ui.row().classes("w-full bg-amber-100 border-l-4 border-amber-500 p-3 mb-4"):
+            ui.icon("warning", color="amber-700").classes("mr-2")
+            ui.label("Copy this link now. You won't be able to see it again!").classes(
+                "text-amber-800"
+            )
+        with ui.row().classes("w-full gap-2 items-center"):
+            link_display = ui.input(value=magic_link).classes("flex-grow")
+            link_display.props("readonly outlined dense")
+
+            async def copy_link() -> None:
+                await ui.run_javascript(f"navigator.clipboard.writeText({magic_link!r})")
+                ui.notify("Link copied to clipboard", type="positive")
+
+            ui.button(icon="content_copy", on_click=copy_link).props("flat color=primary").tooltip(
+                "Copy to clipboard"
+            )
+        ui.markdown(
+            "Send this link to the reviewer. They will be logged in automatically "
+            "when they click it."
+        ).classes("mt-4 text-sm text-gray-600")
+        with ui.row().classes("w-full justify-end mt-4"):
+            ui.button("Done", on_click=dialog.close).props("color=primary")
+    dialog.open()
+
+
+def _open_revoke_token_dialog(
+    *,
+    token_id: str,
+    token_label: str,
+    on_revoked: Callable[[], Awaitable[None]],
+) -> None:
+    """Open confirmation dialog for token revocation."""
+
+    async def do_revoke() -> None:
+        try:
+            async with get_admin_session() as session:
+                result = await session.execute(
+                    select(ReviewToken).where(ReviewToken.id == UUID(token_id))
+                )
+                review_token = result.scalar_one_or_none()
+                if not review_token:
+                    ui.notify("Token not found", type="negative")
+                    dialog.close()
+                    return
+                review_token.is_active = False
+                await session.commit()
+            ui.notify("Token revoked", type="positive")
+            dialog.close()
+            await on_revoked()
+        except Exception as exc:
+            logger.error("Failed to revoke review token: %s", exc, exc_info=True)
+            ui.notify("Failed to revoke token. Please try again.", type="negative")
+
+    with ui.dialog() as dialog, ui.card().classes("w-96"):
+        ui.label("Revoke Review Token").classes("text-lg font-bold mb-2")
+        ui.label(f'Are you sure you want to revoke the token "{token_label}"?').classes("mb-2")
+        ui.label("The reviewer will no longer be able to use this link to log in.").classes(
+            "text-sm text-gray-600 mb-4"
+        )
+        render_dialog_actions(
+            on_confirm=do_revoke,
+            on_cancel=dialog.close,
+            confirm_label="Revoke",
+            confirm_props="color=negative",
+        )
+    dialog.open()
