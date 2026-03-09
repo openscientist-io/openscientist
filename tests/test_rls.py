@@ -31,6 +31,8 @@ async def test_rls_enabled_on_tables(db_session: AsyncSession):
     assert await verify_rls_enabled(db_session, "api_keys")
     assert await verify_rls_enabled(db_session, "hypotheses")
     assert await verify_rls_enabled(db_session, "findings")
+    assert await verify_rls_enabled(db_session, "review_tokens")
+    assert await verify_rls_enabled(db_session, "review_tokens")
 
 
 @pytest.mark.asyncio

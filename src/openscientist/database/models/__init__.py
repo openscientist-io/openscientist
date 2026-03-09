@@ -36,6 +36,9 @@ from .job_share import JobShare
 from .literature import Literature
 from .oauth_account import OAuthAccount
 from .plot import Plot
+
+# Review tokens
+from .review_token import ReviewToken
 from .session import Session
 
 # Skill models
@@ -60,6 +63,7 @@ __all__ = [
     "Literature",
     "OAuthAccount",
     "Plot",
+    "ReviewToken",
     "Session",
     "Skill",
     "SkillSource",
