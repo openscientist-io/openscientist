@@ -4,11 +4,21 @@ from nicegui import app, ui
 
 from openscientist.auth.oauth import is_mock_auth_enabled, is_oauth_configured
 from openscientist.settings import get_settings
-from openscientist.webapp_components.ui_components import OPENSCIENTIST_THINKING_SVG
+from openscientist.webapp_components.ui_components import (
+    OPENSCIENTIST_THINKING_SVG,
+    render_alert_banner,
+)
+
+_TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
+    "token_invalid": (
+        "Invalid Review Link",
+        "This review link is invalid, expired, or has been revoked.",
+    ),
+}
 
 
 @ui.page("/login")
-def login_page() -> None:
+def login_page(error: str | None = None) -> None:
     """Login page with OAuth support."""
 
     # Check if OAuth is configured
@@ -23,6 +33,11 @@ def login_page() -> None:
         return_to = app.storage.user.pop("return_to", "/")
         ui.navigate.to(return_to)
         return
+
+    # Show token error banner if present
+    if error and error in _TOKEN_ERROR_MESSAGES:
+        title, message = _TOKEN_ERROR_MESSAGES[error]
+        render_alert_banner(title=title, message=message, severity="error")
 
     # Page styling - cyan gradient background
     ui.add_head_html(

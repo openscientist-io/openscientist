@@ -177,6 +177,22 @@ def _register_share_routes() -> None:
         logger.warning("Failed to register share routes: %s", e)
 
 
+def _register_review_routes() -> None:
+    """Register review token redemption route on the NiceGUI app."""
+    try:
+        from openscientist.auth.fastapi_routes import redeem_review_token
+
+        app.add_api_route(
+            "/review/{token}",
+            redeem_review_token,
+            methods=["GET"],
+            include_in_schema=False,
+        )
+        logger.info("Review token route registered at /review/{token}")
+    except Exception as e:
+        logger.warning("Failed to register review routes: %s", e)
+
+
 # Configure OpenAPI metadata
 _APP_TITLE = "OpenScientist API"
 _APP_VERSION = "1.0.0"
@@ -419,6 +435,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _register_api_routes(host_app)
     _register_oauth_routes()
     _register_share_routes()
+    _register_review_routes()
 
     _initialize_job_manager_runtime(jobs_dir)
 

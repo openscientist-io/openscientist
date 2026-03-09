@@ -5,8 +5,11 @@ This module provides FastAPI routes for OAuth login and callback handling,
 which integrate with NiceGUI's underlying FastAPI application.
 """
 
+import hashlib
 import logging
+import secrets
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -15,7 +18,7 @@ from sqlalchemy import select
 from openscientist.auth.oauth import get_oauth_client
 from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider
 from openscientist.auth.routes import create_or_update_user, create_session
-from openscientist.database.models import Administrator, Session
+from openscientist.database.models import Administrator, ReviewToken, Session, User
 from openscientist.database.session import get_admin_session
 from openscientist.settings import get_settings
 
@@ -341,3 +344,96 @@ async def logout(request: Request) -> RedirectResponse:
     response = RedirectResponse(url="/login")
     response.delete_cookie(key="session_token")
     return response
+
+
+# =============================================================================
+# Review Token Routes
+# =============================================================================
+
+
+def _hash_token(plaintext: str) -> str:
+    """Hash a review token with SHA-256."""
+    return hashlib.sha256(plaintext.encode()).hexdigest()
+
+
+def generate_review_token() -> str:
+    """Generate a cryptographically random review token."""
+    return secrets.token_urlsafe(32)
+
+
+async def redeem_review_token(token: str) -> RedirectResponse:
+    """
+    Redeem a review token to create/login an anonymous reviewer.
+
+    On first use: creates an anonymous User and marks the token as redeemed.
+    On subsequent uses: creates a new session for the existing anonymous user.
+    """
+    token_hash = _hash_token(token)
+
+    async with get_admin_session() as db:
+        stmt = select(ReviewToken).where(ReviewToken.token_hash == token_hash).with_for_update()
+        result = await db.execute(stmt)
+        review_token = result.scalar_one_or_none()
+
+        if review_token is None:
+            logger.warning("Review token redemption failed: invalid token")
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        if not review_token.is_active:
+            logger.warning("Review token redemption failed: token revoked (id=%s)", review_token.id)
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        if review_token.is_expired:
+            logger.warning("Review token redemption failed: token expired (id=%s)", review_token.id)
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        if review_token.redeemed_by_id is not None:
+            # Re-login: create new session for existing anonymous user
+            user_stmt = select(User).where(User.id == review_token.redeemed_by_id)
+            user_result = await db.execute(user_stmt)
+            user = user_result.scalar_one_or_none()
+
+            if user is None:
+                logger.error(
+                    "Review token redeemed_by user not found (id=%s)", review_token.redeemed_by_id
+                )
+                return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+            session = await create_session(db, str(user.id))
+            response = RedirectResponse(url="/", status_code=303)
+            response.headers["Referrer-Policy"] = "no-referrer"
+            _set_session_cookie(response, str(session.id))
+            logger.info(
+                "Reviewer re-login via token (token_id=%s, user_id=%s)",
+                review_token.id,
+                user.id,
+            )
+            return response
+
+        # First redemption: create anonymous user
+        random_hex = secrets.token_hex(8)
+        anon_email = f"reviewer-{random_hex}@review.local"
+        anon_user = User(
+            email=anon_email,
+            name=review_token.label,
+            is_approved=True,
+        )
+        db.add(anon_user)
+        await db.flush()
+
+        review_token.redeemed_at = datetime.now(UTC)
+        review_token.redeemed_by_id = anon_user.id
+
+        session = await create_session(db, str(anon_user.id))
+
+        response = RedirectResponse(url="/", status_code=303)
+        response.headers["Referrer-Policy"] = "no-referrer"
+        _set_session_cookie(response, str(session.id))
+
+        logger.info(
+            "Reviewer created via token (token_id=%s, user_id=%s, email=%s)",
+            review_token.id,
+            anon_user.id,
+            anon_email,
+        )
+        return response
