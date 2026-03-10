@@ -20,7 +20,7 @@ from openscientist.webapp_components.ui_components import (
     render_navigator,
     render_skill_name_slot,
 )
-from openscientist.webapp_components.utils import setup_timer_cleanup
+from openscientist.webapp_components.utils import get_event_value, setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -233,11 +233,11 @@ async def skills_page() -> None:
             ui.notify("Failed to load skills. Please try again.", type="negative")
 
     async def on_search_change(e: Any) -> None:
-        state["search"] = e.value or ""
+        state["search"] = get_event_value(e) or ""
         await load_skills()
 
     async def on_category_change(e: Any) -> None:
-        state["category"] = e.value
+        state["category"] = get_event_value(e)
         await load_skills()
 
     search_input.on("update:model-value", on_search_change)

@@ -20,7 +20,7 @@ from openscientist.webapp_components.ui_components import (
     render_empty_state,
     render_navigator,
 )
-from openscientist.webapp_components.utils import setup_timer_cleanup
+from openscientist.webapp_components.utils import get_event_value, setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -465,7 +465,7 @@ async def api_keys_page() -> None:
         )
 
         async def on_search_change(event: Any) -> None:
-            state["search"] = event.value or ""
+            state["search"] = get_event_value(event) or ""
             await load_keys()
 
         search_input.on("update:model-value", on_search_change)
