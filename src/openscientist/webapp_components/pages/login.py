@@ -26,6 +26,7 @@ def login_page(error: str | None = None) -> None:
     oauth_enabled = is_oauth_configured()
     google_enabled = bool(settings.auth.google_client_id)
     github_enabled = bool(settings.auth.github_client_id)
+    orcid_enabled = bool(settings.auth.orcid_client_id)
     mock_enabled = is_mock_auth_enabled()
 
     # Check if already authenticated (from return redirect)
@@ -123,6 +124,25 @@ def login_page(error: str | None = None) -> None:
                     )
                     ui.element("div").classes("w-px h-5 bg-white/40 mx-3")
                     ui.label("Continue with GitHub")
+
+            # ORCID OAuth button
+            if orcid_enabled:
+                with (
+                    ui.button(on_click=lambda: ui.navigate.to("/auth/orcid/login"))
+                    .classes("w-full login-btn")
+                    .style(
+                        "background-color: #A6CE39; color: white; "
+                        "justify-content: flex-start; padding-left: 12px;"
+                    ),
+                    ui.row().classes("items-center w-full"),
+                ):
+                    ui.html(
+                        '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">'
+                        '<path d="M12 0C5.372 0 0 5.372 0 12s5.372 12 12 12 12-5.372 12-12S18.628 0 12 0zM7.369 4.378c.525 0 .947.431.947.947s-.422.947-.947.947a.95.95 0 0 1-.947-.947c0-.525.422-.947.947-.947zM6.531 7.853h1.678v10.122H6.531V7.853zm3.975 0h4.547c3.009 0 4.759 2.147 4.759 5.053 0 2.906-1.75 5.069-4.759 5.069h-4.547V7.853zm1.678 1.459v7.203h2.869c2.147 0 3.081-1.575 3.081-3.594 0-2.028-.934-3.609-3.081-3.609h-2.869z"/>'
+                        "</svg>"
+                    )
+                    ui.element("div").classes("w-px h-5 bg-white/40 mx-3")
+                    ui.label("Continue with ORCID")
 
             # Mock OAuth buttons (dev mode only)
             if mock_enabled:
