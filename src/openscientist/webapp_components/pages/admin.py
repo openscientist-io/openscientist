@@ -709,7 +709,7 @@ async def render_review_tokens_panel() -> None:
         # Create section
         with ui.card().classes("w-full"):
             ui.label("Create Review Token").classes("text-lg font-bold mb-2")
-            with ui.row().classes("w-full gap-4 items-end"):
+            with ui.row().classes("w-full gap-4 items-center"):
                 label_input = ui.input(
                     label="Reviewer Label",
                     placeholder="e.g., Reviewer 1, Nature Review Panel",
