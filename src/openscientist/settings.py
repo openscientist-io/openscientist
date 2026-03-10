@@ -374,6 +374,11 @@ class AuthSettings(BaseSettings):
     # GitHub OAuth
     github_client_id: str | None = Field(default=None, alias="GITHUB_CLIENT_ID")
     github_client_secret: str | None = Field(default=None, alias="GITHUB_CLIENT_SECRET")
+
+    # ORCID OAuth
+    orcid_client_id: str | None = Field(default=None, alias="ORCID_CLIENT_ID")
+    orcid_client_secret: str | None = Field(default=None, alias="ORCID_CLIENT_SECRET")
+
     bootstrap_admin_emails: str | None = Field(default=None, alias="BOOTSTRAP_ADMIN_EMAILS")
 
     @staticmethod
@@ -417,6 +422,11 @@ class AuthSettings(BaseSettings):
         if self.github_client_secret and not self.github_client_id:
             errors.append("GITHUB_CLIENT_ID is required when GITHUB_CLIENT_SECRET is set")
 
+        if self.orcid_client_id and not self.orcid_client_secret:
+            errors.append("ORCID_CLIENT_SECRET is required when ORCID_CLIENT_ID is set")
+        if self.orcid_client_secret and not self.orcid_client_id:
+            errors.append("ORCID_CLIENT_ID is required when ORCID_CLIENT_SECRET is set")
+
         if errors:
             raise ValueError(
                 "OAuth configuration errors:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -427,7 +437,7 @@ class AuthSettings(BaseSettings):
     @property
     def is_oauth_configured(self) -> bool:
         """Check if at least one OAuth provider is configured."""
-        return bool(self.google_client_id or self.github_client_id)
+        return bool(self.google_client_id or self.github_client_id or self.orcid_client_id)
 
     @property
     def bootstrap_admin_emails_set(self) -> set[str]:

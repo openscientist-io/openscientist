@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from openscientist.auth.oauth import get_oauth_client
-from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider
+from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider, OrcidProvider
 from openscientist.auth.routes import create_or_update_user, create_session
 from openscientist.database.models import Administrator, ReviewToken, Session, User
 from openscientist.database.session import get_admin_session
@@ -233,10 +233,10 @@ async def oauth_login(provider: str, request: Request) -> RedirectResponse:
     Initiate OAuth login flow.
 
     Args:
-        provider: OAuth provider name (google, github)
+        provider: OAuth provider name (google, github, orcid)
         request: FastAPI request object
     """
-    if provider not in ["google", "github"]:
+    if provider not in ["google", "github", "orcid"]:
         raise HTTPException(status_code=400, detail="Unknown OAuth provider")
 
     try:
@@ -266,10 +266,10 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
     Handle OAuth callback.
 
     Args:
-        provider: OAuth provider name (google, github)
+        provider: OAuth provider name (google, github, orcid)
         request: FastAPI request object
     """
-    if provider not in ["google", "github"]:
+    if provider not in ["google", "github", "orcid"]:
         raise HTTPException(status_code=400, detail="Unknown OAuth provider")
 
     try:
@@ -289,6 +289,8 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
             user_info = await GoogleProvider.get_user_info(token)
         elif provider == "github":
             user_info = await GitHubProvider.get_user_info(token)
+        elif provider == "orcid":
+            user_info = await OrcidProvider.get_user_info(token)
         else:
             raise ValueError(f"Unknown provider: {provider}")
 

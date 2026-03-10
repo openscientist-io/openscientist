@@ -1,7 +1,7 @@
 """
 OAuth account model for linked authentication providers.
 
-Tracks OAuth provider accounts (GitHub, Google) linked to user accounts.
+Tracks OAuth provider accounts (GitHub, Google, ORCID) linked to user accounts.
 Multiple OAuth accounts can be linked to a single user.
 """
 
@@ -24,11 +24,11 @@ class OAuthAccount(UUIDv7Mixin, Base):
     OAuth provider account linked to a user.
 
     Stores OAuth provider information and tokens for authenticated users.
-    A user can have multiple OAuth accounts (e.g., GitHub + Google).
+    A user can have multiple OAuth accounts (e.g., GitHub + Google + ORCID).
 
     Attributes:
         user_id: Foreign key to the user who owns this OAuth account
-        provider: OAuth provider name ('github', 'google')
+        provider: OAuth provider name ('github', 'google', 'orcid')
         provider_user_id: User's unique ID on the OAuth provider
         email: Email address from the OAuth provider
         name: Display name from the OAuth provider
@@ -58,7 +58,7 @@ class OAuthAccount(UUIDv7Mixin, Base):
         String(50),
         nullable=False,
         index=True,
-        comment="OAuth provider name (github, google)",
+        comment="OAuth provider name (github, google, orcid)",
     )
 
     provider_user_id: Mapped[str] = mapped_column(

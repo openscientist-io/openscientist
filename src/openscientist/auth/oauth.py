@@ -31,6 +31,8 @@ def get_oauth_config() -> Config:
             "GOOGLE_CLIENT_SECRET": settings.auth.google_client_secret or "",
             "GITHUB_CLIENT_ID": settings.auth.github_client_id or "",
             "GITHUB_CLIENT_SECRET": settings.auth.github_client_secret or "",
+            "ORCID_CLIENT_ID": settings.auth.orcid_client_id or "",
+            "ORCID_CLIENT_SECRET": settings.auth.orcid_client_secret or "",
         }
     )
 
@@ -80,6 +82,20 @@ def get_oauth_client() -> OAuth:
         else:
             logger.info("GitHub OAuth not configured (GITHUB_CLIENT_ID not set)")
 
+        # Register ORCID provider
+        orcid_client_id = settings.auth.orcid_client_id
+        if orcid_client_id:
+            _oauth.register(
+                name="orcid",
+                client_id=orcid_client_id,
+                client_secret=settings.auth.orcid_client_secret,
+                server_metadata_url="https://orcid.org/.well-known/openid-configuration",
+                client_kwargs={"scope": "openid"},
+            )
+            logger.info("ORCID OAuth provider registered")
+        else:
+            logger.info("ORCID OAuth not configured (ORCID_CLIENT_ID not set)")
+
     return _oauth
 
 
@@ -88,7 +104,7 @@ def is_oauth_configured() -> bool:
     Check if at least one OAuth provider is configured.
 
     Returns:
-        True if GitHub, Google, or mock auth (dev mode) is configured
+        True if GitHub, Google, ORCID, or mock auth (dev mode) is configured
     """
     settings = get_settings()
     return settings.auth.is_oauth_configured or settings.dev.dev_mode

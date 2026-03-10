@@ -335,6 +335,24 @@ class TestAuthSettings:
             )
         assert "GOOGLE_CLIENT_SECRET" in str(exc_info.value)
 
+    def test_orcid_oauth_requires_both_id_and_secret(self):
+        """ORCID OAuth requires both client ID and secret."""
+        with pytest.raises(ValidationError) as exc_info:
+            AuthSettings(
+                ORCID_CLIENT_ID="APP-TEST1234567890",
+                ORCID_CLIENT_SECRET=None,
+            )
+        assert "ORCID_CLIENT_SECRET" in str(exc_info.value)
+
+    def test_orcid_oauth_requires_id_if_secret_set(self):
+        """ORCID OAuth requires ID if secret is set."""
+        with pytest.raises(ValidationError) as exc_info:
+            AuthSettings(
+                ORCID_CLIENT_ID=None,
+                ORCID_CLIENT_SECRET="test-secret",
+            )
+        assert "ORCID_CLIENT_ID" in str(exc_info.value)
+
     def test_bootstrap_admin_emails_parses_and_normalizes(self):
         """BOOTSTRAP_ADMIN_EMAILS parses comma-separated emails into normalized set."""
         settings = AuthSettings(
@@ -363,6 +381,15 @@ class TestAuthSettings:
             GITHUB_CLIENT_SECRET="test-secret",
         )
         assert settings.github_client_id == "test-id"
+        assert settings.is_oauth_configured is True
+
+    def test_valid_orcid_oauth(self):
+        """Valid ORCID OAuth configuration passes."""
+        settings = AuthSettings(
+            ORCID_CLIENT_ID="APP-TEST1234567890",
+            ORCID_CLIENT_SECRET="test-secret",
+        )
+        assert settings.orcid_client_id == "APP-TEST1234567890"
         assert settings.is_oauth_configured is True
 
     def test_is_oauth_configured_false_when_none_set(self):
