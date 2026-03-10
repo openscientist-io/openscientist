@@ -18,6 +18,11 @@ class TestGetEventValue:
 
         assert get_event_value(event) == "search term"
 
+    def test_unwraps_select_option_dict(self):
+        event = SimpleNamespace(args={"value": 172, "label": "workflow"})
+
+        assert get_event_value(event) == "workflow"
+
     def test_preserves_none_when_input_is_cleared(self):
         event = SimpleNamespace(args=None)
 

@@ -13,5 +13,9 @@ def get_event_value(event: Any) -> Any:
     """
     args = getattr(event, "args", None)
     if args is not None:
+        # NiceGUI ui.select may emit option dicts like
+        # {'value': <id>, 'label': 'text'} via update:model-value.
+        if isinstance(args, dict) and "label" in args and "value" in args:
+            return args["label"]
         return args
     return getattr(event, "value", None)
