@@ -114,13 +114,30 @@ Call set_status before every significant action so users can follow your progres
 At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
 
 
-def build_report_prompt(research_question: str, ks: KnowledgeState) -> str:
+def build_report_prompt(
+    research_question: str,
+    ks: KnowledgeState,
+    *,
+    job_dir: Path | None = None,
+) -> str:
     """Build the prompt for the final report generation iteration.
 
     The agent starts a fresh session, so all context comes from the summary
     below and the files on disk.  The prompt must be explicit that the agent
     should write the FULL report content — not a summary or table of contents.
+
+    Args:
+        research_question: The original research question.
+        ks: Current knowledge state with findings and summaries.
+        job_dir: Absolute path to the job directory.  When provided the prompt
+            tells the agent the exact file path to write (the Write tool
+            requires an absolute path).
     """
+    if job_dir is not None:
+        report_path = str(job_dir.resolve() / "final_report.md")
+    else:
+        report_path = "./final_report.md"
+
     return f"""All iterations are complete. Write the final report for this research question:
 
 {research_question}
@@ -131,15 +148,18 @@ def build_report_prompt(research_question: str, ks: KnowledgeState) -> str:
 
 ## Instructions
 
-**CRITICAL:** You must write the COMPLETE report directly into `final_report.md`.
-The file must contain the FULL text of every section — not a table of contents,
-not a summary of sections, not a pointer to another file.  If `final_report.md`
-already exists, overwrite it entirely.
+**CRITICAL — file path:** Write the report to exactly this path:
+`{report_path}`
+Do NOT write to `/tmp/`, `~/`, or any other location — the system will not find it.
+
+**CRITICAL — content:** The file must contain the COMPLETE, FULL text of every
+section — not a table of contents, not a summary of sections, not a pointer to
+another file.  If `final_report.md` already exists, overwrite it entirely.
 
 Use the provided knowledge summary below for findings, hypotheses, literature,
 and iteration summaries.
 
-1. **Write the full report** to `final_report.md` in the current directory.
+1. **Write the full report** to `{report_path}`.
    The report should be comprehensive and detailed — typically 2,000+ words for
    a multi-iteration investigation.  Every section must contain its actual content.
 
@@ -166,7 +186,7 @@ and iteration summaries.
 4. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
    answer to the research question.  Be direct — no citations or hedging.
 
-**Remember:** The content of `final_report.md` IS the deliverable the user receives.
+**Remember:** The content of `{report_path}` IS the deliverable the user receives.
 It must be a complete, self-contained document — not a summary or index.
 """
 

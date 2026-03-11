@@ -250,12 +250,28 @@ def _save_report_transcript(job_dir: Path, transcript: list[dict[str, Any]]) -> 
 
 
 def _ensure_report_written(report_path: Path, report_result: IterationResult) -> bool:
-    """Ensure final_report.md exists after report iteration."""
+    """Ensure final_report.md exists at the expected location after the report iteration.
+
+    If the agent wrote the file to a subdirectory within the job dir, move it
+    to the expected path.  Returns False when the report cannot be found —
+    the caller marks the job as failed.
+    """
     if report_path.exists():
         return True
-    if report_result.success and len(report_result.output) > 500:
-        report_path.write_text(report_result.output, encoding="utf-8")
-        return True
+
+    # Check if the agent nested the file within the job directory.
+    job_dir = report_path.parent
+    for found in job_dir.rglob("final_report.md"):
+        if found != report_path:
+            logger.warning("Report found at %s — moving to %s", found, report_path)
+            found.rename(report_path)
+            return True
+
+    logger.error(
+        "Report file not found at %s after report iteration (agent output: %.200s)",
+        report_path,
+        report_result.output,
+    )
     return False
 
 
@@ -273,7 +289,7 @@ async def _run_report_generation_phase(
 ) -> _ReportOutcome:
     """Run final report generation iteration and output artifact handling."""
     ks = KnowledgeState.load_from_database_sync(job_dir.name)
-    report_prompt = build_report_prompt(research_question, ks)
+    report_prompt = build_report_prompt(research_question, ks, job_dir=job_dir)
     logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
     report_result = await executor.run_iteration(report_prompt, reset_session=True)
 
