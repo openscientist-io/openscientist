@@ -869,23 +869,36 @@ def _normalize_analysis_log(raw_ks: dict[str, Any]) -> list[dict[str, Any]]:
         Normalized analysis-log list.
     """
     now_iso = datetime.now(UTC).isoformat()
+    known_fields = {
+        "iteration",
+        "action",
+        "timestamp",
+        "code",
+        "output",
+        "description",
+        "success",
+        "details",
+        "status",
+    }
     analysis_log: list[dict[str, Any]] = []
     for raw_log in _to_list(raw_ks.get("analysis_log")):
         if not isinstance(raw_log, dict):
             continue
-        analysis_log.append(
-            {
-                "iteration": _coerce_int(raw_log.get("iteration"), default=1, minimum=1),
-                "action": _to_string(raw_log.get("action")) or "legacy_action",
-                "timestamp": _to_optional_string(raw_log.get("timestamp")) or now_iso,
-                "code": _to_optional_string(raw_log.get("code")),
-                "output": _to_optional_string(raw_log.get("output")),
-                "description": _to_optional_string(raw_log.get("description")),
-                "success": _to_string(raw_log.get("status")) != "failed",
-                "details": raw_log.get("details"),
-                "status": _to_optional_string(raw_log.get("status")),
-            }
-        )
+        entry: dict[str, Any] = {
+            "iteration": _coerce_int(raw_log.get("iteration"), default=1, minimum=1),
+            "action": _to_string(raw_log.get("action")) or "legacy_action",
+            "timestamp": _to_optional_string(raw_log.get("timestamp")) or now_iso,
+            "code": _to_optional_string(raw_log.get("code")),
+            "output": _to_optional_string(raw_log.get("output")),
+            "description": _to_optional_string(raw_log.get("description")),
+            "success": _to_string(raw_log.get("status")) != "failed",
+            "details": raw_log.get("details"),
+            "status": _to_optional_string(raw_log.get("status")),
+        }
+        for key, value in raw_log.items():
+            if key not in known_fields:
+                entry[key] = value
+        analysis_log.append(entry)
     return analysis_log
 
 

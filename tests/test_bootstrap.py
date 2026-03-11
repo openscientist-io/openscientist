@@ -330,6 +330,69 @@ async def test_bootstrap_migrates_legacy_knowledge_state_format(
 
 
 @pytest.mark.asyncio
+async def test_bootstrap_preserves_search_pubmed_extra_fields(
+    db_session: AsyncSession,
+    temp_jobs_dir,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """search_pubmed analysis log entries must preserve query and results_count."""
+    monkeypatch.setattr(
+        "openscientist.bootstrap.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    job_id = str(uuid4())
+    job_dir = temp_jobs_dir / job_id
+    job_dir.mkdir()
+    _write_json(
+        job_dir / "job.json",
+        {
+            "research_question": "Caffeine and ADHD",
+            "status": "completed",
+            "owner_id": None,
+        },
+    )
+    _write_json(
+        job_dir / "knowledge_state.json",
+        {
+            "iteration": 2,
+            "hypotheses": [],
+            "findings": [],
+            "literature": [
+                {
+                    "title": "Caffeine paper",
+                    "pmid": "12345678",
+                    "search_query": "caffeine ADHD",
+                    "retrieved_at_iteration": 1,
+                }
+            ],
+            "analysis_log": [
+                {
+                    "iteration": 1,
+                    "action": "search_pubmed",
+                    "timestamp": "2026-02-14T15:26:16.000000",
+                    "query": "caffeine ADHD",
+                    "results_count": 3,
+                    "description": "Searching for caffeine and ADHD studies",
+                }
+            ],
+            "iteration_summaries": [],
+            "feedback_history": [],
+        },
+    )
+
+    result = await bootstrap_jobs_from_filesystem(jobs_dir=temp_jobs_dir)
+    assert result.errors == []
+
+    log = (
+        await db_session.execute(select(AnalysisLog).where(AnalysisLog.job_id == UUID(job_id)))
+    ).scalar_one()
+    assert log.action_type == "search_pubmed"
+    assert log.input_data is not None
+    assert log.input_data["query"] == "caffeine ADHD"
+    assert log.input_data["results_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
     db_session: AsyncSession,
     temp_jobs_dir,

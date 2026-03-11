@@ -261,13 +261,23 @@ def _render_iteration_literature(
     if not literature_entries:
         return
 
+    all_iter_papers = [
+        lit
+        for lit in iter_ks_data.get("literature", [])
+        if lit.get("retrieved_at_iteration") == iter_num
+    ]
+
     total_papers = sum(entry.get("results_count", 0) for entry in literature_entries)
+    rendered_queries: set[str] = set()
     with ui.expansion(
-        f"Literature searched ({total_papers} papers)",
+        f"Literature searched ({total_papers or len(all_iter_papers)} papers)",
         icon="article",
     ).classes("w-full mt-2"):
         for entry in literature_entries:
             query = entry.get("query", "")
+            if not query:
+                continue
+            rendered_queries.add(query)
             matching = _matching_papers(iter_ks_data, query, iter_num)
             if matching:
                 with ui.expansion(f'"{query}" ({len(matching)} papers)').classes("w-full"):
@@ -275,6 +285,19 @@ def _render_iteration_literature(
                         _render_literature_paper(paper)
             else:
                 ui.label(f'"{query}" (0 results)').classes("text-sm text-gray-400 italic")
+
+        # Fallback: show papers whose search_query wasn't covered by analysis log entries
+        # (e.g. migrated jobs where query/results_count were not preserved)
+        remaining: dict[str, list[Any]] = {}
+        for paper in all_iter_papers:
+            sq = paper.get("search_query") or ""
+            if sq not in rendered_queries:
+                remaining.setdefault(sq, []).append(paper)
+        for sq, papers in remaining.items():
+            label = f'"{sq}" ({len(papers)} papers)' if sq else f"{len(papers)} papers"
+            with ui.expansion(label).classes("w-full"):
+                for paper in papers:
+                    _render_literature_paper(paper)
 
 
 _HYPOTHESIS_STATUS_CLASSES: dict[str, str] = {
