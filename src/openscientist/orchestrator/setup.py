@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import subprocess
 from pathlib import Path
 from uuid import UUID
 
@@ -105,6 +106,24 @@ def create_job(
     # World-writable so the agent container (non-root UID) can write into
     # the mounted job directory regardless of host/container UID mismatches.
     job_dir.chmod(0o777)
+
+    # Initialize a git repo so the Claude CLI gets proper gitStatus context
+    # (includes "Primary working directory: <path>") for all file operations.
+    subprocess.run(
+        ["git", "init"],
+        cwd=str(job_dir),
+        capture_output=True,
+        check=False,
+    )
+    git_dir = job_dir / ".git"
+    if git_dir.exists():
+        # Make world-writable so agent container (non-root UID) can use it.
+        for p in git_dir.rglob("*"):
+            try:
+                p.chmod(0o777 if p.is_dir() else 0o666)
+            except OSError:
+                pass
+        git_dir.chmod(0o777)
 
     (job_dir / "data").mkdir(exist_ok=True)
     (job_dir / "data").chmod(0o777)
