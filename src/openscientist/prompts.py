@@ -34,7 +34,7 @@ IMPORTANT:
 - Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title — a short noun phrase
 - Call `set_status` at the START of each significant action to let users know what you're working on
 
-Domain-specific analysis skills are in `.claude/skills/`. List the directory and read relevant skill files before starting your analysis.
+Domain-specific analysis skills are in `.claude/skills/`. Read ALL workflow skills (category `workflow`) in iteration 1 and follow them throughout your investigation. Read domain skills that match your data type. These skills are mandatory methodology — not optional references.
 
 **Your Approach:**
 
@@ -324,7 +324,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 **set_consensus_answer** - Set the final answer to the research question
 
 - `answer`: 1–3 direct sentences answering the research question
-- Call this after writing `final_report.md`""")
+- Call this after writing `./final_report.md`""")
 
     # --- Hypothesis Tracking Workflow (conditional) ---
     if use_hypotheses:
@@ -378,23 +378,47 @@ Use the correct tool for each file type:
 
 **WARNING:** Do NOT use Claude's `Read` tool on PDF, DOCX, or binary files. It returns garbled content that corrupts your context and causes "Prompt is too long" errors.
 
-### Skills Available
+### Skills (MUST USE)
 
-Domain-specific analysis skills are in `.claude/skills/`. List the directory and read relevant files before starting your analysis. Use `search_skills` to discover additional skills in the database beyond those pre-loaded.
+Your `.claude/skills/` directory contains **workflow** and **domain** skills.
+These are not optional references — they encode the project's methodology.
+
+**Workflow skills** (category `workflow`) govern how you work at each phase:
+
+| Skill | When to apply |
+|-------|---------------|
+| `workflow--hypothesis-generation.md` | Before formulating any hypothesis |
+| `workflow--prioritization.md` | When choosing what to investigate next |
+| `workflow--result-interpretation.md` | After every statistical test |
+| `workflow--stopping-criteria.md` | Before the final ~30 % of iterations |
+
+**Domain skills** (category `domain`) contain analysis strategies specific to data
+types you may encounter (genomics, metabolomics, data-science, etc.).
+
+**Required workflow:**
+1. **Iteration 1:** Read ALL workflow skills and any domain skill that matches your data.
+2. **Every hypothesis:** Follow the process in `workflow--hypothesis-generation.md`.
+3. **Every result:** Apply the checklist in `workflow--result-interpretation.md`.
+4. **Choosing next step:** Use `workflow--prioritization.md` to rank options.
+5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
+
+Use `search_skills` to discover additional skills in the database beyond those pre-loaded.
 
 ## Your Approach
 
 ### 1. First Iteration Setup
 
 - Call `set_job_title` with a meaningful, concise title
+- **Read all workflow skills** in `.claude/skills/` and any domain skill matching your data
 - Read the data to understand structure, distributions, missing values
 - Identify groups, covariates, key patterns
 
 ### 2. Generate Hypotheses
 
+- **Follow the process in `workflow--hypothesis-generation.md`**
 - Search literature to understand the domain
 - Formulate specific, testable hypotheses
-- Prioritize by: impact, feasibility, novelty""")
+- **Use `workflow--prioritization.md`** to rank by impact, feasibility, novelty""")
 
     if use_hypotheses:
         parts.append("- **Use `add_hypothesis` to formally record each hypothesis before testing**")
@@ -412,6 +436,8 @@ Domain-specific analysis skills are in `.claude/skills/`. List the directory and
 
     parts.append("""
 ### 4. Interpret Results
+
+**Apply `workflow--result-interpretation.md`** after every statistical test.
 """)
 
     if use_hypotheses:
@@ -469,13 +495,14 @@ Domain-specific analysis skills are in `.claude/skills/`. List the directory and
 
 **Late phase (final ~30% of iterations):**
 
+- **Consult `workflow--stopping-criteria.md`** to decide when you have enough evidence
 - Consolidate findings
 - Test remaining high-priority hypotheses
-- Write `final_report.md` and call `set_consensus_answer`
+- Write `./final_report.md` and call `set_consensus_answer`
 
 ## Final Report
 
-Write `final_report.md` in the job directory with:
+Write the report to `./final_report.md` (relative path — do NOT use absolute paths) with:
 
 1. Executive summary (answer to the research question)
 2. Key findings (with statistical evidence)
