@@ -21,6 +21,9 @@ from openscientist.skill_ingestion import (
     SkillParser,
 )
 
+# Resolved path to the real skills/ directory at project root
+BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
 
 class TestSkillParser:
     """Tests for SkillParser."""
@@ -660,3 +663,57 @@ class TestLocalSkillIngester:
 
         with pytest.raises(ValueError, match="not a local source"):
             await ingester.sync_source(db_session, source)
+
+
+class TestBuiltinSkillsIngestion:
+    """Integration tests for loading the real built-in skills from skills/."""
+
+    @pytest.mark.asyncio
+    async def test_builtin_skills_load(self, db_session: AsyncSession):
+        """Test that all built-in SKILL.md files ingest successfully."""
+        assert BUILTIN_SKILLS_DIR.is_dir(), f"skills dir not found: {BUILTIN_SKILLS_DIR}"
+
+        source = SkillSource(
+            name="Built-in Skills Integration Test",
+            source_type="local",
+            path=str(BUILTIN_SKILLS_DIR),
+            is_enabled=True,
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        ingester = LocalSkillIngester()
+        stats = await ingester.sync_source(db_session, source)
+
+        assert stats["errors"] == 0
+        assert stats["created"] == 9
+
+        # Verify all 9 expected slugs are present
+        stmt = select(Skill).where(Skill.source_id == source.id)
+        result = await db_session.execute(stmt)
+        skills = {s.slug: s for s in result.scalars().all()}
+
+        expected_slugs = {
+            "data-science",
+            "genomics",
+            "jgi-lakehouse",
+            "kbase-query",
+            "metabolomics",
+            "hypothesis-generation",
+            "prioritization",
+            "result-interpretation",
+            "stopping-criteria",
+        }
+        assert set(skills.keys()) == expected_slugs
+
+        # Verify 5 domain + 4 workflow category split
+        domain_skills = [s for s in skills.values() if s.category == "domain"]
+        workflow_skills = [s for s in skills.values() if s.category == "workflow"]
+        assert len(domain_skills) == 5
+        assert len(workflow_skills) == 4
+
+        # Spot-check one skill's metadata
+        genomics = skills["genomics"]
+        assert genomics.name == "genomics"
+        assert genomics.description == "Genomics and transcriptomics analysis strategies"

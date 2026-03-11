@@ -26,6 +26,8 @@ from openscientist.version import get_version_string
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
+# Path to built-in skills directory at project root
+BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 JOBS_DIR_ENV = "OPENSCIENTIST_JOBS_DIR"
 
 
@@ -340,7 +342,7 @@ async def _ensure_default_skill_sources() -> None:
         {
             "source_type": "local",
             "name": "OpenScientist Built-in Skills",
-            "path": "skills",
+            "path": str(BUILTIN_SKILLS_DIR),
             "is_enabled": True,
         },
     ]
@@ -348,11 +350,7 @@ async def _ensure_default_skill_sources() -> None:
     try:
         async with get_admin_session() as session:
             for source_data in default_sources:
-                # Check if source already exists by URL or path
-                if source_data.get("url"):
-                    stmt = select(SkillSource).where(SkillSource.url == source_data["url"])
-                else:
-                    stmt = select(SkillSource).where(SkillSource.path == source_data.get("path"))
+                stmt = select(SkillSource).where(SkillSource.name == source_data["name"])
                 result = await session.execute(stmt)
                 existing = result.scalar_one_or_none()
 
@@ -360,6 +358,10 @@ async def _ensure_default_skill_sources() -> None:
                     source = SkillSource(**source_data)
                     session.add(source)
                     logger.info("Added default skill source: %s", source_data["name"])
+                else:
+                    new_path = source_data.get("path")
+                    if isinstance(new_path, str) and existing.path != new_path:
+                        existing.path = new_path
 
             await session.commit()
     except Exception as e:
