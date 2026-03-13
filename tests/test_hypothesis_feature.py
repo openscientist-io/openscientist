@@ -602,7 +602,64 @@ class TestStatsBadgesHypotheses:
 
 
 # ---------------------------------------------------------------------------
-# 10. job_detail page helpers — _render_iteration_hypotheses filtering
+# 10. job_detail page helpers — analysis log metadata
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisLogMetadata:
+    """Analysis log helpers should surface concise metadata for the timeline UI."""
+
+    def test_search_pubmed_metadata_includes_query_and_result_count(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+
+        lines = _analysis_log_meta_lines(
+            {
+                "action": "search_pubmed",
+                "query": "hypothermia metabolomics",
+                "results_count": 7,
+            }
+        )
+
+        assert [line.text for line in lines] == [
+            'Query: "hypothermia metabolomics"',
+            "Papers found: 7",
+        ]
+        assert all(line.italic is False for line in lines)
+
+    def test_hypothesis_metadata_marks_statement_as_italic(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+
+        lines = _analysis_log_meta_lines(
+            {
+                "action": "update_hypothesis",
+                "statement": "Cold exposure shifts the metabolome.",
+                "status": "supported",
+                "result_summary": "Observed in the treated cohort.",
+            }
+        )
+
+        assert [line.text for line in lines] == [
+            "Cold exposure shifts the metabolome.",
+            "Status: supported",
+            "Observed in the treated cohort.",
+        ]
+        assert [line.italic for line in lines] == [True, False, False]
+
+    def test_execute_code_metadata_adds_duration(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+
+        lines = _analysis_log_meta_lines(
+            {
+                "action": "execute_code",
+                "execution_time": 3.5,
+            }
+        )
+
+        assert [line.text for line in lines] == ["Duration: 3.5s"]
+
+
+# ---------------------------------------------------------------------------
+# 11. job_detail page helpers — _render_iteration_hypotheses filtering
 # ---------------------------------------------------------------------------
 
 
@@ -687,7 +744,7 @@ class TestRenderIterationHypothesesFiltering:
 
 
 # ---------------------------------------------------------------------------
-# 11. Per-iteration hypothesis count in _render_iteration_card
+# 12. Per-iteration hypothesis count in _render_iteration_card
 # ---------------------------------------------------------------------------
 
 
