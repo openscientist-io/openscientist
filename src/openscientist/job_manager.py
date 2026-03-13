@@ -82,6 +82,8 @@ async def _db_create_job(
     description: str | None = None,
     pdb_code: str | None = None,
     space_group: str | None = None,
+    llm_provider: str | None = None,
+    llm_config: dict[str, Any] | None = None,
 ) -> JobModel:
     """Create a job in the database (thread-safe for worker threads).
 
@@ -115,6 +117,8 @@ async def _db_create_job(
             current_iteration=0,
             pdb_code=pdb_code,
             space_group=space_group,
+            llm_provider=llm_provider,
+            llm_config=llm_config,
         )
         session.add(job)
         await session.commit()
@@ -359,6 +363,8 @@ class JobManager:
         description: str | None,
         pdb_code: str | None,
         space_group: str | None,
+        llm_provider: str | None = None,
+        llm_config: dict[str, Any] | None = None,
     ) -> UUID | None:
         owner_uuid = UUID(owner_id) if owner_id else None
         try:
@@ -374,6 +380,8 @@ class JobManager:
                     description=description,
                     pdb_code=pdb_code,
                     space_group=space_group,
+                    llm_provider=llm_provider,
+                    llm_config=llm_config,
                 )
             )
         except Exception as e:
@@ -460,6 +468,16 @@ class JobManager:
         self._ensure_job_not_exists(job_id)
         self._check_budget_before_creation()
 
+        # Capture provider & model from current settings
+        from openscientist.settings import get_settings
+
+        settings = get_settings()
+        llm_provider = settings.provider.claude_provider.lower()
+        model = (
+            settings.provider.anthropic_model or settings.provider.anthropic_default_sonnet_model
+        )
+        llm_config = {"model": model} if model else None
+
         # Create job in database
         logger.info("Creating job %s in database", job_id)
         owner_uuid = self._create_db_job_record(
@@ -473,6 +491,8 @@ class JobManager:
             description=description,
             pdb_code=pdb_code,
             space_group=space_group,
+            llm_provider=llm_provider,
+            llm_config=llm_config,
         )
 
         # Create job directory and files

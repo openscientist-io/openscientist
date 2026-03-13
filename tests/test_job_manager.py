@@ -75,6 +75,19 @@ class TestJobInfo:
         assert restored.status == original.status
         assert restored.error == original.error
 
+    def test_from_db_model_maps_llm_metadata(self):
+        job = _make_db_job(
+            "completed",
+            "2026-01-01T00:00:00",
+            llm_provider="anthropic",
+            llm_config={"model": "claude-sonnet-4-5-20250929"},
+        )
+
+        info = JobInfo.from_db_model(job)
+
+        assert info.llm_provider == "anthropic"
+        assert info.llm_model == "claude-sonnet-4-5-20250929"
+
 
 def _write_config(jobs_dir: Path, job_id: str, **overrides) -> dict:
     """Helper: create a minimal job directory scaffold."""
@@ -703,6 +716,42 @@ class TestJobManagerCreationSafety:
             )
 
         assert mock_db_delete.await_count == 1
+
+    def test_create_job_records_llm_provider_and_model(self, tmp_path):
+        manager = _new_manager(tmp_path)
+        job_id = str(uuid4())
+        created_job = JobInfo(
+            job_id=job_id,
+            research_question="Model tracking test",
+            status=JobStatus.PENDING,
+            created_at="2026-01-01T00:00:00",
+        )
+        settings = SimpleNamespace(
+            provider=SimpleNamespace(
+                claude_provider="Anthropic",
+                anthropic_model=None,
+                anthropic_default_sonnet_model="claude-sonnet-4-5",
+            )
+        )
+
+        with (
+            patch.object(manager, "get_job", return_value=None),
+            patch.object(manager, "_check_budget_before_creation"),
+            patch.object(manager, "_create_job_files"),
+            patch.object(manager, "_load_job_info", return_value=created_job),
+            patch("openscientist.settings.get_settings", return_value=settings),
+            patch.object(manager, "_create_db_job_record") as mock_create_db_job_record,
+        ):
+            manager.create_job(
+                job_id=job_id,
+                research_question="Model tracking test",
+                data_files=[],
+                auto_start=False,
+            )
+
+        _, kwargs = mock_create_db_job_record.call_args
+        assert kwargs["llm_provider"] == "anthropic"
+        assert kwargs["llm_config"] == {"model": "claude-sonnet-4-5"}
 
 
 class TestJobManagerCLI:

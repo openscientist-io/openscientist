@@ -546,6 +546,25 @@ class TestDbCreateJobHypotheses:
         assert len(captured) == 1
         assert captured[0].use_hypotheses is False
 
+    async def test_creates_job_with_llm_metadata(self) -> None:
+        from openscientist.job_manager import _db_create_job
+
+        mock_cm, captured = self._make_session_mock()
+        job_id = str(uuid4())
+
+        with patch("openscientist.job_manager.AsyncSessionLocal", return_value=mock_cm):
+            await _db_create_job(
+                job_id,
+                "Research with model metadata",
+                max_iterations=3,
+                llm_provider="anthropic",
+                llm_config={"model": "claude-sonnet-4-5-20250929"},
+            )
+
+        assert len(captured) == 1
+        assert captured[0].llm_provider == "anthropic"
+        assert captured[0].llm_config == {"model": "claude-sonnet-4-5-20250929"}
+
 
 # ---------------------------------------------------------------------------
 # 9. job_detail page helpers — stats badges
