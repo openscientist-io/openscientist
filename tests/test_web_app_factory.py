@@ -21,6 +21,7 @@ def test_create_app_builds_host_app_once(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(web_app, "_register_share_routes", _noop)
     monkeypatch.setattr(web_app, "_initialize_job_manager_runtime", _noop)
     monkeypatch.setattr(web_app, "_register_nicegui_static_files", _noop)
+    monkeypatch.setattr(web_app, "_register_pwa_metadata", _noop)
     monkeypatch.setattr(web_app.importlib, "import_module", lambda _name: None)
 
     run_with_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
@@ -119,3 +120,32 @@ def test_register_robots_txt_serves_disallow_all() -> None:
 
     assert response.media_type == "text/plain"
     assert response.body == b"User-agent: *\nDisallow: /\n"
+
+
+def test_register_pwa_metadata_adds_shared_head_html(monkeypatch) -> None:
+    calls: list[tuple[str, bool]] = []
+
+    monkeypatch.setattr(
+        web_app.ui,
+        "add_head_html",
+        lambda html, shared=False: calls.append((html, shared)),
+    )
+
+    web_app._register_pwa_metadata()
+
+    assert calls == [
+        (
+            "<!-- PWA & iOS Web App -->\n"
+            '<meta name="apple-mobile-web-app-capable" content="yes">\n'
+            '<meta name="apple-mobile-web-app-status-bar-style" content="default">\n'
+            '<meta name="apple-mobile-web-app-title" content="OpenScientist">\n'
+            '<meta name="mobile-web-app-capable" content="yes">\n'
+            '<meta name="theme-color" content="#0891b2">\n'
+            '<meta name="theme-color" content="#0c4a6e" media="(prefers-color-scheme: dark)">\n'
+            '<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">\n'
+            '<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">\n'
+            '<link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">\n'
+            '<link rel="manifest" href="/assets/manifest.json">',
+            True,
+        )
+    ]

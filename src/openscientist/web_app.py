@@ -436,6 +436,28 @@ def _create_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]
     return lifespan
 
 
+def _register_pwa_metadata() -> None:
+    """Register Progressive Web App metadata globally for all pages.
+
+    Adds Apple iOS web-app tags, theme color, icon links, and manifest link
+    so that every page (including the login page) gets proper PWA support.
+    """
+    ui.add_head_html(
+        "<!-- PWA & iOS Web App -->\n"
+        '<meta name="apple-mobile-web-app-capable" content="yes">\n'
+        '<meta name="apple-mobile-web-app-status-bar-style" content="default">\n'
+        '<meta name="apple-mobile-web-app-title" content="OpenScientist">\n'
+        '<meta name="mobile-web-app-capable" content="yes">\n'
+        '<meta name="theme-color" content="#0891b2">\n'
+        '<meta name="theme-color" content="#0c4a6e" media="(prefers-color-scheme: dark)">\n'
+        '<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">\n'
+        '<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">\n'
+        '<link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">\n'
+        '<link rel="manifest" href="/assets/manifest.json">',
+        shared=True,
+    )
+
+
 def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     """Configure middleware, routes, and mounted NiceGUI app before startup."""
     if _state.app_configured:
@@ -456,11 +478,13 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     # Import page modules so @ui.page decorators are registered.
     importlib.import_module("openscientist.webapp_components.pages")
     _register_nicegui_static_files(jobs_dir)
+    _register_pwa_metadata()
 
     ui.run_with(
         host_app,
         mount_path="/",
         title="OpenScientist",
+        viewport="width=device-width, initial-scale=1, viewport-fit=cover",
         favicon=ASSETS_DIR / "favicon.ico",
         storage_secret=STORAGE_SECRET,
     )

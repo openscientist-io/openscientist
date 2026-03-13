@@ -965,15 +965,6 @@ def render_job_action_buttons(
                 ui.tooltip("Delete job")
 
 
-def _inject_navigation_head_assets() -> None:
-    """Inject PWA/icon assets used by navigation header."""
-    ui.add_head_html(
-        '<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">'
-    )
-    ui.add_head_html('<link rel="manifest" href="/assets/manifest.json">')
-    ui.add_head_html('<meta name="theme-color" content="#0891b2">')
-
-
 def _inject_navigation_responsive_css() -> None:
     """Inject responsive CSS toggling mobile drawer button vs desktop nav."""
     ui.add_css(
@@ -1120,7 +1111,6 @@ def render_navigator(
     New Job, Billing, Docs, and Admin pages. The OpenScientist logo/title acts
     as a home button linking to the jobs list.
     """
-    _inject_navigation_head_assets()
     _inject_navigation_responsive_css()
 
     show_admin = app.storage.user.get("is_admin", False)

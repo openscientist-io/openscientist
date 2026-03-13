@@ -2,11 +2,19 @@
   "name": "OpenScientist",
   "short_name": "OpenScientist",
   "description": "Scientific Hypothesis Agent for Novel Discovery",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#0891b2",
   "icons": [
+    {
+      "src": "/assets/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
     {
       "src": "/assets/logo-192.png",
       "sizes": "192x192",
