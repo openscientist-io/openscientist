@@ -17,7 +17,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from nicegui import app, ui
 
 from openscientist.job_manager import JobManager
@@ -257,6 +257,15 @@ def _register_robots_txt(host_app: FastAPI) -> None:
         )
 
 
+def _register_apple_touch_icon_redirect(host_app: FastAPI) -> None:
+    """Redirect root-level apple-touch-icon requests to /assets/."""
+
+    @host_app.get("/apple-touch-icon.png", include_in_schema=False)
+    @host_app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    def apple_touch_icon() -> RedirectResponse:
+        return RedirectResponse("/assets/apple-touch-icon.png", status_code=301)
+
+
 def get_job_manager() -> JobManager:
     """
     Get the global job manager instance, initializing if needed.
@@ -468,6 +477,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _register_openapi_docs(host_app)
     _register_health_endpoint(host_app)
     _register_robots_txt(host_app)
+    _register_apple_touch_icon_redirect(host_app)
     _register_api_routes(host_app)
     _register_oauth_routes()
     _register_share_routes()

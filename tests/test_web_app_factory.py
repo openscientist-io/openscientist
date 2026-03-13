@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
 
 from openscientist import web_app
 
@@ -120,6 +121,19 @@ def test_register_robots_txt_serves_disallow_all() -> None:
 
     assert response.media_type == "text/plain"
     assert response.body == b"User-agent: *\nDisallow: /\n"
+
+
+def test_register_apple_touch_icon_redirects_root_requests() -> None:
+    host_app = FastAPI()
+
+    web_app._register_apple_touch_icon_redirect(host_app)
+    client = TestClient(host_app)
+
+    for path in ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"):
+        response = client.get(path, follow_redirects=False)
+
+        assert response.status_code == 301
+        assert response.headers["location"] == "/assets/apple-touch-icon.png"
 
 
 def test_register_pwa_metadata_adds_shared_head_html(monkeypatch) -> None:
