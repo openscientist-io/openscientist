@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 
 from openscientist import web_app
 
@@ -14,6 +15,7 @@ def test_create_app_builds_host_app_once(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(web_app, "_state", web_app._AppState())
     monkeypatch.setattr(web_app, "_register_openapi_docs", _noop)
     monkeypatch.setattr(web_app, "_register_health_endpoint", _noop)
+    monkeypatch.setattr(web_app, "_register_robots_txt", _noop)
     monkeypatch.setattr(web_app, "_register_api_routes", _noop)
     monkeypatch.setattr(web_app, "_register_oauth_routes", _noop)
     monkeypatch.setattr(web_app, "_register_share_routes", _noop)
@@ -101,3 +103,19 @@ def test_register_nicegui_static_files_tolerates_duplicates(monkeypatch, tmp_pat
 
     routes = [route for route, _ in calls]
     assert routes == ["/jobs", "/assets"]
+
+
+def test_register_robots_txt_serves_disallow_all() -> None:
+    host_app = FastAPI()
+
+    web_app._register_robots_txt(host_app)
+
+    route = next(
+        route
+        for route in host_app.routes
+        if isinstance(route, APIRoute) and route.path == "/robots.txt"
+    )
+    response = route.endpoint()
+
+    assert response.media_type == "text/plain"
+    assert response.body == b"User-agent: *\nDisallow: /\n"

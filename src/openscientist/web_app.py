@@ -246,6 +246,17 @@ def _register_health_endpoint(host_app: FastAPI) -> None:
         return JSONResponse({"status": "ok"})
 
 
+def _register_robots_txt(host_app: FastAPI) -> None:
+    """Serve robots.txt that disallows all crawlers."""
+
+    @host_app.get("/robots.txt", include_in_schema=False)
+    def robots_txt() -> Response:
+        return Response(
+            content="User-agent: *\nDisallow: /\n",
+            media_type="text/plain",
+        )
+
+
 def get_job_manager() -> JobManager:
     """
     Get the global job manager instance, initializing if needed.
@@ -434,6 +445,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     register_scanner_block_middleware(host_app)
     _register_openapi_docs(host_app)
     _register_health_endpoint(host_app)
+    _register_robots_txt(host_app)
     _register_api_routes(host_app)
     _register_oauth_routes()
     _register_share_routes()
