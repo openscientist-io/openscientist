@@ -77,3 +77,4 @@ htmlcov/
 data/
 
 .playwright-mcp/*.log
+shandy-prod-jobs-backup-20260307.tar.gz
