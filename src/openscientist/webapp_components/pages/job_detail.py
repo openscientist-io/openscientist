@@ -829,6 +829,24 @@ def _render_job_status_notices(context: _JobDetailContext) -> None:
         _render_ks_loading_notice(context.ks_load_error)
 
 
+def _format_model_display(llm_model: str | None, llm_provider: str | None) -> str | None:
+    """Map raw model IDs to human-readable names."""
+    if not llm_model:
+        return llm_provider.title() if llm_provider else None
+
+    model_lower = llm_model.lower()
+    if "opus-4" in model_lower:
+        return "Claude Opus 4"
+    if "sonnet-4-5" in model_lower or "sonnet-4.5" in model_lower:
+        return "Claude Sonnet 4.5"
+    if "sonnet-4" in model_lower:
+        return "Claude Sonnet 4"
+    if "haiku-4" in model_lower:
+        return "Claude Haiku 4"
+
+    return llm_model
+
+
 def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[Any]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
@@ -845,6 +863,12 @@ def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[A
     )
     if hyp_count:
         badges.append(("Hypotheses", hyp_count, "orange"))
+    model_display = _format_model_display(
+        getattr(latest_job, "llm_model", None),
+        getattr(latest_job, "llm_provider", None),
+    )
+    if model_display:
+        badges.append(("Model", model_display, "cyan"))
     return badges
 
 

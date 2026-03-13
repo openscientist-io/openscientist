@@ -1181,6 +1181,7 @@ def render_stat_badges(
         "Papers": "article",
         "Papers Reviewed": "article",
         "Skills": "school",
+        "Model": "psychology",
     }
     icons = {**default_icons, **(icon_map or {})}
 

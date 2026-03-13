@@ -580,12 +580,20 @@ class TestStatsBadgesHypotheses:
     def _get_badge(self, badges: list, label: str) -> tuple | None:
         return next((b for b in badges if b[0] == label), None)
 
-    def _make_job(self, status: str = "completed", findings: int = 0) -> Any:
+    def _make_job(
+        self,
+        status: str = "completed",
+        findings: int = 0,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
+    ) -> Any:
         return SimpleNamespace(
             status=JobStatus(status),
             iterations_completed=2,
             max_iterations=5,
             findings_count=findings,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
         )
 
     def test_no_hypotheses_badge_when_count_is_zero(self) -> None:
@@ -618,6 +626,35 @@ class TestStatsBadgesHypotheses:
         badges = _stats_badges(self._make_job(), lit_count=0)
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
+
+    def test_model_badge_uses_human_readable_label(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        badges = _stats_badges(
+            self._make_job(
+                llm_provider="anthropic",
+                llm_model="claude-sonnet-4-5-20250929",
+            ),
+            lit_count=3,
+        )
+        badge = self._get_badge(badges, "Model")
+        assert badge is not None
+        assert badge[1] == "Claude Sonnet 4.5"
+        assert badge[2] == "cyan"
+
+    def test_model_badge_falls_back_to_provider_name(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        badges = _stats_badges(
+            self._make_job(
+                llm_provider="anthropic",
+                llm_model=None,
+            ),
+            lit_count=1,
+        )
+        badge = self._get_badge(badges, "Model")
+        assert badge is not None
+        assert badge[1] == "Anthropic"
 
 
 # ---------------------------------------------------------------------------
