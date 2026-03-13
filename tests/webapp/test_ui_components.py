@@ -12,6 +12,7 @@ from openscientist.webapp_components.ui_components import (
     STATUS_ICONS,
     get_status_badge_props,
     render_status_cell_slot,
+    transform_pmid_references,
 )
 
 
@@ -208,7 +209,7 @@ class TestPmidLinkParsing:
     """Tests for PMID link parsing in render_text_with_pmid_links."""
 
     # Regex pattern used in render_text_with_pmid_links
-    PMID_PATTERN = re.compile(r"(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
+    PMID_PATTERN = re.compile(r"(PMID[:\s]+)(\d{5,8}(?:\s*,\s*\d{5,8})*)", re.IGNORECASE)
 
     def test_single_pmid_with_colon(self):
         """Test matching single PMID with colon format."""
@@ -277,13 +278,13 @@ class TestPmidLinkParsing:
         assert matches[0].end() == len(text)
 
     def test_pmid_boundary_lengths(self):
-        """Test PMIDs at boundary lengths (1 to 8 digits)."""
-        # Minimum: 1 digit
-        matches = list(self.PMID_PATTERN.finditer("PMID: 1"))
+        """Test PMIDs at boundary lengths (5 to 8 digits)."""
+        # Minimum supported length: 5 digits
+        matches = list(self.PMID_PATTERN.finditer("PMID: 12345"))
         assert len(matches) == 1
-        assert matches[0].group(2) == "1"
+        assert matches[0].group(2) == "12345"
 
-        # Maximum: 8 digits
+        # Maximum supported length: 8 digits
         matches = list(self.PMID_PATTERN.finditer("PMID: 12345678"))
         assert len(matches) == 1
         assert matches[0].group(2) == "12345678"
@@ -294,6 +295,11 @@ class TestPmidLinkParsing:
         assert len(matches) == 1
         # The regex will match 12345678 and leave 9 behind
         assert matches[0].group(2) == "12345678"
+
+    def test_short_year_like_number_is_not_treated_as_pmid(self):
+        """Test that short 4-digit year-like numbers do not match."""
+        matches = list(self.PMID_PATTERN.finditer("PMID: 2025"))
+        assert len(matches) == 0
 
     def test_html_escape_in_text(self):
         """Test that special characters would be escaped properly."""
@@ -317,3 +323,10 @@ class TestPmidLinkParsing:
         pmid = "12345678"
         url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
         assert url == "https://pubmed.ncbi.nlm.nih.gov/12345678/"
+
+    def test_transform_pmid_references_leaves_years_plain(self):
+        """A 4-digit year after PMID should stay as plain text, not a badge."""
+        transformed = transform_pmid_references("Background note PMID: 2025")
+
+        assert "pubmed-badge" not in transformed
+        assert transformed == "Background note PMID: 2025"

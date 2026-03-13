@@ -659,7 +659,28 @@ class TestAnalysisLogMetadata:
 
 
 # ---------------------------------------------------------------------------
-# 11. job_detail page helpers — _render_iteration_hypotheses filtering
+# 11. job_detail page helpers — plot metadata loading
+# ---------------------------------------------------------------------------
+
+
+class TestCollectIterationPlots:
+    """Plot collection should skip unreadable metadata files instead of crashing."""
+
+    def test_skips_non_utf8_metadata_files(self, tmp_path: Path) -> None:
+        from openscientist.webapp_components.pages.job_detail import _collect_iteration_plots
+
+        plots_dir = tmp_path / "provenance"
+        plots_dir.mkdir()
+        (plots_dir / "plot.png").write_bytes(b"png")
+        (plots_dir / "plot.json").write_bytes(b"\xff\xfe\x00\x00")
+
+        plots = _collect_iteration_plots(plots_dir, 1)
+
+        assert plots == []
+
+
+# ---------------------------------------------------------------------------
+# 12. job_detail page helpers — _render_iteration_hypotheses filtering
 # ---------------------------------------------------------------------------
 
 
@@ -744,7 +765,7 @@ class TestRenderIterationHypothesesFiltering:
 
 
 # ---------------------------------------------------------------------------
-# 12. Per-iteration hypothesis count in _render_iteration_card
+# 13. Per-iteration hypothesis count in _render_iteration_card
 # ---------------------------------------------------------------------------
 
 

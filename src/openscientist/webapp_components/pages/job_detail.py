@@ -238,7 +238,7 @@ def _collect_iteration_plots(
         try:
             with open(metadata_file, encoding="utf-8") as metadata_handle:
                 metadata = json.load(metadata_handle)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             continue
         if metadata.get("iteration") == iter_num:
             plots.append((plot_file, metadata))

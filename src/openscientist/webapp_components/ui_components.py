@@ -189,7 +189,9 @@ def _get_pubmed_badge_html(pmid: str) -> str:
 
     return (
         f'<a href="{url}" rel="noopener noreferrer" '
-        f'title="{tooltip}" class="pubmed-badge">'
+        f'title="{tooltip}" class="pubmed-badge" '
+        f'style="display:inline-flex;align-items:center;text-decoration:none;'
+        f'white-space:nowrap;">'
         f"{pubmed_icon}{html.escape(pmid)}</a>"
     )
 
@@ -415,9 +417,9 @@ def render_text_with_pmid_links(
     if not text:
         return
 
-    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers
-    # Case-insensitive, captures the prefix and the number list separately
-    pattern = re.compile(r"(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
+    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers.
+    # Each number must be 5-8 digits to avoid matching years (e.g. 2025) as PMIDs.
+    pattern = re.compile(r"(PMID[:\s]+)(\d{5,8}(?:\s*,\s*\d{5,8})*)", re.IGNORECASE)
 
     # Build HTML with text segments and badges
     result_parts = []
@@ -484,9 +486,10 @@ def transform_pmid_references(text: str) -> str:
     if not text:
         return text
 
-    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers
+    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers.
+    # Each number must be 5-8 digits to avoid matching years (e.g. 2025) as PMIDs.
     # But NOT when inside a markdown link [text](url)
-    pattern = re.compile(r"(?<!\[)(PMID[:\s]+)(\d{1,8}(?:\s*,\s*\d{1,8})*)", re.IGNORECASE)
+    pattern = re.compile(r"(?<!\[)(PMID[:\s]+)(\d{5,8}(?:\s*,\s*\d{5,8})*)", re.IGNORECASE)
 
     def replace_pmid(match: re.Match[str]) -> str:
         pmid_list = match.group(2)
