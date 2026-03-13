@@ -969,11 +969,11 @@ def _inject_navigation_responsive_css() -> None:
     """Inject responsive CSS toggling mobile drawer button vs desktop nav."""
     ui.add_css(
         """
-        @media (max-width: 639px) {
+        @media (max-width: 1023px) {
             .mobile-menu-btn { display: inline-flex !important; }
             .desktop-nav { display: none !important; }
         }
-        @media (min-width: 640px) {
+        @media (min-width: 1024px) {
             .mobile-menu-btn { display: none !important; }
             .desktop-nav { display: flex !important; }
         }
