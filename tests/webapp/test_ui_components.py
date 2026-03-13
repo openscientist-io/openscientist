@@ -10,7 +10,10 @@ from openscientist.job_manager import JobStatus
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
     STATUS_ICONS,
+    _get_job_id_badge_html,
+    _get_pubmed_badge_html,
     get_status_badge_props,
+    render_job_id_slot,
     render_status_cell_slot,
     transform_pmid_references,
 )
@@ -330,3 +333,29 @@ class TestPmidLinkParsing:
 
         assert "pubmed-badge" not in transformed
         assert transformed == "Background note PMID: 2025"
+
+
+class TestInlineBadgeMarkup:
+    """Inline badges should keep icon and text on one line."""
+
+    def test_pubmed_badge_html_keeps_inline_layout(self):
+        badge_html = _get_pubmed_badge_html("12345678")
+
+        assert 'class="pubmed-badge"' in badge_html
+        assert "display:inline-flex" in badge_html
+        assert "white-space:nowrap" in badge_html
+        assert "display:inline !important" in badge_html
+
+    def test_job_id_badge_html_keeps_inline_layout(self):
+        badge_html = _get_job_id_badge_html("12345678-1234-1234-1234-1234567890ab")
+
+        assert 'class="job-id-badge"' in badge_html
+        assert "display:inline-flex" in badge_html
+        assert "white-space:nowrap" in badge_html
+        assert "display:inline !important" in badge_html
+
+    def test_job_id_slot_keeps_icon_inline(self):
+        template = render_job_id_slot()
+
+        assert "display:inline-flex" in template
+        assert "display:inline !important" in template

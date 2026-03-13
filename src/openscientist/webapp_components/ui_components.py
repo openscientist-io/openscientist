@@ -179,8 +179,8 @@ def _get_pubmed_badge_html(pmid: str) -> str:
     pubmed_icon = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" '
         'width="14" height="14" class="pubmed-icon" '
-        'style="width:14px;height:14px;min-width:14px;min-height:14px;flex-shrink:0;'
-        'vertical-align:middle;margin-right:3px;">'
+        'style="display:inline !important;width:14px;height:14px;min-width:14px;'
+        'min-height:14px;flex-shrink:0;vertical-align:middle;margin-right:3px;">'
         '<rect x="1" y="1" width="14" height="14" rx="2" fill="#326599"/>'
         '<text x="8" y="12" text-anchor="middle" '
         'style="font-size:11px;font-weight:bold;font-family:Arial,sans-serif;fill:white;">'
@@ -315,14 +315,17 @@ def _get_job_id_badge_html(job_id: str, truncate: bool = True) -> str:
     job_icon = (
         '<svg class="job-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
         'width="14" height="14" '
-        'style="width:14px;height:14px;min-width:14px;min-height:14px;flex-shrink:0;">'
+        'style="display:inline !important;width:14px;height:14px;min-width:14px;'
+        'min-height:14px;flex-shrink:0;">'
         '<path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>'
         "</svg>"
     )
 
     return (
         f'<span class="job-id-badge" data-job-id="{html.escape(job_id)}" '
-        f'title="{tooltip}">{job_icon}{html.escape(display_id)}</span>'
+        f'title="{tooltip}" '
+        f'style="display:inline-flex;align-items:center;white-space:nowrap;">'
+        f"{job_icon}{html.escape(display_id)}</span>"
     )
 
 
@@ -364,7 +367,7 @@ def render_job_id_slot(field_name: str = "job_id") -> str:
                 style="display:inline-flex;align-items:center;padding:2px 8px;background-color:#f3f4f6;border:1px solid #9ca3af;border-radius:4px;text-decoration:none;color:#374151;font-size:0.8em;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-weight:500;cursor:pointer;white-space:nowrap;"
                 @click="$parent.$emit('view-job', props.row.{field_name})"
             >
-                <svg width="14" height="14" style="width:14px;height:14px;min-width:14px;min-height:14px;margin-right:4px;fill:currentColor;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <svg width="14" height="14" style="display:inline !important;width:14px;height:14px;min-width:14px;min-height:14px;margin-right:4px;fill:currentColor;flex-shrink:0;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                     <path d="M20 6h-4V4c0-1.1-.9-2-2-2h-4c-1.1 0-2 .9-2 2v2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6 0h-4V4h4v2z"/>
                 </svg>
                 {{{{ props.row.{field_name}.slice(-8) }}}}
