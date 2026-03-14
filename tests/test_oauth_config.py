@@ -32,7 +32,7 @@ def _make_settings() -> SimpleNamespace:
     )
 
 
-def test_get_oauth_client_requests_orcid_email_scope(monkeypatch) -> None:
+def test_get_oauth_client_requests_orcid_read_limited_scope(monkeypatch) -> None:
     monkeypatch.setattr(oauth, "_oauth", None)
     monkeypatch.setattr(oauth, "get_settings", _make_settings)
     monkeypatch.setattr(oauth, "OAuth", FakeOAuth)
@@ -40,4 +40,4 @@ def test_get_oauth_client_requests_orcid_email_scope(monkeypatch) -> None:
     client = cast(FakeOAuth, oauth.get_oauth_client())
     orcid_provider = next(provider for provider in client.providers if provider["name"] == "orcid")
 
-    assert orcid_provider["client_kwargs"] == {"scope": "openid email"}
+    assert orcid_provider["client_kwargs"] == {"scope": "openid /read-limited"}

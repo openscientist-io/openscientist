@@ -118,7 +118,7 @@ async def test_email_api_failure_falls_back_gracefully():
         mock_client.get = AsyncMock(
             side_effect=httpx.HTTPStatusError(
                 "Server Error",
-                request=httpx.Request("GET", "https://pub.orcid.org/v3.0/test/email"),
+                request=httpx.Request("GET", "https://api.orcid.org/v3.0/test/email"),
                 response=httpx.Response(500),
             )
         )
