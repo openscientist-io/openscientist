@@ -306,6 +306,39 @@ async def show_assign_dialog(job_id: str) -> None:
     dialog.open()
 
 
+async def delete_user(user_id: UUID) -> tuple[bool, str]:
+    """
+    Delete a user from the system.
+
+    Args:
+        user_id: User to delete
+
+    Returns:
+        Tuple of (success, message)
+    """
+    current_user_id: str | None = None
+    try:
+        current_user_id = get_current_user_id()
+    except (RuntimeError, AssertionError, AttributeError):
+        logger.debug("Current user ID unavailable during delete", exc_info=True)
+
+    if current_user_id == str(user_id):
+        return False, "You cannot delete your own account"
+
+    async with get_admin_session() as session:
+        stmt = select(User).where(User.id == user_id)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            return False, "User not found"
+
+        await session.delete(user)
+        await session.commit()
+
+    return True, "User deleted successfully"
+
+
 def _get_admin_current_user_id() -> str | None:
     try:
         return get_current_user_id()
@@ -412,22 +445,31 @@ def _render_admin_users_table(
             "body-cell-actions",
             """
             <q-td :props="props">
-                <q-btn
-                    v-if="!props.row.is_approved"
-                    size="sm"
-                    color="positive"
-                    icon="check"
-                    label="Approve"
-                    @click="$parent.$emit('approve-user', props.row)"
-                />
-                <q-btn
-                    v-else
-                    size="sm"
-                    color="warning"
-                    icon="remove_circle"
-                    label="Unapprove"
-                    @click="$parent.$emit('unapprove-user', props.row)"
-                />
+                <div class="q-gutter-xs">
+                    <q-btn
+                        v-if="!props.row.is_approved"
+                        size="sm"
+                        color="positive"
+                        icon="check"
+                        label="Approve"
+                        @click="$parent.$emit('approve-user', props.row)"
+                    />
+                    <q-btn
+                        v-else
+                        size="sm"
+                        color="warning"
+                        icon="remove_circle"
+                        label="Unapprove"
+                        @click="$parent.$emit('unapprove-user', props.row)"
+                    />
+                    <q-btn
+                        size="sm"
+                        color="negative"
+                        icon="delete"
+                        label="Delete"
+                        @click="$parent.$emit('delete-user', props.row)"
+                    />
+                </div>
             </q-td>
             """,
         )
@@ -438,8 +480,57 @@ def _render_admin_users_table(
         async def unapprove_user(e: Any) -> None:
             await _handle_approval_update(e, is_approved=False, reload_users=reload_users)
 
+        async def handle_delete_user(e: Any) -> None:
+            user_id = e.args.get("id")
+            user_name = e.args.get("name", "this user")
+            if not user_id:
+                ui.notify("Invalid user selection", color="negative")
+                return
+            _open_delete_user_dialog(
+                user_id=user_id,
+                user_name=user_name,
+                on_deleted=reload_users,
+            )
+
         users_table.on("approve-user", approve_user)
         users_table.on("unapprove-user", unapprove_user)
+        users_table.on("delete-user", handle_delete_user)
+
+
+def _open_delete_user_dialog(
+    *,
+    user_id: str,
+    user_name: str,
+    on_deleted: Callable[[], Awaitable[None]],
+) -> None:
+    """Open confirmation dialog for user deletion."""
+
+    async def do_delete() -> None:
+        try:
+            success, message = await delete_user(UUID(user_id))
+            ui.notify(message, color="positive" if success else "negative")
+            dialog.close()
+            if success:
+                await on_deleted()
+        except ValueError:
+            ui.notify("Invalid user selection", color="negative")
+        except Exception as ex:
+            logger.error("Error deleting user %s: %s", user_id, ex, exc_info=True)
+            ui.notify("Failed to delete user. Check server logs.", color="negative")
+
+    with ui.dialog() as dialog, ui.card().classes("w-96"):
+        ui.label("Delete User").classes("text-lg font-bold mb-2")
+        ui.label(f'Are you sure you want to delete "{user_name}"?').classes("mb-2")
+        ui.label("This will remove the user account. Their jobs will become orphaned.").classes(
+            "text-sm text-gray-600 mb-4"
+        )
+        render_dialog_actions(
+            on_confirm=do_delete,
+            on_cancel=dialog.close,
+            confirm_label="Delete",
+            confirm_props="color=negative",
+        )
+    dialog.open()
 
 
 async def render_users_panel() -> None:

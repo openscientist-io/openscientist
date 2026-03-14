@@ -16,6 +16,7 @@ from openscientist.database.rls import set_current_user
 from openscientist.webapp_components.pages.admin import (
     _filter_users_for_admin_table,
     admin_page,
+    delete_user,
     set_user_approval_status,
 )
 from tests.helpers import fake_admin_session
@@ -509,3 +510,102 @@ def test_admin_page_defaults_to_users_tab():
 
     source = inspect.getsource(admin_page)
     assert 'with ui.tab_panels(tabs, value=users_tab).classes("w-full"):' in source
+
+
+@pytest.mark.asyncio
+async def test_delete_user_removes_user(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+    """delete_user should remove the user from the database."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    user = User(email="deleteme@example.com", name="Delete Me")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    success, message = await delete_user(user.id)
+
+    assert success is True
+    assert message == "User deleted successfully"
+
+    result = await db_session.execute(select(User).where(User.id == user.id))
+    assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+async def test_delete_user_rejects_self_delete(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """delete_user should prevent admins from deleting themselves."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    user = User(email="selfadmin@example.com", name="Self Admin")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_current_user_id",
+        lambda: str(user.id),
+    )
+
+    success, message = await delete_user(user.id)
+
+    assert success is False
+    assert message == "You cannot delete your own account"
+
+    result = await db_session.execute(select(User).where(User.id == user.id))
+    assert result.scalar_one_or_none() is not None
+
+
+@pytest.mark.asyncio
+async def test_delete_user_handles_missing_user(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """delete_user should return not found for unknown user IDs."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    success, message = await delete_user(uuid4())
+
+    assert success is False
+    assert message == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+    """Deleting a user should orphan their jobs (SET NULL on owner_id)."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    user = User(email="jobowner@example.com", name="Job Owner")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    job = Job(
+        owner_id=user.id,
+        title="User's Job",
+        description="Should become orphaned",
+        status="completed",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+    job_id = job.id
+
+    success, _ = await delete_user(user.id)
+    assert success is True
+
+    result = await db_session.execute(select(Job).where(Job.id == job_id))
+    orphaned_job = result.scalar_one()
+    assert orphaned_job.owner_id is None
