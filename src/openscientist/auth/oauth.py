@@ -90,7 +90,7 @@ def get_oauth_client() -> OAuth:
                 client_id=orcid_client_id,
                 client_secret=settings.auth.orcid_client_secret,
                 server_metadata_url="https://orcid.org/.well-known/openid-configuration",
-                client_kwargs={"scope": "openid /read-limited"},
+                client_kwargs={"scope": "openid"},
             )
             logger.info("ORCID OAuth provider registered")
         else:

@@ -73,12 +73,12 @@ class OrcidProvider:
             email = str(oidc_email)
             email_verified = True
 
-        # 2. Try ORCID Member API (requires /read-limited scope)
+        # 2. Try ORCID public email API
         if not email and orcid_id:
             try:
                 async with httpx.AsyncClient() as client:
                     resp = await client.get(
-                        f"https://api.orcid.org/v3.0/{orcid_id}/email",
+                        f"https://pub.orcid.org/v3.0/{orcid_id}/email",
                         headers={
                             "Accept": "application/json",
                             "Authorization": f"Bearer {access_token}",
