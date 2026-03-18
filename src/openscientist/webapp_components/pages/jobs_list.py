@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from nicegui import ui
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from openscientist.auth import (
     can_current_user_start_jobs,
@@ -15,6 +15,7 @@ from openscientist.auth import (
     require_auth,
 )
 from openscientist.database.models import Job, JobShare, User
+from openscientist.database.models.finding import Finding
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
 from openscientist.job.types import JobStatus
@@ -64,10 +65,30 @@ def _truncate_question(question: str, limit: int = 50) -> str:
     return question
 
 
-def _render_badges(badges_container: ui.element, jobs: list[Any]) -> None:
-    """Render aggregate job counters."""
+def _derive_progress_from_db(status: str, current_iteration: int) -> int:
+    """Derive iterations_completed from Job model columns (no KS load needed)."""
+    if status in ("running", "awaiting_feedback"):
+        return current_iteration - 1 if current_iteration > 1 else 0
+    return current_iteration
+
+
+async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID, int]:
+    """Batch-fetch findings counts for multiple jobs in one query."""
+    if not job_ids:
+        return {}
+    stmt = (
+        select(Finding.job_id, func.count())
+        .where(Finding.job_id.in_(job_ids))
+        .group_by(Finding.job_id)
+    )
+    result = await session.execute(stmt)
+    return dict(result.all())
+
+
+def _render_badges(badges_container: ui.element, jobs: list[Job]) -> None:
+    """Render aggregate job counters from raw DB models."""
     status_counts = {
-        status.value: sum(1 for job in jobs if job.status == status) for status in JobStatus
+        status.value: sum(1 for job in jobs if job.status == status.value) for status in JobStatus
     }
     badges_container.clear()
     with badges_container:
@@ -104,45 +125,43 @@ async def _fetch_shared_jobs(current_user_id: str) -> list[tuple[Job, User, JobS
         return list(result.tuples().all())
 
 
-def _owned_rows(job_manager: Any, db_jobs: list[Job]) -> list[dict[str, Any]]:
+def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[dict[str, Any]]:
     """Build owned-jobs table rows."""
-    jobs = [job_manager._db_model_to_job_info(model) for model in db_jobs]
     return [
         {
-            "job_id": job.job_id,
-            "question": _truncate_question(job.research_question),
-            "status": job.status.value,
-            "error": job.error or "",
-            "iterations": f"{job.iterations_completed}/{job.max_iterations}",
-            "findings": job.findings_count,
-            "created": job.created_at[:19],
+            "job_id": str(job.id),
+            "question": _truncate_question(job.title),
+            "status": job.status,
+            "error": job.error_message or "",
+            "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
+            "findings": findings_counts.get(job.id, 0),
+            "created": job.created_at.isoformat()[:19],
             "can_share": True,
             "can_delete": True,
         }
-        for job in jobs
+        for job in db_jobs
     ]
 
 
 def _shared_rows(
-    job_manager: Any,
     shared_jobs: list[tuple[Job, User, JobShare]],
+    findings_counts: dict[UUID, int],
     current_user_is_admin: bool,
 ) -> list[dict[str, Any]]:
     """Build shared-jobs table rows."""
     rows: list[dict[str, Any]] = []
     for job, owner, share in shared_jobs:
-        job_info = job_manager._db_model_to_job_info(job)
         rows.append(
             {
                 "job_id": str(job.id),
-                "question": _truncate_question(job_info.research_question),
+                "question": _truncate_question(job.title),
                 "owner": owner.name,
                 "permission": share.permission_level,
-                "status": job_info.status.value,
-                "error": job_info.error or "",
-                "iterations": f"{job_info.iterations_completed}/{job_info.max_iterations}",
-                "findings": job_info.findings_count,
-                "created": job_info.created_at[:19],
+                "status": job.status,
+                "error": job.error_message or "",
+                "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
+                "findings": findings_counts.get(job.id, 0),
+                "created": job.created_at.isoformat()[:19],
                 "can_share": False,
                 "can_delete": current_user_is_admin,
             }
@@ -152,7 +171,6 @@ def _shared_rows(
 
 async def _refresh_owned_jobs(
     *,
-    job_manager: Any,
     current_user_id: str,
     badges_container: ui.element,
     table: ui.table,
@@ -160,9 +178,12 @@ async def _refresh_owned_jobs(
     """Refresh owned jobs table and summary badges."""
     try:
         db_jobs = await _fetch_owned_jobs(current_user_id)
-        jobs = [job_manager._db_model_to_job_info(model) for model in db_jobs]
-        _render_badges(badges_container, jobs)
-        table.rows = _owned_rows(job_manager, db_jobs)
+        _render_badges(badges_container, db_jobs)
+        async with get_session_ctx() as session:
+            user_uuid = UUID(current_user_id)
+            await set_current_user(session, user_uuid)
+            findings_counts = await _batch_findings_counts(session, [j.id for j in db_jobs])
+        table.rows = _owned_rows(db_jobs, findings_counts)
         table.update()
     except Exception as exc:
         logger.error("Failed to load jobs: %s", exc, exc_info=True)
@@ -170,7 +191,6 @@ async def _refresh_owned_jobs(
 
 async def _refresh_shared_jobs(
     *,
-    job_manager: Any,
     current_user_id: str,
     current_user_is_admin: bool,
     table: ui.table,
@@ -178,7 +198,10 @@ async def _refresh_shared_jobs(
     """Refresh shared jobs table."""
     try:
         shared_jobs = await _fetch_shared_jobs(current_user_id)
-        table.rows = _shared_rows(job_manager, shared_jobs, current_user_is_admin)
+        job_ids = [job.id for job, _, _ in shared_jobs]
+        async with get_admin_session() as session:
+            findings_counts = await _batch_findings_counts(session, job_ids)
+        table.rows = _shared_rows(shared_jobs, findings_counts, current_user_is_admin)
         table.update()
     except Exception as exc:
         logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
@@ -243,7 +266,6 @@ def jobs_page() -> None:
 
             async def refresh_my_jobs_table() -> None:
                 await _refresh_owned_jobs(
-                    job_manager=job_manager,
                     current_user_id=current_user_id,
                     badges_container=badges_container,
                     table=my_jobs_table,
@@ -275,7 +297,6 @@ def jobs_page() -> None:
 
             async def refresh_shared_jobs_table() -> None:
                 await _refresh_shared_jobs(
-                    job_manager=job_manager,
                     current_user_id=current_user_id,
                     current_user_is_admin=current_user_is_admin,
                     table=shared_jobs_table,

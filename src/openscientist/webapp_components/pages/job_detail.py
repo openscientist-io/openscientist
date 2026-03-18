@@ -21,7 +21,7 @@ from openscientist.async_tasks import run_sync
 from openscientist.auth import get_current_user_id, require_auth
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
-from openscientist.job.types import JobStatus
+from openscientist.job.types import JobInfo, JobStatus
 from openscientist.job_chat import get_chat_history, send_chat_message
 from openscientist.job_manager import _db_get_job, _db_get_share_permission
 from openscientist.knowledge_state import KnowledgeState
@@ -53,6 +53,23 @@ from openscientist.webapp_components.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _derive_progress_from_ks(
+    ks_data: dict[str, Any] | None,
+    status: str,
+    default_iterations: int,
+) -> tuple[int, int]:
+    """Derive iteration/findings counts from already-loaded KS data."""
+    if ks_data is None:
+        return default_iterations, 0
+    findings_count = len(ks_data.get("findings", []))
+    ks_iteration = int(ks_data.get("iteration", 1))
+    if status in ("running", "awaiting_feedback"):
+        iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
+    else:
+        iterations_completed = ks_iteration
+    return iterations_completed, findings_count
 
 
 def _load_knowledge_state(job_id: str, user_id: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -543,11 +560,10 @@ def _render_timeline_content(timeline_ks: dict[str, Any], latest_job: Any, job_d
             )
 
 
-def _next_iteration_for_feedback(job_id: str, user_id: str) -> int:
-    latest_ks, _ = _load_knowledge_state(job_id, user_id)
-    if latest_ks is None:
+def _next_iteration_for_feedback(ks_data: dict[str, Any] | None) -> int:
+    if ks_data is None:
         return 1
-    return int(latest_ks.get("iteration", 1))
+    return int(ks_data.get("iteration", 1))
 
 
 def _submit_feedback_and_continue(
@@ -618,11 +634,12 @@ def _render_feedback_panel(
     job_id: str,
     user_id: str,
     active_timers: list[Any],
+    ks_data: dict[str, Any] | None = None,
 ) -> None:
     if latest_job.status != JobStatus.AWAITING_FEEDBACK:
         return
 
-    next_iter = _next_iteration_for_feedback(job_id, user_id)
+    next_iter = _next_iteration_for_feedback(ks_data)
     completed_iter = next_iter - 1 if next_iter > 1 else 1
     awaiting_since = latest_job.started_at
 
@@ -672,6 +689,7 @@ def _refresh_feedback_panel(
     can_edit: bool,
     job_dir: Path,
     active_timers: list[Any],
+    ks_data: dict[str, Any] | None = None,
 ) -> None:
     feedback_container.clear()
     latest_job = job_manager.get_job(job_id)
@@ -685,6 +703,7 @@ def _refresh_feedback_panel(
         job_id=job_id,
         user_id=user_id,
         active_timers=active_timers,
+        ks_data=ks_data,
     )
 
 
@@ -775,12 +794,15 @@ def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         return None
 
     is_owner, can_edit = _resolve_job_permissions(job_id, user_id, db_job)
-    job_info = job_manager.get_job(job_id)
-    if job_info is None:
-        return None
 
     job_dir = job_manager.jobs_dir / job_id
     ks_data, ks_load_error = _load_knowledge_state(job_id, user_id)
+
+    # Derive progress from already-loaded KS data instead of loading it again via get_job()
+    iterations_completed, findings_count = _derive_progress_from_ks(
+        ks_data, db_job.status, db_job.current_iteration
+    )
+    job_info = JobInfo.from_db_model(db_job, iterations_completed, findings_count)
     active_timers = setup_timer_cleanup()
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
         job_id,
@@ -876,11 +898,11 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     if not is_client_connected():
         return
 
-    latest_job = context.job_manager.get_job(context.job_id)
+    latest_job = context.job_info
     if latest_job is None:
         return
 
-    latest_ks, _ = _load_knowledge_state(context.job_id, context.user_id)
+    latest_ks = context.ks_data
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
@@ -918,8 +940,8 @@ def _render_timeline_content_for_context(context: _JobDetailContext) -> None:
     if not is_client_connected():
         return
 
-    timeline_ks, _ = _load_knowledge_state(context.job_id, context.user_id)
-    latest_job = context.job_manager.get_job(context.job_id)
+    timeline_ks = context.ks_data
+    latest_job = context.job_info
     if not timeline_ks or not latest_job:
         _show_no_timeline_activity()
         return
@@ -1004,13 +1026,22 @@ def _check_and_refresh(
     render_timeline: Any,
     stats_timer_holder: dict[str, Any],
 ) -> None:
-    latest_job = context.job_manager.get_job(context.job_id)
-    if latest_job is None:
+    db_job = run_sync(_db_get_job(context.job_id))
+    if db_job is None:
         _handle_missing_job_during_poll(stats_timer_holder)
         return
 
     latest_ks, _ = _load_knowledge_state(context.job_id, context.user_id)
+
+    iters, findings = _derive_progress_from_ks(latest_ks, db_job.status, db_job.current_iteration)
+    latest_job = JobInfo.from_db_model(db_job, iters, findings)
+
     snapshot = _state_snapshot(latest_job, latest_ks)
+
+    # Update context before calling .refresh() so refreshables read fresh data
+    context.ks_data = latest_ks
+    context.job_info = latest_job
+
     if _stats_changed(context.state, snapshot):
         _update_state_fields(context.state, snapshot)
         render_job_stats.refresh()
@@ -1045,6 +1076,7 @@ def _render_timeline_tab(context: _JobDetailContext) -> None:
         can_edit=context.can_edit,
         job_dir=context.job_dir,
         active_timers=context.active_timers,
+        ks_data=context.ks_data,
     )
 
     stats_timer_holder: dict[str, Any] = {"timer": None}

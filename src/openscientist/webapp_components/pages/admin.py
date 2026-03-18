@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from nicegui import app, ui
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
@@ -109,25 +109,25 @@ async def admin_page() -> None:
             billing_tab = ui.tab("Billing", icon="payments")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
-            # Orphaned Jobs Panel
+            # Orphaned Jobs Panel (deferred — not the default tab)
             with ui.tab_panel(orphaned_tab):
-                await render_orphaned_jobs_panel()
+                ui.timer(0.1, render_orphaned_jobs_panel, once=True)
 
-            # Users Panel
+            # Users Panel (default tab — load eagerly)
             with ui.tab_panel(users_tab):
                 await render_users_panel()
 
-            # Review Tokens Panel
+            # Review Tokens Panel (deferred)
             with ui.tab_panel(review_tokens_tab):
-                await render_review_tokens_panel()
+                ui.timer(0.1, render_review_tokens_panel, once=True)
 
-            # Containers Panel
+            # Containers Panel (deferred)
             with ui.tab_panel(containers_tab):
-                await render_containers_panel()
+                ui.timer(0.1, render_containers_panel, once=True)
 
-            # Billing Panel
+            # Billing Panel (deferred)
             with ui.tab_panel(billing_tab):
-                await render_billing_panel()
+                ui.timer(0.1, render_billing_panel, once=True)
 
 
 async def render_orphaned_jobs_panel() -> None:
@@ -367,23 +367,28 @@ def _admin_users_columns() -> list[dict[str, str]]:
 
 
 async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
-    for user in users:
-        stmt = select(Job).where(Job.owner_id == user.id)
-        result = await session.execute(stmt)
-        job_count = len(result.scalars().all())
-        rows.append(
-            {
-                "id": str(user.id),
-                "name": user.name or "N/A",
-                "email": user.email,
-                "created_at": user.created_at.strftime("%Y-%m-%d") if user.created_at else "N/A",
-                "job_count": job_count,
-                "approval_status": "Approved" if user.is_approved else "Pending",
-                "is_approved": bool(user.is_approved),
-            }
-        )
-    return rows
+    # Single aggregated query instead of N+1 per-user queries
+    user_ids = [u.id for u in users]
+    stmt = (
+        select(Job.owner_id, func.count(Job.id))
+        .where(Job.owner_id.in_(user_ids))
+        .group_by(Job.owner_id)
+    )
+    result = await session.execute(stmt)
+    job_counts: dict[Any, int] = dict(result.all())
+
+    return [
+        {
+            "id": str(user.id),
+            "name": user.name or "N/A",
+            "email": user.email,
+            "created_at": user.created_at.strftime("%Y-%m-%d") if user.created_at else "N/A",
+            "job_count": job_counts.get(user.id, 0),
+            "approval_status": "Approved" if user.is_approved else "Pending",
+            "is_approved": bool(user.is_approved),
+        }
+        for user in users
+    ]
 
 
 async def _handle_approval_update(
