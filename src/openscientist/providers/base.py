@@ -118,6 +118,22 @@ class BaseProvider(ABC):
                 "errors": [],
             }
 
+        return self.evaluate_budget(cost_info)
+
+    def evaluate_budget(self, cost_info: CostInfo) -> dict[str, Any]:
+        """
+        Evaluate budget limits against pre-fetched cost info.
+
+        Use this instead of check_budget_limits() when you already have a
+        CostInfo object to avoid duplicate API calls.
+
+        Returns:
+            {
+                "can_proceed": bool,
+                "warnings": List[str],
+                "errors": List[str]
+            }
+        """
         warnings = []
         errors = []
 
@@ -140,7 +156,8 @@ class BaseProvider(ABC):
             max_recent = settings.budget.max_project_spend_24h_usd
             if cost_info.recent_spend_usd >= max_recent:
                 errors.append(
-                    f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
+                    f"Last {cost_info.recent_period_hours}h spend "
+                    f"${cost_info.recent_spend_usd:.2f} "
                     f"exceeds limit ${max_recent:.2f}"
                 )
 
@@ -151,7 +168,8 @@ class BaseProvider(ABC):
                 and cost_info.recent_spend_usd < max_recent
             ):
                 warnings.append(
-                    f"Last {lookback_hours}h spend ${cost_info.recent_spend_usd:.2f} "
+                    f"Last {cost_info.recent_period_hours}h spend "
+                    f"${cost_info.recent_spend_usd:.2f} "
                     f"approaching limit (warning threshold: ${warn_recent:.2f})"
                 )
 

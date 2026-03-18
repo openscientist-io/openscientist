@@ -33,6 +33,9 @@ class JobStatusUpdateResult:
 
     ntfy_enabled: bool = False
     ntfy_topic: str | None = None
+    owner_id: str | None = None
+    job_title: str | None = None
+    current_iteration: int = 0
 
 
 @dataclass

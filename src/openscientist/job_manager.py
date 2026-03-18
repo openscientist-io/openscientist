@@ -48,6 +48,13 @@ async def _apply_rls_context(session: AsyncSession, user_id: UUID | None) -> Non
     await set_current_user(session, user_id)
 
 
+def _derive_progress_from_db(status: str, current_iteration: int) -> int:
+    """Derive iterations_completed from Job model columns (no KS load needed)."""
+    if status in ("running", "awaiting_feedback"):
+        return current_iteration - 1 if current_iteration > 1 else 0
+    return current_iteration
+
+
 def _load_progress_from_knowledge_state(
     job_id: str,
     status: str,
@@ -186,6 +193,10 @@ async def _db_update_job_status(
                 job.cancellation_reason = cancellation_reason
             await session.commit()
 
+            result.owner_id = str(job.owner_id) if job.owner_id else None
+            result.job_title = job.title
+            result.current_iteration = job.current_iteration
+
             # Fetch owner's ntfy settings for notifications
             if job.owner_id:
                 user_stmt = select(User.ntfy_enabled, User.ntfy_topic).where(
@@ -198,6 +209,16 @@ async def _db_update_job_status(
                     result.ntfy_topic = user_row.ntfy_topic
 
     return result
+
+
+async def _db_get_job_statuses(job_ids: list[str]) -> dict[str, str]:
+    """Batch-fetch job statuses by ID."""
+    async with AsyncSessionLocal(thread_safe=True) as session:
+        stmt = select(JobModel.id, JobModel.status).where(
+            JobModel.id.in_([UUID(jid) for jid in job_ids])
+        )
+        result = await session.execute(stmt)
+        return {str(row.id): row.status for row in result}
 
 
 async def _db_list_jobs(
@@ -880,12 +901,11 @@ class JobManager:
         Jobs in AWAITING_FEEDBACK status don't count against the concurrent limit
         so scientists can take unlimited time without blocking the queue.
         """
-        count = 0
-        for job_id in self._running_jobs:
-            job_info = self.get_job(job_id)
-            if job_info and job_info.status != JobStatus.AWAITING_FEEDBACK:
-                count += 1
-        return count
+        if not self._running_jobs:
+            return 0
+        job_ids = list(self._running_jobs.keys())
+        statuses = _run_async(_db_get_job_statuses(job_ids))
+        return sum(1 for s in statuses.values() if s != JobStatus.AWAITING_FEEDBACK.value)
 
     def get_coinvestigate_count(self) -> int:
         """
@@ -932,7 +952,7 @@ class JobManager:
         try:
             provider = get_provider()
             cost_info = provider.get_cost_info(lookback_hours=24)
-            budget_check = provider.check_budget_limits()
+            budget_check = provider.evaluate_budget(cost_info)
         except (ValueError, ProviderError) as e:
             logger.warning("Could not fetch cost info: %s", e)
             cost_info = None
@@ -997,37 +1017,33 @@ class JobManager:
         cancellation_reason: str | None = None,
     ) -> None:
         """Update job status in the database."""
-        # Get job to find owner
-        job_info = self._load_job_info(job_id)
-        owner_id = UUID(job_info.owner_id) if job_info and job_info.owner_id else None
-
-        # Update database and get ntfy settings
         ntfy_result: JobStatusUpdateResult | None = None
         try:
             ntfy_result = _run_async(
-                _db_update_job_status(job_id, status, error_message, owner_id, cancellation_reason)
+                _db_update_job_status(job_id, status, error_message, None, cancellation_reason)
             )
         except Exception as e:
             logger.error("Failed to update job status in database: %s", e)
 
-        # Send push notification if user has ntfy enabled
-        # Note: notify_job_status_change will create topic if not exists
-        if owner_id and job_info and ntfy_result and ntfy_result.ntfy_enabled:
-            try:
-                _run_async(
-                    notify_job_status_change(
-                        user_id=owner_id,
-                        job_id=job_id,
-                        job_title=job_info.research_question,
-                        new_status=status.value,
-                        error_message=error_message,
-                        cancellation_reason=cancellation_reason,
-                        iteration=job_info.iterations_completed,
-                        ntfy_topic=ntfy_result.ntfy_topic,
-                    )
+        if not ntfy_result or not ntfy_result.ntfy_enabled or not ntfy_result.owner_id:
+            return
+
+        iterations_completed = _derive_progress_from_db(status.value, ntfy_result.current_iteration)
+        try:
+            _run_async(
+                notify_job_status_change(
+                    user_id=UUID(ntfy_result.owner_id),
+                    job_id=job_id,
+                    job_title=ntfy_result.job_title or "",
+                    new_status=status.value,
+                    error_message=error_message,
+                    cancellation_reason=cancellation_reason,
+                    iteration=iterations_completed,
+                    ntfy_topic=ntfy_result.ntfy_topic,
                 )
-            except Exception as e:
-                logger.warning("Failed to send ntfy notification: %s", e)
+            )
+        except Exception as e:
+            logger.warning("Failed to send ntfy notification: %s", e)
 
 
 def main() -> None:

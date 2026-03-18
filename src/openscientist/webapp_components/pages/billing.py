@@ -85,7 +85,7 @@ def _render_provider_cost_section() -> None:
         try:
             provider = get_provider()
             cost_info = provider.get_cost_info(lookback_hours=24)
-            budget_check = provider.check_budget_limits()
+            budget_check = provider.evaluate_budget(cost_info)
 
             with ui.row().classes("w-full gap-8 mb-4"):
                 # Total spend

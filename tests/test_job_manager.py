@@ -369,20 +369,12 @@ class TestJobManagerStatusUpdate:
         manager = _new_manager(tmp_path)
         job_id = str(uuid4())
         _write_config(tmp_path, job_id, status="pending")
-        db_job = _make_db_job("pending", "2026-02-01T00:00:00", job_id=job_id)
 
-        with (
-            patch(
-                "openscientist.job_manager._db_get_job",
-                new_callable=AsyncMock,
-                return_value=db_job,
-            ),
-            patch(
-                "openscientist.job_manager._db_update_job_status",
-                new_callable=AsyncMock,
-                return_value=JobStatusUpdateResult(),
-            ) as mock_update,
-        ):
+        with patch(
+            "openscientist.job_manager._db_update_job_status",
+            new_callable=AsyncMock,
+            return_value=JobStatusUpdateResult(),
+        ) as mock_update:
             manager._update_job_status(job_id, JobStatus.RUNNING)
 
         mock_update.assert_awaited_once()
@@ -393,20 +385,12 @@ class TestJobManagerStatusUpdate:
         manager = _new_manager(tmp_path)
         job_id = str(uuid4())
         _write_config(tmp_path, job_id, status="pending")
-        db_job = _make_db_job("pending", "2026-02-01T00:00:00", job_id=job_id)
 
-        with (
-            patch(
-                "openscientist.job_manager._db_get_job",
-                new_callable=AsyncMock,
-                return_value=db_job,
-            ),
-            patch(
-                "openscientist.job_manager._db_update_job_status",
-                new_callable=AsyncMock,
-                return_value=JobStatusUpdateResult(),
-            ) as mock_update,
-        ):
+        with patch(
+            "openscientist.job_manager._db_update_job_status",
+            new_callable=AsyncMock,
+            return_value=JobStatusUpdateResult(),
+        ) as mock_update:
             manager._update_job_status(job_id, JobStatus.COMPLETED)
 
         assert mock_update.await_args.args[1] == JobStatus.COMPLETED
@@ -415,20 +399,12 @@ class TestJobManagerStatusUpdate:
         manager = _new_manager(tmp_path)
         job_id = str(uuid4())
         _write_config(tmp_path, job_id, status="pending")
-        db_job = _make_db_job("pending", "2026-02-01T00:00:00", job_id=job_id)
 
-        with (
-            patch(
-                "openscientist.job_manager._db_get_job",
-                new_callable=AsyncMock,
-                return_value=db_job,
-            ),
-            patch(
-                "openscientist.job_manager._db_update_job_status",
-                new_callable=AsyncMock,
-                return_value=JobStatusUpdateResult(),
-            ) as mock_update,
-        ):
+        with patch(
+            "openscientist.job_manager._db_update_job_status",
+            new_callable=AsyncMock,
+            return_value=JobStatusUpdateResult(),
+        ) as mock_update:
             manager._update_job_status(job_id, JobStatus.FAILED)
 
         assert mock_update.await_args.args[1] == JobStatus.FAILED
@@ -587,14 +563,11 @@ class TestJobManagerCancellationConcurrency:
         job_id = str(uuid4())
         manager._running_jobs[job_id] = MagicMock()
 
-        cancelled_job = JobInfo(
-            job_id=job_id,
-            research_question="Q?",
-            status=JobStatus.CANCELLED,
-            created_at="2026-02-01T00:00:00+00:00",
-        )
-
-        with patch.object(manager, "get_job", return_value=cancelled_job):
+        with patch(
+            "openscientist.job_manager._db_get_job_statuses",
+            new_callable=AsyncMock,
+            return_value={job_id: JobStatus.CANCELLED.value},
+        ):
             assert manager._get_active_job_count() == 1
 
 
