@@ -89,6 +89,14 @@ class JobContainerRunner:
             **provider_env,
         }
 
+        # Pass host path mapping so the agent's ContainerManager can translate
+        # agent-internal paths (e.g. /agent/jobs/<id>/provenance) to host paths
+        # when creating executor container volume mounts.
+        if cs.host_project_dir:
+            env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
+            # The agent mounts jobs under /agent, so its "app dir" is /agent
+            env["OPENSCIENTIST_CONTAINER_APP_DIR"] = "/agent"
+
         # GCP credentials: mount the file if configured.
         # Also mount the Docker socket so the agent can spawn executor containers.
         volumes: dict[str, dict[str, str]] = {
@@ -202,20 +210,7 @@ class JobContainerRunner:
 
     @staticmethod
     def _to_host_path(job_dir: Path, cs: Any) -> Path:
-        """
-        Translate a container-internal path to the host filesystem path.
+        """Delegate to the module-level to_host_path()."""
+        from openscientist.job_container import to_host_path
 
-        When the web server itself runs in Docker, paths like /app/jobs/... need
-        to be mapped to their host equivalents for sibling container volume mounts.
-        """
-        if not cs.host_project_dir:
-            return job_dir
-
-        container_app_dir = Path(cs.container_app_dir)
-        host_project_dir = Path(cs.host_project_dir)
-
-        try:
-            relative = job_dir.relative_to(container_app_dir)
-            return host_project_dir / relative
-        except ValueError:
-            return job_dir
+        return to_host_path(job_dir, cs)

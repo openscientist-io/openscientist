@@ -375,6 +375,225 @@ class TestBuildVolumes:
             )
 
 
+class TestToHostPath:
+    """Unit tests for the shared to_host_path function."""
+
+    def test_path_under_container_app_dir_is_translated(self) -> None:
+        from openscientist.job_container import to_host_path
+
+        cs = MagicMock()
+        cs.host_project_dir = "/host/project"
+        cs.container_app_dir = "/app"
+
+        result = to_host_path(Path("/app/jobs/123/data"), cs)
+        assert result == Path("/host/project/jobs/123/data")
+
+    def test_path_not_under_container_app_dir_unchanged(self) -> None:
+        from openscientist.job_container import to_host_path
+
+        cs = MagicMock()
+        cs.host_project_dir = "/host/project"
+        cs.container_app_dir = "/app"
+
+        result = to_host_path(Path("/tmp/something"), cs)
+        assert result == Path("/tmp/something")
+
+    def test_no_host_project_dir_returns_unchanged(self) -> None:
+        from openscientist.job_container import to_host_path
+
+        cs = MagicMock()
+        cs.host_project_dir = None
+        cs.container_app_dir = "/app"
+
+        result = to_host_path(Path("/app/jobs/123/data"), cs)
+        assert result == Path("/app/jobs/123/data")
+
+
+class TestBuildVolumesHostTranslation:
+    """Tests for host path translation in _build_volumes via execute_code."""
+
+    def _make_manager(self):
+        from openscientist.container_manager import ContainerManager
+
+        return ContainerManager()
+
+    def test_build_volumes_translates_output_dir(self, tmp_path: Path) -> None:
+        """When host_project_dir is set, output_dir is translated."""
+        from unittest.mock import patch
+
+        mgr = self._make_manager()
+        mock_client = MagicMock()
+        mgr._client = mock_client
+
+        result_json = json.dumps(
+            {
+                "success": True,
+                "output": "",
+                "plots": [],
+                "error": None,
+                "execution_time": 0.1,
+            }
+        )
+        mock_client.containers.run.return_value = result_json.encode()
+        mock_client.containers.get.return_value = MagicMock()
+
+        mock_settings = MagicMock()
+        mock_settings.container.host_project_dir = "/host/project"
+        mock_settings.container.container_app_dir = "/app"
+        mock_settings.container.executor_image = "test:latest"
+        mock_settings.container.executor_memory = "2g"
+        mock_settings.container.executor_cpu = 0.5
+        mock_settings.container.executor_timeout = 120
+        mock_settings.container.agent_network = None
+
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
+        ):
+            # Use an output_dir under /app to trigger translation
+            output_dir = tmp_path / "provenance"
+            output_dir.mkdir()
+
+            # Patch to_host_path to simulate translation
+            with patch("openscientist.container_manager.to_host_path") as mock_thp:
+                mock_thp.return_value = Path("/host/project/jobs/123/provenance")
+                mgr.execute_code(
+                    code='print("hi")',
+                    job_id="test-translate",
+                    output_dir=str(output_dir),
+                )
+                # to_host_path was called with the resolved output_dir
+                mock_thp.assert_called()
+
+            # Verify the volumes dict uses the translated path
+            call_kwargs = mock_client.containers.run.call_args
+            volumes = call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
+            assert "/host/project/jobs/123/provenance" in volumes
+
+    def test_build_volumes_translates_data_file_paths(self, tmp_path: Path) -> None:
+        """When host_project_dir is set, data file paths are translated."""
+        from unittest.mock import patch
+
+        mgr = self._make_manager()
+        mock_client = MagicMock()
+        mgr._client = mock_client
+
+        result_json = json.dumps(
+            {
+                "success": True,
+                "output": "",
+                "plots": [],
+                "error": None,
+                "execution_time": 0.1,
+            }
+        )
+        mock_client.containers.run.return_value = result_json.encode()
+        mock_client.containers.get.return_value = MagicMock()
+
+        mock_settings = MagicMock()
+        mock_settings.container.host_project_dir = "/host/project"
+        mock_settings.container.container_app_dir = "/app"
+        mock_settings.container.executor_image = "test:latest"
+        mock_settings.container.executor_memory = "2g"
+        mock_settings.container.executor_cpu = 0.5
+        mock_settings.container.executor_timeout = 120
+        mock_settings.container.agent_network = None
+
+        # Create a real file for _build_volumes to find
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        data_file = data_dir / "file.csv"
+        data_file.write_text("a,b\n1,2\n")
+
+        # We need the translated path to also exist for _build_volumes validation
+        # So we use a real file path and mock only the translation
+        host_data_dir = tmp_path / "host_data"
+        host_data_dir.mkdir()
+        host_file = host_data_dir / "file.csv"
+        host_file.write_text("a,b\n1,2\n")
+
+        def mock_to_host_path(path, cs):
+            # Translate data_dir paths to host_data_dir
+            try:
+                rel = path.relative_to(data_dir)
+                return host_data_dir / rel
+            except ValueError:
+                pass
+            # For output_dir, just return as-is
+            return path
+
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch("openscientist.container_manager.to_host_path", side_effect=mock_to_host_path),
+            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
+        ):
+            output_dir = tmp_path / "out"
+            output_dir.mkdir()
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="test-data-translate",
+                output_dir=str(output_dir),
+                data_files=[{"path": str(data_file), "name": "file.csv"}],
+            )
+
+        call_kwargs = mock_client.containers.run.call_args
+        volumes = call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
+        # The volume source should use the translated host path
+        assert str(host_data_dir) in volumes
+
+    def test_build_volumes_no_translation_without_host_dir(self, tmp_path: Path) -> None:
+        """When host_project_dir is not set, paths pass through unchanged."""
+        from unittest.mock import patch
+
+        mgr = self._make_manager()
+        mock_client = MagicMock()
+        mgr._client = mock_client
+
+        result_json = json.dumps(
+            {
+                "success": True,
+                "output": "",
+                "plots": [],
+                "error": None,
+                "execution_time": 0.1,
+            }
+        )
+        mock_client.containers.run.return_value = result_json.encode()
+        mock_client.containers.get.return_value = MagicMock()
+
+        mock_settings = MagicMock()
+        mock_settings.container.host_project_dir = None  # Not set
+        mock_settings.container.container_app_dir = "/app"
+        mock_settings.container.executor_image = "test:latest"
+        mock_settings.container.executor_memory = "2g"
+        mock_settings.container.executor_cpu = 0.5
+        mock_settings.container.executor_timeout = 120
+        mock_settings.container.agent_network = None
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        data_file = data_dir / "file.csv"
+        data_file.write_text("a,b\n1,2\n")
+
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
+        ):
+            output_dir = tmp_path / "out"
+            output_dir.mkdir()
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="test-no-translate",
+                output_dir=str(output_dir),
+                data_files=[{"path": str(data_file), "name": "file.csv"}],
+            )
+
+        call_kwargs = mock_client.containers.run.call_args
+        volumes = call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
+        # Original paths should be used (no translation)
+        assert str(data_dir) in volumes
+
+
 class TestGetContainerManager:
     """Tests for the global container manager singleton."""
 

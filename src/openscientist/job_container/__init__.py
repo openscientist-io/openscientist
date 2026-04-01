@@ -16,7 +16,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["JobContainerRunner", "resolve_docker_network"]
+__all__ = ["JobContainerRunner", "resolve_docker_network", "to_host_path"]
+
+
+def to_host_path(path: Path, cs: "Any") -> Path:
+    """Translate a container-internal path to the host filesystem path.
+
+    When the web server itself runs in Docker, paths like /app/jobs/... need
+    to be mapped to their host equivalents for sibling container volume mounts.
+
+    Args:
+        path: The path to translate (may be container-internal or host).
+        cs: ContainerSettings instance with host_project_dir and container_app_dir.
+
+    Returns:
+        The translated host path, or the original path if no translation is needed.
+    """
+    if not cs.host_project_dir:
+        return path
+
+    container_app_dir = Path(cs.container_app_dir)
+    host_project_dir = Path(cs.host_project_dir)
+
+    try:
+        relative = path.relative_to(container_app_dir)
+        return host_project_dir / relative
+    except ValueError:
+        return path
 
 
 def resolve_docker_network(

@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openscientist.job_container import to_host_path
 from openscientist.settings import get_settings
 
 if TYPE_CHECKING:
@@ -245,9 +246,38 @@ class ContainerManager:
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # First, validate files exist using container-local paths.
         volumes, host_to_container = self._build_volumes(
             output_dir=output_dir, data_files=data_files
         )
+
+        # Now translate volume mount sources from container-internal paths to
+        # host paths.  The Docker socket is the host's, so volume sources must
+        # be host-absolute paths.
+        settings = get_settings()
+        cs = settings.container
+
+        def _translate_volumes(
+            vols: dict[str, dict[str, str]],
+        ) -> dict[str, dict[str, str]]:
+            return {str(to_host_path(Path(k), cs)): v for k, v in vols.items()}
+
+        volumes = _translate_volumes(volumes)
+        host_to_container = {
+            str(to_host_path(Path(k), cs)): v for k, v in host_to_container.items()
+        }
+
+        # Translate data_path so _remap_paths can find it in host_to_container.
+        if data_path:
+            data_path = str(to_host_path(Path(data_path).resolve(), cs))
+        if data_files:
+            data_files = [
+                {**f, "path": str(to_host_path(Path(f["path"]).resolve(), cs))}
+                if f.get("path")
+                else f
+                for f in data_files
+            ]
+
         remapped_data_path, remapped_files = self._remap_paths(
             data_path=data_path,
             data_files=data_files,
