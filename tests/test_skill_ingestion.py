@@ -5,6 +5,8 @@ Tests SkillParser for markdown parsing, GitHubSkillIngester for API interactions
 (with mocking), and LocalSkillIngester.
 """
 
+import io
+import tarfile
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,6 +25,18 @@ from openscientist.skill_ingestion import (
 
 # Resolved path to the real skills/ directory at project root
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
+
+
+def build_repo_tarball(files: dict[str, str], root: str = "owner-repo-sha") -> bytes:
+    """Build an in-memory tarball matching GitHub's tarball layout."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for path, content in files.items():
+            data = content.encode("utf-8")
+            info = tarfile.TarInfo(name=f"{root}/{path}")
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()
 
 
 class TestSkillParser:
@@ -240,6 +254,57 @@ class TestGitHubSkillIngester:
         await ingester.close()
 
     @pytest.mark.asyncio
+    async def test_github_get_sleeps_between_requests(self):
+        """Test that GitHub requests are paced with a minimum delay."""
+        ingester = GitHubSkillIngester()
+        ingester._last_request_at = 100.0
+
+        with (
+            patch.object(ingester, "_get_client") as mock_get_client,
+            patch("openscientist.skill_ingestion.time.monotonic", return_value=100.25),
+            patch(
+                "openscientist.skill_ingestion.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep,
+        ):
+            mock_client = AsyncMock()
+            mock_response = MagicMock(status_code=200, headers={})
+            mock_client.get.return_value = mock_response
+            mock_get_client.return_value = mock_client
+
+            response = await ingester._github_get("https://api.github.com/test")
+
+            assert response is mock_response
+            mock_sleep.assert_awaited_once_with(0.75)
+
+        await ingester.close()
+
+    @pytest.mark.asyncio
+    async def test_github_get_retries_after_429(self):
+        """Test that GitHub requests honor Retry-After on 429 responses."""
+        ingester = GitHubSkillIngester()
+
+        with (
+            patch.object(ingester, "_get_client") as mock_get_client,
+            patch("openscientist.skill_ingestion.time.monotonic", side_effect=[1.0, 2.0]),
+            patch(
+                "openscientist.skill_ingestion.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep,
+        ):
+            mock_client = AsyncMock()
+            rate_limited = MagicMock(status_code=429, headers={"Retry-After": "2"})
+            success = MagicMock(status_code=200, headers={})
+            mock_client.get.side_effect = [rate_limited, success]
+            mock_get_client.return_value = mock_client
+
+            response = await ingester._github_get("https://api.github.com/test")
+
+            assert response is success
+            assert mock_client.get.call_count == 2
+            mock_sleep.assert_awaited_once_with(2.0)
+
+        await ingester.close()
+
+    @pytest.mark.asyncio
     async def test_list_skill_files(self):
         """Test listing skill files from a repo (only SKILL.md files)."""
         ingester = GitHubSkillIngester()
@@ -294,6 +359,25 @@ class TestGitHubSkillIngester:
 
         await ingester.close()
 
+    def test_extract_skill_files_from_archive(self):
+        """Test filtering SKILL.md files out of a repository tarball."""
+        ingester = GitHubSkillIngester()
+        archive_bytes = build_repo_tarball(
+            {
+                "scientific-skills/biopython/SKILL.md": "---\nname: BioPython\n---\n",
+                "scientific-skills/biopython/examples.md": "example",
+                "scientific-skills/pubchem/SKILL.md": "---\nname: PubChem\n---\n",
+                "README.md": "repo readme",
+            }
+        )
+
+        files = ingester._extract_skill_files_from_archive(archive_bytes, "scientific-skills")
+
+        assert [file_info["path"] for file_info in files] == [
+            "scientific-skills/biopython/SKILL.md",
+            "scientific-skills/pubchem/SKILL.md",
+        ]
+
     @pytest.mark.asyncio
     async def test_github_ingester_end_to_end_with_kdense_format(
         self,
@@ -302,34 +386,12 @@ class TestGitHubSkillIngester:
         """Test end-to-end GitHub skill ingestion with K-Dense format.
 
         Verifies that:
-        - Mocked GitHub API returns tree with SKILL.md files
+        - Mocked GitHub API returns a tarball with SKILL.md files
         - Parser correctly derives category and slug from directory structure
         - Skills are created in database with correct fields
         - Reference files (non-SKILL.md) are filtered out
         """
         ingester = GitHubSkillIngester()
-
-        # Mock tree response (simulating K-Dense repo structure)
-        mock_tree = {
-            "tree": [
-                {
-                    "path": "scientific-skills/biopython/SKILL.md",
-                    "type": "blob",
-                    "sha": "sha1",
-                },
-                {
-                    "path": "scientific-skills/pubchem/SKILL.md",
-                    "type": "blob",
-                    "sha": "sha2",
-                },
-                # Reference file that should be filtered out
-                {
-                    "path": "scientific-skills/biopython/examples.md",
-                    "type": "blob",
-                    "sha": "sha3",
-                },
-            ]
-        }
 
         # Mock skill file contents (K-Dense format: no category in frontmatter)
         biopython_content = """---
@@ -356,6 +418,13 @@ tags:
 
 Access PubChem compound data.
 """
+        tarball_bytes = build_repo_tarball(
+            {
+                "scientific-skills/biopython/SKILL.md": biopython_content,
+                "scientific-skills/pubchem/SKILL.md": pubchem_content,
+                "scientific-skills/biopython/examples.md": "not a skill",
+            }
+        )
 
         def mock_get_response(url, **_kwargs):
             """Return appropriate mock response based on URL."""
@@ -364,14 +433,10 @@ Access PubChem compound data.
 
             if "commits" in url:
                 response.json.return_value = {"sha": "abc123def456"}
-            elif "trees" in url:
-                response.json.return_value = mock_tree
-            elif "biopython/SKILL.md" in url:
-                response.text = biopython_content
-            elif "pubchem/SKILL.md" in url:
-                response.text = pubchem_content
+            elif "tarball" in url:
+                response.content = tarball_bytes
             else:
-                response.text = ""
+                response.content = b""
 
             return response
 
@@ -398,6 +463,8 @@ Access PubChem compound data.
             # Verify stats
             assert stats["created"] == 2
             assert stats["errors"] == 0
+            requested_urls = [call.args[0] for call in mock_client.get.call_args_list]
+            assert all("raw.githubusercontent.com" not in url for url in requested_urls)
 
             # Verify skills were created with correct fields
             stmt = select(Skill).where(Skill.source_id == source.id)
@@ -483,15 +550,15 @@ Access PubChem compound data.
         await db_session.commit()
         await db_session.refresh(source)
 
-        mock_tree: dict[str, list[str]] = {"tree": []}  # Empty tree, no skill files
+        tarball_bytes = build_repo_tarball({})  # Empty archive, no skill files
 
         def mock_get_response(url, **_kwargs):
             response = MagicMock()
             response.raise_for_status = MagicMock()
             if "commits" in url:
                 response.json.return_value = {"sha": "abc123def456"}
-            elif "trees" in url:
-                response.json.return_value = mock_tree
+            elif "tarball" in url:
+                response.content = tarball_bytes
             return response
 
         with patch.object(ingester, "_get_client") as mock_get_client:
@@ -502,7 +569,7 @@ Access PubChem compound data.
             stats = await ingester.sync_source(db_session, source, force=True)
 
             assert "skipped_reason" not in stats
-            # 2 API calls: commit check + tree listing
+            # 2 API calls: commit check + tarball fetch
             assert mock_client.get.call_count == 2
 
         await ingester.close()
@@ -528,15 +595,15 @@ Access PubChem compound data.
         await db_session.commit()
         await db_session.refresh(source)
 
-        mock_tree: dict[str, list[str]] = {"tree": []}  # Empty tree, no skill files
+        tarball_bytes = build_repo_tarball({})  # Empty archive, no skill files
 
         def mock_get_response(url, **_kwargs):
             response = MagicMock()
             response.raise_for_status = MagicMock()
             if "commits" in url:
                 response.json.return_value = {"sha": "new_sha_999"}
-            elif "trees" in url:
-                response.json.return_value = mock_tree
+            elif "tarball" in url:
+                response.content = tarball_bytes
             return response
 
         with patch.object(ingester, "_get_client") as mock_get_client:
@@ -547,7 +614,7 @@ Access PubChem compound data.
             stats = await ingester.sync_source(db_session, source)
 
             assert "skipped_reason" not in stats
-            # 2 API calls: commit check + tree listing
+            # 2 API calls: commit check + tarball fetch
             assert mock_client.get.call_count == 2
 
         await ingester.close()

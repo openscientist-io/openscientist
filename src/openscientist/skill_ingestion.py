@@ -5,13 +5,17 @@ Handles parsing markdown skills with YAML frontmatter and syncing
 skills from external sources like GitHub repositories.
 """
 
+import asyncio
 import hashlib
+import io
 import logging
 import re
+import tarfile
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import httpx
@@ -222,6 +226,8 @@ class GitHubSkillIngester(BaseSkillIngester):
     """
 
     GITHUB_API_BASE = "https://api.github.com"
+    MIN_REQUEST_INTERVAL_SECONDS = 1.0
+    MAX_429_RETRIES = 3
 
     def __init__(
         self,
@@ -238,6 +244,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         self.github_token = github_token
         self.parser = parser or SkillParser()
         self._client: httpx.AsyncClient | None = None
+        self._last_request_at: float | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -260,6 +267,56 @@ class GitHubSkillIngester(BaseSkillIngester):
         if self._client:
             await self._client.aclose()
             self._client = None
+
+    async def _sleep_between_requests(self) -> None:
+        """Pace outbound GitHub requests to reduce rate-limit pressure."""
+        if self._last_request_at is None:
+            return
+
+        elapsed = time.monotonic() - self._last_request_at
+        remaining = self.MIN_REQUEST_INTERVAL_SECONDS - elapsed
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    @staticmethod
+    def _retry_delay_from_response(response: httpx.Response, attempt: int) -> float:
+        """Use Retry-After when available, otherwise fall back to backoff."""
+        retry_after = response.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), 0.0)
+            except ValueError:
+                pass
+
+        return min(float(2 ** (attempt - 1)), 30.0)
+
+    async def _github_get(self, url: str, **kwargs: Any) -> httpx.Response:
+        """GET with pacing and bounded retry on 429 responses."""
+        client = await self._get_client()
+
+        for attempt in range(1, self.MAX_429_RETRIES + 2):
+            await self._sleep_between_requests()
+            response = await client.get(url, **kwargs)
+            self._last_request_at = time.monotonic()
+
+            if response.status_code != 429:
+                return response
+
+            if attempt > self.MAX_429_RETRIES:
+                return response
+
+            delay = self._retry_delay_from_response(response, attempt)
+            logger.warning(
+                "GitHub rate limit hit for %s; sleeping %.1f seconds before retry %d/%d",
+                url,
+                delay,
+                attempt,
+                self.MAX_429_RETRIES,
+            )
+            await asyncio.sleep(delay)
+            self._last_request_at = None
+
+        return response
 
     def _parse_github_url(self, url: str) -> tuple[str, str]:
         """
@@ -298,9 +355,8 @@ class GitHubSkillIngester(BaseSkillIngester):
         Returns:
             Commit SHA string
         """
-        client = await self._get_client()
         url = f"{self.GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{branch}"
-        response = await client.get(url)
+        response = await self._github_get(url)
         response.raise_for_status()
         sha: str = response.json()["sha"]
         return sha
@@ -324,12 +380,10 @@ class GitHubSkillIngester(BaseSkillIngester):
         Returns:
             List of file metadata dicts with 'path' and 'download_url'
         """
-        client = await self._get_client()
-
         # Get the tree recursively
         url = f"{self.GITHUB_API_BASE}/repos/{owner}/{repo}/git/trees/{branch}"
         params = {"recursive": "1"}
-        response = await client.get(url, params=params)
+        response = await self._github_get(url, params=params)
         response.raise_for_status()
 
         tree = response.json().get("tree", [])
@@ -358,20 +412,70 @@ class GitHubSkillIngester(BaseSkillIngester):
 
         return skill_files
 
-    async def fetch_file_content(self, download_url: str) -> str:
+    def _extract_skill_files_from_archive(
+        self,
+        archive_bytes: bytes,
+        skills_path: str = "",
+    ) -> list[dict[str, Any]]:
         """
-        Fetch the content of a file from GitHub.
+        Extract SKILL.md files from a GitHub tarball.
 
         Args:
-            download_url: Raw content URL
+            archive_bytes: Tarball bytes from GitHub
+            skills_path: Optional subdirectory containing skills
 
         Returns:
-            File content as string
+            List of dicts with repo-relative path and raw content bytes
         """
-        client = await self._get_client()
-        response = await client.get(download_url)
+        prefix = skills_path.strip("/")
+        prefix_with_sep = f"{prefix}/" if prefix else ""
+        skill_files: list[dict[str, Any]] = []
+
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+            for member in archive.getmembers():
+                if not member.isfile():
+                    continue
+
+                member_path = PurePosixPath(member.name)
+                if len(member_path.parts) < 2:
+                    continue
+
+                repo_relative_path = str(PurePosixPath(*member_path.parts[1:]))
+                if not repo_relative_path.lower().endswith("/skill.md"):
+                    continue
+                if prefix and not repo_relative_path.startswith(prefix_with_sep):
+                    continue
+
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    continue
+
+                skill_files.append(
+                    {
+                        "path": repo_relative_path,
+                        "content_bytes": extracted.read(),
+                    }
+                )
+
+        return skill_files
+
+    async def fetch_skill_files_from_archive(
+        self,
+        owner: str,
+        repo: str,
+        branch: str,
+        skills_path: str = "",
+    ) -> list[dict[str, Any]]:
+        """
+        Fetch all SKILL.md files from a repository tarball.
+
+        This avoids one request per skill file to raw.githubusercontent.com,
+        which is the path that triggered the observed 429 warnings.
+        """
+        url = f"{self.GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/{branch}"
+        response = await self._github_get(url, follow_redirects=True)
         response.raise_for_status()
-        return response.text
+        return self._extract_skill_files_from_archive(response.content, skills_path)
 
     async def sync_source(
         self,
@@ -417,15 +521,21 @@ class GitHubSkillIngester(BaseSkillIngester):
                 "skipped_reason": "commit_unchanged",  # type: ignore[dict-item]
             }
 
-        # List skill files
-        skill_files = await self.list_skill_files(owner, repo, branch, source.skills_path)
+        # Fetch skill files from a single repository archive to avoid
+        # rate-limited per-file requests against raw.githubusercontent.com.
+        skill_files = await self.fetch_skill_files_from_archive(
+            owner,
+            repo,
+            branch,
+            source.skills_path,
+        )
 
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
 
         # Session is expected to be an admin session (bypasses RLS)
         for file_info in skill_files:
             try:
-                content = await self.fetch_file_content(file_info["download_url"])
+                content = file_info["content_bytes"].decode("utf-8")
                 parsed = self.parser.parse_content(content, file_info["path"])
 
                 # Check if skill exists
@@ -469,7 +579,7 @@ class GitHubSkillIngester(BaseSkillIngester):
                     session.add(skill)
                     stats["created"] += 1
 
-            except (SkillParseError, httpx.HTTPError) as e:
+            except (SkillParseError, UnicodeDecodeError) as e:
                 stats["errors"] += 1
                 # Log error but continue
                 logger.warning("Error processing %s: %s", file_info["path"], e)
