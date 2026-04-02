@@ -528,6 +528,12 @@ class ContainerSettings(BaseSettings):
         alias="OPENSCIENTIST_AGENT_NETWORK",
         description="Docker network for agent containers. Auto-detected from the web server container if not set.",
     )
+    agent_platform: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AGENT_PLATFORM",
+        description="Docker platform for agent containers (e.g. linux/amd64). "
+        "Set to linux/amd64 on Apple Silicon to run x86_64 Phenix via Rosetta.",
+    )
 
     # Host path mapping for sibling container volume mounts (executor containers)
     # When the main container runs inside Docker and spawns sibling containers,
@@ -551,6 +557,31 @@ class PhenixSettings(BaseSettings):
     )
 
     phenix_path: str | None = Field(default=None, alias="PHENIX_PATH")
+    phenix_host_path: str | None = Field(default=None, alias="PHENIX_HOST_PATH")
+
+    @staticmethod
+    def _validate_absolute_path(
+        value: str | None,
+        *,
+        env_name: str,
+        example: str,
+    ) -> str | None:
+        """Validate a configured filesystem path without requiring existence."""
+        if value is None or value == "":
+            return None
+
+        # Must be an absolute path
+        if not value.startswith("/"):
+            raise ValueError(
+                f"{env_name} must be an absolute path (starting with '/'), got: '{value}'\n"
+                f"  Example: {env_name}={example}"
+            )
+
+        # Must not contain path traversal
+        if ".." in value:
+            raise ValueError(f"{env_name} must not contain path traversal (..): '{value}'")
+
+        return value
 
     @field_validator("phenix_path")
     @classmethod
@@ -562,21 +593,21 @@ class PhenixSettings(BaseSettings):
         checked by `is_available` property to match the original behavior
         of phenix_setup.py where invalid paths return None rather than raise.
         """
-        if v is None or v == "":
-            return None
+        return cls._validate_absolute_path(
+            v,
+            env_name="PHENIX_PATH",
+            example="/opt/phenix-1.21.2-5419",
+        )
 
-        # Must be an absolute path
-        if not v.startswith("/"):
-            raise ValueError(
-                f"PHENIX_PATH must be an absolute path (starting with '/'), got: '{v}'\n"
-                f"  Example: PHENIX_PATH=/opt/phenix-1.21.2-5419"
-            )
-
-        # Must not contain path traversal
-        if ".." in v:
-            raise ValueError(f"PHENIX_PATH must not contain path traversal (..): '{v}'")
-
-        return v
+    @field_validator("phenix_host_path")
+    @classmethod
+    def validate_phenix_host_path(cls, v: str | None) -> str | None:
+        """Validate PHENIX_HOST_PATH format if set."""
+        return cls._validate_absolute_path(
+            v,
+            env_name="PHENIX_HOST_PATH",
+            example="/home/user/phenix-1.21.2-5419",
+        )
 
     @property
     def is_available(self) -> bool:
@@ -588,11 +619,11 @@ class PhenixSettings(BaseSettings):
         """
         if not self.phenix_path:
             return False
-        # Check directory exists and contains phenix_env.sh
         if not os.path.isdir(self.phenix_path):
             return False
-        env_script = os.path.join(self.phenix_path, "phenix_env.sh")
-        return os.path.exists(env_script)
+        # Check for build/setpaths.sh — the script actually used by setup_phenix_env()
+        setpaths = os.path.join(self.phenix_path, "build", "setpaths.sh")
+        return os.path.exists(setpaths)
 
 
 class BerkeleyLabSettings(BaseSettings):

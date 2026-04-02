@@ -1104,6 +1104,21 @@ class TestGenerateJobClaudeMd:
         assert isinstance(generate_job_claude_md(use_hypotheses=True), str)
         assert isinstance(generate_job_claude_md(use_hypotheses=False), str)
 
+    def test_phenix_section_includes_bundled_reference_skill_when_available(self) -> None:
+        from openscientist.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(phenix_available=True)
+        assert "### Structural Biology Tools (Phenix is available)" in content
+        assert "domain--phenix-tools-reference.md" in content
+        assert "run_phenix_tool" in content
+
+    def test_phenix_section_omitted_when_phenix_unavailable(self) -> None:
+        from openscientist.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(phenix_available=False)
+        assert "### Structural Biology Tools (Phenix is available)" not in content
+        assert "domain--phenix-tools-reference.md" not in content
+
     def test_both_variants_have_mission_and_footer(self) -> None:
         from openscientist.prompts import generate_job_claude_md
 

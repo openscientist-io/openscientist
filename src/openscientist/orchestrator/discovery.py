@@ -398,9 +398,17 @@ def _write_chat_claude_md(claude_dir: Path) -> None:
 
 def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
     """Write generated JOB_CLAUDE.md content to claude_dir/CLAUDE.md."""
+    from openscientist.settings import get_settings
+
     try:
+        phenix_available = get_settings().phenix.is_available
         dest = claude_dir / "CLAUDE.md"
-        dest.write_text(generate_job_claude_md(use_hypotheses=use_hypotheses), encoding="utf-8")
+        dest.write_text(
+            generate_job_claude_md(
+                use_hypotheses=use_hypotheses, phenix_available=phenix_available
+            ),
+            encoding="utf-8",
+        )
         logger.debug("Wrote job CLAUDE.md to %s (use_hypotheses=%s)", dest, use_hypotheses)
     except Exception as e:
         logger.warning("Failed to write job CLAUDE.md: %s", e)

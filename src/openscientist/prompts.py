@@ -220,7 +220,7 @@ def format_skills_list(skills: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def generate_job_claude_md(*, use_hypotheses: bool = False) -> str:
+def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
     """
     Generate JOB_CLAUDE.md content for the discovery agent.
 
@@ -342,27 +342,31 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 
 Always use hypothesis tracking — even for literature-only investigations.""")
 
-    # --- Structural Biology Tools ---
-    parts.append("""
-### Structural Biology Tools (when PHENIX_PATH is configured)
+    # --- Structural Biology Tools (only when Phenix is available) ---
+    if phenix_available:
+        parts.append("""
+### Structural Biology Tools (Phenix is available)
 
-**run_phenix_tool** - Execute a Phenix command-line tool
+**IMPORTANT:** For structural biology tasks (validation, comparison, refinement, map analysis), **always use `run_phenix_tool`** instead of `execute_code`. Phenix is installed and available. Do NOT write custom Python to parse PDB files or compute validation metrics — use Phenix, which is the gold standard. Read the bundled `domain--phenix-tools-reference.md` skill in `.claude/skills/` for the full list of available commands.
 
-- `tool_name`: e.g., `"phenix.clashscore"`, `"phenix.superpose_pdbs"`, `"phenix.cablam_validate"`
+**run_phenix_tool** - Execute any Phenix command-line tool
+
+- `tool_name`: e.g., `"phenix.molprobity"`, `"phenix.clashscore"`, `"phenix.superpose_pdbs"`
 - `input_files`: List of PDB/mmCIF file paths (relative to `data/`)
 - `arguments`: Optional dict of CLI arguments
+- Example: `run_phenix_tool(tool_name="phenix.molprobity", input_files=["structure.pdb"], description="Full validation")`
 
-**compare_structures** - Compare experimental and predicted protein structures
+**compare_structures** - Compare two protein structures (convenience wrapper for `phenix.superpose_pdbs`)
 
-- `experimental_pdb`: Experimental PDB file (relative to `data/`)
-- `predicted_pdb`: Predicted PDB file (relative to `data/`)
-- Runs `phenix.superpose_pdbs` and interprets RMSD values
+- `experimental_pdb`: First PDB file (relative to `data/`)
+- `predicted_pdb`: Second PDB file (relative to `data/`)
 
 **parse_alphafold_confidence** - Extract pLDDT confidence metrics from an AlphaFold PDB
 
 - `alphafold_pdb`: AlphaFold PDB file (relative to `data/`)
-- `pae_json`: Optional PAE JSON file
+- `pae_json`: Optional PAE JSON file""")
 
+    parts.append("""
 ### Reading Data Files
 
 Use the correct tool for each file type:

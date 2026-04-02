@@ -177,11 +177,13 @@ class TestSetupPhenixEnv:
     @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_missing_env_script_returns_none(self, mock_exists, mock_isdir):
-        """Missing phenix_env.sh should return None."""
+        """Missing setpaths.sh and phenix_env.sh should return None."""
 
-        # Directory exists but phenix_env.sh does not
+        # Directory exists but setpaths.sh and phenix_env.sh do not
         def exists_side_effect(path):
-            return not path.endswith("phenix_env.sh")
+            if "setpaths.sh" in path or "phenix_env.sh" in path:
+                return False
+            return True
 
         mock_exists.side_effect = exists_side_effect
         mock_isdir.return_value = True
@@ -192,16 +194,18 @@ class TestSetupPhenixEnv:
     @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
     def test_missing_env_script_raises_with_flag(self, mock_exists, mock_isdir):
-        """Missing phenix_env.sh should raise when raise_on_error=True."""
+        """Missing setpaths.sh and phenix_env.sh should raise when raise_on_error=True."""
 
         def exists_side_effect(path):
-            return not path.endswith("phenix_env.sh")
+            if "setpaths.sh" in path or "phenix_env.sh" in path:
+                return False
+            return True
 
         mock_exists.side_effect = exists_side_effect
         mock_isdir.return_value = True
         with pytest.raises(PhenixConfigError) as exc_info:
             setup_phenix_env(raise_on_error=True)
-        assert "phenix_env.sh" in str(exc_info.value)
+        assert "not found" in str(exc_info.value)
 
 
 class TestCheckPhenixAvailable:
@@ -209,10 +213,11 @@ class TestCheckPhenixAvailable:
 
     def test_available_when_phenix_configured(self, monkeypatch, tmp_path):
         """check_phenix_available returns True when Phenix is properly configured."""
-        # Create a fake phenix directory with phenix_env.sh
+        # Create a fake phenix directory with build/setpaths.sh
         phenix_dir = tmp_path / "phenix"
         phenix_dir.mkdir()
-        (phenix_dir / "phenix_env.sh").write_text("# phenix env")
+        (phenix_dir / "build").mkdir()
+        (phenix_dir / "build" / "setpaths.sh").write_text("# setpaths")
 
         # Clear settings cache and set PHENIX_PATH
         from openscientist.settings import clear_settings_cache
