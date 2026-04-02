@@ -345,19 +345,21 @@ Always use hypothesis tracking — even for literature-only investigations.""")
     # --- Structural Biology Tools (only when Phenix is available) ---
     if phenix_available:
         parts.append("""
-### Structural Biology Tools (when PHENIX_PATH is configured)
+### Structural Biology Tools (Phenix is available)
 
-**run_phenix_tool** - Execute a Phenix command-line tool
+**IMPORTANT:** For structural biology tasks (validation, comparison, refinement, map analysis), **always use `run_phenix_tool`** instead of `execute_code`. Phenix is installed and available. Do NOT write custom Python to parse PDB files or compute validation metrics — use Phenix, which is the gold standard. Search for the "phenix-tools-reference" skill for the full list of ~60 available commands.
 
-- `tool_name`: e.g., `"phenix.clashscore"`, `"phenix.superpose_pdbs"`, `"phenix.cablam_validate"`
+**run_phenix_tool** - Execute any Phenix command-line tool
+
+- `tool_name`: e.g., `"phenix.molprobity"`, `"phenix.clashscore"`, `"phenix.superpose_pdbs"`
 - `input_files`: List of PDB/mmCIF file paths (relative to `data/`)
 - `arguments`: Optional dict of CLI arguments
+- Example: `run_phenix_tool(tool_name="phenix.molprobity", input_files=["structure.pdb"], description="Full validation")`
 
-**compare_structures** - Compare experimental and predicted protein structures
+**compare_structures** - Compare two protein structures (convenience wrapper for `phenix.superpose_pdbs`)
 
-- `experimental_pdb`: Experimental PDB file (relative to `data/`)
-- `predicted_pdb`: Predicted PDB file (relative to `data/`)
-- Runs `phenix.superpose_pdbs` and interprets RMSD values
+- `experimental_pdb`: First PDB file (relative to `data/`)
+- `predicted_pdb`: Second PDB file (relative to `data/`)
 
 **parse_alphafold_confidence** - Extract pLDDT confidence metrics from an AlphaFold PDB
 

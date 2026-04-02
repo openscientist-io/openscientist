@@ -136,6 +136,7 @@ class JobContainerRunner:
             network=network,
             mem_limit=cs.agent_memory,
             nano_cpus=int(cs.agent_cpu * 1e9),
+            platform=cs.agent_platform or None,
             security_opt=["no-new-privileges:true"],
             group_add=[docker_gid] if docker_gid else [],
             labels={

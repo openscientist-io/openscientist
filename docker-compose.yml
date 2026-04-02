@@ -48,10 +48,10 @@ services:
       ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_PASSWORD:-openscientist_dev_password}@postgres:5432/${POSTGRES_DB:-openscientist}
       PORT: ${PORT:-8080}
 
-      # Phenix: host path (from .env) is mounted at /opt/phenix inside the container
-      PHENIX_PATH: ${PHENIX_PATH:+/opt/phenix}
-      # PHENIX_HOST_PATH: set in .env to a Linux Phenix install path for agent containers.
-      # On Mac, leave unset to avoid mounting macOS binaries into Linux containers.
+      # Phenix: PHENIX_HOST_PATH points to a Linux x86_64 Phenix directory on the
+      # host.  It is mounted read-only at /opt/phenix; PHENIX_PATH is the
+      # container-internal path used by phenix_setup.py and agent tools.
+      PHENIX_PATH: ${PHENIX_HOST_PATH:+/opt/phenix}
       PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
 
       # GCP credentials: the host file path is passed separately so agent containers
@@ -65,6 +65,7 @@ services:
       OPENSCIENTIST_EXECUTOR_CPU: ${OPENSCIENTIST_EXECUTOR_CPU:-0.5}
       OPENSCIENTIST_AGENT_MEMORY: ${OPENSCIENTIST_AGENT_MEMORY:-8g}
       OPENSCIENTIST_AGENT_CPU: ${OPENSCIENTIST_AGENT_CPU:-2.0}
+      OPENSCIENTIST_AGENT_PLATFORM: ${OPENSCIENTIST_AGENT_PLATFORM:-}
       OPENSCIENTIST_HOST_PROJECT_DIR: ${OPENSCIENTIST_HOST_PROJECT_DIR:-}
 
       # Derived settings not expressible in .env
@@ -78,8 +79,8 @@ services:
       # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
 
-      # Mount Phenix installation if available (set PHENIX_PATH in .env)
-      - ${PHENIX_PATH:-/dev/null}:/opt/phenix:ro
+      # Mount Linux Phenix installation if available (set PHENIX_HOST_PATH in .env)
+      - ${PHENIX_HOST_PATH:-/dev/null}:/opt/phenix:ro
 
       # Mount built-in skills directory
       - ./skills:/app/skills:ro

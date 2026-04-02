@@ -5,7 +5,9 @@ description: Reference of available Phenix commands for structural biology analy
 
 # Phenix Tools Reference
 
-The `run_phenix_tool` tool can execute any Phenix command. This reference lists the most useful commands grouped by task. All commands accept PDB or mmCIF files.
+If Phenix is available (check your CLAUDE.md for the "Structural Biology Tools" section), **prefer `run_phenix_tool` over `execute_code`** for structural biology tasks like validation, superposition, refinement, and map analysis. Phenix is the gold standard for these tasks.
+
+Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], description="...")`. This reference lists the most useful commands grouped by task. All commands accept PDB or mmCIF files.
 
 ## Validation & Quality Assessment
 

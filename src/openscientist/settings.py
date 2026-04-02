@@ -528,6 +528,12 @@ class ContainerSettings(BaseSettings):
         alias="OPENSCIENTIST_AGENT_NETWORK",
         description="Docker network for agent containers. Auto-detected from the web server container if not set.",
     )
+    agent_platform: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AGENT_PLATFORM",
+        description="Docker platform for agent containers (e.g. linux/amd64). "
+        "Set to linux/amd64 on Apple Silicon to run x86_64 Phenix via Rosetta.",
+    )
 
     # Host path mapping for sibling container volume mounts (executor containers)
     # When the main container runs inside Docker and spawns sibling containers,
