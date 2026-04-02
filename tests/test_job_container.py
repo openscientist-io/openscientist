@@ -25,9 +25,11 @@ class TestJobContainerRunner:
                 agent_network=None,
                 agent_memory="8g",
                 agent_cpu=2.0,
+                agent_platform=None,
             ),
             provider=provider,
             database=SimpleNamespace(effective_database_url="postgresql://db"),
+            phenix=SimpleNamespace(phenix_host_path=None),
             secret_key="secret",
         )
 
