@@ -21,8 +21,12 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import docker
+from docker import errors as docker_errors
+from openscientist.job_container.utils import resolve_docker_network, to_host_path
+from openscientist.settings import Settings, get_settings
 from openscientist.version import SHORT_COMMIT_LENGTH
 
 logger = logging.getLogger(__name__)
@@ -35,15 +39,121 @@ class JobContainerRunner:
     """Launches and stops per-job agent containers."""
 
     def __init__(self) -> None:
-        import docker
-
         self._docker: docker.DockerClient = docker.from_env()
+
+    @staticmethod
+    def _is_not_found_error(error: Exception) -> bool:
+        """Return True when Docker reports that a container no longer exists."""
+        return isinstance(error, docker_errors.NotFound)
 
     def _get_network(self, configured_network: str | None) -> str:
         """Resolve the Docker network for agent containers."""
-        from openscientist.job_container import resolve_docker_network
-
         return resolve_docker_network(self._docker, configured_network)
+
+    @staticmethod
+    def _build_container_environment(
+        settings: Settings,
+        *,
+        job_id: str,
+        job_mount: str,
+    ) -> dict[str, str]:
+        """Build the environment variables for the agent container."""
+        cs = settings.container
+        provider_env = settings.provider.get_container_env_vars()
+        env: dict[str, str] = {
+            "JOB_ID": job_id,
+            "JOB_DIR": job_mount,
+            "DATABASE_URL": settings.database.effective_database_url,
+            "OPENSCIENTIST_SECRET_KEY": settings.secret_key,
+            **provider_env,
+        }
+        if cs.host_project_dir:
+            env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
+            env["OPENSCIENTIST_CONTAINER_APP_DIR"] = AGENT_APP_DIR
+        if settings.provider.google_application_credentials:
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = "/agent/gcp-credentials.json"
+        if settings.phenix.phenix_host_path:
+            env["PHENIX_PATH"] = "/opt/phenix"
+        return env
+
+    @staticmethod
+    def _build_container_volumes(
+        settings: Settings,
+        *,
+        job_dir_host: Path,
+        job_mount: str,
+    ) -> dict[str, dict[str, str]]:
+        """Build the bind mounts for the agent container."""
+        volumes: dict[str, dict[str, str]] = {
+            str(job_dir_host): {"bind": job_mount, "mode": "rw"},
+            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+        }
+        gcp_path = settings.provider.google_application_credentials
+        if gcp_path:
+            gcp_host_path = settings.provider.gcp_credentials_host_path or gcp_path
+            volumes[str(gcp_host_path)] = {
+                "bind": "/agent/gcp-credentials.json",
+                "mode": "ro",
+            }
+        phenix_host = settings.phenix.phenix_host_path
+        if phenix_host:
+            volumes[str(Path(phenix_host).expanduser().resolve())] = {
+                "bind": "/opt/phenix",
+                "mode": "ro",
+            }
+        return volumes
+
+    @staticmethod
+    def _agent_runtime_settings(
+        settings: Settings,
+    ) -> tuple[str | None, str, float, str | None]:
+        """Return network, memory, CPU, and platform settings for the agent."""
+        container_settings = settings.container
+        if hasattr(container_settings, "model_dump"):
+            config = container_settings.model_dump()
+        else:
+            config = vars(container_settings)
+        return (
+            cast(str | None, config["agent_network"]),
+            cast(str, config["agent_memory"]),
+            cast(float, config["agent_cpu"]),
+            cast(str | None, config["agent_platform"]),
+        )
+
+    @staticmethod
+    def _build_launch_configuration(
+        settings: Settings,
+        *,
+        job_id: str,
+        job_dir_host: Path,
+    ) -> tuple[
+        dict[str, str],
+        dict[str, dict[str, str]],
+        str | None,
+        str,
+        float,
+        str | None,
+    ]:
+        """Build the environment, mounts, and runtime settings for launch()."""
+        agent_network, agent_memory, agent_cpu, agent_platform = (
+            JobContainerRunner._agent_runtime_settings(settings)
+        )
+        job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
+        env = JobContainerRunner._build_container_environment(
+            settings, job_id=job_id, job_mount=job_mount
+        )
+        volumes = JobContainerRunner._build_container_volumes(
+            settings, job_dir_host=job_dir_host, job_mount=job_mount
+        )
+        return env, volumes, agent_network, agent_memory, agent_cpu, agent_platform
+
+    @staticmethod
+    def _docker_socket_group() -> str | None:
+        """Return the Docker socket GID when the socket is present."""
+        socket_path = Path("/var/run/docker.sock")
+        if not socket_path.exists():
+            return None
+        return str(os.stat(socket_path).st_gid)
 
     def launch(self, job_id: str, job_dir: Path) -> Any:
         """
@@ -62,12 +172,8 @@ class JobContainerRunner:
         Raises:
             RuntimeError: If Docker is unavailable or launch fails
         """
-        from openscientist.settings import get_settings
-
-        settings = get_settings()
+        settings: Settings = get_settings()
         cs = settings.container
-
-        from openscientist.job_container import to_host_path
 
         # Translate job_dir from container-internal path to host path.
         # Must resolve to absolute FIRST (so relative paths like "jobs/uuid" become
@@ -75,72 +181,29 @@ class JobContainerRunner:
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
         job_dir_host = to_host_path(job_dir.resolve(), cs)
+        env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
+            self._build_launch_configuration(
+                settings,
+                job_id=job_id,
+                job_dir_host=job_dir_host,
+            )
+        )
+        network = self._get_network(agent_network)
 
-        provider_env = settings.provider.get_container_env_vars()
-        database_url = settings.database.effective_database_url
-        network = self._get_network(cs.agent_network)
-
-        # Mount at a path whose final component IS the job UUID so that
-        # orchestrator code can derive the job ID from job_dir.name.
-        job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
-
-        env: dict[str, str] = {
-            "JOB_ID": job_id,
-            "JOB_DIR": job_mount,
-            "DATABASE_URL": database_url,
-            "OPENSCIENTIST_SECRET_KEY": settings.secret_key,
-            **provider_env,
-        }
-
-        # Pass host path mapping so the agent's ContainerManager can translate
-        # agent-internal paths (e.g. /agent/jobs/<id>/provenance) to host paths
-        # when creating executor container volume mounts.
-        if cs.host_project_dir:
-            env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
-            # Keep the app-dir env var aligned with the mount prefix above.
-            env["OPENSCIENTIST_CONTAINER_APP_DIR"] = AGENT_APP_DIR
-
-        # GCP credentials: mount the file if configured.
-        # Also mount the Docker socket so the agent can spawn executor containers.
-        volumes: dict[str, dict[str, str]] = {
-            str(job_dir_host): {"bind": job_mount, "mode": "rw"},
-            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
-        }
-        gcp_path = settings.provider.google_application_credentials
-        if gcp_path:
-            gcp_host_path = settings.provider.gcp_credentials_host_path or gcp_path
-            container_gcp_path = "/agent/gcp-credentials.json"
-            volumes[str(gcp_host_path)] = {"bind": container_gcp_path, "mode": "ro"}
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = container_gcp_path
-
-        # Phenix: mount the Linux installation directory if explicitly configured.
-        # Only mount when phenix_host_path is set (not the fallback phenix_path)
-        # to avoid mounting macOS binaries into Linux containers.
-        phenix_host = settings.phenix.phenix_host_path
-        if phenix_host:
-            phenix_host = str(Path(phenix_host).expanduser().resolve())
-            container_phenix = "/opt/phenix"
-            volumes[str(phenix_host)] = {"bind": container_phenix, "mode": "ro"}
-            env["PHENIX_PATH"] = container_phenix
-
-        # Pass the docker socket GID so the agent container can use it.
-        # We read the GID from the socket itself rather than /etc/group since
-        # the docker group may not be present inside the web server container.
-        _sock = Path("/var/run/docker.sock")
-        docker_gid = str(os.stat(_sock).st_gid) if _sock.exists() else None
-
-        short_id = job_id[:SHORT_COMMIT_LENGTH]
+        # We read the socket gid directly because the docker group may not exist
+        # inside the web server container.
+        docker_gid = self._docker_socket_group()
         container = self._docker.containers.run(
             image=AGENT_IMAGE,
-            name=f"openscientist-agent-{short_id}",
+            name=f"openscientist-agent-{job_id[:SHORT_COMMIT_LENGTH]}",
             detach=True,
             remove=False,
             environment=env,
             volumes=volumes,
             network=network,
-            mem_limit=cs.agent_memory,
-            nano_cpus=int(cs.agent_cpu * 1e9),
-            platform=cs.agent_platform or None,
+            mem_limit=agent_memory,
+            nano_cpus=int(agent_cpu * 1e9),
+            platform=agent_platform or None,
             security_opt=["no-new-privileges:true"],
             group_add=[docker_gid] if docker_gid else [],
             labels={
@@ -159,8 +222,10 @@ class JobContainerRunner:
             try:
                 container.stop(timeout=timeout)
                 logger.info("Stopped container for job %s", job_id)
-            except Exception as e:
-                logger.warning("Failed to stop container for job %s: %s", job_id, e)
+            except docker_errors.APIError as error:
+                if self._is_not_found_error(error):
+                    return
+                logger.warning("Failed to stop container for job %s: %s", job_id, error)
 
     def cleanup(self, job_id: str, log_dir: Path | None = None) -> None:
         """Remove the container for a job, optionally saving its logs first."""
@@ -173,14 +238,19 @@ class JobContainerRunner:
                             "utf-8", errors="replace"
                         )
                         (log_dir / "agent-container.log").write_text(logs)
-                    except Exception as log_err:
-                        logger.warning(
-                            "Failed to save container logs for job %s: %s", job_id, log_err
-                        )
+                    except (docker_errors.APIError, OSError) as error:
+                        if not self._is_not_found_error(error):
+                            logger.warning(
+                                "Failed to save container logs for job %s: %s",
+                                job_id,
+                                error,
+                            )
                 container.remove(force=True)
                 logger.info("Removed container for job %s", job_id)
-            except Exception as e:
-                logger.warning("Failed to remove container for job %s: %s", job_id, e)
+            except docker_errors.APIError as error:
+                if self._is_not_found_error(error):
+                    return
+                logger.warning("Failed to remove container for job %s: %s", job_id, error)
 
     def get_exit_code(self, job_id: str) -> int | None:
         """
@@ -206,18 +276,25 @@ class JobContainerRunner:
                             job_id,
                             exit_code,
                         )
-        except Exception as e:
-            logger.warning("Failed to get exit code for job %s: %s", job_id, e)
+        except docker_errors.APIError as error:
+            if self._is_not_found_error(error):
+                return None
+            logger.warning("Failed to get exit code for job %s: %s", job_id, error)
         return None
 
     def _find_container(self, job_id: str) -> Any | None:
-        """Find the running container for a job by label."""
+        """Find the agent container for a job by labels."""
         try:
             containers = self._docker.containers.list(
                 all=True,
-                filters={"label": f"openscientist.job_id={job_id}"},
+                filters={
+                    "label": [
+                        f"openscientist.job_id={job_id}",
+                        "openscientist.type=agent",
+                    ]
+                },
             )
             return containers[0] if containers else None
-        except Exception as e:
-            logger.warning("Failed to find container for job %s: %s", job_id, e)
+        except docker_errors.DockerException as error:
+            logger.warning("Failed to find container for job %s: %s", job_id, error)
             return None

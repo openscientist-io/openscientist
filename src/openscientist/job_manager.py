@@ -614,7 +614,10 @@ class JobManager:
                 exit_code = runner.get_exit_code(job_id)
                 if exit_code is not None and exit_code != 0:
                     logger.error(
-                        "Agent container for job %s exited with code %d before writing terminal status",
+                        (
+                            "Agent container for job %s exited with code %d before "
+                            "writing terminal status"
+                        ),
                         job_id,
                         exit_code,
                     )
