@@ -110,6 +110,15 @@ class JobContainerRunner:
             volumes[str(gcp_host_path)] = {"bind": container_gcp_path, "mode": "ro"}
             env["GOOGLE_APPLICATION_CREDENTIALS"] = container_gcp_path
 
+        # Phenix: mount the Linux installation directory if explicitly configured.
+        # Only mount when phenix_host_path is set (not the fallback phenix_path)
+        # to avoid mounting macOS binaries into Linux containers.
+        phenix_host = settings.phenix.phenix_host_path
+        if phenix_host:
+            container_phenix = "/opt/phenix"
+            volumes[str(phenix_host)] = {"bind": container_phenix, "mode": "ro"}
+            env["PHENIX_PATH"] = container_phenix
+
         # Pass the docker socket GID so the agent container can use it.
         # We read the GID from the socket itself rather than /etc/group since
         # the docker group may not be present inside the web server container.

@@ -82,20 +82,38 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
         print(f"Warning: {error_msg}", file=sys.stderr)
         return None
 
-    env_script = os.path.join(phenix_path, "phenix_env.sh")
-    if not os.path.exists(env_script):
-        msg = (
-            f"Phenix environment script not found at: {env_script}\n"
-            f"  This suggests PHENIX_PATH is not a valid Phenix installation.\n"
-            f"  Expected to find 'phenix_env.sh' in the Phenix root directory."
-        )
+    # phenix_env.sh hardcodes the original install path (e.g.
+    # /Applications/phenix-1.21.2-5419) which won't match the container
+    # mount point.  Source build/setpaths.sh directly with PHENIX set to
+    # the actual path so it works regardless of where Phenix is mounted.
+    setpaths = os.path.join(phenix_path, "build", "setpaths.sh")
+    if not os.path.exists(setpaths):
+        # Fall back to phenix_env.sh check for a friendlier error message
+        env_script = os.path.join(phenix_path, "phenix_env.sh")
+        if not os.path.exists(env_script):
+            msg = (
+                f"Phenix environment script not found at: {env_script}\n"
+                f"  This suggests PHENIX_PATH is not a valid Phenix installation.\n"
+                f"  Expected to find 'phenix_env.sh' in the Phenix root directory."
+            )
+        else:
+            msg = (
+                f"Phenix setpaths.sh not found at: {setpaths}\n"
+                f"  Expected to find 'build/setpaths.sh' in the Phenix installation."
+            )
         if raise_on_error:
             raise PhenixConfigError(msg)
         print(f"Warning: {msg}", file=sys.stderr)
         return None
 
-    # Source the script and capture environment
-    cmd = f"source {env_script} && env"
+    # Source setpaths.sh with PHENIX and LIBTBX_BUILD pointing to the
+    # actual mount path so relocated installs resolve correctly.
+    build_dir = os.path.join(phenix_path, "build")
+    cmd = (
+        f"export PHENIX={phenix_path} && "
+        f"export LIBTBX_BUILD={build_dir} && "
+        f"source {setpaths} && env"
+    )
     try:
         proc = subprocess.run(
             cmd,

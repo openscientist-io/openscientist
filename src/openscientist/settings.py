@@ -551,6 +551,7 @@ class PhenixSettings(BaseSettings):
     )
 
     phenix_path: str | None = Field(default=None, alias="PHENIX_PATH")
+    phenix_host_path: str | None = Field(default=None, alias="PHENIX_HOST_PATH")
 
     @field_validator("phenix_path")
     @classmethod
@@ -588,11 +589,11 @@ class PhenixSettings(BaseSettings):
         """
         if not self.phenix_path:
             return False
-        # Check directory exists and contains phenix_env.sh
         if not os.path.isdir(self.phenix_path):
             return False
-        env_script = os.path.join(self.phenix_path, "phenix_env.sh")
-        return os.path.exists(env_script)
+        # Check for build/setpaths.sh — the script actually used by setup_phenix_env()
+        setpaths = os.path.join(self.phenix_path, "build", "setpaths.sh")
+        return os.path.exists(setpaths)
 
 
 class BerkeleyLabSettings(BaseSettings):

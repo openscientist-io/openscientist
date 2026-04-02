@@ -50,6 +50,9 @@ services:
 
       # Phenix: host path (from .env) is mounted at /opt/phenix inside the container
       PHENIX_PATH: ${PHENIX_PATH:+/opt/phenix}
+      # PHENIX_HOST_PATH: set in .env to a Linux Phenix install path for agent containers.
+      # On Mac, leave unset to avoid mounting macOS binaries into Linux containers.
+      PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
 
       # GCP credentials: the host file path is passed separately so agent containers
       # can mount it on the host side (GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile)

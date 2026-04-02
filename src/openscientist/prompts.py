@@ -220,7 +220,7 @@ def format_skills_list(skills: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def generate_job_claude_md(*, use_hypotheses: bool = False) -> str:
+def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
     """
     Generate JOB_CLAUDE.md content for the discovery agent.
 
@@ -342,8 +342,9 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 
 Always use hypothesis tracking — even for literature-only investigations.""")
 
-    # --- Structural Biology Tools ---
-    parts.append("""
+    # --- Structural Biology Tools (only when Phenix is available) ---
+    if phenix_available:
+        parts.append("""
 ### Structural Biology Tools (when PHENIX_PATH is configured)
 
 **run_phenix_tool** - Execute a Phenix command-line tool
@@ -361,8 +362,9 @@ Always use hypothesis tracking — even for literature-only investigations.""")
 **parse_alphafold_confidence** - Extract pLDDT confidence metrics from an AlphaFold PDB
 
 - `alphafold_pdb`: AlphaFold PDB file (relative to `data/`)
-- `pae_json`: Optional PAE JSON file
+- `pae_json`: Optional PAE JSON file""")
 
+    parts.append("""
 ### Reading Data Files
 
 Use the correct tool for each file type:
