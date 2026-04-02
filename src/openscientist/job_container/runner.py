@@ -28,6 +28,7 @@ from openscientist.version import SHORT_COMMIT_LENGTH
 logger = logging.getLogger(__name__)
 
 AGENT_IMAGE = "openscientist-agent:latest"
+AGENT_APP_DIR = "/agent"
 
 
 class JobContainerRunner:
@@ -66,12 +67,14 @@ class JobContainerRunner:
         settings = get_settings()
         cs = settings.container
 
+        from openscientist.job_container import to_host_path
+
         # Translate job_dir from container-internal path to host path.
         # Must resolve to absolute FIRST (so relative paths like "jobs/uuid" become
         # "/app/jobs/uuid" inside the web container), then translate to the host
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
-        job_dir_host = self._to_host_path(job_dir.resolve(), cs)
+        job_dir_host = to_host_path(job_dir.resolve(), cs)
 
         provider_env = settings.provider.get_container_env_vars()
         database_url = settings.database.effective_database_url
@@ -79,7 +82,7 @@ class JobContainerRunner:
 
         # Mount at a path whose final component IS the job UUID so that
         # orchestrator code can derive the job ID from job_dir.name.
-        job_mount = f"/agent/jobs/{job_id}"
+        job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
 
         env: dict[str, str] = {
             "JOB_ID": job_id,
@@ -88,6 +91,14 @@ class JobContainerRunner:
             "OPENSCIENTIST_SECRET_KEY": settings.secret_key,
             **provider_env,
         }
+
+        # Pass host path mapping so the agent's ContainerManager can translate
+        # agent-internal paths (e.g. /agent/jobs/<id>/provenance) to host paths
+        # when creating executor container volume mounts.
+        if cs.host_project_dir:
+            env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
+            # Keep the app-dir env var aligned with the mount prefix above.
+            env["OPENSCIENTIST_CONTAINER_APP_DIR"] = AGENT_APP_DIR
 
         # GCP credentials: mount the file if configured.
         # Also mount the Docker socket so the agent can spawn executor containers.
@@ -199,23 +210,3 @@ class JobContainerRunner:
         except Exception as e:
             logger.warning("Failed to find container for job %s: %s", job_id, e)
             return None
-
-    @staticmethod
-    def _to_host_path(job_dir: Path, cs: Any) -> Path:
-        """
-        Translate a container-internal path to the host filesystem path.
-
-        When the web server itself runs in Docker, paths like /app/jobs/... need
-        to be mapped to their host equivalents for sibling container volume mounts.
-        """
-        if not cs.host_project_dir:
-            return job_dir
-
-        container_app_dir = Path(cs.container_app_dir)
-        host_project_dir = Path(cs.host_project_dir)
-
-        try:
-            relative = job_dir.relative_to(container_app_dir)
-            return host_project_dir / relative
-        except ValueError:
-            return job_dir

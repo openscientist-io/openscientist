@@ -81,7 +81,6 @@ def main():
         }
         json.dump(error_result, sys.stdout)
         sys.stdout.flush()
-        sys.exit(1)
 
 
 if __name__ == "__main__":
