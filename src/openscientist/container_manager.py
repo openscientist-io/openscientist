@@ -257,12 +257,7 @@ class ContainerManager:
         settings = get_settings()
         cs = settings.container
 
-        def _translate_volumes(
-            vols: dict[str, dict[str, str]],
-        ) -> dict[str, dict[str, str]]:
-            return {str(to_host_path(Path(k), cs)): v for k, v in vols.items()}
-
-        volumes = _translate_volumes(volumes)
+        volumes = {str(to_host_path(Path(k), cs)): v for k, v in volumes.items()}
         host_to_container = {
             str(to_host_path(Path(k), cs)): v for k, v in host_to_container.items()
         }
