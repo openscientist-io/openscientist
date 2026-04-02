@@ -2,6 +2,8 @@
 
 An autonomous AI scientist that generates and tests hypotheses from scientific data.
 
+**Live instance: [openscientist.io](https://openscientist.io)**
+
 ## Overview
 
 OpenScientist is a domain-agnostic autonomous discovery agent that:
