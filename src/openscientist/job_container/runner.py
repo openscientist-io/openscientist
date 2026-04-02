@@ -28,6 +28,7 @@ from openscientist.version import SHORT_COMMIT_LENGTH
 logger = logging.getLogger(__name__)
 
 AGENT_IMAGE = "openscientist-agent:latest"
+AGENT_APP_DIR = "/agent"
 
 
 class JobContainerRunner:
@@ -66,12 +67,14 @@ class JobContainerRunner:
         settings = get_settings()
         cs = settings.container
 
+        from openscientist.job_container import to_host_path
+
         # Translate job_dir from container-internal path to host path.
         # Must resolve to absolute FIRST (so relative paths like "jobs/uuid" become
         # "/app/jobs/uuid" inside the web container), then translate to the host
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
-        job_dir_host = self._to_host_path(job_dir.resolve(), cs)
+        job_dir_host = to_host_path(job_dir.resolve(), cs)
 
         provider_env = settings.provider.get_container_env_vars()
         database_url = settings.database.effective_database_url
@@ -79,7 +82,7 @@ class JobContainerRunner:
 
         # Mount at a path whose final component IS the job UUID so that
         # orchestrator code can derive the job ID from job_dir.name.
-        job_mount = f"/agent/jobs/{job_id}"
+        job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
 
         env: dict[str, str] = {
             "JOB_ID": job_id,
@@ -94,8 +97,8 @@ class JobContainerRunner:
         # when creating executor container volume mounts.
         if cs.host_project_dir:
             env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
-            # The agent mounts jobs under /agent, so its "app dir" is /agent
-            env["OPENSCIENTIST_CONTAINER_APP_DIR"] = "/agent"
+            # Keep the app-dir env var aligned with the mount prefix above.
+            env["OPENSCIENTIST_CONTAINER_APP_DIR"] = AGENT_APP_DIR
 
         # GCP credentials: mount the file if configured.
         # Also mount the Docker socket so the agent can spawn executor containers.
@@ -207,10 +210,3 @@ class JobContainerRunner:
         except Exception as e:
             logger.warning("Failed to find container for job %s: %s", job_id, e)
             return None
-
-    @staticmethod
-    def _to_host_path(job_dir: Path, cs: Any) -> Path:
-        """Delegate to the module-level to_host_path()."""
-        from openscientist.job_container import to_host_path
-
-        return to_host_path(job_dir, cs)

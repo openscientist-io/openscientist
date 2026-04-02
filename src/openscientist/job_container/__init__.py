@@ -7,7 +7,7 @@ Each agent job runs in its own Docker container:
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from openscientist.job_container.runner import JobContainerRunner
 
@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 __all__ = ["JobContainerRunner", "resolve_docker_network", "to_host_path"]
 
 
-def to_host_path(path: Path, cs: "Any") -> Path:
+class _HostPathSettings(Protocol):
+    """Minimal settings interface required by to_host_path()."""
+
+    host_project_dir: str | None
+    container_app_dir: str
+
+
+def to_host_path(path: Path, cs: _HostPathSettings) -> Path:
     """Translate a container-internal path to the host filesystem path.
 
     When the web server itself runs in Docker, paths like /app/jobs/... need
@@ -27,7 +34,7 @@ def to_host_path(path: Path, cs: "Any") -> Path:
 
     Args:
         path: The path to translate (may be container-internal or host).
-        cs: ContainerSettings instance with host_project_dir and container_app_dir.
+        cs: Settings object with host_project_dir and container_app_dir.
 
     Returns:
         The translated host path, or the original path if no translation is needed.
