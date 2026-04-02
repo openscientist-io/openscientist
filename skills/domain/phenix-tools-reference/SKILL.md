@@ -1,26 +1,27 @@
 ---
 name: phenix-tools-reference
 description: Reference of available Phenix commands for structural biology analysis
+category: domain
 ---
 
 # Phenix Tools Reference
 
-If Phenix is available (check your CLAUDE.md for the "Structural Biology Tools" section), **prefer `run_phenix_tool` over `execute_code`** for structural biology tasks like validation, superposition, refinement, and map analysis. Phenix is the gold standard for these tasks.
+If Phenix is available, prefer `run_phenix_tool` over `execute_code` for structural biology tasks like validation, superposition, refinement, and map analysis. Phenix is the gold standard for these tasks.
 
 Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], description="...")`. This reference lists the most useful commands grouped by task. All commands accept PDB or mmCIF files.
 
-## Validation & Quality Assessment
+## Validation and Quality Assessment
 
 | Command | Purpose |
 |---------|---------|
-| `phenix.molprobity` | Comprehensive validation: Ramachandran, rotamers, clashes, C-beta deviations — the single best "overall quality" check |
+| `phenix.molprobity` | Comprehensive validation: Ramachandran, rotamers, clashes, C-beta deviations; the single best overall quality check |
 | `phenix.clashscore` | All-atom steric clash analysis |
-| `phenix.ramalyze` | Ramachandran (phi/psi backbone) analysis |
+| `phenix.ramalyze` | Ramachandran backbone analysis |
 | `phenix.rotalyze` | Side-chain rotamer analysis |
 | `phenix.cablam_validate` | C-alpha based backbone validation |
-| `phenix.cbetadev` | C-beta deviation analysis (detects modeling errors) |
+| `phenix.cbetadev` | C-beta deviation analysis |
 | `phenix.omegalyze` | Cis/trans peptide bond validation |
-| `phenix.model_vs_data` | Model vs diffraction data statistics (R-factors, resolution) |
+| `phenix.model_vs_data` | Model versus diffraction data statistics |
 | `phenix.model_statistics` | Summary geometry statistics for a model |
 | `phenix.emringer` | Map-model validation for cryo-EM structures |
 | `phenix.validation_cryoem` | Comprehensive cryo-EM validation |
@@ -32,15 +33,15 @@ Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], de
 run_phenix_tool(
     tool_name="phenix.molprobity",
     input_files=["structure.pdb"],
-    description="Comprehensive structure quality check"
+    description="Comprehensive structure quality check",
 )
 ```
 
-## Structure Comparison & Superposition
+## Structure Comparison and Superposition
 
 | Command | Purpose |
 |---------|---------|
-| `phenix.superpose_pdbs` | Superpose two structures, report RMSD (also available via `compare_structures` tool) |
+| `phenix.superpose_pdbs` | Superpose two structures and report RMSD |
 | `phenix.chain_comparison` | Chain-level comparison between structures |
 | `phenix.structure_comparison` | Broader structural comparison |
 | `phenix.model_model_distances` | Per-residue distance between two models |
@@ -52,15 +53,15 @@ run_phenix_tool(
 run_phenix_tool(
     tool_name="phenix.model_model_distances",
     input_files=["experimental.pdb", "predicted.pdb"],
-    description="Per-residue distances between experimental and predicted"
+    description="Per-residue distances between experimental and predicted",
 )
 ```
 
-## AlphaFold & Predicted Models
+## AlphaFold and Predicted Models
 
 | Command | Purpose |
 |---------|---------|
-| `phenix.process_predicted_model` | Process AlphaFold/predicted structures (trim low-confidence regions, convert B-factors) |
+| `phenix.process_predicted_model` | Process AlphaFold or predicted structures |
 | `phenix.dock_predicted_model` | Dock a predicted model into a cryo-EM map |
 
 ### Example: Process AlphaFold model
@@ -70,7 +71,7 @@ run_phenix_tool(
     tool_name="phenix.process_predicted_model",
     input_files=["alphafold_model.pdb"],
     arguments={"pae_json_file_name": "alphafold_pae.json"},
-    description="Process AlphaFold model, trim low-confidence regions"
+    description="Process AlphaFold model and trim low-confidence regions",
 )
 ```
 
@@ -79,33 +80,33 @@ run_phenix_tool(
 | Command | Purpose |
 |---------|---------|
 | `phenix.refine` | Reciprocal-space refinement against diffraction data |
-| `phenix.real_space_refine` | Real-space refinement (primarily for cryo-EM) |
-| `phenix.geometry_minimization` | Energy minimization (fix geometry without data) |
+| `phenix.real_space_refine` | Real-space refinement, primarily for cryo-EM |
+| `phenix.geometry_minimization` | Energy minimization without data |
 | `phenix.dynamics` | Molecular dynamics refinement |
 
-**Note:** Refinement commands are compute-intensive and may approach the 5-minute timeout. Use targeted refinement (specific chains/residues) when possible.
+Refinement commands are compute-intensive and may approach the 5-minute timeout. Use targeted refinement when possible.
 
-## Map Operations (Cryo-EM / Crystallography)
+## Map Operations
 
 | Command | Purpose |
 |---------|---------|
 | `phenix.maps` | Compute electron density map coefficients |
 | `phenix.map_box` | Extract map region around a model |
 | `phenix.map_model_cc` | Map-model correlation coefficient |
-| `phenix.mtriage` | Cryo-EM map analysis (resolution, sharpening) |
+| `phenix.mtriage` | Cryo-EM map analysis |
 | `phenix.local_resolution` | Local resolution estimation |
 | `phenix.auto_sharpen` | Map sharpening |
 | `phenix.map_to_model` | Build atomic model from a cryo-EM map |
 | `phenix.dock_in_map` | Dock a model into a map |
 | `phenix.segment_and_split_map` | Segment map into domains |
 
-## Model Building & Manipulation
+## Model Building and Manipulation
 
 | Command | Purpose |
 |---------|---------|
 | `phenix.autobuild` | Automated model building into density |
-| `phenix.fit_loops` | Fit/rebuild loop regions |
-| `phenix.pdbtools` | PDB manipulation (select atoms, modify B-factors, extract chains) |
+| `phenix.fit_loops` | Fit or rebuild loop regions |
+| `phenix.pdbtools` | PDB manipulation, including selections and B-factor edits |
 | `phenix.reduce` | Add hydrogens to a structure |
 | `phenix.ready_set` | Add hydrogens and generate ligand restraints |
 | `phenix.find_helices_strands` | Identify secondary structure elements |
@@ -117,7 +118,7 @@ run_phenix_tool(
     tool_name="phenix.pdbtools",
     input_files=["multimer.pdb"],
     arguments={"selection": '"chain A"', "output.file_name": "chain_A.pdb"},
-    description="Extract chain A from multimer"
+    description="Extract chain A from multimer",
 )
 ```
 
@@ -125,7 +126,7 @@ run_phenix_tool(
 
 | Command | Purpose |
 |---------|---------|
-| `phenix.elbow` | Generate ligand geometry and restraints from SMILES or PDB |
+| `phenix.elbow` | Generate ligand geometry and restraints |
 | `phenix.ligandfit` | Fit a ligand into electron density |
 | `phenix.ligand_identification` | Identify unknown ligand density |
 | `phenix.find_all_ligands` | Find all ligand binding sites |
@@ -134,7 +135,7 @@ run_phenix_tool(
 
 | Command | Purpose |
 |---------|---------|
-| `phenix.xtriage` | Diffraction data analysis (twinning, anisotropy, resolution) |
+| `phenix.xtriage` | Diffraction data analysis |
 | `phenix.merging_statistics` | Data merging statistics |
 | `phenix.french_wilson` | French-Wilson scaling |
 | `phenix.cif_as_mtz` / `phenix.mtz_as_cif` | Reflection file format conversion |
@@ -145,11 +146,11 @@ run_phenix_tool(
 | Command | Purpose |
 |---------|---------|
 | `phenix.phaser` | Molecular replacement |
-| `phenix.ensembler` | Prepare search ensembles for MR |
-| `phenix.sculptor` | Edit search models for MR |
-| `phenix.mr_model_preparation` | Prepare MR search models |
+| `phenix.ensembler` | Prepare search ensembles for molecular replacement |
+| `phenix.sculptor` | Edit search models for molecular replacement |
+| `phenix.mr_model_preparation` | Prepare molecular replacement search models |
 
-## Sequence & Annotation
+## Sequence and Annotation
 
 | Command | Purpose |
 |---------|---------|
@@ -164,13 +165,13 @@ run_phenix_tool(
 | `phenix.b_factor_statistics` | B-factor distribution analysis |
 | `phenix.find_ncs` | Detect non-crystallographic symmetry |
 | `phenix.hbond` | Hydrogen bond analysis |
-| `phenix.table_one` | Generate "Table 1" statistics for publication |
+| `phenix.table_one` | Generate publication-ready Table 1 statistics |
 
 ## Tips for Using `run_phenix_tool`
 
-1. **Start with `phenix.molprobity`** for a quick quality overview of any structure
-2. **Input files are relative to `data/`** — just use the filename, not the full path
-3. **Pass arguments as a dict**: `arguments={"flag": "value"}`
-4. **5-minute timeout** — avoid running refinement on very large structures
-5. **Check `phenix.pdbtools`** for any PDB manipulation task before writing custom code
-6. **Format conversion**: Use `phenix.pdb_as_cif` or `phenix.cif_as_pdb` if your files are in the wrong format
+1. Start with `phenix.molprobity` for a quick quality overview.
+2. Input files are relative to `data/`.
+3. Pass CLI arguments as `arguments={"flag": "value"}`.
+4. Avoid large refinement jobs that are likely to hit the 5-minute timeout.
+5. Check `phenix.pdbtools` before writing custom PDB manipulation code.
+6. Use `phenix.pdb_as_cif` or `phenix.cif_as_pdb` for format conversion.

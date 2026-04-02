@@ -687,9 +687,9 @@ class TestBuiltinSkillsIngestion:
         stats = await ingester.sync_source(db_session, source)
 
         assert stats["errors"] == 0
-        assert stats["created"] == 9
+        assert stats["created"] == 10
 
-        # Verify all 9 expected slugs are present
+        # Verify all expected slugs are present
         stmt = select(Skill).where(Skill.source_id == source.id)
         result = await db_session.execute(stmt)
         skills = {s.slug: s for s in result.scalars().all()}
@@ -700,6 +700,7 @@ class TestBuiltinSkillsIngestion:
             "jgi-lakehouse",
             "kbase-query",
             "metabolomics",
+            "phenix-tools-reference",
             "hypothesis-generation",
             "prioritization",
             "result-interpretation",
@@ -707,13 +708,20 @@ class TestBuiltinSkillsIngestion:
         }
         assert set(skills.keys()) == expected_slugs
 
-        # Verify 5 domain + 4 workflow category split
+        # Verify 6 domain + 4 workflow category split
         domain_skills = [s for s in skills.values() if s.category == "domain"]
         workflow_skills = [s for s in skills.values() if s.category == "workflow"]
-        assert len(domain_skills) == 5
+        assert len(domain_skills) == 6
         assert len(workflow_skills) == 4
 
         # Spot-check one skill's metadata
         genomics = skills["genomics"]
         assert genomics.name == "genomics"
         assert genomics.description == "Genomics and transcriptomics analysis strategies"
+
+        phenix_reference = skills["phenix-tools-reference"]
+        assert phenix_reference.name == "phenix-tools-reference"
+        assert (
+            phenix_reference.description
+            == "Reference of available Phenix commands for structural biology analysis"
+        )

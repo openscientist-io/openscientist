@@ -447,6 +447,18 @@ class TestPhenixSettings:
             PhenixSettings(PHENIX_PATH="/opt/../etc/phenix")
         assert "path traversal" in str(exc_info.value)
 
+    def test_phenix_host_path_absolute_required(self):
+        """PHENIX_HOST_PATH must be an absolute path."""
+        with pytest.raises(ValidationError) as exc_info:
+            PhenixSettings(PHENIX_HOST_PATH="relative/path")
+        assert "absolute path" in str(exc_info.value)
+
+    def test_phenix_host_path_no_traversal(self):
+        """PHENIX_HOST_PATH must not contain path traversal."""
+        with pytest.raises(ValidationError) as exc_info:
+            PhenixSettings(PHENIX_HOST_PATH="/opt/../etc/phenix")
+        assert "path traversal" in str(exc_info.value)
+
     def test_phenix_nonexistent_path_accepted(self):
         """PHENIX_PATH with valid format but nonexistent path is accepted (existence checked by is_available)."""
         # Nonexistent path is accepted at validation time
@@ -469,6 +481,11 @@ class TestPhenixSettings:
         settings = PhenixSettings(PHENIX_PATH=None)
         assert settings.phenix_path is None
         assert settings.is_available is False
+
+    def test_phenix_host_path_none_is_valid(self):
+        """None PHENIX_HOST_PATH is valid (Phenix is optional)."""
+        settings = PhenixSettings(PHENIX_HOST_PATH=None)
+        assert settings.phenix_host_path is None
 
     def test_phenix_is_available_checks_env_script(self):
         """is_available checks for phenix_env.sh."""

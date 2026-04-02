@@ -115,6 +115,7 @@ class JobContainerRunner:
         # to avoid mounting macOS binaries into Linux containers.
         phenix_host = settings.phenix.phenix_host_path
         if phenix_host:
+            phenix_host = str(Path(phenix_host).expanduser().resolve())
             container_phenix = "/opt/phenix"
             volumes[str(phenix_host)] = {"bind": container_phenix, "mode": "ro"}
             env["PHENIX_PATH"] = container_phenix

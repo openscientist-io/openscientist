@@ -347,7 +347,7 @@ Always use hypothesis tracking — even for literature-only investigations.""")
         parts.append("""
 ### Structural Biology Tools (Phenix is available)
 
-**IMPORTANT:** For structural biology tasks (validation, comparison, refinement, map analysis), **always use `run_phenix_tool`** instead of `execute_code`. Phenix is installed and available. Do NOT write custom Python to parse PDB files or compute validation metrics — use Phenix, which is the gold standard. Search for the "phenix-tools-reference" skill for the full list of ~60 available commands.
+**IMPORTANT:** For structural biology tasks (validation, comparison, refinement, map analysis), **always use `run_phenix_tool`** instead of `execute_code`. Phenix is installed and available. Do NOT write custom Python to parse PDB files or compute validation metrics — use Phenix, which is the gold standard. Read the bundled `domain--phenix-tools-reference.md` skill in `.claude/skills/` for the full list of available commands.
 
 **run_phenix_tool** - Execute any Phenix command-line tool
 
