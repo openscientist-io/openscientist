@@ -471,6 +471,9 @@ async def test_send_chat_message_success(
         )
 
     assert response == "The main findings indicate..."
+    chat_claude_md = job_dir / ".claude" / "CLAUDE.md"
+    assert chat_claude_md.exists()
+    assert "OpenScientist Job Chat Assistant" in chat_claude_md.read_text(encoding="utf-8")
 
     # Verify both messages were stored
     history = await get_chat_history(db_session, test_job.id)

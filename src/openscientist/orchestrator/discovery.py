@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -388,12 +389,20 @@ async def _write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = F
 def _write_chat_claude_md(claude_dir: Path) -> None:
     """Write CHAT_CLAUDE.md content to claude_dir/CLAUDE.md (chat agent entry point)."""
     try:
-        src = Path(__file__).parent.parent.parent.parent / "CHAT_CLAUDE.md"
         dest = claude_dir / "CLAUDE.md"
-        dest.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        dest.write_text(_read_chat_claude_md_template(), encoding="utf-8")
         logger.debug("Wrote chat CLAUDE.md to %s", dest)
     except Exception as e:
         logger.warning("Failed to write chat CLAUDE.md: %s", e)
+
+
+def _read_chat_claude_md_template() -> str:
+    """Read the packaged CHAT_CLAUDE.md template used by job chat."""
+    return (
+        resources.files("openscientist.templates")
+        .joinpath("CHAT_CLAUDE.md")
+        .read_text(encoding="utf-8")
+    )
 
 
 def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:

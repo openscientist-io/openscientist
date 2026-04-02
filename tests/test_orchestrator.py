@@ -7,6 +7,7 @@ unit testing.
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -812,43 +813,45 @@ class TestAppendLog:
 class TestWriteChatClaudeMd:
     """Tests for _write_chat_claude_md()."""
 
+    def test_packaged_template_matches_repo_copy(self):
+        from openscientist.orchestrator.discovery import _read_chat_claude_md_template
+
+        repo_copy = (Path(__file__).resolve().parents[1] / "CHAT_CLAUDE.md").read_text(
+            encoding="utf-8"
+        )
+        assert _read_chat_claude_md_template() == repo_copy
+
     def test_writes_chat_claude_md(self, tmp_path):
         from openscientist.orchestrator.discovery import _write_chat_claude_md
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
 
-        # Source is relative to discovery.py: ../../../../CHAT_CLAUDE.md
-        # We mock it by patching Path to control the source
-        chat_src = tmp_path / "CHAT_CLAUDE.md"
-        chat_src.write_text("# Chat Claude\nInstructions here", encoding="utf-8")
-
-        with patch("openscientist.orchestrator.discovery.Path") as mock_path_cls:
-            # Make Path(__file__) chain return our test source
-            mock_file_path = MagicMock()
-            mock_file_path.parent.parent.parent.parent.__truediv__ = lambda _self, _name: chat_src
-            mock_path_cls.return_value = mock_file_path
-
-            # But also make the real Path work for dest
-            from pathlib import Path as RealPath
-
-            _write_chat_claude_md(RealPath(claude_dir))
+        with patch(
+            "openscientist.orchestrator.discovery._read_chat_claude_md_template",
+            return_value="# Chat Claude\nInstructions here",
+        ):
+            _write_chat_claude_md(claude_dir)
 
         dest = claude_dir / "CLAUDE.md"
         assert dest.exists()
         content = dest.read_text(encoding="utf-8")
         assert "Chat Claude" in content
 
-    def test_missing_source_no_crash(self, tmp_path):
+    def test_missing_source_no_crash(self, tmp_path, caplog):
         from openscientist.orchestrator.discovery import _write_chat_claude_md
 
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
 
-        # Source file doesn't exist — should log warning but not crash
-        _write_chat_claude_md(claude_dir)
-        # No CLAUDE.md written, but no exception
-        # (the real file may or may not exist depending on working directory)
+        with patch(
+            "openscientist.orchestrator.discovery._read_chat_claude_md_template",
+            side_effect=FileNotFoundError("missing packaged template"),
+        ):
+            _write_chat_claude_md(claude_dir)
+
+        assert not (claude_dir / "CLAUDE.md").exists()
+        assert "Failed to write chat CLAUDE.md" in caplog.text
 
 
 # ─── build_initial_prompt ──────────────────────────────────────────────
