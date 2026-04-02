@@ -7,8 +7,8 @@ import base64
 import json
 import os
 
-from flask import Flask, request
-from google.cloud import iam_admin_v1
+from flask import Flask, request  # type: ignore[import-not-found]
+from google.cloud import iam_admin_v1  # type: ignore[attr-defined]
 
 app = Flask(__name__)
 
