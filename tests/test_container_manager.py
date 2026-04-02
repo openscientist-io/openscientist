@@ -8,6 +8,7 @@ import json
 import tempfile
 from datetime import UTC
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -445,7 +446,10 @@ class TestBuildVolumesHostTranslation:
     @staticmethod
     def _get_run_volumes(mock_client: MagicMock) -> dict[str, dict[str, str]]:
         call_kwargs = mock_client.containers.run.call_args
-        return call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
+        volumes = cast(dict[str, dict[str, str]] | None, call_kwargs.kwargs.get("volumes"))
+        if volumes is not None:
+            return volumes
+        return cast(dict[str, dict[str, str]], call_kwargs[1]["volumes"])
 
     def test_build_volumes_translates_output_dir(self, tmp_path: Path) -> None:
         """When host_project_dir is set, output_dir is translated."""

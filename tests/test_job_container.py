@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -61,13 +62,16 @@ class TestJobContainerRunner:
         def fake_exists(path: Path) -> bool:
             if path == Path("/var/run/docker.sock"):
                 return False
-            return original_exists(path)
+            return cast(bool, original_exists(path))
 
         with (
             patch.dict(sys.modules, {"docker": mock_docker}),
             patch("openscientist.settings.get_settings", return_value=settings),
             patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch("openscientist.job_container.to_host_path", return_value=Path("/host/project/jobs/job-123")),
+            patch(
+                "openscientist.job_container.to_host_path",
+                return_value=Path("/host/project/jobs/job-123"),
+            ),
             patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
         ):
             runner = JobContainerRunner()
@@ -94,13 +98,15 @@ class TestJobContainerRunner:
         def fake_exists(path: Path) -> bool:
             if path == Path("/var/run/docker.sock"):
                 return False
-            return original_exists(path)
+            return cast(bool, original_exists(path))
 
         with (
             patch.dict(sys.modules, {"docker": mock_docker}),
             patch("openscientist.settings.get_settings", return_value=settings),
             patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch("openscientist.job_container.to_host_path", return_value=Path("/app/jobs/job-123")),
+            patch(
+                "openscientist.job_container.to_host_path", return_value=Path("/app/jobs/job-123")
+            ),
             patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
         ):
             runner = JobContainerRunner()
