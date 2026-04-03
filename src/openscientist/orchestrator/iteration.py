@@ -116,11 +116,7 @@ At the end of this iteration, call save_iteration_summary with a brief summary o
 
 def _build_pmid_restriction(ks: KnowledgeState) -> str:
     """Build a prompt section restricting PMID citations to those in the knowledge state."""
-    valid_pmids = [
-        lit["pmid"]
-        for lit in ks.data.get("literature", [])
-        if lit.get("pmid")
-    ]
+    valid_pmids = [lit["pmid"] for lit in ks.data.get("literature", []) if lit.get("pmid")]
     if valid_pmids:
         pmid_list = ", ".join(valid_pmids)
         return (
