@@ -114,6 +114,30 @@ Call set_status before every significant action so users can follow your progres
 At the end of this iteration, call save_iteration_summary with a brief summary of what you investigated and learned."""
 
 
+def _build_pmid_restriction(ks: KnowledgeState) -> str:
+    """Build a prompt section restricting PMID citations to those in the knowledge state."""
+    valid_pmids = [
+        lit["pmid"]
+        for lit in ks.data.get("literature", [])
+        if lit.get("pmid")
+    ]
+    if valid_pmids:
+        pmid_list = ", ".join(valid_pmids)
+        return (
+            f"4. **Literature citations:** Only cite PMIDs that appear in the "
+            f"Literature section of the Knowledge Outline above. The valid PMIDs "
+            f"from this investigation are: {pmid_list}\n"
+            f"   Do NOT invent, guess, or recall PMIDs from memory. If you want to "
+            f"reference a concept without a retrieved paper, describe it without a PMID."
+        )
+    return (
+        "4. **Literature citations:** No literature was retrieved during this "
+        "investigation. Do NOT include any PMID citations in the report. "
+        "If you want to reference background knowledge, describe it in prose "
+        "without PMIDs."
+    )
+
+
 def build_report_prompt(
     research_question: str,
     ks: KnowledgeState,
@@ -183,7 +207,9 @@ and iteration summaries.
    - Quantify findings (e.g., "3 of 5 studies found...")
    - Acknowledge limitations and uncertainty clearly
 
-4. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
+{_build_pmid_restriction(ks)}
+
+5. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
    answer to the research question.  Be direct — no citations or hedging.
 
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.

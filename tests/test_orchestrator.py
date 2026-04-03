@@ -756,6 +756,34 @@ class TestBuildReportPrompt:
         assert "Executive Summary" in prompt
         assert "set_consensus_answer" in prompt
 
+    def test_pmid_restriction_with_literature(self):
+        """When literature exists, report prompt should whitelist those PMIDs."""
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        ks.add_literature("12345678", "Paper A", "Abstract A")
+        ks.add_literature("87654321", "Paper B", "Abstract B")
+
+        prompt = build_report_prompt("What causes X?", ks)
+
+        assert "12345678" in prompt
+        assert "87654321" in prompt
+        assert "Do NOT invent" in prompt
+        assert "No literature was retrieved" not in prompt
+
+    def test_pmid_restriction_without_literature(self):
+        """When no literature exists, report prompt should forbid all PMIDs."""
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+
+        prompt = build_report_prompt("What causes X?", ks)
+
+        assert "No literature was retrieved" in prompt
+        assert "Do NOT include any PMID" in prompt
+
 
 # ─── _save_transcript ─────────────────────────────────────────────────
 
