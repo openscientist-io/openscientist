@@ -761,7 +761,9 @@ class TestBuildReportPrompt:
         from openscientist.orchestrator.iteration import build_report_prompt
 
         ks = KnowledgeState("j1", "What causes X?", 10)
-        ks.add_literature("12345678", "A Relevant Paper", "This study demonstrates that X causes Y.")
+        ks.add_literature(
+            "12345678", "A Relevant Paper", "This study demonstrates that X causes Y."
+        )
         prompt = build_report_prompt("What causes X?", ks)
 
         # Abstract should flow through to the report prompt for citation grounding
