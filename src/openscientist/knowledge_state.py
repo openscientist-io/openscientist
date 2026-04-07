@@ -636,12 +636,16 @@ class KnowledgeState:
             parts.extend(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}" for hyp in all_hyps)
             parts.append("")
 
-        # Literature — titles only (no abstracts)
+        # Literature — titles with abstracts for citation grounding
         if self.data["literature"]:
             parts.append(f"## Literature ({len(self.data['literature'])} papers)")
             for lit in self.data["literature"]:
                 pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
-                parts.append(f"- {lit['title']}{pmid_str}")
+                parts.append(f"- **{lit['title']}**{pmid_str}")
+                abstract = lit.get("abstract", "")
+                if abstract:
+                    truncated = abstract[:500] + "..." if len(abstract) > 500 else abstract
+                    parts.append(f"  Abstract: {truncated}")
             parts.append("")
 
         # Consensus answer if exists
