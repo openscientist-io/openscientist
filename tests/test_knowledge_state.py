@@ -439,6 +439,35 @@ class TestSanitizeForJson:
         assert _sanitize_for_json([]) == []
 
 
+class TestGetReportOutline:
+    """Tests for get_report_outline() — used by the report-writing agent."""
+
+    def test_includes_full_abstracts(self, ks):
+        abstract = "A" * 1000
+        ks.add_literature("12345678", "My Paper Title", abstract)
+        outline = ks.get_report_outline()
+        assert abstract in outline
+
+    def test_includes_literature_titles_and_pmids(self, ks):
+        ks.add_literature("99999999", "Some Important Paper", "abstract text")
+        outline = ks.get_report_outline()
+        assert "Some Important Paper" in outline
+        assert "PMID: 99999999" in outline
+
+    def test_omits_abstract_line_when_empty(self, ks):
+        ks.add_literature("11111111", "No Abstract Paper", "")
+        outline = ks.get_report_outline()
+        assert "No Abstract Paper" in outline
+        assert "Abstract:" not in outline
+
+    def test_includes_findings_and_hypotheses(self, ks):
+        ks.add_finding("Important Discovery", "p < 0.001")
+        ks.add_hypothesis("X causes Y")
+        outline = ks.get_report_outline()
+        assert "Important Discovery" in outline
+        assert "X causes Y" in outline
+
+
 class TestToDict:
     """Tests for raw dict access."""
 
