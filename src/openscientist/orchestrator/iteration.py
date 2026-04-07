@@ -184,7 +184,7 @@ and iteration summaries.
    - Acknowledge limitations and uncertainty clearly
 
 4. **Citation integrity:**
-   - Only attribute claims to papers based on the abstracts provided below — do not infer paper content from titles alone
+   - Only attribute claims to papers based on the abstracts provided in the knowledge outline above — do not infer paper content from titles alone
 
 5. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
    answer to the research question.  Be direct — no citations or hedging.

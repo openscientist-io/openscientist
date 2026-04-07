@@ -587,11 +587,10 @@ class KnowledgeState:
         parts.append("")
 
     def get_report_outline(self) -> str:
-        """Get a concise outline of accumulated knowledge for the report prompt.
+        """Get an outline of accumulated knowledge for the report prompt.
 
-        Unlike get_report_summary() which includes full detail (abstracts, evidence
-        strings, etc.), this returns a compact overview: finding titles, hypothesis
-        outcomes, iteration straplines, and literature titles only.
+        Includes finding titles, hypothesis outcomes, iteration straplines,
+        and literature entries with full abstracts for citation grounding.
         """
         parts: list[str] = [
             f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
@@ -644,8 +643,7 @@ class KnowledgeState:
                 parts.append(f"- **{lit['title']}**{pmid_str}")
                 abstract = lit.get("abstract", "")
                 if abstract:
-                    truncated = abstract[:500] + "..." if len(abstract) > 500 else abstract
-                    parts.append(f"  Abstract: {truncated}")
+                    parts.append(f"  Abstract: {abstract}")
             parts.append("")
 
         # Consensus answer if exists
