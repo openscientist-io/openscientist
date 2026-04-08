@@ -207,8 +207,11 @@ class KnowledgeState:
         elif snippet in abstract:
             result["validation_status"] = "verified"
         else:
-            # Normalize: lowercase + collapse whitespace
-            norm = lambda s: re.sub(r"\s+", " ", s.lower().strip())  # noqa: E731
+            # Normalize: lowercase + collapse whitespace + strip punctuation
+            def norm(s: str) -> str:  # noqa: E731
+                s = re.sub(r"\s+", " ", s.lower().strip())
+                return s.strip(".,;:!?\"'()[]{}")
+
             if norm(snippet) in norm(abstract):
                 result["validation_status"] = "verified_normalized"
             else:

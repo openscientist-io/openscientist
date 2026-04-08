@@ -151,6 +151,24 @@ class TestValidateCitation:
         result = ks.validate_citation({"pmid": "999", "snippet": "some text"})
         assert result["validation_status"] == "unchecked"
 
+    def test_normalized_strips_trailing_punctuation(self, ks):
+        """Snippet missing trailing period + has a case difference."""
+        ks.add_literature("555", "Paper", "The Pathway is active in neurons.")
+        result = ks.validate_citation(
+            {"pmid": "555", "snippet": "the pathway is active in neurons"}
+        )
+        assert result["validation_status"] == "verified_normalized"
+
+    def test_normalized_strips_leading_punctuation(self, ks):
+        """Snippet includes quotes that aren't in the abstract text."""
+        ks.add_literature(
+            "666", "Paper", "She noted the pathway is active in her review."
+        )
+        result = ks.validate_citation(
+            {"pmid": "666", "snippet": '"the Pathway is active"'}
+        )
+        assert result["validation_status"] == "verified_normalized"
+
     def test_empty_snippet_is_mismatch(self, ks):
         ks.add_literature("444", "Paper", "Some abstract text.")
         result = ks.validate_citation({"pmid": "444", "snippet": ""})
