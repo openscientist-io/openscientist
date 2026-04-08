@@ -103,6 +103,58 @@ class TestFindings:
         finding = ks.data["findings"][0]
         assert finding["supporting_hypotheses"] == []
         assert finding["plots"] == []
+        assert finding["citations"] == []
+
+    def test_finding_with_citations(self, ks):
+        ks.add_literature("12345678", "A Paper", "mHTT aggregates were observed in 89% of neurons")
+        ks.add_finding(
+            "HTT aggregation",
+            "p < 0.001",
+            citations=[
+                {
+                    "pmid": "12345678",
+                    "snippet": "mHTT aggregates were observed in 89% of neurons",
+                    "explanation": "Demonstrates aggregation",
+                }
+            ],
+        )
+        finding = ks.data["findings"][0]
+        assert len(finding["citations"]) == 1
+        assert finding["citations"][0]["validation_status"] == "verified"
+        assert finding["citations"][0]["pmid"] == "12345678"
+
+    def test_finding_without_citations_backwards_compatible(self, ks):
+        ks.add_finding("Old finding", "some evidence")
+        finding = ks.data["findings"][0]
+        assert finding["citations"] == []
+
+
+class TestValidateCitation:
+    """Tests for citation validation."""
+
+    def test_verified_exact_match(self, ks):
+        ks.add_literature("111", "Paper", "The protein was detected in all samples.")
+        result = ks.validate_citation({"pmid": "111", "snippet": "detected in all samples"})
+        assert result["validation_status"] == "verified"
+
+    def test_verified_normalized(self, ks):
+        ks.add_literature("222", "Paper", "The  protein\nwas   detected.")
+        result = ks.validate_citation({"pmid": "222", "snippet": "the protein was detected."})
+        assert result["validation_status"] == "verified_normalized"
+
+    def test_mismatch(self, ks):
+        ks.add_literature("333", "Paper", "The protein was detected.")
+        result = ks.validate_citation({"pmid": "333", "snippet": "completely unrelated text"})
+        assert result["validation_status"] == "mismatch"
+
+    def test_unchecked_pmid_not_found(self, ks):
+        result = ks.validate_citation({"pmid": "999", "snippet": "some text"})
+        assert result["validation_status"] == "unchecked"
+
+    def test_empty_snippet_is_mismatch(self, ks):
+        ks.add_literature("444", "Paper", "Some abstract text.")
+        result = ks.validate_citation({"pmid": "444", "snippet": ""})
+        assert result["validation_status"] == "mismatch"
 
 
 class TestLiterature:
@@ -466,6 +518,44 @@ class TestGetReportOutline:
         outline = ks.get_report_outline()
         assert "Important Discovery" in outline
         assert "X causes Y" in outline
+
+    def test_includes_finding_citations(self, ks):
+        ks.add_literature("55555555", "Cited Paper", "relevant abstract text here")
+        ks.add_finding(
+            "A Finding",
+            "p = 0.01",
+            citations=[
+                {
+                    "pmid": "55555555",
+                    "snippet": "relevant abstract text here",
+                    "explanation": "Supports the finding directly",
+                }
+            ],
+        )
+        outline = ks.get_report_outline()
+        assert "PMID:55555555" in outline
+        assert "relevant abstract text here" in outline
+        assert "Supports the finding directly" in outline
+        assert "[verified]" in outline
+
+    def test_omits_abstracts_for_cited_papers(self, ks):
+        ks.add_literature("77777777", "Cited Paper", "This abstract should be omitted")
+        ks.add_literature("88888888", "Uncited Paper", "This abstract should appear")
+        ks.add_finding(
+            "A Finding",
+            "evidence",
+            citations=[{"pmid": "77777777", "snippet": "This abstract", "explanation": "test"}],
+        )
+        outline = ks.get_report_outline()
+        # Cited paper's abstract should NOT appear in the literature section
+        assert "Abstract: This abstract should be omitted" not in outline
+        # Uncited paper's abstract SHOULD appear
+        assert "Abstract: This abstract should appear" in outline
+
+    def test_report_outline_evidence_included(self, ks):
+        ks.add_finding("My Finding", "p < 0.001, d = 0.8")
+        outline = ks.get_report_outline()
+        assert "Statistical evidence: p < 0.001, d = 0.8" in outline
 
 
 class TestToDict:

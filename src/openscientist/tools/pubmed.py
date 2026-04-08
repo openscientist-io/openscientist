@@ -64,7 +64,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
             parts.append(
                 f"\n{i}. **{paper['title']}** (PMID: {paper['pmid']}, {paper.get('year', 'N/A')})\n"
                 f"   Authors: {paper.get('authors', 'Unknown')}\n"
-                f"   Abstract: {paper['abstract'][:300]}...\n"
+                f"   Abstract: {paper['abstract']}\n"
             )
         return "".join(parts)
 

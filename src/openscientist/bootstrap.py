@@ -813,6 +813,7 @@ def _normalize_findings(raw_ks: dict[str, Any]) -> list[dict[str, Any]]:
                 "biological_interpretation": _to_string(raw_f.get("biological_interpretation")),
                 "finding_type": _to_string(raw_f.get("finding_type") or raw_f.get("significance"))
                 or "observation",
+                "citations": _to_list(raw_f.get("citations")),
             }
         )
     return findings
