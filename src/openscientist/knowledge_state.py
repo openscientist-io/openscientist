@@ -134,6 +134,7 @@ class KnowledgeState:
         supporting_hypotheses: list[str] | None = None,
         literature_support: list[str] | None = None,
         plots: list[str] | None = None,
+        citations: list[dict[str, str]] | None = None,
     ) -> str:
         """
         Add a confirmed finding.
@@ -144,11 +145,15 @@ class KnowledgeState:
             supporting_hypotheses: List of hypothesis IDs
             literature_support: List of literature IDs
             plots: List of plot file paths
+            citations: List of citation dicts with keys pmid, snippet, explanation.
+                Each citation is validated against stored abstracts.
 
         Returns:
             finding_id: Unique ID for this finding
         """
         finding_id = f"F{len(self.data['findings']) + 1:03d}"
+
+        validated_citations = [self.validate_citation(c) for c in (citations or [])]
 
         finding = {
             "id": finding_id,
@@ -159,10 +164,60 @@ class KnowledgeState:
             "literature_support": literature_support or [],
             "plots": plots or [],
             "biological_interpretation": "",
+            "citations": validated_citations,
         }
 
         self.data["findings"].append(finding)
         return finding_id
+
+    def validate_citation(self, citation: dict[str, str]) -> dict[str, str]:
+        """Validate a citation snippet against the stored abstract.
+
+        Looks up the PMID in the literature list and checks whether the
+        snippet appears in the abstract.  Sets ``validation_status`` to one of:
+
+        - ``verified`` — exact substring match
+        - ``verified_normalized`` — match after lowercasing + whitespace collapse
+        - ``mismatch`` — snippet not found in abstract
+        - ``unchecked`` — PMID not in literature list
+
+        Args:
+            citation: Dict with at least ``pmid`` and ``snippet``.
+
+        Returns:
+            A new citation dict with ``validation_status`` added.
+        """
+        import re
+
+        result = dict(citation)
+        pmid = result.get("pmid", "")
+        snippet = result.get("snippet", "")
+
+        # Find the paper by PMID
+        abstract = None
+        for lit in self.data["literature"]:
+            if str(lit.get("pmid")) == str(pmid):
+                abstract = lit.get("abstract", "")
+                break
+
+        if abstract is None:
+            result["validation_status"] = "unchecked"
+        elif not snippet:
+            result["validation_status"] = "mismatch"
+        elif snippet in abstract:
+            result["validation_status"] = "verified"
+        else:
+            # Normalize: lowercase + collapse whitespace + strip punctuation
+            def norm(s: str) -> str:  # noqa: E731
+                s = re.sub(r"\s+", " ", s.lower().strip())
+                return s.strip(".,;:!?\"'()[]{}")
+
+            if norm(snippet) in norm(abstract):
+                result["validation_status"] = "verified_normalized"
+            else:
+                result["validation_status"] = "mismatch"
+
+        return result
 
     def add_literature(
         self,
@@ -587,11 +642,10 @@ class KnowledgeState:
         parts.append("")
 
     def get_report_outline(self) -> str:
-        """Get a concise outline of accumulated knowledge for the report prompt.
+        """Get an outline of accumulated knowledge for the report prompt.
 
-        Unlike get_report_summary() which includes full detail (abstracts, evidence
-        strings, etc.), this returns a compact overview: finding titles, hypothesis
-        outcomes, iteration straplines, and literature titles only.
+        Includes finding titles, hypothesis outcomes, iteration straplines,
+        and literature entries with full abstracts for citation grounding.
         """
         parts: list[str] = [
             f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
@@ -622,12 +676,21 @@ class KnowledgeState:
                 parts.append(f"- Iteration {entry['iteration']}: {strapline}")
             parts.append("")
 
-        # Findings — titles only
+        # Findings — titles with citations when available
         if self.data["findings"]:
             parts.append("## Findings")
-            parts.extend(
-                f"- {finding['id']}: {finding['title']}" for finding in self.data["findings"]
-            )
+            for finding in self.data["findings"]:
+                parts.append(f"- {finding['id']}: {finding['title']}")
+                if finding.get("evidence"):
+                    parts.append(f"  Statistical evidence: {finding['evidence']}")
+                for c in finding.get("citations", []):
+                    status = c.get("validation_status", "unchecked")
+                    pmid = c.get("pmid", "?")
+                    snippet = c.get("snippet", "")
+                    explanation = c.get("explanation", "")
+                    parts.append(f'  - PMID:{pmid} [{status}]: "{snippet}"')
+                    if explanation:
+                        parts.append(f"    → {explanation}")
             parts.append("")
 
         # Hypotheses — one-line status
@@ -636,12 +699,25 @@ class KnowledgeState:
             parts.extend(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}" for hyp in all_hyps)
             parts.append("")
 
-        # Literature — titles only (no abstracts)
+        # Literature — titles with abstracts for citation grounding.
+        # Papers already cited by findings get title+PMID only (the snippet
+        # is the grounding); uncited papers include full abstracts as fallback.
+        cited_pmids: set[str] = set()
+        for finding in self.data["findings"]:
+            for c in finding.get("citations", []):
+                if c.get("pmid"):
+                    cited_pmids.add(str(c["pmid"]))
+
         if self.data["literature"]:
             parts.append(f"## Literature ({len(self.data['literature'])} papers)")
             for lit in self.data["literature"]:
                 pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
-                parts.append(f"- {lit['title']}{pmid_str}")
+                parts.append(f"- **{lit['title']}**{pmid_str}")
+                # Only include abstracts for papers not already cited by findings
+                if str(lit.get("pmid", "")) not in cited_pmids:
+                    abstract = lit.get("abstract", "")
+                    if abstract:
+                        parts.append(f"  Abstract: {abstract}")
             parts.append("")
 
         # Consensus answer if exists
@@ -754,6 +830,7 @@ class KnowledgeState:
             "literature_support": finding_data.get("literature_support", []),
             "plots": finding_data.get("plots", []),
             "biological_interpretation": finding_data.get("biological_interpretation", ""),
+            "citations": finding_data.get("citations", []),
         }
 
     async def _upsert_findings(self, session: AsyncSession, job_uuid: UUID) -> None:
@@ -779,6 +856,7 @@ class KnowledgeState:
                 )
                 continue
             existing.finding_type = finding_data.get("finding_type", "observation")
+            existing.data = _sanitize_for_json(self._finding_payload(finding_data))
 
     @staticmethod
     def _literature_extra_metadata(literature_data: dict[str, Any]) -> dict[str, Any]:
@@ -1051,6 +1129,7 @@ class KnowledgeState:
                     "literature_support": finding_data.get("literature_support", []),
                     "plots": finding_data.get("plots", []),
                     "biological_interpretation": finding_data.get("biological_interpretation", ""),
+                    "citations": finding_data.get("citations", []),
                 }
             )
 

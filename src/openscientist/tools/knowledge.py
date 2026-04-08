@@ -18,7 +18,11 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
 
     @tool
     def update_knowledge_state(
-        title: str, evidence: str, interpretation: str = "", description: str = ""
+        title: str,
+        evidence: str,
+        interpretation: str = "",
+        description: str = "",
+        citations: list[dict[str, str]] | None = None,
     ) -> str:
         """
         Record a confirmed finding to the knowledge graph.
@@ -28,14 +32,20 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
             evidence: Statistical evidence (p-values, effect sizes, etc.)
             interpretation: Biological/mechanistic interpretation (optional)
             description: Why you're recording this finding
+            citations: List of supporting citations from the literature. Each
+                citation is a dict with keys:
+                - pmid: PubMed ID of the cited paper
+                - snippet: Exact quote from the paper's abstract
+                - explanation: Why this quote supports the finding
+                Snippets are validated against stored abstracts at recording time.
 
         Returns:
-            Confirmation with finding number
+            Confirmation with finding number and citation validation results
         """
         from openscientist.knowledge_state import KnowledgeState
 
         ks = KnowledgeState.load_from_database_sync(ctx.job_id)
-        finding_id = ks.add_finding(title=title, evidence=evidence)
+        finding_id = ks.add_finding(title=title, evidence=evidence, citations=citations)
         # Set biological_interpretation directly on the dict after creation
         for f in ks.data["findings"]:
             if f["id"] == finding_id:
@@ -49,7 +59,20 @@ def make_tools(ctx: ToolContext, use_hypotheses: bool = False) -> list[Callable[
         )
         ks.save_to_database_sync(ctx.job_id)
         finding_count = len(ks.data["findings"])
-        return f"✅ Finding #{finding_count} recorded: {title}"
+
+        # Build response with citation validation feedback
+        parts = [f"✅ Finding #{finding_count} recorded: {title}"]
+        for f in ks.data["findings"]:
+            if f["id"] == finding_id:
+                for c in f.get("citations", []):
+                    status = c.get("validation_status", "unchecked")
+                    pmid = c.get("pmid", "?")
+                    if status == "mismatch":
+                        parts.append(f"⚠️  Citation PMID:{pmid} — snippet not found in abstract")
+                    elif status == "unchecked":
+                        parts.append(f"ℹ️  Citation PMID:{pmid} — paper not in literature list")
+                break
+        return "\n".join(parts)
 
     @tool
     def add_hypothesis(statement: str) -> str:

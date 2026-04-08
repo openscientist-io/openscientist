@@ -183,7 +183,11 @@ and iteration summaries.
    - Quantify findings (e.g., "3 of 5 studies found...")
    - Acknowledge limitations and uncertainty clearly
 
-4. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
+4. **Citation integrity:**
+   - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
+   - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
+
+5. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
    answer to the research question.  Be direct — no citations or hedging.
 
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.

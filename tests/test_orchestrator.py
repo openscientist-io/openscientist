@@ -756,6 +756,57 @@ class TestBuildReportPrompt:
         assert "Executive Summary" in prompt
         assert "set_consensus_answer" in prompt
 
+    def test_report_prompt_includes_abstracts(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        ks.add_literature(
+            "12345678", "A Relevant Paper", "This study demonstrates that X causes Y."
+        )
+        prompt = build_report_prompt("What causes X?", ks)
+
+        # Abstract should flow through to the report prompt for citation grounding
+        assert "This study demonstrates that X causes Y." in prompt
+        assert "PMID: 12345678" in prompt
+
+    def test_report_prompt_has_citation_integrity_instruction(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        prompt = build_report_prompt("What causes X?", ks)
+        assert "do not infer paper content from titles alone" in prompt
+
+    def test_report_prompt_has_citation_snippet_instruction(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        prompt = build_report_prompt("What causes X?", ks)
+        assert "use the provided citation snippets" in prompt
+
+    def test_report_prompt_includes_finding_citations(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        ks.add_literature("99999999", "A Study", "significant correlation was found")
+        ks.add_finding(
+            "X correlates with Y",
+            "r=0.85, p<0.001",
+            citations=[
+                {
+                    "pmid": "99999999",
+                    "snippet": "significant correlation was found",
+                    "explanation": "Direct evidence",
+                }
+            ],
+        )
+        prompt = build_report_prompt("What causes X?", ks)
+        assert "PMID:99999999" in prompt
+        assert "significant correlation was found" in prompt
+
 
 # ─── _save_transcript ─────────────────────────────────────────────────
 

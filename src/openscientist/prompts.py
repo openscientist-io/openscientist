@@ -170,6 +170,7 @@ def build_discovery_prompt(
             "**Option E: Record Finding**",
             "- If you've confirmed a finding, record it to the knowledge graph",
             "- Include: title, evidence (stats), supporting hypotheses, plots",
+            "- Include `citations` with PMID + exact verbatim quote from the abstract + explanation",
             "",
         ]
     )
@@ -266,7 +267,8 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 **search_pubmed** - Search scientific literature
 
 - `query`: Search terms (e.g., `"hypothermia neuroprotection metabolomics"`)
-- Returns: titles, abstracts, PMIDs
+- Returns: titles, full abstracts, PMIDs
+- Full abstracts are returned so you can extract exact quotes for citations
 
 **search_skills** - Search for domain-specific analysis skills
 
@@ -279,7 +281,12 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - `title`: Concise finding title
 - `evidence`: Statistical evidence (p-values, effect sizes, confidence intervals)
 - `interpretation`: Biological/mechanistic interpretation (optional)
-- `description`: Why you're recording this finding""")
+- `description`: Why you're recording this finding
+- `citations`: List of supporting literature citations (optional but encouraged). Each citation is a dict:
+  - `pmid`: PubMed ID of the cited paper
+  - `snippet`: Exact verbatim quote from the paper's abstract that supports this finding
+  - `explanation`: Brief explanation of why this quote supports the finding
+  Snippets are validated against stored abstracts. Use exact text from the abstract.""")
 
     # --- Hypothesis tools (conditional) ---
     if use_hypotheses:
