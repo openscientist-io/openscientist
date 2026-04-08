@@ -161,12 +161,8 @@ class TestValidateCitation:
 
     def test_normalized_strips_leading_punctuation(self, ks):
         """Snippet includes quotes that aren't in the abstract text."""
-        ks.add_literature(
-            "666", "Paper", "She noted the pathway is active in her review."
-        )
-        result = ks.validate_citation(
-            {"pmid": "666", "snippet": '"the Pathway is active"'}
-        )
+        ks.add_literature("666", "Paper", "She noted the pathway is active in her review.")
+        result = ks.validate_citation({"pmid": "666", "snippet": '"the Pathway is active"'})
         assert result["validation_status"] == "verified_normalized"
 
     def test_empty_snippet_is_mismatch(self, ks):
