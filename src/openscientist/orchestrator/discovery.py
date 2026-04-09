@@ -276,11 +276,48 @@ def _ensure_report_written(report_path: Path, report_result: IterationResult) ->
     return False
 
 
-def _try_generate_report_pdf(report_path: Path) -> None:
-    """Generate PDF from markdown report when possible."""
-    from openscientist.pdf_generator import markdown_to_pdf
+async def _try_generate_report_pdf(report_path: Path) -> None:
+    """Generate HTML and PDF from markdown report.
 
-    markdown_to_pdf(report_path, add_footer=True)
+    Pipeline: markdown (with figure tags) → HTML → PDF (via WeasyPrint).
+    Falls back to fpdf2 if WeasyPrint is unavailable or fails.
+    """
+    job_dir = report_path.parent
+    html_path = job_dir / "final_report.html"
+    pdf_path = job_dir / "final_report.pdf"
+
+    try:
+        from openscientist.report.pdf import render_report_pdf
+        from openscientist.report.renderer import render_report_html
+
+        # Render HTML with file:// image paths (for WeasyPrint)
+        html_content = render_report_html(report_path, job_dir)
+        html_path.write_text(html_content, encoding="utf-8")
+        logger.info("HTML report written: %s", html_path)
+
+        # Render PDF from HTML
+        await render_report_pdf(html_path, pdf_path, job_dir)
+        return
+
+    except Exception as exc:
+        logger.warning("WeasyPrint PDF generation failed, falling back to fpdf2: %s", exc)
+
+    # Fallback: strip figure tags and use fpdf2
+    try:
+        from openscientist.pdf_generator import markdown_to_pdf
+        from openscientist.report.processor import strip_figure_tags
+
+        raw_md = report_path.read_text(encoding="utf-8")
+        stripped = strip_figure_tags(raw_md)
+        # Write stripped version to a temp path for fpdf2
+        stripped_path = job_dir / "_final_report_stripped.md"
+        stripped_path.write_text(stripped, encoding="utf-8")
+        try:
+            markdown_to_pdf(stripped_path, pdf_path, add_footer=True)
+        finally:
+            stripped_path.unlink(missing_ok=True)
+    except Exception as fallback_exc:
+        logger.warning("fpdf2 fallback also failed: %s", fallback_exc)
 
 
 async def _run_report_generation_phase(
@@ -300,7 +337,7 @@ async def _run_report_generation_phase(
 
     if report_success:
         try:
-            _try_generate_report_pdf(report_path)
+            await _try_generate_report_pdf(report_path)
         except (ValueError, OSError, OpenScientistError) as exc:
             logger.warning("PDF generation failed: %s", exc)
 

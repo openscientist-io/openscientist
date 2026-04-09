@@ -662,24 +662,43 @@ async def download_report(
     # Look for report file
     job_dir = _get_jobs_dir() / str(job.id)
 
-    # Regenerate PDF from markdown if markdown exists
-    for md_name, pdf_name in [
-        ("final_report.md", "final_report.pdf"),
-        ("report.md", "report.pdf"),
-    ]:
-        md_path = job_dir / md_name
-        pdf_path = job_dir / pdf_name
-        if md_path.exists():
+    # Serve existing PDF if available (don't regenerate — avoids overwriting WeasyPrint PDF)
+    pdf_path = job_dir / "final_report.pdf"
+    if pdf_path.exists():
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
+        )
+
+    # Fallback: generate PDF from markdown via fpdf2 if no PDF exists yet
+    md_path = job_dir / "final_report.md"
+    if md_path.exists() and not pdf_path.exists():
+        try:
+            from openscientist.pdf_generator import markdown_to_pdf
+            from openscientist.report.processor import strip_figure_tags
+
+            raw_md = md_path.read_text(encoding="utf-8")
+            stripped = strip_figure_tags(raw_md)
+            stripped_path = job_dir / "_final_report_stripped.md"
+            stripped_path.write_text(stripped, encoding="utf-8")
             try:
-                from openscientist.pdf_generator import markdown_to_pdf
+                markdown_to_pdf(stripped_path, pdf_path)
+            finally:
+                stripped_path.unlink(missing_ok=True)
 
-                markdown_to_pdf(md_path, pdf_path)
-            except Exception:
-                logger.warning("Failed to regenerate %s", pdf_name, exc_info=True)
+            if pdf_path.exists():
+                return FileResponse(
+                    path=pdf_path,
+                    media_type="application/pdf",
+                    filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
+                )
+        except Exception:
+            logger.warning("Failed to generate PDF from markdown", exc_info=True)
 
-    # Try PDF first, then Markdown
+    # Try HTML, then markdown as last resort
     report_files = [
-        (job_dir / "final_report.pdf", "application/pdf"),
+        (job_dir / "final_report.html", "text/html"),
         (job_dir / "final_report.md", "text/markdown"),
         (job_dir / "report.pdf", "application/pdf"),
         (job_dir / "report.md", "text/markdown"),
