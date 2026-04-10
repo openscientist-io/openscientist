@@ -110,9 +110,7 @@ class ImageSrcTreeProcessor(Treeprocessor):
                 if child.tag != "img":
                     continue
                 src = child.get("src", "")
-                if not src or src.startswith(
-                    ("http://", "https://", "data:", "file://")
-                ):
+                if not src or src.startswith(("http://", "https://", "data:", "file://")):
                     continue
 
                 # Try resolving relative to provenance dir
