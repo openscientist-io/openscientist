@@ -15,10 +15,10 @@ import re
 import xml.etree.ElementTree as etree  # noqa: N813
 from pathlib import Path
 
-from markdown import Markdown
-from markdown.blockprocessors import BlockProcessor
-from markdown.extensions import Extension
-from markdown.treeprocessors import Treeprocessor
+from markdown import Markdown  # type: ignore[import-untyped]
+from markdown.blockprocessors import BlockProcessor  # type: ignore[import-untyped]
+from markdown.extensions import Extension  # type: ignore[import-untyped]
+from markdown.treeprocessors import Treeprocessor  # type: ignore[import-untyped]
 
 from openscientist.report.processor import _parse_params, _resolve_image_src
 

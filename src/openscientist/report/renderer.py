@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 
 import jinja2
-import markdown as md
+import markdown as md  # type: ignore[import-untyped]
 
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.webapp_components.ui_components import transform_pmid_references
