@@ -32,7 +32,7 @@ async def render_report_pdf(html_path: Path, pdf_path: Path, job_dir: Path) -> P
 
 def _render_pdf_sync(html_path: Path, pdf_path: Path, job_dir: Path) -> Path:
     """Synchronous WeasyPrint rendering."""
-    from weasyprint import HTML
+    from weasyprint import HTML  # type: ignore[import-untyped]
 
     logger.info("Generating PDF from %s", html_path)
     HTML(filename=str(html_path), base_url=str(job_dir)).write_pdf(str(pdf_path))
