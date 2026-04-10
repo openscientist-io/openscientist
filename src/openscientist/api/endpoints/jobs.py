@@ -32,7 +32,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
 from openscientist.artifact_packager import create_artifacts_zip_file
-from openscientist.database.models import Job, JobShare, User
+from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
@@ -578,60 +578,6 @@ async def cancel_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cancel job",
         ) from e
-
-
-@router.post("/{job_id}/regenerate-report", status_code=status.HTTP_202_ACCEPTED)
-async def regenerate_report(
-    job_id: str,
-    user: User = CURRENT_USER_DEP,
-    session: AsyncSession = SESSION_DEP,
-) -> dict[str, str]:
-    """
-    Regenerate the final report for a completed or failed job.
-
-    Re-runs only the report generation phase using the existing
-    knowledge state. The job status will change to 'generating_report'
-    while in progress.
-    """
-    job = await get_job_by_id(job_id, user, session)
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or access denied",
-        )
-
-    # Regenerate requires owner or edit-level share
-    if job.owner_id != user.id:
-        share_stmt = select(JobShare.permission_level).where(
-            JobShare.job_id == job.id,
-            JobShare.shared_with_user_id == user.id,
-        )
-        share_result = await session.execute(share_stmt)
-        permission = share_result.scalar_one_or_none()
-        if permission != "edit":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You need edit permission to regenerate the report",
-            )
-
-    if job.status not in ["completed", "failed"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Can only regenerate report for completed or failed jobs (current: '{job.status}')",
-        )
-
-    job_manager = _get_job_manager()
-    try:
-        job_manager.regenerate_report(str(job.id))
-        logger.info("Started report regeneration for job %s (user %s)", job.id, user.email)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-
-    return {"detail": "Report regeneration started", "job_id": str(job.id)}
 
 
 @router.get("/{job_id}/report")
