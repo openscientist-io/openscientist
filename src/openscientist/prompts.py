@@ -515,7 +515,7 @@ Use `search_skills` to discover additional skills in the database beyond those p
 
 Write the report to `./final_report.md` (relative path — do NOT use absolute paths) with:
 
-1. Executive summary (answer to the research question)
+1. Summary (answer to the research question)
 2. Key findings (with statistical evidence)
 3. Supported and refuted hypotheses
 4. Limitations and future directions

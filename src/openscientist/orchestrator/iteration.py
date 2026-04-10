@@ -177,7 +177,7 @@ and iteration summaries.
    a multi-iteration investigation.  Every section must contain its actual content.
 
 2. **Report structure:**
-   - **Executive Summary** (2-3 paragraphs) — key takeaways for busy readers
+   - **Summary** (2-3 paragraphs) — key takeaways for busy readers
    - **Key Findings** — each finding with its statistical evidence, expanded into
      full prose paragraphs (not just bullet points from the knowledge state)
    - **Mechanistic Model/Interpretation** — synthesize findings into a coherent

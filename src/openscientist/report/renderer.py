@@ -1,10 +1,9 @@
 """HTML report renderer.
 
 Converts markdown report (with figure tags) to styled HTML via:
-1. Process {{figure:...}} tags → HTML <figure> elements
-2. Convert markdown → HTML via the ``markdown`` library
-3. Apply PMID badge transforms
-4. Wrap in Jinja2 template with professional CSS
+1. Convert markdown → HTML via the ``markdown`` library (with FigureExtension)
+2. Apply PMID badge transforms
+3. Wrap in Jinja2 template with professional CSS
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from pathlib import Path
 import jinja2
 import markdown as md
 
-from openscientist.report.processor import process_figure_tags
+from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.webapp_components.ui_components import transform_pmid_references
 
 logger = logging.getLogger(__name__)
@@ -56,22 +55,24 @@ def render_report_html(
     raw_markdown = markdown_path.read_text(encoding="utf-8")
     provenance_dir = job_dir / "provenance"
 
-    # 1. Process figure tags → HTML <figure> elements
-    processed = process_figure_tags(
-        raw_markdown,
-        provenance_dir,
-        use_base64=embed_images,
-    )
-
-    # 2. Apply PMID badge transforms (before markdown conversion,
+    # 1. Apply PMID badge transforms (before markdown conversion,
     #    since transform_pmid_references works on text/markdown)
-    processed = transform_pmid_references(processed)
+    processed = transform_pmid_references(raw_markdown)
 
-    # 3. Convert markdown → HTML
-    #    Extensions: tables, fenced_code, toc for heading anchors
+    # 2. Convert markdown → HTML
+    #    FigureExtension handles {{figure:...}} tags and image path resolution
     body_html = md.markdown(
         processed,
-        extensions=["tables", "fenced_code", "toc", "attr_list"],
+        extensions=[
+            "tables",
+            "fenced_code",
+            "toc",
+            "attr_list",
+            FigureExtension(
+                provenance_dir=str(provenance_dir),
+                use_base64=embed_images,
+            ),
+        ],
     )
 
     # 4. Wrap in styled template
