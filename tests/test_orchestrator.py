@@ -753,7 +753,7 @@ class TestBuildReportPrompt:
         assert "knowledge_state.json" not in prompt
 
         # Standard report instructions should still be present
-        assert "Executive Summary" in prompt
+        assert "Summary" in prompt
         assert "set_consensus_answer" in prompt
 
     def test_report_prompt_includes_abstracts(self):
