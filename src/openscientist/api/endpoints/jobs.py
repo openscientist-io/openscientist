@@ -693,8 +693,10 @@ async def download_report(
                     media_type="application/pdf",
                     filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
                 )
-        except Exception:
-            logger.warning("Failed to generate PDF from markdown", exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Failed to generate PDF from markdown for job %s: %s", job_id, exc, exc_info=True
+            )
 
     # Try HTML, then markdown as last resort
     report_files = [
