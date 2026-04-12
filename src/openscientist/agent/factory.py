@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from claude_agent_sdk.types import AgentDefinition
+
 from openscientist.agent.protocol import AgentExecutor
 from openscientist.agent.sdk_executor import SDKAgentExecutor
 
@@ -23,6 +25,7 @@ def get_agent_executor(
     system_prompt: str | None,
     use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
+    experts: dict[str, AgentDefinition] | None = None,
 ) -> AgentExecutor:
     """
     Return an SDKAgentExecutor for the configured provider.
@@ -33,6 +36,8 @@ def get_agent_executor(
         system_prompt: System prompt to use
         use_hypotheses: Whether to include hypothesis tracking tools
         data_files: All data files for this job (used for multi-file metadata)
+        experts: Optional mapping of subagent slug to AgentDefinition,
+            forwarded to the SDK's ``agents=`` kwarg at session init.
 
     Returns:
         An SDKAgentExecutor instance
@@ -44,4 +49,5 @@ def get_agent_executor(
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
         data_files=data_files,
+        experts=experts,
     )

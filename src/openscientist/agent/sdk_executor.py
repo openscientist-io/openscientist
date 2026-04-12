@@ -23,6 +23,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 from claude_agent_sdk.types import (
+    AgentDefinition,
     PermissionResultAllow,
     TextBlock,
     ToolPermissionContext,
@@ -117,6 +118,7 @@ class SDKAgentExecutor:
         system_prompt: str | None,
         use_hypotheses: bool = False,
         data_files: list[Path] | None = None,
+        experts: dict[str, AgentDefinition] | None = None,
     ) -> None:
         from openscientist.tools.registry import build_tool_list
 
@@ -125,6 +127,12 @@ class SDKAgentExecutor:
         self._system_prompt = system_prompt
         self._tools = build_tool_list(
             job_dir.name, job_dir, data_file, use_hypotheses=use_hypotheses, data_files=data_files
+        )
+        # Defensive copy: callers may reuse or mutate their dict after
+        # construction, but the agents registered at session init must be
+        # frozen from the caller's perspective.
+        self._experts: dict[str, AgentDefinition] | None = (
+            dict(experts) if experts is not None else None
         )
         self._token_usage = TokenUsage()
         self._client: ClaudeSDKClient | None = None
@@ -164,6 +172,7 @@ class SDKAgentExecutor:
             cwd=str(self._job_dir),
             stderr=self._stderr_callback,
             extra_args=extra_args,
+            agents=self._experts,
         )
 
     async def _ensure_client(self) -> ClaudeSDKClient:
