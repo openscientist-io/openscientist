@@ -1,7 +1,7 @@
 """Add experts table and seed 8 vendored expert subagents.
 
 Revision ID: e31e63b8c2c0
-Revises: add_review_tokens
+Revises: add_version_info
 Create Date: 2026-04-10 18:06:58.087697+00:00
 """
 
@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB, insert
 
 # revision identifiers, used by Alembic.
 revision: str = "e31e63b8c2c0"
-down_revision: str | Sequence[str] | None = "add_review_tokens"
+down_revision: str | Sequence[str] | None = "add_version_info"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

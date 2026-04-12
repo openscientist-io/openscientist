@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -175,11 +176,15 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
     ) -> str:
         # Claude gets the concise system prompt. Its rich CLAUDE.md is written
         # separately into .claude/ by prepare_job_workspace.
-        return cls.system_prompt()
+        return cls.system_prompt(experts)
 
     async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
         # Claude's rich per-job CLAUDE.md is always written; skills follow.
@@ -197,6 +202,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
                 generate_job_claude_md(
                     use_hypotheses=use_hypotheses,
                     phenix_available=get_settings().phenix.is_available,
+                    experts=self._config.experts,
                 ),
                 encoding="utf-8",
             )

@@ -5,6 +5,10 @@ Claude system prompt and ``CLAUDE.md`` are byte-identical to the
 pre-split versions.
 """
 
+from collections.abc import Mapping
+
+from claude_agent_sdk.types import AgentDefinition
+
 from openscientist.prompts.common import BackendFragments, build_job_doc
 
 CLAUDE_FRAGMENTS = BackendFragments(
@@ -27,10 +31,16 @@ CLAUDE_FRAGMENTS = BackendFragments(
 )
 
 
-def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+def generate_job_claude_md(
+    *,
+    use_hypotheses: bool = False,
+    phenix_available: bool = False,
+    experts: Mapping[str, AgentDefinition] | None = None,
+) -> str:
     """The per-job ``CLAUDE.md`` content for the Claude Code agent."""
     return build_job_doc(
         use_hypotheses=use_hypotheses,
         phenix_available=phenix_available,
         frags=CLAUDE_FRAGMENTS,
+        experts=experts,
     )

@@ -12,11 +12,13 @@ import logging
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select, text, update
 
 from openscientist.agent.base import (
@@ -27,10 +29,11 @@ from openscientist.agent.base import (
     TokenUsage,
     TurnOutcome,
 )
+from openscientist.agent.expert_loader import load_enabled_experts
 from openscientist.agent.factory import agent_class_for_provider_id, get_agent
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import AsyncSessionLocal, get_admin_session
 from openscientist.exceptions import OpenScientistError
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
@@ -84,12 +87,13 @@ def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
     return data_file
 
 
-def _build_agent_executor(
+async def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     *,
     use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
+    experts: Mapping[str, AgentDefinition] | None = None,
 ) -> AbstractAgent[Provider]:
     """Create a configured agent for discovery/report phases.
 
@@ -97,11 +101,24 @@ def _build_agent_executor(
     system prompt: Claude returns a concise prompt (its rich ``CLAUDE.md`` is
     written separately into ``.claude/`` by ``prepare_job_workspace``), codex
     returns the full per-job doc delivered via ``AGENTS.md``.
+
+    Experts default to the enabled catalog. A catalog that cannot be read
+    costs the run its delegation roster, not the run itself.
     """
+    if experts is None:
+        try:
+            async with get_admin_session() as session:
+                experts = await load_enabled_experts(session)
+        except Exception as e:
+            logger.warning("Failed to load experts: %s", e)
+            experts = {}
+    if experts:
+        logger.info("Loaded %d enabled expert subagents", len(experts))
     agent_cls = agent_class_for_provider_id(get_settings().provider.provider_id)
     system_prompt = agent_cls.discovery_system_prompt(
         use_hypotheses=use_hypotheses,
         phenix_available=get_settings().phenix.is_available,
+        experts=experts,
     )
     logger.info("Built %s system prompt (%d chars)", agent_cls.backend.value, len(system_prompt))
     config = AgentConfig(
@@ -110,6 +127,7 @@ def _build_agent_executor(
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
         data_files=tuple(data_files or ()),
+        experts=experts,
     )
     return get_agent(config)
 
@@ -774,7 +792,7 @@ async def _build_and_prepare_executor(
     """
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    executor = _build_agent_executor(
+    executor = await _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_hypotheses=use_hypotheses,

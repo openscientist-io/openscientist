@@ -259,14 +259,20 @@ class AbstractAgent[P: Provider](abc.ABC):
         flows through them, so its prompts cannot diverge."""
 
     @classmethod
-    def system_prompt(cls) -> str:
+    def system_prompt(cls, experts: Mapping[str, AgentDefinition] | None = None) -> str:
         """The concise system prompt for this backend."""
         from openscientist.prompts.common import build_system_prompt
 
-        return build_system_prompt(cls.prompt_fragments())
+        return build_system_prompt(cls.prompt_fragments(), experts)
 
     @classmethod
-    def job_doc(cls, *, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+    def job_doc(
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
+    ) -> str:
         """The full per-job instruction doc for this backend."""
         from openscientist.prompts.common import build_job_doc
 
@@ -274,6 +280,7 @@ class AbstractAgent[P: Provider](abc.ABC):
             use_hypotheses=use_hypotheses,
             phenix_available=phenix_available,
             frags=cls.prompt_fragments(),
+            experts=experts,
         )
 
     @classmethod
@@ -286,13 +293,21 @@ class AbstractAgent[P: Provider](abc.ABC):
     @classmethod
     @abc.abstractmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
     ) -> str:
         """The system prompt this backend uses for a discovery run.
 
         Claude returns the concise ``system_prompt`` (its rich doc is written
         into ``.claude/``); codex returns the full ``job_doc`` (delivered via
         ``AGENTS.md``).
+
+        ``experts`` advertises the delegation roster, so only a backend that
+        actually registers subagents passes it on. The others accept and drop
+        it rather than instruct a model to delegate to agents it cannot spawn.
         """
 
     # ----- per-job side effects (run where the agent instance lives) -----
