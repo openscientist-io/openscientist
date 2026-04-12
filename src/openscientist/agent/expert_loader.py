@@ -8,7 +8,8 @@ Per-row validation errors are logged and skipped (defense in depth).
 from __future__ import annotations
 
 import logging
-from typing import Final, Literal, cast, get_args
+from collections.abc import Mapping
+from typing import Final, Literal, TypedDict, cast, get_args
 
 from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select
@@ -54,4 +55,45 @@ async def load_enabled_experts(session: AsyncSession) -> dict[str, AgentDefiniti
             out[row.slug] = _row_to_agent_definition(row)
         except (ValueError, TypeError) as exc:
             logger.warning("Skipping malformed expert row %r: %s", row.slug, exc)
+    return out
+
+
+class ExpertPayload(TypedDict):
+    """The wire form of one expert, for handing a roster to a process that
+    must not reach the database itself (the hardened chat container)."""
+
+    description: str
+    prompt: str
+    tools: list[str] | None
+    model: str
+
+
+def experts_to_payload(experts: Mapping[str, AgentDefinition]) -> dict[str, ExpertPayload]:
+    """Serialise a roster. Only the fields this loader ever sets are carried."""
+    return {
+        slug: ExpertPayload(
+            description=defn.description,
+            prompt=defn.prompt,
+            tools=list(defn.tools) if defn.tools is not None else None,
+            model=defn.model if defn.model is not None else "inherit",
+        )
+        for slug, defn in experts.items()
+    }
+
+
+def experts_from_payload(payload: Mapping[str, ExpertPayload]) -> dict[str, AgentDefinition]:
+    """Rebuild a roster from its wire form, skipping any malformed entry."""
+    out: dict[str, AgentDefinition] = {}
+    for slug, item in payload.items():
+        model = item["model"]
+        if model not in _VALID_MODELS:
+            logger.warning("Skipping expert %r with invalid model %r", slug, model)
+            continue
+        out[slug] = AgentDefinition(
+            description=item["description"],
+            prompt=item["prompt"],
+            tools=list(item["tools"]) if item["tools"] is not None else None,
+            # cast: _VALID_MODELS membership guarantees the Literal constraint.
+            model=cast(ExpertModel, model),
+        )
     return out
