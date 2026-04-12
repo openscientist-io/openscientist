@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from claude_agent_sdk.types import AgentDefinition
 
 from openscientist.agent.base import AgentConfig
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
@@ -34,6 +36,7 @@ def _make_agent(
     model_override: str | None = None,
     provider: ClaudeCompatible | None = None,
     tool_server_env: dict[str, str] | None = None,
+    experts: Mapping[str, AgentDefinition] | None = None,
 ) -> ClaudeCodeAgent:
     config = AgentConfig(
         job_dir=tmp_path,
@@ -43,6 +46,7 @@ def _make_agent(
         data_files=tuple(data_files or ()),
         model_override=model_override,
         tool_server_env=tool_server_env or {},
+        experts=experts,
     )
     return ClaudeCodeAgent(config, provider or _StubProvider())
 
@@ -231,3 +235,61 @@ async def test_built_spec_spawns_subprocess_that_lists_all_tools(
         "update_hypothesis",
         "execute_code",
     } <= names
+
+
+def test_build_options_without_experts_registers_no_agents(tmp_path: Path) -> None:
+    """No experts configured leaves the SDK's `agents=` unset."""
+    assert _make_agent(tmp_path)._build_options().agents is None
+
+
+def test_build_options_keeps_empty_experts_distinct_from_absent(tmp_path: Path) -> None:
+    """An empty mapping registers an empty agent set, not the absent default."""
+    assert _make_agent(tmp_path, experts={})._build_options().agents == {}
+
+
+def test_build_options_forwards_experts_to_sdk_agents(tmp_path: Path) -> None:
+    """Every configured expert reaches `agents=` with its definition intact."""
+    experts = {
+        "foo": AgentDefinition(description="Foo expert", prompt="You are foo."),
+        "bar": AgentDefinition(
+            description="Bar expert",
+            prompt="You are bar.",
+            tools=["Read"],
+            model="sonnet",
+        ),
+    }
+    agents = _make_agent(tmp_path, experts=experts)._build_options().agents
+
+    assert agents is not None
+    assert set(agents) == {"foo", "bar"}
+    assert agents["foo"].description == "Foo expert"
+    assert agents["bar"].tools == ["Read"]
+    assert agents["bar"].model == "sonnet"
+
+
+def test_experts_do_not_disturb_the_other_options(tmp_path: Path) -> None:
+    """Registering experts changes nothing else about the session."""
+    experts = {"e": AgentDefinition(description="d", prompt="p")}
+    with_experts = _make_agent(tmp_path, experts=experts)._build_options()
+    without_experts = _make_agent(tmp_path)._build_options()
+
+    assert with_experts.system_prompt == without_experts.system_prompt
+    assert with_experts.cwd == without_experts.cwd
+    assert with_experts.model == without_experts.model
+    assert isinstance(with_experts.mcp_servers, dict)
+    assert isinstance(without_experts.mcp_servers, dict)
+    assert set(with_experts.mcp_servers) == set(without_experts.mcp_servers)
+
+
+def test_experts_are_frozen_against_caller_mutation(tmp_path: Path) -> None:
+    """Mutating the caller's mapping after construction cannot change the
+    agents the session registers."""
+    experts = {"one": AgentDefinition(description="d1", prompt="p1")}
+    agent = _make_agent(tmp_path, experts=experts)
+
+    experts["two"] = AgentDefinition(description="d2", prompt="p2")
+    experts.pop("one")
+
+    agents = agent._build_options().agents
+    assert agents is not None
+    assert set(agents) == {"one"}

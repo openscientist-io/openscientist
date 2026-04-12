@@ -25,6 +25,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 from claude_agent_sdk.types import (
+    AgentDefinition,
     McpStdioServerConfig,
     PermissionResultAllow,
     TextBlock,
@@ -152,6 +153,12 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
     def __init__(self, config: AgentConfig, provider: ClaudeCompatible) -> None:
         super().__init__(config, provider)
         self._model_override = config.model_override
+        # Defensive copy: callers may reuse or mutate their mapping after
+        # construction, but the agents registered at session init must be
+        # frozen from the caller's perspective.
+        self._experts: dict[str, AgentDefinition] | None = (
+            dict(config.experts) if config.experts is not None else None
+        )
         self._client: ClaudeSDKClient | None = None
         self._stderr_lines: list[str] = []
 
@@ -289,6 +296,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             cwd=str(job_dir),
             stderr=self._stderr_callback,
             extra_args={},
+            agents=self._experts,
         )
 
     def _apply_provider_env(self) -> None:

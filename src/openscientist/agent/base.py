@@ -27,6 +27,8 @@ from openscientist.providers.base import Provider
 from openscientist.transcript import TranscriptEntry
 
 if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
+
     from openscientist.database.models import Skill
     from openscientist.prompts.common import BackendFragments
     from openscientist.settings import Settings
@@ -157,6 +159,9 @@ class AgentConfig:
     # Per-invocation env for the tools subprocess. Threaded here, not via global
     # os.environ, so concurrent chats cannot leak one job's exec token.
     tool_server_env: Mapping[str, str] = field(default_factory=dict)
+    # Subagents ("experts") the Claude path registers at session init via the
+    # SDK's ``agents=`` kwarg. Other harnesses have no equivalent and ignore it.
+    experts: Mapping[str, AgentDefinition] | None = None
 
 
 class AbstractAgent[P: Provider](abc.ABC):
