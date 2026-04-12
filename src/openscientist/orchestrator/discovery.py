@@ -14,13 +14,15 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select
 
+from openscientist.agent.expert_loader import load_enabled_experts
 from openscientist.agent.factory import get_agent_executor
 from openscientist.agent.protocol import AgentExecutor, IterationResult, TokenUsage
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import AsyncSessionLocal, get_admin_session
 from openscientist.exceptions import OpenScientistError
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
@@ -67,14 +69,20 @@ def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
     return data_file
 
 
-def _build_agent_executor(
+async def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
+    experts: dict[str, AgentDefinition] | None = None,
 ) -> AgentExecutor:
     """Create a configured agent executor for discovery/report phases."""
-    system_prompt = get_system_prompt()
+    if experts is None:
+        async with get_admin_session() as session:
+            experts = await load_enabled_experts(session)
+    if experts:
+        logger.info("Loaded %d enabled expert subagents", len(experts))
+    system_prompt = get_system_prompt(experts=experts)
     logger.info("Built system prompt (%d chars)", len(system_prompt))
     return get_agent_executor(
         job_dir=job_dir,
@@ -82,6 +90,7 @@ def _build_agent_executor(
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
         data_files=data_files,
+        experts=experts,
     )
 
 
@@ -358,13 +367,18 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     }
 
 
-async def _write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = False) -> None:
+async def _write_skills_to_claude_dir(
+    job_dir: Path,
+    *,
+    use_hypotheses: bool = False,
+    experts: dict[str, AgentDefinition] | None = None,
+) -> None:
     """Write CLAUDE.md and enabled skill files into job_dir/.claude/."""
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
     # Write the discovery-agent JOB_CLAUDE.md (hypothesis sections conditional)
-    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses)
+    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses, experts=experts)
 
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
@@ -405,7 +419,12 @@ def _read_chat_claude_md_template() -> str:
     )
 
 
-def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
+def _write_job_claude_md(
+    claude_dir: Path,
+    *,
+    use_hypotheses: bool = False,
+    experts: dict[str, AgentDefinition] | None = None,
+) -> None:
     """Write generated JOB_CLAUDE.md content to claude_dir/CLAUDE.md."""
     from openscientist.settings import get_settings
 
@@ -414,7 +433,9 @@ def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> N
         dest = claude_dir / "CLAUDE.md"
         dest.write_text(
             generate_job_claude_md(
-                use_hypotheses=use_hypotheses, phenix_available=phenix_available
+                use_hypotheses=use_hypotheses,
+                phenix_available=phenix_available,
+                experts=experts,
             ),
             encoding="utf-8",
         )
@@ -512,12 +533,21 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
 
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
-    executor = _build_agent_executor(
+
+    try:
+        async with get_admin_session() as experts_session:
+            experts = await load_enabled_experts(experts_session)
+    except Exception as e:
+        logger.warning("Failed to load experts for discovery: %s", e)
+        experts = {}
+
+    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses, experts=experts)
+    executor = await _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_hypotheses=use_hypotheses,
         data_files=all_data_files,
+        experts=experts,
     )
     logger.info("Created agent executor for job %s", job_id)
 
@@ -624,12 +654,21 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
 
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
-    executor = _build_agent_executor(
+
+    try:
+        async with get_admin_session() as experts_session:
+            experts = await load_enabled_experts(experts_session)
+    except Exception as e:
+        logger.warning("Failed to load experts for report regeneration: %s", e)
+        experts = {}
+
+    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses, experts=experts)
+    executor = await _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_hypotheses=use_hypotheses,
         data_files=all_data_files,
+        experts=experts,
     )
 
     try:

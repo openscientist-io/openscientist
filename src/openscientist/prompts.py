@@ -6,20 +6,42 @@ System prompts and discovery iteration prompts for the autonomous agent.
 
 from typing import Any
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill
 
+_EXPERT_DELEGATION_PREAMBLE = """\
+## Expert Delegation
 
-def get_system_prompt() -> str:
-    """
-    Get system prompt for Claude.
+You have access to specialist expert subagents registered with the SDK. The runtime can auto-delegate to them based on each expert's description; you can also invoke one explicitly by referencing its slug. **Delegate when** a task is narrow enough that one expert's description matches it more specifically than your general system prompt does. **Do it yourself when** the task is integrative, requires knowledge-state curation, or crosses multiple domains.
 
-    Returns:
-        System prompt string
-    """
-    return """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
+Available experts (slug · when to use):
+"""
+
+_EXPERT_DELEGATION_EPILOGUE = """\
+
+Prefer narrow, well-scoped tasks when delegating. An expert's output is a summary, not a full transcript — trust it the way you would trust a colleague's report."""
+
+
+def _render_expert_delegation_section(
+    experts: dict[str, AgentDefinition] | None,
+) -> str:
+    """Build the Expert Delegation section.  Empty string when no experts."""
+    if not experts:
+        return ""
+    lines = [f"- `{slug}` · {defn.description}" for slug, defn in experts.items()]
+    roster = "\n".join(lines)
+    return _EXPERT_DELEGATION_PREAMBLE + "\n" + roster + _EXPERT_DELEGATION_EPILOGUE
+
+
+def get_system_prompt(
+    experts: dict[str, AgentDefinition] | None = None,
+) -> str:
+    """Build the system prompt passed to the SDK at session init."""
+    return (
+        """You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 
 **Your Capabilities:**
 
@@ -54,7 +76,12 @@ Domain-specific analysis skills are in `.claude/skills/`. Read ALL workflow skil
 - Search literature proactively to inform hypothesis generation
 - Don't repeat failed hypotheses
 
+"""
+        + _render_expert_delegation_section(experts)
+        + """
+
 Think step by step. Be rigorous. Be creative."""
+    )
 
 
 def build_discovery_prompt(
@@ -221,20 +248,13 @@ def format_skills_list(skills: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
-    """
-    Generate JOB_CLAUDE.md content for the discovery agent.
-
-    When use_hypotheses is False, the add_hypothesis/update_hypothesis tool docs
-    and the Hypothesis Tracking Workflow section are omitted so the agent is not
-    instructed to call tools that don't exist.
-
-    Args:
-        use_hypotheses: Include hypothesis-specific sections.
-
-    Returns:
-        Full JOB_CLAUDE.md content as a string.
-    """
+def generate_job_claude_md(
+    *,
+    use_hypotheses: bool = False,
+    phenix_available: bool = False,
+    experts: dict[str, AgentDefinition] | None = None,
+) -> str:
+    """Generate JOB_CLAUDE.md content for the discovery agent."""
     parts: list[str] = []
 
     # --- Header and mission ---
@@ -460,7 +480,8 @@ Use `search_skills` to discover additional skills in the database beyond those p
 - **Positive**: Record confirmed findings to the knowledge state
 - **Negative**: Negative results are also valuable — they rule out possibilities""")
 
-    parts.append("""\
+    parts.append(
+        """\
 - Consider biological/mechanistic interpretation
 
 ### 5. End of Every Iteration
@@ -522,9 +543,14 @@ Write the report to `./final_report.md` (relative path — do NOT use absolute p
 
 Then call `set_consensus_answer` with a 1–3 sentence direct answer.
 
+"""
+        + _render_expert_delegation_section(experts)
+        + """
+
 ---
 
-**Remember:** You are autonomous. Make bold scientific decisions. Pursue interesting leads. Be creative but rigorous.""")
+**Remember:** You are autonomous. Make bold scientific decisions. Pursue interesting leads. Be creative but rigorous."""
+    )
 
     return "\n".join(parts)
 
