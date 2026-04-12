@@ -89,6 +89,9 @@ dependencies = [
 
     # SPARQL queries against remote endpoints
     "SPARQLWrapper>=2.0.0",
+
+    # YAML parsing (skill frontmatter, vendored expert prompts)
+    "pyyaml>=6.0",
 ]
 
 [build-system]
