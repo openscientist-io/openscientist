@@ -632,7 +632,7 @@ class TestCreateJob:
         assert (job_dir / "data").is_dir()
         assert (job_dir / "provenance").is_dir()
 
-    def test_knowledge_state_contents(self, tmp_path):
+    def test_knowledge_state_contents(self, tmp_path: Path) -> None:
         from openscientist.orchestrator import create_job
 
         job_id = str(uuid4())
@@ -641,7 +641,7 @@ class TestCreateJob:
 
         captured: dict[str, Any] = {}
 
-        def _capture_save(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def _capture_save(self: Any, *args: Any, **kwargs: Any) -> None:
             captured["data"] = self.to_dict()
 
         with (
@@ -689,12 +689,12 @@ class TestCreateJob:
         assert copied.exists()
         assert copied.read_text() == "x,y\n1,2\n3,4\n"
 
-    def test_no_data_files(self, tmp_path):
+    def test_no_data_files(self, tmp_path: Path) -> None:
         from openscientist.orchestrator import create_job
 
         captured: dict[str, Any] = {}
 
-        def _capture_save(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def _capture_save(self: Any, *args: Any, **kwargs: Any) -> None:
             captured["data"] = self.to_dict()
 
         with (
