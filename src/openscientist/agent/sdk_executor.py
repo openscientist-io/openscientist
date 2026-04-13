@@ -90,6 +90,9 @@ class _IterationState:
     """Mutable state captured while processing one SDK streaming response."""
 
     tool_call_count: int = 0
+    subagent_call_count: int = 0
+    subagent_names: set[str] = field(default_factory=set)
+    subagent_log: list[str] = field(default_factory=list)  # ordered, with duplicates
     transcript: list[dict[str, Any]] = field(default_factory=list)
     final_output: str = ""
 
@@ -224,6 +227,24 @@ class SDKAgentExecutor:
             "input": getattr(block, "input", {}),
         }
 
+    def _is_subagent_call(self, block: ToolUseBlock) -> str | None:
+        """Return the expert slug if this tool call is a subagent delegation, else None.
+
+        The SDK emits subagent invocations as ToolUseBlock with
+        name="Agent" (current) or name="Task" (older SDK versions).
+        The expert slug is in block.input["subagent_type"].
+        """
+        if not self._experts:
+            return None
+        # "Agent" (current SDK) or "Task" (older SDK).
+        if block.name not in ("Agent", "Task"):
+            return None
+        block_input = getattr(block, "input", {}) or {}
+        candidate = block_input.get("subagent_type", "")
+        if isinstance(candidate, str) and candidate in self._experts:
+            return candidate
+        return None
+
     def _handle_content_list(self, raw_content: list[object], state: _IterationState) -> None:
         """Convert SDK content blocks into transcript items."""
         content_items: list[dict[str, object]] = []
@@ -236,6 +257,12 @@ class SDKAgentExecutor:
                 state.tool_call_count += 1
                 logger.debug("Tool call: %s", block.name)
                 content_items.append(self._tool_use_item(block, state.tool_call_count))
+                expert_slug = self._is_subagent_call(block)
+                if expert_slug:
+                    state.subagent_call_count += 1
+                    state.subagent_names.add(expert_slug)
+                    state.subagent_log.append(expert_slug)
+                    logger.info("Subagent delegation: %s", expert_slug)
         if content_items:
             state.transcript.append({"type": "assistant", "message": {"content": content_items}})
 
@@ -366,6 +393,9 @@ class SDKAgentExecutor:
             tool_calls=state.tool_call_count,
             transcript=state.transcript,
             error="",
+            subagent_calls=state.subagent_call_count,
+            subagent_names=frozenset(state.subagent_names),
+            subagent_log=tuple(state.subagent_log),
         )
 
     async def shutdown(self) -> None:
