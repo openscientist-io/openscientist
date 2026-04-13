@@ -1123,17 +1123,7 @@ def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None
 
 
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
-    html_path = context.job_dir / "final_report.html"
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
-        ui.button(
-            "Download Markdown",
-            on_click=lambda: ui.download(
-                report_path.read_bytes(),
-                filename=f"{context.job_id}_report.md",
-            ),
-            icon="download",
-        ).props("color=secondary outline")
-
         if pdf_path.exists() or report_path.exists():
             ui.button(
                 "Download PDF",
@@ -1143,31 +1133,12 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
         else:
             ui.button("PDF Unavailable", icon="picture_as_pdf").props("color=grey outline disabled")
 
-        if html_path.exists():
-            ui.button(
-                "Download HTML",
-                on_click=lambda: _download_html_report(context.job_dir, context.job_id),
-                icon="code",
-            ).props("color=secondary outline")
-
         ui.button(
             "Download All Artifacts",
             on_click=lambda: _download_artifacts_zip(context.job_dir, context.job_id),
             icon="folder_zip",
         ).props("color=accent outline")
 
-
-def _download_html_report(job_dir: Path, job_id: str) -> None:
-    """Download HTML report with base64-embedded images."""
-    try:
-        from openscientist.report.renderer import render_report_html
-
-        md_path = job_dir / "final_report.md"
-        html_content = render_report_html(md_path, job_dir, embed_images=True)
-        ui.download(html_content.encode("utf-8"), filename=f"{job_id}_report.html")
-    except Exception as exc:
-        logger.error("HTML download failed: %s", exc, exc_info=True)
-        ui.notify("Failed to generate HTML. Please try again.", type="negative")
 
 
 def _render_report_html_iframe(job_dir: Path) -> None:
