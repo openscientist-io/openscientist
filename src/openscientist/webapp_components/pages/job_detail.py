@@ -1195,7 +1195,14 @@ def _render_report_tab(context: _JobDetailContext) -> None:
     pdf_path = context.job_dir / "final_report.pdf"
 
     if context.job_info.status == JobStatus.GENERATING_REPORT:
-        render_thinking_status("Regenerating report...")
+        render_thinking_status("Generating report...")
+
+    # Only show the report when the job has finished. The agent may write
+    # final_report.md mid-run, but it is not ready for display until the
+    # orchestrator marks the job completed (or failed).
+    if context.job_info.status not in (JobStatus.COMPLETED, JobStatus.FAILED):
+        _render_missing_report_state(context)
+        return
 
     if report_path.exists():
         _render_report_actions(context, report_path, pdf_path)
