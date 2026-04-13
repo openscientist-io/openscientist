@@ -30,7 +30,6 @@ from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import notify_job_status_change
 from openscientist.orchestrator import create_job
-from openscientist.orchestrator import regenerate_report as _regenerate_report
 from openscientist.providers import get_provider
 from openscientist.version import get_version_string
 
@@ -645,76 +644,6 @@ class JobManager:
             with self._lock:
                 self._running_jobs.pop(job_id, None)
             self._start_next_queued_job()
-
-    def regenerate_report(self, job_id: str) -> None:
-        """
-        Re-run report generation for a completed or failed job.
-
-        Validates that the job exists and is in a terminal state.
-        Spawns a background thread.
-
-        Args:
-            job_id: Job ID
-
-        Raises:
-            ValueError: If job not found or not in valid state
-        """
-        job_info = self.get_job(job_id)
-        if job_info is None:
-            raise ValueError(f"Job {job_id} not found")
-
-        if job_info.status not in [JobStatus.COMPLETED, JobStatus.FAILED]:
-            raise ValueError(
-                f"Can only regenerate report for completed or failed jobs "
-                f"(current status: {job_info.status.value})"
-            )
-
-        with self._lock:
-            if job_id in self._running_jobs:
-                raise ValueError(f"Job {job_id} already has an operation in progress")
-
-            thread = threading.Thread(
-                target=self._run_regenerate_report, args=(job_id,), daemon=True
-            )
-            self._running_jobs[job_id] = thread
-            thread.start()
-
-    def _run_regenerate_report(self, job_id: str) -> None:
-        """
-        Run report regeneration (internal, called by thread).
-
-        Args:
-            job_id: Job ID
-        """
-        job_dir = self.jobs_dir / job_id
-
-        try:
-            self._update_job_status(job_id, JobStatus.GENERATING_REPORT)
-
-            logger.info("Regenerating report for job %s", job_id)
-            result = _regenerate_report(job_dir)
-
-            logger.info("Report regeneration for job %s completed: %s", job_id, result)
-
-            final_status = result.get("status", "completed")
-            if final_status == "completed":
-                self._update_job_status(job_id, JobStatus.COMPLETED)
-            elif final_status == "failed":
-                self._update_job_status(job_id, JobStatus.FAILED, error_message=result.get("error"))
-
-        except Exception as e:
-            logger.error(
-                "Report regeneration for job %s failed [%s]: %s",
-                job_id,
-                get_version_string(),
-                e,
-                exc_info=True,
-            )
-            self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
-
-        finally:
-            with self._lock:
-                self._running_jobs.pop(job_id, None)
 
     def _start_next_queued_job(self) -> None:
         """Start the next queued job if slots available."""

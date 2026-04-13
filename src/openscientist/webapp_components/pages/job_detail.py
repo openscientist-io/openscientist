@@ -1090,16 +1090,6 @@ def _render_timeline_tab(context: _JobDetailContext) -> None:
         context.active_timers.append(stats_timer_holder["timer"])
 
 
-def _start_report_regeneration(context: _JobDetailContext) -> None:
-    try:
-        context.job_manager.regenerate_report(context.job_id)
-    except ValueError as exc:
-        ui.notify(str(exc), type="negative")
-        return
-    ui.notify("Report regeneration started", type="positive")
-    ui.navigate.to(f"/job/{context.job_id}")
-
-
 def _download_artifacts_zip(job_dir: Path, job_id: str) -> None:
     try:
         zip_buffer = create_artifacts_zip(job_dir, job_id)
@@ -1135,12 +1125,14 @@ def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     html_path = context.job_dir / "final_report.html"
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
-        if context.can_edit and context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
-            ui.button(
-                "Regenerate Report",
-                on_click=lambda: _start_report_regeneration(context),
-                icon="refresh",
-            ).props("color=secondary outline")
+        ui.button(
+            "Download Markdown",
+            on_click=lambda: ui.download(
+                report_path.read_bytes(),
+                filename=f"{context.job_id}_report.md",
+            ),
+            icon="download",
+        ).props("color=secondary outline")
 
         if pdf_path.exists() or report_path.exists():
             ui.button(
@@ -1222,14 +1214,7 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
         ui.label("Report is being generated...").classes("text-gray-500 italic")
         return
     if context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
-        with ui.column().classes("gap-2"):
-            ui.label("Report generation failed").classes("text-red-500")
-            if context.can_edit:
-                ui.button(
-                    "Regenerate Report",
-                    on_click=lambda: _start_report_regeneration(context),
-                    icon="refresh",
-                ).props("color=secondary outline")
+        ui.label("Report generation failed").classes("text-red-500")
         return
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
