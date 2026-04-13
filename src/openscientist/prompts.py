@@ -15,14 +15,27 @@ from .database.models import Skill
 _EXPERT_DELEGATION_PREAMBLE = """\
 ## Expert Delegation
 
-You have access to specialist expert subagents registered with the SDK. The runtime can auto-delegate to them based on each expert's description; you can also invoke one explicitly by referencing its slug. **Delegate when** a task is narrow enough that one expert's description matches it more specifically than your general system prompt does. **Do it yourself when** the task is integrative, requires knowledge-state curation, or crosses multiple domains.
+You have access to specialist expert subagents. **You MUST actively delegate to them** — they exist to help you produce better, faster results. Use them early and often throughout your investigation.
+
+**When to delegate (do this by default):**
+- Literature searches and evidence gathering → delegate to a research/literature expert
+- Statistical methodology questions → delegate to a statistics/methodology expert
+- Synthesizing findings from multiple sources → delegate to a synthesis expert
+- Any task where an expert's description matches what you need
+
+**When to do it yourself (the exception, not the rule):**
+- Recording findings to the knowledge state (only you can call update_knowledge_state)
+- Setting status and saving iteration summaries
+- Making high-level investigation decisions
+
+**In every iteration, aim to delegate at least one task to an expert.** This produces deeper, more thorough results than doing everything yourself.
 
 Available experts (slug · when to use):
 """
 
 _EXPERT_DELEGATION_EPILOGUE = """\
 
-Prefer narrow, well-scoped tasks when delegating. An expert's output is a summary, not a full transcript — trust it the way you would trust a colleague's report."""
+Trust expert outputs the way you would trust a colleague's report. Incorporate their findings into your knowledge state and use them to guide your next steps."""
 
 
 def _render_expert_delegation_section(
