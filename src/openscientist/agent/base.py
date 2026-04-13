@@ -134,6 +134,12 @@ class IterationResult:
     tool_calls: int
     transcript: list[TranscriptEntry]
     error: str = ""
+    # Expert delegations observed in this turn. Only a backend that registers
+    # subagents reports any; the rest leave these at zero.
+    subagent_calls: int = 0
+    subagent_names: frozenset[str] = frozenset()
+    #: Ordered, with duplicates, so a repeated delegation stays visible.
+    subagent_log: tuple[str, ...] = ()
 
     @property
     def success(self) -> bool:
