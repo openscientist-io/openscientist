@@ -1140,7 +1140,6 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
         ).props("color=accent outline")
 
 
-
 def _render_report_html_iframe(job_dir: Path) -> None:
     """Render HTML report in an iframe to avoid CSS leakage."""
     from nicegui import app
