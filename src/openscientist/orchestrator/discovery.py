@@ -94,6 +94,23 @@ async def _build_agent_executor(
     )
 
 
+def _record_subagent_delegations(
+    job_id: str, result: IterationResult, subagent_log: list[str]
+) -> None:
+    """Add one analysis_log entry per subagent call (not per unique name).
+
+    ``subagent_log`` is the ordered list of expert slugs collected
+    during stream handling — one entry per invocation, preserving
+    duplicates so the UI count matches the actual delegation count.
+    """
+    if not subagent_log:
+        return
+    ks = KnowledgeState.load_from_database_sync(job_id)
+    for name in subagent_log:
+        ks.log_analysis(action="delegate_to_expert", description=f"Delegated to {name}")
+    ks.save_to_database_sync(job_id)
+
+
 def _append_iteration_artifacts(
     *,
     provenance_dir: Path,
@@ -111,6 +128,8 @@ def _append_iteration_artifacts(
         prompt,
         result.output,
         result.tool_calls,
+        subagent_calls=result.subagent_calls,
+        subagent_names=result.subagent_names,
         write=overwrite_log,
     )
 
@@ -183,6 +202,7 @@ async def _run_primary_discovery_loop(
         result=result,
         overwrite_log=True,
     )
+    _record_subagent_delegations(job_id, result, list(result.subagent_log))
     if max_iterations > 1:
         increment_ks_iteration(job_id)
     await _assert_job_not_cancelled(job_id)
@@ -231,6 +251,7 @@ async def _run_primary_discovery_loop(
             prompt=iteration_prompt,
             result=result,
         )
+        _record_subagent_delegations(job_id, result, list(result.subagent_log))
 
         if iteration < max_iterations:
             increment_ks_iteration(job_id)
@@ -730,6 +751,8 @@ def _append_log(
     prompt: str,
     output: str,
     tool_calls: int,
+    subagent_calls: int = 0,
+    subagent_names: frozenset[str] = frozenset(),
     write: bool = False,
 ) -> None:
     """Append iteration summary to the log file."""
@@ -739,3 +762,7 @@ def _append_log(
         f.write(f"Prompt: {prompt}\n\n")
         f.write(f"Output: {output}\n\n")
         f.write(f"Tool calls: {tool_calls}\n\n")
+        if subagent_calls:
+            f.write(
+                f"Subagent delegations: {subagent_calls} ({', '.join(sorted(subagent_names))})\n\n"
+            )
