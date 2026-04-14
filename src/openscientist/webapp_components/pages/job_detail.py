@@ -1101,16 +1101,6 @@ def _render_timeline_tab(context: _JobDetailContext) -> None:
         context.active_timers.append(stats_timer_holder["timer"])
 
 
-def _start_report_regeneration(context: _JobDetailContext) -> None:
-    try:
-        context.job_manager.regenerate_report(context.job_id)
-    except ValueError as exc:
-        ui.notify(str(exc), type="negative")
-        return
-    ui.notify("Report regeneration started", type="positive")
-    ui.navigate.to(f"/job/{context.job_id}")
-
-
 def _download_artifacts_zip(job_dir: Path, job_id: str) -> None:
     try:
         zip_buffer = create_artifacts_zip(job_dir, job_id)
@@ -1121,8 +1111,22 @@ def _download_artifacts_zip(job_dir: Path, job_id: str) -> None:
 
 
 def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None:
+    # Serve existing PDF if available (avoids overwriting WeasyPrint PDF with fpdf2)
+    if pdf_path.exists():
+        ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
+        return
+    # Fallback: generate via fpdf2
     try:
-        markdown_to_pdf(report_path, pdf_path)
+        from openscientist.report.processor import strip_figure_tags
+
+        raw_md = report_path.read_text(encoding="utf-8")
+        stripped = strip_figure_tags(raw_md)
+        stripped_path = report_path.parent / "_final_report_stripped.md"
+        stripped_path.write_text(stripped, encoding="utf-8")
+        try:
+            markdown_to_pdf(stripped_path, pdf_path)
+        finally:
+            stripped_path.unlink(missing_ok=True)
         ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
     except Exception as exc:
         logger.error("PDF generation failed: %s", exc, exc_info=True)
@@ -1131,22 +1135,6 @@ def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None
 
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
-        if context.can_edit and context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
-            ui.button(
-                "Regenerate Report",
-                on_click=lambda: _start_report_regeneration(context),
-                icon="refresh",
-            ).props("color=secondary outline")
-
-        ui.button(
-            "Download Markdown",
-            on_click=lambda: ui.download(
-                report_path.read_bytes(),
-                filename=f"{context.job_id}_report.md",
-            ),
-            icon="download",
-        ).props("color=secondary outline")
-
         if pdf_path.exists() or report_path.exists():
             ui.button(
                 "Download PDF",
@@ -1163,6 +1151,38 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
         ).props("color=accent outline")
 
 
+def _render_report_html_iframe(job_dir: Path) -> None:
+    """Render HTML report in an iframe to avoid CSS leakage."""
+    from nicegui import app
+
+    html_path = job_dir / "final_report.html"
+    if not html_path.exists():
+        return
+
+    # Re-render with base64 images for browser display
+    try:
+        from openscientist.report.renderer import render_report_html
+
+        md_path = job_dir / "final_report.md"
+        html_content = render_report_html(md_path, job_dir, embed_images=True)
+    except Exception:
+        logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
+        html_content = html_path.read_text(encoding="utf-8")
+
+    # Serve as a static route and embed in iframe
+    route_path = f"/report-html/{job_dir.name}"
+
+    @app.get(route_path)
+    async def _serve_report_html():  # type: ignore[no-untyped-def]
+        from starlette.responses import HTMLResponse
+
+        return HTMLResponse(html_content)
+
+    ui.element("iframe").props(f'src="{route_path}" frameborder="0"').style(
+        "width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px;"
+    )
+
+
 def _render_report_markdown(report_path: Path) -> None:
     with open(report_path, encoding="utf-8") as report_file:
         report_content = report_file.read()
@@ -1175,20 +1195,14 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
         ui.label("Report is being generated...").classes("text-gray-500 italic")
         return
     if context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
-        with ui.column().classes("gap-2"):
-            ui.label("Report generation failed").classes("text-red-500")
-            if context.can_edit:
-                ui.button(
-                    "Regenerate Report",
-                    on_click=lambda: _start_report_regeneration(context),
-                    icon="refresh",
-                ).props("color=secondary outline")
+        ui.label("Report generation failed").classes("text-red-500")
         return
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
 
 def _render_report_tab(context: _JobDetailContext) -> None:
     report_path = context.job_dir / "final_report.md"
+    html_path = context.job_dir / "final_report.html"
     pdf_path = context.job_dir / "final_report.pdf"
 
     if context.job_info.status == JobStatus.GENERATING_REPORT:
@@ -1196,7 +1210,11 @@ def _render_report_tab(context: _JobDetailContext) -> None:
 
     if report_path.exists():
         _render_report_actions(context, report_path, pdf_path)
-        _render_report_markdown(report_path)
+        # Prefer HTML report (with embedded figures) over raw markdown
+        if html_path.exists():
+            _render_report_html_iframe(context.job_dir)
+        else:
+            _render_report_markdown(report_path)
         return
 
     _render_missing_report_state(context)

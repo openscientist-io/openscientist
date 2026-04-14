@@ -32,7 +32,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
 from openscientist.artifact_packager import create_artifacts_zip_file
-from openscientist.database.models import Job, JobShare, User
+from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
@@ -580,60 +580,6 @@ async def cancel_job(
         ) from e
 
 
-@router.post("/{job_id}/regenerate-report", status_code=status.HTTP_202_ACCEPTED)
-async def regenerate_report(
-    job_id: str,
-    user: User = CURRENT_USER_DEP,
-    session: AsyncSession = SESSION_DEP,
-) -> dict[str, str]:
-    """
-    Regenerate the final report for a completed or failed job.
-
-    Re-runs only the report generation phase using the existing
-    knowledge state. The job status will change to 'generating_report'
-    while in progress.
-    """
-    job = await get_job_by_id(job_id, user, session)
-
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found or access denied",
-        )
-
-    # Regenerate requires owner or edit-level share
-    if job.owner_id != user.id:
-        share_stmt = select(JobShare.permission_level).where(
-            JobShare.job_id == job.id,
-            JobShare.shared_with_user_id == user.id,
-        )
-        share_result = await session.execute(share_stmt)
-        permission = share_result.scalar_one_or_none()
-        if permission != "edit":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You need edit permission to regenerate the report",
-            )
-
-    if job.status not in ["completed", "failed"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Can only regenerate report for completed or failed jobs (current: '{job.status}')",
-        )
-
-    job_manager = _get_job_manager()
-    try:
-        job_manager.regenerate_report(str(job.id))
-        logger.info("Started report regeneration for job %s (user %s)", job.id, user.email)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
-
-    return {"detail": "Report regeneration started", "job_id": str(job.id)}
-
-
 @router.get("/{job_id}/report")
 async def download_report(
     job_id: str,
@@ -662,24 +608,45 @@ async def download_report(
     # Look for report file
     job_dir = _get_jobs_dir() / str(job.id)
 
-    # Regenerate PDF from markdown if markdown exists
-    for md_name, pdf_name in [
-        ("final_report.md", "final_report.pdf"),
-        ("report.md", "report.pdf"),
-    ]:
-        md_path = job_dir / md_name
-        pdf_path = job_dir / pdf_name
-        if md_path.exists():
+    # Serve existing PDF if available (don't regenerate — avoids overwriting WeasyPrint PDF)
+    pdf_path = job_dir / "final_report.pdf"
+    if pdf_path.exists():
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
+        )
+
+    # Fallback: generate PDF from markdown via fpdf2 if no PDF exists yet
+    md_path = job_dir / "final_report.md"
+    if md_path.exists() and not pdf_path.exists():
+        try:
+            from openscientist.pdf_generator import markdown_to_pdf
+            from openscientist.report.processor import strip_figure_tags
+
+            raw_md = md_path.read_text(encoding="utf-8")
+            stripped = strip_figure_tags(raw_md)
+            stripped_path = job_dir / "_final_report_stripped.md"
+            stripped_path.write_text(stripped, encoding="utf-8")
             try:
-                from openscientist.pdf_generator import markdown_to_pdf
+                markdown_to_pdf(stripped_path, pdf_path)
+            finally:
+                stripped_path.unlink(missing_ok=True)
 
-                markdown_to_pdf(md_path, pdf_path)
-            except Exception:
-                logger.warning("Failed to regenerate %s", pdf_name, exc_info=True)
+            if pdf_path.exists():
+                return FileResponse(
+                    path=pdf_path,
+                    media_type="application/pdf",
+                    filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to generate PDF from markdown for job %s: %s", job_id, exc, exc_info=True
+            )
 
-    # Try PDF first, then Markdown
+    # Try HTML, then markdown as last resort
     report_files = [
-        (job_dir / "final_report.pdf", "application/pdf"),
+        (job_dir / "final_report.html", "text/html"),
         (job_dir / "final_report.md", "text/markdown"),
         (job_dir / "report.pdf", "application/pdf"),
         (job_dir / "report.md", "text/markdown"),

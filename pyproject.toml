@@ -74,9 +74,12 @@ dependencies = [
     "azure-identity>=1.15.0",  # Azure Foundry authentication
     "azure-mgmt-costmanagement>=4.0.0",  # Azure Foundry cost tracking
 
-    # PDF generation (lightweight, pure Python)
+    # PDF generation (lightweight, pure Python — fallback)
     "fpdf2>=2.7.0",
     "markdown>=3.5.0",
+
+    # PDF generation (WeasyPrint — primary, requires system libs)
+    "weasyprint>=62.0,<69",
 
     # Berkeley Lab Data Lakehouse
     "linkml-store[dremio]>=0.2.0",
