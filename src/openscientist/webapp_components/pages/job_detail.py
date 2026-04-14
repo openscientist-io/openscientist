@@ -1158,6 +1158,9 @@ def _render_report_html_iframe(job_dir: Path) -> None:
         logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
         html_content = html_path.read_text(encoding="utf-8")
 
+    # Open all links in a new tab (not inside the iframe)
+    html_content = html_content.replace("<head>", '<head><base target="_blank">', 1)
+
     # Serve as a static route and embed in iframe
     route_path = f"/report-html/{job_dir.name}"
 
