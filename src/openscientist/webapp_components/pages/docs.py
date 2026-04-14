@@ -62,7 +62,7 @@ Chronological view of the investigation. Each iteration shows:
 
 ### Report Tab
 The final scientific report with:
-- Executive summary
+- Summary
 - Detailed findings with evidence
 - Mechanistic interpretation
 - Suggested follow-up experiments

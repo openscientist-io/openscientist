@@ -138,11 +138,24 @@ def build_report_prompt(
     else:
         report_path = "./final_report.md"
 
+    # Build figure inventory section if plots are available
+    figure_section = ""
+    if job_dir is not None:
+        from openscientist.report.figures import (
+            build_figure_inventory,
+            format_figure_inventory_prompt,
+        )
+
+        cards = build_figure_inventory(job_dir)
+        figure_section = format_figure_inventory_prompt(cards)
+
     return f"""All iterations are complete. Write the final report for this research question:
 
 {research_question}
 
 {ks.get_report_outline()}
+
+{figure_section}
 
 ---
 
@@ -164,7 +177,7 @@ and iteration summaries.
    a multi-iteration investigation.  Every section must contain its actual content.
 
 2. **Report structure:**
-   - **Executive Summary** (2-3 paragraphs) — key takeaways for busy readers
+   - **Summary** (2-3 paragraphs) — key takeaways for busy readers
    - **Key Findings** — each finding with its statistical evidence, expanded into
      full prose paragraphs (not just bullet points from the knowledge state)
    - **Mechanistic Model/Interpretation** — synthesize findings into a coherent
@@ -183,11 +196,17 @@ and iteration summaries.
    - Quantify findings (e.g., "3 of 5 studies found...")
    - Acknowledge limitations and uncertainty clearly
 
-4. **Citation integrity:**
+4. **Embedding figures:**
+   - To include a plot in the report, use this syntax: `{{{{figure:filename.png|caption=Your caption here}}}}`
+   - Select the most informative plots — aim for ~1 figure per major finding
+   - Place figures near the text that discusses them
+   - Only reference figures listed in the "Available Figures" section above
+
+5. **Citation integrity:**
    - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
    - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
 
-5. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
+6. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
    answer to the research question.  Be direct — no citations or hedging.
 
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.

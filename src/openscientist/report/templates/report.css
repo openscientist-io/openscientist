@@ -1,0 +1,266 @@
+/* OpenScientist Report — print-ready CSS */
+
+/* Page setup */
+@page {
+  size: letter;
+  margin: 2.5cm 2cm 2.5cm 2cm;
+
+  @bottom-center {
+    content: counter(page);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9pt;
+    color: #999;
+  }
+
+  @top-right {
+    content: "OpenScientist Report";
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 8pt;
+    font-style: italic;
+    color: #999;
+  }
+}
+
+/* Title page: no headers/footers */
+@page title {
+  @top-right { content: none; }
+  @bottom-center { content: none; }
+}
+
+/* Body */
+body {
+  font-family: Georgia, "Times New Roman", Times, serif;
+  font-size: 11pt;
+  line-height: 1.6;
+  color: #333;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.report {
+  padding: 0;
+}
+
+/* Headings */
+h1 {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 24pt;
+  font-weight: 700;
+  color: #2c3e50;
+  margin-top: 0;
+  margin-bottom: 0.5em;
+  page: title;
+  border-bottom: 3px solid #2c3e50;
+  padding-bottom: 0.3em;
+}
+
+h2 {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 16pt;
+  font-weight: 600;
+  color: #34495e;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.2em;
+  page-break-after: avoid;
+}
+
+h3 {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 13pt;
+  font-weight: 600;
+  color: #5d6d7e;
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+  page-break-after: avoid;
+}
+
+h4 {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 11pt;
+  font-weight: 600;
+  color: #5d6d7e;
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+}
+
+/* Paragraphs */
+p {
+  margin: 0.6em 0;
+  text-align: justify;
+  orphans: 3;
+  widows: 3;
+}
+
+/* Links */
+a {
+  color: #2980b9;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Bold and italic */
+strong {
+  font-weight: 700;
+}
+
+em {
+  font-style: italic;
+}
+
+/* Lists */
+ul, ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+li {
+  margin-bottom: 0.3em;
+}
+
+/* Figures — auto-numbered */
+figure {
+  margin: 1.5em auto;
+  text-align: center;
+  page-break-inside: avoid;
+  max-width: 100%;
+  counter-increment: figure;
+}
+
+figure img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+figcaption {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 9.5pt;
+  color: #555;
+  margin-top: 0.5em;
+  font-style: italic;
+  text-align: center;
+}
+
+figcaption::before {
+  content: "Figure " counter(figure) ". ";
+  font-weight: 600;
+  font-style: normal;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 10pt;
+  page-break-inside: avoid;
+}
+
+thead th {
+  background-color: #34495e;
+  color: white;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 600;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 2px solid #2c3e50;
+}
+
+tbody td {
+  padding: 6px 12px;
+  border-bottom: 1px solid #ddd;
+}
+
+tbody tr:nth-child(even) {
+  background-color: #f8f9fa;
+}
+
+tbody tr:hover {
+  background-color: #eef2f7;
+}
+
+/* Code */
+code {
+  font-family: "DejaVu Sans Mono", "Courier New", monospace;
+  font-size: 9.5pt;
+  background-color: #f5f5f5;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid #e0e0e0;
+}
+
+pre {
+  background-color: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 9pt;
+  line-height: 1.4;
+  page-break-inside: avoid;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* Blockquotes */
+blockquote {
+  border-left: 4px solid #2980b9;
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  color: #555;
+  background-color: #f8f9fa;
+}
+
+/* Horizontal rules */
+hr {
+  border: none;
+  border-top: 1px solid #ddd;
+  margin: 2em 0;
+}
+
+/* PubMed badges */
+.pubmed-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px 1px 4px;
+  margin: 0 2px;
+  background-color: #e8f4f8;
+  border: 1px solid #326599;
+  border-radius: 4px;
+  text-decoration: none;
+  color: #326599;
+  font-size: 0.85em;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pubmed-icon {
+  width: 14px;
+  height: 14px;
+  vertical-align: middle;
+  margin-right: 3px;
+}
+
+/* Attribution footer */
+.attribution {
+  margin-top: 3em;
+  padding-top: 1em;
+  border-top: 1px solid #ddd;
+  text-align: center;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 9pt;
+  font-style: italic;
+  color: #95a5a6;
+}

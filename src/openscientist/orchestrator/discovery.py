@@ -276,11 +276,48 @@ def _ensure_report_written(report_path: Path, report_result: IterationResult) ->
     return False
 
 
-def _try_generate_report_pdf(report_path: Path) -> None:
-    """Generate PDF from markdown report when possible."""
-    from openscientist.pdf_generator import markdown_to_pdf
+async def _try_generate_report_pdf(report_path: Path) -> None:
+    """Generate HTML and PDF from markdown report.
 
-    markdown_to_pdf(report_path, add_footer=True)
+    Pipeline: markdown (with figure tags) → HTML → PDF (via WeasyPrint).
+    Falls back to fpdf2 if WeasyPrint is unavailable or fails.
+    """
+    job_dir = report_path.parent
+    html_path = job_dir / "final_report.html"
+    pdf_path = job_dir / "final_report.pdf"
+
+    try:
+        from openscientist.report.pdf import render_report_pdf
+        from openscientist.report.renderer import render_report_html
+
+        # Render HTML with file:// image paths (for WeasyPrint)
+        html_content = render_report_html(report_path, job_dir)
+        html_path.write_text(html_content, encoding="utf-8")
+        logger.info("HTML report written: %s", html_path)
+
+        # Render PDF from HTML
+        await render_report_pdf(html_path, pdf_path, job_dir)
+        return
+
+    except Exception as exc:
+        logger.warning("WeasyPrint PDF generation failed, falling back to fpdf2: %s", exc)
+
+    # Fallback: strip figure tags and use fpdf2
+    try:
+        from openscientist.pdf_generator import markdown_to_pdf
+        from openscientist.report.processor import strip_figure_tags
+
+        raw_md = report_path.read_text(encoding="utf-8")
+        stripped = strip_figure_tags(raw_md)
+        # Write stripped version to a temp path for fpdf2
+        stripped_path = job_dir / "_final_report_stripped.md"
+        stripped_path.write_text(stripped, encoding="utf-8")
+        try:
+            markdown_to_pdf(stripped_path, pdf_path, add_footer=True)
+        finally:
+            stripped_path.unlink(missing_ok=True)
+    except Exception as fallback_exc:
+        logger.warning("fpdf2 fallback also failed: %s", fallback_exc)
 
 
 async def _run_report_generation_phase(
@@ -300,7 +337,7 @@ async def _run_report_generation_phase(
 
     if report_success:
         try:
-            _try_generate_report_pdf(report_path)
+            await _try_generate_report_pdf(report_path)
         except (ValueError, OSError, OpenScientistError) as exc:
             logger.warning("PDF generation failed: %s", exc)
 
@@ -593,84 +630,6 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
                 or _PROVIDER_DEFAULT_MODELS.get(provider.name, "unknown")
             )
             await _persist_job_cost_record(job_id, tokens, provider.name, model_name)
-        except Exception as cost_err:
-            logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
-        await executor.shutdown()
-
-
-async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
-    """
-    Re-run only the report generation phase for a completed/failed job.
-
-    Loads the existing KnowledgeState and DB-backed job metadata, creates a fresh executor
-    session, and generates a new final_report.md + PDF.
-
-    Args:
-        job_dir: Path to job directory
-
-    Returns:
-        Dict: {job_id, status, report_success}
-    """
-    job_dir = Path(job_dir)
-    runtime = await _load_runtime_context(job_dir)
-    job_id = runtime["job_id"]
-
-    logger.info("Regenerating report for job %s", job_id)
-
-    # Set up provider and executor
-    provider = get_provider()
-    provider.setup_environment()
-    await update_job_status(job_dir, "generating_report")
-
-    use_hypotheses = runtime["use_hypotheses"]
-    all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
-    executor = _build_agent_executor(
-        job_dir=job_dir,
-        data_file=_resolve_primary_data_file(runtime["data_files"]),
-        use_hypotheses=use_hypotheses,
-        data_files=all_data_files,
-    )
-
-    try:
-        report_outcome = await _run_report_generation_phase(
-            executor=executor,
-            job_dir=job_dir,
-            research_question=runtime["research_question"],
-        )
-        final_status = await _persist_final_status(job_dir, report_outcome)
-
-        return {
-            "job_id": job_id,
-            "status": final_status,
-            "report_success": report_outcome.success,
-        }
-
-    except Exception as e:
-        logger.error("Report regeneration failed [%s]: %s", get_version_string(), e, exc_info=True)
-        try:
-            await update_job_status(job_dir, "failed", error_message=str(e))
-        except Exception as status_error:
-            logger.warning(
-                "Failed to persist regenerate-report failure for %s: %s", job_id, status_error
-            )
-        raise
-
-    finally:
-        tokens = executor.total_tokens
-        logger.info(
-            "Report regeneration executor: %d input tokens, %d output tokens",
-            tokens.input_tokens,
-            tokens.output_tokens,
-        )
-        try:
-            settings = get_settings()
-            model_name = (
-                settings.provider.anthropic_model
-                or settings.provider.anthropic_default_sonnet_model
-                or _PROVIDER_DEFAULT_MODELS.get(provider.name, "unknown")
-            )
-            await _persist_job_cost_record(job_id, tokens, provider.name, model_name, "report")
         except Exception as cost_err:
             logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
         await executor.shutdown()
