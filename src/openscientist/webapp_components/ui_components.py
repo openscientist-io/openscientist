@@ -30,6 +30,36 @@ if TYPE_CHECKING:
     from openscientist.job_manager import JobManager
 
 
+OPENSCIENTIST_DOCS_URL = "/docs"
+OPENSCIENTIST_GITHUB_URL = "https://github.com/openscientist-io/openscientist"
+OPENSCIENTIST_RELEASE_URL = "https://github.com/openscientist-io/openscientist/releases/latest"
+OPENSCIENTIST_PAPER_URL: str | None = None
+
+
+def get_project_resource_links(*, include_docs: bool = True) -> list[tuple[str, str]]:
+    """Return the verified project links we expose in the UI."""
+    links: list[tuple[str, str]] = []
+    if include_docs:
+        links.append(("Docs", OPENSCIENTIST_DOCS_URL))
+    links.append(("GitHub", OPENSCIENTIST_GITHUB_URL))
+    if OPENSCIENTIST_PAPER_URL:
+        links.append(("Paper", OPENSCIENTIST_PAPER_URL))
+    links.append(("Latest Release", OPENSCIENTIST_RELEASE_URL))
+    return links
+
+
+def render_project_resource_links(*, include_docs: bool = True) -> None:
+    """Render a compact row of project resource links."""
+    with ui.column().classes("w-full items-center gap-2"):
+        ui.label("Resources").classes("text-xs font-semibold uppercase tracking-wide text-cyan-600")
+        with ui.row().classes("w-full justify-center gap-2 flex-wrap"):
+            for label, target in get_project_resource_links(include_docs=include_docs):
+                ui.link(label, target=target, new_tab=target.startswith("http")).classes(
+                    "no-underline rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 "
+                    "text-sm font-medium text-cyan-700 hover:bg-cyan-100"
+                )
+
+
 def format_relative_time(dt: datetime | None) -> str:
     """
     Format datetime as relative time (e.g., '2 hours ago').

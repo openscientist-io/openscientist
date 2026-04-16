@@ -7,6 +7,7 @@ from openscientist.settings import get_settings
 from openscientist.webapp_components.ui_components import (
     OPENSCIENTIST_THINKING_SVG,
     render_alert_banner,
+    render_project_resource_links,
 )
 
 _TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
@@ -184,3 +185,6 @@ def login_page(error: str | None = None) -> None:
                         ui.label("Please configure OAuth providers in .env").classes(
                             "text-yellow-700 text-sm"
                         )
+
+        ui.separator().classes("w-full my-1")
+        render_project_resource_links()
