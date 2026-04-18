@@ -1,7 +1,6 @@
 """Phenix environment setup for structural biology tools."""
 
 import os
-import subprocess
 import sys
 from typing import Any
 
@@ -27,28 +26,23 @@ def validate_phenix_path(phenix_path: str) -> list[str]:
     """
     errors = []
 
-    # Must be an absolute path
     if not phenix_path.startswith("/"):
         errors.append(
             f"PHENIX_PATH must be an absolute path (starting with '/'), "
             f"got: '{phenix_path}'\n"
-            f"  Example: PHENIX_PATH=/opt/phenix-1.21.2-5419"
+            f"  Example: PHENIX_PATH=/opt/phenix-2.0-5936"
         )
-        return errors  # Don't check further if not absolute
+        return errors
 
-    # Must not contain path traversal
     if ".." in phenix_path:
         errors.append(f"PHENIX_PATH must not contain path traversal (..): '{phenix_path}'")
 
-    # Must exist
     if not os.path.exists(phenix_path):
         errors.append(
             f"PHENIX_PATH directory does not exist: '{phenix_path}'\n"
             f"  Please verify the path is correct and the directory exists.\n"
             f"  If using Docker, ensure PHENIX_PATH in .env points to your host installation."
         )
-
-    # Must be a directory
     elif not os.path.isdir(phenix_path):
         errors.append(f"PHENIX_PATH must be a directory, not a file: '{phenix_path}'")
 
@@ -57,14 +51,19 @@ def validate_phenix_path(phenix_path: str) -> list[str]:
 
 def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
     """
-    Source Phenix environment and return updated environment dict.
+    Build an environment dict for invoking Phenix 2.x tools.
+
+    Phenix 2.x dispatchers in ``bin/`` are self-relocating via
+    ``shellrealpath $0``, so we only need to put ``bin/`` on PATH and set
+    ``PHENIX`` / ``PHENIX_PREFIX`` (required by tools like ``phenix.list``).
 
     Args:
         raise_on_error: If True, raise PhenixConfigError on invalid config.
                        If False (default), print warnings and return None.
 
     Returns:
-        dict: Environment variables with Phenix paths, or None if not configured/invalid.
+        dict: Environment variables with Phenix paths, or None if not
+        configured/invalid.
 
     Raises:
         PhenixConfigError: If raise_on_error=True and configuration is invalid.
@@ -73,7 +72,6 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
     if not phenix_path:
         return None
 
-    # Validate the path
     errors = validate_phenix_path(phenix_path)
     if errors:
         error_msg = "PHENIX_PATH configuration error:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -82,71 +80,22 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
         print(f"Warning: {error_msg}", file=sys.stderr)
         return None
 
-    # Phenix 2.0 restructured the install: no more build/setpaths.sh, and
-    # dispatchers in bin/ are self-relocating via shellrealpath $0. We only
-    # need to put bin/ on PATH and set PHENIX/PHENIX_PREFIX for tools like
-    # phenix.list that read them directly.
-    setpaths = os.path.join(phenix_path, "build", "setpaths.sh")
     bin_dir = os.path.join(phenix_path, "bin")
-    if os.path.exists(setpaths):
-        return _setup_phenix_1x(phenix_path, setpaths, raise_on_error=raise_on_error)
-    if os.path.isdir(bin_dir) and os.path.exists(os.path.join(bin_dir, "phenix.about")):
-        return _setup_phenix_2x(phenix_path, bin_dir)
+    if not os.path.isdir(bin_dir) or not os.path.exists(os.path.join(bin_dir, "phenix.about")):
+        msg = (
+            f"Phenix installation at {phenix_path} is missing bin/phenix.about. "
+            f"Expected a Phenix 2.x install layout."
+        )
+        if raise_on_error:
+            raise PhenixConfigError(msg)
+        print(f"Warning: {msg}", file=sys.stderr)
+        return None
 
-    msg = (
-        f"Phenix installation at {phenix_path} has neither build/setpaths.sh "
-        f"(1.x layout) nor bin/phenix.about (2.x layout). "
-        f"This does not look like a valid Phenix installation."
-    )
-    if raise_on_error:
-        raise PhenixConfigError(msg)
-    print(f"Warning: {msg}", file=sys.stderr)
-    return None
-
-
-def _setup_phenix_2x(phenix_path: str, bin_dir: str) -> dict[str, Any]:
-    """Phenix 2.x env setup: put bin/ on PATH; set PHENIX_PREFIX for phenix.list."""
     phenix_env = os.environ.copy()  # env-ok
     phenix_env["PATH"] = f"{bin_dir}:{phenix_env.get('PATH', '')}"
     phenix_env["PHENIX"] = phenix_path
     phenix_env["PHENIX_PREFIX"] = phenix_path
     return phenix_env
-
-
-def _setup_phenix_1x(
-    phenix_path: str, setpaths: str, *, raise_on_error: bool
-) -> dict[str, Any] | None:
-    """Phenix 1.x env setup: source build/setpaths.sh with PHENIX overridden."""
-    build_dir = os.path.join(phenix_path, "build")
-    cmd = (
-        f"export PHENIX={phenix_path} && "
-        f"export LIBTBX_BUILD={build_dir} && "
-        f"source {setpaths} && env"
-    )
-    try:
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            executable="/bin/bash",
-            timeout=10,
-            check=False,
-        )
-
-        phenix_env = os.environ.copy()  # env-ok
-        for line in proc.stdout.split("\n"):
-            if "=" in line:
-                key, _, value = line.partition("=")
-                phenix_env[key] = value
-        return phenix_env
-
-    except subprocess.TimeoutExpired:
-        print("Warning: Phenix environment setup timed out")
-        return None
-    except (OSError, subprocess.SubprocessError) as e:
-        print(f"Warning: Failed to setup Phenix environment: {e}")
-        return None
 
 
 def check_phenix_available() -> bool:
@@ -164,5 +113,4 @@ def check_phenix_available() -> bool:
 
         return get_settings().phenix.is_available
     except Exception:
-        # Fall back to original behavior if settings can't be loaded
         return setup_phenix_env() is not None

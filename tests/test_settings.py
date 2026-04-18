@@ -487,22 +487,17 @@ class TestPhenixSettings:
         settings = PhenixSettings(PHENIX_HOST_PATH=None)
         assert settings.phenix_host_path is None
 
-    def test_phenix_is_available_checks_env_script(self):
-        """is_available checks for phenix_env.sh."""
+    def test_phenix_is_available_checks_phenix_about(self):
+        """is_available is True when bin/phenix.about exists (2.x layout)."""
         with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
-            # Directory exists and phenix_env.sh exists
             mock_exists.side_effect = lambda _p: True
             settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
             assert settings.is_available is True
 
-    def test_phenix_not_available_without_setpaths(self):
-        """is_available is False when build/setpaths.sh is missing."""
+    def test_phenix_not_available_without_phenix_about(self):
+        """is_available is False when bin/phenix.about is missing."""
         with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
-            # Directory exists but setpaths.sh does not
-            def exists_side_effect(path):
-                return not path.endswith("setpaths.sh")
-
-            mock_exists.side_effect = exists_side_effect
+            mock_exists.side_effect = lambda path: "phenix.about" not in path
             settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
             assert settings.is_available is False
 

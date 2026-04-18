@@ -596,7 +596,7 @@ class PhenixSettings(BaseSettings):
         return cls._validate_absolute_path(
             v,
             env_name="PHENIX_PATH",
-            example="/opt/phenix-1.21.2-5419",
+            example="/opt/phenix-2.0-5936",
         )
 
     @field_validator("phenix_host_path")
@@ -615,15 +615,15 @@ class PhenixSettings(BaseSettings):
         Check if Phenix is configured and available.
 
         This checks for actual existence on the filesystem, complementing
-        the format validation done by the validator.
+        the format validation done by the validator. Expects the Phenix
+        2.x install layout (`bin/phenix.about`).
         """
         if not self.phenix_path:
             return False
         if not os.path.isdir(self.phenix_path):
             return False
-        # Check for build/setpaths.sh — the script actually used by setup_phenix_env()
-        setpaths = os.path.join(self.phenix_path, "build", "setpaths.sh")
-        return os.path.exists(setpaths)
+        about = os.path.join(self.phenix_path, "bin", "phenix.about")
+        return os.path.exists(about)
 
 
 class BerkeleyLabSettings(BaseSettings):
