@@ -18,7 +18,7 @@ Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], de
 | `phenix.clashscore` | All-atom steric clash analysis |
 | `phenix.ramalyze` | Ramachandran backbone analysis |
 | `phenix.rotalyze` | Side-chain rotamer analysis |
-| `phenix.cablam_validate` | C-alpha based backbone validation |
+| `phenix.cablam` | C-alpha based backbone validation |
 | `phenix.cbetadev` | C-beta deviation analysis |
 | `phenix.omegalyze` | Cis/trans peptide bond validation |
 | `phenix.model_vs_data` | Model versus diffraction data statistics |
@@ -155,7 +155,7 @@ run_phenix_tool(
 | Command | Purpose |
 |---------|---------|
 | `phenix.print_sequence` | Extract sequence from PDB |
-| `phenix.model_vs_sequence` | Compare model against expected sequence |
+| `phenix.assign_sequence` | Assign a sequence to a model using a map and sequence file |
 | `phenix.fetch_pdb` | Download PDB entries by ID |
 
 ## Useful Utilities

@@ -82,32 +82,41 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
         print(f"Warning: {error_msg}", file=sys.stderr)
         return None
 
-    # phenix_env.sh hardcodes the original install path (e.g.
-    # /Applications/phenix-1.21.2-5419) which won't match the container
-    # mount point.  Source build/setpaths.sh directly with PHENIX set to
-    # the actual path so it works regardless of where Phenix is mounted.
+    # Phenix 2.0 restructured the install: no more build/setpaths.sh, and
+    # dispatchers in bin/ are self-relocating via shellrealpath $0. We only
+    # need to put bin/ on PATH and set PHENIX/PHENIX_PREFIX for tools like
+    # phenix.list that read them directly.
     setpaths = os.path.join(phenix_path, "build", "setpaths.sh")
-    if not os.path.exists(setpaths):
-        # Fall back to phenix_env.sh check for a friendlier error message
-        env_script = os.path.join(phenix_path, "phenix_env.sh")
-        if not os.path.exists(env_script):
-            msg = (
-                f"Phenix environment script not found at: {env_script}\n"
-                f"  This suggests PHENIX_PATH is not a valid Phenix installation.\n"
-                f"  Expected to find 'phenix_env.sh' in the Phenix root directory."
-            )
-        else:
-            msg = (
-                f"Phenix setpaths.sh not found at: {setpaths}\n"
-                f"  Expected to find 'build/setpaths.sh' in the Phenix installation."
-            )
-        if raise_on_error:
-            raise PhenixConfigError(msg)
-        print(f"Warning: {msg}", file=sys.stderr)
-        return None
+    bin_dir = os.path.join(phenix_path, "bin")
+    if os.path.exists(setpaths):
+        return _setup_phenix_1x(phenix_path, setpaths, raise_on_error=raise_on_error)
+    if os.path.isdir(bin_dir) and os.path.exists(os.path.join(bin_dir, "phenix.about")):
+        return _setup_phenix_2x(phenix_path, bin_dir)
 
-    # Source setpaths.sh with PHENIX and LIBTBX_BUILD pointing to the
-    # actual mount path so relocated installs resolve correctly.
+    msg = (
+        f"Phenix installation at {phenix_path} has neither build/setpaths.sh "
+        f"(1.x layout) nor bin/phenix.about (2.x layout). "
+        f"This does not look like a valid Phenix installation."
+    )
+    if raise_on_error:
+        raise PhenixConfigError(msg)
+    print(f"Warning: {msg}", file=sys.stderr)
+    return None
+
+
+def _setup_phenix_2x(phenix_path: str, bin_dir: str) -> dict[str, Any]:
+    """Phenix 2.x env setup: put bin/ on PATH; set PHENIX_PREFIX for phenix.list."""
+    phenix_env = os.environ.copy()  # env-ok
+    phenix_env["PATH"] = f"{bin_dir}:{phenix_env.get('PATH', '')}"
+    phenix_env["PHENIX"] = phenix_path
+    phenix_env["PHENIX_PREFIX"] = phenix_path
+    return phenix_env
+
+
+def _setup_phenix_1x(
+    phenix_path: str, setpaths: str, *, raise_on_error: bool
+) -> dict[str, Any] | None:
+    """Phenix 1.x env setup: source build/setpaths.sh with PHENIX overridden."""
     build_dir = os.path.join(phenix_path, "build")
     cmd = (
         f"export PHENIX={phenix_path} && "
@@ -125,13 +134,11 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
             check=False,
         )
 
-        # Parse environment variables
         phenix_env = os.environ.copy()  # env-ok
         for line in proc.stdout.split("\n"):
             if "=" in line:
                 key, _, value = line.partition("=")
                 phenix_env[key] = value
-
         return phenix_env
 
     except subprocess.TimeoutExpired:

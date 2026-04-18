@@ -179,9 +179,10 @@ class TestSetupPhenixEnv:
     def test_missing_env_script_returns_none(self, mock_exists, mock_isdir):
         """Missing setpaths.sh and phenix_env.sh should return None."""
 
-        # Directory exists but setpaths.sh and phenix_env.sh do not
+        # Directory exists but neither 1.x (setpaths.sh) nor 2.x
+        # (bin/phenix.about) layout is present.
         def exists_side_effect(path):
-            if "setpaths.sh" in path or "phenix_env.sh" in path:
+            if "setpaths.sh" in path or "phenix_env.sh" in path or "phenix.about" in path:
                 return False
             return True
 
@@ -197,7 +198,7 @@ class TestSetupPhenixEnv:
         """Missing setpaths.sh and phenix_env.sh should raise when raise_on_error=True."""
 
         def exists_side_effect(path):
-            if "setpaths.sh" in path or "phenix_env.sh" in path:
+            if "setpaths.sh" in path or "phenix_env.sh" in path or "phenix.about" in path:
                 return False
             return True
 
@@ -205,7 +206,26 @@ class TestSetupPhenixEnv:
         mock_isdir.return_value = True
         with pytest.raises(PhenixConfigError) as exc_info:
             setup_phenix_env(raise_on_error=True)
-        assert "not found" in str(exc_info.value)
+        assert "not found" in str(exc_info.value) or "valid Phenix" in str(exc_info.value)
+
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
+    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
+    def test_phenix_2x_layout_sets_path_without_subprocess(self, mock_exists, mock_isdir):
+        """Phenix 2.x (bin/phenix.about, no build/setpaths.sh) sets PATH directly."""
+
+        def exists_side_effect(path):
+            if "setpaths.sh" in path:
+                return False
+            return True
+
+        mock_exists.side_effect = exists_side_effect
+        mock_isdir.return_value = True
+        env = setup_phenix_env()
+        assert env is not None
+        assert env["PATH"].startswith("/opt/phenix/bin:")
+        assert env["PHENIX"] == "/opt/phenix"
+        assert env["PHENIX_PREFIX"] == "/opt/phenix"
 
 
 class TestCheckPhenixAvailable:
