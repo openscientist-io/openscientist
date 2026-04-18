@@ -96,6 +96,12 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
     phenix_env["PATH"] = f"{bin_dir}:{existing_path}" if existing_path else bin_dir
     phenix_env["PHENIX"] = phenix_path
     phenix_env["PHENIX_PREFIX"] = phenix_path
+    # Phenix's SGE queue utilities parse JOB_ID as an int at tool startup and
+    # crash when it's a UUID (see libtbx.queuing_system_utils.sge_utils). We
+    # set JOB_ID=<uuid> in the agent container, which would otherwise break
+    # any phenix.* dispatcher that calls print_programs_start_header (e.g.
+    # phenix.superpose_pdbs). Strip it from the env we pass to Phenix.
+    phenix_env.pop("JOB_ID", None)
     return phenix_env
 
 

@@ -155,6 +155,18 @@ class TestSetupPhenixEnv:
 
     @patch("openscientist.phenix_setup.os.path.isdir")
     @patch("openscientist.phenix_setup.os.path.exists")
+    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix", "JOB_ID": "abc-uuid"})
+    def test_job_id_is_stripped_from_env(self, mock_exists, mock_isdir):
+        """JOB_ID must not leak into Phenix env (Phenix SGE utils parse it as int)."""
+        clear_settings_cache()
+        mock_exists.return_value = True
+        mock_isdir.return_value = True
+        env = setup_phenix_env()
+        assert env is not None
+        assert "JOB_ID" not in env
+
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
     @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix", "PATH": ""})
     def test_empty_path_does_not_add_trailing_colon(self, mock_exists, mock_isdir):
         """Empty PATH must not yield 'bin_dir:' (trailing colon implies CWD in PATH)."""
