@@ -26,6 +26,9 @@ Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], de
 | `phenix.emringer` | Map-model validation for cryo-EM structures |
 | `phenix.validation_cryoem` | Comprehensive cryo-EM validation |
 | `phenix.undowser_validation` | Check waters for clashes and poor contacts |
+| `phenix.clashscore2` | Updated all-atom clash score (prefer over `clashscore` when available; slightly different scoring) |
+| `phenix.undowser2_validation` | Updated water validation (same relationship to `undowser_validation` as above) |
+| `phenix.holton_geometry_validation` | Holton-method geometry validation — complementary signal to molprobity; useful for second-opinion checks |
 
 ### Example: Full validation
 
@@ -46,6 +49,8 @@ run_phenix_tool(
 | `phenix.structure_comparison` | Broader structural comparison |
 | `phenix.model_model_distances` | Per-residue distance between two models |
 | `phenix.superpose_and_morph` | Superpose and morph one structure onto another |
+| `phenix.superpose_models` | Superpose with optional morphing and trimming (more flexible variant of `superpose_and_morph`) |
+| `phenix.find_reference` | Find reference models (e.g., homologs in the PDB) for a supplied model |
 
 ### Example: Per-residue distances
 
@@ -83,8 +88,14 @@ run_phenix_tool(
 | `phenix.real_space_refine` | Real-space refinement, primarily for cryo-EM |
 | `phenix.geometry_minimization` | Energy minimization without data |
 | `phenix.dynamics` | Molecular dynamics refinement |
+| `phenix.fit_h` | Fit hydrogen positions with rotational DOF into a map (use after `phenix.reduce` when H positions matter for interpretation) |
+| `phenix.rocket` | Wrapper for ROCKET refinement (external tool — see rocket-9.gitbook.io for docs) |
+| `phenix.aquaref` | Quantum-mechanical (QM) refinement via qr.refine — specialized; only use when QM restraints are specifically required |
+| `phenix.mopac` | Semiempirical QM refinement via MOPAC — specialized; same caveat as `aquaref` |
+| `phenix.magref` | Magnetic / spin-dependent refinement — specialized; only for data with magnetic scattering |
+| `phenix.TAAM_minus_IAM` | Difference between Transferable Aspherical Atom Model and Independent Atom Model refinements — specialized, for ultra-high-resolution data only |
 
-Refinement commands are compute-intensive and may approach the 5-minute timeout. Use targeted refinement when possible.
+Refinement commands are compute-intensive and may approach the 5-minute timeout. Use targeted refinement when possible. The last four rows above are narrow-use — do not invoke unless the task explicitly calls for QM/magnetic/aspherical refinement.
 
 ## Map Operations
 
@@ -93,6 +104,9 @@ Refinement commands are compute-intensive and may approach the 5-minute timeout.
 | `phenix.maps` | Compute electron density map coefficients |
 | `phenix.map_box` | Extract map region around a model |
 | `phenix.map_model_cc` | Map-model correlation coefficient |
+| `phenix.map_correlations` | Correlation between two maps, or map vs model (use when comparing maps to each other — `map_model_cc` is map-vs-model only) |
+| `phenix.map_sharpening` | Map sharpening via scale-factor optimization (newer, more flexible than `auto_sharpen`; supports half-maps and model-guided modes) |
+| `phenix.reduce_cryoem_resolution` | Artificially limit cryo-EM half-maps to a target resolution (for testing resolution dependence) |
 | `phenix.mtriage` | Cryo-EM map analysis |
 | `phenix.local_resolution` | Local resolution estimation |
 | `phenix.auto_sharpen` | Map sharpening |
@@ -110,6 +124,9 @@ Refinement commands are compute-intensive and may approach the 5-minute timeout.
 | `phenix.reduce` | Add hydrogens to a structure |
 | `phenix.ready_set` | Add hydrogens and generate ligand restraints |
 | `phenix.find_helices_strands` | Identify secondary structure elements |
+| `phenix.analyze_alt_conf` | Analyze alternate conformations in a model; can compare against another model |
+| `phenix.create_alt_conf` | Generate alternate conformations from a single-conformation starting model and data |
+| `phenix.merge_models_as_alt_conf` | Combine several models with identical hierarchies into one multi-conformer model |
 
 ### Example: Extract a single chain
 
