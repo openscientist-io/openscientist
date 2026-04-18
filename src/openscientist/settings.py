@@ -606,7 +606,7 @@ class PhenixSettings(BaseSettings):
         return cls._validate_absolute_path(
             v,
             env_name="PHENIX_HOST_PATH",
-            example="/home/user/phenix-1.21.2-5419",
+            example="/home/user/phenix-2.0-5936",
         )
 
     @property

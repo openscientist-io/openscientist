@@ -269,7 +269,7 @@ def make_tools(ctx: ToolContext) -> list[Callable[..., Any]]:
         Available tools include:
         - phenix.superpose_pdbs: Align and compare two structures
         - phenix.clashscore: Detect steric clashes
-        - phenix.cablam_validate: Validate backbone geometry
+        - phenix.cablam: Validate backbone geometry
 
         Args:
             tool_name: Name of Phenix tool (e.g., "phenix.clashscore")

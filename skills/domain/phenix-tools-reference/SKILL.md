@@ -8,7 +8,7 @@ category: domain
 
 If Phenix is available, prefer `run_phenix_tool` over `execute_code` for structural biology tasks like validation, superposition, refinement, and map analysis. Phenix is the gold standard for these tasks.
 
-Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], description="...")`. This reference lists the most useful commands grouped by task. All commands accept PDB or mmCIF files.
+Call `run_phenix_tool(tool_name="phenix.<command>", input_files=["file.pdb"], description="...")`. This reference lists the most useful commands grouped by task. Most commands accept PDB or mmCIF files, but some take map files, reflection data, sequences, or other formats — check each tool's `--help` if you are unsure.
 
 ## Validation and Quality Assessment
 
@@ -91,7 +91,7 @@ run_phenix_tool(
 | `phenix.fit_h` | Fit hydrogen positions with rotational DOF into a map (use after `phenix.reduce` when H positions matter for interpretation) |
 | `phenix.rocket` | Wrapper for ROCKET refinement (external tool — see rocket-9.gitbook.io for docs) |
 | `phenix.aquaref` | Quantum-mechanical (QM) refinement via qr.refine — specialized; only use when QM restraints are specifically required |
-| `phenix.mopac` | Semiempirical QM refinement via MOPAC — specialized; same caveat as `aquaref` |
+| `phenix.mopac` | Semiempirical QM refinement via MOPAC — specialized. Prefer `phenix.refine` (X-ray) or `phenix.real_space_refine` (cryo-EM) unless the task explicitly asks for QM |
 | `phenix.magref` | Magnetic / spin-dependent refinement — specialized; only for data with magnetic scattering |
 | `phenix.TAAM_minus_IAM` | Difference between Transferable Aspherical Atom Model and Independent Atom Model refinements — specialized, for ultra-high-resolution data only |
 

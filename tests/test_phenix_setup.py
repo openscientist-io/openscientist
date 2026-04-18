@@ -153,6 +153,19 @@ class TestSetupPhenixEnv:
         assert env["PHENIX"] == "/opt/phenix"
         assert env["PHENIX_PREFIX"] == "/opt/phenix"
 
+    @patch("openscientist.phenix_setup.os.path.isdir")
+    @patch("openscientist.phenix_setup.os.path.exists")
+    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix", "PATH": ""})
+    def test_empty_path_does_not_add_trailing_colon(self, mock_exists, mock_isdir):
+        """Empty PATH must not yield 'bin_dir:' (trailing colon implies CWD in PATH)."""
+        clear_settings_cache()
+        mock_exists.return_value = True
+        mock_isdir.return_value = True
+        env = setup_phenix_env()
+        assert env is not None
+        assert env["PATH"] == "/opt/phenix/bin"
+        assert not env["PATH"].endswith(":")
+
 
 class TestCheckPhenixAvailable:
     """Tests for Phenix availability check."""

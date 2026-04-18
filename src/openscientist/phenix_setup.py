@@ -92,7 +92,8 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
         return None
 
     phenix_env = os.environ.copy()  # env-ok
-    phenix_env["PATH"] = f"{bin_dir}:{phenix_env.get('PATH', '')}"
+    existing_path = phenix_env.get("PATH", "")
+    phenix_env["PATH"] = f"{bin_dir}:{existing_path}" if existing_path else bin_dir
     phenix_env["PHENIX"] = phenix_path
     phenix_env["PHENIX_PREFIX"] = phenix_path
     return phenix_env
