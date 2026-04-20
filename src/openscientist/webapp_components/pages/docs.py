@@ -19,6 +19,8 @@ DOCS_PAGE_CONTENT_MARKDOWN = dedent(
 
     ## How It Works
 
+    ![OpenScientist workflow: scientist submits a task and optional data, the agent iterates through literature search, analysis, and knowledge accumulation with optional user feedback, then compiles a final report.](/assets/openscientist-schematic.png)
+
     1. **Submit a Job**: Provide a research question and optionally upload data files.
     2. **Autonomous Discovery**: OpenScientist runs for N iterations, analyzing data and searching literature.
     3. **View Results**: Track progress in the Timeline view, see key findings in Summary, and download the final report.
