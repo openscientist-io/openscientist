@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 OPENSCIENTIST_DOCS_URL = "/docs"
 OPENSCIENTIST_GITHUB_URL = "https://github.com/openscientist-io/openscientist"
 OPENSCIENTIST_RELEASE_URL = "https://github.com/openscientist-io/openscientist/releases/latest"
-OPENSCIENTIST_PAPER_URL: str | None = None
+OPENSCIENTIST_PAPER_URL: str | None = "https://www.medrxiv.org/content/10.64898/2026.03.15.26348338v1"
 
 
 def get_project_resource_links(*, include_docs: bool = True) -> list[tuple[str, str]]:

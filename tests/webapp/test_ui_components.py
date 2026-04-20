@@ -10,6 +10,7 @@ from openscientist.job_manager import JobStatus
 from openscientist.webapp_components.ui_components import (
     OPENSCIENTIST_DOCS_URL,
     OPENSCIENTIST_GITHUB_URL,
+    OPENSCIENTIST_PAPER_URL,
     OPENSCIENTIST_RELEASE_URL,
     STATUS_COLORS,
     STATUS_ICONS,
@@ -42,18 +43,22 @@ class TestStatusConstants:
 class TestProjectResourceLinks:
     """Tests for shared public resource links."""
 
-    def test_default_links_include_docs_repo_and_release(self):
+    def test_default_links_include_docs_repo_paper_and_release(self):
         """Login/front-page resources should expose the verified links."""
+        assert OPENSCIENTIST_PAPER_URL is not None
         assert get_project_resource_links() == [
             ("Docs", OPENSCIENTIST_DOCS_URL),
             ("GitHub", OPENSCIENTIST_GITHUB_URL),
+            ("Paper", OPENSCIENTIST_PAPER_URL),
             ("Latest Release", OPENSCIENTIST_RELEASE_URL),
         ]
 
     def test_docs_page_links_skip_redundant_docs_link(self):
         """Authenticated docs page should avoid linking to itself."""
+        assert OPENSCIENTIST_PAPER_URL is not None
         assert get_project_resource_links(include_docs=False) == [
             ("GitHub", OPENSCIENTIST_GITHUB_URL),
+            ("Paper", OPENSCIENTIST_PAPER_URL),
             ("Latest Release", OPENSCIENTIST_RELEASE_URL),
         ]
 
