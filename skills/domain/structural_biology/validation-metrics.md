@@ -43,7 +43,7 @@ Validates backbone torsion angles (phi/psi).
 
 ```
 run_phenix_tool(
-    tool_name="phenix.cablam_validate",
+    tool_name="phenix.cablam",
     input_files=["alphafold_P04637.pdb"],
     description="Backbone validation of AlphaFold prediction"
 )
