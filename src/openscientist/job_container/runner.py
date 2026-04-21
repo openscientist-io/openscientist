@@ -64,6 +64,8 @@ class JobContainerRunner:
             "JOB_ID": job_id,
             "JOB_DIR": job_mount,
             "DATABASE_URL": settings.database.effective_database_url,
+            # Admin URL needed for RLS-protected tables (experts, review_tokens).
+            "ADMIN_DATABASE_URL": settings.database.effective_admin_database_url,
             "OPENSCIENTIST_SECRET_KEY": settings.secret_key,
             **provider_env,
         }

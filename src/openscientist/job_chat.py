@@ -14,8 +14,10 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.agent.expert_loader import load_enabled_experts
+from openscientist.agent.sdk_executor import SDKAgentExecutor
 from openscientist.database.models import Job, JobChatMessage
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import AsyncSessionLocal, get_admin_session
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
@@ -234,6 +236,31 @@ async def send_chat_message(
     return assistant_message
 
 
+async def _build_chat_executor(
+    job_dir: Path,
+    system_prompt: str,
+) -> SDKAgentExecutor:
+    """Build a chat-facing SDKAgentExecutor with expert subagents.
+
+    Expert loading is fail-open: errors degrade to ``experts={}``
+    so a transient admin-DB issue cannot drop the user's message.
+    """
+    try:
+        async with get_admin_session() as session:
+            experts = await load_enabled_experts(session)
+    except Exception as e:
+        logger.warning("Failed to load experts for chat: %s", e)
+        experts = {}
+    if experts:
+        logger.info("Chat executor loaded %d enabled expert subagents", len(experts))
+    return SDKAgentExecutor(
+        job_dir=job_dir,
+        data_file=None,
+        system_prompt=system_prompt,
+        experts=experts,
+    )
+
+
 async def _send_message_via_executor(
     session: AsyncSession,
     job_id: UUID,
@@ -247,7 +274,6 @@ async def _send_message_via_executor(
     tool access, allowing the agent to re-analyze data or search literature
     when answering follow-up questions.
     """
-    from openscientist.agent.sdk_executor import SDKAgentExecutor
     from openscientist.providers import get_provider
 
     # Get chat history for continuity
@@ -306,9 +332,8 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
     claude_dir.mkdir(parents=True, exist_ok=True)
     _write_chat_claude_md(claude_dir)
 
-    executor = SDKAgentExecutor(
+    executor = await _build_chat_executor(
         job_dir=job_dir,
-        data_file=None,
         system_prompt=system_prompt,
     )
 

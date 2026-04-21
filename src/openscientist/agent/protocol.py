@@ -46,6 +46,9 @@ class IterationResult:
     tool_calls: int
     transcript: list[dict[str, Any]]
     error: str = ""
+    subagent_calls: int = 0
+    subagent_names: frozenset[str] = frozenset()
+    subagent_log: tuple[str, ...] = ()  # ordered, with duplicates
 
 
 @runtime_checkable

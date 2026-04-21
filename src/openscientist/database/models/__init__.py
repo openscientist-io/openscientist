@@ -16,6 +16,9 @@ from .api_key import APIKey
 
 # Cost tracking
 from .cost_record import CostRecord
+
+# Expert subagents
+from .expert import Expert
 from .feedback_history import FeedbackHistory
 from .finding import Finding
 
@@ -51,6 +54,7 @@ __all__ = [
     "Administrator",
     "AnalysisLog",
     "CostRecord",
+    "Expert",
     "FeedbackHistory",
     "Finding",
     "Hypothesis",

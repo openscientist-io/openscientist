@@ -120,18 +120,23 @@ def _normalize_iteration_summary(iter_summary: Any) -> tuple[str, str]:
     return iter_summary.get("strapline", ""), iter_summary.get("summary", "")
 
 
-def _iteration_activity_counts(entries: list[Any]) -> tuple[int, int, int]:
+def _iteration_activity_counts(entries: list[Any]) -> tuple[int, int, int, int]:
     code_count = sum(1 for entry in entries if entry.get("action") == "execute_code")
     search_count = sum(1 for entry in entries if entry.get("action") == "search_pubmed")
     finding_count = sum(1 for entry in entries if entry.get("action") == "update_knowledge_state")
-    return code_count, search_count, finding_count
+    expert_count = sum(1 for entry in entries if entry.get("action") == "delegate_to_expert")
+    return code_count, search_count, finding_count, expert_count
 
 
-def _timeline_border_class(code_count: int, search_count: int, finding_count: int) -> str:
+def _timeline_border_class(
+    code_count: int, search_count: int, finding_count: int, expert_count: int = 0
+) -> str:
     if finding_count > 0:
         return "border-l-4 border-green-500"
     if code_count > 0 or search_count > 0:
         return "border-l-4 border-blue-300"
+    if expert_count > 0:
+        return "border-l-4 border-teal-300"
     return "border-l-4 border-gray-300"
 
 
@@ -154,6 +159,8 @@ def _action_card_class(tool_name: str) -> str:
         return "w-full mb-2 border-l-4 border-purple-300"
     if "update_knowledge_state" in tool_name:
         return "w-full mb-2 border-l-4 border-green-300"
+    if "delegate_to_expert" in tool_name:
+        return "w-full mb-2 border-l-4 border-teal-300"
     return "w-full mb-2 border-l-4 border-gray-300"
 
 
@@ -467,6 +474,7 @@ def _render_iteration_header(
     search_count: int,
     finding_count: int,
     hypothesis_count: int = 0,
+    expert_count: int = 0,
 ) -> None:
     with ui.row().classes("items-center gap-2 flex-wrap"):
         ui.label(f"Iteration {iteration}: {header_text}").classes("font-medium")
@@ -478,6 +486,8 @@ def _render_iteration_header(
             ui.badge(f"{search_count} searches", color="purple").props("outline")
         if finding_count:
             ui.badge(f"{finding_count} findings", color="green")
+        if expert_count:
+            ui.badge(f"{expert_count} delegations", color="teal").props("outline")
 
 
 def _render_iteration_card(
@@ -491,13 +501,13 @@ def _render_iteration_card(
 ) -> None:
     is_in_progress = iteration == timeline_max_iter and latest_status == JobStatus.RUNNING
     strapline, summary_text = _normalize_iteration_summary(iter_summary)
-    code_count, search_count, finding_count = _iteration_activity_counts(entries)
+    code_count, search_count, finding_count, expert_count = _iteration_activity_counts(entries)
     hypothesis_count = sum(
         1
         for h in timeline_ks.get("hypotheses", [])
         if h.get("iteration_proposed") == iteration or h.get("iteration_tested") == iteration
     )
-    border_class = _timeline_border_class(code_count, search_count, finding_count)
+    border_class = _timeline_border_class(code_count, search_count, finding_count, expert_count)
     header_text = _timeline_header_text(strapline, summary_text, is_in_progress)
 
     with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
@@ -509,6 +519,7 @@ def _render_iteration_card(
                 search_count,
                 finding_count,
                 hypothesis_count,
+                expert_count,
             )
 
         content_container = ui.column().classes("w-full")
