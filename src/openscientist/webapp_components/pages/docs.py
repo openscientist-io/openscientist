@@ -110,6 +110,6 @@ def docs_page() -> None:
 **Scientific Hypothesis Agent for Novel Discovery**
             """
         )
-        render_project_resource_links(include_docs=False)
+        render_project_resource_links()
         ui.separator().classes("w-full my-2")
         ui.markdown(DOCS_PAGE_CONTENT_MARKDOWN)
