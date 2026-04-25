@@ -8,10 +8,14 @@ from unittest.mock import Mock, patch
 
 from openscientist.job_manager import JobStatus
 from openscientist.webapp_components.ui_components import (
+    OPENSCIENTIST_GITHUB_URL,
+    OPENSCIENTIST_PAPER_URL,
+    OPENSCIENTIST_RELEASE_URL,
     STATUS_COLORS,
     STATUS_ICONS,
     _get_job_id_badge_html,
     _get_pubmed_badge_html,
+    get_project_resource_links,
     get_status_badge_props,
     render_job_id_slot,
     render_status_cell_slot,
@@ -33,6 +37,19 @@ class TestStatusConstants:
         for status in JobStatus:
             assert status in STATUS_ICONS
             assert isinstance(STATUS_ICONS[status], str)
+
+
+class TestProjectResourceLinks:
+    """Tests for shared public resource links."""
+
+    def test_links_expose_repo_paper_and_release(self):
+        """Resource strip should expose only links reachable without auth."""
+        assert OPENSCIENTIST_PAPER_URL is not None
+        assert get_project_resource_links() == [
+            ("GitHub", OPENSCIENTIST_GITHUB_URL),
+            ("Paper", OPENSCIENTIST_PAPER_URL),
+            ("Latest Release", OPENSCIENTIST_RELEASE_URL),
+        ]
 
 
 class TestGetStatusBadgeProps:
