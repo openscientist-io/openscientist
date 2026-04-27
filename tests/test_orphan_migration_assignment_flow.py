@@ -165,7 +165,7 @@ async def test_assign_orphaned_job_rejects_already_owned(
     """Assignment helper should not reassign jobs that already have an owner."""
     owned_job = Job(
         owner_id=test_user.id,
-        title="Already owned",
+        research_question="Already owned",
         status="completed",
     )
     db_session.add(owned_job)
@@ -206,7 +206,7 @@ async def test_assign_orphaned_job_handles_missing_user(
     """Assignment helper should report missing users before changing ownership."""
     orphan_job = Job(
         owner_id=None,
-        title="Missing user check",
+        research_question="Missing user check",
         status="completed",
     )
     db_session.add(orphan_job)

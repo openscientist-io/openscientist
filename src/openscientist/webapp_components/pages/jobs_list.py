@@ -130,7 +130,7 @@ def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[di
     return [
         {
             "job_id": str(job.id),
-            "question": _truncate_question(job.title),
+            "question": _truncate_question(job.research_question),
             "status": job.status,
             "error": job.error_message or "",
             "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
@@ -154,7 +154,7 @@ def _shared_rows(
         rows.append(
             {
                 "job_id": str(job.id),
-                "question": _truncate_question(job.title),
+                "question": _truncate_question(job.research_question),
                 "owner": owner.name,
                 "permission": share.permission_level,
                 "status": job.status,

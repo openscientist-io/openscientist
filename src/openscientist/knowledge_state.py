@@ -1061,7 +1061,7 @@ class KnowledgeState:
         ks.data = {
             "config": {
                 "job_id": job_id,
-                "research_question": job.title,
+                "research_question": job.research_question,
                 "max_iterations": job.max_iterations,
                 "use_skills": True,
                 "started_at": job.created_at.isoformat(),

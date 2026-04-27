@@ -416,7 +416,7 @@ async def test_job(db_session: AsyncSession, test_user: User) -> Job:
     """Create a test job owned by test_user."""
     job = Job(
         owner_id=test_user.id,
-        title="Test Job",
+        research_question="Test Job",
         description="A test job for testing",
         llm_provider="mock",
         llm_config={"model": "mock-model-v1"},

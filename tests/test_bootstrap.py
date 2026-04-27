@@ -172,7 +172,7 @@ async def test_bootstrap_creates_job_and_syncs_modern_knowledge_state(
 
     job = (await db_session.execute(select(Job).where(Job.id == UUID(job_id)))).scalar_one()
     assert job.owner_id is None
-    assert job.title == "Modern migration test"
+    assert job.research_question == "Modern migration test"
     assert job.status == "completed"
     assert job.consensus_answer == "Consensus A"
 
@@ -582,7 +582,7 @@ async def test_bootstrap_migrates_when_config_missing_but_ks_has_legacy_id(
     assert not legacy_dir.exists()
 
     job = (await db_session.execute(select(Job).where(Job.id == migrated_uuid))).scalar_one()
-    assert job.title == "KS-only migration"
+    assert job.research_question == "KS-only migration"
 
 
 @pytest.mark.asyncio

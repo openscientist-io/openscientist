@@ -42,7 +42,7 @@ async def job_with_hypotheses(db_session: AsyncSession, db_user: User) -> JobMod
     """A Job row with use_hypotheses=True."""
     job = JobModel(
         owner_id=db_user.id,
-        title="Test hypothesis job",
+        research_question="Test hypothesis job",
         status="pending",
         max_iterations=5,
         use_hypotheses=True,
@@ -58,7 +58,7 @@ async def job_without_hypotheses(db_session: AsyncSession, db_user: User) -> Job
     """A Job row with use_hypotheses=False (default)."""
     job = JobModel(
         owner_id=db_user.id,
-        title="Test no-hypothesis job",
+        research_question="Test no-hypothesis job",
         status="pending",
         max_iterations=5,
         use_hypotheses=False,
@@ -82,7 +82,7 @@ class TestJobModelColumn:
     ) -> None:
         job = JobModel(
             owner_id=db_user.id,
-            title="Default test",
+            research_question="Default test",
             status="pending",
             max_iterations=3,
         )
@@ -152,14 +152,14 @@ class TestJobInfoUseHypotheses:
         """Graceful fallback when attribute is absent (legacy objects)."""
         fake_job = SimpleNamespace(
             id=uuid4(),
-            title="Old job",
+            research_question="Old job",
             status="completed",
             created_at=__import__("datetime").datetime(2026, 1, 1),
             updated_at=__import__("datetime").datetime(2026, 1, 1),
             max_iterations=5,
             error_message=None,
             cancellation_reason=None,
-            short_title=None,
+            short_research_question=None,
             owner_id=None,
             # use_hypotheses intentionally absent
         )
@@ -410,7 +410,7 @@ class TestLoadRuntimeContextHypotheses:
         job_id = uuid4()
         job = SimpleNamespace(
             id=job_id,
-            title="Test research",
+            research_question="Test research",
             max_iterations=5,
             use_hypotheses=use_hypotheses,
             investigation_mode="autonomous",
@@ -930,7 +930,7 @@ class TestEndToEndHypothesesFlow:
                 use_hypotheses=True,
                 investigation_mode="autonomous",
                 owner_id=None,
-                title=None,
+                short_title=None,
                 description=None,
                 pdb_code=None,
                 space_group=None,
@@ -949,7 +949,7 @@ class TestEndToEndHypothesesFlow:
 
         fake_job = SimpleNamespace(
             id=job_id,
-            title="Hypothesis research",
+            research_question="Hypothesis research",
             max_iterations=5,
             use_hypotheses=True,
             investigation_mode="autonomous",
@@ -973,7 +973,7 @@ class TestEndToEndHypothesesFlow:
 
         fake_job = SimpleNamespace(
             id=job_id,
-            title="No-hypothesis research",
+            research_question="No-hypothesis research",
             max_iterations=5,
             use_hypotheses=False,
             investigation_mode="autonomous",

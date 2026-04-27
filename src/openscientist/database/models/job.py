@@ -34,7 +34,8 @@ class Job(UUIDv7Mixin, Base):
 
     Attributes:
         owner_id: Foreign key to user who owns this job (NULL for orphaned)
-        title: User-provided job title
+        research_question: Research question that drives the agent prompt
+        short_title: Optional short display label (model- or user-generated)
         description: User-provided job description
         investigation_mode: Investigation mode (autonomous/coinvestigate)
         status: Current job status (pending/running/completed/failed/cancelled)
@@ -65,16 +66,16 @@ class Job(UUIDv7Mixin, Base):
         comment="User who owns this job (NULL for orphaned legacy jobs)",
     )
 
-    title: Mapped[str] = mapped_column(
+    research_question: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment="Research question / job title",
+        comment="Research question that drives the agent prompt",
     )
 
     short_title: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
-        comment="Brief model-generated title (e.g., 'Kinase inhibitor analysis')",
+        comment="Optional short display label (model- or user-generated)",
     )
 
     description: Mapped[str | None] = mapped_column(
@@ -221,7 +222,8 @@ class Job(UUIDv7Mixin, Base):
     )
 
     def __repr__(self) -> str:
+        snippet = self.research_question[:50] if self.research_question else ""
         return (
-            f"<Job(id={self.id}, title={self.title}, status={self.status}, "
+            f"<Job(id={self.id}, research_question={snippet!r}, status={self.status}, "
             f"owner_id={self.owner_id})>"
         )

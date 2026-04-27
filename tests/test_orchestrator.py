@@ -73,7 +73,7 @@ class TestUpdateJobStatus:
         job.status = "pending"
         job.owner_id = None
         job.short_title = None
-        job.title = "Test job"
+        job.research_question = "Test job"
 
         job_result = MagicMock()
         job_result.scalar_one_or_none.return_value = job
@@ -103,7 +103,7 @@ class TestUpdateJobStatus:
         job.status = "running"
         job.owner_id = owner_id
         job.short_title = "Short title"
-        job.title = "Long title"
+        job.research_question = "Long title"
         job.current_iteration = 4
 
         job_result = MagicMock()
@@ -148,7 +148,7 @@ class TestUpdateJobStatus:
         job.status = "awaiting_feedback"
         job.owner_id = uuid4()
         job.short_title = "Short"
-        job.title = "Title"
+        job.research_question = "Title"
 
         job_result = MagicMock()
         job_result.scalar_one_or_none.return_value = job
@@ -807,6 +807,19 @@ class TestBuildReportPrompt:
         assert "PMID:99999999" in prompt
         assert "significant correlation was found" in prompt
 
+    def test_report_prompt_includes_job_description(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_report_prompt
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        prompt = build_report_prompt(
+            "What causes X?",
+            ks,
+            description="Emphasize validated clinical endpoints.",
+        )
+        assert "Additional job context" in prompt
+        assert "Emphasize validated clinical endpoints." in prompt
+
 
 # ─── _save_transcript ─────────────────────────────────────────────────
 
@@ -933,6 +946,21 @@ class TestBuildInitialPrompt:
         assert "No data files" in prompt
         assert "literature search" in prompt
 
+    def test_includes_job_description(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_initial_prompt
+
+        ks = KnowledgeState("j1", "Why X?", 10)
+        prompt = build_initial_prompt(
+            "Why X?",
+            10,
+            [],
+            ks,
+            description="Prioritize longitudinal cohort evidence.",
+        )
+        assert "Additional job context" in prompt
+        assert "Prioritize longitudinal cohort evidence." in prompt
+
 
 # ─── build_iteration_prompt ────────────────────────────────────────────
 
@@ -957,3 +985,17 @@ class TestBuildIterationPrompt:
         prompt = build_iteration_prompt(2, 10, ks, pending_feedback=None)
         assert "Scientist Feedback" not in prompt
         assert "Iteration 2 of 10" in prompt
+
+    def test_includes_job_description(self):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_iteration_prompt
+
+        ks = KnowledgeState("j1", "Q?", 10)
+        prompt = build_iteration_prompt(
+            2,
+            10,
+            ks,
+            description="Stay focused on the uploaded assay design.",
+        )
+        assert "Additional job context" in prompt
+        assert "Stay focused on the uploaded assay design." in prompt
