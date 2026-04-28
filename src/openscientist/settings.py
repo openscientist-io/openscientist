@@ -516,6 +516,15 @@ class ContainerSettings(BaseSettings):
     executor_image: str = Field(
         default="openscientist-executor:latest", alias="OPENSCIENTIST_EXECUTOR_IMAGE"
     )
+    agent_image: str = Field(
+        default="openscientist-agent:latest",
+        alias="OPENSCIENTIST_AGENT_IMAGE",
+        description=(
+            "Docker image tag used to spawn per-job agent containers. Override to "
+            "point staging at separately-tagged images (e.g. openscientist-agent:staging) "
+            "without colliding with the prod :latest image."
+        ),
+    )
     executor_memory: str = Field(default="2g", alias="OPENSCIENTIST_EXECUTOR_MEMORY")
     executor_cpu: float = Field(default=0.5, alias="OPENSCIENTIST_EXECUTOR_CPU")
     executor_timeout: int = Field(default=120, alias="OPENSCIENTIST_EXECUTOR_TIMEOUT")

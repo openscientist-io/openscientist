@@ -15,7 +15,11 @@ class TestJobContainerRunner:
     """Tests for JobContainerRunner."""
 
     @staticmethod
-    def _make_settings(*, host_project_dir: str | None) -> SimpleNamespace:
+    def _make_settings(
+        *,
+        host_project_dir: str | None,
+        agent_image: str = "openscientist-agent:latest",
+    ) -> SimpleNamespace:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {"EXTRA_ENV": "1"}
         return SimpleNamespace(
@@ -26,6 +30,7 @@ class TestJobContainerRunner:
                 agent_memory="8g",
                 agent_cpu=2.0,
                 agent_platform=None,
+                agent_image=agent_image,
             ),
             provider=provider,
             database=SimpleNamespace(effective_database_url="postgresql://db"),
@@ -84,6 +89,44 @@ class TestJobContainerRunner:
         assert environment["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
         assert environment["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
         assert run_kwargs["volumes"]["/host/project/jobs/job-123"]["bind"] == environment["JOB_DIR"]
+
+    def test_launch_uses_agent_image_from_settings(self):
+        """Launch passes the configured agent_image to containers.run.
+
+        Regression test for #132: hardcoded :latest tag prevented staging
+        deployments from isolating their agent image from prod's :latest.
+        """
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_container.short_id = "abc123"
+        mock_client.containers.run.return_value = mock_container
+        settings = self._make_settings(
+            host_project_dir=None,
+            agent_image="openscientist-agent:staging",
+        )
+
+        original_exists = Path.exists
+
+        def fake_exists(path: Path) -> bool:
+            if path == Path("/var/run/docker.sock"):
+                return False
+            return cast(bool, original_exists(path))
+
+        with (
+            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
+            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
+            patch(
+                "openscientist.job_container.runner.to_host_path",
+                return_value=Path("/app/jobs/job-123"),
+            ),
+            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
+        ):
+            runner = JobContainerRunner()
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+
+        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
+        assert run_kwargs["image"] == "openscientist-agent:staging"
 
     def test_launch_omits_host_path_mapping_without_host_project_dir(self):
         """Launch omits host-path env vars when the host project path is unset."""
