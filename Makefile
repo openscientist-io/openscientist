@@ -5,6 +5,19 @@ DEPLOY_HOST ?= gassh
 DEPLOY_DIR ?= ~/openscientist
 COMPOSE_FILE ?= docker-compose.yml
 
+# Load .env if present so OPENSCIENTIST_*_IMAGE values steer build tags
+# (same source of truth as docker-compose substitution).
+-include .env
+export
+
+# Image tags — derived from .env, fall back to :latest when unset.
+# Set OPENSCIENTIST_AGENT_IMAGE=openscientist-agent:staging in
+# ~/shandy-staging/.env to make `make build` produce :staging-tagged
+# images automatically and never clobber prod's :latest tags.
+BASE_IMAGE     ?= $(if $(OPENSCIENTIST_BASE_IMAGE),$(OPENSCIENTIST_BASE_IMAGE),openscientist-base:latest)
+EXECUTOR_IMAGE ?= $(if $(OPENSCIENTIST_EXECUTOR_IMAGE),$(OPENSCIENTIST_EXECUTOR_IMAGE),openscientist-executor:latest)
+AGENT_IMAGE    ?= $(if $(OPENSCIENTIST_AGENT_IMAGE),$(OPENSCIENTIST_AGENT_IMAGE),openscientist-agent:latest)
+
 # Default target
 help:
 	@echo "OpenScientist - Makefile commands"
@@ -36,17 +49,17 @@ stop:
 restart: stop start
 
 build:
-	@echo "Building base image (Python, uv)..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t openscientist-base:latest .
+	@echo "Building base image (Python, uv) as $(BASE_IMAGE)..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.base -t $(BASE_IMAGE) .
 	@echo "Building OpenScientist main image..."
 	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose -f $(COMPOSE_FILE) build \
 		--build-arg OPENSCIENTIST_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
 		--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	@echo "Building executor image..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t openscientist-executor:latest .
-	@echo "Building agent image..."
-	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t openscientist-agent:latest .
-	@echo "All images built: openscientist-base, openscientist, openscientist-executor, openscientist-agent"
+	@echo "Building executor image as $(EXECUTOR_IMAGE)..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.executor -t $(EXECUTOR_IMAGE) .
+	@echo "Building agent image as $(AGENT_IMAGE)..."
+	DOCKER_DEFAULT_PLATFORM=linux/amd64 docker build -f Dockerfile.agent -t $(AGENT_IMAGE) .
+	@echo "All images built: $(BASE_IMAGE), openscientist, $(EXECUTOR_IMAGE), $(AGENT_IMAGE)"
 
 rebuild: build
 	docker compose -f $(COMPOSE_FILE) down --remove-orphans
