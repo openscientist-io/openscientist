@@ -39,7 +39,8 @@ async def list_orphaned_jobs(
     stmt = select(Job).where(Job.owner_id.is_(None))
     if search_query:
         stmt = stmt.where(
-            Job.title.ilike(f"%{search_query}%") | Job.id.cast(String).ilike(f"%{search_query}%")
+            Job.research_question.ilike(f"%{search_query}%")
+            | Job.id.cast(String).ilike(f"%{search_query}%")
         )
     stmt = stmt.order_by(Job.created_at.desc())
     result = await session.execute(stmt)

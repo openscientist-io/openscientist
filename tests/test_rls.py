@@ -45,8 +45,8 @@ async def test_users_cannot_see_each_others_jobs(db_session: AsyncSession):
     await db_session.commit()
 
     # Create jobs for each user
-    alice_job = Job(owner_id=alice.id, title="Alice's research")
-    bob_job = Job(owner_id=bob.id, title="Bob's research")
+    alice_job = Job(owner_id=alice.id, research_question="Alice's research")
+    bob_job = Job(owner_id=bob.id, research_question="Bob's research")
     db_session.add_all([alice_job, bob_job])
     await db_session.commit()
 
@@ -58,14 +58,14 @@ async def test_users_cannot_see_each_others_jobs(db_session: AsyncSession):
     result = await db_session.execute(select(Job))
     alice_visible = result.scalars().all()
     assert len(alice_visible) == 1
-    assert alice_visible[0].title == "Alice's research"
+    assert alice_visible[0].research_question == "Alice's research"
 
     # Bob should only see his own job
     await set_current_user(db_session, bob.id)
     result = await db_session.execute(select(Job))
     bob_visible = result.scalars().all()
     assert len(bob_visible) == 1
-    assert bob_visible[0].title == "Bob's research"
+    assert bob_visible[0].research_question == "Bob's research"
 
     # Alice should not be able to fetch Bob's job by ID
     await set_current_user(db_session, alice.id)
@@ -110,7 +110,7 @@ async def test_no_rls_context_returns_no_jobs(db_session: AsyncSession):
     db_session.add(user)
     await db_session.commit()
 
-    job = Job(owner_id=user.id, title="Hidden job")
+    job = Job(owner_id=user.id, research_question="Hidden job")
     db_session.add(job)
     await db_session.commit()
 
@@ -129,8 +129,8 @@ async def test_sharing_grants_cross_user_visibility(db_session: AsyncSession):
     db_session.add_all([alice, bob])
     await db_session.commit()
 
-    shared_job = Job(owner_id=alice.id, title="Shared research")
-    private_job = Job(owner_id=alice.id, title="Private research")
+    shared_job = Job(owner_id=alice.id, research_question="Shared research")
+    private_job = Job(owner_id=alice.id, research_question="Private research")
     db_session.add_all([shared_job, private_job])
     await db_session.commit()
 
@@ -149,7 +149,7 @@ async def test_sharing_grants_cross_user_visibility(db_session: AsyncSession):
     await set_current_user(db_session, bob.id)
     result = await db_session.execute(select(Job))
     bob_visible = result.scalars().all()
-    visible_titles = {j.title for j in bob_visible}
+    visible_titles = {j.research_question for j in bob_visible}
     assert "Shared research" in visible_titles
     assert "Private research" not in visible_titles
 
@@ -165,7 +165,7 @@ async def test_job_sharing_view_permission(db_session: AsyncSession):
 
     job = Job(
         owner_id=owner.id,
-        title="Shared Job",
+        research_question="Shared Job",
         description="Job shared with viewer",
     )
     db_session.add(job)
@@ -188,7 +188,7 @@ async def test_job_sharing_view_permission(db_session: AsyncSession):
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     viewed_job = result.scalar_one_or_none()
     assert viewed_job is not None
-    assert viewed_job.title == "Shared Job"
+    assert viewed_job.research_question == "Shared Job"
 
 
 @pytest.mark.asyncio
@@ -202,7 +202,7 @@ async def test_job_sharing_edit_permission(db_session: AsyncSession):
 
     job = Job(
         owner_id=owner.id,
-        title="Editable Job",
+        research_question="Editable Job",
         description="Job shared with editor",
     )
     db_session.add(job)
@@ -226,14 +226,14 @@ async def test_job_sharing_edit_permission(db_session: AsyncSession):
     edited_job = result.scalar_one()
 
     # Update the job
-    edited_job.title = "Updated by Editor"
+    edited_job.research_question = "Updated by Editor"
     db_session.add(edited_job)
     await db_session.commit()
 
     # Verify the update persisted
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     job_check = result.scalar_one()
-    assert job_check.title == "Updated by Editor"
+    assert job_check.research_question == "Updated by Editor"
 
 
 @pytest.mark.asyncio
@@ -249,8 +249,8 @@ async def test_admin_session_access(db_session: AsyncSession):
     db_session.add_all([user1, user2])
     await db_session.commit()
 
-    job1 = Job(owner_id=user1.id, title="Job A")
-    job2 = Job(owner_id=user2.id, title="Job B")
+    job1 = Job(owner_id=user1.id, research_question="Job A")
+    job2 = Job(owner_id=user2.id, research_question="Job B")
     db_session.add_all([job1, job2])
     await db_session.commit()
 
@@ -264,7 +264,7 @@ async def test_admin_session_access(db_session: AsyncSession):
 async def test_orphaned_jobs_visible(db_session: AsyncSession):
     """Test that orphaned jobs (owner_id=NULL) are visible to all users."""
     # Create orphaned job
-    orphaned = Job(owner_id=None, title="Orphaned Job")
+    orphaned = Job(owner_id=None, research_question="Orphaned Job")
     db_session.add(orphaned)
     await db_session.commit()
 
@@ -280,7 +280,7 @@ async def test_orphaned_jobs_visible(db_session: AsyncSession):
     result = await db_session.execute(select(Job))
     jobs = result.scalars().all()
     assert len(jobs) == 1
-    assert jobs[0].title == "Orphaned Job"
+    assert jobs[0].research_question == "Orphaned Job"
 
 
 @pytest.mark.asyncio
@@ -307,8 +307,8 @@ async def test_get_session_enforces_rls(test_engine):
         admin_session.add_all([alice, bob])
         await admin_session.commit()
 
-        alice_job = Job(owner_id=alice.id, title="Alice get_session job")
-        bob_job = Job(owner_id=bob.id, title="Bob get_session job")
+        alice_job = Job(owner_id=alice.id, research_question="Alice get_session job")
+        bob_job = Job(owner_id=bob.id, research_question="Bob get_session job")
         admin_session.add_all([alice_job, bob_job])
         await admin_session.commit()
 
@@ -327,7 +327,7 @@ async def test_get_session_enforces_rls(test_engine):
             f"RLS NOT ENFORCED: Alice sees {len(visible)} jobs instead of 1. "
             f"get_session() must SET ROLE openscientist_app for RLS to work."
         )
-        assert visible[0].title == "Alice get_session job"
+        assert visible[0].research_question == "Alice get_session job"
 
         # Also verify Bob's job is NOT visible by direct ID lookup
         result = await user_session.execute(select(Job).where(Job.id == bob_job.id))
@@ -356,8 +356,8 @@ async def test_bypassrls_role_sees_all_jobs(test_engine):
         admin_session.add_all([alice, bob])
         await admin_session.commit()
 
-        alice_job = Job(owner_id=alice.id, title="Alice bypass job")
-        bob_job = Job(owner_id=bob.id, title="Bob bypass job")
+        alice_job = Job(owner_id=alice.id, research_question="Alice bypass job")
+        bob_job = Job(owner_id=bob.id, research_question="Bob bypass job")
         admin_session.add_all([alice_job, bob_job])
         await admin_session.commit()
 

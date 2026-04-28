@@ -116,7 +116,7 @@ def _make_db_job(
     created_dt = datetime.fromisoformat(created_at).replace(tzinfo=UTC)
     defaults = {
         "id": job_uuid,
-        "title": "Test?",
+        "research_question": "Test?",
         "status": status,
         "created_at": created_dt,
         "updated_at": created_dt,

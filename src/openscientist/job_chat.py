@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 async def _load_research_question_from_db(job_id: str) -> str | None:
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
-            result = await session.execute(select(Job.title).where(Job.id == UUID(job_id)))
+            result = await session.execute(
+                select(Job.research_question).where(Job.id == UUID(job_id))
+            )
             value = result.scalar_one_or_none()
         if isinstance(value, str) and value.strip():
             return value

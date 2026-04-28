@@ -28,13 +28,13 @@ async def test_list_orphaned_jobs(db_session: AsyncSession, test_user: User):
     # Create orphaned jobs
     orphaned_job1 = Job(
         owner_id=None,
-        title="Orphaned Job 1",
+        research_question="Orphaned Job 1",
         description="No owner",
         status="completed",
     )
     orphaned_job2 = Job(
         owner_id=None,
-        title="Orphaned Job 2",
+        research_question="Orphaned Job 2",
         description="No owner",
         status="failed",
     )
@@ -42,7 +42,7 @@ async def test_list_orphaned_jobs(db_session: AsyncSession, test_user: User):
     # Create owned job for comparison
     owned_job = Job(
         owner_id=test_user.id,
-        title="Owned Job",
+        research_question="Owned Job",
         description="Has owner",
         status="running",
     )
@@ -57,7 +57,7 @@ async def test_list_orphaned_jobs(db_session: AsyncSession, test_user: User):
 
     assert len(orphaned_jobs) == 2
     assert all(job.owner_id is None for job in orphaned_jobs)
-    orphaned_titles = {job.title for job in orphaned_jobs}
+    orphaned_titles = {job.research_question for job in orphaned_jobs}
     assert orphaned_titles == {"Orphaned Job 1", "Orphaned Job 2"}
 
 
@@ -67,7 +67,7 @@ async def test_assign_orphaned_job_to_user(db_session: AsyncSession, test_user: 
     # Create orphaned job
     orphaned_job = Job(
         owner_id=None,
-        title="Job to Assign",
+        research_question="Job to Assign",
         description="Will be assigned",
         status="completed",
     )
@@ -98,7 +98,7 @@ async def test_user_claims_orphaned_job(db_session: AsyncSession, test_user: Use
     # Create orphaned job
     orphaned_job = Job(
         owner_id=None,
-        title="Job to Claim",
+        research_question="Job to Claim",
         description="Available for claiming",
         status="completed",
     )
@@ -131,19 +131,19 @@ async def test_search_orphaned_jobs_by_title(db_session: AsyncSession):
     jobs = [
         Job(
             owner_id=None,
-            title="Protein Structure Analysis",
+            research_question="Protein Structure Analysis",
             description="Structure",
             status="completed",
         ),
         Job(
             owner_id=None,
-            title="DNA Sequencing Study",
+            research_question="DNA Sequencing Study",
             description="Sequencing",
             status="completed",
         ),
         Job(
             owner_id=None,
-            title="Protein Binding Analysis",
+            research_question="Protein Binding Analysis",
             description="Binding",
             status="completed",
         ),
@@ -155,13 +155,13 @@ async def test_search_orphaned_jobs_by_title(db_session: AsyncSession):
     # Search for "Protein"
     stmt = select(Job).where(
         Job.owner_id.is_(None),
-        Job.title.ilike("%Protein%"),
+        Job.research_question.ilike("%Protein%"),
     )
     result = await db_session.execute(stmt)
     protein_jobs = result.scalars().all()
 
     assert len(protein_jobs) == 2
-    titles = {job.title for job in protein_jobs}
+    titles = {job.research_question for job in protein_jobs}
     assert titles == {"Protein Structure Analysis", "Protein Binding Analysis"}
 
 
@@ -235,7 +235,7 @@ async def test_assign_multiple_orphaned_jobs_to_same_user(
     jobs = [
         Job(
             owner_id=None,
-            title=f"Orphaned Job {i}",
+            research_question=f"Orphaned Job {i}",
             description="No owner",
             status="completed",
         )
@@ -271,7 +271,7 @@ async def test_cannot_assign_already_owned_job(
     # Create job owned by test_user
     owned_job = Job(
         owner_id=test_user.id,
-        title="Already Owned",
+        research_question="Already Owned",
         description="Has an owner",
         status="completed",
     )
@@ -295,7 +295,7 @@ async def test_orphaned_job_count(db_session: AsyncSession, test_user: User):
     for i in range(3):
         orphaned = Job(
             owner_id=None,
-            title=f"Orphaned {i}",
+            research_question=f"Orphaned {i}",
             description="No owner",
             status="pending",
         )
@@ -304,7 +304,7 @@ async def test_orphaned_job_count(db_session: AsyncSession, test_user: User):
     for i in range(2):
         owned = Job(
             owner_id=test_user.id,
-            title=f"Owned {i}",
+            research_question=f"Owned {i}",
             description="Has owner",
             status="running",
         )
@@ -328,7 +328,7 @@ async def test_filter_orphaned_jobs_by_status(db_session: AsyncSession):
     for status in statuses:
         job = Job(
             owner_id=None,
-            title=f"Job {status}",
+            research_question=f"Job {status}",
             description="Test",
             status=status,
         )
@@ -360,7 +360,7 @@ async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
     for i in range(3):
         job = Job(
             owner_id=None,
-            title=f"Job {i}",
+            research_question=f"Job {i}",
             description="Test",
             status="pending",
             # Set explicit timestamps - Job 0 oldest, Job 2 newest
@@ -377,8 +377,8 @@ async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
     sorted_jobs = result.scalars().all()
 
     # Newest should be first
-    assert sorted_jobs[0].title == "Job 2"
-    assert sorted_jobs[-1].title == "Job 0"
+    assert sorted_jobs[0].research_question == "Job 2"
+    assert sorted_jobs[-1].research_question == "Job 0"
 
 
 @pytest.mark.asyncio
@@ -594,7 +594,7 @@ async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: p
 
     job = Job(
         owner_id=user.id,
-        title="User's Job",
+        research_question="User's Job",
         description="Should become orphaned",
         status="completed",
     )

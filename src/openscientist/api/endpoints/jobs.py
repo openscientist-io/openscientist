@@ -51,12 +51,11 @@ SESSION_DEP = Depends(get_session)
 class JobCreate(BaseModel):
     """Request body for creating a new job."""
 
-    title: str = Field(
-        ...,
-        min_length=1,
-        max_length=255,
-        description="Job title",
-        examples=["Analyze protein structure X"],
+    short_title: str | None = Field(
+        None,
+        max_length=100,
+        description="Optional short display label for the job (truncated to 100 chars).",
+        examples=["Kinase inhibitor analysis"],
     )
     description: str | None = Field(
         None,
@@ -102,7 +101,10 @@ class JobResponse(BaseModel):
     """Response for a job."""
 
     id: str = Field(..., description="Job ID")
-    title: str = Field(..., description="Job title")
+    research_question: str = Field(
+        ..., description="Research question that drives the agent prompt"
+    )
+    short_title: str | None = Field(None, description="Optional short display label")
     description: str | None = Field(None, description="Job description")
     status: str = Field(..., description="Job status")
     created_at: datetime = Field(..., description="Creation timestamp (UTC)")
@@ -133,7 +135,6 @@ class JobStatusResponse(BaseModel):
 class JobDetailResponse(JobResponse):
     """Detailed response for a single job."""
 
-    research_question: str | None = Field(None, description="Research question")
     investigation_mode: str | None = Field(None, description="Investigation mode")
     result_summary: str | None = Field(None, description="Final result summary")
     error_message: str | None = Field(None, description="Error message if failed")
@@ -141,7 +142,8 @@ class JobDetailResponse(JobResponse):
 
 class _JobResponseFields(TypedDict):
     id: str
-    title: str
+    research_question: str
+    short_title: str | None
     description: str | None
     status: str
     created_at: datetime
@@ -192,7 +194,8 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
     """Return common response fields shared by job response models."""
     return {
         "id": str(job.id),
-        "title": job.title,
+        "research_question": job.research_question,
+        "short_title": job.short_title,
         "description": job.description,
         "status": job.status,
         "created_at": job.created_at,
@@ -213,7 +216,6 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
     """Convert Job model to JobDetailResponse."""
     return JobDetailResponse(
         **_job_response_fields(job),
-        research_question=job.title,
         investigation_mode=job.investigation_mode,
         result_summary=job.result_summary,
         error_message=job.error_message,
@@ -390,7 +392,7 @@ async def create_job(
                 auto_start=True,
                 investigation_mode=job_data.investigation_mode,
                 owner_id=str(user.id),
-                title=job_data.title,
+                short_title=job_data.short_title,
                 description=job_data.description,
                 pdb_code=job_data.pdb_code,
                 space_group=job_data.space_group,
@@ -614,7 +616,7 @@ async def download_report(
         return FileResponse(
             path=pdf_path,
             media_type="application/pdf",
-            filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
+            filename=f"{(job.short_title or job.research_question[:50]).replace(' ', '_')}_final_report.pdf",
         )
 
     # Fallback: generate PDF from markdown via fpdf2 if no PDF exists yet
@@ -637,7 +639,7 @@ async def download_report(
                 return FileResponse(
                     path=pdf_path,
                     media_type="application/pdf",
-                    filename=f"{job.title.replace(' ', '_')}_final_report.pdf",
+                    filename=f"{(job.short_title or job.research_question[:50]).replace(' ', '_')}_final_report.pdf",
                 )
         except Exception as exc:
             logger.warning(
@@ -652,12 +654,13 @@ async def download_report(
         (job_dir / "report.md", "text/markdown"),
     ]
 
+    download_label = (job.short_title or job.research_question[:50]).replace(" ", "_")
     for report_file, media_type in report_files:
         if report_file.exists():
             return FileResponse(
                 path=report_file,
                 media_type=media_type,
-                filename=f"{job.title.replace(' ', '_')}_{report_file.name}",
+                filename=f"{download_label}_{report_file.name}",
             )
 
     raise HTTPException(
@@ -710,8 +713,9 @@ async def download_artifacts(
 
     background_tasks.add_task(archive_path.unlink, missing_ok=True)
 
+    download_label = (job.short_title or job.research_question[:50]).replace(" ", "_")
     return FileResponse(
         path=archive_path,
         media_type="application/zip",
-        filename=f"{job.title.replace(' ', '_')}_artifacts.zip",
+        filename=f"{download_label}_artifacts.zip",
     )

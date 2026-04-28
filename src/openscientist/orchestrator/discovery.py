@@ -155,7 +155,11 @@ async def _run_primary_discovery_loop(
 
     ks = KnowledgeState.load_from_database_sync(job_id)
     initial_prompt = build_initial_prompt(
-        runtime["research_question"], max_iterations, data_files, ks
+        runtime["research_question"],
+        max_iterations,
+        data_files,
+        ks,
+        description=runtime.get("description"),
     )
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
@@ -199,7 +203,13 @@ async def _run_primary_discovery_loop(
         if pending_feedback is None:
             pending_feedback = ks.get_feedback_for_iteration(iteration)
 
-        iteration_prompt = build_iteration_prompt(iteration, max_iterations, ks, pending_feedback)
+        iteration_prompt = build_iteration_prompt(
+            iteration,
+            max_iterations,
+            ks,
+            pending_feedback,
+            description=runtime.get("description"),
+        )
         pending_feedback = None
         should_reset = iteration % reset_interval == 1
         logger.info(
@@ -324,10 +334,13 @@ async def _run_report_generation_phase(
     executor: AgentExecutor,
     job_dir: Path,
     research_question: str,
+    description: str | None = None,
 ) -> _ReportOutcome:
     """Run final report generation iteration and output artifact handling."""
     ks = KnowledgeState.load_from_database_sync(job_dir.name)
-    report_prompt = build_report_prompt(research_question, ks, job_dir=job_dir)
+    report_prompt = build_report_prompt(
+        research_question, ks, job_dir=job_dir, description=description
+    )
     logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
     report_result = await executor.run_iteration(report_prompt, reset_session=True)
 
@@ -387,7 +400,8 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
 
     return {
         "job_id": str(job.id),
-        "research_question": job.title,
+        "research_question": job.research_question,
+        "description": getattr(job, "description", None),
         "max_iterations": job.max_iterations,
         "use_hypotheses": bool(job.use_hypotheses),
         "investigation_mode": job.investigation_mode,
@@ -574,6 +588,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             executor=executor,
             job_dir=job_dir,
             research_question=runtime["research_question"],
+            description=runtime.get("description"),
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
         ks = KnowledgeState.load_from_database_sync(job_id)

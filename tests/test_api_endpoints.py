@@ -98,7 +98,7 @@ async def test_job_db(
     """Create a real job in the test database."""
     job = Job(
         owner_id=test_user_db.id,
-        title="Test API Job",
+        research_question="Test API Job",
         description="A job for API testing",
         status="pending",
         max_iterations=5,
@@ -118,7 +118,7 @@ async def completed_job_db(
     """Create a completed job in the test database."""
     job = Job(
         owner_id=test_user_db.id,
-        title="Completed Test Job",
+        research_question="Completed Test Job",
         description="A completed job for testing",
         status="completed",
         max_iterations=5,
@@ -499,7 +499,7 @@ class TestJobEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["id"] == str(test_job_db.id)
-        assert data["title"] == "Test API Job"
+        assert data["research_question"] == "Test API Job"
         assert data["status"] == "pending"
 
     @pytest.mark.asyncio
@@ -700,7 +700,7 @@ class TestJobEndpoints:
         # Create job for user2
         other_job = Job(
             owner_id=test_user2_db.id,
-            title="Other User's Job",
+            research_question="Other User's Job",
             description="Belongs to user2",
             status="pending",
         )
@@ -750,7 +750,7 @@ class TestJobEndpoints:
         # Create a running job to cancel
         running_job = Job(
             owner_id=test_user_db.id,
-            title="Running Job",
+            research_question="Running Job",
             description="Will be cancelled",
             status="running",
         )
@@ -790,7 +790,7 @@ class TestJobEndpoints:
 
         pending_job = Job(
             owner_id=test_user_db.id,
-            title="Pending Job",
+            research_question="Pending Job",
             description="Will be cancelled",
             status="pending",
         )
@@ -829,7 +829,7 @@ class TestJobEndpoints:
 
         running_job = Job(
             owner_id=test_user_db.id,
-            title="Running Job",
+            research_question="Running Job",
             description="Should remain unchanged when manager is mocked",
             status="running",
         )
@@ -916,12 +916,13 @@ class TestJobEndpoints:
         mock_job_manager.create_job = MagicMock()
         mock_loaded_job = SimpleNamespace(
             id=uuid.uuid4(),
-            title="API Created Job",
+            research_question="What is the structure of protein X?",
+            short_title="API Created Job",
             description="Created via REST API",
             status="pending",
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
-            max_iterations=10,
+            max_iterations=5,
             current_iteration=0,
             pdb_code=None,
             space_group=None,
@@ -947,10 +948,10 @@ class TestJobEndpoints:
                 response = await client.post(
                     "/api/v1/jobs",
                     json={
-                        "title": "API Created Job",
+                        "short_title": "API Created Job",
                         "description": "Created via REST API",
                         "research_question": "What is the structure of protein X?",
-                        "max_iterations": 10,
+                        "max_iterations": 5,
                         "use_skills": True,
                         "investigation_mode": "autonomous",
                     },
@@ -959,7 +960,8 @@ class TestJobEndpoints:
 
         assert response.status_code == 201
         data = response.json()
-        assert data["title"] == "API Created Job"
+        assert data["research_question"] == "What is the structure of protein X?"
+        assert data["short_title"] == "API Created Job"
         assert data["status"] == "pending"
         mock_job_manager.create_job.assert_called_once()
 
@@ -1004,7 +1006,8 @@ class TestJobEndpoints:
         mock_job_manager.create_job = MagicMock(side_effect=capture_create_job)
         mock_loaded_job = SimpleNamespace(
             id=uuid.uuid4(),
-            title="Multipart Job",
+            research_question="Multipart Job",
+            short_title=None,
             description="Created via multipart API",
             status="pending",
             created_at=datetime.now(UTC),
@@ -1035,7 +1038,7 @@ class TestJobEndpoints:
                 response = await client.post(
                     "/api/v1/jobs",
                     data={
-                        "title": "Multipart Job",
+                        "short_title": "Multipart Job",
                         "description": "Created via multipart API",
                         "research_question": "How does uploaded data affect output?",
                         "max_iterations": "7",
@@ -1097,7 +1100,8 @@ class TestJobEndpoints:
         mock_job_manager.create_job = MagicMock(side_effect=capture_create_job)
         mock_loaded_job = SimpleNamespace(
             id=uuid.uuid4(),
-            title="Duplicate Uploads",
+            research_question="Duplicate Uploads",
+            short_title=None,
             description="Upload integration test",
             status="pending",
             created_at=datetime.now(UTC),
@@ -1128,7 +1132,7 @@ class TestJobEndpoints:
                 response = await client.post(
                     "/api/v1/jobs",
                     data={
-                        "title": "Duplicate Uploads",
+                        "short_title": "Duplicate Uploads",
                         "research_question": "Do duplicate upload names collide?",
                     },
                     files=[
@@ -1165,7 +1169,7 @@ class TestJobEndpoints:
                 response = await client.post(
                     "/api/v1/jobs",
                     json={
-                        "title": "Blocked",
+                        "short_title": "Blocked",
                         "description": "Blocked by validation",
                         "research_question": "Question",
                         "max_iterations": 10,
@@ -1220,7 +1224,7 @@ class TestJobEndpoints:
                 response = await client.post(
                     "/api/v1/jobs",
                     json={
-                        "title": "Blocked Job",
+                        "short_title": "Blocked Job",
                         "description": "Should not be created",
                         "research_question": "Will this run before approval?",
                         "max_iterations": 5,
@@ -1835,7 +1839,7 @@ class TestJobSharingEndpoints:
         # Create a job owned by user2
         other_job = Job(
             owner_id=test_user2_db.id,
-            title="Other User's Job",
+            research_question="Other User's Job",
             status="pending",
         )
         db_session.add(other_job)
@@ -1947,7 +1951,7 @@ class TestJobSharingEndpoints:
         # Create a job owned by user2
         other_job = Job(
             owner_id=test_user2_db.id,
-            title="Other User's Job",
+            research_question="Other User's Job",
             status="pending",
         )
         db_session.add(other_job)

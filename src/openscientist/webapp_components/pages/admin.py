@@ -198,7 +198,9 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = "") -> No
             {
                 "id": "..." + str(job.id)[-8:],
                 "full_id": str(job.id),
-                "title": job.title[:50] + ("..." if len(job.title) > 50 else ""),
+                "title": (
+                    job.research_question[:50] + ("..." if len(job.research_question) > 50 else "")
+                ),
                 "status": job.status,
                 "created_at": job.created_at.strftime("%Y-%m-%d %H:%M")
                 if job.created_at

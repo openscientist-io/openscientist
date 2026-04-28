@@ -281,7 +281,7 @@ async def test_cannot_access_other_user_jobs(
     # Create job for user2
     job = Job(
         owner_id=test_user2.id,
-        title="User 2 Job",
+        research_question="User 2 Job",
         description="Belongs to user2",
         status="pending",
     )

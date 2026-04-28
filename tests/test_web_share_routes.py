@@ -30,7 +30,7 @@ async def test_web_share_create_uses_admin_lookup_for_target_user(
     """
     job = Job(
         owner_id=test_user.id,
-        title="Web Shared Job",
+        research_question="Web Shared Job",
         description="share route test",
         status="pending",
     )
@@ -94,7 +94,7 @@ async def test_web_share_create_rejects_inactive_target_user(
     """Web share creation should reject inactive target users."""
     job = Job(
         owner_id=test_user.id,
-        title="Web Shared Job Inactive Target",
+        research_question="Web Shared Job Inactive Target",
         description="share route inactive user test",
         status="pending",
     )
