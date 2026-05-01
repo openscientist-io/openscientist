@@ -27,6 +27,12 @@ COPY src/ src/
 # Create jobs directory
 RUN mkdir -p jobs
 
+# Copy entrypoint script (runs `alembic upgrade head` before launching the app
+# so a fresh `docker compose up -d` brings up a fully working app with no
+# separate manual migration step. Skip with OPENSCIENTIST_SKIP_MIGRATIONS=true.)
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose port for NiceGUI
 EXPOSE 8080
 
@@ -37,4 +43,4 @@ ENV OPENSCIENTIST_BUILD_TIME=${BUILD_TIME}
 # Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
-CMD ["python", "-m", "openscientist.web_app", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["/entrypoint.sh"]
