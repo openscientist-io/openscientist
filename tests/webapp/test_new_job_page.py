@@ -3,7 +3,11 @@
 import inspect
 from types import SimpleNamespace
 
-from openscientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
+from openscientist.webapp_components.pages.new_job import (
+    _apply_selected_template_to_prompt,
+    _build_upload_session_id,
+    _submit_job,
+)
 
 
 def test_build_upload_session_id_uses_user_and_client_id():
@@ -30,3 +34,18 @@ def test_submit_job_has_coinvestigate_mode_at_top_level():
     """coinvestigate_mode must be a top-level parameter of _submit_job."""
     sig = inspect.signature(_submit_job)
     assert "coinvestigate_mode" in sig.parameters
+
+
+def test_apply_selected_template_to_prompt_keeps_freeform_default():
+    """The freeform selection should not rewrite prompt text."""
+    prompt = "Analyze the attached metabolomics data."
+
+    assert _apply_selected_template_to_prompt(prompt, "freeform") == prompt
+
+
+def test_apply_selected_template_to_prompt_adds_gene_set_guidance():
+    """Template insertion should produce editable scientific guidance."""
+    prompt = _apply_selected_template_to_prompt(None, "gene_set_enrichment")
+
+    assert "Template: Gene set enrichment analysis" in prompt
+    assert "Background gene set or measured universe" in prompt
