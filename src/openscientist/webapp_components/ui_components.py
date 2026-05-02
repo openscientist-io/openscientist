@@ -22,6 +22,7 @@ from openscientist.database.models import Job, JobShare, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
 from openscientist.job.types import JobInfo, JobStatus
+from openscientist.job_templates import JobTemplate
 from openscientist.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
 
 logger = logging.getLogger(__name__)
@@ -774,6 +775,65 @@ def render_alert_banner(
                     ui.label(f"• {detail}").classes(
                         f"{c['detail']} text-xs sm:text-sm font-mono break-words"
                     )
+
+
+def _render_job_template_guidance_list(
+    title: str,
+    values: tuple[str, ...],
+    *,
+    icon: str,
+) -> None:
+    """Render a compact labeled list inside the job template guidance panel."""
+    if not values:
+        return
+
+    with ui.column().classes("w-full gap-1"):
+        with ui.row().classes("items-center gap-1"):
+            ui.icon(icon, size="xs").classes("text-cyan-700")
+            ui.label(title).classes("text-xs font-semibold uppercase text-cyan-900")
+        with ui.column().classes("w-full gap-1 pl-1"):
+            for value in values:
+                ui.label(value).classes("text-sm text-gray-700 leading-snug")
+
+
+def render_job_template_guidance(template: JobTemplate | None) -> None:
+    """Render selected job template guidance without constraining freeform edits."""
+    if template is None:
+        return
+
+    with ui.element("div").classes("w-full rounded border border-cyan-200 bg-cyan-50 px-3 py-3"):
+        with ui.column().classes("w-full gap-3"):
+            with ui.row().classes("items-start gap-2"):
+                ui.icon("science", size="sm").classes("text-cyan-700 mt-1")
+                with ui.column().classes("gap-1 flex-1"):
+                    ui.label(template.name).classes("text-sm font-semibold text-cyan-950")
+                    ui.label(template.description).classes("text-sm text-cyan-900")
+
+            _render_job_template_guidance_list(
+                "Required prompt fields",
+                template.required_prompt_fields,
+                icon="fact_check",
+            )
+            _render_job_template_guidance_list(
+                "Recommended skills",
+                template.recommended_skills,
+                icon="construction",
+            )
+            _render_job_template_guidance_list(
+                "Analysis expectations",
+                template.analysis_expectations,
+                icon="analytics",
+            )
+            _render_job_template_guidance_list(
+                "Visualization guidance",
+                template.visualization_guidance,
+                icon="bar_chart",
+            )
+            _render_job_template_guidance_list(
+                "Reporting guidance",
+                template.reporting_guidance,
+                icon="article",
+            )
 
 
 def get_status_badge_props(status: JobStatus) -> dict[str, Any]:

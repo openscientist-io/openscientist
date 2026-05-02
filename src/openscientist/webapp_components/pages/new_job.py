@@ -9,9 +9,16 @@ from typing import Any
 from nicegui import ui
 
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
+from openscientist.job_templates import (
+    FREEFORM_TEMPLATE_ID,
+    get_job_template,
+    get_job_template_options,
+    merge_template_prompt,
+)
 from openscientist.providers import check_provider_config
 from openscientist.webapp_components.ui_components import (
     render_config_error_banner,
+    render_job_template_guidance,
     render_navigator,
     render_pending_approval_notice,
 )
@@ -49,6 +56,14 @@ def _notify_creation_error(error: Exception) -> None:
         ui.notify("Internal server error. Please try again or contact support.", type="negative")
         return
     ui.notify("Error creating job. Please try again or contact support.", type="negative")
+
+
+def _apply_selected_template_to_prompt(current_prompt: str | None, template_id: str | None) -> str:
+    """Return prompt text after applying the selected editable job template."""
+    template = get_job_template(template_id)
+    if template is None:
+        return current_prompt or ""
+    return merge_template_prompt(current_prompt, template)
 
 
 def _submit_job(
@@ -147,11 +162,68 @@ def new_job_page() -> None:
     with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):
         ui.label("Submit Discovery Job").classes("text-h5 mb-4")
 
+        with ui.row().classes("w-full gap-3 items-end flex-wrap"):
+            template_select = ui.select(
+                options=get_job_template_options(),
+                label="Template",
+                value=FREEFORM_TEMPLATE_ID,
+            ).classes("flex-grow min-w-64")
+            template_select.props("outlined dense")
+            insert_template_button = ui.button("Insert Template", icon="content_paste").props(
+                "outline color=primary"
+            )
+
+        template_guidance = ui.column().classes("w-full gap-2")
+
         research_question = ui.textarea(
             label="Research Question",
             placeholder="e.g., What metabolic pathways are affected by hypothermia?",
             validation={"Too short": lambda value: len(value) >= 10},
         ).classes("w-full")
+
+        template_state: dict[str, str] = {"last_prompt": ""}
+
+        def refresh_template_guidance(template_id: str | None) -> None:
+            """Refresh the selected template guidance panel."""
+            template_guidance.clear()
+            with template_guidance:
+                render_job_template_guidance(get_job_template(template_id))
+
+        def selected_template_id() -> str:
+            """Return the currently selected template ID."""
+            return str(template_select.value or FREEFORM_TEMPLATE_ID)
+
+        def on_template_change(event: Any) -> None:
+            """Prefill an empty prompt when a template is selected."""
+            template_id = str(event.value or FREEFORM_TEMPLATE_ID)
+            template = get_job_template(template_id)
+            current_prompt = str(research_question.value or "")
+            last_prompt = template_state["last_prompt"].strip()
+            should_prefill = not current_prompt.strip() or current_prompt.strip() == last_prompt
+
+            if template is not None and should_prefill:
+                research_question.value = template.prompt.strip()
+                template_state["last_prompt"] = template.prompt.strip()
+            elif template is None:
+                template_state["last_prompt"] = ""
+
+            refresh_template_guidance(template_id)
+
+        def insert_selected_template() -> None:
+            """Insert the selected template into the editable prompt."""
+            template_id = selected_template_id()
+            template = get_job_template(template_id)
+            if template is None:
+                ui.notify("Choose a template to insert.", type="warning")
+                return
+            research_question.value = _apply_selected_template_to_prompt(
+                str(research_question.value or ""),
+                template_id,
+            )
+            template_state["last_prompt"] = template.prompt.strip()
+
+        template_select.on_value_change(on_template_change)
+        insert_template_button.on("click", insert_selected_template)
 
         ui.upload(
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
