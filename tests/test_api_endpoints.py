@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.api.auth import hash_secret
-from openscientist.database.models import APIKey, Job, User
+from openscientist.database.models import APIKey, Job, JobShare, User
 from tests.helpers import enable_rls
 
 
@@ -1431,6 +1431,161 @@ class TestJobEndpoints:
                 )
 
         assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_create_job_review_completed_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        completed_job_db: Job,
+        tmp_path,
+    ):
+        """Review endpoint generates reviewer report for completed jobs."""
+        from openscientist.job_review import REVIEW_REPORT_FILENAME, ReviewGenerationResult
+
+        _, full_key = test_api_key_db
+
+        jobs_dir = tmp_path / "jobs"
+        job_dir = jobs_dir / str(completed_job_db.id)
+        job_dir.mkdir(parents=True)
+        (job_dir / "final_report.md").write_text("# Report\n\nCompleted report.", encoding="utf-8")
+
+        async def fake_generate_review(**_kwargs):
+            review_path = job_dir / REVIEW_REPORT_FILENAME
+            review_path.write_text("# Review\n\n## Major Concerns\n- Concern.", encoding="utf-8")
+            transcript_path = job_dir / "provenance" / "reviewer_transcript.json"
+            transcript_path.parent.mkdir(parents=True, exist_ok=True)
+            transcript_path.write_text("[]", encoding="utf-8")
+            return ReviewGenerationResult(
+                review_path=review_path,
+                transcript_path=transcript_path,
+                tool_calls=3,
+            )
+
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        with (
+            patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=jobs_dir),
+            patch(
+                "openscientist.api.endpoints.jobs.generate_job_review",
+                new_callable=AsyncMock,
+                side_effect=fake_generate_review,
+            ) as mock_generate,
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/jobs/{completed_job_db.id}/review",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["review_available"] is True
+        assert data["filename"] == REVIEW_REPORT_FILENAME
+        assert data["tool_calls"] == 3
+        mock_generate.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_job_review_requires_completed_job(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """Review endpoint rejects incomplete jobs."""
+        _, full_key = test_api_key_db
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        with patch(
+            "openscientist.api.endpoints.jobs.generate_job_review", new_callable=AsyncMock
+        ) as mock_generate:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/jobs/{test_job_db.id}/review",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 400
+        assert "completed" in response.json()["detail"].lower()
+        mock_generate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_job_review_requires_edit_access_for_shared_job(
+        self,
+        db_session: AsyncSession,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        completed_job_db: Job,
+    ):
+        """View-only shared users cannot trigger reviewer generation."""
+        _, full_key = test_api_key_db
+
+        share = JobShare(
+            job_id=completed_job_db.id,
+            shared_with_user_id=test_user2_db.id,
+            permission_level="view",
+        )
+        db_session.add(share)
+        await db_session.commit()
+
+        app = _build_authenticated_app(db_session, test_user2_db)
+
+        with patch(
+            "openscientist.api.endpoints.jobs.generate_job_review", new_callable=AsyncMock
+        ) as mock_generate:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    f"/api/v1/jobs/{completed_job_db.id}/review",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 403
+        mock_generate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_job_review_downloads_existing_report(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        completed_job_db: Job,
+        tmp_path,
+    ):
+        """Review download endpoint returns reviewer_report.md."""
+        from openscientist.job_review import REVIEW_REPORT_FILENAME
+
+        _, full_key = test_api_key_db
+
+        jobs_dir = tmp_path / "jobs"
+        job_dir = jobs_dir / str(completed_job_db.id)
+        job_dir.mkdir(parents=True)
+        (job_dir / REVIEW_REPORT_FILENAME).write_text("# Review\n\nLooks good.", encoding="utf-8")
+
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        with patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=jobs_dir):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/jobs/{completed_job_db.id}/review",
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 200
+        assert response.text.startswith("# Review")
 
     @pytest.mark.asyncio
     async def test_get_job_artifacts_not_found(
