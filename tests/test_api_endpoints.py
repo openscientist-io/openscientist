@@ -5,8 +5,8 @@ Tests actual HTTP requests to API endpoints with mocked authentication.
 """
 
 import io
+import tarfile
 import uuid
-import zipfile
 from contextlib import asynccontextmanager
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1466,14 +1466,18 @@ class TestJobEndpoints:
         test_job_db: Job,
         tmp_path,
     ):
-        """Artifacts endpoint returns ZIP archive."""
+        """Artifacts endpoint returns tar.gz archive."""
         _, full_key = test_api_key_db
 
         # Create job directory with some files
         job_dir = tmp_path / "jobs" / str(test_job_db.id)
         job_dir.mkdir(parents=True)
+        (job_dir / "final_report.md").write_text("# Report\n\nResult summary.", encoding="utf-8")
         (job_dir / "plot.png").write_bytes(b"fake png data")
         (job_dir / "data.csv").write_text("a,b,c\n1,2,3\n")
+        provenance_dir = job_dir / "provenance"
+        provenance_dir.mkdir()
+        (provenance_dir / "iter1_transcript.json").write_text("[]", encoding="utf-8")
 
         app = _build_authenticated_app(db_session, test_user_db)
 
@@ -1490,8 +1494,16 @@ class TestJobEndpoints:
                 )
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/zip"
+        assert response.headers["content-type"] == "application/gzip"
         assert response.headers.get("accept-ranges") == "bytes"
+        assert "Test_API_Job_artifacts.tar.gz" in response.headers["content-disposition"]
+
+        with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as tf:
+            names = tf.getnames()
+            assert "final_report.md" in names
+            assert "plot.png" in names
+            assert "data.csv" in names
+            assert "provenance/iter1_transcript.json" in names
 
     @pytest.mark.asyncio
     async def test_get_job_artifacts_excludes_config_json(
@@ -1525,8 +1537,8 @@ class TestJobEndpoints:
 
         assert response.status_code == 200
 
-        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            names = zf.namelist()
+        with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as tf:
+            names = tf.getnames()
             assert "config.json" not in names
 
     @pytest.mark.asyncio
@@ -1538,7 +1550,7 @@ class TestJobEndpoints:
         test_job_db: Job,
         tmp_path,
     ):
-        """Artifacts endpoint should zip files from configured JobManager jobs_dir."""
+        """Artifacts endpoint should archive files from configured JobManager jobs_dir."""
         _, full_key = test_api_key_db
 
         custom_jobs_dir = tmp_path / "custom-jobs"
@@ -1564,8 +1576,12 @@ class TestJobEndpoints:
                 )
 
         assert response.status_code == 200
-        assert response.headers["content-type"] == "application/zip"
+        assert response.headers["content-type"] == "application/gzip"
         assert response.headers.get("accept-ranges") == "bytes"
+        with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as tf:
+            names = tf.getnames()
+            assert "plot.png" in names
+            assert "data.csv" in names
 
 
 class TestJobSharingEndpoints:

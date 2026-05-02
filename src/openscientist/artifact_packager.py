@@ -2,10 +2,11 @@
 Artifact packager for OpenScientist jobs.
 
 Provides utilities for packaging job artifacts (reports, plots, logs, data)
-into downloadable archives in various formats (ZIP, Markdown, JSON).
+into downloadable archives.
 """
 
 import logging
+import tarfile
 import zipfile
 from collections.abc import Iterator
 from io import BytesIO
@@ -51,6 +52,31 @@ def _write_artifacts_zip(
     return written
 
 
+def _write_artifacts_tar_gz(
+    tar_file: tarfile.TarFile,
+    job_dir: Path,
+    excluded_paths: set[Path] | None = None,
+) -> int:
+    """Write job artifacts into an open tar.gz file and return number of files written."""
+    written = 0
+    for file_path, arcname in _iter_artifact_files(job_dir, excluded_paths=excluded_paths):
+        try:
+            tar_file.add(file_path, arcname=arcname.as_posix(), recursive=False)
+            written += 1
+        except Exception as e:
+            logger.warning("Failed to add %s to archive: %s", arcname, e)
+    return written
+
+
+def _archive_excluded_paths(job_dir: Path, archive_path: Path) -> set[Path]:
+    """Return archive output paths that should be excluded from the artifact walk."""
+    excluded_paths: set[Path] = set()
+    archive_path_resolved = archive_path.resolve()
+    if archive_path_resolved.is_relative_to(job_dir.resolve()):
+        excluded_paths.add(archive_path_resolved)
+    return excluded_paths
+
+
 def create_artifacts_zip(job_dir: Path, job_id: str) -> BytesIO:
     """
     Create a ZIP archive of all job artifacts.
@@ -84,17 +110,62 @@ def create_artifacts_zip(job_dir: Path, job_id: str) -> BytesIO:
     return zip_buffer
 
 
+def create_artifacts_tar_gz(job_dir: Path, job_id: str) -> BytesIO:
+    """
+    Create a tar.gz archive of all job artifacts.
+
+    Includes:
+    - Final reports (PDF, HTML, Markdown)
+    - Plots and visualizations
+    - Data files
+    - Provenance logs
+
+    Args:
+        job_dir: Path to job directory
+        job_id: Job ID (for logging)
+
+    Returns:
+        BytesIO buffer containing tar.gz archive
+    """
+    tar_buffer = BytesIO()
+
+    with tarfile.open(fileobj=tar_buffer, mode="w:gz") as tar_file:
+        written = _write_artifacts_tar_gz(tar_file, job_dir)
+
+    tar_buffer.seek(0)
+    logger.info(
+        "Created artifacts tar.gz for job %s (%d files, %d bytes)",
+        job_id,
+        written,
+        tar_buffer.getbuffer().nbytes,
+    )
+
+    return tar_buffer
+
+
 def create_artifacts_zip_file(job_dir: Path, archive_path: Path, job_id: str) -> int:
     """Create an artifacts ZIP archive on disk and return number of files written."""
-    excluded_paths: set[Path] = set()
-    archive_path_resolved = archive_path.resolve()
-    if archive_path_resolved.is_relative_to(job_dir.resolve()):
-        excluded_paths.add(archive_path_resolved)
+    excluded_paths = _archive_excluded_paths(job_dir, archive_path)
 
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
         written = _write_artifacts_zip(zip_file, job_dir, excluded_paths=excluded_paths)
     logger.info(
         "Created artifacts ZIP file for job %s at %s (%d files)",
+        job_id,
+        archive_path,
+        written,
+    )
+    return written
+
+
+def create_artifacts_tar_gz_file(job_dir: Path, archive_path: Path, job_id: str) -> int:
+    """Create an artifacts tar.gz archive on disk and return number of files written."""
+    excluded_paths = _archive_excluded_paths(job_dir, archive_path)
+
+    with tarfile.open(archive_path, "w:gz") as tar_file:
+        written = _write_artifacts_tar_gz(tar_file, job_dir, excluded_paths=excluded_paths)
+    logger.info(
+        "Created artifacts tar.gz file for job %s at %s (%d files)",
         job_id,
         archive_path,
         written,

@@ -31,7 +31,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
-from openscientist.artifact_packager import create_artifacts_zip_file
+from openscientist.artifact_packager import create_artifacts_tar_gz_file
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
@@ -674,7 +674,7 @@ async def download_artifacts(
     session: AsyncSession = SESSION_DEP,
 ) -> FileResponse:
     """
-    Download all job artifacts as a ZIP archive.
+    Download all job artifacts as a tar.gz archive.
 
     Includes plots, data files, and reports.
     """
@@ -694,16 +694,20 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
-    # Build ZIP archive on disk to avoid holding large archives in memory.
+    # Build archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
-        suffix="_artifacts.zip",
+        suffix="_artifacts.tar.gz",
         prefix=f"openscientist_{job.id}_",
         delete=False,
     ) as tmp_file:
         archive_path = Path(tmp_file.name)
 
     try:
-        create_artifacts_zip_file(job_dir=job_dir, archive_path=archive_path, job_id=str(job.id))
+        create_artifacts_tar_gz_file(
+            job_dir=job_dir,
+            archive_path=archive_path,
+            job_id=str(job.id),
+        )
     except Exception:
         archive_path.unlink(missing_ok=True)
         raise
@@ -712,6 +716,6 @@ async def download_artifacts(
 
     return FileResponse(
         path=archive_path,
-        media_type="application/zip",
-        filename=f"{job.title.replace(' ', '_')}_artifacts.zip",
+        media_type="application/gzip",
+        filename=f"{job.title.replace(' ', '_')}_artifacts.tar.gz",
     )

@@ -16,7 +16,7 @@ from uuid import UUID
 
 from nicegui import ui
 
-from openscientist.artifact_packager import create_artifacts_zip
+from openscientist.artifact_packager import create_artifacts_tar_gz
 from openscientist.async_tasks import run_sync
 from openscientist.auth import get_current_user_id, require_auth
 from openscientist.database.rls import set_current_user
@@ -1090,13 +1090,13 @@ def _render_timeline_tab(context: _JobDetailContext) -> None:
         context.active_timers.append(stats_timer_holder["timer"])
 
 
-def _download_artifacts_zip(job_dir: Path, job_id: str) -> None:
+def _download_artifacts_bundle(job_dir: Path, job_id: str) -> None:
     try:
-        zip_buffer = create_artifacts_zip(job_dir, job_id)
-        ui.download(zip_buffer.getvalue(), filename=f"{job_id}_artifacts.zip")
+        tar_buffer = create_artifacts_tar_gz(job_dir, job_id)
+        ui.download(tar_buffer.getvalue(), filename=f"{job_id}_artifacts.tar.gz")
     except Exception as exc:
-        logger.error("Failed to create artifacts ZIP: %s", exc, exc_info=True)
-        ui.notify("Failed to create ZIP. Please try again.", type="negative")
+        logger.error("Failed to create artifacts bundle: %s", exc, exc_info=True)
+        ui.notify("Failed to create artifact bundle. Please try again.", type="negative")
 
 
 def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None:
@@ -1134,8 +1134,8 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
             ui.button("PDF Unavailable", icon="picture_as_pdf").props("color=grey outline disabled")
 
         ui.button(
-            "Download All Artifacts",
-            on_click=lambda: _download_artifacts_zip(context.job_dir, context.job_id),
+            "Download Bundle",
+            on_click=lambda: _download_artifacts_bundle(context.job_dir, context.job_id),
             icon="folder_zip",
         ).props("color=accent outline")
 
