@@ -214,6 +214,72 @@ It must be a complete, self-contained document — not a summary or index.
 """
 
 
+def build_review_prompt(
+    research_question: str,
+    *,
+    job_dir: Path,
+    final_report_markdown: str,
+    job_context: str = "",
+) -> str:
+    """Build the prompt for an independent review of a completed analysis.
+
+    The reviewer agent returns Markdown; the application persists that output
+    as ``reviewer_report.md`` after the executor completes.
+    """
+    context_section = job_context.strip() or "No structured job context was available."
+
+    return f"""A completed OpenScientist analysis is ready for independent scientific review.
+
+Research question:
+{research_question}
+
+Working directory:
+{job_dir.resolve()}
+
+The current directory contains the completed job bundle. Inspect the final report and, when needed,
+supporting artifacts such as provenance transcripts, analysis logs, data summaries, and uploaded data
+files. Do not modify any files. The application will save your Markdown response as
+`reviewer_report.md`.
+
+## Structured Job Context
+
+{context_section}
+
+## Final Report To Review
+
+<final_report_markdown>
+{final_report_markdown}
+</final_report_markdown>
+
+## Review Instructions
+
+Act as an external scientific reviewer evaluating the rigor of the completed analysis. Be critical,
+specific, and calibrated. Prefer concrete evidence from the report or artifacts over generic advice.
+If you cannot verify a concern from available artifacts, say so explicitly.
+
+Your response must be a self-contained Markdown review with these sections:
+
+1. Summary
+2. Strengths
+3. Major Concerns
+4. Minor Concerns
+5. Recommendations
+6. Review Limitations
+
+Focus especially on:
+
+- Whether the analysis answers the research question
+- Statistical validity, sample handling, preprocessing, normalization, and multiple-testing control
+- Whether claims are supported by measured data and cited literature
+- Missing controls, omitted data files, unsupported causal or translational claims
+- Reproducibility problems in code, provenance, artifacts, or reported methods
+- Concrete next steps that would make the analysis more publishable
+
+Do not rewrite the original report. Do not produce a generic checklist. Return only the Markdown
+review.
+"""
+
+
 def increment_ks_iteration(job_id: str) -> None:
     """Increment the persisted knowledge-state iteration counter."""
     ks = KnowledgeState.load_from_database_sync(job_id)

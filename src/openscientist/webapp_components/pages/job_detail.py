@@ -24,6 +24,7 @@ from openscientist.database.session import get_session_ctx
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.job_chat import get_chat_history, send_chat_message
 from openscientist.job_manager import _db_get_job, _db_get_share_permission
+from openscientist.job_review import REVIEW_REPORT_FILENAME, generate_job_review
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
@@ -31,6 +32,7 @@ from openscientist.webapp_components.error_handler import get_user_friendly_erro
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
     _inject_pubmed_badge_styles,
+    render_alert_banner,
     render_delete_dialog,
     render_error_card,
     render_job_action_buttons,
@@ -1232,6 +1234,112 @@ def _render_report_tab(context: _JobDetailContext) -> None:
     _render_missing_report_state(context)
 
 
+def _download_review_report(review_path: Path, job_id: str) -> None:
+    try:
+        ui.download(review_path.read_bytes(), filename=f"{job_id}_reviewer_report.md")
+    except Exception as exc:
+        logger.error("Failed to download reviewer report: %s", exc, exc_info=True)
+        ui.notify("Failed to download reviewer report. Please try again.", type="negative")
+
+
+async def _generate_review_for_context(context: _JobDetailContext, review_content: Any) -> None:
+    guard = ClientGuard()
+    if not guard.is_connected:
+        return
+
+    try:
+        ui.notify("Generating critical review...", type="info")
+        await generate_job_review(
+            job_id=context.job_id,
+            job_dir=context.job_dir,
+            research_question=context.job_info.research_question,
+        )
+        if not guard.is_connected:
+            return
+        ui.notify("Reviewer report generated", type="positive")
+        review_content.refresh()
+    except FileNotFoundError:
+        if guard.is_connected:
+            ui.notify("Final report not found. Generate the report first.", type="negative")
+    except Exception as exc:
+        logger.error("Reviewer generation failed: %s", exc, exc_info=True)
+        if guard.is_connected:
+            ui.notify("Reviewer generation failed. Please try again.", type="negative")
+
+
+def _render_review_actions(
+    context: _JobDetailContext,
+    review_path: Path,
+    review_content: Any,
+) -> None:
+    with ui.row().classes("w-full justify-end mb-4 gap-2"):
+        ui.button(
+            "Download Review",
+            on_click=lambda: _download_review_report(review_path, context.job_id),
+            icon="download",
+        ).props("color=primary outline")
+        if context.can_edit:
+            ui.button(
+                "Regenerate Review",
+                on_click=lambda: _generate_review_for_context(context, review_content),
+                icon="rate_review",
+            ).props("color=accent outline")
+
+
+def _render_review_empty_state(context: _JobDetailContext, review_content: Any) -> None:
+    if context.job_info.status != JobStatus.COMPLETED:
+        ui.label("Critical review will be available when the job completes.").classes(
+            "text-gray-500 italic"
+        )
+        return
+
+    if not context.can_edit:
+        ui.label("No reviewer report has been generated yet.").classes("text-gray-500 italic")
+        return
+
+    with ui.column().classes("w-full items-center gap-3 py-8"):
+        ui.icon("rate_review", size="xl").classes("text-gray-300")
+        ui.label("No reviewer report yet").classes("text-lg font-medium text-gray-600")
+        ui.label("Generate an independent critique of the completed analysis.").classes(
+            "text-sm text-gray-400"
+        )
+        ui.button(
+            "Generate Critical Review",
+            on_click=lambda: _generate_review_for_context(context, review_content),
+            icon="rate_review",
+        ).props("color=primary")
+
+
+def _render_review_content(context: _JobDetailContext, review_content: Any) -> None:
+    review_path = context.job_dir / REVIEW_REPORT_FILENAME
+    if not review_path.exists():
+        _render_review_empty_state(context, review_content)
+        return
+
+    _render_review_actions(context, review_path, review_content)
+    try:
+        review_markdown = review_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        render_alert_banner(
+            title="Reviewer Report Unavailable",
+            message="The reviewer report exists but could not be read.",
+            severity="error",
+            details=[str(exc)],
+        )
+        return
+
+    _inject_pubmed_badge_styles()
+    ui.markdown(transform_pmid_references(review_markdown)).classes("w-full")
+
+
+def _render_review_tab(context: _JobDetailContext) -> None:
+    @ui.refreshable
+    def review_content() -> None:
+        _render_review_content(context, review_content)
+
+    review_content()
+
+
 _CHAT_STYLES = """
 <style>
     .chat-bubble-user {
@@ -1619,6 +1727,7 @@ def _render_job_tabs(context: _JobDetailContext) -> None:
     with ui.tabs().classes("w-full") as tabs:
         timeline_tab = ui.tab("Research Log")
         report_tab = ui.tab("Report")
+        review_tab = ui.tab("Review")
         chat_tab = ui.tab("Chat")
 
     with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
@@ -1626,6 +1735,8 @@ def _render_job_tabs(context: _JobDetailContext) -> None:
             _render_timeline_tab(context)
         with ui.tab_panel(report_tab):
             _render_report_tab(context)
+        with ui.tab_panel(review_tab):
+            _render_review_tab(context)
         with ui.tab_panel(chat_tab):
             _render_chat_tab(context)
 

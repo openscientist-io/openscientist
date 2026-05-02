@@ -32,11 +32,12 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
 from openscientist.artifact_packager import create_artifacts_zip_file
-from openscientist.database.models import Job, User
+from openscientist.database.models import Job, JobShare, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job_manager import JobManager
+from openscientist.job_review import generate_job_review, read_review_metadata, review_report_path
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,17 @@ class JobStatusResponse(BaseModel):
     error_message: str | None = Field(None, description="Error message if failed")
 
 
+class JobReviewResponse(BaseModel):
+    """Response for a reviewer report generation request."""
+
+    id: str = Field(..., description="Job ID")
+    status: str = Field(..., description="Job status")
+    review_available: bool = Field(..., description="Whether reviewer_report.md exists")
+    filename: str | None = Field(None, description="Reviewer report filename")
+    size_bytes: int | None = Field(None, description="Reviewer report size in bytes")
+    tool_calls: int | None = Field(None, description="Tool calls used by the reviewer agent")
+
+
 class JobDetailResponse(JobResponse):
     """Detailed response for a single job."""
 
@@ -218,6 +230,38 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
         result_summary=job.result_summary,
         error_message=job.error_message,
     )
+
+
+def _review_response_for_job(
+    job: Job,
+    job_dir: Path,
+    *,
+    tool_calls: int | None = None,
+) -> JobReviewResponse:
+    """Build review response metadata from the canonical review artifact."""
+    metadata = read_review_metadata(job_dir)
+    size_bytes = metadata.get("size_bytes")
+    return JobReviewResponse(
+        id=str(job.id),
+        status=job.status,
+        review_available=bool(metadata.get("available", False)),
+        filename=metadata.get("filename") if isinstance(metadata.get("filename"), str) else None,
+        size_bytes=size_bytes if isinstance(size_bytes, int) else None,
+        tool_calls=tool_calls,
+    )
+
+
+async def _can_generate_review(job: Job, user: User, session: AsyncSession) -> bool:
+    """Return whether the current user may create reviewer artifacts for a job."""
+    if job.owner_id == user.id:
+        return True
+
+    stmt = select(JobShare.permission_level).where(
+        JobShare.job_id == job.id,
+        JobShare.shared_with_user_id == user.id,
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() == "edit"
 
 
 def _with_body_error_loc(errors: list[Any]) -> list[dict[str, Any]]:
@@ -664,6 +708,90 @@ async def download_report(
         status_code=status.HTTP_404_NOT_FOUND,
         detail="Report not found",
     )
+
+
+@router.get("/{job_id}/review")
+async def download_review(
+    job_id: str,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> FileResponse:
+    """Download the generated reviewer report Markdown for a completed job."""
+    job = await get_job_by_id(job_id, user, session)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found or access denied",
+        )
+
+    if job.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Review only available for completed jobs",
+        )
+
+    review_path = review_report_path(_get_jobs_dir() / str(job.id))
+    if not review_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Reviewer report not found",
+        )
+
+    return FileResponse(
+        path=review_path,
+        media_type="text/markdown",
+        filename=f"{job.title.replace(' ', '_')}_{review_path.name}",
+    )
+
+
+@router.post("/{job_id}/review", response_model=JobReviewResponse)
+async def create_review(
+    job_id: str,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> JobReviewResponse:
+    """Generate or regenerate a critical reviewer report for a completed job."""
+    job = await get_job_by_id(job_id, user, session)
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found or access denied",
+        )
+
+    if not await _can_generate_review(job, user, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only job owners and shared editors can generate a reviewer report",
+        )
+
+    if job.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Review only available for completed jobs",
+        )
+
+    job_dir = _get_jobs_dir() / str(job.id)
+    try:
+        result = await generate_job_review(
+            job_id=str(job.id),
+            job_dir=job_dir,
+            research_question=job.title,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except RuntimeError as exc:
+        logger.exception("Reviewer generation failed for job %s", job.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    return _review_response_for_job(job, job_dir, tool_calls=result.tool_calls)
 
 
 @router.get("/{job_id}/artifacts")
