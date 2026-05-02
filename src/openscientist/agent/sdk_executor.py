@@ -23,6 +23,7 @@ from claude_agent_sdk import (
     create_sdk_mcp_server,
 )
 from claude_agent_sdk.types import (
+    AgentDefinition,
     PermissionResultAllow,
     TextBlock,
     ToolPermissionContext,
@@ -89,6 +90,9 @@ class _IterationState:
     """Mutable state captured while processing one SDK streaming response."""
 
     tool_call_count: int = 0
+    subagent_call_count: int = 0
+    subagent_names: set[str] = field(default_factory=set)
+    subagent_log: list[str] = field(default_factory=list)  # ordered, with duplicates
     transcript: list[dict[str, Any]] = field(default_factory=list)
     final_output: str = ""
 
@@ -117,6 +121,7 @@ class SDKAgentExecutor:
         system_prompt: str | None,
         use_hypotheses: bool = False,
         data_files: list[Path] | None = None,
+        experts: dict[str, AgentDefinition] | None = None,
     ) -> None:
         from openscientist.tools.registry import build_tool_list
 
@@ -125,6 +130,12 @@ class SDKAgentExecutor:
         self._system_prompt = system_prompt
         self._tools = build_tool_list(
             job_dir.name, job_dir, data_file, use_hypotheses=use_hypotheses, data_files=data_files
+        )
+        # Defensive copy: callers may reuse or mutate their dict after
+        # construction, but the agents registered at session init must be
+        # frozen from the caller's perspective.
+        self._experts: dict[str, AgentDefinition] | None = (
+            dict(experts) if experts is not None else None
         )
         self._token_usage = TokenUsage()
         self._client: ClaudeSDKClient | None = None
@@ -164,6 +175,7 @@ class SDKAgentExecutor:
             cwd=str(self._job_dir),
             stderr=self._stderr_callback,
             extra_args=extra_args,
+            agents=self._experts,
         )
 
     async def _ensure_client(self) -> ClaudeSDKClient:
@@ -215,6 +227,24 @@ class SDKAgentExecutor:
             "input": getattr(block, "input", {}),
         }
 
+    def _is_subagent_call(self, block: ToolUseBlock) -> str | None:
+        """Return the expert slug if this tool call is a subagent delegation, else None.
+
+        The SDK emits subagent invocations as ToolUseBlock with
+        name="Agent" (current) or name="Task" (older SDK versions).
+        The expert slug is in block.input["subagent_type"].
+        """
+        if not self._experts:
+            return None
+        # "Agent" (current SDK) or "Task" (older SDK).
+        if block.name not in ("Agent", "Task"):
+            return None
+        block_input = getattr(block, "input", {}) or {}
+        candidate = block_input.get("subagent_type", "")
+        if isinstance(candidate, str) and candidate in self._experts:
+            return candidate
+        return None
+
     def _handle_content_list(self, raw_content: list[object], state: _IterationState) -> None:
         """Convert SDK content blocks into transcript items."""
         content_items: list[dict[str, object]] = []
@@ -227,6 +257,12 @@ class SDKAgentExecutor:
                 state.tool_call_count += 1
                 logger.debug("Tool call: %s", block.name)
                 content_items.append(self._tool_use_item(block, state.tool_call_count))
+                expert_slug = self._is_subagent_call(block)
+                if expert_slug:
+                    state.subagent_call_count += 1
+                    state.subagent_names.add(expert_slug)
+                    state.subagent_log.append(expert_slug)
+                    logger.info("Subagent delegation: %s", expert_slug)
         if content_items:
             state.transcript.append({"type": "assistant", "message": {"content": content_items}})
 
@@ -357,6 +393,9 @@ class SDKAgentExecutor:
             tool_calls=state.tool_call_count,
             transcript=state.transcript,
             error="",
+            subagent_calls=state.subagent_call_count,
+            subagent_names=frozenset(state.subagent_names),
+            subagent_log=tuple(state.subagent_log),
         )
 
     async def shutdown(self) -> None:

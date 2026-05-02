@@ -28,7 +28,10 @@ class TestJobContainerRunner:
                 agent_platform=None,
             ),
             provider=provider,
-            database=SimpleNamespace(effective_database_url="postgresql://db"),
+            database=SimpleNamespace(
+                effective_database_url="postgresql://db",
+                effective_admin_database_url="postgresql://db",
+            ),
             phenix=SimpleNamespace(phenix_host_path=None),
             secret_key="secret",
         )
@@ -84,6 +87,12 @@ class TestJobContainerRunner:
         assert environment["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
         assert environment["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
         assert run_kwargs["volumes"]["/host/project/jobs/job-123"]["bind"] == environment["JOB_DIR"]
+        # The agent container must receive ADMIN_DATABASE_URL so the
+        # expert loader can use get_admin_session() to read the
+        # admin-only experts table.  Without this, the container would
+        # silently fall back to DATABASE_URL (the app user) and RLS
+        # would return zero experts.
+        assert "ADMIN_DATABASE_URL" in environment
 
     def test_launch_omits_host_path_mapping_without_host_project_dir(self):
         """Launch omits host-path env vars when the host project path is unset."""
@@ -180,6 +189,7 @@ class TestPhenixMount:
         settings.container.agent_cpu = 2.0
         settings.secret_key = "test-secret"
         settings.database.effective_database_url = "postgresql+asyncpg://test"
+        settings.database.effective_admin_database_url = "postgresql+asyncpg://admin-test"
         settings.provider.get_container_env_vars.return_value = {}
         settings.provider.google_application_credentials = None
 

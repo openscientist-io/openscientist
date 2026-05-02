@@ -14,13 +14,15 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select
 
+from openscientist.agent.expert_loader import load_enabled_experts
 from openscientist.agent.factory import get_agent_executor
 from openscientist.agent.protocol import AgentExecutor, IterationResult, TokenUsage
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import AsyncSessionLocal, get_admin_session
 from openscientist.exceptions import OpenScientistError
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
@@ -67,14 +69,20 @@ def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
     return data_file
 
 
-def _build_agent_executor(
+async def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
+    experts: dict[str, AgentDefinition] | None = None,
 ) -> AgentExecutor:
     """Create a configured agent executor for discovery/report phases."""
-    system_prompt = get_system_prompt()
+    if experts is None:
+        async with get_admin_session() as session:
+            experts = await load_enabled_experts(session)
+    if experts:
+        logger.info("Loaded %d enabled expert subagents", len(experts))
+    system_prompt = get_system_prompt(experts=experts)
     logger.info("Built system prompt (%d chars)", len(system_prompt))
     return get_agent_executor(
         job_dir=job_dir,
@@ -82,7 +90,25 @@ def _build_agent_executor(
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
         data_files=data_files,
+        experts=experts,
     )
+
+
+def _record_subagent_delegations(
+    job_id: str, result: IterationResult, subagent_log: list[str]
+) -> None:
+    """Add one analysis_log entry per subagent call (not per unique name).
+
+    ``subagent_log`` is the ordered list of expert slugs collected
+    during stream handling — one entry per invocation, preserving
+    duplicates so the UI count matches the actual delegation count.
+    """
+    if not subagent_log:
+        return
+    ks = KnowledgeState.load_from_database_sync(job_id)
+    for name in subagent_log:
+        ks.log_analysis(action="delegate_to_expert", description=f"Delegated to {name}")
+    ks.save_to_database_sync(job_id)
 
 
 def _append_iteration_artifacts(
@@ -102,6 +128,8 @@ def _append_iteration_artifacts(
         prompt,
         result.output,
         result.tool_calls,
+        subagent_calls=result.subagent_calls,
+        subagent_names=result.subagent_names,
         write=overwrite_log,
     )
 
@@ -174,6 +202,7 @@ async def _run_primary_discovery_loop(
         result=result,
         overwrite_log=True,
     )
+    _record_subagent_delegations(job_id, result, list(result.subagent_log))
     if max_iterations > 1:
         increment_ks_iteration(job_id)
     await _assert_job_not_cancelled(job_id)
@@ -222,6 +251,7 @@ async def _run_primary_discovery_loop(
             prompt=iteration_prompt,
             result=result,
         )
+        _record_subagent_delegations(job_id, result, list(result.subagent_log))
 
         if iteration < max_iterations:
             increment_ks_iteration(job_id)
@@ -395,13 +425,18 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     }
 
 
-async def _write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = False) -> None:
+async def _write_skills_to_claude_dir(
+    job_dir: Path,
+    *,
+    use_hypotheses: bool = False,
+    experts: dict[str, AgentDefinition] | None = None,
+) -> None:
     """Write CLAUDE.md and enabled skill files into job_dir/.claude/."""
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
     # Write the discovery-agent JOB_CLAUDE.md (hypothesis sections conditional)
-    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses)
+    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses, experts=experts)
 
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
@@ -442,7 +477,12 @@ def _read_chat_claude_md_template() -> str:
     )
 
 
-def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
+def _write_job_claude_md(
+    claude_dir: Path,
+    *,
+    use_hypotheses: bool = False,
+    experts: dict[str, AgentDefinition] | None = None,
+) -> None:
     """Write generated JOB_CLAUDE.md content to claude_dir/CLAUDE.md."""
     from openscientist.settings import get_settings
 
@@ -451,7 +491,9 @@ def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> N
         dest = claude_dir / "CLAUDE.md"
         dest.write_text(
             generate_job_claude_md(
-                use_hypotheses=use_hypotheses, phenix_available=phenix_available
+                use_hypotheses=use_hypotheses,
+                phenix_available=phenix_available,
+                experts=experts,
             ),
             encoding="utf-8",
         )
@@ -549,12 +591,21 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
 
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
-    executor = _build_agent_executor(
+
+    try:
+        async with get_admin_session() as experts_session:
+            experts = await load_enabled_experts(experts_session)
+    except Exception as e:
+        logger.warning("Failed to load experts for discovery: %s", e)
+        experts = {}
+
+    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses, experts=experts)
+    executor = await _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_hypotheses=use_hypotheses,
         data_files=all_data_files,
+        experts=experts,
     )
     logger.info("Created agent executor for job %s", job_id)
 
@@ -635,6 +686,93 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
         await executor.shutdown()
 
 
+async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
+    """
+    Re-run only the report generation phase for a completed/failed job.
+
+    Loads the existing KnowledgeState and DB-backed job metadata, creates a fresh executor
+    session, and generates a new final_report.md + PDF.
+
+    Args:
+        job_dir: Path to job directory
+
+    Returns:
+        Dict: {job_id, status, report_success}
+    """
+    job_dir = Path(job_dir)
+    runtime = await _load_runtime_context(job_dir)
+    job_id = runtime["job_id"]
+
+    logger.info("Regenerating report for job %s", job_id)
+
+    # Set up provider and executor
+    provider = get_provider()
+    provider.setup_environment()
+    await update_job_status(job_dir, "generating_report")
+
+    use_hypotheses = runtime["use_hypotheses"]
+    all_data_files = [Path(p) for p in runtime["data_files"]]
+
+    try:
+        async with get_admin_session() as experts_session:
+            experts = await load_enabled_experts(experts_session)
+    except Exception as e:
+        logger.warning("Failed to load experts for report regeneration: %s", e)
+        experts = {}
+
+    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses, experts=experts)
+    executor = await _build_agent_executor(
+        job_dir=job_dir,
+        data_file=_resolve_primary_data_file(runtime["data_files"]),
+        use_hypotheses=use_hypotheses,
+        data_files=all_data_files,
+        experts=experts,
+    )
+
+    try:
+        report_outcome = await _run_report_generation_phase(
+            executor=executor,
+            job_dir=job_dir,
+            research_question=runtime["research_question"],
+        )
+        final_status = await _persist_final_status(job_dir, report_outcome)
+
+        return {
+            "job_id": job_id,
+            "status": final_status,
+            "report_success": report_outcome.success,
+        }
+
+    except Exception as e:
+        logger.error("Report regeneration failed [%s]: %s", get_version_string(), e, exc_info=True)
+        try:
+            await update_job_status(job_dir, "failed", error_message=str(e))
+        except Exception as status_error:
+            logger.warning(
+                "Failed to persist regenerate-report failure for %s: %s", job_id, status_error
+            )
+        raise
+
+    finally:
+        tokens = executor.total_tokens
+        logger.info(
+            "Report regeneration executor: %d input tokens, %d output tokens",
+            tokens.input_tokens,
+            tokens.output_tokens,
+        )
+        try:
+            settings = get_settings()
+            model_name = (
+                settings.provider.anthropic_model
+                or settings.provider.anthropic_default_sonnet_model
+                or _PROVIDER_DEFAULT_MODELS.get(provider.name, "unknown")
+            )
+            await _persist_job_cost_record(job_id, tokens, provider.name, model_name, "report")
+        except Exception as cost_err:
+            logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
+        await executor.shutdown()
+
+
 def _save_transcript(path: Path, transcript: list[dict[str, Any]]) -> None:
     """Save iteration transcript to JSON file."""
     import json as _json
@@ -650,6 +788,8 @@ def _append_log(
     prompt: str,
     output: str,
     tool_calls: int,
+    subagent_calls: int = 0,
+    subagent_names: frozenset[str] = frozenset(),
     write: bool = False,
 ) -> None:
     """Append iteration summary to the log file."""
@@ -659,3 +799,7 @@ def _append_log(
         f.write(f"Prompt: {prompt}\n\n")
         f.write(f"Output: {output}\n\n")
         f.write(f"Tool calls: {tool_calls}\n\n")
+        if subagent_calls:
+            f.write(
+                f"Subagent delegations: {subagent_calls} ({', '.join(sorted(subagent_names))})\n\n"
+            )

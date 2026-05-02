@@ -461,7 +461,7 @@ async def test_send_chat_message_success(
     )
 
     with (
-        patch("openscientist.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("openscientist.job_chat.SDKAgentExecutor", return_value=mock_executor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
@@ -506,7 +506,7 @@ async def test_send_chat_message_raises_on_executor_failure(
     )
 
     with (
-        patch("openscientist.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("openscientist.job_chat.SDKAgentExecutor", return_value=mock_executor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
@@ -540,7 +540,7 @@ async def test_send_chat_message_raises_generic_on_empty_error(
     )
 
     with (
-        patch("openscientist.agent.sdk_executor.SDKAgentExecutor", return_value=mock_executor),
+        patch("openscientist.job_chat.SDKAgentExecutor", return_value=mock_executor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value.setup_environment.return_value = None
@@ -570,8 +570,8 @@ async def test_system_prompt_does_not_include_job_context(
     captured_system_prompt = None
 
     class FakeExecutor:
-        def __init__(self, *, job_dir, data_file, system_prompt):
-            _ = (job_dir, data_file)
+        def __init__(self, *, job_dir, data_file, system_prompt, experts=None):
+            _ = (job_dir, data_file, experts)
             nonlocal captured_system_prompt
             captured_system_prompt = system_prompt
 
@@ -588,7 +588,7 @@ async def test_system_prompt_does_not_include_job_context(
             pass
 
     with (
-        patch("openscientist.agent.sdk_executor.SDKAgentExecutor", FakeExecutor),
+        patch("openscientist.job_chat.SDKAgentExecutor", FakeExecutor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
         patch(
             "openscientist.job_chat.KnowledgeState.load_from_database_sync",
