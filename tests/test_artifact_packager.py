@@ -1,9 +1,15 @@
 """Tests for openscientist.artifact_packager module."""
 
 import stat
+import tarfile
 import zipfile
 
-from openscientist.artifact_packager import create_artifacts_zip, create_artifacts_zip_file
+from openscientist.artifact_packager import (
+    create_artifacts_tar_gz,
+    create_artifacts_tar_gz_file,
+    create_artifacts_zip,
+    create_artifacts_zip_file,
+)
 
 
 class TestCreateArtifactsZip:
@@ -108,3 +114,38 @@ class TestCreateArtifactsZip:
             names = zf.namelist()
             assert "report.md" in names
             assert "config.json" not in names
+
+
+class TestCreateArtifactsTarGz:
+    """Tests for create_artifacts_tar_gz()."""
+
+    def test_creates_valid_tar_gz_bundle(self, tmp_path):
+        (tmp_path / "final_report.md").write_text("# Report")
+        (tmp_path / "config.json").write_text('{"job_id": "j1"}')
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "input.csv").write_text("a,b\n1,2\n")
+        provenance_dir = tmp_path / "provenance"
+        provenance_dir.mkdir()
+        (provenance_dir / "iter1_transcript.json").write_text("[]")
+
+        buf = create_artifacts_tar_gz(tmp_path, "j1")
+
+        with tarfile.open(fileobj=buf, mode="r:gz") as tf:
+            names = tf.getnames()
+            assert "final_report.md" in names
+            assert "data/input.csv" in names
+            assert "provenance/iter1_transcript.json" in names
+            assert "config.json" not in names
+
+    def test_create_artifacts_tar_gz_file_excludes_archive_itself(self, tmp_path):
+        (tmp_path / "report.md").write_text("# Report")
+        archive_path = tmp_path / "artifacts.tar.gz"
+
+        written = create_artifacts_tar_gz_file(tmp_path, archive_path, "j1")
+
+        assert written == 1
+        assert archive_path.exists()
+        with tarfile.open(archive_path, "r:gz") as tf:
+            names = tf.getnames()
+            assert names == ["report.md"]
