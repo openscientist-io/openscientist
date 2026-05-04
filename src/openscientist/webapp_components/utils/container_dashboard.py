@@ -357,7 +357,7 @@ async def _get_active_jobs_map() -> dict[str, dict[str, Any]]:
 
             for job, email in rows:
                 result_map[str(job.id)] = {
-                    "title": job.title,
+                    "title": job.research_question,
                     "status": job.status,
                     "owner_email": email or "unassigned",
                     "current_iteration": job.current_iteration,

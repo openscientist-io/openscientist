@@ -21,7 +21,7 @@ async def test_create_job_then_get_as_owner(db_session: AsyncSession):
     db_session.add(user)
     await db_session.commit()
 
-    job = Job(owner_id=user.id, title="Owner's research")
+    job = Job(owner_id=user.id, research_question="Owner's research")
     db_session.add(job)
     await db_session.commit()
 
@@ -33,7 +33,7 @@ async def test_create_job_then_get_as_owner(db_session: AsyncSession):
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     found = result.scalar_one_or_none()
     assert found is not None
-    assert found.title == "Owner's research"
+    assert found.research_question == "Owner's research"
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_create_job_then_get_as_other_user(db_session: AsyncSession):
     db_session.add_all([alice, bob])
     await db_session.commit()
 
-    alice_job = Job(owner_id=alice.id, title="Alice's private research")
+    alice_job = Job(owner_id=alice.id, research_question="Alice's private research")
     db_session.add(alice_job)
     await db_session.commit()
 
@@ -65,8 +65,8 @@ async def test_list_jobs_with_rls_filters_by_owner(db_session: AsyncSession):
     db_session.add_all([alice, bob])
     await db_session.commit()
 
-    alice_job = Job(owner_id=alice.id, title="Alice's job")
-    bob_job = Job(owner_id=bob.id, title="Bob's job")
+    alice_job = Job(owner_id=alice.id, research_question="Alice's job")
+    bob_job = Job(owner_id=bob.id, research_question="Bob's job")
     db_session.add_all([alice_job, bob_job])
     await db_session.commit()
 
@@ -77,14 +77,14 @@ async def test_list_jobs_with_rls_filters_by_owner(db_session: AsyncSession):
     result = await db_session.execute(select(Job).order_by(Job.created_at.desc()))
     alice_jobs = result.scalars().all()
     assert len(alice_jobs) == 1
-    assert alice_jobs[0].title == "Alice's job"
+    assert alice_jobs[0].research_question == "Alice's job"
 
     # Bob should only see his own job
     await set_current_user(db_session, bob.id)
     result = await db_session.execute(select(Job).order_by(Job.created_at.desc()))
     bob_jobs = result.scalars().all()
     assert len(bob_jobs) == 1
-    assert bob_jobs[0].title == "Bob's job"
+    assert bob_jobs[0].research_question == "Bob's job"
 
 
 @pytest.mark.asyncio
@@ -111,8 +111,8 @@ async def test_get_session_query_filters_by_owner(test_engine):
         admin_session.add_all([alice, bob])
         await admin_session.commit()
 
-        alice_job = Job(owner_id=alice.id, title="Alice production job")
-        bob_job = Job(owner_id=bob.id, title="Bob production job")
+        alice_job = Job(owner_id=alice.id, research_question="Alice production job")
+        bob_job = Job(owner_id=bob.id, research_question="Bob production job")
         admin_session.add_all([alice_job, bob_job])
         await admin_session.commit()
 
@@ -128,7 +128,7 @@ async def test_get_session_query_filters_by_owner(test_engine):
         visible = result.scalars().all()
 
         assert len(visible) == 1
-        assert visible[0].title == "Alice production job"
+        assert visible[0].research_question == "Alice production job"
 
     # Same path for Bob
     async with session_factory() as user_session:
@@ -139,7 +139,7 @@ async def test_get_session_query_filters_by_owner(test_engine):
         visible = result.scalars().all()
 
         assert len(visible) == 1
-        assert visible[0].title == "Bob production job"
+        assert visible[0].research_question == "Bob production job"
 
 
 @pytest.mark.asyncio
@@ -154,15 +154,15 @@ async def test_list_jobs_without_rls_returns_all(db_session: AsyncSession):
     db_session.add_all([alice, bob])
     await db_session.commit()
 
-    alice_job = Job(owner_id=alice.id, title="Alice admin-visible")
-    bob_job = Job(owner_id=bob.id, title="Bob admin-visible")
+    alice_job = Job(owner_id=alice.id, research_question="Alice admin-visible")
+    bob_job = Job(owner_id=bob.id, research_question="Bob admin-visible")
     db_session.add_all([alice_job, bob_job])
     await db_session.commit()
 
     # Admin session (no enable_rls) sees all jobs
     result = await db_session.execute(select(Job))
     all_jobs = result.scalars().all()
-    titles = {j.title for j in all_jobs}
+    titles = {j.research_question for j in all_jobs}
     assert len(all_jobs) >= 2
     assert "Alice admin-visible" in titles
     assert "Bob admin-visible" in titles

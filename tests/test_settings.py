@@ -524,6 +524,7 @@ class TestContainerSettings:
         """Default container settings are reasonable."""
         settings = ContainerSettings()
         assert settings.executor_image == "openscientist-executor:latest"
+        assert settings.agent_image == "openscientist-agent:latest"
         assert settings.executor_memory == "2g"
         assert settings.executor_cpu == 0.5
         assert settings.executor_timeout == 120
@@ -532,14 +533,22 @@ class TestContainerSettings:
         """Custom container settings are applied."""
         settings = ContainerSettings(
             OPENSCIENTIST_EXECUTOR_IMAGE="custom-executor:v1",
+            OPENSCIENTIST_AGENT_IMAGE="custom-agent:v1",
             OPENSCIENTIST_EXECUTOR_MEMORY="4g",
             OPENSCIENTIST_EXECUTOR_CPU=1.0,
             OPENSCIENTIST_EXECUTOR_TIMEOUT=300,
         )
         assert settings.executor_image == "custom-executor:v1"
+        assert settings.agent_image == "custom-agent:v1"
         assert settings.executor_memory == "4g"
         assert settings.executor_cpu == 1.0
         assert settings.executor_timeout == 300
+
+    def test_agent_image_picks_up_env_override(self, monkeypatch):
+        """OPENSCIENTIST_AGENT_IMAGE env var overrides the default."""
+        monkeypatch.setenv("OPENSCIENTIST_AGENT_IMAGE", "openscientist-agent:staging")
+        settings = ContainerSettings()
+        assert settings.agent_image == "openscientist-agent:staging"
 
 
 class TestGetSettings:

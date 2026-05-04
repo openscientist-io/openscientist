@@ -81,7 +81,7 @@ class JobInfo:
     ) -> JobInfo:
         return cls(
             job_id=str(job.id),
-            research_question=job.title,
+            research_question=job.research_question,
             status=JobStatus(job.status),
             created_at=job.created_at.isoformat(),
             started_at=(
@@ -107,7 +107,7 @@ class JobInfo:
             use_hypotheses=bool(getattr(job, "use_hypotheses", False)),
             investigation_mode=getattr(job, "investigation_mode", "autonomous"),
             owner_id=str(job.owner_id) if job.owner_id else None,
-            short_title=job.short_title,
+            short_title=getattr(job, "short_title", None),
             llm_provider=getattr(job, "llm_provider", None),
             llm_model=(job.llm_config or {}).get("model") if hasattr(job, "llm_config") else None,
         )

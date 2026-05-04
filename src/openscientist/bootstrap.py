@@ -1172,7 +1172,7 @@ def _build_new_job(
     job = Job(
         id=job_id,
         owner_id=owner_id,
-        title=title,
+        research_question=title,
         description=_to_optional_string(config.get("description")) or title,
         investigation_mode=_to_string(
             config.get("investigation_mode") or ks_config.get("investigation_mode")
@@ -1487,7 +1487,7 @@ async def _sync_knowledge_state_payload(
         normalized_ks = _normalize_knowledge_state(
             raw_ks=ks_data,
             job_id=str(job.id),
-            research_question=job.title,
+            research_question=job.research_question,
             max_iterations=job.max_iterations,
         )
         ks = KnowledgeState.__new__(KnowledgeState)

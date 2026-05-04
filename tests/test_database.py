@@ -55,7 +55,7 @@ async def test_job_creation_with_owner(db_session: AsyncSession, test_user: User
     """Test creating a job with an owner."""
     job = Job(
         owner_id=test_user.id,
-        title="Research Job",
+        research_question="Research Job",
         description="Testing job creation",
         status="running",
     )
@@ -66,7 +66,7 @@ async def test_job_creation_with_owner(db_session: AsyncSession, test_user: User
     # Verify job attributes
     assert isinstance(job.id, UUID)
     assert job.owner_id == test_user.id
-    assert job.title == "Research Job"
+    assert job.research_question == "Research Job"
     assert job.status == "running"
     assert isinstance(job.created_at, datetime)
 
@@ -81,7 +81,7 @@ async def test_orphaned_job_creation(db_session: AsyncSession):
     """Test creating a job without an owner (orphaned job)."""
     job = Job(
         owner_id=None,
-        title="Orphaned Job",
+        research_question="Orphaned Job",
         description="Job without owner",
         status="pending",
     )
@@ -90,7 +90,7 @@ async def test_orphaned_job_creation(db_session: AsyncSession):
     await db_session.refresh(job)
 
     assert job.owner_id is None
-    assert job.title == "Orphaned Job"
+    assert job.research_question == "Orphaned Job"
 
 
 @pytest.mark.asyncio
@@ -161,7 +161,7 @@ async def test_job_share_creation(db_session: AsyncSession, test_user: User, tes
     # Create a job owned by test_user
     job = Job(
         owner_id=test_user.id,
-        title="Shared Job",
+        research_question="Shared Job",
         description="Job to be shared",
         status="completed",
     )
@@ -341,7 +341,7 @@ async def test_cascade_delete_job(db_session: AsyncSession, test_user: User):
     # Create job with related records
     job = Job(
         owner_id=test_user.id,
-        title="Job to Delete",
+        research_question="Job to Delete",
         description="Will be deleted",
         status="completed",
     )

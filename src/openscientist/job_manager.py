@@ -84,7 +84,7 @@ async def _db_create_job(
     use_hypotheses: bool = False,
     investigation_mode: str = "autonomous",
     owner_id: UUID | None = None,
-    title: str | None = None,
+    short_title: str | None = None,
     description: str | None = None,
     pdb_code: str | None = None,
     space_group: str | None = None,
@@ -95,12 +95,12 @@ async def _db_create_job(
 
     Args:
         job_id: UUID string for the job (used as primary key)
-        research_question: The research question/title
+        research_question: The full research question; drives the agent prompt
         max_iterations: Maximum iterations allowed
         use_hypotheses: Whether hypothesis tracking tools are enabled for this job
         investigation_mode: Investigation mode ('autonomous' or 'coinvestigate')
         owner_id: UUID of the job owner (optional)
-        title: Display title for the job (defaults to research_question)
+        short_title: Optional short display label (truncated to 100 chars)
         description: Optional job description
         pdb_code: Optional PDB code
         space_group: Optional crystal space group
@@ -114,7 +114,8 @@ async def _db_create_job(
         job = JobModel(
             id=UUID(job_id),
             owner_id=owner_id,
-            title=title or research_question,
+            research_question=research_question,
+            short_title=short_title[:100] if short_title else None,
             description=description,
             use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
@@ -193,7 +194,7 @@ async def _db_update_job_status(
             await session.commit()
 
             result.owner_id = str(job.owner_id) if job.owner_id else None
-            result.job_title = job.title
+            result.job_title = job.short_title or job.research_question
             result.current_iteration = job.current_iteration
 
             # Fetch owner's ntfy settings for notifications
@@ -379,7 +380,7 @@ class JobManager:
         use_hypotheses: bool,
         investigation_mode: str,
         owner_id: str | None,
-        title: str | None,
+        short_title: str | None,
         description: str | None,
         pdb_code: str | None,
         space_group: str | None,
@@ -396,7 +397,7 @@ class JobManager:
                     use_hypotheses=use_hypotheses,
                     investigation_mode=investigation_mode,
                     owner_id=owner_uuid,
-                    title=title,
+                    short_title=short_title,
                     description=description,
                     pdb_code=pdb_code,
                     space_group=space_group,
@@ -456,7 +457,7 @@ class JobManager:
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
         owner_id: str | None = None,
-        title: str | None = None,
+        short_title: str | None = None,
         description: str | None = None,
         pdb_code: str | None = None,
         space_group: str | None = None,
@@ -466,14 +467,14 @@ class JobManager:
 
         Args:
             job_id: Unique job identifier
-            research_question: Research question
+            research_question: The full research question; drives the agent prompt
             data_files: List of data file paths (can be empty for literature-only jobs)
             max_iterations: Maximum iterations
             use_hypotheses: Whether to enable hypothesis tracking tools
             auto_start: Whether to start job immediately
             investigation_mode: "autonomous" (default) or "coinvestigate"
             owner_id: UUID of the job owner (optional, for orphaned jobs)
-            title: Display title for UI/API responses (defaults to research_question)
+            short_title: Optional short display label (truncated to 100 chars)
             description: Optional job description
             pdb_code: Optional PDB code metadata
             space_group: Optional crystal space group metadata
@@ -507,7 +508,7 @@ class JobManager:
             use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
             owner_id=owner_id,
-            title=title,
+            short_title=short_title,
             description=description,
             pdb_code=pdb_code,
             space_group=space_group,

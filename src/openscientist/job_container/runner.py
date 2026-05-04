@@ -31,7 +31,6 @@ from openscientist.version import SHORT_COMMIT_LENGTH
 
 logger = logging.getLogger(__name__)
 
-AGENT_IMAGE = "openscientist-agent:latest"
 AGENT_APP_DIR = "/agent"
 
 
@@ -194,7 +193,7 @@ class JobContainerRunner:
         # inside the web server container.
         docker_gid = self._docker_socket_group()
         container = self._docker.containers.run(
-            image=AGENT_IMAGE,
+            image=cs.agent_image,
             name=f"openscientist-agent-{job_id[:SHORT_COMMIT_LENGTH]}",
             detach=True,
             remove=False,

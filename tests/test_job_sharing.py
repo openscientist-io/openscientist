@@ -26,7 +26,7 @@ async def test_share_job_with_view_permission(
     # Create job owned by test_user
     job = Job(
         owner_id=test_user.id,
-        title="Shared Job",
+        research_question="Shared Job",
         description="Job to share",
         status="completed",
     )
@@ -70,7 +70,7 @@ async def test_share_job_with_edit_permission(
     # Create job owned by test_user
     job = Job(
         owner_id=test_user.id,
-        title="Editable Shared Job",
+        research_question="Editable Shared Job",
         description="Can be edited by others",
         status="running",
     )
@@ -117,7 +117,7 @@ async def test_unshared_job_not_accessible(
     # Create job owned by test_user
     job = Job(
         owner_id=test_user.id,
-        title="Private Job",
+        research_question="Private Job",
         description="Not shared",
         status="pending",
     )
@@ -147,7 +147,7 @@ async def test_revoke_job_share(
     # Create and share job
     job = Job(
         owner_id=test_user.id,
-        title="Temporarily Shared",
+        research_question="Temporarily Shared",
         description="Will be unshared",
         status="completed",
     )
@@ -200,7 +200,7 @@ async def test_share_job_with_multiple_users(
     # Create job
     job = Job(
         owner_id=test_user.id,
-        title="Multi-Shared Job",
+        research_question="Multi-Shared Job",
         description="Shared with multiple users",
         status="completed",
     )
@@ -249,7 +249,7 @@ async def test_update_share_permission(
     # Create and share job
     job = Job(
         owner_id=test_user.id,
-        title="Permission Update Test",
+        research_question="Permission Update Test",
         description="Test permission change",
         status="running",
     )
@@ -284,19 +284,19 @@ async def test_list_shared_with_me_jobs(
     # Create multiple jobs and share some with test_user2
     job1 = Job(
         owner_id=test_user.id,
-        title="Shared Job 1",
+        research_question="Shared Job 1",
         description="First shared job",
         status="completed",
     )
     job2 = Job(
         owner_id=test_user.id,
-        title="Shared Job 2",
+        research_question="Shared Job 2",
         description="Second shared job",
         status="running",
     )
     job3 = Job(
         owner_id=test_user.id,
-        title="Private Job",
+        research_question="Private Job",
         description="Not shared",
         status="pending",
     )
@@ -322,7 +322,7 @@ async def test_list_shared_with_me_jobs(
 
     # Should see job1 and job2, but not job3
     assert len(accessible_jobs) == 2
-    accessible_titles = {job.title for job in accessible_jobs}
+    accessible_titles = {job.research_question for job in accessible_jobs}
     assert accessible_titles == {"Shared Job 1", "Shared Job 2"}
 
 
@@ -334,7 +334,7 @@ async def test_owner_always_has_access(
     """Test that job owners always have access regardless of shares."""
     job = Job(
         owner_id=test_user.id,
-        title="Owner Job",
+        research_question="Owner Job",
         description="Owner always has access",
         status="completed",
     )
@@ -361,7 +361,7 @@ async def test_cannot_share_same_job_twice_to_same_user(
     """Test that duplicate shares are prevented."""
     job = Job(
         owner_id=test_user.id,
-        title="Single Share Job",
+        research_question="Single Share Job",
         description="Test duplicate prevention",
         status="completed",
     )
@@ -400,7 +400,7 @@ async def test_cascade_delete_shares_with_job(
     """Test that deleting a job deletes its shares."""
     job = Job(
         owner_id=test_user.id,
-        title="Job to Delete",
+        research_question="Job to Delete",
         description="Will be deleted",
         status="completed",
     )
@@ -437,7 +437,7 @@ async def test_orphaned_job_visibility(db_session: AsyncSession, test_user: User
     # Create orphaned job
     orphaned_job = Job(
         owner_id=None,
-        title="Orphaned Job",
+        research_question="Orphaned Job",
         description="No owner",
         status="completed",
     )

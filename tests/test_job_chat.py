@@ -152,7 +152,7 @@ async def test_chat_messages_per_job(
     # Create second job
     job2 = Job(
         owner_id=test_user.id,
-        title="Second Job",
+        research_question="Second Job",
         description="Another job",
         status="running",
     )
@@ -194,7 +194,7 @@ async def test_cascade_delete_chat_messages(
     # Create job with messages
     job = Job(
         owner_id=test_user.id,
-        title="Job with Chat",
+        research_question="Job with Chat",
         description="Will be deleted",
         status="completed",
     )
@@ -407,7 +407,7 @@ async def test_chat_access_with_rls(
     # Create job for test_user
     job = Job(
         owner_id=test_user.id,
-        title="Private Job",
+        research_question="Private Job",
         description="Test RLS",
         status="running",
     )
