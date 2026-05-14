@@ -3,6 +3,7 @@
 import logging
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,147 @@ from openscientist.webapp_components.utils.session import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TemplateFieldConfig:
+    """Configuration for a template-specific form field."""
+
+    key: str
+    label: str
+    placeholder: str
+    required: bool = True
+
+
+@dataclass(frozen=True)
+class JobTemplateConfig:
+    """Configuration for a guided job template."""
+
+    label: str
+    guidance: str
+    skill_hints: tuple[str, ...]
+    analysis_requirements: tuple[str, ...]
+    report_guidance: tuple[str, ...]
+    fields: tuple[TemplateFieldConfig, ...] = ()
+
+
+FREEFORM_TEMPLATE_ID = "freeform"
+JOB_TEMPLATES: dict[str, JobTemplateConfig] = {
+    "go_gene_set_enrichment": JobTemplateConfig(
+        label="GO Gene Set Enrichment",
+        guidance=(
+            "Provide a target gene set and a background gene set. The agent will prioritize "
+            "deterministic GO enrichment statistics before interpretation."
+        ),
+        skill_hints=("execute_code", "plotting"),
+        analysis_requirements=(
+            "Require over-representation testing against an explicit background set.",
+            "Use GO enrichment methods (not KEGG) unless user asks otherwise.",
+            "Do not make biological claims without statistical evidence from the enrichment run.",
+        ),
+        report_guidance=(
+            "Include adjusted p-values, effect sizes, and top enriched GO terms in a table.",
+            "Highlight how background-set choice influences interpretation.",
+        ),
+        fields=(
+            TemplateFieldConfig(
+                key="target_gene_set",
+                label="Target Gene Set",
+                placeholder="Paste gene symbols or IDs for the gene set of interest.",
+            ),
+            TemplateFieldConfig(
+                key="background_gene_set",
+                label="Background Gene Set",
+                placeholder="Paste gene symbols or IDs for the background universe.",
+            ),
+            TemplateFieldConfig(
+                key="organism",
+                label="Organism (optional)",
+                placeholder="e.g., Homo sapiens",
+                required=False,
+            ),
+        ),
+    ),
+    "variant_interpretation": JobTemplateConfig(
+        label="Variant Interpretation",
+        guidance=(
+            "Provide variants and context. The agent will prioritize deterministic annotation "
+            "steps before narrative interpretation."
+        ),
+        skill_hints=("execute_code", "literature_search"),
+        analysis_requirements=(
+            "Start with explicit variant annotation and evidence aggregation before conclusions.",
+            "Separate known evidence from speculative interpretation.",
+        ),
+        report_guidance=(
+            "Provide a per-variant evidence table with source, confidence, and limitations.",
+            "List recommended follow-up validation experiments.",
+        ),
+        fields=(
+            TemplateFieldConfig(
+                key="variants",
+                label="Variants",
+                placeholder="List variants (e.g., BRCA1 c.68_69delAG, rsID, genomic coordinates).",
+            ),
+            TemplateFieldConfig(
+                key="phenotype_context",
+                label="Phenotype / Clinical Context",
+                placeholder="Describe phenotype, cohort, or disease context.",
+            ),
+        ),
+    ),
+}
+
+
+def _build_template_description(
+    template_id: str,
+    template_inputs: dict[str, str],
+) -> str | None:
+    """Build structured template guidance that is injected into job description."""
+    template = JOB_TEMPLATES.get(template_id)
+    if template is None:
+        return None
+
+    lines = [
+        f"Template selected: {template.label}",
+        "",
+        "Template guidance:",
+        template.guidance,
+        "",
+        "Preferred skills/tools:",
+        *[f"- {skill}" for skill in template.skill_hints],
+        "",
+        "Analysis requirements:",
+        *[f"- {requirement}" for requirement in template.analysis_requirements],
+        "",
+        "Reporting guidance:",
+        *[f"- {guidance}" for guidance in template.report_guidance],
+    ]
+
+    field_lines: list[str] = []
+    missing_required: list[str] = []
+    for field in template.fields:
+        value = template_inputs.get(field.key, "").strip()
+        if value:
+            field_lines.append(f"- {field.label}: {value}")
+        elif field.required:
+            missing_required.append(field.label)
+            field_lines.append(f"- {field.label}: [MISSING]")
+
+    if field_lines:
+        lines.extend(["", "Template inputs:", *field_lines])
+
+    if missing_required:
+        lines.extend(
+            [
+                "",
+                "Required template inputs missing:",
+                *[f"- {label}" for label in missing_required],
+                "Ask the scientist to provide missing required inputs before final interpretation.",
+            ]
+        )
+
+    return "\n".join(lines)
 
 
 def _build_upload_session_id(user_id: str | None, client: object) -> str:
@@ -60,6 +202,8 @@ def _submit_job(
     max_iterations: ui.number,
     use_hypotheses: ui.switch,
     coinvestigate_mode: ui.switch,
+    template_id: ui.select,
+    template_inputs: dict[str, ui.textarea],
 ) -> None:
     """Validate input and create a new discovery job."""
     if not user_can_start_jobs:
@@ -80,6 +224,11 @@ def _submit_job(
     job_id = str(uuid.uuid4())
     data_files = _persist_uploaded_files(session_id)
     mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
+    selected_template = str(template_id.value or FREEFORM_TEMPLATE_ID)
+    description = _build_template_description(
+        selected_template,
+        {key: str(field.value or "").strip() for key, field in template_inputs.items()},
+    )
 
     try:
         job_manager.create_job(
@@ -91,6 +240,7 @@ def _submit_job(
             auto_start=True,
             investigation_mode=mode,
             owner_id=current_user_id,
+            description=description,
         )
         ui.notify(f"Job {job_id} created and started!", type="positive")
         clear_uploaded_files(session_id)
@@ -153,6 +303,35 @@ def new_job_page() -> None:
             validation={"Too short": lambda value: len(value) >= 10},
         ).classes("w-full")
 
+        template_fields: dict[str, ui.textarea] = {}
+        template_options = {FREEFORM_TEMPLATE_ID: "Freeform (No Template)"}
+        template_options.update({key: config.label for key, config in JOB_TEMPLATES.items()})
+        template_id = ui.select(
+            options=template_options,
+            value=FREEFORM_TEMPLATE_ID,
+            label="Guided Template (Optional)",
+        ).classes("w-full")
+        template_container = ui.column().classes("w-full")
+
+        def render_template_inputs() -> None:
+            selected = str(template_id.value or FREEFORM_TEMPLATE_ID)
+            template = JOB_TEMPLATES.get(selected)
+            template_fields.clear()
+            template_container.clear()
+            if template is None:
+                return
+            with template_container:
+                ui.label(template.guidance).classes("text-sm text-gray-700")
+                for field in template.fields:
+                    field_label = field.label if field.required else f"{field.label} (optional)"
+                    template_fields[field.key] = ui.textarea(
+                        label=field_label,
+                        placeholder=field.placeholder,
+                    ).classes("w-full")
+
+        template_id.on("update:model-value", lambda _: render_template_inputs())
+        render_template_inputs()
+
         ui.upload(
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
             multiple=True,
@@ -194,5 +373,7 @@ def new_job_page() -> None:
                 max_iterations=max_iterations,
                 use_hypotheses=use_hypotheses,
                 coinvestigate_mode=coinvestigate_mode,
+                template_id=template_id,
+                template_inputs=template_fields,
             ),
         ).classes("w-full mt-4")
