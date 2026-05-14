@@ -166,6 +166,15 @@ def _build_template_description(
     return "\n".join(lines)
 
 
+def _collect_template_input_values(template_inputs: dict[str, Any]) -> dict[str, str]:
+    """Return trimmed values from template input widgets."""
+    values: dict[str, str] = {}
+    for key, field in template_inputs.items():
+        raw_value = getattr(field, "value", "")
+        values[key] = str(raw_value or "").strip()
+    return values
+
+
 def _build_upload_session_id(user_id: str | None, client: object) -> str:
     """Build an upload-session key scoped to user and websocket client."""
     effective_user_id = user_id or "anonymous"
@@ -203,7 +212,7 @@ def _submit_job(
     use_hypotheses: ui.switch,
     coinvestigate_mode: ui.switch,
     template_id: ui.select,
-    template_inputs: dict[str, ui.textarea],
+    template_inputs: dict[str, Any],
 ) -> None:
     """Validate input and create a new discovery job."""
     if not user_can_start_jobs:
@@ -227,7 +236,7 @@ def _submit_job(
     selected_template = str(template_id.value or FREEFORM_TEMPLATE_ID)
     description = _build_template_description(
         selected_template,
-        {key: str(field.value or "").strip() for key, field in template_inputs.items()},
+        _collect_template_input_values(template_inputs),
     )
 
     try:
@@ -303,7 +312,7 @@ def new_job_page() -> None:
             validation={"Too short": lambda value: len(value) >= 10},
         ).classes("w-full")
 
-        template_fields: dict[str, ui.textarea] = {}
+        template_fields: dict[str, Any] = {}
         template_options = {FREEFORM_TEMPLATE_ID: "Freeform (No Template)"}
         template_options.update({key: config.label for key, config in JOB_TEMPLATES.items()})
         template_id = ui.select(
@@ -314,6 +323,7 @@ def new_job_page() -> None:
         template_container = ui.column().classes("w-full")
 
         def render_template_inputs() -> None:
+            """Render template guidance and input fields for the selected template."""
             selected = str(template_id.value or FREEFORM_TEMPLATE_ID)
             template = JOB_TEMPLATES.get(selected)
             template_fields.clear()

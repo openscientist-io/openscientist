@@ -7,6 +7,7 @@ from openscientist.webapp_components.pages.new_job import (
     FREEFORM_TEMPLATE_ID,
     _build_template_description,
     _build_upload_session_id,
+    _collect_template_input_values,
     _submit_job,
 )
 
@@ -57,6 +58,18 @@ def test_build_template_description_includes_missing_required_fields():
     )
     assert description is not None
     assert "Template selected: GO Gene Set Enrichment" in description
-    assert "Target Gene Set: TP53" in description
+    assert "Template inputs:\n- Target Gene Set: TP53\nBRCA1" in description
     assert "Background Gene Set: [MISSING]" in description
     assert "Ask the scientist to provide missing required inputs" in description
+
+
+def test_collect_template_input_values_trims_and_handles_missing_value_attr():
+    """Template input collection should normalize values from form fields safely."""
+    values = _collect_template_input_values(
+        {
+            "genes": SimpleNamespace(value=" TP53 "),
+            "count": SimpleNamespace(value=42),
+            "missing": SimpleNamespace(),
+        }
+    )
+    assert values == {"genes": "TP53", "count": "42", "missing": ""}
