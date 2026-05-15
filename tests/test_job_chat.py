@@ -570,8 +570,8 @@ async def test_system_prompt_does_not_include_job_context(
     captured_system_prompt = None
 
     class FakeExecutor:
-        def __init__(self, *, job_dir, data_file, system_prompt):
-            _ = (job_dir, data_file)
+        def __init__(self, *, job_dir, data_file, system_prompt, model_override=None):
+            _ = (job_dir, data_file, model_override)
             nonlocal captured_system_prompt
             captured_system_prompt = system_prompt
 

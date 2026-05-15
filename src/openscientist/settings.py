@@ -61,6 +61,16 @@ class ProviderSettings(BaseSettings):
 
     # Model settings
     anthropic_model: str | None = Field(default=None, alias="ANTHROPIC_MODEL")
+    anthropic_chat_model: str | None = Field(
+        default=None,
+        alias="ANTHROPIC_CHAT_MODEL",
+        description=(
+            "Model used for in-page chat. Falls back to ANTHROPIC_MODEL if unset. "
+            "Useful when the discovery model rejects chat-style prompts under its "
+            "Usage Policy enforcement (e.g. Claude Opus 4.6 on Foundry); operators "
+            "can set this to a smaller / less-restrictive deployment such as Haiku."
+        ),
+    )
     anthropic_small_fast_model: str | None = Field(default=None, alias="ANTHROPIC_SMALL_FAST_MODEL")
     anthropic_default_sonnet_model: str | None = Field(
         default=None, alias="ANTHROPIC_DEFAULT_SONNET_MODEL"

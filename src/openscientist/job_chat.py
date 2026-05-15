@@ -308,15 +308,21 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
     claude_dir.mkdir(parents=True, exist_ok=True)
     _write_chat_claude_md(claude_dir)
 
-    # Force chat onto Sonnet regardless of the configured discovery model. Opus 4.6
-    # rejects every chat invocation with a Usage Policy refusal (the CLI itself
-    # suggests switching models in the error message). Sonnet 4.5's safety
-    # enforcement is calibrated for the chat use case and accepts the prompt.
+    # Allow operators to route chat to a different model than discovery via the
+    # ANTHROPIC_CHAT_MODEL env var. This is the escape hatch when the discovery
+    # model rejects chat-style prompts under Usage Policy enforcement (e.g.
+    # Claude Opus 4.6 on Foundry refuses every chat call). When unset, chat uses
+    # the same model as discovery — the "same model for everything" default.
+    from openscientist.settings import get_settings
+
+    provider_settings = get_settings().provider
+    chat_model = provider_settings.anthropic_chat_model or provider_settings.anthropic_model
+
     executor = SDKAgentExecutor(
         job_dir=job_dir,
         data_file=None,
         system_prompt=system_prompt,
-        model_override="claude-sonnet-4-5",
+        model_override=chat_model,
     )
 
     try:
