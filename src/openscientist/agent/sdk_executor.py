@@ -117,12 +117,14 @@ class SDKAgentExecutor:
         system_prompt: str | None,
         use_hypotheses: bool = False,
         data_files: list[Path] | None = None,
+        model_override: str | None = None,
     ) -> None:
         from openscientist.tools.registry import build_tool_list
 
         self._job_dir = job_dir
         self._data_file = data_file
         self._system_prompt = system_prompt
+        self._model_override = model_override
         self._tools = build_tool_list(
             job_dir.name, job_dir, data_file, use_hypotheses=use_hypotheses, data_files=data_files
         )
@@ -159,7 +161,7 @@ class SDKAgentExecutor:
         return ClaudeAgentOptions(
             system_prompt=self._system_prompt,
             mcp_servers={"openscientist-tools": server},
-            model=settings.provider.anthropic_model,
+            model=self._model_override or settings.provider.anthropic_model,
             can_use_tool=self._allow_all_tools,
             cwd=str(self._job_dir),
             stderr=self._stderr_callback,

@@ -308,10 +308,15 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
     claude_dir.mkdir(parents=True, exist_ok=True)
     _write_chat_claude_md(claude_dir)
 
+    # Force chat onto Sonnet regardless of the configured discovery model. Opus 4.6
+    # rejects every chat invocation with a Usage Policy refusal (the CLI itself
+    # suggests switching models in the error message). Sonnet 4.5's safety
+    # enforcement is calibrated for the chat use case and accepts the prompt.
     executor = SDKAgentExecutor(
         job_dir=job_dir,
         data_file=None,
         system_prompt=system_prompt,
+        model_override="claude-sonnet-4-5",
     )
 
     try:
