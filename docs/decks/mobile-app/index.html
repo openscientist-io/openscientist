@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>OpenScientist Mobile — Pitch</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css" />
+<style>
+  :root {
+    --ink:           #07090F;
+    --ink-soft:      #0E1320;
+    --ink-card:      #131826;
+    --paper:         #F4F1EA;
+    --paper-soft:    rgba(244, 241, 234, 0.78);
+    --paper-dim:     rgba(244, 241, 234, 0.50);
+    --paper-faint:   rgba(244, 241, 234, 0.16);
+    --hair:          rgba(244, 241, 234, 0.08);
+
+    --burn:          #E8761B;
+    --burn-deep:     #7C3A0E;
+    --bench:         #22D3EE;
+    --bench-deep:    #0E5A6E;
+    --news:          #F87171;
+    --news-deep:     #7F1D1D;
+    --ios:           #0A84FF;
+    --ios-deep:      #0A3B7A;
+    --car:           #FBBF24;
+    --car-deep:      #78420A;
+    --inst:          #34D399;
+    --inst-deep:     #064E3B;
+    --violet:        #A78BFA;
+    --violet-deep:   #4C1D95;
+  }
+
+  html, body { background: var(--ink); }
+
+  .reveal {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+    color: var(--paper);
+    font-weight: 300;
+    letter-spacing: -0.005em;
+  }
+  .reveal .slides { text-align: left; }
+  .reveal .slides section { padding: 4vh 6vw; box-sizing: border-box; }
+
+  .reveal h1, .reveal h2, .reveal h3, .reveal h4 {
+    color: var(--paper);
+    text-transform: none;
+    letter-spacing: -0.025em;
+    font-weight: 700;
+    margin: 0 0 0.5em 0;
+    line-height: 1.04;
+  }
+  .reveal h1 { font-size: 4.6rem; }
+  .reveal h2 { font-size: 3rem; }
+  .reveal h3 { font-size: 1.6rem; color: var(--paper-soft); font-weight: 500; }
+  .reveal p  { font-size: 1.25rem; line-height: 1.5; color: var(--paper-soft); }
+  .reveal strong { color: var(--paper); font-weight: 600; }
+  .reveal em { font-style: italic; color: var(--paper); }
+
+  .reveal a { color: var(--ios); text-decoration: none; border-bottom: 1px dashed currentColor; }
+
+  .reveal .controls { color: var(--paper-dim); }
+  .reveal .progress { color: var(--paper); height: 2px; }
+
+  /* ---------- shared scaffolding ---------- */
+  .label {
+    font-size: 0.72rem;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--paper-dim);
+    margin-bottom: 1.5rem;
+    font-weight: 500;
+  }
+  .label .dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--accent, var(--paper-soft));
+    border-radius: 50%;
+    margin-right: 0.7rem;
+    transform: translateY(-2px);
+    box-shadow: 0 0 14px var(--accent, var(--paper-soft));
+  }
+  .pull {
+    font-size: 3.7rem;
+    line-height: 1.08;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    color: var(--paper);
+    max-width: 22ch;
+  }
+  .pull em { font-style: normal; color: var(--accent, var(--paper)); font-weight: 600; }
+  .pull b  { font-weight: 700; }
+  .stinger {
+    margin-top: 2.5rem;
+    padding: 0.5rem 0 0.5rem 1.25rem;
+    border-left: 2px solid var(--accent, var(--paper));
+    color: var(--paper-soft);
+    font-size: 1.05rem;
+    max-width: 50ch;
+  }
+  .stinger b { color: var(--accent, var(--paper)); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.78rem; display: block; margin-bottom: 0.3rem; }
+
+  .footnote {
+    position: absolute; bottom: 3vh; right: 6vw;
+    font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--paper-dim);
+  }
+  .footnote .sep { color: var(--paper-faint); margin: 0 0.6rem; }
+
+  .col2 { display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: start; }
+  .col2.tight { gap: 2.5rem; }
+  .col2 .pull { font-size: 2.6rem; }
+
+  /* ---------- title slide ---------- */
+  .title-slide { background: radial-gradient(ellipse at 80% 20%, #1B2240 0%, #07090F 55%); }
+  .title-slide h1 { font-size: 6.5rem; line-height: 0.98; letter-spacing: -0.04em; font-weight: 800; }
+  .title-slide .kicker {
+    display: inline-flex; align-items: center; gap: 0.6rem;
+    font-size: 0.78rem; letter-spacing: 0.3em; text-transform: uppercase;
+    color: var(--paper-soft); margin-bottom: 2.5rem;
+  }
+  .title-slide .kicker .ring {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #fff, var(--ios));
+    box-shadow: 0 0 18px var(--ios);
+  }
+  .title-slide .subtitle {
+    font-size: 1.6rem; line-height: 1.35; color: var(--paper-soft); font-weight: 300;
+    max-width: 38ch; margin-top: 1.5rem;
+  }
+  .title-slide .subtitle b { color: var(--paper); font-weight: 600; }
+
+  /* ---------- vignette card ---------- */
+  .scene {
+    background: var(--ink-card);
+    border: 1px solid var(--hair);
+    border-radius: 22px;
+    padding: 2.2rem 2.4rem;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.4);
+  }
+  .scene .where {
+    font-size: 0.75rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent, var(--paper-dim));
+    font-weight: 600;
+    margin-bottom: 1.2rem;
+  }
+  .scene .body {
+    font-size: 1.1rem; line-height: 1.55; color: var(--paper-soft);
+  }
+  .scene .body b { color: var(--paper); }
+  .scene .body em { color: var(--paper); font-style: italic; }
+  .quote-bubble {
+    margin: 1.2rem 0;
+    padding: 0.9rem 1.1rem;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--hair);
+    border-radius: 14px;
+    font-size: 1rem; font-style: italic;
+    color: var(--paper);
+    position: relative;
+  }
+  .quote-bubble::before {
+    content: "“"; position: absolute; left: 0.5rem; top: -0.5rem;
+    color: var(--accent, var(--paper-faint));
+    font-size: 2.5rem; font-family: Georgia, serif;
+  }
+
+  /* ---------- slide 5: burn scar ---------- */
+  .bg-burn { background: radial-gradient(ellipse at 75% 35%, var(--burn-deep) 0%, var(--ink) 55%); }
+  .photo-card {
+    width: 340px;
+    background: linear-gradient(135deg, #6E3A14 0%, #3A1F0B 100%);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+    transform: rotate(-1.5deg);
+  }
+  .photo-card .img {
+    height: 200px; border-radius: 6px;
+    background:
+      radial-gradient(ellipse at 30% 40%, rgba(0,0,0,0.4), transparent 50%),
+      radial-gradient(ellipse at 70% 60%, rgba(0,0,0,0.6), transparent 50%),
+      linear-gradient(160deg, #1A0D04, #3A1F0B 50%, #5A3818 100%);
+    position: relative;
+    overflow: hidden;
+  }
+  .photo-card .img::after {
+    content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(80deg, transparent 0 6px, rgba(0,0,0,0.15) 6px 7px);
+    opacity: 0.7;
+  }
+  .photo-card .meta {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 10px; font-size: 0.7rem; color: rgba(255,255,255,0.6);
+    font-family: ui-monospace, "SF Mono", monospace; letter-spacing: 0.05em;
+  }
+  .photo-card .meta .pin { color: var(--burn); }
+
+  /* ---------- slide 6: gel ---------- */
+  .bg-bench { background: radial-gradient(ellipse at 25% 70%, var(--bench-deep) 0%, var(--ink) 60%); }
+  .gel {
+    background: linear-gradient(180deg, #0C1014, #050709);
+    border: 1px solid var(--hair);
+    border-radius: 8px;
+    padding: 1.4rem 1.2rem;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;
+    width: 360px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6), inset 0 0 60px rgba(34, 211, 238, 0.05);
+  }
+  .gel .lane {
+    height: 220px;
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.02), transparent 30%),
+      linear-gradient(180deg, #0E1418, #1A2128 100%);
+    border-radius: 3px;
+    position: relative;
+    overflow: hidden;
+  }
+  .gel .lane .band {
+    position: absolute; left: 6%; right: 6%;
+    top: var(--y, 30%);
+    height: 18px;
+    border-radius: 2px;
+    background: linear-gradient(180deg, rgba(244,241,234,calc(var(--i, 0.6) * 0.4)), rgba(244,241,234,calc(var(--i, 0.6) * 0.9)) 50%, rgba(244,241,234,calc(var(--i, 0.6) * 0.4)));
+    filter: blur(0.6px);
+  }
+  .gel .lane .label {
+    position: absolute; top: -22px; left: 0; right: 0;
+    text-align: center; font-size: 0.65rem;
+    color: var(--paper-dim); font-family: ui-monospace, monospace;
+    letter-spacing: 0.05em;
+  }
+  .gel .lane.flag .band {
+    background: linear-gradient(180deg, rgba(34,211,238,0.6), rgba(34,211,238,0.95) 50%, rgba(34,211,238,0.6));
+    box-shadow: 0 0 22px rgba(34,211,238,0.5);
+  }
+  .gel .lane.flag .label { color: var(--bench); }
+  .gel .lane.flag::after {
+    content: ""; position: absolute; inset: -3px;
+    border: 1px dashed var(--bench);
+    border-radius: 4px;
+    opacity: 0.55;
+  }
+
+  /* ---------- slide 7: article + share sheet ---------- */
+  .bg-news { background: radial-gradient(ellipse at 30% 30%, var(--news-deep) 0%, var(--ink) 65%); }
+  .article-mock {
+    width: 360px;
+    background: #F4F1EA;
+    color: #111;
+    border-radius: 16px;
+    padding: 20px 22px 110px 22px;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+    position: relative;
+    overflow: hidden;
+  }
+  .article-mock .src { font-size: 0.65rem; letter-spacing: 0.18em; color: var(--news-deep); text-transform: uppercase; font-weight: 700; margin-bottom: 8px; }
+  .article-mock h4 { font-family: Georgia, "Times New Roman", serif; font-size: 1.35rem; color: #111; margin: 0 0 12px 0; line-height: 1.2; font-weight: 800; }
+  .article-mock p { font-family: Georgia, serif; font-size: 0.9rem; color: #2a2a2a; line-height: 1.55; margin: 0 0 8px 0; }
+  .article-mock .highlight { background: rgba(248, 113, 113, 0.4); padding: 0 2px; border-radius: 2px; }
+  .share-sheet {
+    position: absolute; left: 14px; right: 14px; bottom: 14px;
+    background: rgba(28, 28, 30, 0.78);
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+    border-radius: 14px;
+    padding: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .share-sheet .row {
+    padding: 9px 14px; display: flex; align-items: center; gap: 10px;
+    color: rgba(255,255,255,0.92); font-size: 0.78rem; font-weight: 500;
+    border-radius: 9px;
+  }
+  .share-sheet .row.os { background: rgba(10,132,255,0.22); color: #fff; }
+  .share-sheet .row .ic {
+    width: 22px; height: 22px; border-radius: 5px;
+    background: linear-gradient(135deg, var(--ios), var(--violet));
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 700; color: #fff;
+  }
+  .share-sheet .row .ic.copy { background: rgba(255,255,255,0.12); }
+  .share-sheet .row .ic.msg  { background: #34C759; }
+
+  /* ---------- slide 8: dynamic island ---------- */
+  .bg-bus { background: linear-gradient(180deg, #07090F 0%, #0A1428 100%); }
+  .island-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 1.5rem;
+  }
+  .island {
+    background: #000;
+    border-radius: 999px;
+    padding: 14px 26px;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 8px 32px rgba(0,0,0,0.8), 0 0 80px rgba(10,132,255,0.2);
+    min-width: 540px;
+  }
+  .island .flask {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--ios), #5E5CE6);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 0.95rem;
+    position: relative;
+  }
+  .island .flask::after {
+    content: ""; position: absolute; inset: -4px;
+    border-radius: 50%;
+    border: 1px solid var(--ios);
+    opacity: 0.35;
+    animation: ring 2s ease-out infinite;
+  }
+  @keyframes ring {
+    0%   { transform: scale(1); opacity: 0.5; }
+    100% { transform: scale(1.6); opacity: 0; }
+  }
+  .island .copy {
+    color: #fff; font-size: 0.95rem; line-height: 1.25;
+    flex: 1;
+  }
+  .island .copy .title { color: rgba(255,255,255,0.55); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 2px; }
+  .island .chip {
+    background: rgba(10,132,255,0.3); color: #fff;
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 0.72rem; font-weight: 600;
+    border: 1px solid rgba(10,132,255,0.5);
+  }
+
+  /* ---------- slide 9: carplay ---------- */
+  .bg-car { background: radial-gradient(ellipse at 70% 70%, var(--car-deep) 0%, var(--ink) 60%); }
+  .carplay {
+    width: 720px;
+    background: #1C1C1E;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 30px 70px rgba(0,0,0,0.6);
+    display: grid; grid-template-columns: 200px 1fr;
+    overflow: hidden;
+    font-family: ui-rounded, -apple-system, system-ui, sans-serif;
+  }
+  .carplay .rail {
+    background: #2C2C2E;
+    padding: 14px 8px;
+    display: flex; flex-direction: column; gap: 10px; align-items: center;
+    border-right: 1px solid rgba(255,255,255,0.05);
+  }
+  .carplay .rail .app {
+    width: 56px; height: 56px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.75rem; font-weight: 700;
+    color: #fff;
+  }
+  .carplay .rail .app.maps  { background: linear-gradient(135deg, #34C759, #1B7A38); }
+  .carplay .rail .app.music { background: linear-gradient(135deg, #FF2D55, #B91C1C); }
+  .carplay .rail .app.os {
+    background: linear-gradient(135deg, var(--ios), var(--violet));
+    box-shadow: 0 0 0 2px rgba(10,132,255,0.5), 0 0 24px rgba(10,132,255,0.4);
+  }
+  .carplay .rail .app.phone { background: linear-gradient(135deg, #30D158, #166534); }
+  .carplay .main {
+    padding: 22px 26px;
+    background: linear-gradient(135deg, #1C1C1E 0%, #2C2C2E 100%);
+    display: flex; flex-direction: column;
+    gap: 16px;
+  }
+  .carplay .main .head {
+    display: flex; justify-content: space-between; align-items: center;
+    color: rgba(255,255,255,0.6); font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase;
+  }
+  .carplay .main .head .live {
+    display: inline-flex; align-items: center; gap: 6px; color: #FF453A;
+  }
+  .carplay .main .head .live::before {
+    content: ""; width: 8px; height: 8px; background: #FF453A; border-radius: 50%;
+    box-shadow: 0 0 10px #FF453A;
+    animation: blink 1.2s ease-in-out infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .carplay .main .now-speaking {
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 14px 16px;
+    color: #fff;
+    font-size: 0.92rem;
+    font-style: italic;
+  }
+  .carplay .main .now-speaking .who { font-style: normal; color: var(--car); font-weight: 700; font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; display: block; margin-bottom: 4px; }
+  .carplay .main .findings { display: flex; flex-direction: column; gap: 8px; }
+  .carplay .main .finding {
+    display: flex; align-items: center; gap: 12px;
+    color: rgba(255,255,255,0.85); font-size: 0.85rem;
+  }
+  .carplay .main .finding .conf {
+    font-family: ui-monospace, monospace;
+    background: rgba(52, 211, 153, 0.18);
+    color: var(--inst);
+    padding: 3px 8px; border-radius: 6px;
+    font-size: 0.72rem; font-weight: 600;
+    min-width: 38px; text-align: center;
+  }
+  .carplay .main .finding .conf.lo { background: rgba(251, 191, 36, 0.18); color: var(--car); }
+
+  /* ---------- slide 10: hplc ---------- */
+  .bg-inst { background: radial-gradient(ellipse at 70% 35%, var(--inst-deep) 0%, var(--ink) 60%); }
+  .hplc-wrap {
+    width: 540px;
+    background: #0A0E14;
+    border: 1px solid var(--hair);
+    border-radius: 14px;
+    padding: 20px 22px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .hplc-wrap .head {
+    display: flex; justify-content: space-between; align-items: center;
+    color: rgba(244,241,234,0.5); font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .hplc-wrap .head .col-id { color: var(--inst); }
+  .hplc-trace { width: 100%; height: 140px; display: block; }
+  .hplc-trace .peak-lbl { font-family: ui-monospace, monospace; font-size: 10px; fill: var(--inst); }
+  .hplc-trace .axis { stroke: rgba(244,241,234,0.1); stroke-width: 1; }
+  .hplc-wrap .reply {
+    margin-top: 18px; padding: 14px 16px;
+    background: rgba(52, 211, 153, 0.08);
+    border: 1px solid rgba(52, 211, 153, 0.2);
+    border-radius: 10px;
+    color: var(--paper);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  .hplc-wrap .reply .who {
+    color: var(--inst); font-weight: 700; font-size: 0.7rem;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    display: block; margin-bottom: 4px;
+  }
+  .hplc-wrap .reply b { color: var(--paper); }
+
+  /* ---------- slide 13: targets ---------- */
+  .targets {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.2rem;
+  }
+  .targets .device {
+    background: var(--ink-card);
+    border: 1px solid var(--hair);
+    border-radius: 18px;
+    padding: 1.8rem 1.5rem 1.6rem 1.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+  .targets .device::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--accent, var(--paper-soft));
+    opacity: 0.7;
+  }
+  .targets .device .name {
+    font-size: 1.5rem; font-weight: 700; color: var(--paper);
+    margin: 0.6rem 0 0.3rem 0;
+  }
+  .targets .device .role {
+    font-size: 0.92rem; color: var(--paper-soft); line-height: 1.45;
+  }
+  .targets .device .glyph {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    background: var(--accent, var(--paper-soft));
+    opacity: 0.18;
+  }
+  .targets .device.iphone  { --accent: var(--ios); }
+  .targets .device.ipad    { --accent: var(--violet); }
+  .targets .device.watch   { --accent: var(--news); }
+  .targets .device.vision  { --accent: var(--inst); }
+
+  /* ---------- slide 14: platforms ---------- */
+  .platforms { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.7rem; }
+  .platforms .chip {
+    background: var(--ink-card);
+    border: 1px solid var(--hair);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    font-size: 0.88rem;
+  }
+  .platforms .chip .api {
+    font-family: ui-monospace, "SF Mono", monospace;
+    color: var(--paper);
+    font-weight: 600;
+    font-size: 0.78rem;
+    letter-spacing: 0.01em;
+  }
+  .platforms .chip .why {
+    color: var(--paper-dim);
+    font-size: 0.78rem;
+    margin-top: 0.3rem;
+    line-height: 1.35;
+  }
+
+  /* ---------- slide 15: backend (endpoints) ---------- */
+  .endpoints { display: flex; flex-direction: column; gap: 0.5rem; }
+  .endpoints .row {
+    display: grid; grid-template-columns: 80px 1fr 1fr; gap: 1.5rem;
+    align-items: baseline;
+    padding: 0.85rem 0;
+    border-bottom: 1px solid var(--hair);
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .endpoints .row .verb {
+    font-weight: 700; font-size: 0.85rem;
+    padding: 3px 8px; border-radius: 5px;
+    text-align: center; width: 60px;
+  }
+  .endpoints .row .verb.post  { background: rgba(52,211,153,0.18); color: var(--inst); }
+  .endpoints .row .verb.get   { background: rgba(10,132,255,0.18);  color: var(--ios); }
+  .endpoints .row .verb.sse   { background: rgba(167,139,250,0.18); color: var(--violet); }
+  .endpoints .row .path {
+    color: var(--paper); font-size: 1rem;
+  }
+  .endpoints .row .why {
+    font-family: -apple-system, system-ui, sans-serif;
+    color: var(--paper-soft); font-size: 0.9rem;
+    line-height: 1.4;
+  }
+
+  /* ---------- slide 16: phasing ---------- */
+  .timeline {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.8rem;
+    margin-top: 2rem;
+    position: relative;
+  }
+  .timeline::before {
+    content: ""; position: absolute; top: 24px; left: 5%; right: 5%;
+    height: 1px; background: var(--hair);
+    z-index: 0;
+  }
+  .timeline .phase {
+    position: relative; z-index: 1;
+    padding-top: 60px;
+  }
+  .timeline .phase .dot {
+    position: absolute; top: 14px; left: 0;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--ink); border: 2px solid var(--accent, var(--paper-soft));
+    box-shadow: 0 0 14px var(--accent, var(--paper-soft));
+  }
+  .timeline .phase .when {
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem; color: var(--accent, var(--paper)); font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    margin-bottom: 0.4rem;
+  }
+  .timeline .phase .what {
+    color: var(--paper-soft); font-size: 0.9rem; line-height: 1.45;
+  }
+  .timeline .phase.p1 { --accent: var(--bench); }
+  .timeline .phase.p2 { --accent: var(--ios); }
+  .timeline .phase.p3 { --accent: var(--violet); }
+  .timeline .phase.p4 { --accent: var(--news); }
+  .timeline .phase.p5 { --accent: var(--inst); }
+
+  /* ---------- slide 17: this / not this ---------- */
+  .split {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    border: 1px solid var(--hair);
+    border-radius: 18px;
+    overflow: hidden;
+    margin-top: 2rem;
+  }
+  .split > div {
+    padding: 2.4rem 2rem;
+  }
+  .split .desk {
+    background: linear-gradient(135deg, #14171F 0%, #0E1320 100%);
+    border-right: 1px solid var(--hair);
+  }
+  .split .phone {
+    background: linear-gradient(135deg, #0E1B33 0%, #0A1428 100%);
+  }
+  .split .role { font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--paper-dim); margin-bottom: 1rem; }
+  .split .quote { font-size: 1.35rem; line-height: 1.4; color: var(--paper); font-weight: 300; font-style: italic; }
+  .split .label-good { font-size: 0.78rem; color: var(--paper-soft); margin-top: 1.2rem; letter-spacing: 0.05em; }
+
+  /* ---------- slide 18: open qs ---------- */
+  .questions { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.5rem; }
+  .questions .q {
+    background: var(--ink-card);
+    border: 1px solid var(--hair);
+    border-left: 3px solid var(--accent, var(--paper-soft));
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+  }
+  .questions .q .h { font-size: 1rem; font-weight: 600; color: var(--paper); margin-bottom: 0.3rem; }
+  .questions .q .b { font-size: 0.85rem; color: var(--paper-soft); line-height: 1.45; }
+  .questions .q:nth-child(1) { --accent: var(--ios); }
+  .questions .q:nth-child(2) { --accent: var(--inst); }
+  .questions .q:nth-child(3) { --accent: var(--violet); }
+  .questions .q:nth-child(4) { --accent: var(--news); }
+  .questions .q:nth-child(5) { --accent: var(--car); }
+
+  /* ---------- final slide ---------- */
+  .final-slide { background: radial-gradient(ellipse at 50% 70%, #1B2240 0%, #07090F 60%); text-align: center; }
+  .final-slide h1 { font-size: 5.2rem; line-height: 1.0; max-width: none; text-align: center; margin: 0 auto; font-weight: 800; letter-spacing: -0.035em; }
+  .final-slide .center { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 80vh; gap: 1.5rem; }
+  .final-slide .sub { color: var(--paper-soft); font-size: 1.25rem; max-width: 50ch; }
+
+  /* ---------- responsive baseline ---------- */
+  @media (max-aspect-ratio: 4/3) {
+    .reveal h1 { font-size: 3.5rem; }
+    .pull { font-size: 2.6rem; }
+    .targets, .platforms { grid-template-columns: repeat(2, 1fr); }
+    .timeline { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ===================== 1: TITLE ===================== -->
+<section class="title-slide" data-background-color="#07090F">
+  <div class="kicker"><span class="ring"></span> OpenScientist · Mobile</div>
+  <h1>The pocket<br/>scientist.</h1>
+  <p class="subtitle">An autonomous research agent for the <b>bench</b>, the <b>field</b>, the <b>elevator</b>, and the <b>drive home</b>.</p>
+  <div class="footnote">draft <span class="sep">·</span> 2026-05-16 <span class="sep">·</span> claude/mobile-app-research-RIaFp</div>
+</section>
+
+<!-- ===================== 2: THE THESIS ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--paper-soft)"></span>The thesis</div>
+  <div class="pull" style="--accent: var(--ios)">
+    A scientist's relationship with a multi-day autonomous research agent should be <em>ambient,</em> not foreground.
+  </div>
+  <div class="stinger" style="--accent: var(--ios)">
+    <b>Why</b>
+    The browser is the wrong shape for ambient. The phone is the right shape.
+  </div>
+  <div class="footnote">02 / 17</div>
+</section>
+
+<!-- ===================== 3: TODAY ===================== -->
+<section data-background-color="#0A0D14">
+  <div class="label"><span class="dot" style="--accent: var(--paper-dim)"></span>Today</div>
+  <h2 style="max-width: 18ch">The desk<br/>is the chokepoint.</h2>
+  <p style="max-width: 56ch; margin-top: 2rem; font-size: 1.15rem;">
+    Sit down. Launch a job. Come back hours later to read the report. The agent's perception of the world is whatever CSV you uploaded — nothing else.
+  </p>
+  <p style="max-width: 56ch; margin-top: 1rem; font-size: 1.15rem;">
+    The most interesting moments of a scientist's day — at the bench, in the field, on the bus, in the elevator, on the plane — are <strong>invisible to it</strong>.
+  </p>
+  <div class="footnote">03 / 17</div>
+</section>
+
+<!-- ===================== 4: THE SHIFT ===================== -->
+<section data-background="linear-gradient(135deg, #07090F 0%, #0E1320 60%, #0A1428 100%)">
+  <div class="label"><span class="dot" style="--accent: var(--violet)"></span>The shift</div>
+  <h2 style="max-width: 22ch">A mobile app is not a port of the web UI.</h2>
+  <div class="col2 tight" style="margin-top: 2.5rem;">
+    <div>
+      <div style="font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--violet); font-weight: 600; margin-bottom: 0.8rem;">For the agent</div>
+      <div style="font-size: 1.8rem; font-weight: 600; line-height: 1.2;">A sensor package.</div>
+      <p style="margin-top: 0.6rem; max-width: 26ch;">Photos. Voice. Location. Ambient sensors. The user's attention.</p>
+    </div>
+    <div>
+      <div style="font-size: 0.72rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ios); font-weight: 600; margin-bottom: 0.8rem;">For the scientist</div>
+      <div style="font-size: 1.8rem; font-weight: 600; line-height: 1.2;">Peripheral vision.</div>
+      <p style="margin-top: 0.6rem; max-width: 26ch;">Glance, ack, dictate, capture. The agent in the corner of the eye.</p>
+    </div>
+  </div>
+  <div class="footnote">04 / 17</div>
+</section>
+
+<!-- ===================== 5: BURN SCAR ===================== -->
+<section class="bg-burn">
+  <div class="label" style="--accent: var(--burn)"><span class="dot" style="--accent: var(--burn)"></span>Vignette · I</div>
+  <div class="col2" style="grid-template-columns: 1.1fr 1fr; align-items: center;">
+    <div>
+      <h2 style="max-width: 16ch;">The edge of<br/>the burn scar.</h2>
+      <div class="scene" style="--accent: var(--burn); margin-top: 1.5rem;">
+        <div class="where">Colorado · fire road · 2 km in</div>
+        <div class="body">
+          A field ecologist kneeling beside a soil core. Phone out. Three photos. Then a voice memo:
+        </div>
+        <div class="quote-bubble" style="--accent: var(--burn)">
+          Top ten cm charcoal-black, no visible mycelial mat, smells faintly sweet — different from last week's control at site B.
+        </div>
+        <div class="body" style="font-size: 1rem;">
+          EXIF geotag, altitude, timestamp, on-device transcription. Staged to the running job. Syncs when the truck hits signal.
+        </div>
+      </div>
+      <div class="stinger" style="--accent: var(--burn)">
+        <b>The unlock</b>
+        Observation, not upload.
+      </div>
+    </div>
+    <div style="display: flex; justify-content: center;">
+      <div class="photo-card">
+        <div class="img"></div>
+        <div class="meta">
+          <span class="pin">◉ 39.7392°N · 105.0178°W</span>
+          <span>17:42 · 2748 m</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footnote">05 / 17</div>
+</section>
+
+<!-- ===================== 6: GEL ===================== -->
+<section class="bg-bench">
+  <div class="label" style="--accent: var(--bench)"><span class="dot" style="--accent: var(--bench)"></span>Vignette · II</div>
+  <div class="col2" style="grid-template-columns: 1fr 1.1fr; align-items: center;">
+    <div style="display: flex; justify-content: center;">
+      <div class="gel">
+        <div class="lane"><span class="label">1</span><div class="band" style="--y: 32%; --i: 0.5"></div></div>
+        <div class="lane"><span class="label">2</span><div class="band" style="--y: 32%; --i: 0.5"></div></div>
+        <div class="lane"><span class="label">3</span><div class="band" style="--y: 32%; --i: 0.55"></div></div>
+        <div class="lane flag"><span class="label">4</span><div class="band" style="--y: 32%; --i: 1.0"></div></div>
+        <div class="lane"><span class="label">5</span><div class="band" style="--y: 32%; --i: 0.5"></div></div>
+      </div>
+    </div>
+    <div>
+      <h2 style="max-width: 16ch;">The gel that wasn't supposed to look like that.</h2>
+      <div class="scene" style="--accent: var(--bench); margin-top: 1.5rem;">
+        <div class="where">Bench · 7 pm · lightbox</div>
+        <div class="body">
+          Lane 4 is twice as bright as the RNA-seq predicted. Photo. Voice memo:
+        </div>
+        <div class="quote-bubble" style="--accent: var(--bench)">
+          Either post-transcriptional regulation, or a loading error I'm not seeing.
+        </div>
+        <div class="body" style="font-size: 1rem;">
+          On-device Vision densitometry. The agent — already mid-iteration — promotes a new hypothesis and queues a PubMed pass.
+        </div>
+      </div>
+      <div class="stinger" style="--accent: var(--bench)">
+        <b>The unlock</b>
+        The moment of observation is captured. By the time the user is back at a desk, the hypothesis is gone.
+      </div>
+    </div>
+  </div>
+  <div class="footnote">06 / 17</div>
+</section>
+
+<!-- ===================== 7: ARTICLE ===================== -->
+<section class="bg-news">
+  <div class="label" style="--accent: var(--news)"><span class="dot" style="--accent: var(--news)"></span>Vignette · III</div>
+  <div class="col2" style="grid-template-columns: 1.1fr 1fr; align-items: center;">
+    <div>
+      <h2 style="max-width: 16ch;">The article and the gut check.</h2>
+      <div class="scene" style="--accent: var(--news); margin-top: 1.5rem;">
+        <div class="where">Subway · reading on the phone</div>
+        <div class="body">
+          A grad student is reading a Bloomberg piece about a biotech preprint claiming <em>78% durable remission at 18 months.</em> Something pings as off.
+        </div>
+        <div class="body" style="margin-top: 1rem; font-size: 1rem;">
+          Long-press <span style="color: var(--paper); font-weight: 600;">→</span> share sheet <span style="color: var(--paper); font-weight: 600;">→</span> <em>Investigate with OpenScientist.</em> By her stop, the agent has flagged the denominator changed between the conference abstract and the preprint.
+        </div>
+      </div>
+      <div class="stinger" style="--accent: var(--news)">
+        <b>The unlock</b>
+        Reflexive skepticism is a perishable good. The desk is too far away.
+      </div>
+    </div>
+    <div style="display: flex; justify-content: center;">
+      <div class="article-mock">
+        <div class="src">Bloomberg · Science</div>
+        <h4>Biotech firm reports 78% durable remission in sickle-cell CRISPR trial</h4>
+        <p>The Cambridge-based developer disclosed long-term follow-up showing <span class="highlight">78% durable remission at 18 months</span> across the cohort, marking a new high-water mark for one-shot gene therapies in the indication.</p>
+        <p>Analysts called the data "transformative," though several outside researchers cautioned that <span class="highlight">the denominator has shifted</span> since the conference presentation last fall.</p>
+        <div class="share-sheet">
+          <div class="row os"><span class="ic">⌬</span>Investigate with OpenScientist</div>
+          <div class="row"><span class="ic msg">●</span>Messages</div>
+          <div class="row"><span class="ic copy">⎘</span>Copy</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footnote">07 / 17</div>
+</section>
+
+<!-- ===================== 8: DYNAMIC ISLAND ===================== -->
+<section class="bg-bus">
+  <div class="label" style="--accent: var(--ios)"><span class="dot" style="--accent: var(--ios)"></span>Vignette · IV</div>
+  <div style="display: flex; flex-direction: column; align-items: center; gap: 2rem; margin-top: 1rem;">
+    <div class="island">
+      <div class="flask">⌬</div>
+      <div class="copy">
+        <div class="title">OpenScientist · iteration 7</div>
+        Needs your input — metabolomics or proteomics first?
+      </div>
+      <div class="chip">Respond</div>
+    </div>
+
+    <h2 style="text-align: center; max-width: 22ch; margin-top: 1rem;">The push on the bus.</h2>
+
+    <p style="text-align: center; max-width: 56ch; font-size: 1.15rem;">
+      Long-press: a one-paragraph summary of why the agent is stuck. She taps <em>metabolomics, but flag the proteomics overlap.</em> The job resumes. She closes the app before her stop.
+    </p>
+
+    <div class="stinger" style="--accent: var(--ios); margin-top: 1.5rem; align-self: flex-start;">
+      <b>The unlock</b>
+      <code style="font-family: ui-monospace, monospace; color: var(--ios);">AWAITING_FEEDBACK</code> already exists in the schema. It's the surface that's missing.
+    </div>
+  </div>
+  <div class="footnote">08 / 17</div>
+</section>
+
+<!-- ===================== 9: CARPLAY ===================== -->
+<section class="bg-car">
+  <div class="label" style="--accent: var(--car)"><span class="dot" style="--accent: var(--car)"></span>Vignette · V</div>
+  <div class="col2" style="grid-template-columns: 1.4fr 1fr; align-items: center;">
+    <div style="display: flex; justify-content: center;">
+      <div class="carplay">
+        <div class="rail">
+          <div class="app maps">⌖</div>
+          <div class="app music">♫</div>
+          <div class="app os">⌬</div>
+          <div class="app phone">☎</div>
+        </div>
+        <div class="main">
+          <div class="head">
+            <span>OpenScientist · cell-type abundance</span>
+            <span class="live">live</span>
+          </div>
+          <div class="now-speaking">
+            <span class="who">Agent</span>
+            "The astrocyte cluster's marker overlap with microglia is higher than I'd expect. I cross-referenced against the Allen Brain Map v23 update — three markers shifted, four held."
+          </div>
+          <div class="findings">
+            <div class="finding"><span class="conf">0.91</span>Microglia-resident gene set enriched in cluster 7</div>
+            <div class="finding"><span class="conf">0.84</span>Astrocyte/microglia marker bleed-through in cluster 3</div>
+            <div class="finding"><span class="conf lo">0.62</span>Vascular signal in clusters 11 and 14 ambiguous</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h2 style="max-width: 14ch;">The drive home.</h2>
+      <p style="font-size: 1.05rem; margin-top: 1rem; max-width: 38ch;">
+        Forty-five minutes. CarPlay. AirPods. A back-and-forth about an unexpected marker overlap. By the parking spot, two hypotheses are picked and a paragraph is in her postdoc's inbox.
+      </p>
+      <div class="stinger" style="--accent: var(--car); margin-top: 1.5rem;">
+        <b>The unlock</b>
+        A research agent that can hold a sustained conversation. Voice-only. Hands on the wheel.
+      </div>
+    </div>
+  </div>
+  <div class="footnote">09 / 17</div>
+</section>
+
+<!-- ===================== 10: INSTRUMENT ===================== -->
+<section class="bg-inst">
+  <div class="label" style="--accent: var(--inst)"><span class="dot" style="--accent: var(--inst)"></span>Vignette · VI</div>
+  <div class="col2" style="grid-template-columns: 1fr 1.2fr; align-items: center;">
+    <div>
+      <h2 style="max-width: 14ch;">The instrument display.</h2>
+      <p style="font-size: 1.05rem; margin-top: 1rem; max-width: 40ch;">
+        Grad student in front of an HPLC. Small screen. Peak at 4.2 minutes. He raises his phone, holds the Camera Control button. <em>Ask OpenScientist about this.</em>
+      </p>
+      <div class="stinger" style="--accent: var(--inst); margin-top: 1.5rem;">
+        <b>The unlock</b>
+        The agent as a <em>modality</em> of the phone, not a destination inside it.
+      </div>
+    </div>
+    <div style="display: flex; justify-content: center;">
+      <div class="hplc-wrap">
+        <div class="head">
+          <span>HPLC trace · run 042</span>
+          <span class="col-id">C18 · 4.6 × 150 mm</span>
+        </div>
+        <svg class="hplc-trace" viewBox="0 0 540 140" preserveAspectRatio="none">
+          <line class="axis" x1="0" y1="125" x2="540" y2="125"/>
+          <path d="M0,122 L60,121 L120,120 L155,118 L168,30 L176,18 L184,32 L194,118 L230,116 L260,55 L272,42 L282,58 L296,116 L380,114 L440,110 L500,108 L540,107"
+                stroke="#34D399" stroke-width="1.6" fill="none" />
+          <text class="peak-lbl" x="156" y="10">2.8 min · ascorbate degr.</text>
+          <text class="peak-lbl" x="240" y="32">4.2 min · TARGET</text>
+          <line x1="180" y1="20" x2="180" y2="125" stroke="rgba(52,211,153,0.18)" stroke-dasharray="2 4"/>
+          <line x1="276" y1="42" x2="276" y2="125" stroke="rgba(52,211,153,0.18)" stroke-dasharray="2 4"/>
+          <circle cx="296" cy="58" r="3" fill="#FBBF24"/>
+          <text class="peak-lbl" x="302" y="55" fill="#FBBF24">shoulder · NEW</text>
+        </svg>
+        <div class="reply">
+          <span class="who">OpenScientist</span>
+          4.2 peak matches your target. 2.8 is the ascorbate degradation product you flagged in your method notes from March. <b>The shoulder on 4.2 is new — worth investigating.</b>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="footnote">10 / 17</div>
+</section>
+
+<!-- ===================== 11: PATTERN ===================== -->
+<section data-background="radial-gradient(ellipse at 50% 50%, #1B2240 0%, #07090F 65%)">
+  <div class="label"><span class="dot" style="--accent: var(--paper-soft)"></span>The pattern</div>
+  <div class="pull" style="--accent: var(--ios); max-width: 26ch; margin-top: 2rem;">
+    Each scene collapses the distance between a <em>moment of scientific observation</em> and the agent acting on it.
+  </div>
+  <p style="margin-top: 3rem; font-size: 1.4rem; max-width: 30ch; color: var(--paper);">
+    The desk is a chokepoint. The phone removes it.
+  </p>
+  <div class="footnote">11 / 17</div>
+</section>
+
+<!-- ===================== 12: AGENT CHANGES ===================== -->
+<section data-background="linear-gradient(160deg, #07090F 0%, #14171F 100%)">
+  <div class="label"><span class="dot" style="--accent: var(--violet)"></span>What changes about the agent</div>
+  <div class="pull" style="--accent: var(--violet); max-width: 24ch;">
+    It's not a window onto the same agent.<br/>It's <em>a different agent.</em>
+  </div>
+  <p style="margin-top: 2.5rem; font-size: 1.2rem; max-width: 56ch;">
+    One whose perception now includes situated, sensory, partial evidence — a photo of a gel, a voice memo, a geotag, a glance during a one-on-one, an uncertain question on the drive home.
+  </p>
+  <p style="margin-top: 1rem; font-size: 1.2rem; max-width: 56ch; color: var(--paper);">
+    The mobile app is less a client and more a <strong>sensor package.</strong>
+  </p>
+  <div class="footnote">12 / 17</div>
+</section>
+
+<!-- ===================== 13: TARGETS ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--ios)"></span>What we build</div>
+  <h2 style="max-width: 22ch">Native. Apple-first.<br/>Multi-target SwiftUI.</h2>
+  <div class="targets" style="margin-top: 2rem;">
+    <div class="device iphone">
+      <div class="glyph"></div>
+      <div class="name">iPhone</div>
+      <div class="role">Primary surface. Jobs, capture, chat, push.</div>
+    </div>
+    <div class="device ipad">
+      <div class="glyph"></div>
+      <div class="name">iPad</div>
+      <div class="role">Split view, Apple Pencil annotations on reports.</div>
+    </div>
+    <div class="device watch">
+      <div class="glyph"></div>
+      <div class="name">Watch</div>
+      <div class="role">Glance, ack, thumbs. Complications on the wrist.</div>
+    </div>
+    <div class="device vision">
+      <div class="glyph"></div>
+      <div class="name">Vision Pro</div>
+      <div class="role">Walk through a Phenix structure at 1:1 with anchored findings.</div>
+    </div>
+  </div>
+  <p style="margin-top: 2rem; font-size: 0.95rem; color: var(--paper-dim); max-width: 60ch;">
+    Android as KMP siblings in Phase 3 — preserves the bar, not a Flutter / RN compromise.
+  </p>
+  <div class="footnote">13 / 17</div>
+</section>
+
+<!-- ===================== 14: PLATFORMS ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--violet)"></span>Apple platform leverage</div>
+  <h2>Why native, not a PWA.</h2>
+  <div class="platforms" style="margin-top: 1.8rem;">
+    <div class="chip"><div class="api">App Intents</div><div class="why">Siri, Shortcuts, Spotlight, Apple Intelligence</div></div>
+    <div class="chip"><div class="api">ActivityKit</div><div class="why">Running job in the Dynamic Island</div></div>
+    <div class="chip"><div class="api">WidgetKit</div><div class="why">Lock-screen, Standby, watch complications</div></div>
+    <div class="chip"><div class="api">Vision</div><div class="why">OCR, document scan, barcode, gel densitometry</div></div>
+    <div class="chip"><div class="api">Speech</div><div class="why">On-device transcription, no round-trip cost</div></div>
+    <div class="chip"><div class="api">HealthKit</div><div class="why">N-of-1 use cases the browser can't reach</div></div>
+    <div class="chip"><div class="api">CoreLocation · SensorKit</div><div class="why">Field studies, situated metadata</div></div>
+    <div class="chip"><div class="api">FileProvider</div><div class="why">iCloud, Drive, S3-backed providers</div></div>
+    <div class="chip"><div class="api">CarPlay</div><div class="why">The commute conversation</div></div>
+    <div class="chip"><div class="api">Camera Control · Visual Intelligence</div><div class="why">Agent as system-level modality</div></div>
+    <div class="chip"><div class="api">PushKit · APNs</div><div class="why">Critical Alerts can break through Focus</div></div>
+    <div class="chip"><div class="api">FaceTime SharePlay</div><div class="why">Two PIs review a report with synced scroll</div></div>
+  </div>
+  <div class="footnote">14 / 17</div>
+</section>
+
+<!-- ===================== 15: BACKEND ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--inst)"></span>Backend work</div>
+  <h2 style="max-width: 28ch">A forcing function for an honest REST surface.</h2>
+  <p style="font-size: 1rem; color: var(--paper-dim); max-width: 56ch; margin-top: 0.5rem;">
+    Every gap below also benefits the web UI and the Python-SDK ask.
+  </p>
+  <div class="endpoints" style="margin-top: 1.5rem;">
+    <div class="row"><span class="verb sse">SSE</span><span class="path">/api/v1/jobs/{id}/events</span><span class="why">Iteration ticks, findings, status, heartbeat.</span></div>
+    <div class="row"><span class="verb post">POST</span><span class="path">/api/v1/jobs/{id}/chat</span><span class="why">Chat as REST — streamed back on the same channel.</span></div>
+    <div class="row"><span class="verb post">POST</span><span class="path">/api/v1/jobs/{id}/feedback</span><span class="why">Mid-run input — the state already exists.</span></div>
+    <div class="row"><span class="verb post">POST</span><span class="path">/api/v1/jobs/{id}/attachments</span><span class="why">Images, audio, blobs, with metadata + kind tag.</span></div>
+    <div class="row"><span class="verb get">GET</span> <span class="path">/api/v1/jobs<span style="color: var(--paper-dim);"> · summary projection</span></span><span class="why">JobSummary for the 50-job scroll.</span></div>
+    <div class="row"><span class="verb post">POST</span><span class="path">/api/v1/auth/device · OAuth-PKCE</span><span class="why">Device-bound API key. No more copy-pasting.</span></div>
+    <div class="row"><span class="verb post">POST</span><span class="path">/api/v1/devices · push tokens</span><span class="why">Bind APNs / Watch tokens to a session.</span></div>
+  </div>
+  <div class="footnote">15 / 17</div>
+</section>
+
+<!-- ===================== 16: PHASING ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--bench)"></span>Phasing</div>
+  <h2>Six months to the unlock.</h2>
+  <div class="timeline">
+    <div class="phase p1">
+      <div class="dot"></div>
+      <div class="when">M 1—2</div>
+      <div class="what">Backend hardening: SSE, chat, feedback, attachments, PKCE, devices.</div>
+    </div>
+    <div class="phase p2">
+      <div class="dot"></div>
+      <div class="when">M 2—4</div>
+      <div class="what">iPhone v1 in TestFlight. Jobs, chat, push, camera + voice, share-sheet.</div>
+    </div>
+    <div class="phase p3">
+      <div class="dot"></div>
+      <div class="when">M 4—5</div>
+      <div class="what">Live Activities, Widgets, App Intents, Watch companion.</div>
+    </div>
+    <div class="phase p4">
+      <div class="dot"></div>
+      <div class="when">M 5—6</div>
+      <div class="what">iPad with Pencil. HealthKit pilot with a willing N-of-1 user.</div>
+    </div>
+    <div class="phase p5">
+      <div class="dot"></div>
+      <div class="when">M 6+</div>
+      <div class="what">Vision Pro. Android via KMP.</div>
+    </div>
+  </div>
+  <div class="footnote">16 / 17</div>
+</section>
+
+<!-- ===================== 17: NOT / IS ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--news)"></span>What this is not</div>
+  <h2 style="max-width: 20ch">Not a port of the web UI.</h2>
+  <div class="split">
+    <div class="desk">
+      <div class="role">The browser is right for</div>
+      <div class="quote">Sit down for 45 minutes. Launch a job. Read a report.</div>
+      <div class="label-good">Focused, foreground, planned.</div>
+    </div>
+    <div class="phone">
+      <div class="role">The phone is right for</div>
+      <div class="quote">Live your day. Occasionally observe, respond, glance.</div>
+      <div class="label-good">Ambient, peripheral, situated.</div>
+    </div>
+  </div>
+  <p style="margin-top: 1.8rem; font-size: 1.05rem; color: var(--paper-soft); max-width: 60ch;">
+    Same backend. Two different products. The mobile one puts an autonomous research agent in the <strong>peripheral vision</strong> of a working scientist — which, ultimately, is where you want it.
+  </p>
+  <div class="footnote">17 / 17</div>
+</section>
+
+<!-- ===================== 18: OPEN QUESTIONS ===================== -->
+<section data-background-color="#07090F">
+  <div class="label"><span class="dot" style="--accent: var(--car)"></span>Open questions</div>
+  <h2>Decisions before we staff this.</h2>
+  <div class="questions">
+    <div class="q">
+      <div class="h">Target user</div>
+      <div class="b">Bench scientist, computational biologist, or field researcher? Different answers move different Phase-3 features up.</div>
+    </div>
+    <div class="q">
+      <div class="h">Push: ntfy.sh, or APNs/FCM?</div>
+      <div class="b">ntfy is operationally simpler. APNs is better behaved and unlocks badges and Critical Alerts.</div>
+    </div>
+    <div class="q">
+      <div class="h">Repo shape</div>
+      <div class="b"><code style="font-family: ui-monospace, monospace;">mobile/</code> directory in the existing repo, or a sibling <code style="font-family: ui-monospace, monospace;">openscientist-mobile</code> repo?</div>
+    </div>
+    <div class="q">
+      <div class="h">Engineering ownership</div>
+      <div class="b">A SwiftUI lead is a real hire — not a side project for the Python team.</div>
+    </div>
+    <div class="q">
+      <div class="h">Distribution</div>
+      <div class="b">App Store, or TestFlight / enterprise only? Affects review surface for "agent that runs arbitrary code on uploaded data."</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== 19: FINAL ===================== -->
+<section class="final-slide">
+  <div class="center">
+    <div class="label" style="text-align: center;"><span class="dot" style="--accent: var(--ios)"></span>The ask</div>
+    <h1>Put the agent<br/>in the pocket.</h1>
+    <p class="sub">Same backend. Different product. Six months to the first version a scientist actually keeps with them.</p>
+  </div>
+</section>
+
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    transition: 'fade',
+    transitionSpeed: 'default',
+    backgroundTransition: 'fade',
+    controls: true,
+    controlsLayout: 'edges',
+    progress: true,
+    width: 1440,
+    height: 900,
+    margin: 0.04,
+    minScale: 0.4,
+    maxScale: 1.6,
+  });
+</script>
+</body>
+</html>
