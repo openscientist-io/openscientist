@@ -1,265 +1,353 @@
 # Mobile App Research
 
-Scope: what would it take to ship an OpenScientist mobile app, and what does
-"mobile" specifically unlock that the current web UI can't?
+The right question is not "can we get OpenScientist onto a phone" but "what
+does a scientist do with OpenScientist when they aren't at their desk?"
+Most of the desk-bound version maps cleanly onto a phone, and most of that
+mapping is boring. The interesting part is everything that becomes possible
+*because* the device is a phone — the camera, the microphone, the
+geolocation, the share sheet, the lock-screen glance, the watch on the
+wrist, the always-on push pipe — and what those unlock for the way science
+actually gets done. This document explores that in scenes, and then talks
+about what it would take to build the best possible version: a native
+iOS-first client (with iPad, Apple Watch, and Vision Pro targets), with
+the FastAPI surface extended to feed it.
 
-## TL;DR
+## Vignettes
 
-A mobile companion is a much smaller lift than a full mobile-first rewrite,
-because the existing FastAPI surface (`src/openscientist/api/endpoints/`) and
-ntfy.sh push pipeline already cover the boring 80%. The interesting question
-is not "can we render the existing pages on a phone" — NiceGUI is already
-responsive-ish — but "what would a phone-native client let scientists do
-that they cannot do today?" Candidates: in-field photo capture of samples /
-gels / instruments, voice-dictated research questions and observations, share
-sheet ingest of PDFs/papers, glanceable job status (widgets, watch app), and
-mid-run feedback while away from the desk. The right shape is probably an
-**Expo / React Native client** consuming the REST API, with one new SSE
-endpoint for live timeline and one new multimodal upload endpoint.
+### A soil sample at the edge of a burn scar
 
-## What's already in place
+A field ecologist is two kilometers up a fire road in Colorado, kneeling
+beside a soil core she just pulled. The phone is in her pocket. She opens
+OpenScientist, taps the floating "Capture" button, photographs the core
+from three angles, and dictates: "Top ten centimeters charcoal-black, no
+visible mycelial mat, smells faintly sweet — different from last week's
+unburned control at site B." The app stamps the photos with EXIF
+geolocation, altitude, and a timestamp, transcribes the voice memo
+on-device, and stages it all as an attachment to her active job, which
+has been running for three days and is partway through an iteration
+investigating post-fire microbial succession. When she gets back to a
+cell signal it syncs in the background. The agent picks the observations
+up on its next iteration and uses them to narrow its hypothesis about
+fungal-bacterial ratios — something it could not have done from the CSV
+of metagenomic counts alone.
 
-- **REST API at `/api/v1`** with bearer-token auth (`src/openscientist/api/`):
-  jobs CRUD, status, cancel, report download, artifacts ZIP, shares, skills,
-  API keys, health.
-- **API key issuance flow** (`pages/api_keys.py`, `endpoints/keys.py`): plaintext
-  shown once, hashed at rest.
-- **OAuth providers**: GitHub, Google, ORCID, plus mock for dev
-  (`src/openscientist/auth/`).
-- **Push notifications via ntfy.sh** (`src/openscientist/ntfy.py`, `User.ntfy_topic`):
-  job started / completed / failed / cancelled / awaiting-feedback all
-  already wired; users get a personal topic they subscribe to.
-- **`AWAITING_FEEDBACK` job state** and `coinvestigate` investigation mode
-  (`src/openscientist/job/types.py`) — the data model can already park a job
-  waiting on a human.
-- **Job chat** (`src/openscientist/job_chat.py`) — conversational follow-up
-  exists, but only as an internal service consumed by the NiceGUI page, not
-  exposed via REST.
-- **File upload** on `POST /jobs` — multipart, data-files-only today; no
-  image/audio path.
+None of this requires the user to think about "uploading evidence to a
+job." It just feels like *making an observation*, the way scientists
+already do, except the observation is now legible to the agent.
 
-## Existing issues that a mobile app would partially or fully unlock
+### The gel that wasn't supposed to look like that
 
-| # | Issue | Mobile angle |
-|---|-------|-------------|
-| #4 | Conversational support during/after analysis | Phone chat is the natural shape; the "branch on a finding while away from desk" UX wants a mobile thread, not a browser tab. |
-| #15, #113 | Thumbs up/down feedback on report items | One-tap rating is mobile-native; doomed to under-use behind a desktop click. |
-| #22 | MOTD banner | Trivially becomes a push notification. |
-| #34 | Track and display data files submitted by users | Camera roll / share-sheet ingest fits the same model. |
-| #42 | Long-query readability | Mobile forces a collapsible/segmented redesign that probably helps desktop too. |
-| #45 | Real-time streaming of agent progress | A mobile app that doesn't stream feels broken; this becomes a hard requirement, not a nice-to-have. |
-| #55 | Support API calls (Jupyter, etc.) | Mobile is "yet another API consumer"; whatever we build for one helps the other. |
-| #84 | Download artifacts | Native share sheet → Files / iCloud / Drive. |
-| #86 | Publish to Zenodo/GitHub | Share-sheet flow on mobile is the obvious UI. |
-| #91 | Reviewer agent | "Give me critical feedback on this finding" as a voice prompt while commuting. |
+A bench scientist runs a Western blot at 6pm, takes it out of the
+developer at 7, and is staring at a band that's twice as intense as it
+should be in lane 4. He pulls out his phone, snaps the gel under the
+lightbox, and says: "GAPDH loading control looks fine, but the target
+band in the LPS-stimulated condition is way brighter than the predicted
+fold change from the RNA-seq. Either translation is being dramatically
+upregulated post-transcriptionally, or there's a loading error I'm not
+seeing." The agent — which has been working on his transcriptomics
+analysis for the last hour and a half — receives the image, runs Vision
+framework densitometry locally to estimate band intensities, and adds
+"post-transcriptional regulation" to the hypothesis tracker as a
+candidate explanation for the discrepancy. By the time he gets home,
+the agent has searched PubMed for known post-transcriptional regulators
+of his target and queued a follow-up analysis.
 
-No existing issue is *blocked* on mobile, but several would land better in
-that medium.
+The unlock here is not the photo. It's the *moment of observation*. He
+would never have walked back to his desk, opened a browser, navigated
+to the job page, and uploaded a JPG — by the time he did, he'd have
+forgotten the verbal hypothesis. The phone collapses that distance to
+zero.
 
-## Mobile-specific unlocks (what desktop can't do)
+### The push notification on the bus
 
-Grouped by what the phone has that a browser tab doesn't.
+A computational biologist is on the 41 going home. Her phone buzzes.
+The Dynamic Island shows a small molecular flask icon and a line of
+text: "Iteration 7 needs your input — should I prioritize the
+metabolomics or the proteomics signal?" She long-presses, the Live
+Activity expands, and she sees a one-paragraph summary of why the agent
+is stuck: two pathways are converging on the same gene set, and it
+can't decide which lens to take first. She taps "metabolomics, but
+flag the proteomics overlap" — voice would also have worked — and the
+job resumes. She closes the app before her stop.
 
-### Camera
+This is what `AWAITING_FEEDBACK` *should* feel like. The state exists in
+the schema today; the ntfy notification already fires; but at the
+moment, the only place a user can act on it is back at a laptop. The
+"co-investigator" mode is being designed for a workflow that no current
+client supports.
 
-- **In-field environmental sampling.** Soil/water/plant photos with EXIF
-  geotag + timestamp, attached to a job as evidence. The agent can already
-  reason about images via multimodal models; the gap is the upload pipeline.
-- **Lab bench capture.** Western blots, gels, plates, instrument screens,
-  Coomassie stains, microscopy snapshots — photograph rather than retype.
-  Especially useful for capturing instrument readouts that don't have a
-  digital export path.
-- **Document / paper capture.** Snap a printed paper or a poster at a
-  conference, OCR + summarize into a finding or a new job seed.
-- **QR / barcode → sample ID.** Scan a tube/plate barcode to attach data
-  to the right job.
+### A poster at a conference
 
-### Voice
+She's at ASBMB. A poster two booths over makes her stop. The author has
+stepped away. She opens her camera, frames the title and abstract, and
+shares it directly into OpenScientist. The app OCRs it on-device,
+recognizes the structure of a scientific abstract, and offers: "Start a
+new job seeded with this work?" — pre-filling a research question along
+the lines of "Replicate or extend the finding from <author>, <year>:
+that <conclusion>, using <dataset>." She edits one phrase, attaches
+her own competing dataset from Files (which is a folder synced from
+the lab's S3 bucket), and starts the job before the poster's author
+has come back. By the time she's at the next session, the agent is
+two iterations deep.
 
-- **Voice-dictated research questions.** Lower friction than typing on a
-  phone keyboard; particularly relevant for the "broad, open-ended query"
-  framing #99 is asking for.
-- **Voice memos as findings.** "Hypothesis: the upregulation of GENE_X in
-  cluster 3 might be a stress response artifact, check the heatshock pathway"
-  — transcribe and post into the job's chat / hypothesis tracker (#70).
-- **Hands-free lab walk-through.** Siri-style "OpenScientist, what did the
-  last iteration find?" while gloved up at a bench.
+The share sheet, the on-device OCR, and the Files integration are all
+things a browser cannot do. Each one individually is small; together
+they shorten the path from "this is interesting" to "the agent is on
+it" from a 20-minute desk session to 90 seconds standing in an aisle.
 
-### Geolocation + sensors
+### A glance during a one-on-one
 
-- **Field studies.** Tag observations with lat/lng, altitude, accelerometer
-  (e.g. depth/orientation for sample collection). Could feed environmental
-  metadata directly into a job's knowledge state.
-- **HealthKit / Google Fit / SensorKit.** For N-of-1 biomedical questions
-  (sleep, HRV, glucose if user has a CGM) — a research question can pull
-  the user's own longitudinal data as input.
+A PI is in a one-on-one with her postdoc. She doesn't want to pull out
+her phone, but she glances at her Apple Watch and sees the
+complication: three jobs running, one needs attention, two completed
+overnight, the latest report has a confidence score of 0.82. That's
+all she needs to know that her morning isn't on fire and she can stay
+present in the meeting.
 
-### Background + glanceable
+A scientist's relationship with a long-running agent is fundamentally
+ambient. They want it in their peripheral vision, not in a tab they
+have to remember to refresh. The desktop UI is the wrong shape for this
+— it demands an active foreground session. The watch and the lock
+screen are the right shape.
 
-- **Lock-screen widgets / Live Activities** showing job iteration progress.
-  Jobs run for tens of minutes to hours; this is exactly the shape iOS
-  Live Activities and Android Glance were built for.
-- **Apple Watch / Wear OS app**: status glance, push acknowledgment,
-  thumbs-up/down on findings.
-- **Background sync**: keep last N reports on-device so you can read them
-  on a plane.
+### N-of-1 in the wild
 
-### OS integrations
+A neurologist with an autoimmune condition wants to know whether her
+flare-ups correlate with sleep architecture, HRV, or both. She points
+OpenScientist at her own HealthKit data — six years of Apple Watch
+sleep, heart rate, HRV, and the symptom journal she keeps in a third-
+party app that exports to Health. The job runs across that
+longitudinal record, with the data never leaving her device until a
+summary is uploaded with her consent. She is the patient, the
+investigator, and the cohort.
 
-- **Share sheet ingest.** "Share to OpenScientist" from Safari/Mail/Slack
-  to seed a new job with a paper PDF or dataset link. Covers #65 ("ignore
-  these sources") as the inverse: "include this source".
-- **Files / Drive / iCloud / Dropbox pickers.** Solves #33 (S3/GCS data
-  retrieval) for the common case of "the data is in my Drive already".
-- **Apple Shortcuts / Tasker.** "Every Monday at 9am, summarize jobs that
-  completed over the weekend." Trivial to expose since the API already
-  exists.
-- **Native push notifications.** Already half-built via ntfy.sh; could
-  either keep ntfy and surface its push or move to APNs/FCM tokens bound
-  to the user record.
+This is a use case that *only exists* in the mobile world. You can't
+do it from a browser because the data isn't reachable from a browser.
+HealthKit is a private, on-device store. The agent has to come to the
+data, not the other way around.
 
-### Mid-run interaction
+### Vision Pro: walking through a structure
 
-- The `AWAITING_FEEDBACK` state + ntfy `notify_job_awaiting_feedback`
-  already exist. A mobile app makes this *usable* — the user gets a push,
-  taps the notification, lands on a feedback screen, types/dictates a
-  reply, the job resumes. On desktop, the user is usually closed out of
-  the tab when this happens.
+A structural biologist's overnight Phenix job finishes a model
+comparison. She picks up her Vision Pro, puts it on, and walks around
+the superposed structure at 1:1 scale in her living room. The agent's
+findings appear as floating annotations attached to the relevant
+residues: "Loop displacement 3.2Å, hypothesis: stabilizes the ATP
+binding pocket — see iteration 4." She pinches a residue, asks "what
+did the comparison say about this side chain," and the agent's chat
+opens with the context pre-loaded.
 
-## Backend gap analysis
+This is the most speculative vignette, but it's the one where the
+mobile (or rather post-mobile) platform genuinely does something a
+laptop physically cannot: render a protein at the scale and parallax
+your visual cortex evolved to parse.
 
-What the existing REST surface lacks for a viable mobile client:
+## What changes about the agent itself
 
-1. **Real-time progress stream.** Today the web UI relies on NiceGUI's
-   internal websocket; mobile needs an explicit SSE or WebSocket endpoint.
-   This is issue #45 and would land on `/api/v1/jobs/{id}/stream` or
-   similar. SSE is cheaper to implement and survives mobile network
-   transitions better than WS.
-2. **Multimodal upload endpoint.** `POST /jobs` accepts data files; needs
-   either a generalized `attachments[]` field or a separate
-   `POST /jobs/{id}/attachments` for images / audio / OCR'd documents
-   added *after* a job exists. The job's knowledge-state already takes
-   arbitrary blobs.
-3. **Chat-over-REST.** `job_chat` is internal — needs a thin
-   `POST /jobs/{id}/chat` + paginated `GET /jobs/{id}/chat/messages` and
-   ideally streamed responses on the same SSE channel.
-4. **Mid-run feedback RPC.** `AWAITING_FEEDBACK` exists in the schema but
-   has no public endpoint to *provide* the feedback and resume. Needs
-   `POST /jobs/{id}/feedback`.
-5. **Mobile-friendly auth.** OAuth-with-PKCE → automatic API key issuance,
-   so the user doesn't have to copy-paste a `name:secret` string from the
-   web UI into a mobile app. Today's flow is unusable on a phone.
-6. **Device registration for push.** If we move off ntfy.sh to APNs/FCM,
-   a `POST /devices` endpoint that binds an APNs/FCM token to a session.
-   If we stay on ntfy.sh, no backend change needed but the app must
-   subscribe to the user's topic.
-7. **Voice transcription.** Either client-side (iOS Speech / Android
-   SpeechRecognizer — free, on-device, no backend cost) or server-side
-   via a new `POST /transcribe` endpoint. On-device is the right default.
-8. **Lightweight list payloads.** `GET /jobs` returns the full
-   `JobResponse`; mobile lists want a smaller `JobSummary` projection
-   (id, title, status, iter/max-iter, updated_at) so a 50-job scroll
-   doesn't move megabytes.
+Worth saying out loud: a phone client is not a window onto the same
+agent. It changes what the agent is. Today, the agent's perception of
+the world is "the user uploaded these CSVs and typed this question."
+With a phone in the loop, the agent's perception expands to "the user
+is at a bench, just photographed a gel, and verbally hypothesized X,"
+or "the user is in a field site at this elevation, has logged six
+soil cores in the last hour, and described two of them as 'unusual.'"
 
-## Implementation approaches
+This is qualitatively different evidence. It's situated, time-stamped,
+sensory, and partial — the way real scientific observation is. The
+agent that gets this kind of input can do things the agent without it
+cannot, in roughly the same way that a postdoc who hears the PI mutter
+"that doesn't look right" while walking past their bench does things
+that a postdoc reading the same data from home cannot.
 
-Three serious options, ranked by total cost-to-value.
+The mobile app is, in this sense, less a client and more a sensor
+package.
 
-### Option A — PWA on top of the existing NiceGUI app (cheapest)
+## Building the best possible version
 
-Add a service worker + web manifest to the existing app. Pin a few
-mobile-friendly pages (jobs list, job detail, chat, push acknowledge).
-Browser-side `getUserMedia` covers camera and microphone. Web Push
-covers notifications on Android; on iOS, web push works since 16.4 but
-is gimped (no badges, weaker reliability).
+If we're not optimizing for cost, the answer is native, Apple-first,
+multi-target.
 
-- ✅ Smallest engineering investment; reuses the existing UI.
-- ✅ No app store review cycle.
-- ❌ No share sheet on iOS. No Live Activities. No widgets. No
-  HealthKit. Weak background behavior. Camera/voice UX feels webby,
-  not native.
-- ❌ The "real unlocks" above (widgets, share sheet, watch, sensors,
-  shortcuts) are off the table.
+### The app
 
-**When this is right:** if mobile is purely a "view my running jobs on the
-go" use case and we don't care about the field/lab/voice unlocks.
+A SwiftUI iOS app that ships against the iPhone, iPad, and Apple Watch
+simultaneously, with a Vision Pro target as a Phase 3 deliverable.
+SwiftUI handles all three in one codebase well enough that the cost
+delta over "iPhone only" is not as large as it used to be, especially
+with an army of developers.
 
-### Option B — Expo + React Native client against the REST API (recommended)
+Concretely:
 
-A new repo (or `mobile/` directory) that consumes `/api/v1`. Expo handles
-push, camera, file system, share intent, share sheet, voice (via
-`expo-speech` / native speech APIs), background fetch, and most of the
-sensor APIs. Watch and widgets are reachable via Expo modules but require
-some native code.
+- **iPhone target.** The primary client. Tabbed navigation (Jobs,
+  Capture, Chat, You). The "Capture" tab is the home for the camera,
+  voice memo, and share-sheet flow — designed so the most common
+  action when opening the app while away from a desk is a single tap.
+  PDF report viewing uses PDFKit; chat uses a streaming response
+  rendered into a TextKit 2 view. Pull-to-refresh is a backup; the
+  primary live-update path is SSE.
 
-- ✅ Single codebase for iOS + Android.
-- ✅ Unlocks camera, voice, share sheet, push, background — i.e.
-  everything in the "Mobile-specific unlocks" section above except
-  Live Activities and Watch (which need extra native modules but are
-  reachable).
-- ✅ Forces the backend gaps in §"Backend gap analysis" to get filled,
-  which benefits all API consumers (#55).
-- ❌ New stack for the team (TS + RN) if everyone is Python-native.
-- ❌ App store review cycle, signing certs, TestFlight, Play Console.
-- ❌ ~2–4 months of FTE for a credible v1.
+- **iPad target.** Split view with the report on one side and a chat
+  / hypothesis tracker on the other. Apple Pencil for marking up the
+  PDF; PencilKit ink becomes annotations attached to the finding,
+  which the agent can read on the next iteration ("the user circled
+  this passage and wrote 'check this'"). Stage Manager friendly.
 
-**When this is right:** if we want the unlocks and are willing to staff
-it. This is the default recommendation.
+- **Apple Watch target.** Complications (status glance + last
+  finding's confidence). Notification actions for thumbs-up/down on
+  findings and quick replies to "awaiting feedback" prompts. No data
+  entry beyond voice; this is a glance/ack surface.
 
-### Option C — Fully native (Swift + Kotlin)
+- **Vision Pro target (Phase 3).** Primary use case is reviewing
+  structural-biology reports in 3D, with findings as anchored
+  spatial annotations. Secondary use case is a "wall of jobs" — all
+  active jobs as floating cards, each showing a live iteration
+  graph. Speculative; revisit after iPhone v1 lands.
 
-Two codebases, best fidelity on each platform, full access to Live
-Activities, Watch, complications, widgets, App Intents, HealthKit.
+### Apple platform integrations to lean on
 
-- ✅ Best possible UX, especially for sensor-heavy / watch-heavy
-  workflows.
-- ❌ Roughly 2× the engineering cost of Option B for marginal gain
-  unless we're sensor-heavy.
+- **App Intents.** Every meaningful action — "start a new job,"
+  "ask the agent about my last finding," "what did iteration 7
+  conclude" — is exposed as an App Intent. Siri can invoke them.
+  Shortcuts can chain them. Apple Intelligence's contextual
+  awareness can surface them. Spotlight indexes them.
 
-**When this is right:** if the field/sensor/watch story becomes the
-primary product thesis.
+- **WidgetKit.** Small (status of one job), medium (last finding
+  with a sparkline of iteration progress), large (the running
+  hypotheses panel). Lock-screen and Standby-mode widgets too.
 
-## Suggested phased roadmap
+- **ActivityKit / Live Activities.** A running job is a Live
+  Activity. Dynamic Island shows current iteration; long-press
+  expands to the agent's current action; tap goes to chat. This
+  is the single most "this is what mobile is for" feature on the
+  list.
 
-1. **Phase 0 — API hardening (no mobile client yet).**
-   - Add SSE stream endpoint (#45).
-   - Add `/jobs/{id}/chat` and `/jobs/{id}/feedback` endpoints.
-   - Add OAuth-PKCE → API-key issuance flow.
-   - Add `JobSummary` projection on `GET /jobs`.
-   - Outcome: improves the web UI, unblocks the Python SDK request in
-     #55, and is the prerequisite for any mobile shape.
+- **Vision framework.** On-device OCR for paper/poster capture,
+  document detection, barcode scanning for sample IDs, and
+  rudimentary densitometry on gel images.
 
-2. **Phase 1 — PWA polish (1–2 weeks).**
-   - Service worker + manifest. Validates whether mobile traffic
-     materializes at all before sinking real money into a native app.
-   - Web Push subscription parallel to ntfy.sh.
+- **Speech framework.** On-device transcription for voice memos
+  and dictated research questions. No round trip to the server
+  for transcription cost or latency.
 
-3. **Phase 2 — Expo client v1 (2–3 months).**
-   - Auth (OAuth-PKCE), job list/detail, chat, push, cancel, report
-     viewer (PDF), feedback-while-awaiting flow.
-   - Camera attachment upload to a job.
-   - Voice-to-text research-question entry (on-device).
+- **HealthKit.** Read-only authorization with granular scopes. The
+  agent never sees raw data; it sees the summaries the user
+  approves to upload.
 
-4. **Phase 3 — Mobile-native unlocks (incremental).**
-   - Share-sheet ingest (paper → new job).
-   - Lock-screen widget / Live Activity for running job.
-   - Watch app (status glance + thumbs).
-   - Shortcuts / App Intents.
-   - HealthKit / SensorKit for N-of-1 biomedical questions, if a
-     willing pilot user wants this.
+- **CoreLocation + SensorKit.** Geotagging for field observations.
+  SensorKit gives access to ambient light, motion, and orientation
+  for studies where that's actual signal.
 
-## Open questions for the team
+- **FileProvider.** Native pickers for iCloud Drive, Google Drive,
+  Dropbox, S3-backed providers, OneDrive, lab-internal NAS via
+  WebDAV. Solves the "my data is too big to upload via UI" problem
+  for the common case.
 
-- Who is the target user — bench scientist (camera/voice/lab matters),
-  computational biologist (probably fine with the web UI), or
-  field researcher (geolocation/sensors matter most)? Different
-  answers change which Phase-3 items move up.
-- Do we want to stay on ntfy.sh for push, or move to APNs/FCM? ntfy
-  is operationally simpler but loses badge counts and the iOS
-  notification-extension surface.
-- App-store distribution vs. enterprise/TestFlight-only? Affects review
-  surface for the "agent that runs arbitrary code on uploaded data"
-  description.
-- Do we want a single repo with a `mobile/` directory, or a separate
-  `openscientist-mobile` repo? Single-repo means easier API-contract
-  coupling; separate means independent release cadence.
+- **PushKit + APNs.** Replaces ntfy.sh for native push. Critical
+  alerts allowed for "job needs feedback" so it can break through
+  Focus modes the user has opted in. We keep ntfy.sh as a fallback
+  for Android and web.
+
+- **AVFoundation.** Camera with manual control for the bench-photo
+  workflow (gels under lightboxes need exposure that auto-mode
+  gets wrong). Voice memo recording with on-device transcription
+  in parallel.
+
+- **CoreML + Vision.** Small on-device models for "is this a
+  reasonable gel image / is the lighting okay / is the focus
+  acceptable" before we waste bandwidth uploading a blurry photo.
+
+- **FaceTime SharePlay.** Two PIs review the same report together
+  on a video call, with synchronized scrolling and shared
+  annotations. Real workflow for collaborative grant writing.
+
+- **AirDrop.** Findings, reports, and job links are first-class
+  Transferable types so they show up in the system share sheet
+  with AirDrop targets.
+
+### What the backend has to grow to support this
+
+A native client is a forcing function for an honest REST surface. The
+shape of the work, roughly:
+
+- A real streaming channel — Server-Sent Events on
+  `/api/v1/jobs/{id}/events` — that emits iteration starts,
+  findings, status transitions, and a heartbeat. SSE survives
+  mobile network transitions better than WebSocket and is dead
+  simple on the iOS side via URLSession.
+
+- Chat as a first-class API: `POST /api/v1/jobs/{id}/chat` for
+  user turns, with the response streamed back on the same SSE
+  channel as the timeline so the client gets one ordered feed.
+  `GET /api/v1/jobs/{id}/chat` for paginated history.
+
+- Mid-run feedback: `POST /api/v1/jobs/{id}/feedback` to satisfy
+  the `AWAITING_FEEDBACK` state and resume the job with user
+  input.
+
+- A general attachments endpoint:
+  `POST /api/v1/jobs/{id}/attachments` accepting images, audio,
+  arbitrary blobs, with a `kind` tag (observation, gel, poster,
+  voice-memo, sample-photo) and a metadata payload (geolocation,
+  timestamp, on-device transcript). The agent's iteration loop
+  reads new attachments on each pass.
+
+- OAuth with PKCE that issues a long-lived API key on successful
+  device login, bound to a device identifier. Today's flow —
+  generate a key in the web UI, copy-paste into the app — is
+  obviously wrong for phone-first.
+
+- Device registration: `POST /api/v1/devices` to bind an APNs
+  token (and Watch complication push token) to a session, so the
+  server can wake the right device.
+
+- Lightweight list projections: `GET /api/v1/jobs` should default
+  to a `JobSummary` shape (id, title, status, iteration counters,
+  updated_at, last-finding-headline) so scrolling 50 jobs costs
+  kilobytes, not megabytes.
+
+- Resumable uploads. Field captures might be 20MB videos or
+  collections of 4K photos taken off the grid; the upload has to
+  survive losing signal mid-transfer.
+
+- Per-attachment retention controls (some users will have HIPAA
+  or institutional concerns about uploaded gels, posters, or
+  health data). At minimum a "delete this attachment" endpoint
+  and a UI for it; ideally policy-bound expiry.
+
+### A note on Android
+
+If we're picking one platform for best-possible, iOS wins. The
+target user (academic and industry scientists) skews heavily
+iPhone/Mac, the platform integrations are more developed (Live
+Activities, App Intents, HealthKit, Vision Pro), and the
+deployment story is faster (TestFlight beats Play Internal
+Testing for clinical-academic beta cycles). Android is a Phase
+3 conversation, ideally as a Kotlin Multiplatform sibling rather
+than a Flutter or React Native compromise — if we built it native
+on iOS, building it native on Android preserves the bar.
+
+### Rough timeline with abundant resources
+
+- **Months 1–2.** Backend hardening (SSE, chat-over-REST,
+  feedback RPC, attachments, OAuth-PKCE, device registration).
+  This is also the work that satisfies the Python SDK request
+  and benefits the web UI.
+- **Months 2–4.** iPhone v1 in TestFlight. Jobs list, job
+  detail with streaming timeline, chat, push, camera + voice
+  capture, share-sheet ingest, Files picker integration.
+- **Months 4–5.** Live Activities, Widgets, App Intents,
+  Apple Watch companion.
+- **Months 5–6.** iPad-native layout with Pencil. HealthKit
+  integration with a pilot N-of-1 user.
+- **Months 6+.** Vision Pro target. Android via KMP.
+
+## What this is not
+
+It's not a port of the web UI. The web UI is the right shape for
+"a user sits down for 45 minutes to launch a job and read a
+report." The mobile app is the right shape for "a scientist
+lives their day, occasionally observes something, occasionally
+gets pinged, occasionally glances at progress." Those are
+different products that happen to share a backend. The mobile
+one is the one that puts an autonomous research agent in the
+peripheral vision of a working scientist — which is, ultimately,
+where you want it.
