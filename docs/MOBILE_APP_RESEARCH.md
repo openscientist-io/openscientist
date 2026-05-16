@@ -58,6 +58,37 @@ to the job page, and uploaded a JPG — by the time he did, he'd have
 forgotten the verbal hypothesis. The phone collapses that distance to
 zero.
 
+### The article and the gut check
+
+A second-year graduate student is on the subway reading a Bloomberg piece
+about a biotech preprint claiming "78% durable remission at eighteen
+months" for a single-dose CRISPR therapy for sickle cell. Something
+pings as off — she remembers a competing group with a different vector
+where a similar headline number softened on follow-up, and the Phase 1
+denominator she's seeing quoted doesn't match what she half-remembers
+from the conference abstract. She long-presses the paragraph and picks
+"Investigate with OpenScientist" from the share sheet. The app opens
+with the selected text pre-loaded as context, the linked preprint
+already being fetched, and a prompt: "What do you want to know?" She
+types one sentence: "Is the 78% durable-remission claim defensible
+against the underlying trial data and any follow-up reports?" By the
+time she's at her stop the agent has the preprint open, has tracked
+down the linked ClinicalTrials.gov record, and has flagged that the
+denominator in fact changed between the conference abstract and the
+preprint and that two patients were re-categorized between the
+six-month and twelve-month timepoints. She tells it to keep going and
+forgets about it until lunch.
+
+This is the most prosaic vignette in the document and probably the
+most common. The friction it eliminates is "I had a thought while
+reading something but the thought was gone by the time I got to a
+computer." Reflexive scientific skepticism is a perishable good. The
+share sheet, the selection-as-context, the warm start with the source
+already being fetched in the background — none of it is exotic; all of
+it has to be invisibly correct. The cumulative effect is that an idle
+moment of skepticism on the subway becomes an actual investigation by
+the time the user is back above ground.
+
 ### The push notification on the bus
 
 A computational biologist is on the 41 going home. Her phone buzzes.
@@ -95,6 +126,88 @@ things a browser cannot do. Each one individually is small; together
 they shorten the path from "this is interesting" to "the agent is on
 it" from a 20-minute desk session to 90 seconds standing in an aisle.
 
+### Peer review at thirty-five thousand feet
+
+A senior reviewer has a manuscript to read on the overnight from SFO to
+Heathrow. He opens the PDF inside OpenScientist before the cabin doors
+close. During the boarding window, while the phone still had wifi, the
+app pre-cached the manuscript's bibliography (the references he's
+likely to want to consult) plus the report from his own earlier
+OpenScientist job on the same gene family from six months ago.
+Somewhere over Greenland he marks up Figure 3 with the Pencil: the
+error bars look suspiciously tight for n=4, and the y-axis is
+log-transformed in a way that visually flattens the apparent effect
+without saying so in the caption. He scrawls "are these the right
+error bars? recompute from the supplementary table" in the margin.
+The agent, running offline against cached data, parses the
+supplementary table, recomputes the confidence intervals, finds that
+the bars in the figure are SEM rather than SD or 95% CI as the caption
+implies, and writes that into the margin alongside his note. When the
+plane lands and reconnects, the agent does a final literature pass
+against a paper that had eluded its offline cache, finds it directly
+contradicts one of the manuscript's central claims, and surfaces it.
+By the time he's in the customs line, his review is most of the way
+written.
+
+The headline here is not that the agent works on a plane. It is that
+the *scientist's reasoning* works on a plane. Offline-first capability
+is not a Tier 2 polish item — it's the difference between the device
+being a peripheral and being the primary working surface during the
+five to ten hours a week that senior researchers spend in transit. The
+flight is the time they have to think. The app has to be there for it.
+
+### The elevator briefing
+
+A postdoc is in the elevator: four floors and ninety seconds before
+her PI's weekly lab meeting. AirPods in. "Open, what did the
+metabolomics job find over the weekend?" The agent's voice — not
+Siri's, but a distinct voice the user picked from a small set,
+because that detail matters when you're going to listen to it a
+lot — reads back a forty-second briefing: which two pathways had the
+strongest signal, which hypothesis got promoted, which got demoted,
+which question is still open and why. It ends with the agent's own
+uncertainty assessment in plain language: "I'm confident about the
+first finding; the second I'd describe as suggestive rather than
+established — I'd want one more independent line of evidence before
+relying on it." She steps off the elevator with the headline ready,
+the receipts in her phone if anyone asks, and a clear sense of what
+to claim and what to hedge. None of this required her to look at a
+screen.
+
+The mobile app is the only client where this happens. A desktop user
+reads. A mobile user — increasingly — *listens*: to podcasts, to
+audiobooks, to AI-narrated articles, to walking directions. An
+autonomous research agent that can give you a competent audio
+briefing on demand is meeting the user inside a habit they already
+have.
+
+### The drive home
+
+A faculty member has a forty-five-minute commute each way. Her phone
+is on the dock; CarPlay is showing her overnight job summaries on
+the right side of the dashboard, four lines per job. She glances
+once, then says, "Open, let's talk about the cell-type-abundance
+job. Read me the headline findings, just the ones you're confident
+about." The agent reads three. "On the second one — the astrocyte
+cluster — you mentioned the marker overlap with microglia was higher
+than expected. Did you cross-reference that against the recent Allen
+Brain Map update?" The agent confirms it did, names the version,
+walks through which markers shifted and which didn't. They go back
+and forth like this for the rest of the drive. By the time she pulls
+into her parking spot she has decided which two of the four
+hypotheses to push on this week and has dictated a paragraph to her
+postdoc explaining why; the paragraph is already in his inbox by the
+time she's walking from the parking garage.
+
+This is the most demanding mode the agent has, and the one most
+resistant to being modeled as a "feature" — it is a sustained
+conversation. It requires the agent to remember context across turns
+the way a colleague would, to have an opinion when asked, and to be
+comfortable saying "I don't know, but here's what I checked." It
+also requires the voice to be one a scientist can actually stand
+listening to for twenty minutes. Both are real product problems,
+not technology problems, and both are unique to the mobile surface.
+
 ### A glance during a one-on-one
 
 A PI is in a one-on-one with her postdoc. She doesn't want to pull out
@@ -109,6 +222,54 @@ ambient. They want it in their peripheral vision, not in a tab they
 have to remember to refresh. The desktop UI is the wrong shape for this
 — it demands an active foreground session. The watch and the lock
 screen are the right shape.
+
+### The bedside dock
+
+The phone goes onto the magnetic dock at 11pm. Standby mode lights
+up: a small, calm dashboard angled toward the pillow. The job that
+has been running for two days is on iteration nine; the agent's
+current activity reads "comparing post-hoc cluster assignments
+against published markers"; one number in the corner — 0.71 — is
+the agent's confidence that its current best hypothesis will hold.
+The scientist sleeps. At 4am the agent finishes iteration nine and
+quietly updates the dashboard. If it had stalled or needed input, a
+soft amber pulse would have shown it, but it didn't. In the morning
+she glances at the dock before her alarm goes off: iteration ten,
+confidence 0.74, and a one-sentence headline of the latest finding.
+That's the whole interaction. She is caught up before her feet hit
+the floor.
+
+Most of what a scientist wants from a long-running job overnight is
+*not to think about it* — but to be told the moment it's done or the
+moment it needs them, and to be able to confirm at a glance, on
+waking, that nothing is on fire. Standby is the surface that
+delivers that without ever being a screen the user has to actively
+open. It is the calmest form the agent takes.
+
+### The instrument display
+
+A second-year graduate student is staring at a small screen on the
+HPLC, trying to remember whether the peak at 4.2 minutes is the
+metabolite he wanted or a known artifact he's seen before. He
+raises his phone and holds the camera button down. The system camera
+overlays a tap target — "Ask OpenScientist about this." He taps. The
+agent reads the screen image, picks the column label off the
+adjacent panel, cross-references it against the method file he's
+previously linked to this kind of analysis, and tells him: "Peak at
+4.2 min matches your standard for the target. Peak at 2.8 min is the
+ascorbate degradation product you flagged in your method notes from
+March. The shoulder on the 4.2 peak is new — worth investigating."
+He pockets the phone and writes "shoulder = new" on the printout
+without breaking from the instrument.
+
+The unlock is integration with the system-level Camera Control /
+Visual Intelligence flow: the user does not have to leave whatever
+app they are in (or, more importantly, whatever physical task they
+are in) to invoke the agent. The agent becomes a *modality* of the
+phone, not a destination inside it. The same flow works pointed at a
+plate reader, a flow cytometer screen, a centrifuge readout, a
+spectrophotometer, a colony plate, or a whiteboard at the end of a
+group meeting.
 
 ### N-of-1 in the wild
 
