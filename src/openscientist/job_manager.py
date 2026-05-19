@@ -86,6 +86,9 @@ async def _db_create_job(
     owner_id: UUID | None = None,
     short_title: str | None = None,
     description: str | None = None,
+    template_id: str | None = None,
+    template_version: str | None = None,
+    template_inputs: dict[str, Any] | None = None,
     pdb_code: str | None = None,
     space_group: str | None = None,
     llm_provider: str | None = None,
@@ -117,6 +120,9 @@ async def _db_create_job(
             research_question=research_question,
             short_title=short_title[:100] if short_title else None,
             description=description,
+            template_id=template_id,
+            template_version=template_version,
+            template_inputs=template_inputs,
             use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
             status=JobStatus.PENDING.value,
@@ -382,6 +388,9 @@ class JobManager:
         owner_id: str | None,
         short_title: str | None,
         description: str | None,
+        template_id: str | None = None,
+        template_version: str | None = None,
+        template_inputs: dict[str, Any] | None = None,
         pdb_code: str | None,
         space_group: str | None,
         llm_provider: str | None = None,
@@ -399,6 +408,9 @@ class JobManager:
                     owner_id=owner_uuid,
                     short_title=short_title,
                     description=description,
+                    template_id=template_id,
+                    template_version=template_version,
+                    template_inputs=template_inputs,
                     pdb_code=pdb_code,
                     space_group=space_group,
                     llm_provider=llm_provider,
@@ -459,6 +471,8 @@ class JobManager:
         owner_id: str | None = None,
         short_title: str | None = None,
         description: str | None = None,
+        template_id: str | None = None,
+        template_inputs: dict[str, Any] | None = None,
         pdb_code: str | None = None,
         space_group: str | None = None,
     ) -> JobInfo:
@@ -476,6 +490,8 @@ class JobManager:
             owner_id: UUID of the job owner (optional, for orphaned jobs)
             short_title: Optional short display label (truncated to 100 chars)
             description: Optional job description
+            template_id: Optional guided template identifier
+            template_inputs: Structured inputs for the guided template
             pdb_code: Optional PDB code metadata
             space_group: Optional crystal space group metadata
 
@@ -488,6 +504,15 @@ class JobManager:
         """
         self._ensure_job_not_exists(job_id)
         self._check_budget_before_creation()
+
+        from openscientist.job_templates import resolve_template_submission
+
+        template_resolution = resolve_template_submission(
+            template_id=template_id,
+            template_inputs=template_inputs,
+            research_question=research_question,
+        )
+        research_question = template_resolution.research_question
 
         # Capture provider & model from current settings
         from openscientist.settings import get_settings
@@ -508,6 +533,9 @@ class JobManager:
             owner_id=owner_id,
             short_title=short_title,
             description=description,
+            template_id=template_resolution.template_id,
+            template_version=template_resolution.template_version,
+            template_inputs=template_resolution.template_inputs,
             pdb_code=pdb_code,
             space_group=space_group,
             llm_provider=llm_provider,

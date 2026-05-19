@@ -221,7 +221,12 @@ def format_skills_list(skills: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+def generate_job_claude_md(
+    *,
+    use_hypotheses: bool = False,
+    phenix_available: bool = False,
+    template_guidance: str | None = None,
+) -> str:
     """
     Generate JOB_CLAUDE.md content for the discovery agent.
 
@@ -231,6 +236,7 @@ def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bo
 
     Args:
         use_hypotheses: Include hypothesis-specific sections.
+        template_guidance: Optional guided workflow instructions for this job.
 
     Returns:
         Full JOB_CLAUDE.md content as a string.
@@ -414,7 +420,15 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
 
 Use `search_skills` to discover additional skills in the database beyond those pre-loaded.
+""")
 
+    if template_guidance:
+        parts.append(f"""
+## Guided Workflow
+
+{template_guidance}""")
+
+    parts.append("""
 ## Your Approach
 
 ### 1. First Iteration Setup
@@ -535,8 +549,8 @@ async def get_enabled_skills(
     """
     Get all enabled skills.
 
-    All enabled skills are now available to every job - there is no
-    per-job skill selection.
+    Freeform jobs currently receive all enabled skills. Guided job templates
+    can filter this list before writing skills into a job directory.
 
     Args:
         session: Database session

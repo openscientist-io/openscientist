@@ -3,6 +3,7 @@
 from openscientist.prompts import (
     build_discovery_prompt,
     format_skills_list,
+    generate_job_claude_md,
     get_system_prompt,
 )
 
@@ -23,6 +24,15 @@ class TestGetSystemPrompt:
         prompt = get_system_prompt()
         assert "effect sizes" in prompt
         assert "Negative results" in prompt
+
+
+class TestGenerateJobClaudeMd:
+    """Tests for discovery agent CLAUDE.md generation."""
+
+    def test_includes_template_guidance_when_provided(self):
+        prompt = generate_job_claude_md(template_guidance="Use deterministic annotation first.")
+        assert "Guided Workflow" in prompt
+        assert "Use deterministic annotation first." in prompt
 
 
 class TestBuildDiscoveryPrompt:

@@ -726,6 +726,54 @@ class TestJobManagerCreationSafety:
         assert kwargs["llm_provider"] == "anthropic"
         assert kwargs["llm_config"] == {"model": "claude-sonnet-4-5"}
 
+    def test_create_job_resolves_guided_template_metadata(self, tmp_path):
+        manager = _new_manager(tmp_path)
+        job_id = str(uuid4())
+        created_job = JobInfo(
+            job_id=job_id,
+            research_question="Generated template question",
+            status=JobStatus.PENDING,
+            created_at="2026-01-01T00:00:00",
+        )
+        settings = SimpleNamespace(
+            provider=SimpleNamespace(
+                provider_id="Anthropic",
+                model="claude-sonnet-4-5",
+                anthropic_default_sonnet_model="claude-sonnet-4-5",
+            )
+        )
+
+        with (
+            patch.object(manager, "get_job", return_value=None),
+            patch.object(manager, "_check_budget_before_creation"),
+            patch.object(manager, "_create_job_files") as mock_create_job_files,
+            patch.object(manager, "_load_job_info", return_value=created_job),
+            patch("openscientist.settings.get_settings", return_value=settings),
+            patch.object(manager, "_create_db_job_record") as mock_create_db_job_record,
+        ):
+            manager.create_job(
+                job_id=job_id,
+                research_question="",
+                data_files=[],
+                auto_start=False,
+                template_id="variant-interpretation",
+                template_inputs={
+                    "variant_input": "uploaded variants.vcf",
+                    "organism_build": "human-grch38",
+                    "phenotype_context": "cardiomyopathy",
+                    "interpretation_mode": "exploratory",
+                },
+            )
+
+        _, db_kwargs = mock_create_db_job_record.call_args
+        assert db_kwargs["template_id"] == "variant-interpretation"
+        assert db_kwargs["template_version"] == "1"
+        assert db_kwargs["template_inputs"]["phenotype_context"] == "cardiomyopathy"
+        assert "uploaded variants.vcf" in db_kwargs["research_question"]
+
+        _, file_kwargs = mock_create_job_files.call_args
+        assert "uploaded variants.vcf" in file_kwargs["research_question"]
+
 
 class TestJobManagerCLI:
     """Tests for job_manager CLI argument handling."""

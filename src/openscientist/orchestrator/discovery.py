@@ -22,6 +22,7 @@ from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import AsyncSessionLocal
 from openscientist.exceptions import OpenScientistError
+from openscientist.job_templates import build_template_agent_guidance, filter_skills_for_template
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
@@ -160,6 +161,7 @@ async def _run_primary_discovery_loop(
         data_files,
         ks,
         description=runtime.get("description"),
+        template_guidance=runtime.get("template_guidance"),
     )
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
@@ -209,6 +211,7 @@ async def _run_primary_discovery_loop(
             ks,
             pending_feedback,
             description=runtime.get("description"),
+            template_guidance=runtime.get("template_guidance"),
         )
         pending_feedback = None
         should_reset = iteration % reset_interval == 1
@@ -335,11 +338,16 @@ async def _run_report_generation_phase(
     job_dir: Path,
     research_question: str,
     description: str | None = None,
+    template_guidance: str | None = None,
 ) -> _ReportOutcome:
     """Run final report generation iteration and output artifact handling."""
     ks = KnowledgeState.load_from_database_sync(job_dir.name)
     report_prompt = build_report_prompt(
-        research_question, ks, job_dir=job_dir, description=description
+        research_question,
+        ks,
+        job_dir=job_dir,
+        description=description,
+        template_guidance=template_guidance,
     )
     logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
     report_result = await executor.run_iteration(report_prompt, reset_session=True)
@@ -402,6 +410,13 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
         "job_id": str(job.id),
         "research_question": job.research_question,
         "description": getattr(job, "description", None),
+        "template_id": getattr(job, "template_id", None),
+        "template_version": getattr(job, "template_version", None),
+        "template_inputs": getattr(job, "template_inputs", None),
+        "template_guidance": build_template_agent_guidance(
+            getattr(job, "template_id", None),
+            getattr(job, "template_inputs", None),
+        ),
         "max_iterations": job.max_iterations,
         "use_hypotheses": bool(job.use_hypotheses),
         "investigation_mode": job.investigation_mode,
@@ -409,17 +424,28 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     }
 
 
-async def _write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = False) -> None:
+async def _write_skills_to_claude_dir(
+    job_dir: Path,
+    *,
+    use_hypotheses: bool = False,
+    template_id: str | None = None,
+    template_guidance: str | None = None,
+) -> None:
     """Write CLAUDE.md and enabled skill files into job_dir/.claude/."""
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
     # Write the discovery-agent JOB_CLAUDE.md (hypothesis sections conditional)
-    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses)
+    _write_job_claude_md(
+        claude_dir,
+        use_hypotheses=use_hypotheses,
+        template_guidance=template_guidance,
+    )
 
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
-            skills = await get_enabled_skills(session)
+            all_skills = await get_enabled_skills(session)
+            skills = filter_skills_for_template(all_skills, template_id)
         if not skills:
             logger.info("No enabled skills to write")
             return
@@ -456,7 +482,12 @@ def _read_chat_claude_md_template() -> str:
     )
 
 
-def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
+def _write_job_claude_md(
+    claude_dir: Path,
+    *,
+    use_hypotheses: bool = False,
+    template_guidance: str | None = None,
+) -> None:
     """Write generated JOB_CLAUDE.md content to claude_dir/CLAUDE.md."""
     from openscientist.settings import get_settings
 
@@ -465,7 +496,9 @@ def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> N
         dest = claude_dir / "CLAUDE.md"
         dest.write_text(
             generate_job_claude_md(
-                use_hypotheses=use_hypotheses, phenix_available=phenix_available
+                use_hypotheses=use_hypotheses,
+                phenix_available=phenix_available,
+                template_guidance=template_guidance,
             ),
             encoding="utf-8",
         )
@@ -563,7 +596,12 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
 
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
+    await _write_skills_to_claude_dir(
+        job_dir,
+        use_hypotheses=use_hypotheses,
+        template_id=runtime.get("template_id"),
+        template_guidance=runtime.get("template_guidance"),
+    )
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
@@ -589,6 +627,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             job_dir=job_dir,
             research_question=runtime["research_question"],
             description=runtime.get("description"),
+            template_guidance=runtime.get("template_guidance"),
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
         ks = KnowledgeState.load_from_database_sync(job_id)

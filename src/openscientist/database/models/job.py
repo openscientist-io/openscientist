@@ -37,6 +37,9 @@ class Job(UUIDv7Mixin, Base):
         research_question: Research question that drives the agent prompt
         short_title: Optional short display label (model- or user-generated)
         description: User-provided job description
+        template_id: Guided job template identifier, NULL for freeform jobs
+        template_version: Version of the guided template used at submission time
+        template_inputs: Structured guided template inputs
         investigation_mode: Investigation mode (autonomous/coinvestigate)
         status: Current job status (pending/running/completed/failed/cancelled)
         max_iterations: Maximum number of analysis iterations allowed
@@ -82,6 +85,25 @@ class Job(UUIDv7Mixin, Base):
         Text,
         nullable=True,
         comment="User-provided job description",
+    )
+
+    template_id: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+        index=True,
+        comment="Guided job template identifier, NULL for freeform jobs",
+    )
+
+    template_version: Mapped[str | None] = mapped_column(
+        String(40),
+        nullable=True,
+        comment="Version of the guided job template used at submission time",
+    )
+
+    template_inputs: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Structured inputs captured for the guided job template",
     )
 
     use_hypotheses: Mapped[bool] = mapped_column(

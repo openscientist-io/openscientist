@@ -77,6 +77,26 @@ async def test_job_creation_with_owner(db_session: AsyncSession, test_user: User
 
 
 @pytest.mark.asyncio
+async def test_job_creation_with_template_metadata(db_session: AsyncSession, test_user: User):
+    """Test storing guided workflow metadata on a job."""
+    job = Job(
+        owner_id=test_user.id,
+        research_question="Generated template question",
+        status="pending",
+        template_id="variant-interpretation",
+        template_version="1",
+        template_inputs={"phenotype_context": "cardiomyopathy"},
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    assert job.template_id == "variant-interpretation"
+    assert job.template_version == "1"
+    assert job.template_inputs == {"phenotype_context": "cardiomyopathy"}
+
+
+@pytest.mark.asyncio
 async def test_orphaned_job_creation(db_session: AsyncSession):
     """Test creating a job without an owner (orphaned job)."""
     job = Job(

@@ -23,7 +23,7 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
@@ -37,6 +37,10 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job_manager import JobManager
+from openscientist.job_templates import (
+    normalize_template_id,
+    parse_template_inputs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +66,20 @@ class JobCreate(BaseModel):
         description="Detailed job description",
         examples=["Comparing treated vs control samples to explain pathway shifts"],
     )
-    research_question: str = Field(
-        ...,
-        min_length=1,
+    research_question: str | None = Field(
+        None,
         description="Research question for the analysis",
         examples=["What are the key binding sites in this protein structure?"],
+    )
+    template_id: str | None = Field(
+        None,
+        max_length=100,
+        description="Optional guided workflow template identifier",
+        examples=["variant-interpretation"],
+    )
+    template_inputs: dict[str, Any] | None = Field(
+        None,
+        description="Structured inputs for the selected guided workflow template",
     )
     max_iterations: int = Field(
         5,
@@ -96,6 +109,22 @@ class JobCreate(BaseModel):
         examples=["P212121"],
     )
 
+    @field_validator("template_inputs", mode="before")
+    @classmethod
+    def parse_template_input_payload(cls, value: Any) -> dict[str, Any] | None:
+        """Accept template inputs as JSON strings in multipart forms."""
+        return parse_template_inputs(value)
+
+    @model_validator(mode="after")
+    def require_question_or_template(self) -> "JobCreate":
+        """Freeform jobs need a question; guided jobs can generate one from inputs."""
+        if (
+            not (self.research_question or "").strip()
+            and normalize_template_id(self.template_id) is None
+        ):
+            raise ValueError("research_question is required for freeform jobs")
+        return self
+
 
 class JobResponse(BaseModel):
     """Response for a job."""
@@ -113,6 +142,9 @@ class JobResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration number")
     pdb_code: str | None = Field(None, description="PDB code")
     space_group: str | None = Field(None, description="Space group")
+    template_id: str | None = Field(None, description="Guided workflow template identifier")
+    template_version: str | None = Field(None, description="Guided workflow template version")
+    template_inputs: dict[str, Any] | None = Field(None, description="Guided workflow inputs")
 
 
 class JobListResponse(BaseModel):
@@ -152,6 +184,9 @@ class _JobResponseFields(TypedDict):
     current_iteration: int
     pdb_code: str | None
     space_group: str | None
+    template_id: str | None
+    template_version: str | None
+    template_inputs: dict[str, Any] | None
 
 
 async def get_job_by_id(
@@ -204,6 +239,9 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "current_iteration": job.current_iteration,
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
+        "template_id": getattr(job, "template_id", None),
+        "template_version": getattr(job, "template_version", None),
+        "template_inputs": getattr(job, "template_inputs", None),
     }
 
 
@@ -385,7 +423,7 @@ async def create_job(
             data_files = await _persist_uploaded_files(upload_files, Path(upload_tmp))
             job_manager.create_job(
                 job_id=str(job_uuid),
-                research_question=job_data.research_question,
+                research_question=job_data.research_question or "",
                 data_files=data_files,
                 max_iterations=job_data.max_iterations,
                 use_hypotheses=job_data.use_hypotheses,
@@ -394,6 +432,8 @@ async def create_job(
                 owner_id=str(user.id),
                 short_title=job_data.short_title,
                 description=job_data.description,
+                template_id=job_data.template_id,
+                template_inputs=job_data.template_inputs,
                 pdb_code=job_data.pdb_code,
                 space_group=job_data.space_group,
             )

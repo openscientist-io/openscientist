@@ -37,6 +37,16 @@ def _format_job_description_section(description: str | None) -> str:
 """
 
 
+def _format_template_guidance_section(template_guidance: str | None) -> str:
+    """Return optional guided workflow instructions for prompts."""
+    if not template_guidance:
+        return ""
+    return f"""Guided workflow selected by the scientist:
+
+{template_guidance}
+"""
+
+
 class FeedbackWaitResult(TypedDict):
     """Outcome for co-investigate feedback waiting."""
 
@@ -50,9 +60,11 @@ def build_initial_prompt(
     data_files: list[str],
     ks: KnowledgeState,
     description: str | None = None,
+    template_guidance: str | None = None,
 ) -> str:
     """Build the prompt for iteration 1."""
     description_context = _format_job_description_section(description)
+    template_context = _format_template_guidance_section(template_guidance)
     if data_files:
         data_context = (
             f"Data summary:\n"
@@ -69,6 +81,7 @@ def build_initial_prompt(
 
 {research_question}
 {description_context}
+{template_context}
 
 **You are now on iteration 1 of {max_iterations}.** When writing summaries, always refer to this as "Iteration 1".
 
@@ -97,9 +110,11 @@ def build_iteration_prompt(
     ks: KnowledgeState,
     pending_feedback: str | None = None,
     description: str | None = None,
+    template_guidance: str | None = None,
 ) -> str:
     """Build the prompt for iterations 2-N."""
     description_context = _format_job_description_section(description)
+    template_context = _format_template_guidance_section(template_guidance)
     feedback_section = ""
     if pending_feedback:
         feedback_section = f"""
@@ -117,6 +132,7 @@ the scientist's suggestions with your own analysis of what will be most producti
 **You are now on iteration {iteration}.** When writing summaries, always refer to this as "Iteration {iteration}".
 {feedback_section}
 {description_context}
+{template_context}
 {ks.get_summary()}
 
 ---
@@ -136,6 +152,7 @@ def build_report_prompt(
     *,
     job_dir: Path | None = None,
     description: str | None = None,
+    template_guidance: str | None = None,
 ) -> str:
     """Build the prompt for the final report generation iteration.
 
@@ -150,6 +167,7 @@ def build_report_prompt(
             tells the agent the exact file path to write (the Write tool
             requires an absolute path).
         description: Optional user-provided job context.
+        template_guidance: Optional guided workflow instructions.
     """
     if job_dir is not None:
         report_path = str(job_dir.resolve() / "final_report.md")
@@ -172,6 +190,7 @@ def build_report_prompt(
 {research_question}
 
 {_format_job_description_section(description)}
+{_format_template_guidance_section(template_guidance)}
 
 {ks.get_report_outline()}
 
