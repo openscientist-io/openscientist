@@ -23,6 +23,10 @@ WORKDIR /app
 # Copy project files — deps already installed in base
 COPY pyproject.toml README.md alembic.ini uv.lock ./
 COPY src/ src/
+# Built-in skills must be in the image: the job_templates registry resolves
+# bundled-skill references (e.g. domain/ontology-enrichment) at module import
+# time, before any docker-compose bind-mount could provide them.
+COPY skills/ skills/
 
 # Create jobs directory
 RUN mkdir -p jobs
