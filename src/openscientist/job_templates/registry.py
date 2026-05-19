@@ -11,11 +11,106 @@ from openscientist.job_templates.types import (
     TemplateField,
     TemplateFieldOption,
     TemplateResolution,
+    TemplateSkill,
     TemplateValidationError,
 )
 
 FREEFORM_TEMPLATE_ID = "freeform"
 FREEFORM_DEFAULT_MAX_ITERATIONS = 10
+
+ONTOLOGY_ENRICHMENT_SKILL = TemplateSkill(
+    name="Ontology Enrichment Analysis",
+    category="domain",
+    slug="ontology-enrichment",
+    description=(
+        "Run statistically grounded ontology enrichment with explicit foreground, "
+        "background, multiple-testing correction, and term interpretation."
+    ),
+    content="""# Ontology Enrichment Analysis
+
+## When to Use
+
+Use this skill when a guided workflow asks for GO, phenotype ontology, pathway, or other term enrichment over a foreground set against a background universe.
+
+## Required Inputs
+
+- Foreground set: the genes, variants, taxa, or features being tested.
+- Background universe: all assayed or eligible entities. Do not silently use all known genes when a measured/tested universe is available.
+- Ontology or collection: for example GO Biological Process, Molecular Function, Cellular Component, Reactome, KEGG, HPO, or a supplied term set.
+- Identifier namespace and organism/build: normalize symbols or IDs before testing.
+
+## Deterministic Analysis Steps
+
+1. Normalize identifiers and report unmapped, duplicate, or ambiguous IDs.
+2. Intersect both foreground and background with the ontology annotation universe.
+3. For each term, build a 2x2 contingency table over the background universe.
+4. Use an appropriate enrichment test such as one-sided Fisher's exact or hypergeometric over-representation analysis.
+5. Correct all tested terms for multiple comparisons, preferably Benjamini-Hochberg FDR unless the user requests another method.
+6. Report term ID, term label, ontology namespace, overlap count, term size, background size, raw p-value, adjusted p-value, and driving foreground members.
+7. Interpret biology only after the deterministic statistics are available.
+
+## Guardrails
+
+- Do not infer enrichment from biological intuition alone.
+- If no valid background was provided, state the bias and treat the result as exploratory.
+- Avoid ranking purely by p-value when large generic terms dominate; include specificity, overlap, and effect size.
+- Collapse or group redundant ontology terms when interpreting themes, but do not remove them from the statistical record.
+- If the ontology is hierarchical, avoid claiming parent and child terms as independent mechanisms.
+
+## Output Expectations
+
+- A table of significant terms sorted by adjusted p-value.
+- A short interpretation that separates statistical evidence from biological interpretation.
+- A limitations note covering background universe, identifier mapping, annotation coverage, and database version if known.
+""",
+)
+
+SCIENTIFIC_VISUALIZATION_SKILL = TemplateSkill(
+    name="Scientific Visualization",
+    category="workflow",
+    slug="scientific-visualization",
+    description=(
+        "Choose figures that expose the statistical result, uncertainty, and scientific "
+        "interpretation without overstating evidence."
+    ),
+    content="""# Scientific Visualization
+
+## Figure Selection
+
+Pick figures that match the evidence object:
+
+- Enrichment results: dot plot, bar chart, term table, enrichment map, or leading-member heatmap.
+- Evidence synthesis: evidence matrix, study-quality table, effect-direction plot, or forest plot only when comparable quantitative effects exist.
+- Simulations: trajectories, phase diagrams, parameter sweeps, scenario comparisons, and uncertainty bands for stochastic runs.
+- Microbiome analysis: ordination, diversity summaries, differential abundance effect plots, and compositional caveat annotations.
+- Variant interpretation: ranked variant/gene tables, phenotype-match summaries, inheritance views, or locus diagrams when supported.
+
+## Required Figure Metadata
+
+- Clear title that states the result being shown.
+- Axis labels with units or transformed scales.
+- Sample size, background universe, or tested count when relevant.
+- Statistical threshold and multiple-testing correction when used.
+- Direct labels for the most important marks instead of relying on dense legends.
+
+## Guardrails
+
+- Do not make decorative figures that add no evidence.
+- Do not hide non-significant or failed results if they affect interpretation.
+- Do not use a volcano, heatmap, forest plot, or network diagram unless the underlying data supports that geometry.
+- If the figure is exploratory, label it as exploratory.
+- Keep colors semantic and consistent across related figures.
+
+## Reporting
+
+Every figure should be accompanied by a caption that states:
+
+1. what data was plotted,
+2. what statistical method or transformation was used,
+3. the main result,
+4. the main limitation or uncertainty.
+""",
+)
 
 
 def _option(value: str, label: str) -> TemplateFieldOption:
@@ -170,7 +265,16 @@ def _templates() -> tuple[JobTemplate, ...]:
                 placeholder="Optional condition, tissue, treatment, or phenotype context.",
             ),
         ),
-        skill_slugs=("domain:genomics", "genomics", "domain:data-science", "data-science"),
+        skill_slugs=(
+            "domain:genomics",
+            "genomics",
+            "domain:data-science",
+            "data-science",
+            "domain:ontology-enrichment",
+            "ontology-enrichment",
+            "workflow:scientific-visualization",
+            "scientific-visualization",
+        ),
         skill_categories=("workflow",),
         methodology=(
             "Run or design deterministic enrichment/statistical analysis before interpretation.",
@@ -189,6 +293,7 @@ def _templates() -> tuple[JobTemplate, ...]:
         ),
         question_builder=_build_gene_set_question,
         default_max_iterations=2,
+        bundled_skills=(ONTOLOGY_ENRICHMENT_SKILL, SCIENTIFIC_VISUALIZATION_SKILL),
     )
 
     evidence = JobTemplate(
@@ -247,7 +352,12 @@ def _templates() -> tuple[JobTemplate, ...]:
                 ),
             ),
         ),
-        skill_slugs=("domain:data-science", "data-science"),
+        skill_slugs=(
+            "domain:data-science",
+            "data-science",
+            "workflow:scientific-visualization",
+            "scientific-visualization",
+        ),
         skill_categories=("workflow",),
         methodology=(
             "Separate evidence retrieval, study extraction, quality appraisal, and interpretation.",
@@ -266,6 +376,7 @@ def _templates() -> tuple[JobTemplate, ...]:
         ),
         question_builder=_build_evidence_question,
         default_max_iterations=4,
+        bundled_skills=(SCIENTIFIC_VISUALIZATION_SKILL,),
     )
 
     simulation = JobTemplate(
@@ -324,7 +435,12 @@ def _templates() -> tuple[JobTemplate, ...]:
                 placeholder="Known simplifications, constraints, or theoretical assumptions.",
             ),
         ),
-        skill_slugs=("domain:data-science", "data-science"),
+        skill_slugs=(
+            "domain:data-science",
+            "data-science",
+            "workflow:scientific-visualization",
+            "scientific-visualization",
+        ),
         skill_categories=("workflow",),
         methodology=(
             "State model assumptions, equations or update rules, and parameter units before running simulations.",
@@ -343,6 +459,7 @@ def _templates() -> tuple[JobTemplate, ...]:
         ),
         question_builder=_build_simulation_question,
         default_max_iterations=4,
+        bundled_skills=(SCIENTIFIC_VISUALIZATION_SKILL,),
     )
 
     microbiome = JobTemplate(
@@ -397,7 +514,14 @@ def _templates() -> tuple[JobTemplate, ...]:
                 ),
             ),
         ),
-        skill_slugs=("domain:data-science", "data-science", "domain:genomics", "genomics"),
+        skill_slugs=(
+            "domain:data-science",
+            "data-science",
+            "domain:genomics",
+            "genomics",
+            "workflow:scientific-visualization",
+            "scientific-visualization",
+        ),
         skill_categories=("workflow",),
         methodology=(
             "Inspect sample balance, missing metadata, sequencing depth, and feature sparsity before testing.",
@@ -416,6 +540,7 @@ def _templates() -> tuple[JobTemplate, ...]:
         ),
         question_builder=_build_microbiome_question,
         default_max_iterations=3,
+        bundled_skills=(SCIENTIFIC_VISUALIZATION_SKILL,),
     )
 
     variant = JobTemplate(
@@ -487,7 +612,14 @@ def _templates() -> tuple[JobTemplate, ...]:
                 placeholder="Optional known genes, intervals, panels, or candidate loci.",
             ),
         ),
-        skill_slugs=("domain:genomics", "genomics", "domain:data-science", "data-science"),
+        skill_slugs=(
+            "domain:genomics",
+            "genomics",
+            "domain:data-science",
+            "data-science",
+            "workflow:scientific-visualization",
+            "scientific-visualization",
+        ),
         skill_categories=("workflow",),
         methodology=(
             "Annotate variants with deterministic sources/tools before interpretation.",
@@ -506,6 +638,7 @@ def _templates() -> tuple[JobTemplate, ...]:
         ),
         question_builder=_build_variant_question,
         default_max_iterations=3,
+        bundled_skills=(SCIENTIFIC_VISUALIZATION_SKILL,),
     )
 
     return (gene_set, evidence, simulation, microbiome, variant)
@@ -647,7 +780,8 @@ def filter_skills_for_template(skills: Iterable[Any], template_id: str | None) -
     """Return the skills that should be written for a selected template.
 
     Freeform jobs keep current behavior and receive all enabled skills. Guided
-    jobs always receive workflow skills plus template-matched domain skills.
+    jobs receive workflow skills, template-matched domain skills, and any
+    template-bundled skills that are not already present from the database.
     """
     template = get_job_template(template_id)
     skill_list = list(skills)
@@ -662,6 +796,13 @@ def filter_skills_for_template(skills: Iterable[Any], template_id: str | None) -
             if key not in selected_keys:
                 selected.append(skill)
                 selected_keys.add(key)
+
+    for skill in template.bundled_skills:
+        key = (skill.category, skill.slug)
+        if key not in selected_keys:
+            selected.append(skill)
+            selected_keys.add(key)
+
     return selected
 
 

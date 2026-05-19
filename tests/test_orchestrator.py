@@ -600,6 +600,31 @@ class TestWriteSkillsToClaudeDir:
         assert (skills_dir / "cat1--skill-a.md").exists()
         assert (skills_dir / "cat2--skill-b.md").exists()
 
+    @pytest.mark.asyncio
+    async def test_writes_template_bundled_skills_without_db_skills(self, tmp_path):
+        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
+
+        with (
+            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch(
+                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+            ) as mock_get_skills,
+        ):
+            mock_get_skills.return_value = []
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__ = AsyncMock(return_value=mock_cm)
+            mock_cm.__aexit__ = AsyncMock(return_value=False)
+            mock_session_cls.return_value = mock_cm
+
+            await _write_skills_to_claude_dir(tmp_path, template_id="gene-set-enrichment")
+
+        skills_dir = tmp_path / ".claude" / "skills"
+        assert (skills_dir / "domain--ontology-enrichment.md").exists()
+        assert (skills_dir / "workflow--scientific-visualization.md").exists()
+        assert "Foreground set" in (skills_dir / "domain--ontology-enrichment.md").read_text(
+            encoding="utf-8"
+        )
+
 
 # ─── create_job ───────────────────────────────────────────────────────
 

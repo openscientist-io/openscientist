@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -41,6 +41,17 @@ class TemplateField:
 
 
 @dataclass(frozen=True)
+class TemplateSkill:
+    """Skill document bundled with one or more guided job templates."""
+
+    name: str
+    category: str
+    slug: str
+    description: str
+    content: str
+
+
+@dataclass(frozen=True)
 class JobTemplate:
     """Built-in guided workflow template."""
 
@@ -56,6 +67,7 @@ class JobTemplate:
     visualization_guidance: Sequence[str]
     question_builder: Callable[[Mapping[str, Any]], str]
     default_max_iterations: int = 10
+    bundled_skills: Sequence[TemplateSkill] = ()
 
     def validate_inputs(self, inputs: Mapping[str, Any] | None) -> dict[str, Any]:
         """Validate and normalize user-provided template inputs."""
@@ -104,6 +116,15 @@ class JobTemplate:
         if input_lines:
             sections.append("### Structured Inputs\n" + "\n".join(input_lines))
 
+        if self.bundled_skills:
+            sections.append(
+                "### Bundled Skills\n"
+                + _format_bullets(
+                    f"`{skill.category}--{skill.slug}.md`: {skill.name}"
+                    for skill in self.bundled_skills
+                )
+            )
+
         sections.extend(
             [
                 "### Methodology Guardrails\n" + _format_bullets(self.methodology),
@@ -150,5 +171,5 @@ def _format_value(value: Any) -> str:
     return text if len(text) <= 240 else text[:237] + "..."
 
 
-def _format_bullets(items: Sequence[str]) -> str:
+def _format_bullets(items: Iterable[str]) -> str:
     return "\n".join(f"- {item}" for item in items)

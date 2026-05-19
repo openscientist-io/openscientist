@@ -20,6 +20,7 @@ from openscientist.job_templates.types import (
     TemplateField,
     TemplateFieldOption,
     TemplateResolution,
+    TemplateSkill,
     TemplateValidationError,
 )
 
@@ -30,6 +31,7 @@ __all__ = [
     "TemplateField",
     "TemplateFieldOption",
     "TemplateResolution",
+    "TemplateSkill",
     "TemplateValidationError",
     "build_template_agent_guidance",
     "build_template_research_question",

@@ -9,6 +9,7 @@ from openscientist.job_templates import (
     TemplateValidationError,
     default_max_iterations_for_template,
     filter_skills_for_template,
+    get_job_template,
     list_job_templates,
     resolve_template_submission,
 )
@@ -62,6 +63,32 @@ def test_variant_template_generates_question_and_guidance() -> None:
     assert "Rank variants using explicit evidence" in resolution.agent_guidance
 
 
+def test_gene_set_template_bundles_enrichment_and_visualization_skills() -> None:
+    """Enrichment jobs should carry concrete skills even before DB skill sync."""
+    template = get_job_template("gene-set-enrichment")
+    assert template is not None
+
+    bundled_keys = {(skill.category, skill.slug) for skill in template.bundled_skills}
+
+    assert ("domain", "ontology-enrichment") in bundled_keys
+    assert ("workflow", "scientific-visualization") in bundled_keys
+
+    resolution = resolve_template_submission(
+        template_id="gene-set-enrichment",
+        template_inputs={
+            "gene_set_label": "interferon stimulated genes",
+            "foreground_genes": "IFIT1\nISG15\nMX1",
+            "organism": "Homo sapiens",
+            "database": "go",
+        },
+        research_question="",
+    )
+    assert resolution.agent_guidance is not None
+    assert "`domain--ontology-enrichment.md`: Ontology Enrichment Analysis" in (
+        resolution.agent_guidance
+    )
+
+
 def test_guided_template_validates_required_fields() -> None:
     """Templates should block missing inputs that determine the scientific workflow."""
     with pytest.raises(TemplateValidationError, match="Phenotype or disease context"):
@@ -99,7 +126,26 @@ def test_template_skill_filter_keeps_workflow_and_matching_domain_skills() -> No
     assert [(skill.category, skill.slug) for skill in filtered] == [
         ("workflow", "result-interpretation"),
         ("domain", "genomics"),
+        ("workflow", "scientific-visualization"),
     ]
+
+
+def test_template_skill_filter_adds_bundled_skills_and_deduplicates_existing() -> None:
+    """Template bundles should be guaranteed but not duplicate DB-synced skills."""
+    skills = [
+        SimpleNamespace(category="workflow", slug="result-interpretation", name="Result"),
+        SimpleNamespace(category="domain", slug="ontology-enrichment", name="DB Ontology"),
+    ]
+
+    filtered = filter_skills_for_template(skills, "gene-set-enrichment")
+    keys = [(skill.category, skill.slug) for skill in filtered]
+
+    assert keys == [
+        ("workflow", "result-interpretation"),
+        ("domain", "ontology-enrichment"),
+        ("workflow", "scientific-visualization"),
+    ]
+    assert filtered[1].name == "DB Ontology"
 
 
 def test_freeform_skill_filter_preserves_all_skills() -> None:
