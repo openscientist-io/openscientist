@@ -1,0 +1,69 @@
+id: microbiome-differential-abundance
+version: "1"
+name: Microbiome Differential Abundance
+summary: Analyze microbiome feature differences with metadata, covariates, and compositional caveats.
+default_max_iterations: 3
+question_builder: microbiome-differential-abundance
+fields:
+  - key: comparison
+    label: Comparison
+    required: true
+    placeholder: "e.g., responders vs non-responders, treatment vs control"
+  - key: feature_table_description
+    label: Feature table or uploaded data
+    kind: textarea
+    placeholder: Describe ASV/OTU/taxon table, counts, relative abundance, or uploaded files.
+  - key: metadata_description
+    label: Sample metadata
+    kind: textarea
+    required: true
+    placeholder: Describe metadata columns, sample groups, batches, and collection context.
+  - key: grouping_variable
+    label: Primary grouping variable
+    required: true
+    placeholder: "e.g., treatment_group"
+  - key: covariates
+    label: Covariates
+    placeholder: Optional confounders such as batch, age, sex, site, diet, sequencing depth.
+  - key: taxonomic_level
+    label: Taxonomic level
+    kind: select
+    required: true
+    default: auto
+    options:
+      - value: auto
+        label: Auto-select
+      - value: asv-otu
+        label: ASV/OTU
+      - value: species
+        label: Species
+      - value: genus
+        label: Genus
+      - value: family
+        label: Family
+      - value: phylum
+        label: Phylum
+skill_slugs:
+  - domain:data-science
+  - data-science
+  - domain:genomics
+  - genomics
+  - workflow:scientific-visualization
+  - scientific-visualization
+skill_categories:
+  - workflow
+bundled_skills:
+  - category: workflow
+    slug: scientific-visualization
+methodology:
+  - Inspect sample balance, missing metadata, sequencing depth, and feature sparsity before testing.
+  - Account for microbiome compositionality and multiple testing.
+  - Separate differential abundance from causal or functional claims.
+  - Check confounders and batch effects before interpreting taxa biologically.
+report_guidance:
+  - Include QC, alpha/beta diversity where applicable, differential taxa, effect direction, and FDR.
+  - Report the taxonomic level, normalization/transformation, and statistical method.
+  - State limitations around compositionality, sample size, and confounding.
+visualization_guidance:
+  - Use ordination, diversity summaries, abundance plots, and volcano-style summaries where appropriate.
+  - Make figures interpretable at the selected taxonomic level.

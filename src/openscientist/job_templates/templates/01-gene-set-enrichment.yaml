@@ -1,0 +1,73 @@
+id: gene-set-enrichment
+version: "1"
+name: Gene Set Enrichment
+summary: Guide enrichment analysis with foreground/background sets and database choice.
+default_max_iterations: 2
+question_builder: gene-set-enrichment
+fields:
+  - key: gene_set_label
+    label: Gene set label
+    required: true
+    placeholder: "e.g., upregulated genes in cold-treated samples"
+  - key: foreground_genes
+    label: Foreground genes
+    kind: textarea
+    required: true
+    placeholder: Paste gene symbols/IDs, one per line, or describe the uploaded file.
+    rows: 5
+  - key: background_genes
+    label: Background genes
+    kind: textarea
+    placeholder: Paste the tested/background universe or describe the uploaded file.
+    help_text: Strongly recommended for statistically defensible enrichment.
+    rows: 4
+  - key: organism
+    label: Organism
+    required: true
+    placeholder: "e.g., Homo sapiens"
+  - key: database
+    label: Enrichment database
+    kind: select
+    required: true
+    default: auto
+    options:
+      - value: auto
+        label: Auto-select
+      - value: go
+        label: Gene Ontology
+      - value: kegg
+        label: KEGG
+      - value: reactome
+        label: Reactome
+  - key: biological_context
+    label: Biological context
+    kind: textarea
+    placeholder: Optional condition, tissue, treatment, or phenotype context.
+skill_slugs:
+  - domain:genomics
+  - genomics
+  - domain:data-science
+  - data-science
+  - domain:ontology-enrichment
+  - ontology-enrichment
+  - workflow:scientific-visualization
+  - scientific-visualization
+skill_categories:
+  - workflow
+bundled_skills:
+  - category: domain
+    slug: ontology-enrichment
+  - category: workflow
+    slug: scientific-visualization
+methodology:
+  - Run or design deterministic enrichment/statistical analysis before interpretation.
+  - Use the provided background set when available; if absent, state the bias this creates.
+  - Apply multiple-test correction and report the correction method.
+  - Do not infer enrichment from latent biological knowledge alone.
+report_guidance:
+  - Include enriched terms, adjusted p-values/FDR, effect sizes or overlap counts, and driving genes.
+  - Separate statistical results from biological interpretation.
+  - Call out database choice and background-universe assumptions.
+visualization_guidance:
+  - Prefer bar, dot, or enrichment-map style summaries of top significant terms.
+  - Show foreground/background overlap or leading genes when useful.

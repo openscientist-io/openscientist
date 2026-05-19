@@ -1,5 +1,5 @@
 ---
-name: scientific-visualization
+name: Scientific Visualization
 description: Choose figures that expose statistical evidence, uncertainty, and interpretation
 category: workflow
 tags:

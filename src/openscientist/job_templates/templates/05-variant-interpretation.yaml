@@ -1,0 +1,92 @@
+id: variant-interpretation
+version: "1"
+name: Variant Interpretation
+summary: Rank variants with phenotype context, inheritance assumptions, and deterministic annotation first.
+default_max_iterations: 3
+question_builder: variant-interpretation
+fields:
+  - key: variant_input
+    label: Variants or uploaded VCF
+    kind: textarea
+    required: true
+    placeholder: Paste variants or describe the uploaded VCF/list and relevant columns.
+    rows: 4
+  - key: organism_build
+    label: Organism and genome build
+    kind: select
+    required: true
+    default: human-grch38
+    options:
+      - value: human-grch38
+        label: Human GRCh38
+      - value: human-grch37
+        label: Human GRCh37
+      - value: mouse-grcm39
+        label: Mouse GRCm39
+      - value: other
+        label: Other / specify in context
+  - key: phenotype_context
+    label: Phenotype or disease context
+    kind: textarea
+    required: true
+    placeholder: Clinical phenotype, disease, traits, HPO terms, model organism phenotype, or cohort context.
+    rows: 4
+  - key: interpretation_mode
+    label: Interpretation mode
+    kind: select
+    required: true
+    default: exploratory
+    options:
+      - value: diagnostic
+        label: Diagnostic
+      - value: exploratory
+        label: Exploratory
+      - value: functional
+        label: Functional mechanism
+      - value: cohort-level
+        label: Cohort-level prioritization
+  - key: inheritance_model
+    label: Inheritance model
+    kind: select
+    default: unknown
+    options:
+      - value: unknown
+        label: Unknown
+      - value: de-novo
+        label: De novo
+      - value: dominant
+        label: Dominant
+      - value: recessive
+        label: Recessive
+      - value: compound-het
+        label: Compound heterozygous
+      - value: x-linked
+        label: X-linked
+  - key: affected_genes
+    label: Affected genes or loci
+    kind: textarea
+    placeholder: Optional known genes, intervals, panels, or candidate loci.
+skill_slugs:
+  - domain:genomics
+  - genomics
+  - domain:data-science
+  - data-science
+  - workflow:scientific-visualization
+  - scientific-visualization
+skill_categories:
+  - workflow
+bundled_skills:
+  - category: workflow
+    slug: scientific-visualization
+methodology:
+  - Annotate variants with deterministic sources/tools before interpretation.
+  - Separate pathogenicity evidence, functional plausibility, phenotype match, and inheritance fit.
+  - Rank variants using explicit evidence and uncertainty; do not rely on latent model knowledge alone.
+  - Avoid diagnostic claims beyond the evidence and call out needed validation.
+report_guidance:
+  - Include a ranked variant/gene table with evidence categories and uncertainty.
+  - Summarize phenotype match, inheritance fit, functional rationale, and follow-up validation.
+  - Distinguish clinical interpretation from exploratory biological prioritization.
+visualization_guidance:
+  - Use ranked tables as the primary output.
+  - Add gene/pathway summaries or locus diagrams only when supported by the data.

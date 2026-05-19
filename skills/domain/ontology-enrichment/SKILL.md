@@ -1,5 +1,5 @@
 ---
-name: ontology-enrichment
+name: Ontology Enrichment Analysis
 description: Statistically grounded ontology enrichment with explicit foreground/background sets
 category: domain
 tags:

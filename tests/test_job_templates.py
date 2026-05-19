@@ -11,6 +11,7 @@ from openscientist.job_templates import (
     filter_skills_for_template,
     get_job_template,
     list_job_templates,
+    load_job_templates_from_paths,
     resolve_template_submission,
 )
 
@@ -39,6 +40,55 @@ def test_templates_define_workflow_default_iterations() -> None:
     assert all(2 <= value <= 10 for value in template_defaults.values())
     assert default_max_iterations_for_template("freeform") == FREEFORM_DEFAULT_MAX_ITERATIONS
     assert default_max_iterations_for_template("gene-set-enrichment") == 2
+
+
+def test_templates_are_loaded_from_yaml_specs() -> None:
+    """Built-ins should be data files, not Python literals in a monolithic registry."""
+    template = get_job_template("gene-set-enrichment")
+    assert template is not None
+    assert template.fields[0].key == "gene_set_label"
+    assert template.fields[4].option_labels()["go"] == "Gene Ontology"
+
+
+def test_can_load_plugin_template_from_yaml_without_python_builder(tmp_path) -> None:
+    """Simple templates should not need Python unless they require custom logic."""
+    template_file = tmp_path / "literature-gap.yaml"
+    template_file.write_text(
+        """
+id: literature-gap
+version: "1"
+name: Literature Gap
+summary: Find gaps in a specified literature area.
+default_max_iterations: 2
+question_template: "Find open research gaps in {topic} for {organism}."
+fields:
+  - key: topic
+    label: Topic
+    required: true
+  - key: organism
+    label: Organism
+skill_slugs: []
+skill_categories:
+  - workflow
+methodology:
+  - Separate established findings from open questions.
+report_guidance:
+  - Include a ranked list of gaps and supporting evidence.
+visualization_guidance: []
+""",
+        encoding="utf-8",
+    )
+
+    templates = load_job_templates_from_paths([tmp_path], include_builtins=False)
+
+    assert len(templates) == 1
+    assert templates[0].id == "literature-gap"
+    assert (
+        templates[0].build_research_question(
+            {"topic": "microbiome resilience", "organism": "Homo sapiens"}
+        )
+        == "Find open research gaps in microbiome resilience for Homo sapiens."
+    )
 
 
 def test_variant_template_generates_question_and_guidance() -> None:

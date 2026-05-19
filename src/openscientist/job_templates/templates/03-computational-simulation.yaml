@@ -1,0 +1,71 @@
+id: computational-simulation
+version: "1"
+name: Computational Simulation
+summary: Set up simulations with explicit assumptions, parameters, perturbations, and observables.
+default_max_iterations: 4
+question_builder: computational-simulation
+fields:
+  - key: system_model
+    label: System or model
+    required: true
+    placeholder: "e.g., predator-prey dynamics, metabolic pathway, diffusion process"
+  - key: model_type
+    label: Model type
+    kind: select
+    required: true
+    default: custom
+    options:
+      - value: ode
+        label: ODE / dynamical system
+      - value: stochastic
+        label: Stochastic simulation
+      - value: agent-based
+        label: Agent-based model
+      - value: network
+        label: Network model
+      - value: physics
+        label: Physics-based model
+      - value: custom
+        label: Custom / decide from context
+  - key: parameters
+    label: Parameters and initial conditions
+    kind: textarea
+    required: true
+    placeholder: List known parameters, ranges, units, and initial conditions.
+    rows: 4
+  - key: perturbations
+    label: Perturbations to test
+    kind: textarea
+    required: true
+    placeholder: What interventions, parameter changes, or scenarios should be simulated?
+  - key: observables
+    label: Outputs to measure
+    kind: textarea
+    required: true
+    placeholder: What model outputs should be tracked and compared?
+  - key: assumptions
+    label: Assumptions
+    kind: textarea
+    placeholder: Known simplifications, constraints, or theoretical assumptions.
+skill_slugs:
+  - domain:data-science
+  - data-science
+  - workflow:scientific-visualization
+  - scientific-visualization
+skill_categories:
+  - workflow
+bundled_skills:
+  - category: workflow
+    slug: scientific-visualization
+methodology:
+  - State model assumptions, equations or update rules, and parameter units before running simulations.
+  - Run sensitivity analysis or parameter sweeps for important uncertain inputs.
+  - Distinguish simulation predictions from empirical evidence.
+  - Check whether results are robust to numerical settings and plausible parameter ranges.
+report_guidance:
+  - Include parameter tables, assumptions, scenarios tested, and sensitivity results.
+  - Explain model behavior mechanistically, including failure modes and uncertainty.
+  - Do not present simulated outcomes as validated biological facts.
+visualization_guidance:
+  - Plot trajectories, phase diagrams, parameter sweeps, or scenario comparisons as appropriate.
+  - Use uncertainty bands or replicate summaries for stochastic simulations.
