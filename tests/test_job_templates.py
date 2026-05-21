@@ -17,9 +17,6 @@ from openscientist.job_templates import (
 
 EXPECTED_TEMPLATE_IDS = {
     "gene-set-enrichment",
-    "evidence-synthesis",
-    "computational-simulation",
-    "microbiome-differential-abundance",
     "variant-interpretation",
 }
 
@@ -49,7 +46,7 @@ class TestRegistry:
     def test_default_iterations(self):
         assert default_max_iterations_for_template(None) == FREEFORM_DEFAULT_MAX_ITERATIONS
         assert default_max_iterations_for_template("gene-set-enrichment") == 2
-        assert default_max_iterations_for_template("evidence-synthesis") == 4
+        assert default_max_iterations_for_template("variant-interpretation") == 3
 
 
 class TestInputValidation:

@@ -8,8 +8,6 @@ import pytest
 
 from openscientist.webapp_components.pages import new_job
 from openscientist.webapp_components.pages.new_job import (
-    FREEFORM_TAB,
-    GUIDED_TAB,
     _build_upload_session_id,
     _collect_template_inputs,
     _submit_job,
@@ -43,24 +41,18 @@ def test_submit_job_has_coinvestigate_mode_at_top_level():
     assert "coinvestigate_mode" in sig.parameters
 
 
-def test_submit_job_wires_template_widgets():
-    """_submit_job must accept the tab/template widgets driving guided submissions."""
+def test_submit_job_wires_question_selection_and_widgets():
+    """_submit_job must take the single question box, selection, and template widgets."""
     sig = inspect.signature(_submit_job)
-    for param in (
-        "workflow_tabs",
-        "freeform_question",
-        "guided_question",
-        "template_select",
-        "template_field_widgets",
-    ):
+    for param in ("research_question", "selection", "template_field_widgets"):
         assert param in sig.parameters
 
 
-def test_new_job_page_accepts_workflow_query_param():
-    """The dashboard discovery link relies on /new?workflow=guided."""
+def test_new_job_page_accepts_template_query_param():
+    """The dashboard / deep links rely on /new?template=<id>."""
     sig = inspect.signature(inspect.unwrap(new_job_page))
-    assert "workflow" in sig.parameters
-    assert sig.parameters["workflow"].default == FREEFORM_TAB
+    assert "template" in sig.parameters
+    assert sig.parameters["template"].default is None
 
 
 def test_collect_template_inputs_freeform_returns_none():
@@ -116,10 +108,8 @@ def _base_kwargs(env: dict[str, Any], **overrides: Any) -> dict[str, Any]:
         "job_manager": env["job_manager"],
         "user_can_start_jobs": True,
         "session_id": "user-1:client",
-        "workflow_tabs": SimpleNamespace(value=FREEFORM_TAB),
-        "freeform_question": SimpleNamespace(value="What pathways respond to cold?"),
-        "guided_question": SimpleNamespace(value=""),
-        "template_select": SimpleNamespace(value="gene-set-enrichment"),
+        "research_question": SimpleNamespace(value="What pathways respond to cold?"),
+        "selection": {"template_id": None},
         "template_field_widgets": {},
         "max_iterations": SimpleNamespace(value=10),
         "use_hypotheses": SimpleNamespace(value=False),
@@ -149,7 +139,8 @@ def test_submit_guided_generates_question_and_guidance(submit_env: dict[str, Any
     _submit_job(
         **_base_kwargs(
             submit_env,
-            workflow_tabs=SimpleNamespace(value=GUIDED_TAB),
+            research_question=SimpleNamespace(value=""),
+            selection={"template_id": "gene-set-enrichment"},
             template_field_widgets=widgets,
         )
     )
@@ -164,7 +155,8 @@ def test_submit_guided_missing_required_field_notifies_and_skips(submit_env: dic
     _submit_job(
         **_base_kwargs(
             submit_env,
-            workflow_tabs=SimpleNamespace(value=GUIDED_TAB),
+            research_question=SimpleNamespace(value=""),
+            selection={"template_id": "gene-set-enrichment"},
             template_field_widgets=widgets,
         )
     )

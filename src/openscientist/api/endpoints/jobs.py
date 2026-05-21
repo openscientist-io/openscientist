@@ -23,7 +23,7 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import FormData
@@ -41,6 +41,7 @@ from openscientist.job_manager import JobManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
+templates_router = APIRouter(prefix="/job-templates", tags=["Job Templates"])
 
 
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
@@ -62,11 +63,32 @@ class JobCreate(BaseModel):
         description="Detailed job description",
         examples=["Comparing treated vs control samples to explain pathway shifts"],
     )
-    research_question: str = Field(
-        ...,
-        min_length=1,
-        description="Research question for the analysis",
+    research_question: str | None = Field(
+        None,
+        description=(
+            "Research question for the analysis. Required unless template_id is given, "
+            "in which case the template composes it (ignored in template mode — use "
+            "additional_context for extra guidance)."
+        ),
         examples=["What are the key binding sites in this protein structure?"],
+    )
+    template_id: str | None = Field(
+        None,
+        description="Guided analysis template id (see GET /job-templates). Composes the research question and methodology guidance server-side.",
+        examples=["gene-set-enrichment"],
+    )
+    template_version: str | None = Field(
+        None,
+        description="Pin a template version; if it doesn't match the current version the request is rejected. Omit to use the latest.",
+        examples=["1"],
+    )
+    template_inputs: dict[str, Any] | None = Field(
+        None,
+        description="Structured inputs for the chosen template (e.g. foreground_genes, organism).",
+    )
+    additional_context: str | None = Field(
+        None,
+        description="Extra free-text context appended to a template-composed research question.",
     )
     max_iterations: int = Field(
         5,
@@ -74,6 +96,31 @@ class JobCreate(BaseModel):
         le=20,
         description="Maximum number of analysis iterations",
     )
+
+    @field_validator("template_inputs", mode="before")
+    @classmethod
+    def _parse_template_inputs(cls, value: Any) -> Any:
+        """Accept template_inputs as a JSON string (multipart form) or an object."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            import json
+
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError("template_inputs must be a JSON object") from exc
+        return value
+
+    @model_validator(mode="after")
+    def _require_question_or_template(self) -> "JobCreate":
+        """A freeform job needs a research question; a template job composes one."""
+        if self.template_id is None:
+            if not (self.research_question and self.research_question.strip()):
+                raise ValueError("research_question is required when no template_id is given")
+        return self
+
     use_hypotheses: bool = Field(
         False,
         description="Whether to enable hypothesis tracking and testing tools for this job",
@@ -120,6 +167,38 @@ class JobListResponse(BaseModel):
 
     jobs: list[JobResponse] = Field(..., description="List of jobs")
     total: int = Field(..., description="Total number of jobs")
+
+
+class TemplateFieldOptionSchema(BaseModel):
+    """A selectable option for a template field."""
+
+    value: str
+    label: str
+
+
+class TemplateFieldSchema(BaseModel):
+    """Input field schema for a guided template, for client form rendering."""
+
+    key: str
+    label: str
+    kind: str = Field(..., description="text | textarea | select")
+    required: bool
+    placeholder: str
+    help_text: str
+    options: list[TemplateFieldOptionSchema]
+    default: str | None
+    rows: int
+
+
+class JobTemplateSchema(BaseModel):
+    """A guided analysis template and its input schema."""
+
+    id: str
+    version: str
+    name: str
+    summary: str
+    default_max_iterations: int
+    fields: list[TemplateFieldSchema]
 
 
 class JobStatusResponse(BaseModel):
@@ -173,6 +252,54 @@ async def get_job_by_id(
     stmt = select(Job).where(Job.id == job_uuid)
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+def _resolve_api_template(job_data: "JobCreate") -> tuple[str, str | None]:
+    """Compose research_question + description from a guided template.
+
+    In template mode the template owns the research question; any client-supplied
+    research_question/description are ignored, and additional_context (if any) is
+    appended. Raises HTTP 422 for unknown templates, version mismatches, or
+    invalid/missing structured inputs.
+    """
+    from openscientist.job_templates import (
+        TemplateValidationError,
+        get_job_template,
+        resolve_template_submission,
+    )
+
+    template = get_job_template(job_data.template_id)
+    if template is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown template_id: {job_data.template_id}",
+        )
+    if job_data.template_version and job_data.template_version != template.version:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unsupported template_version '{job_data.template_version}' for "
+                f"'{template.id}'; current version is '{template.version}'"
+            ),
+        )
+    try:
+        resolution = resolve_template_submission(
+            template_id=job_data.template_id,
+            template_inputs=job_data.template_inputs,
+            research_question=None,
+        )
+    except TemplateValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    research_question = resolution.research_question
+    if job_data.additional_context and job_data.additional_context.strip():
+        research_question = (
+            f"{research_question}\n\nAdditional context: {job_data.additional_context.strip()}"
+        )
+    return research_question, resolution.description
 
 
 def _get_job_manager() -> JobManager:
@@ -377,6 +504,14 @@ async def create_job(
 
     job_data, upload_files = await _parse_job_create_request(request)
 
+    # Guided templates compose the research question + methodology guidance
+    # server-side via the same resolver the web UI uses.
+    if job_data.template_id is not None:
+        research_question, description = _resolve_api_template(job_data)
+    else:
+        research_question = job_data.research_question or ""
+        description = job_data.description
+
     # Create job via JobManager (database + filesystem structure).
     job_uuid = uuid4()
     job_manager = _get_job_manager()
@@ -385,7 +520,7 @@ async def create_job(
             data_files = await _persist_uploaded_files(upload_files, Path(upload_tmp))
             job_manager.create_job(
                 job_id=str(job_uuid),
-                research_question=job_data.research_question,
+                research_question=research_question,
                 data_files=data_files,
                 max_iterations=job_data.max_iterations,
                 use_hypotheses=job_data.use_hypotheses,
@@ -393,7 +528,7 @@ async def create_job(
                 investigation_mode=job_data.investigation_mode,
                 owner_id=str(user.id),
                 short_title=job_data.short_title,
-                description=job_data.description,
+                description=description,
                 pdb_code=job_data.pdb_code,
                 space_group=job_data.space_group,
             )
@@ -719,3 +854,44 @@ async def download_artifacts(
         media_type="application/zip",
         filename=f"{download_label}_artifacts.zip",
     )
+
+
+@templates_router.get("", response_model=list[JobTemplateSchema])
+async def list_job_templates_endpoint(
+    user: User = CURRENT_USER_DEP,
+) -> list[JobTemplateSchema]:
+    """List guided analysis templates and their input schemas.
+
+    Clients use this to discover available ``template_id`` values and the
+    structured ``template_inputs`` each one expects.
+    """
+    _ = user
+    from openscientist.job_templates import list_job_templates
+
+    return [
+        JobTemplateSchema(
+            id=template.id,
+            version=template.version,
+            name=template.name,
+            summary=template.summary,
+            default_max_iterations=template.default_max_iterations,
+            fields=[
+                TemplateFieldSchema(
+                    key=field.key,
+                    label=field.label,
+                    kind=field.kind,
+                    required=field.required,
+                    placeholder=field.placeholder,
+                    help_text=field.help_text,
+                    options=[
+                        TemplateFieldOptionSchema(value=option.value, label=option.label)
+                        for option in field.options
+                    ],
+                    default=field.default,
+                    rows=field.rows,
+                )
+                for field in template.fields
+            ],
+        )
+        for template in list_job_templates()
+    ]

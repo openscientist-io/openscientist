@@ -16,6 +16,7 @@ from openscientist.job_templates import (
     TemplateValidationError,
     build_template_research_question,
     default_max_iterations_for_template,
+    get_job_template,
     list_job_templates,
     normalize_template_id,
     resolve_template_submission,
@@ -33,9 +34,6 @@ from openscientist.webapp_components.utils.session import (
 )
 
 logger = logging.getLogger(__name__)
-
-FREEFORM_TAB = "freeform"
-GUIDED_TAB = "guided"
 
 
 def _build_upload_session_id(user_id: str | None, client: object) -> str:
@@ -121,34 +119,30 @@ def _submit_job(
     job_manager: Any,
     user_can_start_jobs: bool,
     session_id: str,
-    workflow_tabs: Any,
-    freeform_question: ui.textarea,
-    guided_question: ui.textarea,
-    template_select: Any,
+    research_question: ui.textarea,
+    selection: dict[str, str | None],
     template_field_widgets: Mapping[str, Mapping[str, Any]],
     max_iterations: ui.number,
     use_hypotheses: ui.switch,
     coinvestigate_mode: ui.switch,
 ) -> None:
-    """Validate input and create a new discovery job."""
+    """Validate input and create a new discovery job.
+
+    ``selection["template_id"]`` is the currently selected guided analysis, or
+    None for a freeform job. Both paths run through the same resolver.
+    """
     if not user_can_start_jobs:
         ui.notify("Your account is pending administrator approval.", type="warning")
         return
 
-    if workflow_tabs.value == GUIDED_TAB:
-        selected_template_id = normalize_template_id(str(template_select.value))
-        template_inputs = _collect_template_inputs(selected_template_id, template_field_widgets)
-        question = guided_question.value
-    else:
-        selected_template_id = None
-        template_inputs = None
-        question = freeform_question.value
+    selected_template_id = selection.get("template_id")
+    template_inputs = _collect_template_inputs(selected_template_id, template_field_widgets)
 
     try:
         resolution = resolve_template_submission(
             template_id=selected_template_id,
             template_inputs=template_inputs,
-            research_question=question,
+            research_question=research_question.value,
         )
     except TemplateValidationError as exc:
         ui.notify(str(exc), type="negative")
@@ -200,11 +194,11 @@ async def _handle_upload(e: Any, session_id: str) -> None:
 
 @ui.page("/new")
 @require_auth
-def new_job_page(workflow: str = FREEFORM_TAB) -> None:
+def new_job_page(template: str | None = None) -> None:
     """Job submission form.
 
-    ``workflow`` is an optional query param (``/new?workflow=guided``) used by the
-    dashboard discovery link to open the guided-templates tab directly.
+    ``template`` is an optional query param (``/new?template=gene-set-enrichment``)
+    that pre-selects a guided analysis chip.
     """
     from openscientist import web_app
 
@@ -233,105 +227,139 @@ def new_job_page(workflow: str = FREEFORM_TAB) -> None:
         await _handle_upload(event, session_id)
 
     templates = list_job_templates()
-    initial_tab = GUIDED_TAB if workflow == GUIDED_TAB and templates else FREEFORM_TAB
+    preselect = normalize_template_id(template) if get_job_template(template) else None
+    # Mutable selection shared with the submit handler. None == freeform.
+    selection: dict[str, str | None] = {"template_id": preselect}
+    sync = {
+        "question": True,
+        "syncing_question": False,
+        "user_edited_iterations": False,
+        "syncing_iterations": False,
+    }
 
     with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):
         ui.label("Submit Discovery Job").classes("text-h5 mb-4")
 
-        with ui.tabs().classes("w-full") as workflow_tabs:
-            ui.tab(FREEFORM_TAB, label="Freeform")
-            ui.tab(GUIDED_TAB, label="Guided templates")
+        research_question = ui.textarea(
+            label="Research Question",
+            placeholder="What do you want OpenScientist to investigate?",
+            validation={"Too short": lambda value: len(value) >= 10},
+        ).classes("w-full")
 
+        # "Common analyses" chip row — optional accelerators, not a mode switch.
+        ui.label("Common analyses").classes("text-sm text-gray-600 mt-2")
+        chips: dict[str, Any] = {}
+        with ui.row().classes("gap-2 flex-wrap"):
+            for tmpl in templates:
+                chips[tmpl.id] = ui.button(tmpl.name).props("rounded no-caps")
+
+        # Per-template structured-input panels (hidden until that chip is selected).
         template_field_widgets: dict[str, dict[str, Any]] = {}
         template_sections: dict[str, Any] = {}
+        for tmpl in templates:
+            with ui.column().classes("w-full gap-3 mt-2 hidden") as section:
+                ui.label(tmpl.summary).classes("text-sm text-gray-700")
+                template_field_widgets[tmpl.id] = {}
+                for field in tmpl.fields:
+                    template_field_widgets[tmpl.id][field.key] = _render_template_field(field)
+            template_sections[tmpl.id] = section
 
-        with ui.tab_panels(workflow_tabs, value=initial_tab).classes("w-full"):
-            with ui.tab_panel(FREEFORM_TAB):
-                freeform_question = ui.textarea(
-                    label="Research Question",
-                    placeholder="e.g., What metabolic pathways are affected by hypothermia?",
-                    validation={"Too short": lambda value: len(value) >= 10},
-                ).classes("w-full")
+        regenerate_button = (
+            ui.button(
+                "Regenerate research question", on_click=lambda: _regenerate(show_errors=True)
+            )
+            .props("outline color=primary no-caps")
+            .classes("w-full hidden")
+        )
 
-            with ui.tab_panel(GUIDED_TAB):
-                ui.label(
-                    "Guided workflows collect the inputs a rigorous analysis needs and "
-                    "compose the research question for you. You can edit it before starting."
-                ).classes("text-sm text-gray-700 mb-2")
-
-                template_select = ui.select(
-                    options={template.id: template.name for template in templates},
-                    value=templates[0].id if templates else None,
-                    label="Template",
-                ).classes("w-full")
-
-                for template in templates:
-                    with ui.column().classes("w-full gap-3 hidden") as section:
-                        ui.label(template.summary).classes("text-sm text-gray-700")
-                        template_field_widgets[template.id] = {}
-                        for field in template.fields:
-                            template_field_widgets[template.id][field.key] = _render_template_field(
-                                field
-                            )
-                    template_sections[template.id] = section
-
-                guided_question = ui.textarea(
-                    label="Generated Research Question",
-                    placeholder="Fill in the fields above to generate a research question.",
-                ).classes("w-full")
-
-        template_state = {"syncing_question": False, "question_synced_to_template": True}
-
-        def update_generated_question(*, show_errors: bool = False) -> bool:
-            selected = normalize_template_id(str(template_select.value))
-            if selected is None:
+        def _regenerate(*, show_errors: bool = False) -> bool:
+            tid = selection["template_id"]
+            if tid is None:
                 return False
-            template_inputs = _collect_template_inputs(selected, template_field_widgets)
+            inputs = _collect_template_inputs(tid, template_field_widgets)
             try:
-                generated = build_template_research_question(selected, template_inputs)
+                generated = build_template_research_question(tid, inputs)
             except TemplateValidationError as exc:
                 if show_errors:
                     ui.notify(str(exc), type="warning")
                 return False
-
-            template_state["syncing_question"] = True
-            guided_question.value = generated
-            guided_question.update()
-            template_state["syncing_question"] = False
-            template_state["question_synced_to_template"] = True
+            sync["syncing_question"] = True
+            research_question.value = generated
+            research_question.update()
+            sync["syncing_question"] = False
+            sync["question"] = True
             return True
 
-        regenerate_button = (
-            ui.button(
-                "Regenerate Research Question",
-                on_click=lambda: update_generated_question(show_errors=True),
-            )
-            .props("outline color=primary")
-            .classes("w-full hidden")
-        )
+        def _refresh_chip_styles() -> None:
+            for tid, chip in chips.items():
+                if tid == selection["template_id"]:
+                    chip.props(remove="outline", add="unelevated color=primary")
+                else:
+                    chip.props(remove="unelevated", add="outline color=primary")
 
-        def update_template_visibility() -> None:
-            selected = str(template_select.value)
-            for template_id, section in template_sections.items():
-                if template_id == selected:
+        def _refresh_sections() -> None:
+            for tid, section in template_sections.items():
+                if tid == selection["template_id"]:
                     section.classes(remove="hidden")
                 else:
                     section.classes(add="hidden")
+            if selection["template_id"] is None:
+                regenerate_button.classes(add="hidden")
+            else:
+                regenerate_button.classes(remove="hidden")
 
-        def maybe_update_template_question() -> None:
-            if template_state["question_synced_to_template"]:
-                update_generated_question()
+        def _update_default_iterations() -> None:
+            if sync["user_edited_iterations"]:
+                return
+            tid = selection["template_id"]
+            default = (
+                default_max_iterations_for_template(tid)
+                if tid is not None
+                else FREEFORM_DEFAULT_MAX_ITERATIONS
+            )
+            sync["syncing_iterations"] = True
+            max_iterations.value = default
+            max_iterations.update()
+            sync["syncing_iterations"] = False
 
-        def mark_question_edited() -> None:
-            if not template_state["syncing_question"]:
-                template_state["question_synced_to_template"] = False
+        def _select_template(tid: str) -> None:
+            # Toggle: clicking the active chip returns to freeform.
+            selection["template_id"] = None if selection["template_id"] == tid else tid
+            _refresh_chip_styles()
+            _refresh_sections()
+            if selection["template_id"] is not None:
+                sync["question"] = True
+                _regenerate()
+            _update_default_iterations()
+
+        def _maybe_regenerate() -> None:
+            if selection["template_id"] is not None and sync["question"]:
+                _regenerate()
+
+        def _mark_question_edited() -> None:
+            if not sync["syncing_question"]:
+                sync["question"] = False
+
+        def _mark_iterations_edited() -> None:
+            if not sync["syncing_iterations"]:
+                sync["user_edited_iterations"] = True
+
+        def _chip_handler(t: str) -> Any:
+            return lambda: _select_template(t)
+
+        for tid, chip in chips.items():
+            chip.on_click(_chip_handler(tid))
+        research_question.on("update:model-value", lambda _e: _mark_question_edited())
+        for widgets in template_field_widgets.values():
+            for widget in widgets.values():
+                widget.on("update:model-value", lambda _e: _maybe_regenerate())
 
         ui.upload(
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
             multiple=True,
             auto_upload=True,
             on_upload=on_upload,
-        ).classes("w-full")
+        ).classes("w-full mt-2")
         ui.label("Maximum file size: 500 MB per file").classes("text-caption text-grey-6")
 
         max_iterations = ui.number(
@@ -341,52 +369,7 @@ def new_job_page(workflow: str = FREEFORM_TAB) -> None:
             max=100,
             step=1,
         ).classes("w-full")
-
-        iteration_state = {"syncing_iterations": False, "user_edited_iterations": False}
-
-        def update_default_iterations() -> None:
-            if iteration_state["user_edited_iterations"]:
-                return
-            if workflow_tabs.value == GUIDED_TAB:
-                default = default_max_iterations_for_template(str(template_select.value))
-            else:
-                default = FREEFORM_DEFAULT_MAX_ITERATIONS
-            iteration_state["syncing_iterations"] = True
-            max_iterations.value = default
-            max_iterations.update()
-            iteration_state["syncing_iterations"] = False
-
-        def mark_iterations_edited() -> None:
-            if not iteration_state["syncing_iterations"]:
-                iteration_state["user_edited_iterations"] = True
-
-        def show_regenerate(visible: bool) -> None:
-            if visible:
-                regenerate_button.classes(remove="hidden")
-            else:
-                regenerate_button.classes(add="hidden")
-
-        def handle_tab_change() -> None:
-            guided = workflow_tabs.value == GUIDED_TAB
-            show_regenerate(guided)
-            if guided:
-                template_state["question_synced_to_template"] = True
-                update_generated_question()
-            update_default_iterations()
-
-        def handle_template_change() -> None:
-            update_template_visibility()
-            template_state["question_synced_to_template"] = True
-            update_generated_question()
-            update_default_iterations()
-
-        workflow_tabs.on("update:model-value", lambda _event: handle_tab_change())
-        template_select.on("update:model-value", lambda _event: handle_template_change())
-        guided_question.on("update:model-value", lambda _event: mark_question_edited())
-        max_iterations.on("update:model-value", lambda _event: mark_iterations_edited())
-        for widgets in template_field_widgets.values():
-            for widget in widgets.values():
-                widget.on("update:model-value", lambda _event: maybe_update_template_question())
+        max_iterations.on("update:model-value", lambda _e: _mark_iterations_edited())
 
         ui.separator().classes("my-4")
         use_hypotheses = ui.switch("Hypothesis Generation", value=False)
@@ -409,10 +392,8 @@ def new_job_page(workflow: str = FREEFORM_TAB) -> None:
                 job_manager=job_manager,
                 user_can_start_jobs=user_can_start_jobs,
                 session_id=session_id,
-                workflow_tabs=workflow_tabs,
-                freeform_question=freeform_question,
-                guided_question=guided_question,
-                template_select=template_select,
+                research_question=research_question,
+                selection=selection,
                 template_field_widgets=template_field_widgets,
                 max_iterations=max_iterations,
                 use_hypotheses=use_hypotheses,
@@ -420,7 +401,9 @@ def new_job_page(workflow: str = FREEFORM_TAB) -> None:
             ),
         ).classes("w-full mt-4")
 
-        # Initialize guided-tab state when deep-linked via ?workflow=guided.
-        update_template_visibility()
-        if initial_tab == GUIDED_TAB:
-            handle_tab_change()
+        # Apply initial state (chip styles, and any ?template= preselection).
+        _refresh_chip_styles()
+        if selection["template_id"] is not None:
+            _refresh_sections()
+            _regenerate()
+            _update_default_iterations()
