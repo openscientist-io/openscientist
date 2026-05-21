@@ -253,11 +253,20 @@ def new_job_page(template: str | None = None) -> None:
             for tmpl in templates:
                 chips[tmpl.id] = ui.button(tmpl.name).props("rounded no-caps")
 
-        # Per-template structured-input panels (hidden until that chip is selected).
+        # Per-template structured-input panels: a distinct, tinted card with a
+        # header so it's clear these fields belong to the selected analysis and
+        # that the selection can be removed. Hidden until that chip is selected.
         template_field_widgets: dict[str, dict[str, Any]] = {}
         template_sections: dict[str, Any] = {}
         for tmpl in templates:
-            with ui.column().classes("w-full gap-3 mt-2 hidden") as section:
+            with ui.card().classes(
+                "w-full gap-2 mt-2 hidden border border-primary/40 bg-primary/5"
+            ) as section:
+                with ui.row().classes("w-full items-center justify-between no-wrap"):
+                    ui.label(f"{tmpl.name} setup").classes("text-sm font-semibold text-primary")
+                    ui.button("Clear", icon="close", on_click=lambda: _clear_selection()).props(
+                        "flat dense no-caps color=primary"
+                    )
                 ui.label(tmpl.summary).classes("text-sm text-gray-700")
                 template_field_widgets[tmpl.id] = {}
                 for field in tmpl.fields:
@@ -307,6 +316,12 @@ def new_job_page(template: str | None = None) -> None:
                 regenerate_button.classes(add="hidden")
             else:
                 regenerate_button.classes(remove="hidden")
+
+        def _clear_selection() -> None:
+            selection["template_id"] = None
+            _refresh_chip_styles()
+            _refresh_sections()
+            _update_default_iterations()
 
         def _update_default_iterations() -> None:
             if sync["user_edited_iterations"]:
