@@ -246,6 +246,13 @@ def jobs_page() -> None:
 
     badges_container = ui.row().classes("w-full")
 
+    if is_configured and can_start_jobs:
+        with ui.row().classes("w-full items-center gap-1 text-sm text-gray-600"):
+            ui.label("Common analyses?")
+            ui.link("Start from a guided template →", "/new?workflow=guided").classes(
+                "text-primary no-underline hover:underline"
+            )
+
     with ui.tabs().classes("w-full") as tabs:
         my_jobs_tab = ui.tab("My Jobs", icon="work")
         shared_tab = ui.tab("Shared with me", icon="people")
