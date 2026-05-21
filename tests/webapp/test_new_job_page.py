@@ -41,10 +41,10 @@ def test_submit_job_has_coinvestigate_mode_at_top_level():
     assert "coinvestigate_mode" in sig.parameters
 
 
-def test_submit_job_wires_question_selection_and_widgets():
-    """_submit_job must take the single question box, selection, and template widgets."""
+def test_submit_job_wires_tabs_question_selection_and_widgets():
+    """_submit_job must take the tab state, freeform box, selection, and widgets."""
     sig = inspect.signature(_submit_job)
-    for param in ("research_question", "selection", "template_field_widgets"):
+    for param in ("workflow_tabs", "freeform_question", "selection", "template_field_widgets"):
         assert param in sig.parameters
 
 
@@ -108,8 +108,9 @@ def _base_kwargs(env: dict[str, Any], **overrides: Any) -> dict[str, Any]:
         "job_manager": env["job_manager"],
         "user_can_start_jobs": True,
         "session_id": "user-1:client",
-        "research_question": SimpleNamespace(value="What pathways respond to cold?"),
-        "selection": {"template_id": None},
+        "workflow_tabs": SimpleNamespace(value="freeform"),
+        "freeform_question": SimpleNamespace(value="What pathways respond to cold?"),
+        "selection": {"template_id": "gene-set-enrichment"},
         "template_field_widgets": {},
         "max_iterations": SimpleNamespace(value=10),
         "use_hypotheses": SimpleNamespace(value=False),
@@ -139,7 +140,7 @@ def test_submit_guided_generates_question_and_guidance(submit_env: dict[str, Any
     _submit_job(
         **_base_kwargs(
             submit_env,
-            research_question=SimpleNamespace(value=""),
+            workflow_tabs=SimpleNamespace(value="guided"),
             selection={"template_id": "gene-set-enrichment"},
             template_field_widgets=widgets,
         )
@@ -155,7 +156,7 @@ def test_submit_guided_missing_required_field_notifies_and_skips(submit_env: dic
     _submit_job(
         **_base_kwargs(
             submit_env,
-            research_question=SimpleNamespace(value=""),
+            workflow_tabs=SimpleNamespace(value="guided"),
             selection={"template_id": "gene-set-enrichment"},
             template_field_widgets=widgets,
         )

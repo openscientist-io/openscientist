@@ -35,6 +35,9 @@ from openscientist.webapp_components.utils.session import (
 
 logger = logging.getLogger(__name__)
 
+FREEFORM_TAB = "freeform"
+GUIDED_TAB = "guided"
+
 
 def _build_upload_session_id(user_id: str | None, client: object) -> str:
     """Build an upload-session key scoped to user and websocket client."""
@@ -72,7 +75,7 @@ def _collect_template_inputs(
     template_id: str | None,
     template_field_widgets: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any] | None:
-    """Collect structured inputs for the selected guided workflow."""
+    """Collect structured inputs for the selected guided analysis."""
     normalized_template_id = normalize_template_id(template_id)
     if normalized_template_id is None:
         return None
@@ -119,7 +122,8 @@ def _submit_job(
     job_manager: Any,
     user_can_start_jobs: bool,
     session_id: str,
-    research_question: ui.textarea,
+    workflow_tabs: Any,
+    freeform_question: ui.textarea,
     selection: dict[str, str | None],
     template_field_widgets: Mapping[str, Mapping[str, Any]],
     max_iterations: ui.number,
@@ -128,21 +132,29 @@ def _submit_job(
 ) -> None:
     """Validate input and create a new discovery job.
 
-    ``selection["template_id"]`` is the currently selected guided analysis, or
-    None for a freeform job. Both paths run through the same resolver.
+    The active tab decides the path: the "Common analyses" tab composes the
+    research question + guidance from the selected template's inputs; the
+    freeform tab uses the typed research question. Both run through the same
+    resolver.
     """
     if not user_can_start_jobs:
         ui.notify("Your account is pending administrator approval.", type="warning")
         return
 
-    selected_template_id = selection.get("template_id")
-    template_inputs = _collect_template_inputs(selected_template_id, template_field_widgets)
+    if workflow_tabs.value == GUIDED_TAB:
+        template_id = selection.get("template_id")
+        template_inputs = _collect_template_inputs(template_id, template_field_widgets)
+        question = None
+    else:
+        template_id = None
+        template_inputs = None
+        question = freeform_question.value
 
     try:
         resolution = resolve_template_submission(
-            template_id=selected_template_id,
+            template_id=template_id,
             template_inputs=template_inputs,
-            research_question=research_question.value,
+            research_question=question,
         )
     except TemplateValidationError as exc:
         ui.notify(str(exc), type="negative")
@@ -198,7 +210,7 @@ def new_job_page(template: str | None = None) -> None:
     """Job submission form.
 
     ``template`` is an optional query param (``/new?template=gene-set-enrichment``)
-    that pre-selects a guided analysis chip.
+    that opens the Common analyses tab with that analysis selected.
     """
     from openscientist import web_app
 
@@ -228,132 +240,102 @@ def new_job_page(template: str | None = None) -> None:
 
     templates = list_job_templates()
     preselect = normalize_template_id(template) if get_job_template(template) else None
-    # Mutable selection shared with the submit handler. None == freeform.
-    selection: dict[str, str | None] = {"template_id": preselect}
-    sync = {
-        "question": True,
-        "syncing_question": False,
-        "user_edited_iterations": False,
-        "syncing_iterations": False,
-    }
+    default_guided = preselect or (templates[0].id if templates else None)
+    selection: dict[str, str | None] = {"template_id": default_guided}
+    initial_tab = GUIDED_TAB if preselect else FREEFORM_TAB
+    sync = {"user_edited_iterations": False, "syncing_iterations": False}
 
     with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):
         ui.label("Submit Discovery Job").classes("text-h5 mb-4")
 
-        research_question = ui.textarea(
-            label="Research Question",
-            placeholder="What do you want OpenScientist to investigate?",
-            validation={"Too short": lambda value: len(value) >= 10},
-        ).classes("w-full")
+        with ui.tabs().classes("w-full") as workflow_tabs:
+            ui.tab(FREEFORM_TAB, label="Write a question")
+            ui.tab(GUIDED_TAB, label="Common analyses")
 
-        # "Common analyses" chip row — optional accelerators, not a mode switch.
-        ui.label("Common analyses").classes("text-sm text-gray-600 mt-2")
-        chips: dict[str, Any] = {}
-        with ui.row().classes("gap-2 flex-wrap"):
-            for tmpl in templates:
-                chips[tmpl.id] = ui.button(tmpl.name).props("rounded no-caps")
-
-        # Per-template structured-input panels: a distinct, tinted card with a
-        # header so it's clear these fields belong to the selected analysis and
-        # that the selection can be removed. Hidden until that chip is selected.
         template_field_widgets: dict[str, dict[str, Any]] = {}
         template_sections: dict[str, Any] = {}
-        for tmpl in templates:
-            with ui.card().classes(
-                "w-full gap-2 mt-2 hidden border border-primary/40 bg-primary/5"
-            ) as section:
-                with ui.row().classes("w-full items-center justify-between no-wrap"):
-                    ui.label(f"{tmpl.name} setup").classes("text-sm font-semibold text-primary")
-                    ui.button("Clear", icon="close", on_click=lambda: _clear_selection()).props(
-                        "flat dense no-caps color=primary"
+        chips: dict[str, Any] = {}
+        preview_label: Any = None
+
+        with ui.tab_panels(workflow_tabs, value=initial_tab).classes("w-full"):
+            with ui.tab_panel(FREEFORM_TAB):
+                freeform_question = ui.textarea(
+                    label="Research Question",
+                    placeholder="What do you want OpenScientist to investigate?",
+                    validation={"Too short": lambda value: len(value) >= 10},
+                ).classes("w-full")
+
+            with ui.tab_panel(GUIDED_TAB):
+                ui.label(
+                    "Pick an analysis — we collect the inputs it needs and run it with the "
+                    "right methodology."
+                ).classes("text-sm text-gray-700 mb-2")
+                with ui.row().classes("gap-2 flex-wrap"):
+                    for tmpl in templates:
+                        chips[tmpl.id] = ui.button(tmpl.name).props("rounded no-caps")
+
+                for tmpl in templates:
+                    with ui.card().classes(
+                        "w-full gap-2 mt-2 hidden border border-primary/40 bg-primary/5"
+                    ) as section:
+                        ui.label(f"{tmpl.name} setup").classes("text-sm font-semibold text-primary")
+                        ui.label(tmpl.summary).classes("text-sm text-gray-700")
+                        template_field_widgets[tmpl.id] = {}
+                        for field in tmpl.fields:
+                            template_field_widgets[tmpl.id][field.key] = _render_template_field(
+                                field
+                            )
+                    template_sections[tmpl.id] = section
+
+                with ui.expansion("Preview research question").classes("w-full mt-2"):
+                    preview_label = ui.label("").classes(
+                        "text-sm text-gray-700 whitespace-pre-wrap"
                     )
-                ui.label(tmpl.summary).classes("text-sm text-gray-700")
-                template_field_widgets[tmpl.id] = {}
-                for field in tmpl.fields:
-                    template_field_widgets[tmpl.id][field.key] = _render_template_field(field)
-            template_sections[tmpl.id] = section
 
-        regenerate_button = (
-            ui.button(
-                "Regenerate research question", on_click=lambda: _regenerate(show_errors=True)
-            )
-            .props("outline color=primary no-caps")
-            .classes("w-full hidden")
-        )
-
-        def _regenerate(*, show_errors: bool = False) -> bool:
+        def _update_preview() -> None:
             tid = selection["template_id"]
-            if tid is None:
-                return False
+            if tid is None or preview_label is None:
+                return
             inputs = _collect_template_inputs(tid, template_field_widgets)
             try:
-                generated = build_template_research_question(tid, inputs)
-            except TemplateValidationError as exc:
-                if show_errors:
-                    ui.notify(str(exc), type="warning")
-                return False
-            sync["syncing_question"] = True
-            research_question.value = generated
-            research_question.update()
-            sync["syncing_question"] = False
-            sync["question"] = True
-            return True
+                preview_label.set_text(build_template_research_question(tid, inputs))
+            except TemplateValidationError:
+                preview_label.set_text(
+                    "Complete the required fields to preview the research question."
+                )
 
-        def _refresh_chip_styles() -> None:
+        def _refresh_chips() -> None:
             for tid, chip in chips.items():
                 if tid == selection["template_id"]:
                     chip.props(remove="outline", add="unelevated color=primary")
                 else:
                     chip.props(remove="unelevated", add="outline color=primary")
 
-        def _refresh_sections() -> None:
+        def _refresh_field_cards() -> None:
             for tid, section in template_sections.items():
                 if tid == selection["template_id"]:
                     section.classes(remove="hidden")
                 else:
                     section.classes(add="hidden")
-            if selection["template_id"] is None:
-                regenerate_button.classes(add="hidden")
-            else:
-                regenerate_button.classes(remove="hidden")
 
-        def _clear_selection() -> None:
-            selection["template_id"] = None
-            _refresh_chip_styles()
-            _refresh_sections()
-            _update_default_iterations()
-
-        def _update_default_iterations() -> None:
+        def _update_iterations() -> None:
             if sync["user_edited_iterations"]:
                 return
-            tid = selection["template_id"]
-            default = (
-                default_max_iterations_for_template(tid)
-                if tid is not None
-                else FREEFORM_DEFAULT_MAX_ITERATIONS
-            )
+            if workflow_tabs.value == GUIDED_TAB and selection["template_id"] is not None:
+                default = default_max_iterations_for_template(selection["template_id"])
+            else:
+                default = FREEFORM_DEFAULT_MAX_ITERATIONS
             sync["syncing_iterations"] = True
             max_iterations.value = default
             max_iterations.update()
             sync["syncing_iterations"] = False
 
         def _select_template(tid: str) -> None:
-            # Toggle: clicking the active chip returns to freeform.
-            selection["template_id"] = None if selection["template_id"] == tid else tid
-            _refresh_chip_styles()
-            _refresh_sections()
-            if selection["template_id"] is not None:
-                sync["question"] = True
-                _regenerate()
-            _update_default_iterations()
-
-        def _maybe_regenerate() -> None:
-            if selection["template_id"] is not None and sync["question"]:
-                _regenerate()
-
-        def _mark_question_edited() -> None:
-            if not sync["syncing_question"]:
-                sync["question"] = False
+            selection["template_id"] = tid
+            _refresh_chips()
+            _refresh_field_cards()
+            _update_preview()
+            _update_iterations()
 
         def _mark_iterations_edited() -> None:
             if not sync["syncing_iterations"]:
@@ -364,10 +346,10 @@ def new_job_page(template: str | None = None) -> None:
 
         for tid, chip in chips.items():
             chip.on_click(_chip_handler(tid))
-        research_question.on("update:model-value", lambda _e: _mark_question_edited())
+        workflow_tabs.on("update:model-value", lambda _e: _update_iterations())
         for widgets in template_field_widgets.values():
             for widget in widgets.values():
-                widget.on("update:model-value", lambda _e: _maybe_regenerate())
+                widget.on("update:model-value", lambda _e: _update_preview())
 
         ui.upload(
             label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
@@ -407,7 +389,8 @@ def new_job_page(template: str | None = None) -> None:
                 job_manager=job_manager,
                 user_can_start_jobs=user_can_start_jobs,
                 session_id=session_id,
-                research_question=research_question,
+                workflow_tabs=workflow_tabs,
+                freeform_question=freeform_question,
                 selection=selection,
                 template_field_widgets=template_field_widgets,
                 max_iterations=max_iterations,
@@ -416,9 +399,9 @@ def new_job_page(template: str | None = None) -> None:
             ),
         ).classes("w-full mt-4")
 
-        # Apply initial state (chip styles, and any ?template= preselection).
-        _refresh_chip_styles()
-        if selection["template_id"] is not None:
-            _refresh_sections()
-            _regenerate()
-            _update_default_iterations()
+        # Initialize guided-tab state (chip styling, visible card, preview).
+        _refresh_chips()
+        _refresh_field_cards()
+        _update_preview()
+        if initial_tab == GUIDED_TAB:
+            _update_iterations()
