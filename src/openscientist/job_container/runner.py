@@ -73,6 +73,8 @@ class JobContainerRunner:
             env["GOOGLE_APPLICATION_CREDENTIALS"] = "/agent/gcp-credentials.json"
         if settings.phenix.phenix_host_path:
             env["PHENIX_PATH"] = "/opt/phenix"
+        if settings.exomiser.exomiser_host_path:
+            env["EXOMISER_PATH"] = "/opt/exomiser"
         return env
 
     @staticmethod
@@ -98,6 +100,12 @@ class JobContainerRunner:
         if phenix_host:
             volumes[str(Path(phenix_host).expanduser().resolve())] = {
                 "bind": "/opt/phenix",
+                "mode": "ro",
+            }
+        exomiser_host = settings.exomiser.exomiser_host_path
+        if exomiser_host:
+            volumes[str(Path(exomiser_host).expanduser().resolve())] = {
+                "bind": "/opt/exomiser",
                 "mode": "ro",
             }
         return volumes
