@@ -33,9 +33,8 @@ associations across human + model organisms), inheritance filtering, and pathoge
 **Workflow:**
 1. Confirm inputs (phenopacket with HPO terms; VCF; genome assembly).
 2. Run `run_exomiser` (the pre-installed Exomiser, `analyse`, default preset).
-3. The tool emits the deterministic baseline `exomiser_ranking.json` (gene + disease rankings) for you — read it (and the parquet/jsonl for full detail).
-4. Optionally write an evidence-cited `reranked.json` (every change cites a source).
-5. Interpret the top candidates and write a clinical report.
+3. The tool emits the deterministic `exomiser_ranking.json` (gene + disease rankings) for you — read it (and the parquet/jsonl for full detail).
+4. Interpret the top candidates and write a clinical report.
 
 ---
 
@@ -123,14 +122,10 @@ Key fields:
 
 ---
 
-## 4. Structured ranked output — two files
+## 4. Structured ranked output
 
-There are two ranking files. The **baseline is emitted for you by the tool**; you produce the
-evidence-cited re-ranking. Keeping them separate means the deterministic baseline is never
-muddied by interpretation.
-
-**(a) `exomiser_ranking.json` — deterministic baseline, written by `run_exomiser`.** You do NOT
-write this. The tool parses Exomiser's output and emits it at the path returned in the result's
+`run_exomiser` emits **`exomiser_ranking.json`** for you — the deterministic ranking. You do NOT
+write it. The tool parses Exomiser's output and emits it at the path returned in the result's
 `exomiser_ranking` field. Exomiser ranks **both genes and diseases**, so the file carries both:
 `geneRanking` (sorted by `geneCombinedScore`, tie-broken by `geneSymbol` then `moi`) and
 `diseaseRanking` (the hiPhive phenotype-driven disease matches, best score per disease). Lists
@@ -156,26 +151,10 @@ re-order it; cite it as the reproducible baseline.**
 }
 ```
 
-**(b) `reranked.json` — formal, evidence-cited re-ranking.** This is OpenScientist's value-add:
-you MAY re-order based on additional evidence (PubMed, ClinVar, OMIM, the database skills), **but
-every move must be grounded in a cited source** — auditable, not a hunch. Record each item's new
-rank, its `exomiserRank`, the rationale, and the evidence.
-
-```json
-{
-  "schemaVersion": "1",
-  "basis": "exomiser_geneCombinedScore + cited evidence",
-  "ranking": [
-    {"rank": 1, "geneSymbol": "...", "geneId": "...", "exomiserRank": 3,
-     "rationale": "...",
-     "evidence": [{"source": "ClinVar", "id": "VCV...", "note": "..."},
-                  {"source": "PubMed", "id": "PMID:...", "note": "..."}]}
-  ]
-}
-```
-
-Rules: `exomiser_ranking.json` is the reproducible baseline — never re-order it. In
-`reranked.json`, every rank change cites ≥1 source; no unsupported disease/variant claims.
+This skill runs Exomiser and reports **its** ranking — it does not re-rank. Re-ranking candidates
+against external evidence (PubMed, ClinVar, OMIM, the database skills) is a separate step, done
+only when the user asks for it or on the agent's own initiative — it is not a standard output of
+this skill.
 
 ---
 
