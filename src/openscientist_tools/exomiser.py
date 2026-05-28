@@ -20,6 +20,7 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
@@ -130,6 +131,146 @@ def _write_phenotype_only_analysis(run_dir: Path, assembly: str, hpo_ids: list[s
     with analysis_path.open("w") as fh:
         yaml.safe_dump(analysis, fh, sort_keys=False)
     return analysis_path
+
+
+def _baseline_run_metadata(
+    sample: str, assembly: str, jar: str, exomiser_path: str
+) -> dict[str, Any]:
+    """Best-effort run metadata for the deterministic ranking file."""
+    # Exomiser version from the jar filename: exomiser-cli-15.0.0.jar -> 15.0.0
+    version = Path(jar).stem.replace("exomiser-cli-", "") or None
+    data_version: str | None = None
+    manifest = Path(exomiser_path) / "openscientist-exomiser-manifest.txt"
+    try:
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            if line.startswith("exomiser_data_version="):
+                data_version = line.split("=", 1)[1].strip() or None
+                break
+    except OSError:
+        pass
+    return {
+        "sampleId": Path(sample).stem,
+        "assembly": assembly,
+        "exomiserVersion": version,
+        "dataVersion": data_version,
+    }
+
+
+def _gene_ranking_entry(g: dict[str, Any]) -> dict[str, Any]:
+    """Build one gene-ranking row from an Exomiser JSONL gene record."""
+    gene_scores = g.get("geneScores") or []
+    gs = gene_scores[0] if gene_scores else {}
+    ident = g.get("geneIdentifier") or {}
+    acmg: str | None = None
+    for a in gs.get("acmgAssignments") or []:
+        acmg = a.get("acmgClassification")
+        if acmg:
+            break
+    variants: list[str] = []
+    for v in gs.get("contributingVariants") or []:
+        contig, start, ref, alt = v.get("contigName"), v.get("start"), v.get("ref"), v.get("alt")
+        if contig and start and ref and alt:
+            variants.append(f"{contig}-{start}-{ref}-{alt}")
+    matches = ((g.get("priorityResults") or {}).get("HIPHIVE_PRIORITY") or {}).get(
+        "diseaseMatches"
+    ) or []
+    top_disease: str | None = None
+    if matches:
+        d = (matches[0].get("model") or {}).get("disease") or {}
+        if d.get("diseaseId"):
+            top_disease = f"{d['diseaseId']} {d.get('diseaseName') or ''}".strip()
+    return {
+        "geneSymbol": g.get("geneSymbol"),
+        "geneId": ident.get("ensemblId") or ident.get("geneId"),
+        "entrezId": ident.get("entrezId"),
+        "moi": gs.get("modeOfInheritance"),
+        "geneCombinedScore": g.get("combinedScore"),
+        "genePhenotypeScore": g.get("priorityScore"),
+        "geneVariantScore": g.get("variantScore"),
+        "acmgClassification": acmg,
+        "variants": variants,
+        "topDiseaseMatch": top_disease,
+    }
+
+
+def _write_baseline_ranking(
+    run_dir: Path,
+    jsonl_files: list[str],
+    *,
+    sample: str,
+    assembly: str,
+    jar: str,
+    exomiser_path: str,
+    max_genes: int = 100,
+    max_diseases: int = 50,
+) -> Path | None:
+    """Emit the deterministic baseline ranking (genes + phenotype-driven diseases).
+
+    Parses Exomiser's gene-level JSONL so the immutable baseline never depends on the
+    agent (it's a pure data transform). Diseases are the hiPhive phenotype matches
+    aggregated across genes, keeping the best score per disease. Gene/disease lists are
+    capped (``totalGenes``/``totalDiseases`` record the full counts). Returns the
+    written path, or None if there is no JSONL to parse.
+    """
+    if not jsonl_files:
+        return None
+    genes: list[dict[str, Any]] = []
+    diseases: dict[str, dict[str, Any]] = {}
+    for jf in jsonl_files:
+        try:
+            with open(jf, encoding="utf-8") as fh:
+                for raw in fh:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    g = json.loads(line)
+                    genes.append(g)
+                    hiphive = (g.get("priorityResults") or {}).get("HIPHIVE_PRIORITY") or {}
+                    for dm in hiphive.get("diseaseMatches") or []:
+                        disease = (dm.get("model") or {}).get("disease") or {}
+                        disease_id, score = disease.get("diseaseId"), dm.get("score")
+                        if not disease_id or score is None:
+                            continue
+                        cur = diseases.get(disease_id)
+                        if cur is None or score > cur["phenotypeScore"]:
+                            diseases[disease_id] = {
+                                "diseaseId": disease_id,
+                                "diseaseName": disease.get("diseaseName"),
+                                "phenotypeScore": score,
+                                "topGene": g.get("geneSymbol"),
+                            }
+        except (OSError, json.JSONDecodeError):
+            continue
+
+    genes.sort(
+        key=lambda g: (
+            -(g.get("combinedScore") or 0.0),
+            g.get("geneSymbol") or "",
+            ((g.get("geneScores") or [{}])[0] or {}).get("modeOfInheritance") or "",
+        )
+    )
+    gene_ranking = [
+        {"rank": i, **_gene_ranking_entry(g)} for i, g in enumerate(genes[:max_genes], start=1)
+    ]
+    disease_sorted = sorted(
+        diseases.values(), key=lambda d: (-(d["phenotypeScore"] or 0.0), d["diseaseId"])
+    )
+    disease_ranking = [
+        {"rank": i, **d} for i, d in enumerate(disease_sorted[:max_diseases], start=1)
+    ]
+
+    payload = {
+        "schemaVersion": "1",
+        "runMetadata": _baseline_run_metadata(sample, assembly, jar, exomiser_path),
+        "totalGenes": len(genes),
+        "totalDiseases": len(diseases),
+        "geneRanking": gene_ranking,
+        "diseaseRanking": disease_ranking,
+    }
+    path = run_dir / "exomiser_ranking.json"
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+    return path
 
 
 def _run_exomiser_impl(
@@ -257,6 +398,15 @@ def _run_exomiser_impl(
 
     parquet = sorted(str(p) for p in run_dir.glob("*.parquet"))
     jsonl = sorted(str(p) for p in run_dir.glob("*.jsonl"))
+    # Emit the deterministic baseline ranking ourselves so it's guaranteed, not left to
+    # the agent. Genes (by geneCombinedScore) and phenotype-driven diseases.
+    ranking_path = (
+        _write_baseline_ranking(
+            run_dir, jsonl, sample=sample, assembly=assembly, jar=jar, exomiser_path=exomiser_path
+        )
+        if result.returncode == 0
+        else None
+    )
     return json.dumps(
         {
             "ok": result.returncode == 0,
@@ -265,9 +415,15 @@ def _run_exomiser_impl(
             "output_directory": str(run_dir),
             "parquet": parquet,
             "jsonl": jsonl,
+            "exomiser_ranking": str(ranking_path) if ranking_path else None,
             "stdout_tail": result.stdout[-2000:],
             "stderr_tail": result.stderr[-1000:],
-            "note": "Parse the parquet file (richest). Sort genes by geneCombinedScore.",
+            "note": (
+                "`exomiser_ranking` is the deterministic baseline (geneRanking + "
+                "diseaseRanking) emitted for you — treat it as the immutable Exomiser ranking; "
+                "do not re-order it. For an evidence-cited re-ranking, write reranked.json "
+                "citing sources. parquet/jsonl hold the full per-variant detail."
+            ),
         },
         indent=2,
     )

@@ -32,9 +32,9 @@ associations across human + model organisms), inheritance filtering, and pathoge
 
 **Workflow:**
 1. Confirm inputs (phenopacket with HPO terms; VCF; genome assembly).
-2. Run the pre-installed Exomiser (`analyse`, default preset).
-3. Parse the parquet output.
-4. Emit a structured ranked candidate list (`prioritized_genes.json`).
+2. Run `run_exomiser` (the pre-installed Exomiser, `analyse`, default preset).
+3. The tool emits the deterministic baseline `exomiser_ranking.json` (gene + disease rankings) for you — read it (and the parquet/jsonl for full detail).
+4. Optionally write an evidence-cited `reranked.json` (every change cites a source).
 5. Interpret the top candidates and write a clinical report.
 
 ---
@@ -123,27 +123,35 @@ Key fields:
 
 ---
 
-## 4. Structured ranked output (required) — two files
+## 4. Structured ranked output — two files
 
-Write **two** machine-readable rankings to the job directory. Keeping them separate means the
-deterministic baseline is never muddied by interpretation. Produce gene-level and/or
-disease-level rankings depending on what's asked (disease-level uses the same shape with disease
-IDs).
+There are two ranking files. The **baseline is emitted for you by the tool**; you produce the
+evidence-cited re-ranking. Keeping them separate means the deterministic baseline is never
+muddied by interpretation.
 
-**(a) `exomiser_ranking.json` — deterministic baseline.** Exactly Exomiser's ranking: sort by
-`geneCombinedScore` descending with fixed tie-breakers (`geneSymbol`, then `moi`). **Do not
-re-order this list.** Use stable gene IDs (HGNC/Ensembl), not just symbols.
+**(a) `exomiser_ranking.json` — deterministic baseline, written by `run_exomiser`.** You do NOT
+write this. The tool parses Exomiser's output and emits it at the path returned in the result's
+`exomiser_ranking` field. Exomiser ranks **both genes and diseases**, so the file carries both:
+`geneRanking` (sorted by `geneCombinedScore`, tie-broken by `geneSymbol` then `moi`) and
+`diseaseRanking` (the hiPhive phenotype-driven disease matches, best score per disease). Lists
+are capped; `totalGenes`/`totalDiseases` give the full counts. **Treat it as immutable — never
+re-order it; cite it as the reproducible baseline.**
 
 ```json
 {
   "schemaVersion": "1",
-  "runMetadata": {"sampleId": "...", "assembly": "hg38",
-                  "exomiserVersion": "...", "dataVersion": "..."},
-  "ranking": [
-    {"rank": 1, "geneSymbol": "PAH", "geneId": "HGNC:8582", "moi": "AUTOSOMAL_RECESSIVE",
-     "geneCombinedScore": 0.987, "genePhenotypeScore": 0.91, "geneVariantScore": 0.99,
-     "acmgClassification": "PATHOGENIC", "variants": ["12-103234567-A-G"],
-     "topDiseaseMatch": "OMIM:261600 Phenylketonuria"}
+  "runMetadata": {"sampleId": "patient", "assembly": "hg38",
+                  "exomiserVersion": "15.0.0", "dataVersion": "2512"},
+  "totalGenes": 1, "totalDiseases": 22,
+  "geneRanking": [
+    {"rank": 1, "geneSymbol": "FGFR2", "geneId": "ENSG00000066468", "entrezId": "2263",
+     "moi": "AUTOSOMAL_DOMINANT", "geneCombinedScore": 0.9614, "genePhenotypeScore": 0.86,
+     "geneVariantScore": 1.0, "acmgClassification": "PATHOGENIC", "variants": ["10-121520163-G-C"],
+     "topDiseaseMatch": "OMIM:101600 Craniofacial-skeletal-dermatologic dysplasia"}
+  ],
+  "diseaseRanking": [
+    {"rank": 1, "diseaseId": "OMIM:101600", "diseaseName": "Craniofacial-skeletal-dermatologic dysplasia",
+     "phenotypeScore": 0.86, "topGene": "FGFR2"}
   ]
 }
 ```
