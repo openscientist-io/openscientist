@@ -246,11 +246,16 @@ def new_job_page(template: str | None = None) -> None:
     sync = {"user_edited_iterations": False, "syncing_iterations": False}
 
     with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):
-        ui.label("Submit Discovery Job").classes("text-h5 mb-4")
+        ui.label("Submit Discovery Job").classes("text-h5 mb-1")
+        ui.label(
+            "Describe what you want to investigate — or, optionally, start from a common analysis."
+        ).classes("text-sm text-gray-500 mb-3")
 
-        with ui.tabs().classes("w-full") as workflow_tabs:
-            ui.tab(FREEFORM_TAB, label="Write a question")
-            ui.tab(GUIDED_TAB, label="Common analyses")
+        # Asymmetric tabs: freeform is the primary path; "Common analyses" is a
+        # smaller, muted secondary option.
+        with ui.tabs().props("align=left no-caps inline-label").classes("w-full") as workflow_tabs:
+            ui.tab(FREEFORM_TAB, label="Write a question").classes("text-weight-medium")
+            ui.tab(GUIDED_TAB, label="Common analyses").classes("text-grey-6 text-caption")
 
         template_field_widgets: dict[str, dict[str, Any]] = {}
         template_sections: dict[str, Any] = {}
