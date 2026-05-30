@@ -217,17 +217,121 @@ def format_reference(rec: PubMedRecord, n: int) -> str:
     )
 
 
-def annotate_inline(
-    text: str, cites_with_issues: list[tuple[Citation, list[str]]]
-) -> str:
-    """Insert a ⚠ marker immediately after each problematic PMID. Edits are applied
-    from end to start so offsets stay valid."""
-    out = text
-    for cite, issues in sorted(cites_with_issues, key=lambda x: -x[0].pmid_span[1]):
+def _build_correction(
+    cited_author: str, cited_year: int | None, rec: PubMedRecord
+) -> str | None:
+    """Build a corrected ``Surname[ et al.] (YEAR)`` string for an attribution
+    whose surname isn't on the paper or whose year is wrong, else ``None``.
+
+    Replaces only the leading surname with PubMed's actual first author when
+    the cited name isn't on the paper, and replaces the year when it doesn't
+    match. Preserves the original "et al." / co-first / single-author structure
+    — "Naguib & Lopez-Lee et al." becomes "Akay & Lopez-Lee et al." rather than
+    collapsing the structure (which might over-correct if the second name is
+    legitimately on the paper).
+    """
+    if not rec.surnames:
+        return None
+    head = cited_author.split(" et al")[0].split(" &")[0].split(" and ")[0].strip()
+    cited_norm = _norm(head)
+    author_norms = [_norm(s) for s in rec.surnames]
+
+    author_wrong = cited_norm not in author_norms
+    year_wrong = (
+        cited_year is not None and rec.year and str(cited_year) != rec.year
+    )
+    if not (author_wrong or year_wrong):
+        return None
+
+    correct_first = rec.surnames[0]
+    new_author = (
+        cited_author.replace(head, correct_first, 1) if author_wrong else cited_author
+    )
+    new_year = (
+        rec.year if year_wrong else (str(cited_year) if cited_year else rec.year)
+    )
+    return f"{new_author} ({new_year})"
+
+
+def correct_and_annotate(
+    text: str,
+    cites_with_issues: list[tuple[Citation, list[str]]],
+    records: dict[str, PubMedRecord],
+) -> tuple[str, list[dict]]:
+    """Auto-correct wrong-author / wrong-year attributions in the prose and
+    insert ⚠ markers after each flagged PMID.
+
+    Returns ``(annotated_text, corrections)`` where ``corrections`` is a list
+    of ``{pmid, original, corrected}`` dicts for the sidecar JSON. All edits
+    are applied from end to start so character offsets stay valid through the
+    rewrite, and author-span corrections never overlap PMID-span markers.
+    """
+    edits: list[tuple[int, int, str]] = []
+    corrections: list[dict] = []
+
+    for cite, issues in cites_with_issues:
         if not issues:
             continue
-        out = out[: cite.pmid_span[1]] + " ⚠" + out[cite.pmid_span[1] :]
-    return out
+        # ⚠ marker right after the PMID match (zero-width insertion).
+        edits.append((cite.pmid_span[1], cite.pmid_span[1], " ⚠"))
+        # Author/year correction in the attribution span.
+        rec = records.get(cite.pmid)
+        if cite.author_span and cite.cited_author and rec and rec.title:
+            replacement = _build_correction(cite.cited_author, cite.cited_year, rec)
+            if replacement is not None:
+                original = text[cite.author_span[0] : cite.author_span[1]]
+                edits.append((cite.author_span[0], cite.author_span[1], replacement))
+                corrections.append(
+                    {
+                        "pmid": cite.pmid,
+                        "original": original,
+                        "corrected": replacement,
+                    }
+                )
+
+    for start, end, replacement in sorted(edits, key=lambda e: -e[0]):
+        text = text[:start] + replacement + text[end:]
+    return text, corrections
+
+
+def build_citation_issues_section(
+    cites_with_issues: list[tuple[Citation, list[str]]],
+    corrections: list[dict],
+) -> str:
+    """Build the human-readable "Citation Issues (auto-detected)" panel listing
+    each unique flagged PMID, its issues, and the auto-correction if any.
+    Empty string when nothing was flagged."""
+    flagged = [(c, iss) for c, iss in cites_with_issues if iss]
+    if not flagged:
+        return ""
+    seen: set[str] = set()
+    unique_flags: list[tuple[Citation, list[str]]] = []
+    for c, iss in flagged:
+        if c.pmid in seen:
+            continue
+        seen.add(c.pmid)
+        unique_flags.append((c, iss))
+    corr_by_pmid = {c["pmid"]: c for c in corrections}
+
+    lines = ["", "---", "", "## Citation Issues (auto-detected)", ""]
+    lines.append(
+        "Citations flagged during post-processing. Wrong-author and wrong-year "
+        "attributions have been auto-corrected in the prose (⚠ marker next to "
+        "each affected PMID); preprints are tagged in the References section "
+        "but left in the body for the author to handle."
+    )
+    lines.append("")
+    for c, issues in unique_flags:
+        corr = corr_by_pmid.get(c.pmid)
+        joined = "; ".join(issues)
+        if corr:
+            lines.append(
+                f'- **PMID {c.pmid}** — auto-corrected *"{corr["original"]}"* → '
+                f'*"{corr["corrected"]}"*. {joined}'
+            )
+        else:
+            lines.append(f"- **PMID {c.pmid}** — {joined}")
+    return "\n".join(lines) + "\n"
 
 
 def build_references_section(
@@ -259,13 +363,21 @@ def validate_report(report_path: Path) -> tuple[str, dict]:
     cites_with_issues = [(c, validate(c, records[c.pmid])) for c in cites]
     flagged = [(c, iss) for c, iss in cites_with_issues if iss]
     flagged_pmids = {c.pmid for c, _ in flagged}
+
+    annotated_body, corrections = correct_and_annotate(
+        text, cites_with_issues, records
+    )
+    issues_section = build_citation_issues_section(cites_with_issues, corrections)
     refs_section = build_references_section(records, unique_pmids)
-    annotated = annotate_inline(text, cites_with_issues).rstrip() + "\n" + refs_section
+    annotated = annotated_body.rstrip() + "\n" + issues_section + refs_section
+
     summary = {
         "n_citation_instances": len(cites),
         "n_unique_pmids": len(unique_pmids),
         "n_flagged_instances": len(flagged),
         "n_flagged_pmids": len(flagged_pmids),
+        "n_corrected": len(corrections),
+        "corrections": corrections,
         "flagged": [
             {
                 "pmid": c.pmid,
