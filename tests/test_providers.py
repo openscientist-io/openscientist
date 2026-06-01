@@ -127,6 +127,7 @@ class TestAgentBackendForProvider:
 
         assert backend_for_provider_id("openai") is AgentBackend.CODEX
         assert backend_for_provider_id("azure-openai") is AgentBackend.CODEX
+        assert backend_for_provider_id("bedrock-openai") is AgentBackend.CODEX
         assert backend_for_provider_id("ollama") is AgentBackend.CODEX
         # vLLM is OpenAI-wire but not a Codex backend, so omp is its only harness.
         assert backend_for_provider_id("vllm") is AgentBackend.OMP

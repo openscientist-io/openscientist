@@ -508,6 +508,29 @@ class TestProviderContainerEnvVars:
         assert "OPENSCIENTIST_MODEL" not in env
         assert "LLAMACPP_API_KEY" not in env
 
+    def test_bedrock_openai_vars_passed_for_codex_provider(self):
+        settings = ProviderSettings(
+            OPENSCIENTIST_PROVIDER="bedrock-openai",
+            BEDROCK_API_KEY="br-key",
+            BEDROCK_REGION="us-west-2",
+            BEDROCK_MODEL="openai.gpt-oss-120b",
+        )
+
+        env = settings.get_container_env_vars()
+
+        assert env["OPENSCIENTIST_PROVIDER"] == "bedrock-openai"
+        assert env["BEDROCK_API_KEY"] == "br-key"
+        assert env["BEDROCK_REGION"] == "us-west-2"
+        assert env["BEDROCK_MODEL"] == "openai.gpt-oss-120b"
+
+    def test_bedrock_api_key_omitted_when_unset(self, monkeypatch, tmp_path):
+        # The dev .env reaches tests via both os.environ (database.engine calls
+        # load_dotenv() at import) and the settings env_file. Neutralize both.
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("BEDROCK_API_KEY", raising=False)
+        settings = ProviderSettings(OPENSCIENTIST_PROVIDER="bedrock-openai")
+        assert "BEDROCK_API_KEY" not in settings.get_container_env_vars()
+
     def test_optional_model_and_token_env_vars_are_included(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="anthropic",

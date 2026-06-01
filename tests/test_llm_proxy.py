@@ -49,6 +49,9 @@ def active_provider(monkeypatch):
         "LLAMACPP_BASE_URL",
         "LLAMACPP_API_KEY",
         "CODEX_AUTH_HOST_PATH",
+        "BEDROCK_API_KEY",
+        "BEDROCK_REGION",
+        "BEDROCK_MODEL",
         "AWS_REGION",
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
@@ -246,6 +249,16 @@ class TestCodexUpstream:
         )
         assert provider.llm_upstream() == LlmUpstream(
             "https://myres.openai.azure.com/openai/v1", {"authorization": "Bearer az-real"}
+        )
+
+    def test_bedrock_openai_upstream(self, active_provider):
+        provider = active_provider(
+            OPENSCIENTIST_PROVIDER="bedrock-openai",
+            BEDROCK_API_KEY="br-real",
+            BEDROCK_REGION="us-west-2",
+        )
+        assert provider.llm_upstream() == LlmUpstream(
+            "https://bedrock-mantle.us-west-2.api.aws/v1", {"authorization": "Bearer br-real"}
         )
 
     def test_ollama_upstream_is_keyless(self, active_provider):
@@ -652,6 +665,10 @@ class TestAirgapPosture:
         )
         assert p.airgap_egress().mode is AirgapEgress.PROXY
 
+    def test_bedrock_openai_proxies(self, active_provider):
+        p = active_provider(OPENSCIENTIST_PROVIDER="bedrock-openai", BEDROCK_API_KEY="br")
+        assert p.airgap_egress().mode is AirgapEgress.PROXY
+
     def test_cborg_proxies(self, active_provider):
         p = active_provider(
             OPENSCIENTIST_PROVIDER="cborg",
@@ -708,6 +725,7 @@ class TestAirgapPosture:
             {"OPENSCIENTIST_PROVIDER": "anthropic", "ANTHROPIC_API_KEY": "k"},
             {"OPENSCIENTIST_PROVIDER": "anthropic", "CLAUDE_CODE_OAUTH_TOKEN": "o"},
             {"OPENSCIENTIST_PROVIDER": "openai", "OPENAI_API_KEY": "sk"},
+            {"OPENSCIENTIST_PROVIDER": "bedrock-openai", "BEDROCK_API_KEY": "br"},
             {"OPENSCIENTIST_PROVIDER": "ollama"},
             {"OPENSCIENTIST_PROVIDER": "vllm", "OPENSCIENTIST_MODEL": "Qwen/Qwen3-32B"},
             {
@@ -774,6 +792,10 @@ class TestHarnessRouting:
                 "FOUNDRY_BASE_URL",
             ),
             ({"OPENSCIENTIST_PROVIDER": "openai", "OPENAI_API_KEY": "sk"}, "OPENAI_BASE_URL"),
+            (
+                {"OPENSCIENTIST_PROVIDER": "bedrock-openai", "BEDROCK_API_KEY": "br"},
+                "OPENAI_BASE_URL",
+            ),
         ],
     )
     def test_proxied_provider_routes_the_harness_at_the_proxy(
@@ -815,6 +837,8 @@ class TestHarnessRouting:
                 "ANTHROPIC_FOUNDRY_API_KEY": "k",
             },
             {"OPENSCIENTIST_PROVIDER": "openai", "OPENAI_API_KEY": "sk"},
+            # Not OpenAI-hosted, so it names its own endpoint instead of inheriting.
+            {"OPENSCIENTIST_PROVIDER": "bedrock-openai", "BEDROCK_API_KEY": "br"},
             # Self-hosted providers route themselves rather than inheriting the
             # OpenAI default, so their credential wiring is bespoke and is the
             # class most likely to omit one.
