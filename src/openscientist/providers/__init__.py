@@ -48,9 +48,13 @@ def _provider_class(provider_name: str) -> type[Provider]:
         from openscientist.providers.azure_openai import AzureOpenAIProvider
 
         return AzureOpenAIProvider
+    if name == "bedrock-openai":
+        from openscientist.providers.bedrock_openai import BedrockOpenAIProvider
+
+        return BedrockOpenAIProvider
     raise ValueError(
         f"Unknown provider '{name}'. Valid options: anthropic, cborg, "
-        "vertex, bedrock, foundry, openai, azure-openai"
+        "vertex, bedrock, foundry, openai, azure-openai, bedrock-openai"
     )
 
 
@@ -124,6 +128,7 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
         "foundry",
         "openai",
         "azure-openai",
+        "bedrock-openai",
     )
     if provider_name not in valid_providers:
         return (

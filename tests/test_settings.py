@@ -391,6 +391,25 @@ class TestProviderContainerEnvVars:
         assert "AZURE_OPENAI_API_KEY" not in env
         assert "AZURE_OPENAI_RESOURCE" not in env
 
+    def test_bedrock_openai_vars_passed_for_codex_provider(self):
+        settings = ProviderSettings(
+            OPENSCIENTIST_PROVIDER="bedrock-openai",
+            BEDROCK_API_KEY="br-key",
+            BEDROCK_REGION="us-west-2",
+            BEDROCK_MODEL="openai.gpt-oss-120b",
+        )
+
+        env = settings.get_container_env_vars()
+
+        assert env["OPENSCIENTIST_PROVIDER"] == "bedrock-openai"
+        assert env["BEDROCK_API_KEY"] == "br-key"
+        assert env["BEDROCK_REGION"] == "us-west-2"
+        assert env["BEDROCK_MODEL"] == "openai.gpt-oss-120b"
+
+    def test_bedrock_api_key_omitted_when_unset(self):
+        settings = ProviderSettings(OPENSCIENTIST_PROVIDER="bedrock-openai")
+        assert "BEDROCK_API_KEY" not in settings.get_container_env_vars()
+
     def test_optional_model_and_token_env_vars_are_included(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="anthropic",

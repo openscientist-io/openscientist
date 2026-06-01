@@ -16,6 +16,7 @@ from openscientist.providers.anthropic import AnthropicProvider
 from openscientist.providers.azure_openai import AzureOpenAIProvider
 from openscientist.providers.base import ClaudeCompatible, CodexCompatible, Provider
 from openscientist.providers.bedrock import BedrockProvider
+from openscientist.providers.bedrock_openai import BedrockOpenAIProvider
 from openscientist.providers.cborg import CborgProvider
 from openscientist.providers.foundry import FoundryProvider
 from openscientist.providers.openai import OpenAIDirectProvider
@@ -32,6 +33,7 @@ _PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     "foundry": FoundryProvider,
     "openai": OpenAIDirectProvider,
     "azure-openai": AzureOpenAIProvider,
+    "bedrock-openai": BedrockOpenAIProvider,
 }
 
 

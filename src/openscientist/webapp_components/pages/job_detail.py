@@ -862,6 +862,7 @@ _PROVIDER_DISPLAY = {
     "foundry": "Azure AI Foundry",
     "openai": "OpenAI",
     "azure-openai": "Azure OpenAI",
+    "bedrock-openai": "AWS Bedrock OpenAI",
 }
 
 
