@@ -45,7 +45,10 @@ class ProviderSettings(BaseSettings):
     provider_id: str = Field(
         default="anthropic",
         alias="OPENSCIENTIST_PROVIDER",
-        description="Provider id (anthropic, cborg, vertex, bedrock, foundry, openai, azure-openai).",
+        description=(
+            "Provider id (anthropic, cborg, vertex, bedrock, foundry, openai, "
+            "azure-openai, bedrock-openai)."
+        ),
     )
 
     # GitHub token for skill syncing
@@ -76,6 +79,14 @@ class ProviderSettings(BaseSettings):
     azure_openai_stream_max_retries: int = Field(
         default=10, alias="AZURE_OPENAI_STREAM_MAX_RETRIES"
     )
+
+    # AWS Bedrock OpenAI (Codex agent backend, OpenAI gpt-oss models via the
+    # Bedrock "Mantle" Responses endpoint). Distinct from the bedrock provider,
+    # which serves Anthropic models through the Bedrock runtime.
+    bedrock_api_key: str | None = Field(default=None, alias="BEDROCK_API_KEY")
+    bedrock_region: str = Field(default="us-east-1", alias="BEDROCK_REGION")
+    bedrock_model: str = Field(default="openai.gpt-oss-120b", alias="BEDROCK_MODEL")
+    bedrock_stream_max_retries: int = Field(default=5, alias="BEDROCK_STREAM_MAX_RETRIES")
 
     # Model settings
     model: str | None = Field(default=None, alias="OPENSCIENTIST_MODEL")
@@ -223,7 +234,8 @@ class ProviderSettings(BaseSettings):
     def _unknown_provider_warnings(provider: str) -> list[str]:
         return [
             f"Unknown provider '{provider}'. "
-            "Valid options: anthropic, cborg, vertex, bedrock, foundry, openai, azure-openai"
+            "Valid options: anthropic, cborg, vertex, bedrock, foundry, openai, "
+            "azure-openai, bedrock-openai"
         ]
 
     _LEGACY_ENV_VAR_RENAMES = (
@@ -310,6 +322,7 @@ class ProviderSettings(BaseSettings):
             "foundry": lambda: [],
             "openai": lambda: [],
             "azure-openai": lambda: [],
+            "bedrock-openai": lambda: [],
         }
         warnings = warning_builders.get(
             provider, lambda: self._unknown_provider_warnings(provider)
@@ -366,6 +379,14 @@ class ProviderSettings(BaseSettings):
         )
         self._set_env_if_present(
             env_vars, "AZURE_OPENAI_STREAM_MAX_RETRIES", str(self.azure_openai_stream_max_retries)
+        )
+
+    def _apply_bedrock_openai_env_vars(self, env_vars: dict[str, str]) -> None:
+        self._set_env_if_present(env_vars, "BEDROCK_API_KEY", self.bedrock_api_key)
+        self._set_env_if_present(env_vars, "BEDROCK_REGION", self.bedrock_region)
+        self._set_env_if_present(env_vars, "BEDROCK_MODEL", self.bedrock_model)
+        self._set_env_if_present(
+            env_vars, "BEDROCK_STREAM_MAX_RETRIES", str(self.bedrock_stream_max_retries)
         )
 
     def _apply_vertex_env_vars(
@@ -436,6 +457,7 @@ class ProviderSettings(BaseSettings):
         self._apply_auth_env_vars(env_vars)
         self._apply_openai_env_vars(env_vars)
         self._apply_azure_openai_env_vars(env_vars)
+        self._apply_bedrock_openai_env_vars(env_vars)
         self._apply_vertex_env_vars(env_vars, gcp_credentials_container_path)
         self._apply_bedrock_env_vars(env_vars)
         self._apply_foundry_env_vars(env_vars)
