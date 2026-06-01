@@ -324,6 +324,27 @@ def build_references_section(
     return "\n".join(lines) + "\n"
 
 
+# Matches a trailing "## References" or "## Citation Issues" heading (with an
+# optional preceding `---` separator). Anchored to the LAST such heading in the
+# document so we can strip everything from there to EOF before appending a
+# fresh auto-generated section. Idempotent for re-runs and replaces an
+# agent-freehand References section with the verified one.
+_TRAILING_GENERATED_HEADING_RE = re.compile(
+    r"\n+(?:---[ \t]*\n+)?##[ \t]+(?:References|Citation Issues\b[^\n]*)\n"
+)
+
+
+def _strip_trailing_generated_section(text: str) -> str:
+    """Strip an agent-written or previously-auto-generated trailing References
+    / Citation Issues section so the freshly built one can be appended without
+    doubling. Stripping is anchored to the EARLIEST matching heading so a stale
+    "Citation Issues" panel + "References" pair from an older run both go."""
+    matches = list(_TRAILING_GENERATED_HEADING_RE.finditer(text))
+    if not matches:
+        return text
+    return text[: matches[0].start()].rstrip() + "\n"
+
+
 def validate_report(report_path: Path) -> tuple[str, dict]:
     """Validate citations, fix them in place, and append a References section.
 
@@ -347,6 +368,7 @@ def validate_report(report_path: Path) -> tuple[str, dict]:
     flagged_pmids = {c.pmid for c, _ in flagged}
 
     corrected_body, corrections = apply_corrections(text, cites_with_issues, records)
+    corrected_body = _strip_trailing_generated_section(corrected_body)
     refs_section = build_references_section(records, unique_pmids)
     annotated = corrected_body.rstrip() + "\n" + refs_section
 
