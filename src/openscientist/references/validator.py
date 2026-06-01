@@ -1,27 +1,20 @@
-"""Validate inline citations + generate a References section for a report.
+"""Validate inline citations and fix them deterministically.
 
-Two checks (deterministic, no LLM):
+For every ``Surname et al. YEAR (PMID)`` attribution in the report, this pass:
 
-1. **Author surname is on the paper.** For every ``Surname et al. YEAR (PMID)``
-   citation in the markdown, ``Surname`` must appear on the PubMed author list
-   for that PMID. Three severity tiers:
+* checks ``Surname`` appears on the PubMed author list for that PMID — and
+  rewrites the prose with PubMed's actual first author when it doesn't;
+* checks the cited year against PubMed's publication year — and rewrites it
+  when it doesn't match;
+* tags preprints (bioRxiv / medRxiv / etc.) with ``[Preprint]`` inline so
+  the reader sees publication status at the point of citation;
+* appends a deduplicated **References section** at the end of the report
+  with first-3-authors-then-et-al display, journal, year, ``[Preprint]``
+  tag where applicable, and a PMID hyperlink.
 
-   - cited surname is the actual first author (or PubMed's ``sortfirstauthor``)
-     → ✓ clean
-   - cited surname is on the paper but not first author
-     → ⚠ "on paper but not first author"
-   - cited surname is not on the paper at all (the hallucination case)
-     → ✗ "not on author list"
-
-2. **Year matches PubMed.** Mismatched years are flagged.
-
-Plus a third pass that builds a deduplicated **References section**, with
-first-3-authors-then-et-al display, the journal, year, and PMID hyperlink,
-flagged ``[Preprint]`` where applicable.
-
-The output is the original report with ⚠ markers adjacent to each problem PMID
-and a generated References section appended — i.e. soft-annotation (no rewrite
-of the prose, no opinion).
+Every rewrite is recorded in a JSON sidecar (``final_report.refs.json``)
+for audit — the prose itself stays clean (no inline warning markers, no
+"Citation Issues" panel cluttering the report).
 
 Run::
 
@@ -218,17 +211,30 @@ def format_reference(rec: PubMedRecord, n: int) -> str:
 
 
 def _build_correction(
-    cited_author: str, cited_year: int | None, rec: PubMedRecord
+    cited_author: str,
+    cited_year: int | None,
+    rec: PubMedRecord,
+    *,
+    preprint_already_labeled: bool = False,
 ) -> str | None:
-    """Build a corrected ``Surname[ et al.] (YEAR)`` string for an attribution
-    whose surname isn't on the paper or whose year is wrong, else ``None``.
+    """Build a corrected ``Surname[ et al.] (YEAR)[ [Preprint]]`` string for an
+    attribution that's wrong in some way, else ``None``.
 
-    Replaces only the leading surname with PubMed's actual first author when
-    the cited name isn't on the paper, and replaces the year when it doesn't
-    match. Preserves the original "et al." / co-first / single-author structure
-    — "Naguib & Lopez-Lee et al." becomes "Akay & Lopez-Lee et al." rather than
-    collapsing the structure (which might over-correct if the second name is
-    legitimately on the paper).
+    Three things this fixes, in order of how much the prose changes:
+
+    * **Wrong year** — replaces the year with PubMed's publication year.
+    * **Wrong author** — replaces only the leading surname with PubMed's actual
+      first author. The original "et al." / co-first / single-author structure
+      is preserved ("Naguib & Lopez-Lee et al." becomes "Akay & Lopez-Lee
+      et al." rather than collapsing — the second-name verification is a v2
+      improvement; over-collapsing here might silently drop legitimate
+      co-author info).
+    * **Unlabeled preprint** — appends ``[Preprint]`` to the attribution so
+      the publication status is visible inline. Skipped if the prose already
+      labels it (``preprint_already_labeled``), which the caller detects from
+      the text immediately after the author span.
+
+    Returns ``None`` when nothing needs to change.
     """
     if not rec.surnames:
         return None
@@ -240,7 +246,8 @@ def _build_correction(
     year_wrong = (
         cited_year is not None and rec.year and str(cited_year) != rec.year
     )
-    if not (author_wrong or year_wrong):
+    preprint_to_label = rec.is_preprint and not preprint_already_labeled
+    if not (author_wrong or year_wrong or preprint_to_label):
         return None
 
     correct_first = rec.surnames[0]
@@ -250,21 +257,25 @@ def _build_correction(
     new_year = (
         rec.year if year_wrong else (str(cited_year) if cited_year else rec.year)
     )
-    return f"{new_author} ({new_year})"
+    base = f"{new_author} ({new_year})"
+    if preprint_to_label:
+        base += " [Preprint]"
+    return base
 
 
-def correct_and_annotate(
+def apply_corrections(
     text: str,
     cites_with_issues: list[tuple[Citation, list[str]]],
     records: dict[str, PubMedRecord],
 ) -> tuple[str, list[dict]]:
-    """Auto-correct wrong-author / wrong-year attributions in the prose and
-    insert ⚠ markers after each flagged PMID.
+    """Rewrite wrong-author / wrong-year / unlabeled-preprint attributions in
+    the prose, in place. No warning markers — bad citations become correct
+    citations, full stop. The audit trail lives in the returned ``corrections``
+    list (and from there in the JSON sidecar).
 
-    Returns ``(annotated_text, corrections)`` where ``corrections`` is a list
-    of ``{pmid, original, corrected}`` dicts for the sidecar JSON. All edits
-    are applied from end to start so character offsets stay valid through the
-    rewrite, and author-span corrections never overlap PMID-span markers.
+    Returns ``(corrected_text, corrections)`` where ``corrections`` is a list
+    of ``{pmid, original, corrected}`` dicts. All edits are applied from end to
+    start so character offsets stay valid through the rewrite.
     """
     edits: list[tuple[int, int, str]] = []
     corrections: list[dict] = []
@@ -272,66 +283,36 @@ def correct_and_annotate(
     for cite, issues in cites_with_issues:
         if not issues:
             continue
-        # ⚠ marker right after the PMID match (zero-width insertion).
-        edits.append((cite.pmid_span[1], cite.pmid_span[1], " ⚠"))
-        # Author/year correction in the attribution span.
         rec = records.get(cite.pmid)
-        if cite.author_span and cite.cited_author and rec and rec.title:
-            replacement = _build_correction(cite.cited_author, cite.cited_year, rec)
-            if replacement is not None:
-                original = text[cite.author_span[0] : cite.author_span[1]]
-                edits.append((cite.author_span[0], cite.author_span[1], replacement))
-                corrections.append(
-                    {
-                        "pmid": cite.pmid,
-                        "original": original,
-                        "corrected": replacement,
-                    }
-                )
+        if not (cite.author_span and cite.cited_author and rec and rec.title):
+            continue
+        # Look ~30 chars past the attribution to detect an already-present
+        # preprint tag — keeps the rewrite idempotent for this cite.
+        suffix = text[cite.author_span[1] : cite.author_span[1] + 30]
+        preprint_labeled = (
+            "[Preprint]" in suffix or "preprint" in suffix.lower()
+        )
+        replacement = _build_correction(
+            cite.cited_author,
+            cite.cited_year,
+            rec,
+            preprint_already_labeled=preprint_labeled,
+        )
+        if replacement is None:
+            continue
+        original = text[cite.author_span[0] : cite.author_span[1]]
+        edits.append((cite.author_span[0], cite.author_span[1], replacement))
+        corrections.append(
+            {
+                "pmid": cite.pmid,
+                "original": original,
+                "corrected": replacement,
+            }
+        )
 
     for start, end, replacement in sorted(edits, key=lambda e: -e[0]):
         text = text[:start] + replacement + text[end:]
     return text, corrections
-
-
-def build_citation_issues_section(
-    cites_with_issues: list[tuple[Citation, list[str]]],
-    corrections: list[dict],
-) -> str:
-    """Build the human-readable "Citation Issues (auto-detected)" panel listing
-    each unique flagged PMID, its issues, and the auto-correction if any.
-    Empty string when nothing was flagged."""
-    flagged = [(c, iss) for c, iss in cites_with_issues if iss]
-    if not flagged:
-        return ""
-    seen: set[str] = set()
-    unique_flags: list[tuple[Citation, list[str]]] = []
-    for c, iss in flagged:
-        if c.pmid in seen:
-            continue
-        seen.add(c.pmid)
-        unique_flags.append((c, iss))
-    corr_by_pmid = {c["pmid"]: c for c in corrections}
-
-    lines = ["", "---", "", "## Citation Issues (auto-detected)", ""]
-    lines.append(
-        "Citations flagged during post-processing. Wrong-author and wrong-year "
-        "attributions have been auto-corrected in the prose (⚠ marker next to "
-        "each affected PMID); preprints are tagged in the References section "
-        "but left in the body for the author to handle."
-    )
-    lines.append("")
-    for c, issues in unique_flags:
-        corr = corr_by_pmid.get(c.pmid)
-        joined = "; ".join(issues)
-        if corr:
-            lines.append(
-                f'- **PMID {c.pmid}** — auto-corrected *"{corr["original"]}"* → '
-                f'*"{corr["corrected"]}"*. {joined}'
-            )
-        else:
-            lines.append(f"- **PMID {c.pmid}** — {joined}")
-    return "\n".join(lines) + "\n"
 
 
 def build_references_section(
@@ -344,17 +325,18 @@ def build_references_section(
 
 
 def validate_report(report_path: Path) -> tuple[str, dict]:
-    """Validate citations and build a References section for a markdown report.
+    """Validate citations, fix them in place, and append a References section.
 
-    Returns ``(annotated_md, summary)``. ``annotated_md`` is the original report
-    text with a ⚠ marker after each problematic PMID and a generated References
-    section appended. ``summary`` is the structured validation result (counts,
-    per-flag details, and the resolved reference list) — JSON-serializable.
+    Returns ``(output_md, summary)``. ``output_md`` is the report with bad
+    citations rewritten and a deduplicated References section at the end — no
+    warning markers in the prose. ``summary`` is the structured audit trail
+    (counts, per-correction original/corrected pairs, resolved reference list)
+    for the JSON sidecar.
 
     This is the library entry point. The CLI (:func:`main`) writes its outputs
     to ``<input>.annotated.md`` / ``<input>.refs.json``; the orchestrator hook
     (:func:`annotate_in_place`) overwrites ``final_report.md`` in place so the
-    downstream HTML/PDF render picks up the annotations.
+    downstream HTML/PDF render picks up the rewrites.
     """
     text = report_path.read_text()
     cites = extract_citations(text)
@@ -364,12 +346,9 @@ def validate_report(report_path: Path) -> tuple[str, dict]:
     flagged = [(c, iss) for c, iss in cites_with_issues if iss]
     flagged_pmids = {c.pmid for c, _ in flagged}
 
-    annotated_body, corrections = correct_and_annotate(
-        text, cites_with_issues, records
-    )
-    issues_section = build_citation_issues_section(cites_with_issues, corrections)
+    corrected_body, corrections = apply_corrections(text, cites_with_issues, records)
     refs_section = build_references_section(records, unique_pmids)
-    annotated = annotated_body.rstrip() + "\n" + issues_section + refs_section
+    annotated = corrected_body.rstrip() + "\n" + refs_section
 
     summary = {
         "n_citation_instances": len(cites),
