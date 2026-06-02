@@ -28,14 +28,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
 import time
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 
@@ -117,16 +121,37 @@ def extract_citations(text: str) -> list[Citation]:
 
 
 def fetch_pubmed(pmids: list[str]) -> dict[str, PubMedRecord]:
-    """Batched esummary fetch (NCBI guidance: ≤200 IDs/req, 3 req/sec)."""
+    """Batched esummary fetch (NCBI guidance: ≤200 IDs/req, 3 req/sec).
+
+    Fail-soft: if NCBI is unreachable, times out, or returns a malformed JSON
+    body, the batch's PMIDs come back as empty :class:`PubMedRecord` stubs
+    (``title == ""``). Downstream :func:`validate` marks each as "did not
+    resolve at PubMed" — the post-process pass continues, the operator still
+    gets a report, the un-resolvable PMIDs are visible in the JSON sidecar.
+    """
     out: dict[str, PubMedRecord] = {}
     batch_size = 100
     for i in range(0, len(pmids), batch_size):
         batch = pmids[i : i + batch_size]
-        params = urllib.parse.urlencode(
-            {"db": "pubmed", "id": ",".join(batch), "retmode": "json"}
-        )
+        params = urllib.parse.urlencode({"db": "pubmed", "id": ",".join(batch), "retmode": "json"})
         url = f"{EUTILS}?{params}"
-        resp = json.load(urllib.request.urlopen(url, timeout=20))["result"]
+        try:
+            with urllib.request.urlopen(url, timeout=20) as fh:
+                resp = json.load(fh).get("result", {})
+        except (
+            urllib.error.URLError,
+            json.JSONDecodeError,
+            TimeoutError,
+            OSError,
+        ) as exc:
+            logger.warning(
+                "PubMed esummary fetch failed for %d PMIDs (%s); marking unresolved",
+                len(batch),
+                exc,
+            )
+            for pmid in batch:
+                out[pmid] = PubMedRecord(pmid=pmid)
+            continue
         for pmid in batch:
             rec = resp.get(pmid, {})
             # Filter out non-author contributors (CollectiveName, etc.) if marked.
@@ -141,8 +166,7 @@ def fetch_pubmed(pmids: list[str]) -> dict[str, PubMedRecord]:
                 pmid=pmid,
                 title=rec.get("title", ""),
                 authors=authors,
-                first_author=rec.get("sortfirstauthor", "")
-                or (authors[0] if authors else ""),
+                first_author=rec.get("sortfirstauthor", "") or (authors[0] if authors else ""),
                 year=year,
                 source=rec.get("source", ""),
                 pubtypes=rec.get("pubtype") or [],
@@ -199,9 +223,7 @@ def format_reference(rec: PubMedRecord, n: int) -> str:
     if not rec.title:
         return f"{n}. PMID: [{rec.pmid}](https://pubmed.ncbi.nlm.nih.gov/{rec.pmid}/) — *could not resolve*"
     authors_disp = (
-        ", ".join(rec.authors[:3]) + ", et al."
-        if len(rec.authors) > 3
-        else ", ".join(rec.authors)
+        ", ".join(rec.authors[:3]) + ", et al." if len(rec.authors) > 3 else ", ".join(rec.authors)
     )
     preprint = " *[Preprint]*" if rec.is_preprint else ""
     return (
@@ -243,20 +265,14 @@ def _build_correction(
     author_norms = [_norm(s) for s in rec.surnames]
 
     author_wrong = cited_norm not in author_norms
-    year_wrong = (
-        cited_year is not None and rec.year and str(cited_year) != rec.year
-    )
+    year_wrong = cited_year is not None and rec.year and str(cited_year) != rec.year
     preprint_to_label = rec.is_preprint and not preprint_already_labeled
     if not (author_wrong or year_wrong or preprint_to_label):
         return None
 
     correct_first = rec.surnames[0]
-    new_author = (
-        cited_author.replace(head, correct_first, 1) if author_wrong else cited_author
-    )
-    new_year = (
-        rec.year if year_wrong else (str(cited_year) if cited_year else rec.year)
-    )
+    new_author = cited_author.replace(head, correct_first, 1) if author_wrong else cited_author
+    new_year = rec.year if year_wrong else (str(cited_year) if cited_year else rec.year)
     base = f"{new_author} ({new_year})"
     if preprint_to_label:
         base += " [Preprint]"
@@ -289,9 +305,7 @@ def apply_corrections(
         # Look ~30 chars past the attribution to detect an already-present
         # preprint tag — keeps the rewrite idempotent for this cite.
         suffix = text[cite.author_span[1] : cite.author_span[1] + 30]
-        preprint_labeled = (
-            "[Preprint]" in suffix or "preprint" in suffix.lower()
-        )
+        preprint_labeled = "[Preprint]" in suffix or "preprint" in suffix.lower()
         replacement = _build_correction(
             cite.cited_author,
             cite.cited_year,
@@ -315,9 +329,7 @@ def apply_corrections(
     return text, corrections
 
 
-def build_references_section(
-    records: dict[str, PubMedRecord], pmids_in_order: list[str]
-) -> str:
+def build_references_section(records: dict[str, PubMedRecord], pmids_in_order: list[str]) -> str:
     lines = ["", "---", "", "## References", ""]
     for i, pmid in enumerate(pmids_in_order, 1):
         lines.append(format_reference(records[pmid], i))
@@ -425,12 +437,8 @@ def annotate_in_place(report_path: Path) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("report", type=Path, help="path to final_report.md")
-    ap.add_argument(
-        "--out-md", type=Path, default=None, help="(default: <input>.annotated.md)"
-    )
-    ap.add_argument(
-        "--out-json", type=Path, default=None, help="(default: <input>.refs.json)"
-    )
+    ap.add_argument("--out-md", type=Path, default=None, help="(default: <input>.annotated.md)")
+    ap.add_argument("--out-json", type=Path, default=None, help="(default: <input>.refs.json)")
     args = ap.parse_args()
 
     annotated, summary = validate_report(args.report)

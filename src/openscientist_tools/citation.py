@@ -73,9 +73,7 @@ def validate_citation(
             "issues": [f"PMID {pmid_clean} did not resolve at PubMed"],
         }
 
-    head = (
-        author.strip().split(" et al")[0].split(" &")[0].split(" and ")[0].strip()
-    )
+    head = author.strip().split(" et al")[0].split(" &")[0].split(" and ")[0].strip()
     author_norm = _norm(head)
     author_norms = [_norm(s) for s in rec.surnames]
     first_surname = rec.surnames[0] if rec.surnames else ""
@@ -88,16 +86,10 @@ def validate_citation(
 
     issues: list[str] = []
     if not on_list:
-        issues.append(
-            f"'{head}' is NOT on the author list — use surname "
-            f"'{first_surname}' (PubMed's full first-author string: "
-            f"'{rec.first_author}')"
-        )
+        issues.append(f"'{head}' is NOT on the author list — use surname '{first_surname}'")
     elif not is_first:
         issues.append(
-            f"'{head}' is on the paper but is not the first author — use "
-            f"surname '{first_surname}' (PubMed's full first-author "
-            f"string: '{rec.first_author}')"
+            f"'{head}' is on the paper but is not the first author — use surname '{first_surname}'"
         )
     if year is not None and not year_match:
         issues.append(f"cited year {year} but PubMed says {rec.year}")
@@ -106,15 +98,15 @@ def validate_citation(
 
     has_others = len(rec.surnames) > 1
     suggested = (
-        f"{first_surname} et al. ({rec.year})"
-        if has_others
-        else f"{first_surname} ({rec.year})"
+        f"{first_surname} et al. ({rec.year})" if has_others else f"{first_surname} ({rec.year})"
     )
     if is_preprint:
         suggested += " [Preprint]"
 
     return {
-        "is_valid": on_list and year_match and not is_preprint,
+        # is_valid is True iff every check passed — so an agent that sees
+        # is_valid=True can write the citation as-is without consulting issues.
+        "is_valid": not issues,
         "on_author_list": on_list,
         "is_first_author": is_first,
         "actual_first_author": first_surname,
@@ -122,4 +114,7 @@ def validate_citation(
         "is_preprint": is_preprint,
         "suggested_citation": suggested,
         "issues": issues,
+        # The raw PubMed "Lastname Initials" string for debugging/transparency.
+        # Do NOT parse this for the citation surname — use actual_first_author.
+        "pubmed_first_author_raw": rec.first_author,
     }
