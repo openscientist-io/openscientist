@@ -38,8 +38,12 @@ def validate_citation(
     Returns:
         A dict with:
 
-        - ``is_valid`` (bool) — True iff the cited surname is on the paper AND
-          the year matches (if given) AND the paper is not a preprint.
+        - ``is_valid`` (bool) — True iff every check passed (i.e. ``issues``
+          is empty). An agent that reads ``is_valid=True`` can use the citation
+          as-is without consulting ``issues``. False when the surname is not
+          on the paper, the surname is on the paper but is not the first
+          author, the cited year does not match PubMed's, the PMID did not
+          resolve, or the paper is a preprint that needs labeling.
         - ``on_author_list`` (bool) — Whether the cited surname appears anywhere
           on the paper's author list.
         - ``is_first_author`` (bool) — Whether the cited surname matches the
