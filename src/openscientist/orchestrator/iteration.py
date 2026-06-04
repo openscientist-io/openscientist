@@ -225,7 +225,7 @@ and iteration summaries.
 5. **Citation integrity:**
    - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
    - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
-   - **Before writing any `Surname et al. Year (PMID: ...)` attribution, call `validate_citation(author, pmid, year)`** to verify the cited surname appears on PubMed's author list for that PMID. The tool returns `actual_first_author` and a ready-to-paste `suggested_citation` — use those if anything's flagged. A post-process pass will fix surviving attribution errors, but using `validate_citation` while you write keeps the prose clean on the first emission.
+   - **Before writing any `Surname et al. Year (PMID: ...)` attribution, call `validate_citation(author, pmid, year)`** and use the returned `suggested_citation` if anything is flagged. Catches wrong-author citations at composition time so the post-process gate doesn't have to rewrite them.
 
 6. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
    answer to the research question.  Be direct — no citations or hedging.

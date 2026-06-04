@@ -544,20 +544,13 @@ Then call `set_consensus_answer` with a 1–3 sentence direct answer.
 
 ### Citation hygiene
 
-Before writing any `Surname et al. Year (PMID: ...)` attribution in the report,
-call `validate_citation(author, pmid, year)` to confirm the cited surname is
-actually on the paper's author list. A common and damaging failure mode is to
-reach for a recognizable name from the domain literature and pin it on a real
-PMID whose topic you remember — the cited paper IS the right topic, but the
-attributed author isn't on it (e.g. citing "Lopera et al. (PMID: 40637118)"
-when Lopera doesn't appear among the 15 actual authors). `validate_citation`
-returns the actual first author so you can fix the attribution before
-committing it.
-
-A post-process pass also auto-corrects wrong-author and wrong-year attributions
-and appends a References section — but using `validate_citation` while you
-write avoids the corrections needing to happen at all and produces a cleaner
-report.
+Before writing any `Surname et al. Year (PMID: ...)` attribution, call
+`validate_citation(author, pmid, year)` to confirm the cited surname is on
+the paper's author list. A common failure mode is reaching for a recognizable
+name from the literature and pinning it on a real PMID whose topic you
+remember (e.g. "Lopera et al. (PMID: 40637118)" when Lopera isn't on that
+paper). The tool returns `actual_first_author` and `suggested_citation` — use
+them if anything's flagged. A post-process pass auto-corrects survivors.
 
 ---
 

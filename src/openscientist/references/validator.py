@@ -1,27 +1,12 @@
 """Validate inline citations and fix them deterministically.
 
-For every ``Surname et al. YEAR (PMID)`` attribution in the report, this pass:
+For every ``Surname et al. YEAR (PMID)`` attribution: rewrite the prose with
+PubMed's actual first author when the cited surname isn't on the paper, fix
+the year when it doesn't match, and tag preprints inline with ``[Preprint]``.
+A deduplicated References section is appended; every rewrite is recorded in
+``final_report.refs.json`` for audit. No warning markers in the prose.
 
-* checks ``Surname`` appears on the PubMed author list for that PMID — and
-  rewrites the prose with PubMed's actual first author when it doesn't;
-* checks the cited year against PubMed's publication year — and rewrites it
-  when it doesn't match;
-* tags preprints (bioRxiv / medRxiv / etc.) with ``[Preprint]`` inline so
-  the reader sees publication status at the point of citation;
-* appends a deduplicated **References section** at the end of the report
-  with first-3-authors-then-et-al display, journal, year, ``[Preprint]``
-  tag where applicable, and a PMID hyperlink.
-
-Every rewrite is recorded in a JSON sidecar (``final_report.refs.json``)
-for audit — the prose itself stays clean (no inline warning markers, no
-"Citation Issues" panel cluttering the report).
-
-Run::
-
-    python3 -m openscientist.references.validator path/to/final_report.md
-
-Writes ``<input>.annotated.md`` and ``<input>.refs.json``. Stdlib only — no
-dependency on the OS env.
+CLI: ``python3 -m openscientist.references.validator <report.md>``.
 """
 
 from __future__ import annotations
@@ -239,24 +224,13 @@ def _build_correction(
     *,
     preprint_already_labeled: bool = False,
 ) -> str | None:
-    """Build a corrected ``Surname[ et al.] (YEAR)[ [Preprint]]`` string for an
-    attribution that's wrong in some way, else ``None``.
+    """Build a corrected ``Surname[ et al.] (YEAR)[ [Preprint]]`` string, or
+    ``None`` if nothing is wrong.
 
-    Three things this fixes, in order of how much the prose changes:
-
-    * **Wrong year** — replaces the year with PubMed's publication year.
-    * **Wrong author** — replaces only the leading surname with PubMed's actual
-      first author. The original "et al." / co-first / single-author structure
-      is preserved ("Naguib & Lopez-Lee et al." becomes "Akay & Lopez-Lee
-      et al." rather than collapsing — the second-name verification is a v2
-      improvement; over-collapsing here might silently drop legitimate
-      co-author info).
-    * **Unlabeled preprint** — appends ``[Preprint]`` to the attribution so
-      the publication status is visible inline. Skipped if the prose already
-      labels it (``preprint_already_labeled``), which the caller detects from
-      the text immediately after the author span.
-
-    Returns ``None`` when nothing needs to change.
+    Replaces only the leading surname (so ``Naguib & Lopez-Lee et al.`` becomes
+    ``Akay & Lopez-Lee et al.`` rather than collapsing — verifying every named
+    surname is a v2 improvement). Appends ``[Preprint]`` unless the caller
+    signals it's already there in the prose.
     """
     if not rec.surnames:
         return None
@@ -285,13 +259,9 @@ def apply_corrections(
     records: dict[str, PubMedRecord],
 ) -> tuple[str, list[dict]]:
     """Rewrite wrong-author / wrong-year / unlabeled-preprint attributions in
-    the prose, in place. No warning markers — bad citations become correct
-    citations, full stop. The audit trail lives in the returned ``corrections``
-    list (and from there in the JSON sidecar).
-
-    Returns ``(corrected_text, corrections)`` where ``corrections`` is a list
-    of ``{pmid, original, corrected}`` dicts. All edits are applied from end to
-    start so character offsets stay valid through the rewrite.
+    place. Returns ``(corrected_text, corrections)``; the audit list of
+    ``{pmid, original, corrected}`` dicts ends up in the JSON sidecar. Edits
+    are applied end-to-start so offsets stay valid.
     """
     edits: list[tuple[int, int, str]] = []
     corrections: list[dict] = []
@@ -347,10 +317,9 @@ _TRAILING_GENERATED_HEADING_RE = re.compile(
 
 
 def _strip_trailing_generated_section(text: str) -> str:
-    """Strip an agent-written or previously-auto-generated trailing References
-    / Citation Issues section so the freshly built one can be appended without
-    doubling. Stripping is anchored to the EARLIEST matching heading so a stale
-    "Citation Issues" panel + "References" pair from an older run both go."""
+    """Strip a trailing ``## References`` / ``## Citation Issues`` section so a
+    fresh one can be appended without doubling. Anchored to the earliest match
+    so a stale Citation Issues + References pair from an older run both go."""
     matches = list(_TRAILING_GENERATED_HEADING_RE.finditer(text))
     if not matches:
         return text
@@ -358,18 +327,11 @@ def _strip_trailing_generated_section(text: str) -> str:
 
 
 def validate_report(report_path: Path) -> tuple[str, dict]:
-    """Validate citations, fix them in place, and append a References section.
-
-    Returns ``(output_md, summary)``. ``output_md`` is the report with bad
-    citations rewritten and a deduplicated References section at the end — no
-    warning markers in the prose. ``summary`` is the structured audit trail
-    (counts, per-correction original/corrected pairs, resolved reference list)
-    for the JSON sidecar.
-
-    This is the library entry point. The CLI (:func:`main`) writes its outputs
-    to ``<input>.annotated.md`` / ``<input>.refs.json``; the orchestrator hook
-    (:func:`annotate_in_place`) overwrites ``final_report.md`` in place so the
-    downstream HTML/PDF render picks up the rewrites.
+    """Validate, rewrite, and append a References section. Returns
+    ``(output_md, summary)``. The CLI writes ``<input>.annotated.md`` /
+    ``<input>.refs.json``; the orchestrator hook (:func:`annotate_in_place`)
+    overwrites ``final_report.md`` in place so the HTML/PDF render picks up
+    the rewrites.
     """
     text = report_path.read_text()
     cites = extract_citations(text)

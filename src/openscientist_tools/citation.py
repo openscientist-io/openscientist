@@ -1,10 +1,7 @@
 """MCP tool: verify a citation's surname/year against PubMed.
 
-The agent calls this **before** writing each ``Surname et al. YEAR (PMID)``
-attribution in the final report, so wrong-author citations are caught at
-composition time rather than only at the post-process gate. See
-:mod:`openscientist.references.validator` for the post-process counterpart
-(auto-correction + References section).
+Catches wrong-author citations at composition time, before the post-process
+gate in :mod:`openscientist.references.validator` has to rewrite them.
 """
 
 from __future__ import annotations
@@ -19,48 +16,29 @@ def validate_citation(
     pmid: str,
     year: int | None = None,
 ) -> dict:
-    """Verify an "Author et al. Year (PMID)" attribution against PubMed before writing it.
+    """Verify an "Author et al. Year (PMID)" attribution against PubMed.
 
-    Catches the common failure mode where a recognizable name from the domain
-    literature gets pinned on a real PMID whose topic you remember — e.g.
-    citing "Lopera et al. (PMID: 40637118)" when Lopera isn't among the 15
-    actual authors (the real first author is Perez-Corredor). **Call this for
-    every "Surname et al. Year" attribution you intend to write in the final
-    report**, and use the returned ``suggested_citation`` if anything's flagged.
+    Catches the failure mode where a recognizable name from the field gets
+    pinned on a real PMID whose topic the agent remembers (e.g. "Lopera et al.
+    (PMID: 40637118)" when Lopera isn't on that paper). Use ``suggested_citation``
+    from the response if anything is flagged.
 
     Args:
-        author: The cited surname (e.g. "Lopera"). Strip "et al.", year, and
-            any punctuation — just the leading surname.
-        pmid: The PubMed ID, digits only (or with "PMID:" prefix — both work).
-        year: Optional. The year you plan to cite. Will be checked against the
-            paper's publication year.
+        author: The cited surname; strip ``et al.``, year, and punctuation.
+        pmid: PubMed ID (digits, with or without ``PMID:`` prefix).
+        year: Optional year to check against the paper's publication year.
 
-    Returns:
-        A dict with:
+    Returns a dict:
 
-        - ``is_valid`` (bool) — True iff every check passed (i.e. ``issues``
-          is empty). An agent that reads ``is_valid=True`` can use the citation
-          as-is without consulting ``issues``. False when the surname is not
-          on the paper, the surname is on the paper but is not the first
-          author, the cited year does not match PubMed's, the PMID did not
-          resolve, or the paper is a preprint that needs labeling.
-        - ``on_author_list`` (bool) — Whether the cited surname appears anywhere
-          on the paper's author list.
-        - ``is_first_author`` (bool) — Whether the cited surname matches the
-          actual first author (the conventional citation handle).
-        - ``actual_first_author`` (str) — Surname of the paper's first author
-          (e.g. ``"Perez-Corredor"``). **Use this exact string** in your
-          "Surname et al." attribution if ``on_author_list`` is False. NOTE:
-          PubMed returns authors as ``"Lastname Initials"`` (e.g.
-          ``"Perez-Corredor P"`` — the trailing token is the initials, NOT a
-          first name); this field gives you the surname only so you do not
-          need to parse the format.
-        - ``actual_year`` (str) — Publication year per PubMed.
-        - ``is_preprint`` (bool) — True for bioRxiv/medRxiv/etc. Label preprints
-          as "[Preprint]".
-        - ``suggested_citation`` (str) — A correctly-formed attribution string
-          you can use directly if the validator flagged an issue.
-        - ``issues`` (list[str]) — Human-readable issues. Empty list = clean.
+        is_valid (bool): True iff ``issues`` is empty.
+        on_author_list, is_first_author (bool): granular checks.
+        actual_first_author (str): surname only (e.g. ``"Perez-Corredor"``).
+            PubMed returns ``"Lastname Initials"``; this field strips the
+            initials so you don't have to parse the format.
+        actual_year (str), is_preprint (bool), suggested_citation (str).
+        pubmed_first_author_raw (str): the raw ``"Lastname Initials"`` string,
+            for transparency only — do NOT use it as the citation surname.
+        issues (list[str]): human-readable issues; empty = clean.
     """
     pmid_clean = str(pmid).strip().lstrip("PMID:").strip()
     records = fetch_pubmed([pmid_clean])
