@@ -56,7 +56,15 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 - Python 3.12+
 - Docker (for containerized deployment)
 - `uv` package manager
+- **Apple Silicon (M1–M5) only:** the images are built for `linux/amd64` and run
+  under emulation, which requires Rosetta:
+
+  ```bash
+  softwareupdate --install-rosetta --agree-to-license
+  ```
+
 - One of the following for model access:
+  - **Anthropic**: API key from [console.anthropic.com](https://console.anthropic.com)
   - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
   - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
   - **AWS Bedrock**: AWS account with Bedrock access (see below)
@@ -68,12 +76,35 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 # Clone the repository
 git clone <repository-url>
 cd openscientist
+```
 
-# Create .env file (copy from example and configure)
+**1. Create and configure `.env` before starting** (the app refuses to boot
+without `OPENSCIENTIST_SECRET_KEY`):
+
+```bash
 cp .env.example .env
-# Edit .env with your provider credentials
+```
 
-# Build and start
+Then edit `.env` and set, at minimum:
+
+```bash
+# Required: master secret. Generate one with `openssl rand -hex 32`
+OPENSCIENTIST_SECRET_KEY=<paste 64-char hex here>
+
+# Select your provider and add its credentials. Example for Azure AI Foundry:
+OPENSCIENTIST_PROVIDER=foundry
+ANTHROPIC_FOUNDRY_BASE_URL=https://<your-resource>.services.ai.azure.com/anthropic
+ANTHROPIC_FOUNDRY_API_KEY=<your-foundry-key>
+# (For the default Anthropic provider, set OPENSCIENTIST_PROVIDER=anthropic and ANTHROPIC_API_KEY.)
+
+# For local development, enable mock login so you can sign in without OAuth:
+OPENSCIENTIST_DEV_MODE=true
+```
+
+**2. Build and start.** `make start` brings up the containers and runs database
+migrations automatically:
+
+```bash
 make build
 make start
 ```
