@@ -90,9 +90,7 @@ EGRESS_TARGETS: dict[str, Callable[[Any], set[HostPort]]] = {
     "cborg": lambda s: _from_url(getattr(s.provider, "anthropic_base_url", None)),
     "foundry": lambda s: (
         _from_url(getattr(s.provider, "anthropic_foundry_base_url", None))
-        or _from_foundry_resource(
-            getattr(s.provider, "anthropic_foundry_resource", None)
-        )
+        or _from_foundry_resource(getattr(s.provider, "anthropic_foundry_resource", None))
         or _unsupported(
             "Foundry provider with no ANTHROPIC_FOUNDRY_BASE_URL or _RESOURCE — "
             "set one for air-gapped mode"
@@ -112,8 +110,7 @@ EGRESS_TARGETS: dict[str, Callable[[Any], set[HostPort]]] = {
     "azure-openai": lambda s: (
         _from_azure_openai_resource(getattr(s.provider, "azure_openai_resource", None))
         or _unsupported(
-            "Azure OpenAI provider with no AZURE_OPENAI_RESOURCE — "
-            "set it for air-gapped mode"
+            "Azure OpenAI provider with no AZURE_OPENAI_RESOURCE — set it for air-gapped mode"
         )
     ),
     "bedrock": lambda s: _unsupported(

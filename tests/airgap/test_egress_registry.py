@@ -73,15 +73,11 @@ class TestEgressTargetsFor:
             anthropic_foundry_base_url=None,
             anthropic_foundry_resource="myresource",
         )
-        assert egress_targets_for("foundry", s) == {
-            ("myresource.services.ai.azure.com", 443)
-        }
+        assert egress_targets_for("foundry", s) == {("myresource.services.ai.azure.com", 443)}
 
     def test_azure_openai_resource_derives_endpoint(self) -> None:
         s = _settings(azure_openai_resource="my-aoai")
-        assert egress_targets_for("azure-openai", s) == {
-            ("my-aoai.openai.azure.com", 443)
-        }
+        assert egress_targets_for("azure-openai", s) == {("my-aoai.openai.azure.com", 443)}
 
     def test_anthropic_requires_base_url_override(self) -> None:
         s = _settings(anthropic_base_url=None)
