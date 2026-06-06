@@ -74,11 +74,24 @@ class ContainerManager:
 
     @property
     def client(self) -> "_docker_module.DockerClient":
-        """Lazy-load Docker client."""
+        """Lazy-load Docker client.
+
+        In air-gap mode the client points at the operator-deployed Docker
+        socket proxy instead of the real ``docker.sock`` so executor spawns
+        go through the hard-coded default-deny policy (RFC §9). The proxy
+        socket path is validated at startup by :class:`AirgapSettings`
+        (must not equal ``/var/run/docker.sock``).
+        """
         if self._client is None:
             import docker
 
-            self._client = docker.from_env()
+            settings = get_settings()
+            if getattr(getattr(settings, "airgap", None), "enabled", False):
+                from openscientist.airgap.docker_proxy import docker_base_url_for_airgap
+
+                self._client = docker.DockerClient(base_url=docker_base_url_for_airgap(settings))
+            else:
+                self._client = docker.from_env()
         return self._client
 
     def _encode_executor_input(

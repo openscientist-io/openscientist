@@ -861,12 +861,28 @@ class AirgapSettings(BaseSettings):
         ),
     )
 
+    docker_socket_path: str = Field(
+        default="/var/run/airgap-docker.sock",
+        alias="OPENSCIENTIST_AIRGAP_DOCKER_SOCKET_PATH",
+        description=(
+            "Unix socket path of the airgap Docker socket proxy (RFC §9). "
+            "The proxy is operator-deployed (see docs/AIR_GAPPED.md); the "
+            "application points at it instead of /var/run/docker.sock so "
+            "executor spawns go through the hard-coded default-deny policy. "
+            "Refusing the real Docker socket here is the application's only "
+            "enforcement; the security depends on the proxy implementation."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_required_addrs(self) -> "AirgapSettings":
-        """When the master switch is on, the internal addresses must be set.
+        """When the master switch is on, the internal addresses must be set
+        and the configured Docker socket path must not be the real one.
 
         Air-gap mode without an internal LLM means the agent has nothing to
-        talk to; fail-closed at startup rather than running a broken job.
+        talk to; pointing at the real docker.sock means executor spawns
+        bypass the proxy. Fail-closed at startup rather than running a
+        broken or insecure deployment.
         """
         if self.enabled:
             missing = [
@@ -881,6 +897,15 @@ class AirgapSettings(BaseSettings):
                 raise ValueError(
                     "Air-gap mode is enabled (OPENSCIENTIST_AIR_GAPPED=true) "
                     f"but required addresses are not set: {', '.join(missing)}"
+                )
+            if self.docker_socket_path == "/var/run/docker.sock":
+                raise ValueError(
+                    "Air-gap mode is enabled but "
+                    "OPENSCIENTIST_AIRGAP_DOCKER_SOCKET_PATH points at the "
+                    "real Docker socket. Set it to your airgap Docker "
+                    "socket proxy's Unix socket path (default "
+                    "/var/run/airgap-docker.sock); see RFC §9 and "
+                    "docs/AIR_GAPPED.md."
                 )
         return self
 
