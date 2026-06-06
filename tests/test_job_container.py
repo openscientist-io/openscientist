@@ -227,6 +227,10 @@ class TestPhenixMount:
         settings.provider.get_container_env_vars.return_value = {}
         settings.provider.google_application_credentials = None
         settings.provider.codex_auth_host_path = None
+        # Explicitly disable air-gap: a bare MagicMock would otherwise have
+        # `airgap.enabled` resolve to a truthy MagicMock and spuriously
+        # trigger the air-gap code path.
+        settings.airgap.enabled = False
 
         phenix = MagicMock()
         type(phenix).is_available = PropertyMock(return_value=phenix_available)
@@ -322,6 +326,9 @@ class TestCodexAuthProvisioning:
     def _settings(self, codex_auth_host_path: str | None) -> MagicMock:
         settings = MagicMock()
         settings.provider.codex_auth_host_path = codex_auth_host_path
+        # Default-off so this legacy provisioning path goes to the
+        # job_dir/.codex/ tree (not the airgap host_codex_home_root tree).
+        settings.airgap.enabled = False
         return settings
 
     def test_copies_auth_into_codex_home_agent_readable(self, tmp_path: Path) -> None:
@@ -330,7 +337,9 @@ class TestCodexAuthProvisioning:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
 
-        JobContainerRunner._provision_codex_auth(self._settings(str(src)), job_dir)
+        JobContainerRunner._provision_codex_auth(
+            self._settings(str(src)), "test-job-id", job_dir
+        )
 
         dest = job_dir / ".codex" / "auth.json"
         assert dest.read_text() == '{"tokens": {}}'
@@ -340,13 +349,15 @@ class TestCodexAuthProvisioning:
     def test_noop_when_unset(self, tmp_path: Path) -> None:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
-        JobContainerRunner._provision_codex_auth(self._settings(None), job_dir)
+        JobContainerRunner._provision_codex_auth(
+            self._settings(None), "test-job-id", job_dir
+        )
         assert not (job_dir / ".codex").exists()
 
     def test_noop_when_source_missing(self, tmp_path: Path) -> None:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
         JobContainerRunner._provision_codex_auth(
-            self._settings(str(tmp_path / "nope.json")), job_dir
+            self._settings(str(tmp_path / "nope.json")), "test-job-id", job_dir
         )
         assert not (job_dir / ".codex" / "auth.json").exists()

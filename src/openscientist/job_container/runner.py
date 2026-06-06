@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 AGENT_APP_DIR = "/agent"
 
+# Default tmpfs-style location for the per-job CODEX_HOME in air-gap mode
+# (host-side and container-side share the same path by default). Operators
+# override via `settings.airgap.codex_home_root`.
+_AIRGAP_CODEX_HOME_ROOT_DEFAULT = "/run/openscientist-codex-home"
+
 
 class JobContainerRunner:
     """Launches and stops per-job agent containers."""
@@ -51,13 +56,30 @@ class JobContainerRunner:
         return resolve_docker_network(self._docker, configured_network)
 
     @staticmethod
+    def _airgap_codex_home_paths(settings: Settings, job_id: str) -> tuple[Path, Path]:
+        """Return ``(host_dir, container_dir)`` for the per-job CODEX_HOME.
+
+        The host and container path are the same by default (operators run
+        this on Linux where ``/run`` is tmpfs); they can diverge via
+        ``settings.airgap.codex_home_root``.
+        """
+        root = settings.airgap.codex_home_root or _AIRGAP_CODEX_HOME_ROOT_DEFAULT
+        per_job = Path(root) / job_id
+        return per_job, per_job
+
+    @staticmethod
     def _build_container_environment(
         settings: Settings,
         *,
         job_id: str,
         job_mount: str,
     ) -> dict[str, str]:
-        """Build the environment variables for the agent container."""
+        """Build the environment variables for the agent container.
+
+        In air-gap mode the env is filtered through
+        :func:`airgap.env_allowlist.filtered_agent_env` so only the active
+        provider's credentials reach the container — see RFC §12.1.
+        """
         cs = settings.container
         provider_env = settings.provider.get_container_env_vars()
         env: dict[str, str] = {
@@ -74,16 +96,42 @@ class JobContainerRunner:
             env["GOOGLE_APPLICATION_CREDENTIALS"] = "/agent/gcp-credentials.json"
         if settings.phenix.phenix_host_path:
             env["PHENIX_PATH"] = "/opt/phenix"
+
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            from openscientist.airgap.env_allowlist import filtered_agent_env
+
+            env = filtered_agent_env(env, settings.provider.provider_id)
+            # Re-add the air-gap-specific vars the agent needs to find its
+            # internal endpoints. Safe to overlay after filtering because
+            # they aren't credentials.
+            env["OPENSCIENTIST_AIR_GAPPED"] = "1"
+            if settings.airgap.llm_addr:
+                env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] = settings.airgap.llm_addr
+            if settings.airgap.pubmed_addr:
+                env["OPENSCIENTIST_AIRGAP_PUBMED_ADDR"] = settings.airgap.pubmed_addr
+            # The AirgapCodexAgent reads this to relocate CODEX_HOME outside
+            # job_dir. Must match the container-side bind-mount target below.
+            _host_dir, container_dir = JobContainerRunner._airgap_codex_home_paths(settings, job_id)
+            env["OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT"] = str(container_dir.parent)
         return env
 
     @staticmethod
     def _build_container_volumes(
         settings: Settings,
         *,
+        job_id: str,
         job_dir_host: Path,
         job_mount: str,
     ) -> dict[str, dict[str, str]]:
-        """Build the bind mounts for the agent container."""
+        """Build the bind mounts for the agent container.
+
+        In air-gap mode an extra mount maps the per-job host CODEX_HOME
+        subdir (where the runner already pre-placed ``auth.json``) into the
+        container at the same path the :class:`AirgapCodexAgent` will use as
+        its ``_codex_home()``. Keeps Codex's generated ``config.toml`` and
+        the mounted ``auth.json`` out of the exported job artifact tree
+        (RFC §11 / §12.2).
+        """
         volumes: dict[str, dict[str, str]] = {
             str(job_dir_host): {"bind": job_mount, "mode": "rw"},
             "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
@@ -101,6 +149,9 @@ class JobContainerRunner:
                 "bind": "/opt/phenix",
                 "mode": "ro",
             }
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            host_dir, container_dir = JobContainerRunner._airgap_codex_home_paths(settings, job_id)
+            volumes[str(host_dir)] = {"bind": str(container_dir), "mode": "rw"}
         return volumes
 
     @staticmethod
@@ -143,7 +194,7 @@ class JobContainerRunner:
             settings, job_id=job_id, job_mount=job_mount
         )
         volumes = JobContainerRunner._build_container_volumes(
-            settings, job_dir_host=job_dir_host, job_mount=job_mount
+            settings, job_id=job_id, job_dir_host=job_dir_host, job_mount=job_mount
         )
         return env, volumes, agent_network, agent_memory, agent_cpu, agent_platform
 
@@ -156,17 +207,23 @@ class JobContainerRunner:
         return str(os.stat(socket_path).st_gid)
 
     @staticmethod
-    def _provision_codex_auth(settings: Settings, job_dir: Path) -> None:
-        """Place the codex CLI auth into the per-job CODEX_HOME so the
-        non-root agent (uid 1001) can read it.
+    def _provision_codex_auth(settings: Settings, job_id: str, job_dir: Path) -> None:
+        """Place the codex CLI auth into the per-job CODEX_HOME.
+
+        Non-airgap mode (default): writes to ``job_dir/.codex/auth.json``
+        — the legacy path the base :class:`CodexAgent` reads as its
+        ``_codex_home()``.
+
+        Airgap mode (RFC §12.2): writes to ``host_codex_home_root/<job_id>/
+        auth.json`` instead, keeping the file out of the exported artifact
+        tree. The host directory is then bind-mounted into the container at
+        the same path so the :class:`AirgapCodexAgent` finds the file at
+        ``_codex_home() / "auth.json"``.
 
         Mounting the host auth file directly fails on the uid/permission
         boundary (the host file is mode 600 owned by another user), so we
-        copy it in agent-readable. ``job_dir`` is the runner-local path to
-        the job directory (the same path ``setup.py`` writes into), not the
-        host-translated bind-mount path, so the copy works whether the web
-        server runs on the host or in a container. No-op unless
-        ``codex_auth_host_path`` is set (the API-key path needs no file).
+        copy it in agent-readable. No-op unless ``codex_auth_host_path`` is
+        set (the API-key path needs no file).
         """
         src = settings.provider.codex_auth_host_path
         if not src:
@@ -175,9 +232,15 @@ class JobContainerRunner:
         if not src_path.exists():
             logger.warning("codex_auth_host_path %s does not exist, skipping", src_path)
             return
-        codex_home = job_dir / ".codex"
+
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            host_dir, _ = JobContainerRunner._airgap_codex_home_paths(settings, job_id)
+            codex_home = host_dir
+        else:
+            codex_home = job_dir / ".codex"
         codex_home.mkdir(parents=True, exist_ok=True)
-        # World-writable so the agent can also write config.toml into CODEX_HOME.
+        # World-writable so the agent (uid 1001) can also write config.toml
+        # into CODEX_HOME during the run.
         codex_home.chmod(0o777)
         dest = codex_home / "auth.json"
         shutil.copy2(src_path, dest)
@@ -210,7 +273,7 @@ class JobContainerRunner:
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
         job_dir_resolved = job_dir.resolve()
-        self._provision_codex_auth(settings, job_dir_resolved)
+        self._provision_codex_auth(settings, job_id, job_dir_resolved)
         job_dir_host = to_host_path(job_dir_resolved, cs)
         env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
             self._build_launch_configuration(

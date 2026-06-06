@@ -54,6 +54,19 @@ BASE_AIRGAP_ENV: frozenset[str] = frozenset(
         "LANG",
         "LC_ALL",
         "TZ",
+        # Container-side job identification (the runner sets these).
+        "JOB_ID",
+        "JOB_DIR",
+        # Host-path signal the Codex provider's container-side config check
+        # looks for. Path only, never the file contents.
+        "CODEX_AUTH_HOST_PATH",
+        # Sibling-container path translation (used by executor spawn).
+        "OPENSCIENTIST_HOST_PROJECT_DIR",
+        "OPENSCIENTIST_CONTAINER_APP_DIR",
+        # Host-mounted scientific-tool paths. Paths, never credentials —
+        # the data itself is mounted read-only by the runner.
+        "PHENIX_PATH",
+        "GOOGLE_APPLICATION_CREDENTIALS",
     }
 )
 
