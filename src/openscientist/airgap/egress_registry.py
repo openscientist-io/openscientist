@@ -103,9 +103,16 @@ EGRESS_TARGETS: dict[str, Callable[[Any], set[HostPort]]] = {
     # is RFC §19 OQ — until that lands, these providers refuse to start
     # in air-gap mode. The error message is honest about the cause.
     "openai": lambda s: _unsupported(
-        "OpenAI provider has no base-URL override field on ProviderSettings — "
-        "Codex CLI talks to its built-in default endpoint. "
-        "Air-gap support for this provider is not yet wired up; see RFC §19 OQ."
+        "Air-gap mode with the 'openai' provider requires a local "
+        "OpenAI-compatible inference server (vLLM, llama.cpp server, TGI, "
+        "etc.) serving an open-weight model — gpt-oss-120b is the validated "
+        "reference (Bedrock's open-weight provider uses the same model via "
+        "the same Responses API; see providers/bedrock_openai.py). Today the "
+        "OpenAIDirectProvider has no base-URL override field on "
+        "ProviderSettings, so Codex talks to its built-in default endpoint. "
+        "Once OPENAI_BASE_URL becomes a real settings field (or a dedicated "
+        "LocalOpenAIProvider lands), this entry flips on. "
+        "See RFC §7.4 (local-model deployment shape) and §19 OQ."
     ),
     "azure-openai": lambda s: (
         _from_azure_openai_resource(getattr(s.provider, "azure_openai_resource", None))

@@ -371,6 +371,73 @@ Each allowlisted service must satisfy:
 - **Service-side attestation.** `airgap-verify` runs negative egress probes from *inside* the
   service containers as well as the agent's.
 
+### 7.4 The local LLM endpoint — operational shape
+
+The previous subsections refer to "the operator-stood-up local LLM endpoint" as an abstract
+service contract. This section names the concrete deployment shape the design assumes — answering
+the **"where do the tokens come from?"** question that air-gap mode has been hand-waving on.
+
+**The internal LLM endpoint is an OpenAI-compatible API server fronted by an open-weight model.**
+The canonical reference today is **`gpt-oss-120b`** (and its 20B sibling), OpenAI's open-weight
+release that exposes the `/v1/responses` Responses API with tool calling — exactly the API
+contract the Codex CLI subprocess speaks. Serving stacks that satisfy the contract include vLLM,
+llama.cpp's HTTP server, TGI, SGLang, and any of the dozens of OpenAI-compatible inference
+runtimes. The operator chooses one based on their hardware budget; gpt-oss-120b runs on a single
+H100 (or quantized on consumer hardware), gpt-oss-20b on much less. The same pattern works with
+any open-weight model that ships a compliant Responses-API surface.
+
+**This isn't speculative.** Luca's in-flight `BedrockOpenAIProvider` (PR #190) runs **the same
+gpt-oss-120b model through the same Responses API** at Bedrock's Mantle endpoint. A
+self-hosted vLLM serving the same weights at `https://10.0.0.5:8443/v1` is operationally
+identical from the Codex CLI's perspective — only the `base_url` and auth surface change. A
+``LocalOpenAIProvider`` (or a generalized ``OPENAI_BASE_URL`` override on
+``OpenAIDirectProvider``) is a ~30-line copy of `bedrock_openai.py` once it lands.
+
+**Provider class.** The agent reaches the local endpoint through a `CodexCompatible` provider on
+the established template (compare `azure_openai.py` and `bedrock_openai.py`):
+
+```python
+class LocalOpenAIProvider(CodexCompatible):
+    def _base_url(self) -> str:
+        return get_settings().airgap.llm_addr  # e.g. "https://10.0.0.5:8443/v1"
+    def codex_config_overrides(self) -> list[str]:
+        return ["[model_providers.local-openai]",
+                f'base_url = "{self._base_url()}"',
+                'env_key = "LOCAL_LLM_API_KEY"',
+                'wire_api = "responses"',
+                "stream_max_retries = 10"]
+    def codex_model_name(self) -> str | None:
+        return get_settings().provider.model or "gpt-oss-120b"
+    def codex_sdk_env(self) -> dict[str, str]:
+        key = os.environ.get("LOCAL_LLM_API_KEY")
+        return {"LOCAL_LLM_API_KEY": key} if key else {}
+```
+
+(The exact class name and id depend on what Luca picks — `LocalOpenAIProvider`,
+`OpenAIEndpointProvider`, or just extending `OpenAIDirectProvider` with the override field.
+PR-1's `egress_registry.py` keys on the provider id string, so adding the entry when it lands is
+a one-line change.)
+
+**Agent backend.** No new backend needed. The path is **CodexAgent → AirgapCodexAgent**, both
+already implemented in PR-1. The Codex CLI subprocess sees an OpenAI-compatible endpoint and
+behaves identically to its Azure / Bedrock / cloud-OpenAI paths.
+
+**What this constrains.** Three things follow from this shape:
+
+1. **`ClaudeCompatible` providers can't trivially work in air-gap mode.** Anthropic doesn't ship
+   Claude weights, so there's no "local Claude" to fall back to. The few Anthropic-API-shimming
+   proxies that exist (routing Llama/Qwen through `/v1/messages`) are workable in principle but
+   the model behind them is still an open-weight model — so an operator who wants Claude SDK +
+   open-weight model is paying the SDK gating cost (§10.3) for no model-quality gain over the
+   Codex + open-weight path. PR-1's factory refuses ClaudeCompatible providers in airgap mode
+   for this reason (§17), pointing operators at the Codex path instead.
+2. **The model is open-weight, not frontier.** gpt-oss-120b is competent but isn't Opus. The
+   capability/sovereignty tradeoff is real and documented in §20.
+3. **Tool-call reliability is the load-bearing risk.** The OS workflow leans heavily on MCP tool
+   calls (`search_pubmed`, `validate_citation`, code execution). Open-weight models vary widely
+   in tool-call faithfulness. gpt-oss-120b is well above the bar; smaller models may not be. The
+   operator-facing docs should name a tested model floor.
+
 ---
 
 ## 8. Container Hardening (parity: agent and executor)
@@ -899,15 +966,24 @@ refactor. Non-airgap deployments continue to work; airgap stops using the proxy.
 
 1. **DNS architecture:** static `--add-host` vs. local non-recursive resolver. Both work.
 2. **Provider explicit-mapping mechanism — OpenAI / Bedrock / Vertex.** None of these has a
-   `*_base_url` field on `ProviderSettings` today (`settings.py:62-142`). Two design choices:
-   (a) add per-provider override fields (`OPENAI_BASE_URL`, `BEDROCK_BASE_URL`,
-   `VERTEX_BASE_URL`) and have the providers respect them at request time — minimal coupling but
-   provider-side changes; (b) introduce a single `OPENSCIENTIST_AIRGAP_LLM_ADDR` and have the
-   airgap layer transparently rewrite the provider's outbound request hostname — more airgap-
-   internal but might surprise providers that compute hostnames lazily (Bedrock/Vertex regional
-   clients). PR-1's egress registry refuses these three providers in air-gap mode until this
-   resolves; CBORG / Foundry / Anthropic / Azure-OpenAI work today because they already have
-   introspectable URL fields.
+   `*_base_url` field on `ProviderSettings` today (`settings.py:62-142`). The resolution path is
+   now clearer for each:
+   - **OpenAI:** the air-gap shape (§7.4) is a `CodexCompatible` provider pointing at a local
+     OpenAI-compatible server (vLLM serving gpt-oss-120b). This is what Luca is trending toward
+     in his Codex-provider series (`BedrockOpenAIProvider` is the latest in pattern). Concrete
+     change: either generalize `OpenAIDirectProvider` to read `OPENAI_BASE_URL` (smaller diff,
+     opens cloud-OpenAI to airgap rewrites too) or add a dedicated `LocalOpenAIProvider`
+     class (clearer deployment intent). Either way the egress registry entry flips from
+     `_unsupported` to `_from_url(...)`. Decision can wait for Luca's in-flight work.
+   - **Bedrock (Claude):** `ClaudeCompatible`, regional SDK. Air-gap support requires either an
+     SDK-level base-URL override or routing through an Anthropic-API proxy. Both are
+     significant work and don't help against the model-quality bar (§7.4) — deferred unless a
+     concrete operator need surfaces.
+   - **Vertex:** same shape as Bedrock-Claude. Same deferral.
+
+   PR-1's egress registry refuses these three providers in air-gap mode until either Luca's
+   work lands (OpenAI case) or the explicit deferral is revisited. CBORG / Foundry / Anthropic
+   / Azure-OpenAI work today because they already have introspectable URL fields.
 3. **Codex `auth.json` provisioning:** cleanest source for the read-only secret mount —
    operator-managed file, K8s secret, Docker secret?
 4. **Local PubMed service tech:** eutils shim vs ES/Solr + adapter (the sibling repo currently
@@ -937,12 +1013,47 @@ containers (regardless of backend), verified by per-job attestation and the host
   block.
 - **Build-time supply chain** of agent/executor base images and the bundled Codex CLI binary
   beyond what SHA256 pinning catches.
+- **Discovery quality vs. frontier models.** Per §7.4, the air-gap deployment runs an open-weight
+  model (gpt-oss-120b being the canonical reference). Frontier models (Claude Opus, GPT-5,
+  Gemini Ultra) are markedly stronger at multi-step scientific reasoning and at the tool-call
+  faithfulness that OS's MCP-heavy workflow depends on. Operators deploying air-gap mode trade
+  capability for sovereignty — they are not getting frontier-model discovery, and should not
+  deploy expecting it. The operator-facing docs name a tested model floor and recommend
+  benchmark calibration before regulated use.
 
 The "guarantee" claim should always be cited with §4's precise statement and this section.
 
 ---
 
 ## 21. Revision Log
+
+**v4.2 (2026-06-06) — answer the "where do the tokens come from?" question:**
+
+The previous versions treated the "internal LLM endpoint" as an abstract operator-deployed
+artifact without naming the concrete shape. v4.2 fills that in based on the trajectory of
+Luca's in-flight provider work:
+
+- **New §7.4 "The local LLM endpoint — operational shape".** Air-gap mode runs an
+  OpenAI-compatible inference server (vLLM, llama.cpp server, TGI, etc.) serving an open-weight
+  model — gpt-oss-120b being the validated reference, mirroring what Luca's
+  `BedrockOpenAIProvider` (PR #190) does through Bedrock's Mantle endpoint. The provider class
+  is a `CodexCompatible` template ~30 lines long, and the agent backend is the existing
+  `AirgapCodexAgent` from PR-1 (no new backend needed). Calls out three consequences:
+  ClaudeCompatible can't trivially work (no local Claude weights), the model is open-weight not
+  frontier, and tool-call reliability is the load-bearing risk.
+- **§19 OQ#2 sharpened.** OpenAI's resolution path is now concrete — generalize
+  `OpenAIDirectProvider` to read `OPENAI_BASE_URL` OR add a dedicated `LocalOpenAIProvider`
+  (Luca's choice). Bedrock-Claude and Vertex are explicitly deferred unless concrete operator
+  need surfaces, since the model-quality bar (§7.4) makes the Codex + open-weight path
+  preferable anyway.
+- **§20 gains the discovery-quality residual risk.** Air-gap mode trades capability for
+  sovereignty. Open-weight models are competent but not frontier. Operators should benchmark
+  before regulated use.
+- **`egress_registry.py` OpenAI entry's error message** rewritten to point at the
+  local-OpenAI-compatible-server resolution rather than the misleading "set OPENAI_BASE_URL"
+  (the field doesn't exist yet). Test match string updated accordingly.
+
+No code structure change beyond the error-message rewrite.
 
 **v4.1 (2026-06-06) — amendments after Codex Review-4 vibe-check on v4:**
 

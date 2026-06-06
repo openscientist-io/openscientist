@@ -86,9 +86,12 @@ class TestEgressTargetsFor:
 
     def test_openai_unsupported_in_airgap(self) -> None:
         # OpenAI provider has no base-URL override field on current main.
-        # Until RFC §19 OQ is resolved, air-gap refuses this provider.
+        # Until RFC §19 OQ is resolved (or a LocalOpenAIProvider lands),
+        # air-gap refuses this provider. The error message points at the
+        # local-model deployment resolution rather than at "set
+        # OPENAI_BASE_URL" — there is no such field yet (see RFC §7.4).
         s = _settings()
-        with pytest.raises(AirGapUnsupportedError, match="OpenAI provider"):
+        with pytest.raises(AirGapUnsupportedError, match="local OpenAI-compatible"):
             egress_targets_for("openai", s)
 
     def test_bedrock_unsupported_in_airgap(self) -> None:
