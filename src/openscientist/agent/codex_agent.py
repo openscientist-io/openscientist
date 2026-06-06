@@ -97,10 +97,23 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         forward the whole parent environment (PATH, DATABASE_URL,
         OPENSCIENTIST_SECRET_KEY, provider creds, executor image, ...) that the
         tools need, then overlay the per-job ``OPENSCIENTIST_*`` values.
+
+        Subclasses that need to seed from something other than ``os.environ``
+        (the air-gap subclass replaces it with an allowlisted view) override
+        this method; the per-job overlay lives in :meth:`_overlay_job_env` so
+        the override can reuse it without duplicating the overlay logic.
+        """
+        return self._overlay_job_env(dict(os.environ))
+
+    def _overlay_job_env(self, base: dict[str, str]) -> dict[str, str]:
+        """Overlay the per-job ``OPENSCIENTIST_*`` values on ``base``.
+
+        Mutates and returns ``base``. Extracted so subclasses can compose
+        their own base seed (e.g. an allowlisted env) with the same per-job
+        overlay :meth:`_mcp_env` uses.
         """
         config = self._config
-        env = dict(os.environ)
-        env.update(
+        base.update(
             {
                 "OPENSCIENTIST_JOB_ID": config.job_dir.name,
                 "OPENSCIENTIST_JOB_DIR": str(config.job_dir),
@@ -108,10 +121,10 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             }
         )
         if config.data_file is not None:
-            env["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)
+            base["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)
         if config.data_files:
-            env["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
-        return env
+            base["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
+        return base
 
     def _write_codex_config(self) -> None:
         """Write the per-job ``$CODEX_HOME/config.toml`` selecting the
@@ -163,6 +176,32 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         }
         return Codex({"env": env})
 
+    def _thread_options(self) -> ThreadOptions:
+        """Build the ``ThreadOptions`` for a fresh thread.
+
+        Subclasses that need to tweak fields (the air-gap subclass disables
+        ``network_access_enabled`` and ``web_search_enabled``) override this
+        and ``return super()._thread_options().model_copy(update={...})`` so
+        the base defaults stay in one place.
+        """
+        return ThreadOptions(
+            model=self._provider.codex_model_name(),
+            working_directory=str(self._config.job_dir),
+            # The agent already runs locked down in its own ephemeral
+            # container, which is the real security boundary. Codex's
+            # own "workspace-write" sandbox additionally gates MCP tool
+            # calls and the headless exec auto-cancels them ("user
+            # cancelled MCP tool call"), so no tool ever runs. Full
+            # access defers sandboxing to the container, as codex
+            # recommends for externally sandboxed automation.
+            sandbox_mode="danger-full-access",
+            # Headless: no human to approve actions, so never ask.
+            approval_policy="never",
+            # Job dirs are not git repos. Without this, codex exec
+            # refuses to run ("not inside a trusted directory").
+            skip_git_repo_check=True,
+        )
+
     def _ensure_thread(self, reset_session: bool) -> Thread:
         """Return a started thread, (re)building it when requested."""
         if reset_session:
@@ -172,25 +211,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             self._write_agents_md()
             self._ensure_auth()
             codex = self._make_codex()
-            self._thread = codex.start_thread(
-                ThreadOptions(
-                    model=self._provider.codex_model_name(),
-                    working_directory=str(self._config.job_dir),
-                    # The agent already runs locked down in its own ephemeral
-                    # container, which is the real security boundary. Codex's
-                    # own "workspace-write" sandbox additionally gates MCP tool
-                    # calls and the headless exec auto-cancels them ("user
-                    # cancelled MCP tool call"), so no tool ever runs. Full
-                    # access defers sandboxing to the container, as codex
-                    # recommends for externally sandboxed automation.
-                    sandbox_mode="danger-full-access",
-                    # Headless: no human to approve actions, so never ask.
-                    approval_policy="never",
-                    # Job dirs are not git repos. Without this, codex exec
-                    # refuses to run ("not inside a trusted directory").
-                    skip_git_repo_check=True,
-                )
-            )
+            self._thread = codex.start_thread(self._thread_options())
             logger.info("Codex thread started")
         return self._thread
 
