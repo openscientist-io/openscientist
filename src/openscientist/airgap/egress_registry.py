@@ -98,33 +98,33 @@ EGRESS_TARGETS: dict[str, Callable[[Any], set[HostPort]]] = {
             "set one for air-gapped mode"
         )
     ),
-    "openai": lambda s: (
-        _from_url(getattr(s.provider, "openai_base_url", None))
-        or _unsupported(
-            "OpenAI provider using Codex's default endpoint — "
-            "set OPENAI_BASE_URL to your internal endpoint for air-gapped mode"
-        )
+    # OpenAI / Bedrock / Vertex: there is currently no settings field on
+    # main that lets the operator point these providers at an internal
+    # endpoint. The right mechanism (a per-provider base_url field on
+    # ProviderSettings vs. a single OPENSCIENTIST_AIRGAP_LLM_ADDR redirect)
+    # is RFC §19 OQ — until that lands, these providers refuse to start
+    # in air-gap mode. The error message is honest about the cause.
+    "openai": lambda s: _unsupported(
+        "OpenAI provider has no base-URL override field on ProviderSettings — "
+        "Codex CLI talks to its built-in default endpoint. "
+        "Air-gap support for this provider is not yet wired up; see RFC §19 OQ."
     ),
-    "azure_openai": lambda s: (
+    "azure-openai": lambda s: (
         _from_azure_openai_resource(getattr(s.provider, "azure_openai_resource", None))
         or _unsupported(
             "Azure OpenAI provider with no AZURE_OPENAI_RESOURCE — "
             "set it for air-gapped mode"
         )
     ),
-    "bedrock": lambda s: (
-        _from_url(getattr(s.provider, "airgap_bedrock_endpoint", None))
-        or _unsupported(
-            "Bedrock provider's regional SDK client has no introspectable endpoint — "
-            "set OPENSCIENTIST_AIRGAP_BEDROCK_ENDPOINT to your internal Bedrock-compatible URL"
-        )
+    "bedrock": lambda s: _unsupported(
+        "Bedrock provider's regional SDK client has no introspectable endpoint "
+        "and no base-URL override field on ProviderSettings. "
+        "Air-gap support for this provider is not yet wired up; see RFC §19 OQ."
     ),
-    "vertex": lambda s: (
-        _from_url(getattr(s.provider, "airgap_vertex_endpoint", None))
-        or _unsupported(
-            "Vertex provider's regional SDK client has no introspectable endpoint — "
-            "set OPENSCIENTIST_AIRGAP_VERTEX_ENDPOINT to your internal Vertex-compatible URL"
-        )
+    "vertex": lambda s: _unsupported(
+        "Vertex provider's regional SDK client has no introspectable endpoint "
+        "and no base-URL override field on ProviderSettings. "
+        "Air-gap support for this provider is not yet wired up; see RFC §19 OQ."
     ),
 }
 

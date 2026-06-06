@@ -168,7 +168,7 @@ The operator, host OS, kernel, and Docker daemon are **trusted**. The operator i
 | NET_RAW / packet sockets | default cap | `cap_drop=ALL` (§8) |
 | Control-plane outbound | active | disabled in mode (§13) |
 | MCP `cwd=job_dir` `.env` discovery | possible | disabled (§10) |
-| **`get_agent_env()` passes ALL provider credentials** to every job regardless of which provider is active | a job using Anthropic still receives `OPENAI_API_KEY`, Foundry token, Bedrock keys, etc. | **active-provider-only credential allowlist** (§12.1) |
+| **`ProviderSettings.get_container_env_vars()` passes ALL provider credentials** to every job regardless of which provider is active | a job using Anthropic still receives `OPENAI_API_KEY`, Foundry token, Bedrock keys, etc. | **active-provider-only credential allowlist** (§12.1) |
 | **Codex CLI config (`job_dir/.codex/config.toml`)** | written from copy of parent env (DB URL, master secret, provider creds) | constructed from a minimal allowlist (§12.2) |
 | **Codex CLI auth (`job_dir/.codex/auth.json`)** | may land in job dir with `0644` in a `0777` parent | never written to job dir; tmpfs read-only secret mount (§12.2) |
 | **Codex CLI binary supply chain** | downloaded from GitHub release at image-build time, no checksum | SHA256-pinned, pre-bundled in agent image (§8.1) |
@@ -242,7 +242,7 @@ optional**. Inability to establish any one of them is fail-closed startup error 
     (Claude *and* Codex) disabled, `.env` discovery disabled, SPARQL allowlist, `requests` import
     removed from code-exec allowlist (defense in depth on top of the kernel namespace).
 12. **Skills pre-bundled, signed, frozen** for the job; GitHub fetch disabled (§10).
-13. **Active-provider-only credential allowlist.** `settings.get_agent_env(active_provider_id)`
+13. **Active-provider-only credential allowlist.** `ProviderSettings.get_container_env_vars(active_provider_id)`
     strips all provider credentials except those needed by the active provider, plus
     `GITHUB_TOKEN`, master secret, full DB URL. The verifier scans the resulting env,
     `CODEX_HOME/config.toml`, and the job dir for forbidden secret patterns and refuses to start
@@ -516,6 +516,22 @@ Air-gap mode addresses this at the network layer of the **executor** container s
 - The import-allowlist (drop `requests` etc. from the code-exec allowlist) remains as fail-fast
   UX, but is no longer the security boundary.
 
+**What this intentionally breaks in air-gap mode** (operators must accept):
+
+- **SPARQL endpoints reached from `exec()`'d code.** Today the SPARQL execution path in
+  `code_executor.py:431` opens HTTP connections to whatever `# ENDPOINT:` the agent writes; in
+  air-gap mode the executor has no egress route, so any SPARQL endpoint outside the per-job
+  allowlist is unreachable. Internal SPARQL stores remain reachable only if they're added to the
+  per-job network and §10.5's `airgap.sparql_allowlist` lists them.
+- **External-API Python from the agent's code.** `code_exec.py:90` advertises arbitrary Python
+  execution; agent-authored `requests.get(...)` / `urllib.request.urlopen(...)` to public APIs
+  silently fails (connection refused / no route to host). The agent must use MCP-registered
+  tools (`search_pubmed`, `validate_citation`, the LLM call itself) — those run in the *agent*
+  container, are gated by the §7 allowlist, and are reachable.
+
+Both are intentional under the §4 threat model: air-gap mode by definition forbids unauthorized
+egress from agent-controlled code. The point is to make this loud, not subtle.
+
 ### 10.3 Claude Code SDK backend
 
 - **SDK built-in tool gating.** Claude Code's SDK ships with its own tools (web fetch, etc.)
@@ -562,15 +578,18 @@ In air-gap mode:
 
 ### 12.1 Active-provider-only credential allowlist
 
-Codex Review-3's new finding: `src/openscientist/settings.py:get_agent_env()` collects **all**
-configured provider credentials and passes them to every job container regardless of the active
-provider. An air-gap job using Anthropic still receives `OPENAI_API_KEY`, Foundry token, Bedrock
-keys, etc. — every one a potential exfil channel if any allowlisted local service ever logs
-inbound credentials by mistake.
+Codex Review-3's new finding: the container env-injection path
+(`ProviderSettings.get_container_env_vars()` in `settings.py:421`, layered with
+`JobContainerRunner._build_container_environment()` in `job_container/runner.py:54`) collects
+**all** configured provider credentials and passes them to every job container regardless of the
+active provider. An air-gap job using Anthropic still receives `OPENAI_API_KEY`, Foundry token,
+Bedrock keys, etc. — every one a potential exfil channel if any allowlisted local service ever
+logs inbound credentials by mistake.
 
 Air-gap mode requires:
 
-- `settings.get_agent_env()` takes an `active_provider_id` parameter (or reads it from settings).
+- The env-injection path takes the active provider id (read from settings) and filters
+  accordingly.
 - **Only** credentials for the active provider are included in the agent env.
 - All other provider credentials are stripped.
 - Plus `GITHUB_TOKEN`, `OPENSCIENTIST_SECRET_KEY`, full `DATABASE_URL` (with credentials) all
@@ -580,13 +599,22 @@ Air-gap mode requires:
 The implementation lives in `airgap/env_allowlist.py`:
 
 ```python
-# airgap/env_allowlist.py (sketch)
+# airgap/env_allowlist.py (sketch). Var names verified against settings.py:55-142.
 PROVIDER_ENV_VARS = {
-    "anthropic":    {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"},
-    "openai":       {"OPENAI_API_KEY", "OPENAI_BASE_URL"},
-    "azure_openai": {"AZURE_OPENAI_API_KEY", "AZURE_OPENAI_RESOURCE"},
-    "foundry":      {"ANTHROPIC_FOUNDRY_RESOURCE", "ANTHROPIC_FOUNDRY_AUTH_TOKEN"},
-    # ...
+    "anthropic":    {"ANTHROPIC_API_KEY",
+                     "ANTHROPIC_AUTH_TOKEN",        # for OAuth/CBORG-style auth
+                     "CLAUDE_CODE_OAUTH_TOKEN",     # for `claude login`
+                     "ANTHROPIC_BASE_URL"},
+    "cborg":        {"ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"},
+    "openai":       {"OPENAI_API_KEY"},
+    "azure-openai": {"AZURE_OPENAI_API_KEY",
+                     "AZURE_OPENAI_RESOURCE",
+                     "AZURE_OPENAI_DEPLOYMENT",
+                     "AZURE_OPENAI_API_VERSION"},
+    "foundry":      {"ANTHROPIC_FOUNDRY_RESOURCE",
+                     "ANTHROPIC_FOUNDRY_BASE_URL",
+                     "ANTHROPIC_FOUNDRY_API_KEY"},  # was ANTHROPIC_FOUNDRY_AUTH_TOKEN in v4
+    # Bedrock and Vertex deferred until §19 OQ#2 resolves.
 }
 
 def filtered_agent_env(full_env: dict, active_provider_id: str) -> dict:
@@ -596,8 +624,9 @@ def filtered_agent_env(full_env: dict, active_provider_id: str) -> dict:
     return {k: v for k, v in full_env.items() if k in allowed}
 ```
 
-`settings.get_agent_env()` gets a one-line conditional: if `airgap_mode`, route through
-`env_allowlist.filtered_agent_env(env, active_provider_id)`.
+`ProviderSettings.get_container_env_vars()` gets a one-line conditional: if `airgap_mode`, route
+the returned dict through `env_allowlist.filtered_agent_env(env, active_provider_id)` before
+`JobContainerRunner._build_container_environment()` consumes it.
 
 ### 12.2 Codex MCP env + auth handling
 
@@ -738,8 +767,8 @@ files and adds a new `src/openscientist/airgap/` package.
 
 - **`src/openscientist/settings.py`** (~30 lines): add `airgap_mode` to `ContainerSettings`; add
   `airgap` block (host/port for LLM, PubMed, optional Bedrock/Vertex internal mappings);
-  `get_agent_env()` gains an `active_provider_id` parameter and routes through
-  `airgap.env_allowlist.filtered_agent_env()` when `airgap_mode`.
+  `ProviderSettings.get_container_env_vars()` gains an `active_provider_id` parameter and routes
+  through `airgap.env_allowlist.filtered_agent_env()` when `airgap_mode`.
 - **`src/openscientist/agent/factory.py`** (~5 lines): when `airgap_mode=True` and provider is
   `CodexCompatible`, instantiate `AirgapCodexAgent` instead of `CodexAgent`. Otherwise unchanged.
 - **`src/openscientist/job_container/runner.py`** (~15 lines): airgap-mode conditional that
@@ -814,7 +843,7 @@ behavior.
 
 | File | Change |
 |---|---|
-| `src/openscientist/settings.py` | `airgap_mode` flag + airgap config block; `get_agent_env(active_provider_id)` parameter; airgap-mode routing |
+| `src/openscientist/settings.py` | `airgap_mode` flag + airgap config block; `ProviderSettings.get_container_env_vars(active_provider_id)` parameter; airgap-mode routing |
 | `src/openscientist/agent/factory.py` | one conditional selecting `AirgapCodexAgent` |
 | `src/openscientist/job_container/runner.py` | airgap-mode block: tmpfs Codex auth mount, `CODEX_HOME`, hardening flags, per-job network attach |
 | `src/openscientist/container_manager.py` | airgap-mode block: socket path → airgap proxy |
@@ -869,9 +898,16 @@ refactor. Non-airgap deployments continue to work; airgap stops using the proxy.
 ## 19. Remaining Open Questions
 
 1. **DNS architecture:** static `--add-host` vs. local non-recursive resolver. Both work.
-2. **Provider explicit-mapping settings:** the shape of
-   `OPENSCIENTIST_AIRGAP_BEDROCK_ENDPOINT` / `_VERTEX_ENDPOINT` — single URL enough or do these
-   SDKs need richer config?
+2. **Provider explicit-mapping mechanism — OpenAI / Bedrock / Vertex.** None of these has a
+   `*_base_url` field on `ProviderSettings` today (`settings.py:62-142`). Two design choices:
+   (a) add per-provider override fields (`OPENAI_BASE_URL`, `BEDROCK_BASE_URL`,
+   `VERTEX_BASE_URL`) and have the providers respect them at request time — minimal coupling but
+   provider-side changes; (b) introduce a single `OPENSCIENTIST_AIRGAP_LLM_ADDR` and have the
+   airgap layer transparently rewrite the provider's outbound request hostname — more airgap-
+   internal but might surprise providers that compute hostnames lazily (Bedrock/Vertex regional
+   clients). PR-1's egress registry refuses these three providers in air-gap mode until this
+   resolves; CBORG / Foundry / Anthropic / Azure-OpenAI work today because they already have
+   introspectable URL fields.
 3. **Codex `auth.json` provisioning:** cleanest source for the read-only secret mount —
    operator-managed file, K8s secret, Docker secret?
 4. **Local PubMed service tech:** eutils shim vs ES/Solr + adapter (the sibling repo currently
@@ -907,6 +943,32 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 ---
 
 ## 21. Revision Log
+
+**v4.1 (2026-06-06) — amendments after Codex Review-4 vibe-check on v4:**
+
+Minor corrections, no architectural change:
+
+- Egress registry provider id `azure_openai` → `azure-openai` (typo against
+  `providers/__init__.py:47`). Code + test updated; regression test added.
+- Egress registry `openai`, `bedrock`, `vertex` entries no longer pretend to read
+  `openai_base_url` / `airgap_bedrock_endpoint` / `airgap_vertex_endpoint` settings fields
+  (none exist on current main). All three now raise `AirGapUnsupportedError` with honest
+  messages referencing §19 OQ#2.
+- §12.1 `PROVIDER_ENV_VARS` sketch fixed against actual `settings.py:55-142`:
+  `ANTHROPIC_FOUNDRY_AUTH_TOKEN` → `ANTHROPIC_FOUNDRY_API_KEY`; added
+  `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_FOUNDRY_BASE_URL`,
+  `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION`; Bedrock/Vertex entries deferred
+  pending OQ#2.
+- §12.1 and §17 references to a nonexistent `settings.get_agent_env()` function corrected to
+  the real names — `ProviderSettings.get_container_env_vars()` (`settings.py:421`) and
+  `JobContainerRunner._build_container_environment()` (`job_container/runner.py:54`).
+- §10.2 gained an explicit "what this intentionally breaks" callout — SPARQL endpoints
+  reached from `exec()`'d code and external-API Python both fail in air-gap mode, by
+  design. Calling this out loudly so operators know to use MCP-registered tools instead of
+  arbitrary HTTP.
+- §19 OQ#2 rewritten to name the actual design question (per-provider `*_base_url` fields
+  vs. single `OPENSCIENTIST_AIRGAP_LLM_ADDR` redirect) rather than the phantom
+  `OPENSCIENTIST_AIRGAP_BEDROCK_ENDPOINT` / `_VERTEX_ENDPOINT` that v4 invented.
 
 **v4 (2026-06-05) — after the fourth Codex review (Review-3), incorporating both the new gaps and
 the diff-minimization architecture:**

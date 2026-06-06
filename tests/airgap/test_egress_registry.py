@@ -38,12 +38,15 @@ class TestRegistryCoverage:
     """
 
     def test_known_providers_present(self) -> None:
+        # Must match the id strings returned by `providers/__init__.py:get_provider`.
+        # Note `azure-openai` is hyphenated, not underscored — matches the
+        # actual provider id at `providers/__init__.py:47` and `:126`.
         expected = {
             "anthropic",
             "cborg",
             "foundry",
             "openai",
-            "azure_openai",
+            "azure-openai",
             "bedrock",
             "vertex",
         }
@@ -76,7 +79,7 @@ class TestEgressTargetsFor:
 
     def test_azure_openai_resource_derives_endpoint(self) -> None:
         s = _settings(azure_openai_resource="my-aoai")
-        assert egress_targets_for("azure_openai", s) == {
+        assert egress_targets_for("azure-openai", s) == {
             ("my-aoai.openai.azure.com", 443)
         }
 
@@ -85,23 +88,21 @@ class TestEgressTargetsFor:
         with pytest.raises(AirGapUnsupportedError, match="ANTHROPIC_BASE_URL"):
             egress_targets_for("anthropic", s)
 
-    def test_openai_requires_base_url_override(self) -> None:
-        s = _settings(openai_base_url=None)
-        with pytest.raises(AirGapUnsupportedError, match="OPENAI_BASE_URL"):
+    def test_openai_unsupported_in_airgap(self) -> None:
+        # OpenAI provider has no base-URL override field on current main.
+        # Until RFC §19 OQ is resolved, air-gap refuses this provider.
+        s = _settings()
+        with pytest.raises(AirGapUnsupportedError, match="OpenAI provider"):
             egress_targets_for("openai", s)
 
-    def test_bedrock_unsupported_without_override(self) -> None:
+    def test_bedrock_unsupported_in_airgap(self) -> None:
         s = _settings()
-        with pytest.raises(AirGapUnsupportedError, match="Bedrock"):
+        with pytest.raises(AirGapUnsupportedError, match="Bedrock provider"):
             egress_targets_for("bedrock", s)
 
-    def test_bedrock_explicit_override_supported(self) -> None:
-        s = _settings(airgap_bedrock_endpoint="https://bedrock-compat.internal:8443")
-        assert egress_targets_for("bedrock", s) == {("bedrock-compat.internal", 8443)}
-
-    def test_vertex_unsupported_without_override(self) -> None:
+    def test_vertex_unsupported_in_airgap(self) -> None:
         s = _settings()
-        with pytest.raises(AirGapUnsupportedError, match="Vertex"):
+        with pytest.raises(AirGapUnsupportedError, match="Vertex provider"):
             egress_targets_for("vertex", s)
 
     def test_unknown_provider_raises_policy_error(self) -> None:
@@ -140,6 +141,17 @@ class TestValidateProviderForAirgap:
                 s,
                 allowlist={("any", 443)},
             )
+
+    def test_azure_openai_validates_with_hyphenated_id(self) -> None:
+        # Regression: catch the underscore-vs-hyphen typo Codex flagged
+        # against v4 — the provider id is `azure-openai`, not `azure_openai`.
+        s = _settings(azure_openai_resource="prod-aoai")
+        targets = validate_provider_for_airgap(
+            "azure-openai",
+            s,
+            allowlist={("prod-aoai.openai.azure.com", 443)},
+        )
+        assert targets == {("prod-aoai.openai.azure.com", 443)}
 
     def test_default_port_80_for_http(self) -> None:
         # Sanity check on the URL parser — http defaults to 80.
