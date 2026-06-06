@@ -8,7 +8,14 @@ COMPOSE_FILE ?= docker-compose.yml
 # Load .env if present so OPENSCIENTIST_*_IMAGE values steer build tags
 # (same source of truth as docker-compose substitution).
 -include .env
-export
+# Export ONLY the image-tag overrides to the docker compose subprocess. A bare
+# `export` would push every .env value (POSTGRES_PORT, PORT, ...) into the
+# environment, and GNU Make strips an inline `# comment` but keeps the trailing
+# whitespace before it — turning `POSTGRES_PORT=5434  # ...` into "5434   ",
+# which docker compose rejects as `invalid hostPort`. docker compose reads .env
+# directly for those values (its parser handles inline comments correctly), so
+# they must not be re-exported from here.
+export OPENSCIENTIST_BASE_IMAGE OPENSCIENTIST_EXECUTOR_IMAGE OPENSCIENTIST_AGENT_IMAGE
 
 # Image tags — derived from .env, fall back to :latest when unset.
 # Set OPENSCIENTIST_AGENT_IMAGE=openscientist-agent:staging in
@@ -39,7 +46,7 @@ help:
 start:
 	@echo "Starting OpenScientist..."
 	docker compose -f $(COMPOSE_FILE) up -d --remove-orphans
-	@echo "OpenScientist started at http://localhost:8080"
+	@echo "OpenScientist started at http://localhost:8080 (migrations run automatically on container startup)"
 
 stop:
 	@echo "Stopping OpenScientist..."

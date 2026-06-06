@@ -24,6 +24,10 @@ WORKDIR /app
 COPY pyproject.toml README.md alembic.ini uv.lock ./
 COPY src/ src/
 
+# Entrypoint runs alembic migrations before the server on startup (issue #134)
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Create jobs directory
 RUN mkdir -p jobs
 
@@ -37,4 +41,5 @@ ENV OPENSCIENTIST_BUILD_TIME=${BUILD_TIME}
 # Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "openscientist.web_app", "--host", "0.0.0.0", "--port", "8080"]

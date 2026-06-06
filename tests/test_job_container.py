@@ -23,6 +23,7 @@ class TestJobContainerRunner:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {"EXTRA_ENV": "1"}
         provider.codex_auth_host_path = None
+        provider.gcp_credentials_host_path = None
         return SimpleNamespace(
             container=SimpleNamespace(
                 host_project_dir=host_project_dir,
@@ -226,6 +227,7 @@ class TestPhenixMount:
         settings.database.effective_database_url = "postgresql+asyncpg://test"
         settings.provider.get_container_env_vars.return_value = {}
         settings.provider.google_application_credentials = None
+        settings.provider.gcp_credentials_host_path = None
         settings.provider.codex_auth_host_path = None
 
         phenix = MagicMock()

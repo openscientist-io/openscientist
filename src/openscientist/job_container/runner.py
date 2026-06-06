@@ -88,9 +88,15 @@ class JobContainerRunner:
             str(job_dir_host): {"bind": job_mount, "mode": "rw"},
             "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
         }
-        gcp_path = settings.provider.google_application_credentials
-        if gcp_path:
-            gcp_host_path = settings.provider.gcp_credentials_host_path or gcp_path
+        # Mount GCP service-account creds into the agent container only when an
+        # explicit host path is configured (GCP_CREDENTIALS_FILE /
+        # GCP_CREDENTIALS_HOST_PATH). The base image hard-sets
+        # GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json — a
+        # container-internal path — so using that as the bind-mount source would
+        # make Docker reject the mount ("mounts denied") for every non-Vertex
+        # provider on the host.
+        gcp_host_path = settings.provider.gcp_credentials_host_path
+        if gcp_host_path:
             volumes[str(gcp_host_path)] = {
                 "bind": "/agent/gcp-credentials.json",
                 "mode": "ro",

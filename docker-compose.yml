@@ -72,7 +72,11 @@ services:
       OPENSCIENTIST_AGENT_MEMORY: ${OPENSCIENTIST_AGENT_MEMORY:-8g}
       OPENSCIENTIST_AGENT_CPU: ${OPENSCIENTIST_AGENT_CPU:-2.0}
       OPENSCIENTIST_AGENT_PLATFORM: ${OPENSCIENTIST_AGENT_PLATFORM:-}
-      OPENSCIENTIST_HOST_PROJECT_DIR: ${OPENSCIENTIST_HOST_PROJECT_DIR:-}
+      # Host path that maps to /app, used to translate job dirs into host bind
+      # mounts for sibling agent containers. Defaults to the directory compose is
+      # invoked from (the project root via `make start`), which is correct for
+      # local single-host setups. Override explicitly for unusual layouts.
+      OPENSCIENTIST_HOST_PROJECT_DIR: ${OPENSCIENTIST_HOST_PROJECT_DIR:-${PWD}}
 
       # Derived settings not expressible in .env
       PYTHONDONTWRITEBYTECODE: ${OPENSCIENTIST_DEV_MODE:+1}
