@@ -48,12 +48,25 @@ def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
     """Return the agent for the configured provider.
 
     The active provider is selected by `settings.provider.provider_id`. The
-    agent class is chosen by the provider's compatibility family.
+    agent class is chosen by the provider's compatibility family. When
+    `settings.airgap.enabled` is True, the air-gap variant of the family's
+    agent is selected (currently only `AirgapCodexAgent`; the Claude SDK
+    built-in gating from RFC §10.3 lands in a follow-up PR).
     """
-    provider = _instantiate_provider(get_settings().provider.provider_id)
+    settings = get_settings()
+    provider = _instantiate_provider(settings.provider.provider_id)
     # ClaudeCompatible is checked first: a hypothetical multi-family provider
     # prefers the mature Claude path until a real hybrid case appears.
     if isinstance(provider, ClaudeCompatible):
+        if settings.airgap.enabled:
+            raise ValueError(
+                "Air-gap mode is enabled but the active provider "
+                f"({provider.id}) is Claude-compatible. PR-1 ships only the "
+                "AirgapCodexAgent; the AirgapClaudeCodeAgent (with SDK "
+                "built-in tool gating per RFC §10.3) lands in a follow-up "
+                "PR. Switch to a Codex-compatible provider (openai, "
+                "azure-openai) or disable OPENSCIENTIST_AIR_GAPPED."
+            )
         logger.info("Using ClaudeCodeAgent with provider %s", provider.id)
         return ClaudeCodeAgent(config, provider)
     if isinstance(provider, CodexCompatible):
@@ -62,6 +75,11 @@ def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
         # can still import the factory.
         from openscientist.agent.codex_agent import CodexAgent
 
+        if settings.airgap.enabled:
+            from openscientist.airgap.codex_agent import AirgapCodexAgent
+
+            logger.info("Using AirgapCodexAgent (air-gap mode) with provider %s", provider.id)
+            return AirgapCodexAgent(config, provider)
         logger.info("Using CodexAgent with provider %s", provider.id)
         return CodexAgent(config, provider)
     raise ValueError(

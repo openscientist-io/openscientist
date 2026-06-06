@@ -794,6 +794,97 @@ class AgentSettings(BaseSettings):
         return v
 
 
+class AirgapSettings(BaseSettings):
+    """Air-gapped / zero-egress mode configuration.
+
+    All fields are no-ops when ``enabled`` is ``False`` (the default), so the
+    rest of OpenScientist behaves byte-for-byte the same. See the design RFC
+    at ``docs/AIR_GAPPED_MODE_RFC.md``.
+
+    When ``enabled`` is ``True``, ``agent/factory.py`` selects the air-gap
+    variants of the agent backends, the egress registry validates the active
+    provider against the allowlist at startup, and the credential allowlist
+    in ``airgap/env_allowlist.py`` strips inactive-provider creds from the
+    job env. Several downstream pieces (host firewall, per-job network,
+    attestation, executor namespace isolation) are operator-applied per
+    ``docs/AIR_GAPPED.md`` and are out of scope for the application's own
+    enforcement.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=False,
+        alias="OPENSCIENTIST_AIR_GAPPED",
+        description=(
+            "Master switch for air-gapped mode. When True, the agent factory "
+            "selects the AirgapCodexAgent for Codex-compatible providers, "
+            "Claude-compatible providers refuse to start until PR-2's "
+            "AirgapClaudeCodeAgent lands, and the egress registry validates "
+            "the active provider against the allowlist at startup."
+        ),
+    )
+
+    llm_addr: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AIRGAP_LLM_ADDR",
+        description=(
+            "IP:port of the operator-stood-up local LLM endpoint. Used by "
+            "the egress registry's allowlist check and by container "
+            "networking. Format: 'host:port' (e.g. '10.0.0.5:8443'). "
+            "Required when enabled=True."
+        ),
+    )
+
+    pubmed_addr: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AIRGAP_PUBMED_ADDR",
+        description=(
+            "IP:port of the local PubMed mirror service. Required when "
+            "enabled=True. The literature MCP tool reads PUBMED_BASE_URL "
+            "(derived from this) instead of NCBI eutils."
+        ),
+    )
+
+    codex_home_root: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT",
+        description=(
+            "Override for the tmpfs root the AirgapCodexAgent uses as "
+            "per-job CODEX_HOME (defaults to /run/openscientist-codex-home, "
+            "a Linux tmpfs path). Set to a writable path for local-dev on "
+            "macOS or other non-Linux hosts where /run isn't tmpfs."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_required_addrs(self) -> "AirgapSettings":
+        """When the master switch is on, the internal addresses must be set.
+
+        Air-gap mode without an internal LLM means the agent has nothing to
+        talk to; fail-closed at startup rather than running a broken job.
+        """
+        if self.enabled:
+            missing = [
+                name
+                for name, val in (
+                    ("OPENSCIENTIST_AIRGAP_LLM_ADDR", self.llm_addr),
+                    ("OPENSCIENTIST_AIRGAP_PUBMED_ADDR", self.pubmed_addr),
+                )
+                if not val
+            ]
+            if missing:
+                raise ValueError(
+                    "Air-gap mode is enabled (OPENSCIENTIST_AIR_GAPPED=true) "
+                    f"but required addresses are not set: {', '.join(missing)}"
+                )
+        return self
+
+
 class Settings(BaseSettings):
     """Root settings class with all configuration sections."""
 
@@ -826,6 +917,7 @@ class Settings(BaseSettings):
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    airgap: AirgapSettings = Field(default_factory=AirgapSettings)
 
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":
