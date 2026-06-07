@@ -28,6 +28,7 @@ is what the orchestrator checks before invoking ``get_agent(config).run()``.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,21 +132,34 @@ def verify_env(
             continue
         if not value:
             continue
-        # (2) value shape scan — first match wins (one finding per var keeps
-        # the report compact; the rule list is ordered most-specific-first).
+        # (2) value shape scan — pick the HIGHEST-SEVERITY match across
+        # all rules (one finding per var keeps the report compact). The
+        # default ruleset orders BLOCK before WARN so a first-match-wins
+        # would be correct there, but a caller-supplied custom rules list
+        # could interleave them; this loop is order-insensitive and a
+        # BLOCK can never get masked behind an earlier WARN.
+        best: tuple[int, SecretRule, re.Match[str]] | None = None
         for rule in rules:
             match = rule.pattern.search(value)
-            if match:
-                findings.append(
-                    EnvFinding(
-                        var_name=var_name,
-                        rule_name=rule.name,
-                        severity=rule.severity,
-                        context=_redacted_context(value, match),
-                        description=rule.description,
-                    )
-                )
+            if match is None:
+                continue
+            rank = 0 if rule.severity == "block" else 1  # lower = more severe
+            if best is None or rank < best[0]:
+                best = (rank, rule, match)
+            if rank == 0:
+                # Found a block — can't do better than that, short-circuit.
                 break
+        if best is not None:
+            _, rule, match = best
+            findings.append(
+                EnvFinding(
+                    var_name=var_name,
+                    rule_name=rule.name,
+                    severity=rule.severity,
+                    context=_redacted_context(value, match),
+                    description=rule.description,
+                )
+            )
     return findings
 
 

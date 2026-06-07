@@ -273,7 +273,14 @@ shared, for blast-radius reduction. Auto-detection fallback to `bridge` in
 ip6tables) rules with default-DROP** on the per-job bridge, allowing only IP:port flows to the
 local LLM and PubMed services. These rules are part of the attestation evidence (§14).
 
-- Forbid `host-gateway` and `extra_hosts`.
+- Forbid `host-gateway` and `extra_hosts`. PR #195's web/agent images add `extra_hosts:
+  ["host.docker.internal:host-gateway"]` so the OS server can reach an Ollama daemon running
+  on the Docker host. **In air-gap mode this is forbidden** — air-gap deployments point
+  `OPENSCIENTIST_AIRGAP_LLM_ADDR` at an explicit internal IP/hostname (e.g. an Ollama instance
+  on the per-job internal network or a separate internal-network service); the `host.docker
+  .internal` shortcut is replaced with the operator-controlled allowlisted endpoint. The
+  runner's air-gap branch must drop the `extra_hosts` parameter regardless of what PR #195
+  sets in the non-air-gap path.
 - Single network attachment per container.
 - Drop `NET_RAW`.
 - Require patched Docker Engine (CVE-2024-29018 leaked DNS externally on certain Moby versions).
@@ -463,13 +470,40 @@ Agent and executor containers hardened identically. Air-gap mode enforces on bot
 
 ### 8.1 Codex CLI binary supply chain
 
-The agent image currently installs `openai-codex-sdk` from PyPI and downloads the Codex CLI binary
-from GitHub release URLs at image-build time. Air-gap mode requires:
+PR #195 (the Ollama backend) changes the picture: the upstream `codex` doesn't drive
+open-weight models on Ollama, so the agent and web images build the Codex CLI from a fork
+(`LucaCappelletti94/codex` branch `open-codex`, commit-pinned) via a multi-stage Docker build that
+clones the fork's git repo and runs `cargo build`. The fork carries three load-bearing fixes
+(harmony parser flattening, function-form `apply_patch`, web-search capability gate) that PR-1
+took for granted as already present.
 
-- Pre-bundled Codex CLI binary at SHA256-pinned digest in the agent image.
-- No networked install of `openai-codex-sdk` or the Codex CLI at build time.
-- Codex CLI binary digest captured in per-job attestation (§14).
-- `make download-codex` documents the trusted-download + checksum step.
+This is **incompatible with a pure "no network at image-build time" stance**. The realistic
+operator guidance is:
+
+- **The image is built once with full network access**, on a non-air-gapped build host. The
+  `git clone` + `cargo build` happen there, with the fork pinned to its commit hash (a checksum
+  of the source tree, transitively). The resulting image is digest-pinned by the operator
+  (`docker image inspect` returns the SHA256 the air-gap deployment will run).
+- **The deployed images are immutable**; air-gap deployments install the pre-built image by
+  digest and never rebuild. The per-job attestation (§14) records the image digest of the
+  running agent and executor containers (already in `AttestationRecord.image_digests`), so the
+  CI gate can refuse a job whose image digest doesn't match the deployment manifest.
+- **The fork's commit hash, the Rust toolchain version, and the cargo lockfile hash** are recorded
+  in the per-job attestation under `codex_cli_digest` (already in the dataclass) plus a new
+  `codex_cli_provenance` sub-field that captures the source.
+
+What this **doesn't** address (acknowledged): the operator's build host is itself part of the
+trust surface. The signed image digest is the audit anchor; whoever built that image had to
+trust the fork's commits, the Rust toolchain, the cargo registry, and every transitive
+dependency `cargo build` resolved. That's a real attestation chain that's out of scope for this
+RFC — it sits in the operator's CI/CD threat model. A v2 might require a reproducible build
+(cargo lockfile + a fixed Rust toolchain digest), but that's a follow-up.
+
+Per-job attestation captures:
+- Codex CLI binary digest (SHA256 of the compiled binary inside the image).
+- Image digest for the agent and executor containers.
+- Fork commit hash and a flag indicating the fork-build path was taken (so a verifier can
+  distinguish a pre-bundled binary from a build-host artifact).
 
 ### 8.2 Codex backend runtime hardening (via subclass)
 
@@ -1026,6 +1060,75 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 ---
 
 ## 21. Revision Log
+
+**v4.3 (2026-06-07) — after Codex Review-5, integrating PR #195 (Luca's Ollama backend):**
+
+Codex did a fifth review pass on the in-flight PR-1 in light of #195. Eight real bugs,
+four already fixed in this revision, four blocked on #195 actually merging. The RFC
+updates:
+
+- **§7.4 alignment with #195's findings.** No factual correction — the RFC already cites
+  gpt-oss-120b as the validated reference. Luca's PR body now empirically confirms the
+  claim ("a run made 14 `execute_code` calls and produced a substantive report") and
+  reports the negative result ("`qwen2.5-coder:32b` returns the tool call as plain text...
+  `devstral:24b` degrades to text under the full tool set"). Worth citing in §7.4 prose
+  in a v4.4.
+- **§6.2 expanded.** PR #195 adds `extra_hosts: ["host.docker.internal:host-gateway"]` so
+  the OS server can reach Ollama on the Docker host. RFC §6.2 already forbids this in
+  air-gap mode; the section now spells out what an air-gap deployment uses instead (an
+  explicit internal endpoint via `OPENSCIENTIST_AIRGAP_LLM_ADDR`) and notes that the
+  runner's air-gap branch must drop `extra_hosts` regardless of what the non-air-gap
+  path sets.
+- **§8.1 rewritten end-to-end.** The previous "no networked install at build time" stance
+  is incompatible with #195's fork-build approach (the upstream Codex CLI doesn't drive
+  open-weight models on Ollama; Luca's fork carries three load-bearing fixes that build
+  from source via `cargo build`). New stance: the image is built once with full network
+  access on a non-air-gap build host, with the fork commit-pinned; the air-gap deployment
+  installs the resulting image by digest and never rebuilds. The per-job attestation
+  records the agent image digest and a new `codex_cli_provenance` sub-field. The build
+  host's own trust surface (Rust toolchain, cargo registry transitive deps) is
+  acknowledged as out of scope, sitting in the operator's CI/CD threat model.
+- **Egress registry adds `ollama`** as a supported provider (was missing — would have
+  raised `AirGapPolicyError` on first run). Provider field is `ollama_base_url`.
+- **`BASE_AIRGAP_ENV` adds `OPENSCIENTIST_CODEX_TURN_TIMEOUT`** (PR #195 forwards it to
+  the agent container; without it in the allowlist the runner's filter would silently
+  strip it and CPU-bound gpt-oss-120b runs would be killed by the default timeout).
+- **`PROVIDER_ENV_VARS` adds `"ollama"`** (keyless, `OLLAMA_BASE_URL` + `OLLAMA_MODEL`).
+- **Factory's `ClaudeCompatible` airgap-refusal message** now names `ollama` (with
+  gpt-oss-120b cited) as the recommended local-model path, alongside the cloud-OpenAI
+  alternatives.
+- **§11 export boundary scan-everything semantics.** Codex Review-5 caught a real bug
+  in `export_boundary.evaluate_export`: `.codex/*` was filtered out *before* the secret
+  scan, so a misconfigured run that landed `auth.json` in `job_dir/.codex/` had its
+  secret content silently exempted from scanning. The RFC explicitly listed `.codex/
+  config.toml` and `.codex/auth.json` as scan targets. The implementation now scans
+  every intended file (allowed + excluded) and reports findings in both buckets;
+  blocking findings in either refuse the export, but the ZIP still only contains the
+  allowed paths. The split lets operators see "the file was caught by exclusion AND its
+  contents would have blocked" — a stronger signal than either alone.
+- **Attestation `expires_at` field added.** Optional freshness bound. PR #195 raises
+  `OPENSCIENTIST_AGENT_TIMEOUT` to 48 h for slow gpt-oss-120b runs, so signed
+  attestations have a long valid window; operators can now set `expires_at` for a
+  shorter downstream re-verification window without re-signing. `verify()` gains a
+  `now=` parameter for testability; a tampered `expires_at` still trips the HMAC.
+- **`credential_verifier.verify_env` severity-wins instead of first-match-wins.** Codex
+  Review-5 flagged that a caller-supplied custom `rules` list with WARN before BLOCK
+  could silently mask the BLOCK. The default ruleset is unaffected, but the loop is now
+  order-insensitive: it picks the highest-severity match across all matching rules. One
+  finding per var (compactness) is preserved.
+
+Bugs still pending #195 actually merging (rebase-time fixes):
+
+- `airgap/codex_agent.py` imports `openai_codex_sdk.ThreadOptions`; #195 switches to the
+  `openai-codex` package and inlines `thread_start(...)`. `AirgapCodexAgent` will fail to
+  import after merge. Rebase the subclass onto the new `AsyncCodex` API.
+- Real merge conflict in `agent/codex_agent.py` env-overlay region: our `_overlay_job_env`
+  collides with #195's rewritten `_mcp_env` + absolute-path `_job_dir`.
+- `host.docker.internal:host-gateway` `extra_hosts` entry needs an `if not settings
+  .airgap.enabled` guard in `runner.py`.
+- The fork's `web_search` capability gate — verify whether our explicit
+  `web_search_enabled=False` in `AirgapCodexAgent._thread_options()` is still applicable
+  to Luca's `openai-codex` library API, or whether the gate makes the override redundant.
 
 **v4.2 (2026-06-06) — answer the "where do the tokens come from?" question:**
 

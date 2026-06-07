@@ -120,6 +120,14 @@ EGRESS_TARGETS: dict[str, Callable[[Any], set[HostPort]]] = {
             "Azure OpenAI provider with no AZURE_OPENAI_RESOURCE — set it for air-gapped mode"
         )
     ),
+    "ollama": lambda s: (
+        _from_url(getattr(s.provider, "ollama_base_url", None))
+        or _unsupported(
+            "Ollama provider with no OLLAMA_BASE_URL — point it at your "
+            "internal Ollama server (e.g. http://10.0.0.5:11434/v1). "
+            "RFC §7.4 references gpt-oss-120b as the validated reference model."
+        )
+    ),
     "bedrock": lambda s: _unsupported(
         "Bedrock provider's regional SDK client has no introspectable endpoint "
         "and no base-URL override field on ProviderSettings. "

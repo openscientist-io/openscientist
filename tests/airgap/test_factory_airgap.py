@@ -104,7 +104,8 @@ class TestAirgapEnabled:
     def test_claude_error_names_the_followup(self, tmp_path: Path) -> None:
         # The error must point the operator at the resolution (PR-2 follow-up
         # OR switch to a Codex provider OR disable airgap), not just say
-        # 'unsupported'.
+        # 'unsupported'. After PR #195 the message names ollama as the
+        # validated local-model path.
         provider = StubClaudeProvider()
         with (
             patch("openscientist.agent.factory._instantiate_provider", return_value=provider),
@@ -118,3 +119,6 @@ class TestAirgapEnabled:
         msg = str(excinfo.value)
         assert "OPENSCIENTIST_AIR_GAPPED" in msg
         assert "Codex-compatible" in msg
+        # PR #195 / RFC §7.4 integration: ollama is now a named alternative.
+        assert "ollama" in msg
+        assert "gpt-oss-120b" in msg

@@ -86,6 +86,13 @@ class AttestationRecord:
     job_id: str
     timestamp: str  # ISO 8601, always UTC ('Z' suffix)
     schema_version: str = SCHEMA_VERSION
+    # Optional expiry timestamp (ISO 8601, UTC). When set, :func:`verify`
+    # treats a current-time-past-``expires_at`` record as invalid even if
+    # the HMAC is correct. PR #195 raises OPENSCIENTIST_AGENT_TIMEOUT to
+    # 48 h (gpt-oss-120b runs are slow), so an attestation signed at
+    # job-start has a long window where it remains technically valid;
+    # the operator may want a freshness bound for downstream re-checks.
+    expires_at: str = ""
 
     # Policy state
     airgap_mode: bool = False
@@ -138,6 +145,7 @@ class AttestationRecord:
             "job_id": self.job_id,
             "timestamp": self.timestamp,
             "schema_version": self.schema_version,
+            "expires_at": self.expires_at,
             "airgap_mode": self.airgap_mode,
             "active_provider_id": self.active_provider_id,
             "egress_registry_result": self.egress_registry_result,
@@ -168,6 +176,7 @@ class AttestationRecord:
             "job_id",
             "timestamp",
             "schema_version",
+            "expires_at",
             "airgap_mode",
             "active_provider_id",
             "egress_registry_result",
@@ -243,20 +252,43 @@ def sign(record: AttestationRecord, key: bytes, key_id: str) -> SignedAttestatio
     return SignedAttestation(record=record, signature=mac, key_id=key_id)
 
 
-def verify(signed: SignedAttestation, key: bytes) -> bool:
+def verify(
+    signed: SignedAttestation,
+    key: bytes,
+    *,
+    now: str | None = None,
+) -> bool:
     """Re-verify a :class:`SignedAttestation` against ``key``.
 
     Uses :func:`hmac.compare_digest` (constant-time) so a side-channel can't
-    leak the expected HMAC byte-by-byte. Wrong-key, wrong-algorithm, and
-    tampered-record all return False.
+    leak the expected HMAC byte-by-byte. Wrong-key, wrong-algorithm,
+    tampered-record, and (when ``record.expires_at`` is set) past-expiry
+    records all return False.
+
+    Args:
+        signed: The :class:`SignedAttestation` to verify.
+        key: HMAC key to verify against (usually
+            :func:`derive_job_attestation_key`'s output).
+        now: ISO 8601 UTC timestamp to compare against ``expires_at``.
+            Defaults to the current wall-clock UTC. Inject for tests.
     """
     if signed.algorithm != "HMAC-SHA256":
         return False
     expected = sign(signed.record, key, signed.key_id).signature
     try:
-        return hmac.compare_digest(expected, signed.signature)
+        if not hmac.compare_digest(expected, signed.signature):
+            return False
     except (TypeError, ValueError):
         return False
+    # Freshness check — only when expires_at is set (otherwise the record
+    # is open-ended, which is fine for the typical orchestrator workflow
+    # that re-signs on every state transition).
+    expires_at = signed.record.expires_at
+    if expires_at:
+        current = now or _utc_timestamp()
+        if current > expires_at:
+            return False
+    return True
 
 
 def load_signed(data: str | dict[str, Any]) -> SignedAttestation:
@@ -320,6 +352,7 @@ def build_attestation(
     codex_cli_digest: str = "",
     notes: Iterable[str] | None = None,
     timestamp: str | None = None,
+    expires_at: str = "",
 ) -> AttestationRecord:
     """Assemble an :class:`AttestationRecord` from the other modules' outputs.
 
@@ -349,6 +382,7 @@ def build_attestation(
         job_id=job_id,
         timestamp=timestamp or _utc_timestamp(),
         schema_version=SCHEMA_VERSION,
+        expires_at=expires_at,
         airgap_mode=airgap_mode,
         active_provider_id=active_provider_id,
         egress_registry_result=egress_registry_result or {},

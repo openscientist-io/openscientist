@@ -57,6 +57,11 @@ BASE_AIRGAP_ENV: frozenset[str] = frozenset(
         # Container-side job identification (the runner sets these).
         "JOB_ID",
         "JOB_DIR",
+        # Per-turn timeout for the Codex CLI subprocess (PR #195 adds this).
+        # Without it in the allowlist, the runner's airgap env filter would
+        # silently strip it and slow CPU-bound open-weight model runs
+        # (gpt-oss-120b is hours) would be killed by the default timeout.
+        "OPENSCIENTIST_CODEX_TURN_TIMEOUT",
         # Host-path signal the Codex provider's container-side config check
         # looks for. Path only, never the file contents.
         "CODEX_AUTH_HOST_PATH",
@@ -108,6 +113,15 @@ PROVIDER_ENV_VARS: dict[str, frozenset[str]] = {
             "ANTHROPIC_FOUNDRY_RESOURCE",
             "ANTHROPIC_FOUNDRY_BASE_URL",
             "ANTHROPIC_FOUNDRY_API_KEY",
+        }
+    ),
+    "ollama": frozenset(
+        {
+            # PR #195: Ollama is keyless. OLLAMA_BASE_URL points at the
+            # local server; OLLAMA_MODEL selects gpt-oss-120b (the validated
+            # reference per RFC §7.4) or another open-weight model.
+            "OLLAMA_BASE_URL",
+            "OLLAMA_MODEL",
         }
     ),
     # Bedrock and Vertex deferred — see RFC §19 OQ#2. The egress registry

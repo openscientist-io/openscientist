@@ -351,12 +351,28 @@ class ExportDecision:
     The artifact-ZIP builder reads ``allowed``: True → proceed with the
     paths in ``allowed_paths``; False → refuse the bundle and surface
     ``blocking_findings`` for operator review.
+
+    Findings are split by where they live:
+
+    * ``allowed_findings`` — secrets in files that **would have shipped** in
+      the ZIP. These are direct export-channel leaks.
+    * ``excluded_findings`` — secrets in files that ``filter_paths_for_export``
+      caught (e.g. ``.codex/auth.json`` left in ``job_dir`` by a misconfigured
+      runner). These don't ship via the ZIP but are evidence the upstream
+      isolation policy failed; RFC §11 says they must still block export so
+      the operator notices.
     """
 
     allowed: bool
     allowed_paths: list[Path] = field(default_factory=list)
     excluded_paths: list[Path] = field(default_factory=list)
-    findings: list[SecretFinding] = field(default_factory=list)
+    allowed_findings: list[SecretFinding] = field(default_factory=list)
+    excluded_findings: list[SecretFinding] = field(default_factory=list)
+
+    @property
+    def findings(self) -> list[SecretFinding]:
+        """Union of both finding lists. Backward-compat shim."""
+        return self.allowed_findings + self.excluded_findings
 
     @property
     def blocking_findings(self) -> list[SecretFinding]:
@@ -371,6 +387,8 @@ class ExportDecision:
             "allowed": self.allowed,
             "allowed_paths": [str(p) for p in self.allowed_paths],
             "excluded_paths": [str(p) for p in self.excluded_paths],
+            "allowed_findings": [f.as_dict() for f in self.allowed_findings],
+            "excluded_findings": [f.as_dict() for f in self.excluded_findings],
             "findings": [f.as_dict() for f in self.findings],
             "blocking_count": len(self.blocking_findings),
             "warning_count": len(self.warning_findings),
@@ -395,19 +413,30 @@ def evaluate_export(
             for tests).
 
     Returns:
-        :class:`ExportDecision` whose ``allowed`` is False iff any
-        ``block``-severity finding was discovered in the *allowed* (post-
-        exclusion) files.
+        :class:`ExportDecision` whose ``allowed`` is False iff **any**
+        ``block``-severity finding was discovered — in either the
+        eventually-shipped (allowed) files or the eventually-excluded
+        files. RFC §11: ``.codex/config.toml`` / ``.codex/auth.json``
+        sitting in ``job_dir`` are still scanned, because their presence
+        there is itself evidence the upstream isolation failed; a finding
+        must surface to the operator even though the file won't ride out
+        in the ZIP.
     """
     if intended is None:
         intended = [p for p in job_dir.rglob("*") if p.is_file()]
 
     allowed_paths, excluded_paths = filter_paths_for_export(job_dir, intended, exclusion_patterns)
-    findings = scan_for_secrets(allowed_paths, rules)
-    has_blocking = any(f.severity == "block" for f in findings)
+    # Scan EVERYTHING the upstream wanted to ship, then split the findings by
+    # destination. Per RFC §11, blocking findings in either bucket refuse the
+    # export — the ZIP cleanliness is one half of the threat model, the
+    # other half is "did the upstream isolation policy hold this run?".
+    allowed_findings = scan_for_secrets(allowed_paths, rules)
+    excluded_findings = scan_for_secrets(excluded_paths, rules)
+    has_blocking = any(f.severity == "block" for f in allowed_findings + excluded_findings)
     return ExportDecision(
         allowed=not has_blocking,
         allowed_paths=allowed_paths,
         excluded_paths=excluded_paths,
-        findings=findings,
+        allowed_findings=allowed_findings,
+        excluded_findings=excluded_findings,
     )

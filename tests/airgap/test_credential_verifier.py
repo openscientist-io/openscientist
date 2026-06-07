@@ -117,7 +117,7 @@ class TestValueShapeScan:
         assert len(findings) == 1
         assert findings[0].rule_name == "github-pat"
 
-    def test_first_match_wins_one_finding_per_var(self) -> None:
+    def test_one_finding_per_var(self) -> None:
         # A value that could match multiple rules contributes one finding
         # — keeps the report compact and avoids "this same secret matches
         # 4 rules" noise.
@@ -128,6 +128,42 @@ class TestValueShapeScan:
             active_provider_id="anthropic",
         )
         assert len(findings) == 1
+
+    def test_block_severity_wins_over_warn_regardless_of_rule_order(self) -> None:
+        # Codex Review-5: a caller-supplied custom rules list with WARN
+        # ordered before BLOCK must NOT mask the BLOCK match. The scanner
+        # picks the highest-severity match across all rules, not the first
+        # match.
+        import re as _re
+
+        from openscientist.airgap.export_boundary import SecretRule
+
+        # Both rules match any 'XXX' string; warn is listed first.
+        custom_rules = [
+            SecretRule(
+                name="warn-rule",
+                pattern=_re.compile(r"XXX"),
+                severity="warn",
+                description="warn match",
+            ),
+            SecretRule(
+                name="block-rule",
+                pattern=_re.compile(r"XXX"),
+                severity="block",
+                description="block match",
+            ),
+        ]
+        findings = verify_env(
+            {"SOME_VAR": "leaked-XXX-value"},
+            active_provider_id="anthropic",
+            rules=custom_rules,
+        )
+        assert len(findings) == 1
+        assert findings[0].severity == "block", (
+            "BLOCK match must win even when WARN is earlier in the rules "
+            "list — first-match-wins would silently mask the BLOCK"
+        )
+        assert findings[0].rule_name == "block-rule"
 
     def test_value_redacted_in_finding_context(self) -> None:
         # Critical: the finding's context must NOT contain the matched

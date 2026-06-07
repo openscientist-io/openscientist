@@ -28,6 +28,7 @@ class TestRegistryShape:
             "openai",
             "azure-openai",
             "foundry",
+            "ollama",  # PR #195
         }
 
     def test_base_env_has_no_credential_content(self) -> None:

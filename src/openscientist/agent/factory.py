@@ -64,8 +64,10 @@ def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
                 f"({provider.id}) is Claude-compatible. PR-1 ships only the "
                 "AirgapCodexAgent; the AirgapClaudeCodeAgent (with SDK "
                 "built-in tool gating per RFC §10.3) lands in a follow-up "
-                "PR. Switch to a Codex-compatible provider (openai, "
-                "azure-openai) or disable OPENSCIENTIST_AIR_GAPPED."
+                "PR. Switch to a Codex-compatible provider — `ollama` "
+                "(local, gpt-oss-120b is the RFC §7.4 reference), or "
+                "`openai` / `azure-openai` if you have a cloud-compatible "
+                "internal endpoint — or disable OPENSCIENTIST_AIR_GAPPED."
             )
         logger.info("Using ClaudeCodeAgent with provider %s", provider.id)
         return ClaudeCodeAgent(config, provider)

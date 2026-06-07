@@ -272,22 +272,40 @@ class TestEvaluateExport:
         assert decision.allowed is True
         assert decision.findings == []
 
-    def test_codex_artifacts_excluded_not_scanned(self, tmp_path: Path) -> None:
-        # The whole point of §11: a Codex auth.json that landed in job_dir
-        # by mistake gets excluded *before* it's exported AND before it's
-        # scanned — so even if its contents contain block-severity
-        # patterns, the export still proceeds (with the file dropped).
+    def test_codex_artifacts_scanned_even_when_excluded(self, tmp_path: Path) -> None:
+        # Per RFC §11: the auth.json sitting in job_dir is evidence that
+        # AirgapCodexAgent's CODEX_HOME relocation failed (it should have
+        # gone to /run/openscientist-codex-home/<job_id>/). Even though the
+        # file is filtered out of the ZIP, its presence is itself a setup-
+        # failure signal the operator needs to see — block the export so
+        # the misconfig surfaces, don't silently ship a 'clean' bundle
+        # that hides the broken isolation.
         (tmp_path / ".codex").mkdir()
         (tmp_path / ".codex" / "auth.json").write_text('{"tokens": {"access_token": "secret"}}\n')
         (tmp_path / "final_report.md").write_text("# Clean report.\n")
         decision = evaluate_export(tmp_path)
-        assert decision.allowed is True
-        # The auth.json is excluded from export.
+        # The auth.json is still excluded from the ZIP — exclusion stays
+        # correct because the file shouldn't ride out either way.
         auth = tmp_path / ".codex" / "auth.json"
         assert auth in decision.excluded_paths
         assert auth not in decision.allowed_paths
-        # And no findings, because excluded files aren't scanned.
-        assert decision.findings == []
+        # And its content IS now scanned. The block finding refuses export.
+        assert decision.allowed is False
+        # The finding lands in excluded_findings (not allowed_findings) —
+        # the operator can tell from that split that the leak channel
+        # was filesystem-residue, not the ZIP itself.
+        assert any(f.rule_name == "codex-auth-tokens-block" for f in decision.excluded_findings)
+        assert decision.allowed_findings == []
+
+    def test_clean_excluded_files_dont_break_export(self, tmp_path: Path) -> None:
+        # Sanity: an excluded file with no secrets in it (a stray *.pem
+        # without an actual private key block) doesn't accidentally block
+        # the export. Only block-severity findings refuse the bundle.
+        (tmp_path / "stray.pem").write_text("# this is not actually a key\n")
+        (tmp_path / "final_report.md").write_text("# Clean report.\n")
+        decision = evaluate_export(tmp_path)
+        assert decision.allowed is True
+        assert (tmp_path / "stray.pem") in decision.excluded_paths
 
     def test_secret_in_report_blocks_export(self, tmp_path: Path) -> None:
         # The clean half of the contract: a real secret in the *report*
@@ -340,6 +358,6 @@ class TestExportDecisionConvenience:
         warn_finding = SecretFinding(
             rule_name="r2", severity="warn", path=Path("b"), line=2, context=""
         )
-        decision = ExportDecision(allowed=False, findings=[block_finding, warn_finding])
+        decision = ExportDecision(allowed=False, allowed_findings=[block_finding, warn_finding])
         assert decision.blocking_findings == [block_finding]
         assert decision.warning_findings == [warn_finding]

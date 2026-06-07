@@ -312,6 +312,63 @@ class TestSigning:
         assert verify(loaded, _KEY_A) is True
 
 
+class TestExpiresAt:
+    """RFC §14 + PR #195: with OPENSCIENTIST_AGENT_TIMEOUT raised to 48h
+    for slow gpt-oss-120b runs, attestations have a long valid window.
+    Optional expires_at gives operators a freshness bound for re-checks."""
+
+    @pytest.fixture
+    def record_with_expiry(self) -> AttestationRecord:
+        with patch(
+            "openscientist.airgap.attestation._utc_timestamp",
+            return_value=_FROZEN_TIMESTAMP,
+        ):
+            return build_attestation(
+                job_id="j",
+                airgap_mode=True,
+                active_provider_id="ollama",
+                expires_at="2026-06-08T12:00:00Z",  # +24h from signing
+            )
+
+    def test_unexpired_record_verifies(self, record_with_expiry: AttestationRecord) -> None:
+        signed = sign(record_with_expiry, _KEY_A, key_id="job-key:abc")
+        # Current time is well before expiry.
+        assert verify(signed, _KEY_A, now="2026-06-07T18:00:00Z") is True
+
+    def test_expired_record_fails_verification(self, record_with_expiry: AttestationRecord) -> None:
+        signed = sign(record_with_expiry, _KEY_A, key_id="job-key:abc")
+        # Current time well past expiry.
+        assert verify(signed, _KEY_A, now="2026-06-09T12:00:00Z") is False
+
+    def test_at_expiry_boundary_fails(self, record_with_expiry: AttestationRecord) -> None:
+        # One second past expiry → fail. Pinning the comparison direction
+        # so a future implementation switch (>= vs >) is caught.
+        signed = sign(record_with_expiry, _KEY_A, key_id="job-key:abc")
+        assert verify(signed, _KEY_A, now="2026-06-08T12:00:01Z") is False
+
+    def test_empty_expires_at_means_no_expiry(self) -> None:
+        # Default behavior — open-ended records (the typical orchestrator
+        # workflow that re-signs on every state transition) must still verify.
+        with patch(
+            "openscientist.airgap.attestation._utc_timestamp",
+            return_value=_FROZEN_TIMESTAMP,
+        ):
+            record = build_attestation(job_id="j", airgap_mode=True, active_provider_id="ollama")
+        assert record.expires_at == ""
+        signed = sign(record, _KEY_A, key_id="job-key:abc")
+        # 100 years from now → still verifies.
+        assert verify(signed, _KEY_A, now="2126-06-07T12:00:00Z") is True
+
+    def test_expires_at_tamper_breaks_signature(
+        self, record_with_expiry: AttestationRecord
+    ) -> None:
+        # Belt-and-suspenders sentinel: if an attacker extends expires_at
+        # to keep a stolen record valid, the HMAC fails.
+        signed = sign(record_with_expiry, _KEY_A, key_id="job-key:abc")
+        signed.record.expires_at = "2126-06-07T12:00:00Z"  # extend by a century
+        assert verify(signed, _KEY_A, now="2026-06-07T18:00:00Z") is False
+
+
 class TestKeyDerivation:
     def test_different_master_secrets_yield_different_keys(self) -> None:
         k1 = derive_job_attestation_key(b"secret-1", "job-1")

@@ -49,6 +49,7 @@ class TestRegistryCoverage:
             "azure-openai",
             "bedrock",
             "vertex",
+            "ollama",  # added by PR #195 — Luca's local-model provider
         }
         assert set(EGRESS_TARGETS) == expected
 
@@ -103,6 +104,16 @@ class TestEgressTargetsFor:
         s = _settings()
         with pytest.raises(AirGapUnsupportedError, match="Vertex provider"):
             egress_targets_for("vertex", s)
+
+    def test_ollama_from_base_url(self) -> None:
+        # PR #195's OllamaProvider — local, keyless, OpenAI-compatible.
+        s = _settings(ollama_base_url="http://10.0.0.5:11434/v1")
+        assert egress_targets_for("ollama", s) == {("10.0.0.5", 11434)}
+
+    def test_ollama_unsupported_without_base_url(self) -> None:
+        s = _settings(ollama_base_url=None)
+        with pytest.raises(AirGapUnsupportedError, match="OLLAMA_BASE_URL"):
+            egress_targets_for("ollama", s)
 
     def test_unknown_provider_raises_policy_error(self) -> None:
         s = _settings()
