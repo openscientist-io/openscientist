@@ -70,14 +70,14 @@ def _airgap_settings(
 class TestAirgapCodexHomePaths:
     def test_default_root(self) -> None:
         settings = _airgap_settings(enabled=True)
-        host, container = JobContainerRunner._airgap_codex_home_paths(settings, "job-42")
+        host, container = JobContainerRunner._airgap_codex_home_paths(settings, "job-42")  # type: ignore[arg-type]
         assert host == container  # by default they match
         assert host.parent == Path(_AIRGAP_CODEX_HOME_ROOT_DEFAULT)
         assert host.name == "job-42"
 
     def test_override(self, tmp_path: Path) -> None:
         settings = _airgap_settings(enabled=True, codex_home_root=str(tmp_path / "tmpfs"))
-        host, _ = JobContainerRunner._airgap_codex_home_paths(settings, "job-42")
+        host, _ = JobContainerRunner._airgap_codex_home_paths(settings, "job-42")  # type: ignore[arg-type]
         assert host == tmp_path / "tmpfs" / "job-42"
 
 
@@ -106,8 +106,10 @@ class TestEnvFilteringInAirgap:
         settings = _airgap_settings(
             enabled=True, provider_id="azure-openai", provider_env=self._polluted_env()
         )
-        env = JobContainerRunner._build_container_environment(
-            settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
         # Active provider's creds survive.
         assert env["AZURE_OPENAI_API_KEY"] == "active-secret"
@@ -122,8 +124,10 @@ class TestEnvFilteringInAirgap:
         settings = _airgap_settings(
             enabled=True, provider_id="azure-openai", provider_env=self._polluted_env()
         )
-        env = JobContainerRunner._build_container_environment(
-            settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
         # RFC §12.1: master secret + full DB URL stripped from agent env.
         assert "OPENSCIENTIST_SECRET_KEY" not in env
@@ -143,8 +147,10 @@ class TestEnvFilteringInAirgap:
             host_project_dir="/home/op/openscientist",
             phenix_host_path="/Applications/phenix-1.21.2",
         )
-        env = JobContainerRunner._build_container_environment(
-            settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
         assert env["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/home/op/openscientist"
         assert env["OPENSCIENTIST_CONTAINER_APP_DIR"] == "/agent"
@@ -154,8 +160,10 @@ class TestEnvFilteringInAirgap:
         settings = _airgap_settings(
             enabled=True, provider_id="azure-openai", provider_env=self._polluted_env()
         )
-        env = JobContainerRunner._build_container_environment(
-            settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
         assert env["JOB_ID"] == "job-42"
         assert env["JOB_DIR"] == "/agent/jobs/job-42"
@@ -168,8 +176,10 @@ class TestEnvFilteringInAirgap:
             llm_addr="10.0.0.5:8443",
             pubmed_addr="10.0.0.6:9000",
         )
-        env = JobContainerRunner._build_container_environment(
-            settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
         assert env["OPENSCIENTIST_AIR_GAPPED"] == "1"
         assert env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] == "10.0.0.5:8443"
@@ -180,8 +190,10 @@ class TestEnvFilteringInAirgap:
         # the runner must set it to the container-side path of the bind
         # mount so the agent finds auth.json there.
         settings = _airgap_settings(enabled=True, codex_home_root=None)
-        env = JobContainerRunner._build_container_environment(
-            settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
         # Default root (the per-job suffix is appended by the agent itself).
         assert env["OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT"] == str(
@@ -195,8 +207,8 @@ class TestEnvFilteringInAirgap:
 class TestVolumesInAirgap:
     def test_airgap_adds_codex_home_bind_mount(self) -> None:
         settings = _airgap_settings(enabled=True)
-        volumes = JobContainerRunner._build_container_volumes(
-            settings,
+        volumes = JobContainerRunner._build_container_volumes(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
             job_id="job-42",
             job_dir_host=Path("/host/jobs/job-42"),
             job_mount="/agent/jobs/job-42",
@@ -210,8 +222,8 @@ class TestVolumesInAirgap:
 
     def test_non_airgap_omits_codex_home_mount(self) -> None:
         settings = _airgap_settings(enabled=False)
-        volumes = JobContainerRunner._build_container_volumes(
-            settings,
+        volumes = JobContainerRunner._build_container_volumes(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
             job_id="job-42",
             job_dir_host=Path("/host/jobs/job-42"),
             job_mount="/agent/jobs/job-42",
@@ -224,8 +236,8 @@ class TestVolumesInAirgap:
         # PR-1 keeps the existing docker.sock mount; the airgap-only socket
         # proxy is wired in container_manager.py, a separate edit.
         settings = _airgap_settings(enabled=True)
-        volumes = JobContainerRunner._build_container_volumes(
-            settings,
+        volumes = JobContainerRunner._build_container_volumes(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
             job_id="job-42",
             job_dir_host=Path("/host/jobs/job-42"),
             job_mount="/agent/jobs/job-42",
@@ -253,7 +265,7 @@ class TestProvisionAuthInAirgap:
             codex_auth_host_path=str(src),
             codex_home_root=str(codex_root),
         )
-        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)
+        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)  # type: ignore[arg-type]
 
         # Lands at codex_root/<job_id>/auth.json — NOT in job_dir/.codex.
         assert (codex_root / "job-42" / "auth.json").read_text() == '{"tokens": {}}'
@@ -267,7 +279,7 @@ class TestProvisionAuthInAirgap:
         job_dir.mkdir()
 
         settings = _airgap_settings(enabled=False, codex_auth_host_path=str(src))
-        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)
+        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)  # type: ignore[arg-type]
 
         assert (job_dir / ".codex" / "auth.json").read_text() == '{"tokens": {}}'
 
@@ -278,7 +290,7 @@ class TestProvisionAuthInAirgap:
         settings = _airgap_settings(
             enabled=True, codex_auth_host_path=None, codex_home_root=str(codex_root)
         )
-        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)
+        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)  # type: ignore[arg-type]
         # No auth = no file = no work done. The codex_root dir is not even
         # created (the airgap branch returns before mkdir).
         assert not codex_root.exists()
@@ -299,8 +311,10 @@ def test_filtering_works_for_each_supported_provider(provider_id: str) -> None:
             "ANTHROPIC_FOUNDRY_API_KEY": "foundry-secret",
         },
     )
-    env = JobContainerRunner._build_container_environment(
-        settings, job_id="job-42", job_mount="/agent/jobs/job-42"
+    env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+        settings,  # type: ignore[arg-type]
+        job_id="job-42",
+        job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
     )
     # OPENSCIENTIST_PROVIDER always survives (it's in BASE_AIRGAP_ENV).
     assert env["OPENSCIENTIST_PROVIDER"] == provider_id

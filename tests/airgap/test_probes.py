@@ -334,13 +334,15 @@ class TestProbeSetSummary:
         d = summary.as_dict()
         assert d["total"] == 1
         assert d["airgap_holds"] is True
-        assert len(d["results"]) == 1
-        assert d["results"][0]["name"] == "a"
+        results = d["results"]
+        assert isinstance(results, list)
+        assert len(results) == 1
+        assert results[0]["name"] == "a"
 
 
 class TestNegativeProbeSet:
     @pytest.fixture
-    def airgap_is_holding(self) -> None:
+    def airgap_is_holding(self):  # type: ignore[no-untyped-def]
         """Patch every reachable probe to behave as the air-gap policy expects."""
         with (
             patch("socket.gethostbyname", side_effect=socket.gaierror("no")),

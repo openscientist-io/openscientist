@@ -300,14 +300,13 @@ def load_signed(data: str | dict[str, Any]) -> SignedAttestation:
     by :meth:`AttestationRecord.from_dict`, but the **signature** is still
     over the original bytes — so a tampered file still fails verification.
     """
-    if isinstance(data, str):
-        data = json.loads(data)
-    record = AttestationRecord.from_dict(data["record"])
+    payload: dict[str, Any] = json.loads(data) if isinstance(data, str) else data
+    record = AttestationRecord.from_dict(payload["record"])
     return SignedAttestation(
         record=record,
-        signature=data["signature"],
-        key_id=data["key_id"],
-        algorithm=data.get("algorithm", "HMAC-SHA256"),
+        signature=payload["signature"],
+        key_id=payload["key_id"],
+        algorithm=payload.get("algorithm", "HMAC-SHA256"),
     )
 
 

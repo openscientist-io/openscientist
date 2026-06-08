@@ -45,18 +45,18 @@ def _agent_config(tmp_path: Path) -> AgentConfig:
         system_prompt="test prompt",
         use_hypotheses=True,
         data_file=None,
-        data_files=[],
+        data_files=(),
     )
 
 
 @pytest.fixture
 def airgap_agent(tmp_path: Path) -> AirgapCodexAgent:
-    return AirgapCodexAgent(_agent_config(tmp_path), _fake_provider())
+    return AirgapCodexAgent(_agent_config(tmp_path), _fake_provider())  # type: ignore[arg-type]
 
 
 @pytest.fixture
 def base_agent(tmp_path: Path) -> CodexAgent:
-    return CodexAgent(_agent_config(tmp_path), _fake_provider())
+    return CodexAgent(_agent_config(tmp_path), _fake_provider())  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------- _codex_home
