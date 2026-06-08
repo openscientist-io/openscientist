@@ -23,7 +23,7 @@ ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
 ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
 RUN git clone "${CODEX_REPO}" /codex \
     && git -C /codex checkout "${CODEX_REF}" \
-    && cargo build --release --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
+    && cargo build --release -j "${CODEX_BUILD_JOBS:-3}" --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
     && cp /codex/codex-rs/target/release/codex /usr/local/bin/codex
 
 FROM openscientist-base:latest

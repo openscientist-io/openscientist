@@ -84,6 +84,9 @@ async def main() -> int:
     codex_root = os.environ.get(
         "OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT", _DEFAULT_AIRGAP_CODEX_HOME_ROOT
     )
+    # Model the codex turn targets in Ollama. Defaults to gpt-oss:120b but is
+    # overridable (e.g. gpt-oss:20b on machines that can't host the 120b).
+    model = os.environ.get("OPENSCIENTIST_MODEL", "gpt-oss:120b")
 
     _section("Preflight")
     if not Path(codex_bin).exists():
@@ -117,9 +120,9 @@ async def main() -> int:
         "OPENSCIENTIST_AIRGAP_PUBMED_ADDR": "127.0.0.1:9000",
         "OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT": codex_root,
         "OPENSCIENTIST_PROVIDER": "ollama",
-        "OPENSCIENTIST_MODEL": "gpt-oss:120b",
+        "OPENSCIENTIST_MODEL": model,
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1",
-        "OLLAMA_MODEL": "gpt-oss:120b",
+        "OLLAMA_MODEL": model,
         "OPENSCIENTIST_CODEX_BIN": codex_bin,
         "OPENSCIENTIST_SECRET_KEY": "test-secret-not-real",
         "DATABASE_URL": "postgresql+asyncpg://test@localhost/test",
@@ -192,7 +195,7 @@ async def main() -> int:
                 return 1
 
             _section("Token usage")
-            usage = agent.token_usage
+            usage = agent.total_tokens
             _ok(f"input: {usage.input_tokens}  cache_read: {usage.cache_read_tokens}")
             _ok(f"output: {usage.output_tokens}  reasoning: {usage.reasoning_tokens}")
 
