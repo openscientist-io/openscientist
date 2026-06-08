@@ -369,9 +369,7 @@ class TestCodexAuthProvisioning:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
 
-        JobContainerRunner._provision_codex_auth(
-            self._settings(str(src)), "test-job-id", job_dir
-        )
+        JobContainerRunner._provision_codex_auth(self._settings(str(src)), "test-job-id", job_dir)
 
         dest = job_dir / ".codex" / "auth.json"
         assert dest.read_text() == '{"tokens": {}}'
@@ -381,9 +379,7 @@ class TestCodexAuthProvisioning:
     def test_noop_when_unset(self, tmp_path: Path) -> None:
         job_dir = tmp_path / "job"
         job_dir.mkdir()
-        JobContainerRunner._provision_codex_auth(
-            self._settings(None), "test-job-id", job_dir
-        )
+        JobContainerRunner._provision_codex_auth(self._settings(None), "test-job-id", job_dir)
         assert not (job_dir / ".codex").exists()
 
     def test_noop_when_source_missing(self, tmp_path: Path) -> None:
