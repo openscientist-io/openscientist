@@ -52,6 +52,7 @@ def test_registry_maps_known_ids() -> None:
         "foundry",
         "openai",
         "azure-openai",
+        "ollama",
     }
 
 
@@ -104,7 +105,7 @@ def test_factory_imports_without_codex_sdk() -> None:
         import builtins
         _orig = builtins.__import__
         def _blocked(name, *a, **k):
-            if name == "openai_codex_sdk" or name.startswith("openai_codex_sdk."):
+            if name == "openai_codex" or name.startswith("openai_codex."):
                 raise ModuleNotFoundError("blocked for test")
             return _orig(name, *a, **k)
         builtins.__import__ = _blocked

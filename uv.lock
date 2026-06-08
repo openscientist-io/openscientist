@@ -13,6 +13,9 @@ resolution-markers = [
     "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
+[manifest]
+overrides = [{ name = "openai-codex-cli-bin", marker = "sys_platform == 'no_such_platform'" }]
+
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -2728,17 +2731,22 @@ wheels = [
 ]
 
 [[package]]
-name = "openai-codex-sdk"
-version = "0.1.11"
+name = "openai-codex"
+version = "0.1.0b2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "openai-codex-cli-bin", marker = "sys_platform == 'no_such_platform'" },
     { name = "pydantic" },
-    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/48/d9/601134e94b83017252d29bbffff85ed86b302ded014165edee8bf70c8558/openai_codex_sdk-0.1.11.tar.gz", hash = "sha256:2cb1ad6bc6318b419802f6f87e1cef2f3987580953d218933def281ff98929ab", size = 20609, upload-time = "2026-01-19T09:59:46.757Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/b7/216fa0e7725c33791fe97621c663a9ec0e6e98c2240bffae89661de55602/openai_codex-0.1.0b2.tar.gz", hash = "sha256:44dd51f004ce2ed51cf7b9f34e8b2e6a207ab06e8739b45d5a0cfe338e460587", size = 57665, upload-time = "2026-05-28T06:28:00.461Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/53/2e/72ce1e801d0ad668096c7a9250b23d0325a26fe9e6d63788ccf8ddfe3d81/openai_codex_sdk-0.1.11-py3-none-any.whl", hash = "sha256:0575fd99ad3310ead661d8c6d54f5c3bb6b45a6ff99f57377f30f19ea34a3cc0", size = 19743, upload-time = "2026-01-19T09:59:44.866Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/38/59e86bc20bdd4390faa979d2a0235d7be60ae895cd3ac6a92a49bfe080a7/openai_codex-0.1.0b2-py3-none-any.whl", hash = "sha256:9edf0871e9e0d6e3951cd6c3b9b187641e6247d9413402dfc66ac3a5f6ba66ff", size = 64285, upload-time = "2026-05-28T06:27:58.949Z" },
 ]
+
+[[package]]
+name = "openai-codex-cli-bin"
+version = "0.136.0"
+source = { registry = "https://pypi.org/simple" }
 
 [[package]]
 name = "openpyxl"
@@ -2779,7 +2787,7 @@ dependencies = [
     { name = "networkx" },
     { name = "nicegui" },
     { name = "numpy" },
-    { name = "openai-codex-sdk" },
+    { name = "openai-codex" },
     { name = "openpyxl" },
     { name = "pandas" },
     { name = "pyarrow" },
@@ -2846,7 +2854,7 @@ requires-dist = [
     { name = "networkx", specifier = ">=3.0" },
     { name = "nicegui", specifier = ">=3.7.1" },
     { name = "numpy", specifier = ">=2.2.0,<2.4" },
-    { name = "openai-codex-sdk", specifier = ">=0.1.11" },
+    { name = "openai-codex", specifier = ">=0.1.0b2" },
     { name = "openpyxl", specifier = ">=3.1.0" },
     { name = "pandas", specifier = ">=3.0.0" },
     { name = "pyarrow", specifier = ">=14.0.0" },

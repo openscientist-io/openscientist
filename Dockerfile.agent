@@ -11,15 +11,43 @@
 #   openscientist.job_id=<uuid>   set by JobContainerRunner at runtime
 #   openscientist.type=agent
 
+# --- Stage: build the open-codex CLI from the fork --------------------------
+# The open-codex branch carries the fixes that let codex drive open-weight
+# models served by Ollama: flatten MCP namespace tools for providers without
+# namespace support, a function-form apply_patch (with a +-prefix patch-body
+# description so open models format added lines correctly), and a web_search
+# capability gate that stops the hosted tool from corrupting tool calls on
+# non-OpenAI providers. Pinned to a commit on open-codex for reproducibility.
+FROM rust:1.95-bookworm AS codex-build
+ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
+ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
+RUN git clone "${CODEX_REPO}" /codex \
+    && git -C /codex checkout "${CODEX_REF}" \
+    && cargo build --release --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
+    && cp /codex/codex-rs/target/release/codex /usr/local/bin/codex
+
 FROM openscientist-base:latest
 
-# Install system dependencies for native extensions (scipy, h5py, scanpy, etc.) and Rust
+# Install system dependencies for native extensions (scipy, h5py, scanpy, etc.) and Rust.
+# The libpango/cairo/gdk-pixbuf/glib stack is required by WeasyPrint, which renders
+# final_report.pdf from the report HTML. Without it WeasyPrint fails to load
+# libgobject-2.0-0 and the report falls back to the fpdf2 renderer, producing a PDF
+# that does not match the HTML report shown in the UI.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libhdf5-dev \
     pkg-config \
     rustc \
+    curl \
+    ca-certificates \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libcairo2 \
+    libffi8 \
+    shared-mime-info \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -31,14 +59,20 @@ WORKDIR /app
 COPY pyproject.toml README.md uv.lock* ./
 COPY src/ ./src/
 
-# Install dependencies including claude-agent-sdk and openai-codex-sdk
-# (both are listed in pyproject.toml dependencies)
+# Install dependencies including claude-agent-sdk and openai-codex (both listed
+# in pyproject.toml). The official openai-codex bundles its codex binary only as
+# a musl wheel, which is dropped via the uv override in pyproject.toml; the
+# binary is provisioned separately below.
 RUN uv pip install --system -e .
 
-# Install the Codex CLI binary for the Codex agent backend. The SDK ships
-# only a Linux musl asset (static, runs on this glibc base). It lands in the
-# SDK vendor dir where find_codex_path() resolves it.
-RUN python -c "from openai_codex_sdk import Codex; Codex.install(version='rust-v0.135.0', filename='codex-x86_64-unknown-linux-musl.tar.gz')"
+# Install the open-codex CLI built in the codex-build stage above (namespace
+# tools, function apply_patch, web_search capability gate, and the apply_patch
+# +-prefix description fix). Built from the fork rather than the upstream
+# release because the open-weight fixes are not yet upstream. It goes on PATH at
+# /usr/local/bin/codex, where CodexAgent._resolve_codex_bin (shutil.which) finds
+# it.
+COPY --from=codex-build /usr/local/bin/codex /usr/local/bin/codex
+RUN chmod +x /usr/local/bin/codex
 
 # Copy agent entrypoint
 COPY docker/agent-entrypoint.py /agent-entrypoint.py

@@ -26,9 +26,12 @@ from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
     _get_job_status,
+    build_consensus_prompt,
+    build_consensus_retry_prompt,
     build_initial_prompt,
     build_iteration_prompt,
     build_report_prompt,
+    build_report_retry_prompt,
     increment_ks_iteration,
     update_job_status,
     wait_for_feedback_or_timeout,
@@ -353,25 +356,98 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
         logger.warning("fpdf2 fallback also failed: %s", fallback_exc)
 
 
+# A weak model sometimes ends a turn without actually producing the deliverable
+# (e.g. it describes the report instead of writing the file). Re-ask in the same
+# session a bounded number of times. The model still authors it, and the job
+# fails honestly if the attempts are exhausted.
+_MAX_REPORT_ATTEMPTS = 3
+_MAX_CONSENSUS_ATTEMPTS = 3
+
+
+async def _run_report_turn(
+    executor: AbstractAgent[Provider],
+    job_dir: Path,
+    research_question: str,
+    ks: KnowledgeState,
+    description: str | None,
+) -> tuple[IterationResult, bool]:
+    """Run the report turn, re-asking until the model creates final_report.md.
+
+    The first attempt sends the full report prompt in a fresh session. Later
+    attempts send a short focused reminder in the same session. Returns the last
+    turn result and whether the report file now exists.
+    """
+    report_path = job_dir / "final_report.md"
+    prompt = build_report_prompt(research_question, ks, job_dir=job_dir, description=description)
+    logger.info("Report generation turn (prompt: %d chars)", len(prompt))
+
+    result = await executor.run_iteration(prompt, reset_session=True)
+    for attempt in range(1, _MAX_REPORT_ATTEMPTS + 1):
+        if _ensure_report_written(report_path, result):
+            if attempt > 1:
+                logger.info("Report written on attempt %d", attempt)
+            return result, True
+        if attempt == _MAX_REPORT_ATTEMPTS:
+            break
+        logger.warning(
+            "Report file missing after attempt %d/%d; re-asking", attempt, _MAX_REPORT_ATTEMPTS
+        )
+        result = await executor.run_iteration(
+            build_report_retry_prompt(str(report_path)), reset_session=False
+        )
+    logger.error("Report file not written after %d attempts", _MAX_REPORT_ATTEMPTS)
+    return result, False
+
+
+async def _set_consensus_answer(
+    executor: AbstractAgent[Provider], job_dir: Path, research_question: str
+) -> None:
+    """Run the consensus turn, re-asking until the model records an answer.
+
+    The model writes the consensus itself. This only re-prompts. If the attempts
+    are exhausted the report still stands and the job completes without a
+    consensus (logged), rather than fabricating one.
+    """
+    for attempt in range(1, _MAX_CONSENSUS_ATTEMPTS + 1):
+        prompt = (
+            build_consensus_prompt(research_question)
+            if attempt == 1
+            else build_consensus_retry_prompt(research_question)
+        )
+        await executor.run_iteration(prompt, reset_session=False)
+        if KnowledgeState.load_from_database_sync(job_dir.name).data.get("consensus_answer"):
+            if attempt > 1:
+                logger.info("Consensus recorded on attempt %d", attempt)
+            return
+        if attempt < _MAX_CONSENSUS_ATTEMPTS:
+            logger.warning(
+                "Consensus not recorded after attempt %d/%d; re-asking",
+                attempt,
+                _MAX_CONSENSUS_ATTEMPTS,
+            )
+    logger.warning("Consensus answer not recorded after %d attempts", _MAX_CONSENSUS_ATTEMPTS)
+
+
 async def _run_report_generation_phase(
     executor: AbstractAgent[Provider],
     job_dir: Path,
     research_question: str,
     description: str | None = None,
 ) -> _ReportOutcome:
-    """Run final report generation iteration and output artifact handling."""
+    """Run the report and consensus turns (each with bounded retries) and output
+    artifact handling."""
     ks = KnowledgeState.load_from_database_sync(job_dir.name)
-    report_prompt = build_report_prompt(
-        research_question, ks, job_dir=job_dir, description=description
+    report_result, report_success = await _run_report_turn(
+        executor, job_dir, research_question, ks, description
     )
-    logger.info("Report generation iteration (prompt: %d chars)", len(report_prompt))
-    report_result = await executor.run_iteration(report_prompt, reset_session=True)
-
     _save_report_transcript(job_dir, report_result.transcript)
     report_path = job_dir / "final_report.md"
-    report_success = _ensure_report_written(report_path, report_result)
 
     if report_success:
+        # Dedicated consensus turn (separate from the report so a weaker model
+        # commits fully to one deliverable at a time). The model writes it.
+        await _set_consensus_answer(executor, job_dir, research_question)
+
         try:
             await _try_generate_report_pdf(report_path)
         except (ValueError, OSError, OpenScientistError) as exc:

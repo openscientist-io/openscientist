@@ -1,21 +1,30 @@
 """Codex agent backend.
 
-``CodexAgent`` drives the Codex CLI via ``openai-codex-sdk``. The SDK
-spawns ``codex exec`` as a one-shot subprocess per turn; it exposes no
-programmatic MCP/config parameter, so per-job configuration (the active
+``CodexAgent`` drives the Codex agent via the official ``openai-codex`` SDK.
+The SDK launches ``codex app-server`` as a persistent subprocess and speaks
+JSON-RPC to it over stdio, so a single thread spans the whole job and turns are
+run on it in sequence. The SDK exposes no programmatic MCP/config parameter for
+the provider table or the tools MCP server, so per-job configuration (the active
 ``model_provider``, its ``[model_providers.<id>]`` table, and the
-``openscientist-tools`` MCP server) is written to
-``$CODEX_HOME/config.toml`` and the child is pointed at it via the
-``CODEX_HOME`` environment variable. The system prompt is delivered as
-an ``AGENTS.md`` in the working directory (codex's project-doc
-mechanism, symmetric to how ``ClaudeCodeAgent`` writes ``CLAUDE.md``).
+``openscientist-tools`` MCP server) is written to ``$CODEX_HOME/config.toml``
+and the child reads it via the ``CODEX_HOME`` environment variable. The system
+prompt is delivered as an ``AGENTS.md`` in the working directory (codex's
+project-doc mechanism, symmetric to how ``ClaudeCodeAgent`` writes
+``CLAUDE.md``).
 
-Each turn's ``ThreadItem`` objects are translated to transcript entries
-by the shared ``CODEX`` deserializer (see ``_to_transcript``).
+The official package ships its codex binary only as a musl-tagged wheel
+(``openai-codex-cli-bin``), which does not install on glibc hosts, so that
+dependency is dropped (see ``pyproject.toml``) and the binary is provisioned
+separately and selected via ``CodexConfig.codex_bin`` (see
+``_resolve_codex_bin``).
+
+Each turn's items are translated to transcript entries by the shared ``CODEX``
+deserializer (see ``_to_transcript``).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -23,9 +32,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from openai_codex_sdk import Codex, Thread, ThreadItem, ThreadOptions, Usage
-from openai_codex_sdk import parsing as _codex_parsing
-from openai_codex_sdk.types import FileChangeItem as _SdkFileChangeItem
+from openai_codex import ApprovalMode, AsyncCodex, AsyncThread, CodexConfig, Sandbox
 
 from openscientist.agent.base import (
     AbstractAgent,
@@ -41,24 +48,30 @@ logger = logging.getLogger(__name__)
 
 _MCP_SERVER_NAME = "openscientist-tools"
 
+# Item types that are messages or reasoning rather than tool actions; everything
+# else (commandExecution, mcpToolCall, fileChange, ...) counts as a tool call.
+_NON_TOOL_ITEM_TYPES = frozenset({"userMessage", "agentMessage", "reasoning"})
 
-class _LenientFileChangeItem(_SdkFileChangeItem):
-    """``file_change`` item that tolerates an in-progress status.
+# Hard wall-clock bound on a single agent turn. A weak model can get stuck
+# retrying an unsupported tool call (e.g. apply_patch) and never end the turn,
+# which would otherwise run until the job timeout. When exceeded, the turn is
+# cut and the loop continues. Tool calls completed before the cut are already
+# persisted. Override with OPENSCIENTIST_CODEX_TURN_TIMEOUT (seconds).
+_TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_CODEX_TURN_TIMEOUT", "900"))
 
-    The pinned codex binary streams ``file_change`` items with
-    ``status="in_progress"``, but openai-codex-sdk 0.1.11 (the latest
-    release) types ``FileChangeItem.status`` as ``Literal["completed",
-    "failed"]`` only, so its strict parsing raises and fails the whole turn
-    the moment codex writes a file. The status string is informational for
-    our transcript, so we widen it to whatever codex emits and keep the run
-    alive.
+
+def _resolve_codex_bin() -> str | None:
+    """Locate the codex executable for the SDK to launch.
+
+    An explicit ``OPENSCIENTIST_CODEX_BIN`` wins; otherwise fall back to a
+    ``codex`` on ``PATH``. Returns None to let ``CodexConfig`` apply its own
+    default (which will raise a clear error if no binary is found), since the
+    bundled-binary dependency is intentionally not installed.
     """
-
-    status: str  # type: ignore[assignment]
-
-
-# Patch the SDK's event-to-model map so the lenient model is used during parsing.
-_codex_parsing._ITEM_MODELS["file_change"] = _LenientFileChangeItem
+    override = os.environ.get("OPENSCIENTIST_CODEX_BIN")
+    if override:
+        return override
+    return shutil.which("codex")
 
 
 def _toml_str(value: str) -> str:
@@ -79,14 +92,21 @@ def _toml_str(value: str) -> str:
 
 
 class CodexAgent(AbstractAgent[CodexCompatible]):
-    """Agent that drives the Codex CLI (``openai-codex-sdk``)."""
+    """Agent that drives the Codex app-server via the official ``openai-codex``."""
 
     def __init__(self, config: AgentConfig, provider: CodexCompatible) -> None:
         super().__init__(config, provider)
-        self._thread: Thread | None = None
+        self._codex: AsyncCodex | None = None
+        self._thread: AsyncThread | None = None
+
+    def _job_dir(self) -> Path:
+        # Absolute: codex resolves a relative CODEX_HOME/cwd against its own
+        # cwd, doubling a relative job dir (chat passes "jobs/<id>", discovery
+        # passes an absolute path).
+        return self._config.job_dir.resolve()
 
     def _codex_home(self) -> Path:
-        return self._config.job_dir / ".codex"
+        return self._job_dir() / ".codex"
 
     def _mcp_env(self) -> dict[str, str]:
         """Full environment for the tools MCP server, written into the codex
@@ -97,34 +117,22 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         forward the whole parent environment (PATH, DATABASE_URL,
         OPENSCIENTIST_SECRET_KEY, provider creds, executor image, ...) that the
         tools need, then overlay the per-job ``OPENSCIENTIST_*`` values.
-
-        Subclasses that need to seed from something other than ``os.environ``
-        (the air-gap subclass replaces it with an allowlisted view) override
-        this method; the per-job overlay lives in :meth:`_overlay_job_env` so
-        the override can reuse it without duplicating the overlay logic.
-        """
-        return self._overlay_job_env(dict(os.environ))
-
-    def _overlay_job_env(self, base: dict[str, str]) -> dict[str, str]:
-        """Overlay the per-job ``OPENSCIENTIST_*`` values on ``base``.
-
-        Mutates and returns ``base``. Extracted so subclasses can compose
-        their own base seed (e.g. an allowlisted env) with the same per-job
-        overlay :meth:`_mcp_env` uses.
         """
         config = self._config
-        base.update(
+        job_dir = self._job_dir()
+        env = dict(os.environ)
+        env.update(
             {
-                "OPENSCIENTIST_JOB_ID": config.job_dir.name,
-                "OPENSCIENTIST_JOB_DIR": str(config.job_dir),
+                "OPENSCIENTIST_JOB_ID": job_dir.name,
+                "OPENSCIENTIST_JOB_DIR": str(job_dir),
                 "OPENSCIENTIST_USE_HYPOTHESES": "1" if config.use_hypotheses else "0",
             }
         )
         if config.data_file is not None:
-            base["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)
+            env["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)
         if config.data_files:
-            base["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
-        return base
+            env["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
+        return env
 
     def _write_codex_config(self) -> None:
         """Write the per-job ``$CODEX_HOME/config.toml`` selecting the
@@ -147,15 +155,15 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     def _write_agents_md(self) -> None:
         """Deliver the system prompt as ``AGENTS.md`` in the working dir."""
         if self._config.system_prompt:
-            (self._config.job_dir / "AGENTS.md").write_text(self._config.system_prompt)
+            (self._job_dir() / "AGENTS.md").write_text(self._config.system_prompt)
 
     def _ensure_auth(self) -> None:
         """Make the per-job ``CODEX_HOME`` able to authenticate.
 
         If an API key is available (provider env or ``OPENAI_API_KEY``),
         codex uses it directly. Otherwise copy the codex CLI's stored OAuth
-        login (``~/.codex/auth.json``) into the per-job home so ``codex
-        exec`` can authenticate via the ChatGPT subscription.
+        login (``~/.codex/auth.json``) into the per-job home so codex can
+        authenticate via the ChatGPT subscription.
         """
         if self._provider.codex_sdk_env() or os.environ.get("OPENAI_API_KEY"):
             return
@@ -166,82 +174,97 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             dest.chmod(0o600)
             logger.info("Provisioned codex auth into per-job CODEX_HOME")
 
-    def _make_codex(self) -> Codex:
-        """Build a ``Codex`` whose child reads the per-job config home and
-        the provider's auth env."""
+    def _make_codex(self) -> AsyncCodex:
+        """Build an ``AsyncCodex`` whose app-server reads the per-job config
+        home and the provider's auth env, and launches our provisioned binary."""
         env = {
             **os.environ,
             **self._provider.codex_sdk_env(),
             "CODEX_HOME": str(self._codex_home()),
         }
-        return Codex({"env": env})
-
-    def _thread_options(self) -> ThreadOptions:
-        """Build the ``ThreadOptions`` for a fresh thread.
-
-        Subclasses that need to tweak fields (the air-gap subclass disables
-        ``network_access_enabled`` and ``web_search_enabled``) override this
-        and ``return super()._thread_options().model_copy(update={...})`` so
-        the base defaults stay in one place.
-        """
-        return ThreadOptions(
-            model=self._provider.codex_model_name(),
-            working_directory=str(self._config.job_dir),
-            # The agent already runs locked down in its own ephemeral
-            # container, which is the real security boundary. Codex's
-            # own "workspace-write" sandbox additionally gates MCP tool
-            # calls and the headless exec auto-cancels them ("user
-            # cancelled MCP tool call"), so no tool ever runs. Full
-            # access defers sandboxing to the container, as codex
-            # recommends for externally sandboxed automation.
-            sandbox_mode="danger-full-access",
-            # Headless: no human to approve actions, so never ask.
-            approval_policy="never",
-            # Job dirs are not git repos. Without this, codex exec
-            # refuses to run ("not inside a trusted directory").
-            skip_git_repo_check=True,
+        return AsyncCodex(
+            CodexConfig(
+                codex_bin=_resolve_codex_bin(),
+                env=env,
+                cwd=str(self._job_dir()),
+            )
         )
 
-    def _ensure_thread(self, reset_session: bool) -> Thread:
-        """Return a started thread, (re)building it when requested."""
+    async def _close_codex(self) -> None:
+        """Tear down the app-server client and drop the thread."""
+        if self._codex is not None:
+            try:
+                await self._codex.close()
+            except Exception:  # best-effort cleanup
+                logger.debug("Closing codex client failed", exc_info=True)
+        self._codex = None
+        self._thread = None
+
+    async def _ensure_thread(self, reset_session: bool) -> AsyncThread:
+        """Return a started thread, (re)building it when requested.
+
+        The app-server client persists across iterations; a reset starts a new
+        thread (a fresh conversation) on the same client.
+        """
         if reset_session:
             self._thread = None
-        if self._thread is None:
+        if self._codex is None:
             self._write_codex_config()
             self._write_agents_md()
             self._ensure_auth()
-            codex = self._make_codex()
-            self._thread = codex.start_thread(self._thread_options())
+            self._codex = self._make_codex()
+        if self._thread is None:
+            self._thread = await self._codex.thread_start(
+                model=self._provider.codex_model_name(),
+                model_provider=self._provider.codex_model_provider_id(),
+                # The agent already runs locked down in its own ephemeral
+                # container, which is the real security boundary, so codex gets
+                # full filesystem/network access and defers sandboxing to the
+                # container, as recommended for externally sandboxed automation.
+                sandbox=Sandbox.full_access,
+                # Headless: no human to approve actions. deny_all maps to
+                # codex's approval policy "never" (no escalation prompts and no
+                # auto-reviewer), so tools run immediately. ApprovalMode
+                # .auto_review instead runs an approval reviewer that has a
+                # deadline and times out in a headless run, failing every tool
+                # call with "automatic permission approval review did not
+                # finish before its deadline".
+                approval_mode=ApprovalMode.deny_all,
+                cwd=str(self._job_dir()),
+            )
             logger.info("Codex thread started")
         return self._thread
 
     @staticmethod
-    def _usage_from_payload(usage: Usage) -> TokenUsage:
-        """Normalize a codex ``Usage`` to ``TokenUsage``.
+    def _usage_from_payload(usage: Any) -> TokenUsage:
+        """Normalize the turn's token usage to ``TokenUsage``.
 
-        Codex reports ``input_tokens`` inclusive of ``cached_input_tokens``
-        (Responses-API shape), so the fresh-input count is the difference.
-        Codex exposes no reasoning-token count, so ``reasoning_tokens`` is
-        always 0; there is no prompt-cache write bucket either.
+        The SDK reports per-turn usage as ``usage.last`` (a
+        ``TokenUsageBreakdown``) with ``input_tokens`` inclusive of
+        ``cached_input_tokens`` (Responses-API shape), so the fresh-input count
+        is the difference. ``usage.total`` is the running thread total, which we
+        do not use here since ``_token_usage`` accumulates per turn.
         """
+        last = getattr(usage, "last", None)
+        if last is None:
+            return TokenUsage()
         return TokenUsage(
-            input_tokens=usage.input_tokens - usage.cached_input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_read_tokens=usage.cached_input_tokens,
+            input_tokens=last.input_tokens - last.cached_input_tokens,
+            output_tokens=last.output_tokens,
+            cache_read_tokens=last.cached_input_tokens,
             cache_write_tokens=0,
-            reasoning_tokens=0,
+            reasoning_tokens=last.reasoning_output_tokens,
         )
 
     @staticmethod
-    def _to_transcript(items: list[ThreadItem]) -> list[TranscriptEntry]:
-        """Translate the turn's ``ThreadItem`` objects into transcript
-        entries by reusing the ``CODEX`` deserializer.
+    def _to_transcript(items: list[Any]) -> list[TranscriptEntry]:
+        """Translate the turn's items into transcript entries by reusing the
+        ``CODEX`` deserializer.
 
-        The SDK hands us parsed items; ``CODEX.deserialize`` consumes the
-        raw ``item.completed`` event shape, so each item is dumped back to
-        its wire dict and wrapped in an envelope. This delegates every
-        mapping (the ``mcp_tool_call`` split, ``file_change`` fan-out,
-        unknown-item handling) to the single tested translator.
+        The SDK hands us parsed item objects; ``CODEX.deserialize`` consumes the
+        raw ``item.completed`` event shape, so each item is dumped back to its
+        wire dict and wrapped in an envelope. This delegates every mapping to
+        the single tested translator.
         """
         events: list[dict[str, Any]] = [
             {"type": "item.completed", "item": item.model_dump(mode="json")} for item in items
@@ -249,34 +272,47 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         return CODEX.deserialize(events)
 
     async def run_iteration(self, prompt: str, *, reset_session: bool = False) -> IterationResult:
-        """Run one turn via ``codex exec`` and return its result.
+        """Run one turn on the codex thread and return its result.
 
-        The turn's items are translated to a transcript and token usage
-        from ``Turn.usage`` is accumulated.
+        The turn's items are translated to a transcript and per-turn token
+        usage is accumulated.
         """
         try:
-            thread = self._ensure_thread(reset_session)
-            turn = await thread.run(prompt)
+            thread = await self._ensure_thread(reset_session)
+            result = await asyncio.wait_for(thread.run(prompt), timeout=_TURN_TIMEOUT_SECONDS)
+        except TimeoutError:
+            # Runaway turn (e.g. the model looping on an unsupported tool call).
+            # Cut it and let the loop continue: success=True so the orchestrator
+            # advances (the discovery loop raises on a failed turn), since work
+            # done before the cut is already persisted via the MCP tools. The
+            # report turn is gated on the file existing, not on this flag.
+            logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
+            await self._close_codex()
+            return IterationResult(success=True, output="", tool_calls=0, transcript=[], error="")
         except Exception as e:
             logger.error("Codex run failed: %s", e, exc_info=True)
-            self._thread = None
+            await self._close_codex()
             return IterationResult(
                 success=False, output="", tool_calls=0, transcript=[], error=str(e)
             )
 
-        if turn.usage is not None:
-            self._token_usage += self._usage_from_payload(turn.usage)
+        if result.usage is not None:
+            self._token_usage += self._usage_from_payload(result.usage)
 
-        tool_calls = sum(1 for item in turn.items if item.type != "agent_message")
+        tool_calls = sum(
+            1
+            for item in result.items
+            if item.model_dump(mode="json").get("type") not in _NON_TOOL_ITEM_TYPES
+        )
         return IterationResult(
             success=True,
-            output=turn.final_response,
+            output=result.final_response or "",
             tool_calls=tool_calls,
-            transcript=self._to_transcript(turn.items),
+            transcript=self._to_transcript(result.items),
             error="",
         )
 
     async def shutdown(self) -> None:
-        """No-op: ``codex exec`` is one-shot per turn, nothing to close."""
-        self._thread = None
+        """Close the app-server client."""
+        await self._close_codex()
         logger.debug("CodexAgent shut down")

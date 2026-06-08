@@ -755,3 +755,53 @@ class TestJobManagerCLI:
         )
         stdout = capsys.readouterr().out
         assert '"created_jobs": 1' in stdout
+
+
+class TestEffectiveModel:
+    """`_effective_model` records the model the active provider will actually
+    use, so the job can show a model badge."""
+
+    @staticmethod
+    def _settings(
+        model: str | None = None, anthropic_default: str | None = None
+    ) -> SimpleNamespace:
+        return SimpleNamespace(
+            provider=SimpleNamespace(
+                model=model,
+                anthropic_default_sonnet_model=anthropic_default,
+            )
+        )
+
+    def test_explicit_model_wins(self) -> None:
+        from openscientist.job_manager import _effective_model
+
+        assert _effective_model(self._settings(model="gpt-5")) == "gpt-5"
+
+    def test_anthropic_default_used(self) -> None:
+        from openscientist.job_manager import _effective_model
+
+        assert _effective_model(self._settings(anthropic_default="claude-x")) == "claude-x"
+
+    def test_codex_provider_model_resolved_when_unset(self) -> None:
+        """Codex providers carry the model in provider config (e.g. OLLAMA_MODEL),
+        so it is resolved from the provider rather than OPENSCIENTIST_MODEL."""
+        from openscientist.job_manager import _effective_model
+        from tests.helpers import StubCodexProvider
+
+        with patch("openscientist.job_manager.get_provider", return_value=StubCodexProvider()):
+            assert _effective_model(self._settings()) == "stub-codex-model"
+
+    def test_claude_provider_model_resolved_when_unset(self) -> None:
+        from openscientist.job_manager import _effective_model
+        from tests.helpers import StubClaudeProvider
+
+        with patch("openscientist.job_manager.get_provider", return_value=StubClaudeProvider()):
+            assert _effective_model(self._settings()) is not None
+
+    def test_returns_none_when_provider_unavailable(self) -> None:
+        from openscientist.job_manager import _effective_model
+
+        with patch(
+            "openscientist.job_manager.get_provider", side_effect=ValueError("misconfigured")
+        ):
+            assert _effective_model(self._settings()) is None

@@ -144,35 +144,23 @@ class TestMcpEnvFiltering:
         assert env["OPENAI_API_KEY"] == "polluting-secret"
 
 
-# --------------------------------------------------------- _thread_options
-
-
-class TestThreadOptionsHardening:
-    """RFC §8.2: ``ThreadOptions`` must disable Codex's network access and
-    web search in air-gap mode."""
-
-    def test_base_class_leaves_network_unset(self, base_agent: CodexAgent) -> None:
-        opts = base_agent._thread_options()
-        # Default: SDK leaves both None (Codex CLI applies its own defaults).
-        assert opts.network_access_enabled is None
-        assert opts.web_search_enabled is None
-
-    def test_airgap_disables_network(self, airgap_agent: AirgapCodexAgent) -> None:
-        opts = airgap_agent._thread_options()
-        assert opts.network_access_enabled is False
-
-    def test_airgap_disables_web_search(self, airgap_agent: AirgapCodexAgent) -> None:
-        opts = airgap_agent._thread_options()
-        assert opts.web_search_enabled is False
-
-    def test_base_field_preserved(self, airgap_agent: AirgapCodexAgent) -> None:
-        # The base class's sandbox / approval / skip-git settings must come
-        # through unchanged; the subclass only adds the network restrictions.
-        opts = airgap_agent._thread_options()
-        assert opts.sandbox_mode == "danger-full-access"
-        assert opts.approval_policy == "never"
-        assert opts.skip_git_repo_check is True
-        assert opts.model == "test-model"
+# --------------------------------------------------------- _thread_options (removed after PR #195)
+#
+# The previous draft had a TestThreadOptionsHardening class that asserted
+# AirgapCodexAgent overrode _thread_options() to set network_access_enabled=
+# False + web_search_enabled=False on a ThreadOptions object. PR #195 swaps
+# openai-codex-sdk for openai-codex, which:
+#
+#   - drops the ThreadOptions dataclass entirely (thread_start takes kwargs);
+#   - gates web_search at the FORK level for non-OpenAI providers (Ollama,
+#     BedrockOpenAI, AzureOpenAI — every CodexCompatible provider the air-gap
+#     egress registry supports);
+#   - has no network_access_enabled parameter — network policy lives at the
+#     host firewall + Docker network configuration (RFC §6).
+#
+# So the four overrides shrink to three; nothing to test here. The fork-level
+# web_search gate is the upstream's responsibility to assert; the network
+# boundary is asserted by `tests/airgap/test_probes.py`.
 
 
 # --------------------------------------------------------- _ensure_auth

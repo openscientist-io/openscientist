@@ -36,6 +36,32 @@ from openscientist.version import get_version_string
 logger = logging.getLogger(__name__)
 
 
+def _effective_model(settings: Any) -> str | None:
+    """Resolve the model the active provider will actually use, for recording
+    on the job so the UI can show a model badge.
+
+    ``OPENSCIENTIST_MODEL`` (and the anthropic default) are checked first, but
+    codex providers carry their model in provider-specific config (for example
+    ``OLLAMA_MODEL`` or the Azure deployment), so when those are unset we ask
+    the provider itself. Returns None when nothing resolves (for example codex
+    on the account default), leaving the job with a provider badge only.
+    """
+    model = settings.provider.model or settings.provider.anthropic_default_sonnet_model
+    if model:
+        return str(model)
+    try:
+        from openscientist.providers.base import ClaudeCompatible, CodexCompatible
+
+        provider = get_provider()
+        if isinstance(provider, CodexCompatible):
+            return provider.codex_model_name()
+        if isinstance(provider, ClaudeCompatible):
+            return provider.claude_model_name()
+    except Exception as exc:  # provider misconfigured, unavailable, etc.
+        logger.debug("Could not resolve provider model for job: %s", exc)
+    return None
+
+
 # Database helper functions for async operations
 
 
@@ -494,7 +520,7 @@ class JobManager:
 
         settings = get_settings()
         llm_provider = settings.provider.provider_id.lower()
-        model = settings.provider.model or settings.provider.anthropic_default_sonnet_model
+        model = _effective_model(settings)
         llm_config = {"model": model} if model else None
 
         # Create job in database
@@ -590,7 +616,10 @@ class JobManager:
 
             # Poll the database until the container's agent writes a terminal status.
             # Also check if the container has exited unexpectedly (crash before DB write).
-            timeout_seconds = 4 * 3600
+            from openscientist.settings import get_settings
+
+            timeout_seconds = get_settings().container.agent_timeout
+            timeout_hours = timeout_seconds / 3600
             elapsed = 0
             while elapsed < timeout_seconds:
                 time.sleep(poll_interval)
@@ -627,9 +656,11 @@ class JobManager:
                     return
 
             # Hard timeout reached.
-            logger.error("Container job %s timed out after 4 hours", job_id)
+            logger.error("Container job %s timed out after %.1f hours", job_id, timeout_hours)
             self._update_job_status(
-                job_id, JobStatus.FAILED, error_message="Job timed out after 4 hours"
+                job_id,
+                JobStatus.FAILED,
+                error_message=f"Job timed out after {timeout_hours:.1f} hours",
             )
 
         except Exception as e:

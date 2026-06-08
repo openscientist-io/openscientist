@@ -1,8 +1,11 @@
-"""Codex CLI exec :class:`TranscriptDeserializer` backend.
+"""Codex :class:`TranscriptDeserializer` backend.
 
-Translates the ``ThreadEvent`` JSONL stream emitted by
-``codex exec --json``. Wire format declared in
-``codex-rs/exec/src/exec_events.rs``.
+Translates the ``ThreadItem`` objects produced by the official ``openai-codex``
+SDK. ``CodexAgent`` dumps each item to its wire dict and wraps it in an
+``item.completed`` envelope (see ``codex_agent._to_transcript``); this module
+maps those item shapes (discriminated by their camelCase ``type``) to
+:class:`TranscriptEntry` variants. The thread/turn envelope handlers are kept
+for callers that feed a full event stream.
 """
 
 from dataclasses import dataclass
@@ -51,7 +54,7 @@ class _CodexItemContext:
 
 
 class _CodexItem(BaseModel):
-    """Base for Codex CLI exec items."""
+    """Base for Codex SDK thread items."""
 
     model_config = ConfigDict(extra="allow")
     id: str
@@ -63,8 +66,26 @@ class _CodexItem(BaseModel):
         return merge_overlay(ctx.overlay, block_extras_or_none(self.model_extras()))
 
 
+class _UserMessageItem(_CodexItem):
+    """User-supplied prompt. ``content`` is a list of input blocks; the text
+    blocks carry the prompt."""
+
+    type: Literal["userMessage"]
+    content: list[dict[str, Any]] = Field(default_factory=list)
+
+    def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
+        parts = [
+            block["text"]
+            for block in self.content
+            if isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        ]
+        return [UserPrompt(id=self.id, text="\n".join(parts), raw=self._raw(ctx))]
+
+
 class _AgentMessageItem(_CodexItem):
-    type: Literal["agent_message"]
+    type: Literal["agentMessage"]
     text: str
 
     def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
@@ -72,15 +93,20 @@ class _AgentMessageItem(_CodexItem):
 
 
 class _ReasoningItem(_CodexItem):
+    """Reasoning item. Text lives in ``summary`` (falling back to ``content``),
+    both lists of strings."""
+
     type: Literal["reasoning"]
-    text: str
+    summary: list[str] | None = None
+    content: list[str] | None = None
 
     def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
-        return [Reasoning(id=self.id, text=self.text, raw=self._raw(ctx))]
+        text = "\n".join(self.summary or self.content or [])
+        return [Reasoning(id=self.id, text=text, raw=self._raw(ctx))]
 
 
 class _CommandExecutionItem(_CodexItem):
-    type: Literal["command_execution"]
+    type: Literal["commandExecution"]
     command: str
     aggregated_output: str | None = None
     exit_code: int | None = None
@@ -102,7 +128,8 @@ class _CommandExecutionItem(_CodexItem):
 class _FileUpdateChange(BaseModel):
     model_config = ConfigDict(extra="allow")
     path: str
-    kind: str  # PatchChangeKind: "add" | "delete" | "update"
+    # PatchChangeKind: an object like ``{"type": "add"|"delete"|"update"}``.
+    kind: Any = None
 
 
 _FILE_CHANGE_KIND_TO_VARIANT: dict[str, str] = {
@@ -112,19 +139,30 @@ _FILE_CHANGE_KIND_TO_VARIANT: dict[str, str] = {
 }
 
 
+def _change_kind(kind: Any) -> str | None:
+    """Extract the kind discriminator from a PatchChangeKind value, tolerating
+    both the object form (``{"type": "add"}``) and a bare string."""
+    if isinstance(kind, dict):
+        value = kind.get("type")
+        return value if isinstance(value, str) else None
+    if isinstance(kind, str):
+        return kind
+    return None
+
+
 class _FileChangeItem(_CodexItem):
-    type: Literal["file_change"]
+    type: Literal["fileChange"]
     changes: list[_FileUpdateChange] = Field(default_factory=list)
     status: str | None = None  # PatchApplyStatus
 
     def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
         if not self.changes:
-            return [unknown_block("codex", ctx.overlay, self, "file_change item has no changes")]
+            return [unknown_block("codex", ctx.overlay, self, "fileChange item has no changes")]
         success = self.status == "completed"
         out: list[TranscriptEntry] = []
-        # One FileChange entry per source change, sharing parent id + status.
         for change in self.changes:
-            kind = _FILE_CHANGE_KIND_TO_VARIANT.get(change.kind)
+            raw_kind = _change_kind(change.kind)
+            kind = _FILE_CHANGE_KIND_TO_VARIANT.get(raw_kind) if raw_kind is not None else None
             if kind is None:
                 out.append(
                     unknown(
@@ -136,7 +174,7 @@ class _FileChangeItem(_CodexItem):
                             },
                             "_overlay": ctx.overlay,
                         },
-                        f"file_change kind {change.kind!r} has no FileChange variant",
+                        f"fileChange kind {change.kind!r} has no FileChange variant",
                     )
                 )
                 continue
@@ -157,7 +195,6 @@ class _McpToolCallItemResult(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
     content: list[Any] = Field(default_factory=list)
     structured_content: Any | None = None
-    meta: Any | None = Field(default=None, alias="_meta")
 
 
 class _McpToolCallItemError(BaseModel):
@@ -166,7 +203,7 @@ class _McpToolCallItemError(BaseModel):
 
 
 class _McpToolCallItem(_CodexItem):
-    type: Literal["mcp_tool_call"]
+    type: Literal["mcpToolCall"]
     server: str
     tool: str
     arguments: Any = None
@@ -196,8 +233,6 @@ class _McpToolCallItem(_CodexItem):
         content_items: list[Any] | None = None
         if self.result is not None:
             structured = self.result.structured_content
-            # Preserve the source content list. Non-text blocks would
-            # otherwise be lost by the text-only flatten below.
             content_items = [
                 dict(item) if isinstance(item, dict) else item for item in self.result.content
             ]
@@ -223,21 +258,55 @@ class _McpToolCallItem(_CodexItem):
         return out
 
 
-class _CollabAgentState(BaseModel):
-    """Last known state of a collab agent."""
+class _DynamicToolCallItem(_CodexItem):
+    """A generic (non-MCP) tool call, e.g. a built-in dynamic tool."""
 
-    model_config = ConfigDict(extra="allow")
-    status: str
-    message: str | None = None
+    type: Literal["dynamicToolCall"]
+    tool: str
+    arguments: Any = None
+    content_items: list[Any] | None = None
+    namespace: str | None = None
+    status: str | None = None
+
+    def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
+        args = self.arguments if isinstance(self.arguments, dict) else {}
+        raw = self._raw(ctx)
+        if self.arguments is not None and not isinstance(self.arguments, dict):
+            raw = dict(raw)
+            raw["_arguments_non_dict"] = self.arguments
+        out: list[TranscriptEntry] = [
+            ToolCall(
+                id=self.id,
+                tool=self.tool,
+                arguments=args,
+                server=self.namespace,
+                raw=raw,
+            )
+        ]
+        success = self.status == "completed"
+        parts: list[str] = []
+        for item in self.content_items or []:
+            if isinstance(item, dict) and item.get("type") in ("text", "inputText"):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        out.append(
+            ToolResult(
+                call_id=self.id,
+                output="\n".join(parts),
+                success=success,
+                status=self.status,
+                content_items=self.content_items,
+                raw=raw,
+            )
+        )
+        return out
 
 
 class _CollabToolCallItem(_CodexItem):
-    type: Literal["collab_tool_call"]
-    tool: str
-    sender_thread_id: str
-    receiver_thread_ids: list[str] = Field(default_factory=list)
+    type: Literal["collabAgentToolCall"]
     prompt: str | None = None
-    agents_states: dict[str, _CollabAgentState] = Field(default_factory=dict)
+    agents_states: dict[str, Any] = Field(default_factory=dict)
     status: str | None = None
 
     def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
@@ -245,14 +314,14 @@ class _CollabToolCallItem(_CodexItem):
             CollabAgentToolCall(
                 id=self.id,
                 prompt=self.prompt,
-                agents_states={k: v.model_dump(mode="json") for k, v in self.agents_states.items()},
+                agents_states={k: v for k, v in self.agents_states.items()},
                 raw=self._raw(ctx),
             )
         ]
 
 
 class _WebSearchItem(_CodexItem):
-    type: Literal["web_search"]
+    type: Literal["webSearch"]
     query: str
     action: dict[str, Any] | None = None
 
@@ -267,65 +336,27 @@ class _WebSearchItem(_CodexItem):
         ]
 
 
-class _TodoListItem(_CodexItem):
-    """Running to-do list. Maps to :class:`Plan` with items rendered
-    as a markdown checklist; structured list preserved in
-    ``raw["_todo_items"]``."""
+class _PlanItem(_CodexItem):
+    """Running plan, rendered as text."""
 
-    type: Literal["todo_list"]
-    items: list[dict[str, Any]] = Field(default_factory=list)
-
-    def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
-        lines = []
-        for entry in self.items:
-            marker = "[x]" if entry.get("completed") else "[ ]"
-            text = entry.get("text", "")
-            lines.append(f"- {marker} {text}")
-        raw = dict(self._raw(ctx))
-        raw["_todo_items"] = [dict(item) for item in self.items]
-        return [Plan(id=self.id, text="\n".join(lines), raw=raw)]
-
-
-class _ErrorItem(_CodexItem):
-    """Non-fatal error surfaced mid-turn."""
-
-    type: Literal["error"]
-    message: str
-
-    def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
-        return [
-            TaskNotification(
-                task_id=ctx.thread_id or "",
-                status="failed",
-                summary=self.message,
-                output_file="",
-                raw=self._raw(ctx),
-            )
-        ]
-
-
-class _UserMessageItem(_CodexItem):
-    """User-supplied prompt text. Forward-compat for multi-turn captures
-    where the CLI echoes prior user prompts back into the stream."""
-
-    type: Literal["user_message"]
+    type: Literal["plan"]
     text: str
 
     def translate(self, ctx: _CodexItemContext) -> list[TranscriptEntry]:
-        return [UserPrompt(id=self.id, text=self.text, raw=self._raw(ctx))]
+        return [Plan(id=self.id, text=self.text, raw=self._raw(ctx))]
 
 
 _CodexItemUnion = Annotated[
-    _AgentMessageItem
+    _UserMessageItem
+    | _AgentMessageItem
     | _ReasoningItem
     | _CommandExecutionItem
     | _FileChangeItem
     | _McpToolCallItem
+    | _DynamicToolCallItem
     | _CollabToolCallItem
     | _WebSearchItem
-    | _TodoListItem
-    | _ErrorItem
-    | _UserMessageItem,
+    | _PlanItem,
     Field(discriminator="type"),
 ]
 _CodexItemAdapter: TypeAdapter[_CodexItemUnion] = TypeAdapter(_CodexItemUnion)
@@ -351,8 +382,9 @@ def _leftover(d: dict[str, Any], consumed: frozenset[str]) -> dict[str, Any]:
 
 
 class CodexDeserializer:
-    """:class:`TranscriptDeserializer` for the Codex CLI exec JSONL
-    stream. Stateless. See :data:`CODEX` for the canonical instance.
+    """:class:`TranscriptDeserializer` for Codex SDK items wrapped in
+    ``item.completed`` envelopes. Stateless. See :data:`CODEX` for the
+    canonical instance.
     """
 
     def deserialize(self, raw: list[dict[str, Any]]) -> list[TranscriptEntry]:
@@ -439,7 +471,7 @@ class CodexDeserializer:
                         unknown(
                             "codex",
                             dict(event),
-                            f"unrecognised ThreadEvent type {other!r}",
+                            f"unrecognised event type {other!r}",
                         )
                     )
         return out
@@ -456,9 +488,6 @@ class CodexDeserializer:
                     "item.completed event missing dict-shaped item",
                 )
             ]
-        # Envelope leftover (e.g. thread_id we might attach later) becomes
-        # the item's overlay. The event itself has only ``type`` and
-        # ``item`` keys today, so the overlay is normally empty.
         envelope_extras = {k: v for k, v in event.items() if k not in ("type", "item")}
         overlay: dict[str, Any] = {}
         if thread_id is not None:
@@ -480,5 +509,5 @@ class CodexDeserializer:
 
 
 CODEX: CodexDeserializer = CodexDeserializer()
-"""Canonical :class:`TranscriptDeserializer` for the Codex CLI exec
-JSONL wire format."""
+"""Canonical :class:`TranscriptDeserializer` for the Codex SDK item wire
+format."""

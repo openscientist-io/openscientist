@@ -129,6 +129,38 @@ class TestJobContainerRunner:
         run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
         assert run_kwargs["image"] == "openscientist-agent:staging"
 
+    def test_launch_maps_host_docker_internal_to_gateway(self):
+        """The agent container maps host.docker.internal to the host gateway so a
+        job can reach a model server running on the host (e.g. a local Ollama)."""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_container.short_id = "abc123"
+        mock_client.containers.run.return_value = mock_container
+        settings = self._make_settings(host_project_dir=None)
+
+        original_exists = Path.exists
+
+        def fake_exists(path: Path) -> bool:
+            if path == Path("/var/run/docker.sock"):
+                return False
+            return cast(bool, original_exists(path))
+
+        with (
+            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
+            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
+            patch(
+                "openscientist.job_container.runner.to_host_path",
+                return_value=Path("/app/jobs/job-123"),
+            ),
+            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
+        ):
+            runner = JobContainerRunner()
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+
+        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
+        assert run_kwargs["extra_hosts"] == {"host.docker.internal": "host-gateway"}
+
     def test_launch_omits_host_path_mapping_without_host_project_dir(self):
         """Launch omits host-path env vars when the host project path is unset."""
         mock_client = MagicMock()

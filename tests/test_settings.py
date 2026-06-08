@@ -391,6 +391,25 @@ class TestProviderContainerEnvVars:
         assert "AZURE_OPENAI_API_KEY" not in env
         assert "AZURE_OPENAI_RESOURCE" not in env
 
+    def test_ollama_vars_passed_for_codex_provider(self):
+        settings = ProviderSettings(
+            OPENSCIENTIST_PROVIDER="ollama",
+            OLLAMA_BASE_URL="http://host.docker.internal:11434/v1",
+            OLLAMA_MODEL="gpt-oss:20b",
+        )
+
+        env = settings.get_container_env_vars()
+
+        assert env["OPENSCIENTIST_PROVIDER"] == "ollama"
+        assert env["OLLAMA_BASE_URL"] == "http://host.docker.internal:11434/v1"
+        assert env["OLLAMA_MODEL"] == "gpt-oss:20b"
+
+    def test_ollama_vars_default_when_unset(self):
+        settings = ProviderSettings(OPENSCIENTIST_PROVIDER="ollama")
+        env = settings.get_container_env_vars()
+        assert env["OLLAMA_BASE_URL"] == "http://localhost:11434/v1"
+        assert env["OLLAMA_MODEL"] == "gpt-oss:20b"
+
     def test_optional_model_and_token_env_vars_are_included(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="anthropic",

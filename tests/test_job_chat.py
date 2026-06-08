@@ -462,7 +462,7 @@ async def test_send_chat_message_success(
     )
 
     with (
-        patch("openscientist.agent.claude_code_agent.ClaudeCodeAgent", return_value=mock_executor),
+        patch("openscientist.agent.factory.get_agent", return_value=mock_executor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value = _ChatProvider()
@@ -507,7 +507,7 @@ async def test_send_chat_message_raises_on_executor_failure(
     )
 
     with (
-        patch("openscientist.agent.claude_code_agent.ClaudeCodeAgent", return_value=mock_executor),
+        patch("openscientist.agent.factory.get_agent", return_value=mock_executor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value = _ChatProvider()
@@ -541,7 +541,7 @@ async def test_send_chat_message_raises_generic_on_empty_error(
     )
 
     with (
-        patch("openscientist.agent.claude_code_agent.ClaudeCodeAgent", return_value=mock_executor),
+        patch("openscientist.agent.factory.get_agent", return_value=mock_executor),
         patch("openscientist.providers.get_provider") as mock_get_provider,
     ):
         mock_get_provider.return_value = _ChatProvider()
@@ -571,11 +571,6 @@ async def test_system_prompt_does_not_include_job_context(
     captured_system_prompt = None
 
     class FakeExecutor:
-        def __init__(self, config, provider, *, model_override=None):
-            _ = (provider, model_override)
-            nonlocal captured_system_prompt
-            captured_system_prompt = config.system_prompt
-
         async def run_iteration(self, prompt, *, reset_session=False):
             _ = (prompt, reset_session)
             return IterationResult(
@@ -588,8 +583,13 @@ async def test_system_prompt_does_not_include_job_context(
         async def shutdown(self):
             pass
 
+    def fake_get_agent(config):
+        nonlocal captured_system_prompt
+        captured_system_prompt = config.system_prompt
+        return FakeExecutor()
+
     with (
-        patch("openscientist.agent.claude_code_agent.ClaudeCodeAgent", FakeExecutor),
+        patch("openscientist.agent.factory.get_agent", fake_get_agent),
         patch("openscientist.providers.get_provider") as mock_get_provider,
         patch(
             "openscientist.job_chat.KnowledgeState.load_from_database_sync",
@@ -607,3 +607,66 @@ async def test_system_prompt_does_not_include_job_context(
     assert "knowledge_state.json" not in captured_system_prompt
     # Should NOT contain the large content
     assert "x" * 1000 not in captured_system_prompt
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_codex_provider(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    """Chat works for codex-family providers (e.g. Ollama).
+
+    It must route through the factory (no Claude-only RuntimeError), fold the
+    chat guidance into the system prompt so CodexAgent delivers it via AGENTS.md,
+    and must NOT write the Claude-only .claude/CLAUDE.md.
+    """
+    _ = test_user
+    from tests.helpers import StubCodexProvider
+
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+
+    captured_config = None
+
+    mock_executor = AsyncMock()
+    mock_executor.run_iteration.return_value = IterationResult(
+        success=True,
+        output="Codex chat reply",
+        tool_calls=0,
+        transcript=[],
+    )
+
+    def fake_get_agent(config):
+        nonlocal captured_config
+        captured_config = config
+        return mock_executor
+
+    with (
+        patch("openscientist.agent.factory.get_agent", fake_get_agent),
+        patch("openscientist.providers.get_provider") as mock_get_provider,
+    ):
+        mock_get_provider.return_value = StubCodexProvider()
+
+        response = await send_chat_message(
+            db_session, test_job.id, "Summarize the main findings.", job_dir
+        )
+
+    assert response == "Codex chat reply"
+    # Codex path must NOT write the Claude-only chat context file.
+    assert not (job_dir / ".claude" / "CLAUDE.md").exists()
+    # Chat guidance is folded into the system prompt (delivered via AGENTS.md).
+    assert captured_config is not None
+    assert "OpenScientist Job Chat Assistant" in captured_config.system_prompt
+    # No model override on the codex path — the model comes from the provider.
+    assert captured_config.model_override is None
+    mock_executor.run_iteration.assert_awaited_once()
+    mock_executor.shutdown.assert_awaited_once()
+
+    # Both messages persisted.
+    history = await get_chat_history(db_session, test_job.id)
+    assert len(history) == 2
+    assert history[0].role == "user"
+    assert history[1].role == "assistant"
+    assert history[1].content == "Codex chat reply"

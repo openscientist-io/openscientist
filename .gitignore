@@ -40,6 +40,10 @@ env/
 .env
 .env.backup-*
 
+# Locally built codex binary for ad-hoc validation. The images build codex
+# from the fork in a multi-stage build, so this large artifact never goes in.
+codex-local-bin
+
 # Deployment-specific configs (keep private)
 docker-compose.*.yml
 DEPLOY_*.md

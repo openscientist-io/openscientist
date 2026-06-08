@@ -243,14 +243,15 @@ async def _send_message_via_executor(
     job_dir: Path,
 ) -> str:
     """
-    Send message using ClaudeCodeAgent.
+    Send a chat message through the configured agent backend.
 
-    Creates a short-lived executor with the chat system prompt and full
-    tool access, allowing the agent to re-analyze data or search literature
-    when answering follow-up questions.
+    Creates a short-lived executor via the agent factory (ClaudeCodeAgent for
+    Claude-compatible providers, CodexAgent for codex-compatible ones such as
+    Ollama) with the chat system prompt and full tool access, allowing the
+    agent to re-analyze data or search literature when answering follow-ups.
     """
     from openscientist.agent.base import AgentConfig
-    from openscientist.agent.claude_code_agent import ClaudeCodeAgent
+    from openscientist.agent.factory import get_agent
     from openscientist.providers import get_provider
     from openscientist.providers.base import ClaudeCompatible
 
@@ -299,33 +300,48 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
         len(system_prompt),
     )
 
-    # Set up provider environment. In-page chat is Claude-only.
+    # Build the agent the same way discovery does: select the backend by
+    # provider family via the factory and drive it through the shared
+    # AbstractAgent contract. The only backend-specific work is prompt/context
+    # prep below, mirroring discovery's provider-neutral setup.
     provider = get_provider()
-    if not isinstance(provider, ClaudeCompatible):
-        raise RuntimeError(
-            f"In-page chat requires a Claude-compatible provider, got {type(provider).__name__}"
-        )
-    provider.setup_environment()
 
-    # Overwrite CLAUDE.md with chat-specific content (discovery wrote JOB_CLAUDE.md here)
-    from openscientist.orchestrator.discovery import _write_chat_claude_md
+    model_override: str | None = None
+    if isinstance(provider, ClaudeCompatible):
+        # setup_environment() and the .claude/CLAUDE.md chat context are
+        # Claude-family concerns (the method does not exist on CodexCompatible).
+        provider.setup_environment()
 
-    claude_dir = job_dir / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    _write_chat_claude_md(claude_dir)
+        from openscientist.orchestrator.discovery import _write_chat_claude_md
 
-    # Allow operators to route chat to a different model than discovery via the
-    # ANTHROPIC_CHAT_MODEL env var. This is the escape hatch when the discovery
-    # model rejects chat-style prompts under Usage Policy enforcement (e.g.
-    # Claude Opus 4.6 on Foundry refuses every chat call). When unset, chat uses
-    # the same model as discovery — the "same model for everything" default.
-    from openscientist.settings import get_settings
+        claude_dir = job_dir / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        _write_chat_claude_md(claude_dir)
 
-    provider_settings = get_settings().provider
-    chat_model = provider_settings.anthropic_chat_model or provider_settings.model
+        # Allow operators to route chat to a different model than discovery via
+        # the ANTHROPIC_CHAT_MODEL env var. This is the escape hatch when the
+        # discovery model rejects chat-style prompts under Usage Policy
+        # enforcement (e.g. Claude Opus 4.6 on Foundry refuses every chat call).
+        # When unset, chat uses the same model as discovery.
+        from openscientist.settings import get_settings
 
-    config = AgentConfig(job_dir=job_dir, system_prompt=system_prompt)
-    executor = ClaudeCodeAgent(config, provider, model_override=chat_model)
+        provider_settings = get_settings().provider
+        model_override = provider_settings.anthropic_chat_model or provider_settings.model
+    else:
+        # Codex-family providers (e.g. Ollama) read guidance from AGENTS.md,
+        # which CodexAgent writes from the system prompt. Fold the chat-specific
+        # guidance (the same content Claude gets via .claude/CLAUDE.md) into the
+        # system prompt so codex chat behaves identically.
+        from openscientist.orchestrator.discovery import _read_chat_claude_md_template
+
+        system_prompt = f"{system_prompt}\n\n{_read_chat_claude_md_template()}"
+
+    config = AgentConfig(
+        job_dir=job_dir,
+        system_prompt=system_prompt,
+        model_override=model_override,
+    )
+    executor = get_agent(config)
 
     try:
         result = await executor.run_iteration(prompt, reset_session=True)

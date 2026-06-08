@@ -7,6 +7,7 @@ unit testing.
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -753,7 +754,8 @@ class TestBuildReportPrompt:
 
         # Standard report instructions should still be present
         assert "Summary" in prompt
-        assert "set_consensus_answer" in prompt
+        # The consensus is a separate turn now, not part of the report prompt.
+        assert "set_consensus_answer" not in prompt
 
     def test_report_prompt_includes_abstracts(self):
         from openscientist.knowledge_state import KnowledgeState
@@ -996,3 +998,176 @@ class TestBuildIterationPrompt:
         )
         assert "Additional job context" in prompt
         assert "Stay focused on the uploaded assay design." in prompt
+
+
+class TestReportGenerationPhase:
+    """Report and consensus turns, each with bounded retries (the model writes
+    each deliverable itself; the job fails honestly only if attempts run out)."""
+
+    def test_prompts_are_focused(self):
+        from openscientist.orchestrator.iteration import (
+            build_consensus_prompt,
+            build_consensus_retry_prompt,
+            build_report_retry_prompt,
+        )
+
+        assert "set_consensus_answer" in build_consensus_prompt("Does X cause Y?")
+        assert "Does X cause Y?" in build_consensus_prompt("Does X cause Y?")
+        assert "set_consensus_answer" in build_consensus_retry_prompt("Does X cause Y?")
+        assert "/jobs/x/final_report.md" in build_report_retry_prompt("/jobs/x/final_report.md")
+
+    @staticmethod
+    def _executor(record: list) -> SimpleNamespace:
+        from openscientist.agent.base import IterationResult
+
+        async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            record.append((prompt, reset_session))
+            return IterationResult(success=True, output="", tool_calls=0, transcript=[])
+
+        return SimpleNamespace(run_iteration=fake_run)
+
+    @pytest.mark.asyncio
+    async def test_report_turn_succeeds_first_attempt(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        calls: list[tuple[str, bool]] = []
+        with (
+            patch.object(discovery, "build_report_prompt", return_value="FULL"),
+            patch.object(discovery, "_ensure_report_written", return_value=True),
+        ):
+            _, ok = await discovery._run_report_turn(
+                self._executor(calls),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+                ks,
+                None,
+            )
+        assert ok is True
+        assert calls == [("FULL", True)]  # one attempt, fresh session
+
+    @pytest.mark.asyncio
+    async def test_report_turn_retries_until_written(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        calls: list[tuple[str, bool]] = []
+        with (
+            patch.object(discovery, "build_report_prompt", return_value="FULL"),
+            patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
+            patch.object(discovery, "_ensure_report_written", side_effect=[False, True]),
+        ):
+            _, ok = await discovery._run_report_turn(
+                self._executor(calls),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+                ks,
+                None,
+            )
+        assert ok is True
+        # First the full prompt (fresh), then a focused retry in the same session.
+        assert calls == [("FULL", True), ("RETRY", False)]
+
+    @pytest.mark.asyncio
+    async def test_report_turn_gives_up_after_max(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        calls: list[tuple[str, bool]] = []
+        with (
+            patch.object(discovery, "build_report_prompt", return_value="FULL"),
+            patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
+            patch.object(discovery, "_ensure_report_written", return_value=False),
+        ):
+            _, ok = await discovery._run_report_turn(
+                self._executor(calls),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+                ks,
+                None,
+            )
+        assert ok is False
+        assert len(calls) == discovery._MAX_REPORT_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_consensus_retries_until_recorded(self, tmp_path: Path):
+        from openscientist.agent.base import IterationResult
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        calls: list[str] = []
+
+        async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            calls.append(prompt)
+            if len(calls) == 2:  # model records it on the second attempt
+                ks.data["consensus_answer"] = "A"
+            return IterationResult(success=True, output="", tool_calls=0, transcript=[])
+
+        with patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks):
+            await discovery._set_consensus_answer(
+                SimpleNamespace(run_iteration=fake_run),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+            )
+        assert ks.data["consensus_answer"] == "A"
+        assert len(calls) == 2  # first attempt + one retry
+
+    @pytest.mark.asyncio
+    async def test_phase_happy_path(self, tmp_path: Path):
+        from openscientist.agent.base import IterationResult
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        ks.data["consensus_answer"] = "A"
+
+        async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            return IterationResult(success=True, output="", tool_calls=0, transcript=[])
+
+        with (
+            patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks),
+            patch.object(discovery, "build_report_prompt", return_value="R"),
+            patch.object(discovery, "_save_report_transcript"),
+            patch.object(discovery, "_ensure_report_written", return_value=True),
+            patch.object(discovery, "_try_generate_report_pdf", new=AsyncMock()) as pdf,
+        ):
+            outcome = await discovery._run_report_generation_phase(
+                SimpleNamespace(run_iteration=fake_run),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+            )
+        assert outcome.success is True
+        pdf.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_phase_fails_when_report_never_written(self, tmp_path: Path):
+        from openscientist.agent.base import IterationResult
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        calls: list[str] = []
+
+        async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            calls.append(prompt)
+            return IterationResult(success=False, output="", tool_calls=0, transcript=[], error="x")
+
+        with (
+            patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks),
+            patch.object(discovery, "build_report_prompt", return_value="R"),
+            patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
+            patch.object(discovery, "_save_report_transcript"),
+            patch.object(discovery, "_ensure_report_written", return_value=False),
+        ):
+            outcome = await discovery._run_report_generation_phase(
+                SimpleNamespace(run_iteration=fake_run),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+            )
+        assert outcome.success is False
+        # Report attempted _MAX times; the consensus turn is never reached.
+        assert len(calls) == discovery._MAX_REPORT_ATTEMPTS

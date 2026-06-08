@@ -95,6 +95,10 @@ class AgentConfig:
     use_hypotheses: bool = False
     data_files: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServerSpec, ...] = ()
+    # Optional per-run model override. Honored by the Claude path (e.g. the
+    # ANTHROPIC_CHAT_MODEL escape hatch for in-page chat). The codex path
+    # sources its model from the provider, so this is ignored there.
+    model_override: str | None = None
 
 
 class AbstractAgent[P: Provider](abc.ABC):

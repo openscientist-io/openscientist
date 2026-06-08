@@ -862,6 +862,7 @@ _PROVIDER_DISPLAY = {
     "foundry": "Azure AI Foundry",
     "openai": "OpenAI",
     "azure-openai": "Azure OpenAI",
+    "ollama": "Ollama (local)",
 }
 
 
@@ -907,15 +908,16 @@ def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[A
     if provider_id:
         backend = agent_backend_for_provider(provider_id)
         badges.append(("Agent", _AGENT_DISPLAY.get(backend, backend), "indigo"))
-    # Show the model when known. Otherwise (e.g. codex on the account default)
-    # fall back to a provider badge instead of mislabeling the provider as a model.
-    model_name = _format_model_name(getattr(latest_job, "llm_model", None))
-    if model_name:
-        badges.append(("Model", model_name, "cyan"))
-    elif provider_id:
         badges.append(
             ("Provider", _PROVIDER_DISPLAY.get(provider_id.lower(), provider_id.title()), "teal")
         )
+    # Show the model as its own badge when known. This is independent of the
+    # provider badge: the provider is where the model is hosted, the model is
+    # which one ran. Codex on an account default records no model id, so the
+    # model badge is simply omitted in that case.
+    model_name = _format_model_name(getattr(latest_job, "llm_model", None))
+    if model_name:
+        badges.append(("Model", model_name, "cyan"))
     return badges
 
 

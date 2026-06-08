@@ -38,6 +38,12 @@ services:
       - "${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    # Map host.docker.internal to the host gateway so the in-page chat's codex
+    # agent can reach a host-local model endpoint (e.g. Ollama at
+    # http://host.docker.internal:11434/v1). Mirrors what job_container/runner.py
+    # adds for agent containers. Harmless for providers that do not use it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # All credentials and settings come from .env (ANTHROPIC_API_KEY, CLAUDE_PROVIDER, etc.)
     env_file:
       - path: .env

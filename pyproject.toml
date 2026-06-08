@@ -90,8 +90,10 @@ dependencies = [
     # Claude Agent SDK (required – powers the agent execution path)
     "claude-agent-sdk>=0.1.46",
 
-    # Codex SDK (second agent backend; wraps the bundled codex CLI)
-    "openai-codex-sdk>=0.1.11",
+    # Codex SDK (second agent backend; official OpenAI package). The codex
+    # binary is provisioned separately and selected via CodexConfig.codex_bin,
+    # so the musl-only openai-codex-cli-bin dependency is dropped below.
+    "openai-codex>=0.1.0b2",
 
     # SPARQL queries against remote endpoints
     "SPARQLWrapper>=2.0.0",
@@ -100,6 +102,13 @@ dependencies = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+# The official openai-codex pulls openai-codex-cli-bin, which ships only
+# musllinux wheels and so will not resolve on a glibc host. We provide the
+# codex binary ourselves (CodexConfig.codex_bin), so drop that dependency by
+# overriding it with a marker that is never satisfied.
+override-dependencies = ["openai-codex-cli-bin ; sys_platform == 'no_such_platform'"]
 
 [tool.ruff]
 line-length = 100

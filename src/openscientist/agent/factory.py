@@ -18,6 +18,7 @@ from openscientist.providers.base import ClaudeCompatible, CodexCompatible, Prov
 from openscientist.providers.bedrock import BedrockProvider
 from openscientist.providers.cborg import CborgProvider
 from openscientist.providers.foundry import FoundryProvider
+from openscientist.providers.ollama import OllamaProvider
 from openscientist.providers.openai import OpenAIDirectProvider
 from openscientist.providers.vertex import VertexProvider
 from openscientist.settings import get_settings
@@ -32,6 +33,7 @@ _PROVIDER_REGISTRY: dict[str, type[Provider]] = {
     "foundry": FoundryProvider,
     "openai": OpenAIDirectProvider,
     "azure-openai": AzureOpenAIProvider,
+    "ollama": OllamaProvider,
 }
 
 
@@ -70,7 +72,7 @@ def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
                 "internal endpoint — or disable OPENSCIENTIST_AIR_GAPPED."
             )
         logger.info("Using ClaudeCodeAgent with provider %s", provider.id)
-        return ClaudeCodeAgent(config, provider)
+        return ClaudeCodeAgent(config, provider, model_override=config.model_override)
     if isinstance(provider, CodexCompatible):
         # Deferred import: the codex SDK is only needed on the codex path, so
         # environments without it (e.g. images that ship only the Claude SDK)

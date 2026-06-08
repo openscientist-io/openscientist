@@ -524,6 +524,24 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Provider") == "Azure OpenAI"
         assert self._get_badge(badges, "Model") is None
 
+    def test_ollama_job_shows_codex_and_ollama_provider(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        badges = _stats_badges(self._make_job(llm_provider="ollama"), lit_count=0)
+        assert self._badge_value(badges, "Agent") == "Codex"
+        assert self._badge_value(badges, "Provider") == "Ollama (local)"
+
+    def test_ollama_job_with_model_shows_provider_and_model(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        badges = _stats_badges(
+            self._make_job(llm_provider="ollama", llm_model="gpt-oss:20b"), lit_count=0
+        )
+        # Provider (where it is hosted) and model (which one ran) appear together.
+        assert self._badge_value(badges, "Agent") == "Codex"
+        assert self._badge_value(badges, "Provider") == "Ollama (local)"
+        assert self._badge_value(badges, "Model") == "gpt-oss:20b"
+
     def test_claude_job_shows_agent_and_model(self) -> None:
         from openscientist.webapp_components.pages.job_detail import _stats_badges
 
@@ -533,7 +551,8 @@ class TestStatsBadgesHypotheses:
         )
         assert self._badge_value(badges, "Agent") == "Claude Code"
         assert self._badge_value(badges, "Model") == "Claude Sonnet 4.5"
-        assert self._get_badge(badges, "Provider") is None
+        # Provider and model are independent badges shown together.
+        assert self._badge_value(badges, "Provider") == "Anthropic"
 
     def test_no_provider_omits_agent_badge(self) -> None:
         from openscientist.webapp_components.pages.job_detail import _stats_badges

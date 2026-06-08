@@ -58,7 +58,12 @@ def build_initial_prompt(
             f"Data summary:\n"
             f"- Files: {data_files}\n"
             f"- Columns: {ks.data['data_summary'].get('columns', [])}\n"
-            f"- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}"
+            f"- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}\n"
+            f"- Accessing data in execute_code: the primary file is pre-loaded "
+            f"as the `data` DataFrame, and every file is listed in `data_files` "
+            f"with a ready-to-read `path`. Do not construct file paths yourself "
+            f"or reuse paths from the shell. They do not exist in the code "
+            f"executor."
         )
     else:
         data_context = (
@@ -185,6 +190,10 @@ def build_report_prompt(
 `{report_path}`
 Do NOT write to `/tmp/`, `~/`, or any other location — the system will not find it.
 
+**CRITICAL — action:** Use your file-writing tool to actually CREATE this file on disk.
+Do not just describe the report or print it in your reply — the file must exist at the
+path above when you are done.
+
 **CRITICAL — content:** The file must contain the COMPLETE, FULL text of every
 section — not a table of contents, not a summary of sections, not a pointer to
 another file.  If `final_report.md` already exists, overwrite it entirely.
@@ -226,12 +235,51 @@ and iteration summaries.
    - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
    - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
 
-6. **After writing the report**, call `set_consensus_answer` with a direct 1-3 sentence
-   answer to the research question.  Be direct — no citations or hedging.
-
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.
-It must be a complete, self-contained document — not a summary or index.
+It must be a complete, self-contained document — not a summary or index. Writing this
+report is the only task for this step. The consensus answer comes as a separate step.
 """
+
+
+def build_consensus_prompt(research_question: str) -> str:
+    """Prompt for the dedicated consensus-answer turn.
+
+    Run as its own single-purpose turn after the report so a weaker model does
+    not drop the report by trying to do both at once. The model writes the
+    consensus itself.
+    """
+    return f"""The final report is written. Now record the consensus answer for this
+research question:
+
+{research_question}
+
+Call the `set_consensus_answer` tool with a direct 1-3 sentence answer to the research
+question. Be direct — no citations, no hedging. Calling that tool is the only action
+for this step."""
+
+
+def build_report_retry_prompt(report_path: str) -> str:
+    """Focused re-ask when the report turn ended without creating the file.
+
+    The model must write the file itself. This only reminds it to act.
+    """
+    return f"""You did NOT create the report file. Do it now: use your file-writing tool
+to write the complete final report to this exact path:
+
+`{report_path}`
+
+Actually create the file on disk — do not just describe the report or print it in your
+reply. Writing that file is the only action for this step."""
+
+
+def build_consensus_retry_prompt(research_question: str) -> str:
+    """Focused re-ask when the consensus turn did not record an answer."""
+    return f"""You did NOT record the consensus answer. Call the `set_consensus_answer`
+tool now with a direct 1-3 sentence answer to the research question:
+
+{research_question}
+
+Calling that tool is the only action for this step."""
 
 
 def increment_ks_iteration(job_id: str) -> None:

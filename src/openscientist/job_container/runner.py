@@ -89,6 +89,12 @@ class JobContainerRunner:
             "OPENSCIENTIST_SECRET_KEY": settings.secret_key,
             **provider_env,
         }
+        # Forward the per-turn Codex timeout so the agent (CodexAgent reads
+        # OPENSCIENTIST_CODEX_TURN_TIMEOUT at import) can be tuned for slow
+        # local backends. Without this the agent always uses the 900s default.
+        turn_timeout = os.environ.get("OPENSCIENTIST_CODEX_TURN_TIMEOUT")
+        if turn_timeout:
+            env["OPENSCIENTIST_CODEX_TURN_TIMEOUT"] = turn_timeout
         if cs.host_project_dir:
             env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
             env["OPENSCIENTIST_CONTAINER_APP_DIR"] = AGENT_APP_DIR
@@ -299,6 +305,22 @@ class JobContainerRunner:
             nano_cpus=int(agent_cpu * 1e9),
             platform=agent_platform or None,
             security_opt=["no-new-privileges:true"],
+            # Map host.docker.internal to the host gateway so a job can reach a
+            # model server running on the host (e.g. a local Ollama at
+            # http://host.docker.internal:11434/v1). Harmless for providers that
+            # do not use it. On Linux this is not provided by default.
+            #
+            # AIR-GAP: RFC §6.2 forbids host-gateway/extra_hosts in air-gap
+            # mode (the per-job internal network + host firewall is the whole
+            # point of the network-layer guarantee; routing back to the host
+            # bypasses it). When airgap.enabled, the operator points
+            # OPENSCIENTIST_AIRGAP_LLM_ADDR at an explicit internal endpoint
+            # on the per-job network instead.
+            extra_hosts=(
+                {}
+                if getattr(getattr(settings, "airgap", None), "enabled", False)
+                else {"host.docker.internal": "host-gateway"}
+            ),
             group_add=[docker_gid] if docker_gid else [],
             labels={
                 "openscientist.job_id": job_id,
