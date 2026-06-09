@@ -1066,6 +1066,90 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 
 ## 21. Revision Log
 
+**v4.5.1 (2026-06-09) — Codex Review-7 fixes + drift cleanup:**
+
+Review-7 audit of the v4.5 codebase surfaced five real bugs (three
+critical) and several spots where the design prose had drifted from the
+landed implementation. Fixes:
+
+- **B1 — DB credentials stripped from agent env (critical).** The
+  `BASE_AIRGAP_ENV` allowlist denied `DATABASE_URL` and
+  `OPENSCIENTIST_SECRET_KEY`, so every airgap job failed to start (the
+  agent needs both to read its job row). Temporarily allowed through with
+  a `TODO(PR-2 / RFC §12.1)` marker pointing at the job-scoped
+  least-privilege DB role + per-job derived key mechanism §12.1 calls
+  for. Tests in `test_env_allowlist.py`.
+- **B2 (Fix 4) — MCP policy fail-opens in subprocess (critical).**
+  `_apply_airgap_policy()` in `openscientist_tools/server.py` previously
+  silently fail-opened when `get_settings()` raised (e.g. under a
+  misconfigured env), so the policy never enforced in airgap mode. Now,
+  if `OPENSCIENTIST_AIR_GAPPED` is set, any failure in settings load or
+  enforcement re-raises so the MCP server refuses to start. Non-airgap
+  retains the silent best-effort fallback. Tests in
+  `test_mcp_filter.py::TestApplyAirgapPolicyFailClosed`.
+- **B3 (Fix 2) — Docker socket container-side path mismatch (critical).**
+  `docker_base_url_for_airgap()` returned the host-side
+  `settings.airgap.docker_socket_path` from inside the web container —
+  that host path doesn't exist there, so the docker SDK failed to
+  connect. Fixed: always return the conventional container-side path
+  (`/var/run/docker.sock`); operators mount their host proxy socket to
+  that path inside the web container. The host-side setting is now
+  documented as a runner-only concern (used to build the agent
+  container's mount mapping). Tests in `test_docker_proxy.py`.
+- **B4 (Fix 4 / B2) — `PUBMED_BASE_URL` never derived from
+  `OPENSCIENTIST_AIRGAP_PUBMED_ADDR`.** The addr was set in settings and
+  forwarded into the agent env, but `literature.py` reads
+  `PUBMED_BASE_URL` (a full URL), not the addr. The agent then fell
+  back to the public NCBI URL — which the airgap firewall blocks,
+  making PubMed search a silent dead path. The runner now derives
+  `PUBMED_BASE_URL=http://<addr>/entrez/eutils` (matching the public NCBI
+  eutils layout), with an explicit operator override via host-side
+  `PUBMED_BASE_URL` env. Tests in `test_runner_airgap.py`.
+- **B5 (Fix 5 / Review-7 Fix 3) — IPv6/port-less allowlist parsing.**
+  `_airgap_allowlist_from_settings()` in `agent/factory.py` used
+  `rpartition(':')` to split host/port — that breaks IPv6 literals
+  (`[::1]:8443` chops at the wrong colon) and silently drops port-less
+  hosts. Now uses `urllib.parse.urlsplit` on a synthesized URL so
+  Python's bracket-aware parser does the work, with a documented
+  `_DEFAULT_AIRGAP_PORT = 443` fallback for port-less hosts. Tests in
+  `test_factory_airgap.py::TestParseAirgapAddr`.
+
+Design-prose drift flagged by Review-7 and clarified here so future
+readers don't have to cross-check the code:
+
+- **Setting name: `airgap_mode` → `airgap.enabled`.** The body of this
+  RFC names the master switch `settings.airgap_mode` (or
+  `ContainerSettings.airgap_mode`) in ~14 places (§16 §17, code sketches,
+  prose). Implementation diverged: the master switch lives on a separate
+  `AirgapSettings` block as `settings.airgap.enabled` with
+  `OPENSCIENTIST_AIR_GAPPED` as its environment alias. Everywhere this
+  doc says `airgap_mode`, read `airgap.enabled`. The attestation JSON
+  schema *does* keep the field name `airgap_mode: bool` (public
+  contract).
+- **`ThreadOptions` references are stale (§8.2, §7.1 table).** v4.2/v4.3
+  describe the airgap codex agent overriding
+  `ThreadOptions(network_access_enabled=False, web_search_enabled=False)`.
+  PR #195 (Luca's fork) switched the SDK package from
+  `openai_codex_sdk` to `openai-codex` and dropped the `ThreadOptions`
+  dataclass — `thread_start` now takes kwargs directly. The current
+  `AirgapCodexAgent` overrides `_make_codex()` instead, which is the
+  shape PR #195 introduced. The §8.2 code sketch is illustrative of
+  intent, not the call shape.
+- **`airgap/firewall.py` is PR-2 only.** §17 lists `firewall.py` as a
+  PR-1 deliverable; §18 (Phased Implementation Plan) and the rest of the
+  PR-1 closeout treat it as deferred. Read §17 as design-scope; firewall
+  rules are not in this PR. The host-level network isolation in PR-1 is
+  achieved by `network="none"` on the executor container plus the airgap
+  Docker socket proxy + the operator-provisioned host firewall (operator
+  responsibility, documented in `docs/AIR_GAPPED.md`); `firewall.py`'s
+  in-app nftables apply/teardown is a PR-2 enhancement.
+- **Makefile targets (`download-pubmed`, `download-codex`,
+  `airgap-verify`) are PR-2.** §17 line item promises these as PR-1
+  deliverables; they are not present in the Makefile after PR-1. They
+  land alongside `firewall.py` in the operator-tooling PR-2.
+
+PR-1 is now complete for every Codex Review-6 *and* Review-7 finding.
+
 **v4.5 (2026-06-09) — Codex Review-6 follow-ups landed:**
 
 Review-6 surfaced 9 real bugs (the security-critical 6 landed in

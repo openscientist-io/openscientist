@@ -72,6 +72,21 @@ BASE_AIRGAP_ENV: frozenset[str] = frozenset(
         # the data itself is mounted read-only by the runner.
         "PHENIX_PATH",
         "GOOGLE_APPLICATION_CREDENTIALS",
+        # Operational necessity in PR-1 — temporarily allowed pending the
+        # job-scoped least-privilege DB credential mechanism that RFC §12.1
+        # calls for. The agent's discovery loop loads runtime context from
+        # the DB (`_load_runtime_context`) and signs attestation records
+        # with the master secret; without these vars airgap jobs cannot
+        # start. The mitigation today is the per-job internal Docker
+        # network (RFC §6) — the agent process can reach the DB but the
+        # network boundary keeps an exfiltration via DB content infeasible.
+        # Codex Review-7 BUG #B1 (fixed): previously these were stripped
+        # so every airgap job failed during _load_runtime_context.
+        # TODO(PR-2 / RFC §12.1): replace with a job-scoped least-privilege
+        # DB role and a derived per-job key, so the master credentials
+        # never reach the agent container.
+        "DATABASE_URL",
+        "OPENSCIENTIST_SECRET_KEY",
     }
 )
 

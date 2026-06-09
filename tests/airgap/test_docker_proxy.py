@@ -16,15 +16,26 @@ from openscientist.settings import AirgapSettings
 
 
 class TestDockerBaseUrl:
-    def test_default_path(self) -> None:
+    """Codex Review-7 BUG #2 (fixed): the docker SDK URL is always the
+    conventional container-side path (``/var/run/docker.sock``), because
+    the operator's docker-compose mounts the host-side proxy socket to that
+    path inside the web container. The prior code returned the host-side
+    path, which doesn't exist inside the container."""
+
+    def test_returns_conventional_container_path(self) -> None:
+        # Regardless of what the host-side proxy path is, the container-side
+        # SDK URL is /var/run/docker.sock.
         s = SimpleNamespace(
             airgap=SimpleNamespace(docker_socket_path="/var/run/airgap-docker.sock")
         )
-        assert docker_base_url_for_airgap(s) == "unix:///var/run/airgap-docker.sock"
+        assert docker_base_url_for_airgap(s) == "unix:///var/run/docker.sock"
 
-    def test_custom_path(self) -> None:
+    def test_host_side_path_does_not_leak_into_url(self) -> None:
+        # Regression sentinel for the original bug.
         s = SimpleNamespace(airgap=SimpleNamespace(docker_socket_path="/tmp/custom-proxy.sock"))
-        assert docker_base_url_for_airgap(s) == "unix:///tmp/custom-proxy.sock"
+        url = docker_base_url_for_airgap(s)
+        assert "custom-proxy" not in url
+        assert url == "unix:///var/run/docker.sock"
 
 
 # --------------------------------------------------------- AirgapSettings.docker_socket_path
@@ -109,7 +120,11 @@ class TestContainerManagerClientSelection:
             mock_from_env.assert_called_once()
             mock_docker_client.assert_not_called()
 
-    def test_airgap_enabled_uses_proxy_socket(self) -> None:
+    def test_airgap_enabled_uses_container_side_path(self) -> None:
+        # Codex Review-7 BUG #2 (fixed): airgap DockerClient targets the
+        # conventional container-side /var/run/docker.sock — the operator's
+        # docker-compose mounts the proxy at that path inside the web
+        # container, so the SDK reads it as a normal socket.
         with patch(
             "openscientist.container_manager.get_settings",
             return_value=self._make_settings(airgap_enabled=True),
@@ -122,11 +137,11 @@ class TestContainerManagerClientSelection:
                 mock_docker_client.return_value = MagicMock()
                 _ = cm.client
             mock_from_env.assert_not_called()
-            mock_docker_client.assert_called_once_with(
-                base_url="unix:///var/run/airgap-docker.sock"
-            )
+            mock_docker_client.assert_called_once_with(base_url="unix:///var/run/docker.sock")
 
-    def test_airgap_enabled_uses_custom_proxy_path(self) -> None:
+    def test_host_side_socket_path_does_not_leak_to_client(self) -> None:
+        # Regression sentinel for the original Codex Review-7 BUG #2 —
+        # the in-container client must NOT receive the host-side path.
         settings = self._make_settings(airgap_enabled=True)
         settings.airgap.docker_socket_path = "/run/airgap-proxy.sock"
         with patch("openscientist.container_manager.get_settings", return_value=settings):
@@ -134,4 +149,6 @@ class TestContainerManagerClientSelection:
             with patch("docker.from_env"), patch("docker.DockerClient") as mock_docker_client:
                 mock_docker_client.return_value = MagicMock()
                 _ = cm.client
-            mock_docker_client.assert_called_once_with(base_url="unix:///run/airgap-proxy.sock")
+            ((), kwargs) = mock_docker_client.call_args
+            assert kwargs["base_url"] == "unix:///var/run/docker.sock"
+            assert "airgap-proxy" not in kwargs["base_url"]

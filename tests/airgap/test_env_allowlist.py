@@ -34,7 +34,17 @@ class TestRegistryShape:
     def test_base_env_has_no_credential_content(self) -> None:
         # Sanity: any var name suggesting "KEY", "TOKEN", or "SECRET" in the
         # base set is a smell. Process-runtime + model-selection only.
+        # OPENSCIENTIST_SECRET_KEY is an operational necessity in PR-1 (see
+        # the comment in env_allowlist.py) pending the §12.1 job-scoped
+        # credential mechanism; exempt from this sentinel with that TODO.
+        # GOOGLE_APPLICATION_CREDENTIALS is a path, not a credential.
+        operational_exemptions = {
+            "OPENSCIENTIST_SECRET_KEY",  # PR-2 / RFC §12.1 job-scoped key TODO
+            "GOOGLE_APPLICATION_CREDENTIALS",  # path, not credential
+        }
         for name in BASE_AIRGAP_ENV:
+            if name in operational_exemptions:
+                continue
             assert "KEY" not in name, f"{name} smells like a credential in base set"
             assert "TOKEN" not in name, f"{name} smells like a credential in base set"
             assert "SECRET" not in name, f"{name} smells like a credential in base set"
@@ -96,11 +106,18 @@ class TestFilteredAgentEnv:
         assert "AWS_SECRET_ACCESS_KEY" not in filtered
 
     def test_cross_cutting_secrets_stripped(self) -> None:
-        # GITHUB_TOKEN, master secret, full DB URL all stripped per §12.1.
+        # GITHUB_TOKEN stripped per §12.1. OPENSCIENTIST_SECRET_KEY and
+        # DATABASE_URL are operational necessities in PR-1 — the agent's
+        # _load_runtime_context needs DB access and attestation signing
+        # uses the master secret. Codex Review-7 BUG #B1 (fixed):
+        # previously they were stripped so airgap jobs never started.
+        # TODO(PR-2 / RFC §12.1): replace with job-scoped least-privilege
+        # DB role + per-job derived key, then re-add the strip assertion.
         filtered = filtered_agent_env(self._full_env(), "anthropic")
         assert "GITHUB_TOKEN" not in filtered
-        assert "OPENSCIENTIST_SECRET_KEY" not in filtered
-        assert "DATABASE_URL" not in filtered
+        # The two operational-necessity exemptions:
+        assert "OPENSCIENTIST_SECRET_KEY" in filtered
+        assert "DATABASE_URL" in filtered
 
     def test_base_env_preserved(self) -> None:
         filtered = filtered_agent_env(self._full_env(), "anthropic")

@@ -131,13 +131,15 @@ class TestEnvFilteringInAirgap:
             job_id="job-42",
             job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
         )
-        # RFC §12.1: master secret + full DB URL stripped from agent env.
-        assert "OPENSCIENTIST_SECRET_KEY" not in env
-        assert "DATABASE_URL" not in env
-        # ... and 'master-secret-DO-NOT-LEAK' must not appear in any value.
-        for value in env.values():
-            assert "master-secret-DO-NOT-LEAK" not in value
-            assert "postgresql://user:pw@db/x" not in value
+        # RFC §12.1 originally said master secret + full DB URL stripped,
+        # but PR-1 operationally allows them through pending §12.1's
+        # job-scoped least-privilege credential mechanism (PR-2 TODO).
+        # Codex Review-7 B1: previously stripped, so _load_runtime_context
+        # failed and no airgap job ever started. The non-PR-1 cross-cutting
+        # secret (GITHUB_TOKEN) is still stripped.
+        assert "GITHUB_TOKEN" not in env
+        assert env.get("OPENSCIENTIST_SECRET_KEY") == "master-secret-DO-NOT-LEAK"
+        assert env.get("DATABASE_URL") == "postgresql://user:pw@db/x"
 
     def test_preserves_base_runtime_vars(self) -> None:
         # PHENIX_PATH and OPENSCIENTIST_HOST_PROJECT_DIR are paths/config,
@@ -186,6 +188,31 @@ class TestEnvFilteringInAirgap:
         assert env["OPENSCIENTIST_AIR_GAPPED"] == "1"
         assert env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] == "10.0.0.5:8443"
         assert env["OPENSCIENTIST_AIRGAP_PUBMED_ADDR"] == "10.0.0.6:9000"
+        # Codex Review-7 BUG #2 (B2): runner must derive PUBMED_BASE_URL
+        # from pubmed_addr — `literature.py` reads PUBMED_BASE_URL, not
+        # the addr — otherwise PubMed search silently falls back to the
+        # public NCBI URL which the airgap firewall then blocks.
+        assert env["PUBMED_BASE_URL"] == "http://10.0.0.6:9000/entrez/eutils"
+
+    def test_pubmed_base_url_explicit_override_preserved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # If the operator exports PUBMED_BASE_URL explicitly (e.g. to point
+        # at a non-default mirror layout), the runner must not clobber it.
+        monkeypatch.setenv("PUBMED_BASE_URL", "http://mirror.lan/eutils-v2")
+        settings = _airgap_settings(
+            enabled=True,
+            provider_id="azure-openai",
+            provider_env=self._polluted_env(),
+            llm_addr="10.0.0.5:8443",
+            pubmed_addr="10.0.0.6:9000",
+        )
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
+        )
+        assert env["PUBMED_BASE_URL"] == "http://mirror.lan/eutils-v2"
 
     def test_adds_codex_home_root_for_subclass(self) -> None:
         # The AirgapCodexAgent reads this env var to relocate _codex_home();

@@ -115,6 +115,25 @@ class JobContainerRunner:
                 env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] = settings.airgap.llm_addr
             if settings.airgap.pubmed_addr:
                 env["OPENSCIENTIST_AIRGAP_PUBMED_ADDR"] = settings.airgap.pubmed_addr
+                # Codex Review-7 BUG #2 (B2) fix: derive PUBMED_BASE_URL
+                # from pubmed_addr so the agent's literature tool actually
+                # routes through the operator's mirror. Previously the addr
+                # was set but `literature.py` (which reads PUBMED_BASE_URL)
+                # never saw it, so the agent fell back to the public NCBI
+                # URL — which is then blocked by the airgap firewall, making
+                # PubMed search a silent dead path in airgap mode.
+                #
+                # Operators can override the derived URL by exporting
+                # PUBMED_BASE_URL explicitly (e.g. a mirror with a non-NCBI
+                # path layout) — we forward it from the host env when set;
+                # otherwise we derive ``http://<addr>/entrez/eutils`` to
+                # match the public NCBI eutils path convention operators
+                # typically replicate.
+                operator_pubmed_url = os.environ.get("PUBMED_BASE_URL")
+                if operator_pubmed_url:
+                    env["PUBMED_BASE_URL"] = operator_pubmed_url
+                else:
+                    env["PUBMED_BASE_URL"] = f"http://{settings.airgap.pubmed_addr}/entrez/eutils"
             # The AirgapCodexAgent reads this to relocate CODEX_HOME outside
             # job_dir. Must match the container-side bind-mount target below.
             _host_dir, container_dir = JobContainerRunner._airgap_codex_home_paths(settings, job_id)

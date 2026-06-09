@@ -179,3 +179,69 @@ class TestAirgapEnabled:
         # PR #195 / RFC §7.4 integration: ollama is now a named alternative.
         assert "ollama" in msg
         assert "gpt-oss-120b" in msg
+
+
+class TestParseAirgapAddr:
+    """Codex Review-7 BUG #3 (fixed): the allowlist parser must handle
+    IPv6 literals (bracketed) and port-less host strings. The prior
+    ``rpartition(':')`` splitter silently dropped both shapes from the
+    allowlist, leaving the egress validation logic to compare against a
+    set that was a strict subset of what the operator configured.
+    """
+
+    def test_ipv4_with_port(self) -> None:
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("10.0.0.5:8443") == ("10.0.0.5", 8443)
+
+    def test_hostname_with_port(self) -> None:
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("llm.internal:8080") == ("llm.internal", 8080)
+
+    def test_hostname_without_port_defaults_to_443(self) -> None:
+        # Regression: prior parser dropped port-less hosts entirely.
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("llm.internal") == ("llm.internal", 443)
+
+    def test_ipv6_bracketed_with_port(self) -> None:
+        # Regression: prior rpartition split [::1]:8443 at the wrong colon.
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("[::1]:8443") == ("::1", 8443)
+
+    def test_ipv6_bracketed_without_port_defaults(self) -> None:
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("[fe80::1]") == ("fe80::1", 443)
+
+    def test_empty_returns_none(self) -> None:
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("") is None
+        assert _parse_airgap_addr("   ") is None
+
+    def test_non_numeric_port_returns_none(self) -> None:
+        # urlsplit raises ValueError on .port for non-numeric — we must
+        # catch it (not raise to the caller) so the allowlist build keeps
+        # going for the other addresses.
+        from openscientist.agent.factory import _parse_airgap_addr
+
+        assert _parse_airgap_addr("host:notaport") is None
+
+    def test_allowlist_picks_up_ipv6_and_portless_pair(self) -> None:
+        # End-to-end through the public builder: the prior bug meant an
+        # operator with one IPv6 LLM and one port-less PubMed mirror got
+        # an empty allowlist; ensure both now show up.
+        from openscientist.agent.factory import _airgap_allowlist_from_settings
+
+        settings = SimpleNamespace(
+            airgap=SimpleNamespace(
+                llm_addr="[fe80::1]:8443",
+                pubmed_addr="pubmed.internal",
+            )
+        )
+        allowlist = _airgap_allowlist_from_settings(settings)
+        assert ("fe80::1", 8443) in allowlist
+        assert ("pubmed.internal", 443) in allowlist

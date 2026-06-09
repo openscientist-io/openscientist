@@ -47,6 +47,52 @@ def _instantiate_provider(provider_id: str) -> Provider:
     return cls()
 
 
+_DEFAULT_AIRGAP_PORT = 443
+
+
+def _parse_airgap_addr(addr: str) -> tuple[str, int] | None:
+    """Parse ``host[:port]`` allowing IPv6 in bracket form.
+
+    Codex Review-7 BUG #3 (fixed): the prior ``rpartition(':')`` split
+    treated the last colon as the port separator, so:
+
+    * IPv6 literals (e.g. ``[::1]:8443``, ``[fe80::1]:443``) were chopped at
+      the wrong colon, producing a host like ``[fe80`` and a port like
+      ``:1]:443`` that fails ``isdigit()`` — silently dropped from the
+      allowlist.
+    * Bare ``host`` with no port was rejected (``rpartition`` returns
+      ``('', '', 'host')`` for a string with no colon), also silently
+      dropped.
+
+    Now: a missing port defaults to :data:`_DEFAULT_AIRGAP_PORT` (443),
+    bracketed IPv6 hosts are unwrapped, and we use
+    :func:`urllib.parse.urlsplit` on a synthesized ``scheme://`` URL so
+    Python's URL parser does the bracket-aware tokenization for us.
+
+    Returns ``None`` for inputs we can't parse rather than raising — the
+    caller drops them from the allowlist, and the operator sees the gap
+    when the subsequent provider-target validation fails.
+    """
+    from urllib.parse import urlsplit
+
+    s = addr.strip()
+    if not s:
+        return None
+    # urlsplit handles bracketed IPv6, port-less hosts, and rejects garbage.
+    try:
+        parts = urlsplit(f"airgap://{s}")
+    except ValueError:
+        return None
+    host = parts.hostname  # None if unparseable; brackets already stripped
+    if not host:
+        return None
+    try:
+        port = parts.port  # raises ValueError if non-numeric, else int|None
+    except ValueError:
+        return None
+    return host, port if port is not None else _DEFAULT_AIRGAP_PORT
+
+
 def _airgap_allowlist_from_settings(settings: Any) -> set[tuple[str, int]]:
     """Build the egress allowlist from ``settings.airgap.llm_addr`` (and
     ``pubmed_addr`` for completeness).
@@ -59,10 +105,10 @@ def _airgap_allowlist_from_settings(settings: Any) -> set[tuple[str, int]]:
     for addr in (settings.airgap.llm_addr, settings.airgap.pubmed_addr):
         if not addr:
             continue
-        host, _, port_s = addr.rpartition(":")
-        if not host or not port_s.isdigit():
+        parsed = _parse_airgap_addr(addr)
+        if parsed is None:
             continue
-        allowlist.add((host, int(port_s)))
+        allowlist.add(parsed)
     return allowlist
 
 

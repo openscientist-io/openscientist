@@ -120,7 +120,10 @@ class TestMcpEnvFiltering:
         assert "AZURE_OPENAI_API_KEY" not in env
         assert "AWS_ACCESS_KEY_ID" not in env
         assert "GITHUB_TOKEN" not in env
-        assert "DATABASE_URL" not in env
+        # DATABASE_URL is an operational necessity in PR-1 (PR-2 / RFC §12.1
+        # TODO: replace with job-scoped least-privilege role). Codex Review-7
+        # B1 fix: was being stripped, so airgap jobs couldn't start.
+        assert env.get("DATABASE_URL") == "postgresql://user:pass@db/x"
 
     def test_overlay_still_applied(self, airgap_agent: AirgapCodexAgent) -> None:
         # The per-job overlay (job id, job dir, use_hypotheses) must still
@@ -187,7 +190,7 @@ class TestMakeCodexSubprocessEnv:
         }
         with patch.dict("os.environ", polluted, clear=True):
             with (
-                patch("openscientist.airgap.codex_agent.AsyncCodex") as mock_codex_cls,
+                patch("openscientist.airgap.codex_agent.AsyncCodex"),
                 patch("openscientist.airgap.codex_agent.CodexConfig") as mock_config_cls,
             ):
                 airgap_agent._make_codex()
@@ -196,17 +199,21 @@ class TestMakeCodexSubprocessEnv:
         passed_env = mock_config_cls.call_args.kwargs["env"]
         # Active provider creds survive.
         assert passed_env["ANTHROPIC_API_KEY"] == "active-secret"
-        # Everything else is stripped.
+        # Inactive-provider creds + GITHUB_TOKEN stripped.
         for k in (
             "OPENAI_API_KEY",
             "AWS_ACCESS_KEY_ID",
-            "OPENSCIENTIST_SECRET_KEY",
-            "DATABASE_URL",
             "GITHUB_TOKEN",
         ):
             assert k not in passed_env, (
                 f"{k} reached the Codex CLI subprocess env — env_allowlist bypassed"
             )
+        # OPENSCIENTIST_SECRET_KEY + DATABASE_URL are operational necessities
+        # in PR-1 (PR-2 / RFC §12.1 TODO). They're preserved so the agent
+        # process can sign attestations and load runtime context. Codex
+        # Review-7 B1: previously stripped, so airgap jobs never started.
+        assert passed_env.get("OPENSCIENTIST_SECRET_KEY") == "leaky"
+        assert passed_env.get("DATABASE_URL") == "postgresql://user:pass@db/x"
         # CODEX_HOME still set (the base class invariant).
         assert "CODEX_HOME" in passed_env
         # Provider SDK env merged on top (anthropic's codex_sdk_env returns
@@ -214,12 +221,18 @@ class TestMakeCodexSubprocessEnv:
         # clobber the active provider's key).
         assert passed_env["ANTHROPIC_API_KEY"] == "active-secret"
 
-    def test_subprocess_env_does_not_leak_secret_value_anywhere(
+    def test_inactive_provider_secret_value_does_not_leak(
         self, airgap_agent: AirgapCodexAgent
     ) -> None:
-        # Belt-and-suspenders sentinel — the master secret's actual VALUE
-        # must not appear in any env var, even if mis-renamed.
-        polluted = {"PATH": "/bin", "OPENSCIENTIST_SECRET_KEY": "MASTER-DO-NOT-LEAK"}
+        # Belt-and-suspenders sentinel — an INACTIVE provider's secret value
+        # must not appear in any env var, even if mis-renamed. (Can't pin
+        # this with OPENSCIENTIST_SECRET_KEY anymore — see Codex Review-7
+        # B1 operational exemption.)
+        polluted = {
+            "PATH": "/bin",
+            "ANTHROPIC_API_KEY": "active",
+            "OPENAI_API_KEY": "INACTIVE-DO-NOT-LEAK",
+        }
         with patch.dict("os.environ", polluted, clear=True):
             with (
                 patch("openscientist.airgap.codex_agent.AsyncCodex"),
@@ -228,7 +241,7 @@ class TestMakeCodexSubprocessEnv:
                 airgap_agent._make_codex()
         passed_env = mock_config_cls.call_args.kwargs["env"]
         for value in passed_env.values():
-            assert "MASTER-DO-NOT-LEAK" not in str(value)
+            assert "INACTIVE-DO-NOT-LEAK" not in str(value)
 
     def test_base_class_unfiltered_regression_sentinel(self, base_agent: CodexAgent) -> None:
         # Sentinel — the base class deliberately passes os.environ unfiltered.

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -206,6 +207,66 @@ class TestEnforceMcpPolicy:
         s = _settings(airgap_enabled=True)
         removed = enforce_mcp_policy(BrokenMcp(), s)
         assert removed == []
+
+
+# --------------------------------------------------------- _apply_airgap_policy fail-closed
+
+
+class TestApplyAirgapPolicyFailClosed:
+    """Codex Review-7 BUG #4: the prior _apply_airgap_policy silently
+    fail-opened when settings load raised, so the policy enforcement was
+    dead code under a misconfigured env. The fix: re-raise when
+    OPENSCIENTIST_AIR_GAPPED is set so the MCP server refuses to start."""
+
+    def test_airgap_requested_settings_load_fails_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Set airgap env so the policy is required, then make settings load
+        # raise. The function must re-raise rather than fail-open.
+        monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", "true")
+        # Required AirgapSettings validators — present so module-import of
+        # `openscientist_tools.server` doesn't blow up before the test runs.
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAP_LLM_ADDR", "10.0.0.5:8443")
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAP_PUBMED_ADDR", "10.0.0.6:9000")
+        monkeypatch.setenv("OPENSCIENTIST_JOB_ID", "mcp-filter-test")
+        monkeypatch.setenv("OPENSCIENTIST_JOB_DIR", "/tmp")
+
+        from openscientist_tools import server as srv_module
+
+        with patch(
+            "openscientist_tools.server._load_settings_and_filter",
+            side_effect=RuntimeError("settings broken for test"),
+        ):
+            with pytest.raises(RuntimeError, match="settings broken"):
+                srv_module._apply_airgap_policy()
+
+    def test_non_airgap_settings_load_fails_silently(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Non-airgap deployment with a broken settings load — fail-open is
+        # the right behavior here; policy enforcement isn't load-bearing.
+        monkeypatch.delenv("OPENSCIENTIST_AIR_GAPPED", raising=False)
+        monkeypatch.setenv("OPENSCIENTIST_JOB_ID", "mcp-filter-test")
+        monkeypatch.setenv("OPENSCIENTIST_JOB_DIR", "/tmp")
+
+        from openscientist_tools import server as srv_module
+
+        with patch(
+            "openscientist_tools.server._load_settings_and_filter",
+            side_effect=RuntimeError("settings broken for test"),
+        ):
+            # Must not raise.
+            srv_module._apply_airgap_policy()
+
+    def test_airgap_mode_requested_parse_handles_truthy_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from openscientist_tools import server as srv_module
+
+        for truthy in ("1", "true", "TRUE", "yes", "on"):
+            monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", truthy)
+            assert srv_module._airgap_mode_requested(), f"{truthy!r} should be truthy"
+        for falsy in ("", "0", "false", "no", "off"):
+            monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", falsy)
+            assert not srv_module._airgap_mode_requested(), f"{falsy!r} should be falsy"
 
 
 # --------------------------------------------------------- unclassified sentinel
