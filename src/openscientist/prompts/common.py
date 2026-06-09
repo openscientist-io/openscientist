@@ -279,7 +279,10 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 
 **execute_code** - Run Python, Rust, or SPARQL code
 
-- `language="python"` (default): `data` (pandas DataFrame, if data file loaded), `data_files` (list of metadata dicts), pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, scanpy, h5py, networkx. Plots are automatically saved.
+- `language="python"` (default): your uploaded data files are ALREADY available in this tool's namespace. Access them through:
+  - `data`: a pandas DataFrame pre-loaded from the PRIMARY data file.
+  - `data_files`: a list of dicts, one per uploaded file, each with a `path` key that already points to the file inside the executor (under `/data`). Read additional files with `pd.read_csv(data_files[i]["path"])`.
+  Do NOT guess or construct file paths, and do NOT reuse `data/`-relative or host paths (such as `data/Brain_Lipids.csv`, `/app/data/...`, or the current working directory) inside `execute_code`. Those paths do not exist in this executor. Libraries available: pandas, numpy, scipy, matplotlib, seaborn, statsmodels, sklearn, scanpy, h5py, networkx, and more. To create a figure, build it with matplotlib or seaborn and finish with `plt.show()`. The executor saves and embeds it in the report automatically, so do not call `plt.savefig()` or `plt.close()` yourself and do not manage image files.
 - `language="rust"`: Compiles and runs Rust via `rustc`. Use for performance-critical computation.
 - `language="sparql"`: Runs a SPARQL SELECT query. Include `# ENDPOINT: <url>` in the query.
 - Always set `description` to explain what you're investigating; it appears alongside saved plots.
@@ -328,7 +331,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
     parts.append("""
 **read_document** - Extract text from binary documents
 
-- `file_path`: Path to the document (relative to `data/`, or absolute)
+- `file_path`: Path to the document on the host job directory (relative to `data/`, or absolute). This is a host-side path, unrelated to the `/data` paths used inside `execute_code`.
 - Supports: PDF, Word (.docx), Excel (.xlsx)
 - Returns clean text suitable for analysis
 
@@ -396,18 +399,23 @@ Always use hypothesis tracking — even for literature-only investigations.""")
     parts.append("""
 ### Reading Data Files
 
+There are two distinct path worlds. Do not mix them:
+
+- Inside `execute_code`: never open files by a path you typed. Use the pre-loaded `data` DataFrame for the primary file, and `pd.read_csv(data_files[i]["path"])` for any additional file. The `data_files[i]["path"]` values are in-container `/data` paths and are the only correct way to reach files from `execute_code`.
+- `read_document` and the Phenix tools run host-side and take job-directory paths (relative to `data/`, or absolute). Use them only for the file types noted below.
+
 Use the correct tool for each file type:
 
-| File Type          | Tool                          |
-|--------------------|-------------------------------|
-| PDF (.pdf)         | `read_document` MCP tool      |
-| Word (.docx)       | `read_document` MCP tool      |
-| Excel (.xlsx)      | `read_document` for overview; `execute_code` with pandas for analysis |
-| CSV, TSV, TXT, JSON| Claude's built-in `Read` tool |
-| AnnData (.h5ad)    | `execute_code` with `import scanpy as sc; adata = sc.read_h5ad("path")` |
-| HDF5 (.h5, .hdf5)  | `execute_code` with `import h5py; f = h5py.File("path", "r")` |
+| File Type           | How to read it |
+|---------------------|----------------|
+| CSV, TSV, TXT, JSON | `execute_code`: primary file is the `data` DataFrame, additional files via `pd.read_csv(data_files[i]["path"])` |
+| AnnData (.h5ad)     | `execute_code`: `import scanpy as sc; adata = sc.read_h5ad(data_files[i]["path"])` |
+| HDF5 (.h5, .hdf5)   | `execute_code`: `import h5py; f = h5py.File(data_files[i]["path"], "r")` |
+| Excel (.xlsx)       | `read_document` for a text overview, `execute_code` with pandas for analysis |
+| PDF (.pdf)          | `read_document` MCP tool |
+| Word (.docx)        | `read_document` MCP tool |
 
-**WARNING:** Do NOT use Claude's `Read` tool on PDF, DOCX, or binary files. It returns garbled content that corrupts your context and causes "Prompt is too long" errors.
+**WARNING:** Do NOT use Claude's built-in `Read` tool (or any file reader) on PDF, DOCX, XLSX, or other binary files. It returns garbled content that corrupts your context and causes "Prompt is too long" errors. For CSV, TSV, TXT, or JSON analysis, do not use a file reader at all. Load them inside `execute_code` as described above.
 
 ### Skills (MUST USE)
 
@@ -499,7 +507,7 @@ Use `search_skills` to discover additional skills in the database beyond those p
 - Search literature proactively
 - Learn from both successes and failures
 - Document your reasoning
-- Generate visualizations to communicate findings
+- **Visualize every quantitative finding** with a matplotlib or seaborn figure, finished with `plt.show()` so the executor saves and embeds it. A key finding without a supporting figure is incomplete
 
 ❌ **DON'T:**
 
