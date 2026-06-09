@@ -588,10 +588,15 @@ Not the boundary (§3) — these make failures fast and legible.
 
 - **PubMed:** `literature.py:37` `base_url` becomes `PUBMED_BASE_URL`; in air-gap mode it must be
   internal or the tool is disabled (§15).
-- **MCP tool gating:** extend the conditional-registration pattern (currently only hypothesis
-  tools at `openscientist_tools/knowledge.py:146-150`) to all network-touching tools in air-gap
-  mode. `airgap/mcp_filter.py` returns the airgap-filtered tool list; `agent/factory.py` passes it
-  to whichever agent backend the factory selected.
+- **MCP tool gating** (`airgap/mcp_filter.py`, **landed in v4.4**): declarative policy with
+  three classifications — `MCP_TOOLS_LOCAL_ONLY` (13 tools always safe in airgap),
+  `MCP_TOOLS_NETWORK_DEPENDENT` (`search_pubmed`, allowed only when
+  `OPENSCIENTIST_AIRGAP_PUBMED_ADDR` is set — fail-closed), `CLAUDE_BUILTINS_NETWORK`
+  (`WebFetch`/`WebSearch`, disabled in airgap). The module is the *declaration*; actual
+  enforcement is at the three load-bearing layers (Codex CLI fork's `web_search` gate for
+  non-OpenAI providers, executor network-namespace isolation per §10.2, host firewall per
+  §6). A live FastMCP-registry sentinel in the test suite catches any new tool added
+  without a security review.
 - **Package managers:** `pip`, `uv`, `cargo`, `git` configured offline by default in agent /
   executor images. Attestation probes them.
 - **Skills:** pre-bundled, signed, immutable for the duration of the job; GitHub ingestion path
@@ -1060,6 +1065,49 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 ---
 
 ## 21. Revision Log
+
+**v4.4 (2026-06-09) — empirical validation + last additive module:**
+
+- **Tier-3 validation passes against real Ollama on macOS** (`scripts/validate_airgap.py`,
+  13/13 checks). Exercises every orchestrator-layer code path against a live Ollama daemon
+  serving `gpt-oss:120b`: AirgapSettings construction + model_validator, egress_registry
+  resolution for `ollama` and refusal of mismatched allowlists, env_allowlist stripping of
+  cross-provider creds, credential_verifier startup gate, factory dispatch returning
+  `AirgapCodexAgent`, `_codex_home` relocation outside `job_dir`, `_mcp_env` filtering,
+  `_ensure_auth` no-op, attestation sign/verify roundtrip with tamper detection. No Docker
+  or fork-built CLI required — runs in <1 s. Useful as a CI smoke gate.
+- **Tier-4 validation passes on an M-series Mac** (`scripts/validate_airgap_live.py`). The
+  cross-process contract — `AirgapCodexAgent` writes the `config.toml`, launches the
+  fork-built Codex CLI subprocess, the binary talks to Ollama's `/v1/responses`, gpt-oss
+  returns a token — is now empirically confirmed. The first attempt on a non-M-series Mac
+  exhausted system resources mid-prefill (gpt-oss:120b CPU-bound); the M-series run
+  surfaced two real bugs that were fixed in the same commit:
+  - `scripts/validate_airgap_live.py` hardcoded `gpt-oss:120b`; now reads `OPENSCIENTIST_MODEL`
+    from env (gpt-oss:20b works on smaller machines).
+  - The script reached for a nonexistent `agent.token_usage` attribute; the real property is
+    `agent.total_tokens`, and the script crashed in post-turn reporting right after a
+    successful turn.
+- **§8.1 cargo-build OOM lesson.** Building Luca's Codex fork inside the agent/web images
+  via full-parallelism `cargo build` exceeds Docker Desktop's default ~8 GB VM and gets
+  SIGKILL'd on `codex-core`. Both Dockerfiles now cap the build to
+  `-j ${CODEX_BUILD_JOBS:-3}`; the env var still lets larger build hosts use more parallelism.
+  This is operationally significant for §8.1's "build once with full network access" stance:
+  operators on default Docker Desktop need either the `-j 3` cap or to raise the VM's RAM
+  ceiling.
+- **§10 declarative tool allowlist landed** (`airgap/mcp_filter.py`). Last additive PR-1
+  module. Three classifications: `MCP_TOOLS_LOCAL_ONLY` (13 tools, always safe in airgap),
+  `MCP_TOOLS_NETWORK_DEPENDENT` (`search_pubmed`, allowed iff
+  `OPENSCIENTIST_AIRGAP_PUBMED_ADDR` is set — fail-closed), and `CLAUDE_BUILTINS_NETWORK`
+  (`WebFetch`/`WebSearch`, disabled in airgap). The module is a *declaration*; enforcement
+  remains at the three load-bearing layers (Codex CLI fork web_search gate, executor
+  network-namespace isolation, host firewall). A live FastMCP-registry sentinel in the test
+  suite caught a real classification gap during development (`set_job_title` was registered
+  but unclassified) — the sentinel will catch any future tool added without a security
+  review.
+- **§17 refreshed** to include `airgap/mcp_filter.py` in the new-file list. PR-1 is now
+  functionally complete at the application layer; the remaining `airgap/firewall.py`
+  (host-layer nftables/ip6tables) is PR-2 territory since it can't be unit-tested without
+  root on a Linux host.
 
 **v4.3 (2026-06-07) — after Codex Review-5, integrating PR #195 (Luca's Ollama backend):**
 
