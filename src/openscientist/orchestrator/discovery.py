@@ -637,6 +637,69 @@ async def _persist_job_cost_record(
         await session.commit()
 
 
+async def _enforce_airgap_startup_policy(
+    job_id: str, job_dir: Path, active_provider_id: str
+) -> None:
+    """Run the air-gap startup verifier and (optionally) the probe set.
+
+    No-op when ``settings.airgap.enabled`` is False — non-airgap deployments
+    are unaffected.
+
+    On a blocking startup finding (env-allowlist leak, secret in job_dir)
+    the function raises ``RuntimeError`` *before* the agent is constructed,
+    so a misconfigured deployment doesn't run with credentials leaking into
+    the LLM-facing process.
+
+    Probes are skipped here: they're a verifier-side check that fires after
+    the agent's network namespace is set up, and need to run inside the
+    agent container (RFC §14). The orchestrator's role is to surface the
+    startup verifier's verdict.
+    """
+    import os
+
+    from openscientist.airgap.credential_verifier import verify_airgap_startup
+    from openscientist.settings import get_settings
+
+    settings = get_settings()
+    if not getattr(getattr(settings, "airgap", None), "enabled", False):
+        return
+
+    result = verify_airgap_startup(
+        env=dict(os.environ),
+        active_provider_id=active_provider_id,
+        job_dir=job_dir,
+    )
+    if not result.passed:
+        # Log the redacted findings so the operator can see what's wrong
+        # without the verifier itself echoing the offending values.
+        for env_finding in result.blocking_env:
+            logger.error(
+                "airgap startup BLOCKED — env: %s (rule: %s, severity: %s)",
+                env_finding.var_name,
+                env_finding.rule_name,
+                env_finding.severity,
+            )
+        for file_finding in result.blocking_files:
+            logger.error(
+                "airgap startup BLOCKED — file: %s (rule: %s, severity: %s)",
+                file_finding.path,
+                file_finding.rule_name,
+                file_finding.severity,
+            )
+        raise RuntimeError(
+            f"Air-gap startup verifier refused job {job_id}: "
+            f"{result.blocking_count} blocking finding(s). "
+            f"Inspect the operator-side env_allowlist filter and job_dir "
+            f"contents; the per-finding details (with values REDACTED) are "
+            f"in the orchestrator log."
+        )
+    logger.info(
+        "airgap startup verified for job %s (warnings: %d)",
+        job_id,
+        result.warning_count,
+    )
+
+
 async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     """
     Run autonomous discovery using the configured agent executor.
@@ -662,6 +725,13 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     if isinstance(provider, ClaudeCompatible):
         provider.setup_environment()
     backend = _backend_for(provider)
+
+    # Codex Review-6 GAP (fixed): the airgap startup verifier + probes
+    # were dead code (only run from test fixtures). Wire them into the
+    # discovery start path so a misconfigured deployment fails fast
+    # rather than letting the agent run with broken policy.
+    await _enforce_airgap_startup_policy(job_id, job_dir, provider.id)
+
     await update_job_status(job_dir, "running")
 
     use_hypotheses = runtime["use_hypotheses"]

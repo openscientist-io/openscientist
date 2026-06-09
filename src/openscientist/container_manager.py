@@ -315,7 +315,20 @@ class ContainerManager:
 
         from openscientist.job_container import resolve_docker_network
 
-        network = resolve_docker_network(self.client, get_settings().container.agent_network)
+        settings = get_settings()
+        # AIR-GAP: RFC §10.2 — the executor container has no egress route at
+        # all in air-gap mode. The kernel network namespace is fully isolated;
+        # not even the LLM endpoint is reachable from `exec()`'d Python. This
+        # is what makes the `execute_code` MCP-tool classification as local-
+        # only correct: the agent's Python can `import socket` all it wants,
+        # but the kernel drops the egress at the namespace boundary.
+        #
+        # Codex Review-6 BUG (fixed): previously the executor inherited the
+        # agent network, so the local-only classification was a lie.
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            network = "none"
+        else:
+            network = resolve_docker_network(self.client, settings.container.agent_network)
 
         try:
             # Run container

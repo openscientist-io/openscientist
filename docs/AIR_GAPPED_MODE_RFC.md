@@ -1066,6 +1066,47 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 
 ## 21. Revision Log
 
+**v4.5 (2026-06-09) — Codex Review-6 follow-ups landed:**
+
+Review-6 surfaced 9 real bugs (the security-critical 6 landed in
+`771aa66`) plus three GAPs deferred to a follow-up. v4.5 closes the
+follow-ups:
+
+- **`execute_code` MCP-tool classification + executor `network="none"`.**
+  Review-6 flagged `execute_code` as misclassified in
+  `MCP_TOOLS_LOCAL_ONLY` because `code_executor.py` opens SPARQL endpoints
+  and imports `requests`. The fix: in air-gap mode, the executor
+  container is now spawned with `network="none"` (Docker's null-driver
+  null network — no interfaces, no route, no DNS resolver), so the
+  agent's `exec()`'d Python can `import socket` all it wants and still
+  gets no egress. The classification is now correct because the kernel-
+  layer enforcement is in place. `container_manager.py` selects the
+  network based on `settings.airgap.enabled`; non-airgap still uses the
+  resolved agent network. Tests in
+  `tests/airgap/test_container_manager_airgap.py`.
+- **`attestation.codex_cli_provenance` field.** Per RFC §8.1 the per-job
+  attestation now carries a `codex_cli_provenance: dict[str, str]` field
+  for the operator to populate from the Dockerfile-emitted build
+  manifest (typical keys: `fork_commit`, `rustc_version`,
+  `cargo_lock_hash`, `build_host_id`). The field is empty by default;
+  populating it is a deployment-config concern, not a code change. Two
+  new tests pin the round-trip + HMAC tamper detection.
+- **Production-side wiring of the startup verifier.** Review-6 noted
+  that `verify_airgap_startup()` and `run_airgap_probe_set()` existed
+  only as test fixtures. The orchestrator's `run_discovery_async` now
+  calls a new `_enforce_airgap_startup_policy()` helper between provider
+  setup and agent construction. It runs `verify_airgap_startup()` and
+  raises `RuntimeError` on any blocking finding (env-allowlist leak,
+  secret residue in `job_dir`) before the agent is built. Warning-only
+  findings are logged but don't block. Probes are *not* wired here —
+  they need to run inside the agent's network namespace and belong to
+  the agent-side `airgap-verify` target (RFC §14), separate from this
+  orchestrator gate. Tests in
+  `tests/airgap/test_orchestrator_startup.py`.
+
+PR-1 is now complete for every Codex Review-6 finding. 304 airgap tests
+pass. Mypy clean. Ruff clean.
+
 **v4.4 (2026-06-09) — empirical validation + last additive module:**
 
 - **Tier-3 validation passes against real Ollama on macOS** (`scripts/validate_airgap.py`,

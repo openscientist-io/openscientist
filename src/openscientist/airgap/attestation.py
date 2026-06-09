@@ -111,6 +111,20 @@ class AttestationRecord:
     resolver_config: str = ""
     image_digests: dict[str, str] = field(default_factory=dict)
     codex_cli_digest: str = ""
+    # Build-time provenance for the Codex CLI binary baked into the agent
+    # image. Per RFC §8.1, the image is built once with full network access
+    # on a non-airgap build host with the fork commit-pinned; this dict
+    # records the supply-chain inputs so a verifier can detect drift
+    # between deployments. Typical keys (operator-populated, e.g. via
+    # build-args written to /etc/codex-provenance.json that the orchestrator
+    # reads at startup):
+    #   - "fork_commit"     — git commit hash of the open-codex fork
+    #   - "rustc_version"   — output of `rustc --version`
+    #   - "cargo_lock_hash" — SHA256 of /codex/codex-rs/Cargo.lock
+    #   - "build_host_id"   — operator-defined build host identifier
+    # Empty dict in this PR-1 lands; populated when the operator wires the
+    # Dockerfile to emit a provenance manifest.
+    codex_cli_provenance: dict[str, str] = field(default_factory=dict)
 
     # Policy enforcement outputs (from the other airgap/ modules' as_dict()).
     startup_verification: dict[str, Any] = field(default_factory=dict)
@@ -157,6 +171,7 @@ class AttestationRecord:
             "resolver_config": self.resolver_config,
             "image_digests": self.image_digests,
             "codex_cli_digest": self.codex_cli_digest,
+            "codex_cli_provenance": self.codex_cli_provenance,
             "startup_verification": self.startup_verification,
             "export_decision": self.export_decision,
             "probe_summary": self.probe_summary,
@@ -188,6 +203,7 @@ class AttestationRecord:
             "resolver_config",
             "image_digests",
             "codex_cli_digest",
+            "codex_cli_provenance",
             "startup_verification",
             "export_decision",
             "probe_summary",
@@ -349,6 +365,7 @@ def build_attestation(
     resolver_config: str = "",
     image_digests: dict[str, str] | None = None,
     codex_cli_digest: str = "",
+    codex_cli_provenance: dict[str, str] | None = None,
     notes: Iterable[str] | None = None,
     timestamp: str | None = None,
     expires_at: str = "",
@@ -393,6 +410,7 @@ def build_attestation(
         resolver_config=resolver_config,
         image_digests=image_digests or {},
         codex_cli_digest=codex_cli_digest,
+        codex_cli_provenance=codex_cli_provenance or {},
         startup_verification=startup_verification or {},
         export_decision=export_decision or {},
         probe_summary=probe_summary or {},
