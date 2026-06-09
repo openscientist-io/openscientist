@@ -84,10 +84,14 @@ class TestChatTemplateContainerIntegration:
                 rm=True,
             )
         except docker.errors.BuildError as exc:
+            # docker SDK 7.x returns ``build_log`` as an ``itertools._tee``
+            # iterator, not a list — slicing it raises TypeError, which then
+            # masks the actual build failure. Materialize first, then keep
+            # the last 20 ``dict`` entries (skipping non-dict progress
+            # frames the SDK occasionally yields).
+            log_entries = [e for e in list(exc.build_log) if isinstance(e, dict)]
             log_tail = "\n".join(
-                str(entry.get("stream", "")).rstrip()
-                for entry in exc.build_log[-20:]
-                if isinstance(entry, dict)
+                str(entry.get("stream", "")).rstrip() for entry in log_entries[-20:]
             )
             pytest.fail(f"Failed to build test web image {tag}:\n{log_tail}")
 
