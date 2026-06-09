@@ -199,7 +199,7 @@ async def send_chat_message(
     job_dir: Path,
 ) -> str:
     """
-    Send a chat message and get LLM response via ClaudeCodeAgent.
+    Send a chat message and get LLM response via the configured agent.
 
     Args:
         session: Database session
@@ -211,8 +211,29 @@ async def send_chat_message(
         LLM's response text
 
     Raises:
+        RuntimeError: When air-gap mode is enabled (RFC §2 — PR-1 disables
+            post-job chat; the AirgapCodexAgent would crash on the missing
+            CODEX_HOME tmpfs mount that the runner provisions for job
+            containers but not for the web process).
         Exception: If executor call fails
     """
+    # Codex Review-6 BUG (fixed): airgap mode never set up the CODEX_HOME
+    # mount for the web process, so passing chat through get_agent() →
+    # AirgapCodexAgent → _codex_home() → /run/openscientist-codex-home/
+    # would crash on first message. RFC §2 already disables chat in
+    # airgap PR-1; this guard enforces that stance at the entry point.
+    from openscientist.settings import get_settings
+
+    settings = get_settings()
+    if getattr(getattr(settings, "airgap", None), "enabled", False):
+        raise RuntimeError(
+            "Post-job chat is disabled in air-gap mode (RFC §2). The "
+            "AirgapCodexAgent assumes a runner-provisioned CODEX_HOME "
+            "mount that exists only inside per-job agent containers; "
+            "the web process where chat runs has no such mount. The "
+            "in-container chat path is a v2 improvement (PR-2)."
+        )
+
     # Use executor (context is read on-demand by the agent from job_dir files)
     assistant_message = await _send_message_via_executor(session, job_id, message, job_dir)
 

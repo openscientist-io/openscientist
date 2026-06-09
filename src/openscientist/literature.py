@@ -4,10 +4,17 @@ Literature search via PubMed API for OpenScientist.
 Proactive literature integration to inform hypothesis generation.
 """
 
+import os
 import time
 from typing import Any
 
 import requests
+
+# NCBI eutils default. In air-gap mode the operator sets PUBMED_BASE_URL
+# to the internal mirror (RFC §15); air-gap deployments without the
+# override would otherwise hit public NCBI. Codex Review-6 BUG (fixed) —
+# previously this was hardcoded so the override was a no-op.
+_DEFAULT_PUBMED_BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
 
 def search_pubmed(
@@ -15,6 +22,11 @@ def search_pubmed(
 ) -> list[dict[str, Any]]:
     """
     Search PubMed and return relevant papers.
+
+    Reads ``PUBMED_BASE_URL`` from the environment so air-gap deployments
+    can route to an internal mirror (typically the
+    ``openscientist-pubmed-mirror`` shim — see RFC §15). Defaults to the
+    public NCBI eutils endpoint when unset.
 
     Args:
         query: Search terms (e.g., "hypothermia neuroprotection metabolomics")
@@ -34,7 +46,7 @@ def search_pubmed(
             ...
         ]
     """
-    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    base_url = os.environ.get("PUBMED_BASE_URL", _DEFAULT_PUBMED_BASE_URL).rstrip("/")
 
     # Step 1: Search for PMIDs
     search_params: dict[str, str | int] = {

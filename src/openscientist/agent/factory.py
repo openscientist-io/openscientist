@@ -9,6 +9,7 @@ get a `ClaudeCodeAgent`, `CodexCompatible` providers a `CodexAgent`.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from openscientist.agent.base import AbstractAgent, AgentConfig
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
@@ -46,6 +47,25 @@ def _instantiate_provider(provider_id: str) -> Provider:
     return cls()
 
 
+def _airgap_allowlist_from_settings(settings: Any) -> set[tuple[str, int]]:
+    """Build the egress allowlist from ``settings.airgap.llm_addr`` (and
+    ``pubmed_addr`` for completeness).
+
+    The LLM endpoint is the load-bearing one for provider validation; the
+    PubMed mirror is included because the same allowlist gets recorded
+    into the per-job attestation (§14).
+    """
+    allowlist: set[tuple[str, int]] = set()
+    for addr in (settings.airgap.llm_addr, settings.airgap.pubmed_addr):
+        if not addr:
+            continue
+        host, _, port_s = addr.rpartition(":")
+        if not host or not port_s.isdigit():
+            continue
+        allowlist.add((host, int(port_s)))
+    return allowlist
+
+
 def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
     """Return the agent for the configured provider.
 
@@ -81,7 +101,23 @@ def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
 
         if settings.airgap.enabled:
             from openscientist.airgap.codex_agent import AirgapCodexAgent
+            from openscientist.airgap.egress_registry import (
+                validate_provider_for_airgap,
+            )
 
+            # Codex Review-6 BUG (fixed): validate the provider's egress
+            # targets against the operator's allowlist BEFORE instantiating
+            # the airgap agent. Without this, an unsupported provider
+            # (Bedrock SDK regional client, OpenAI default endpoint, etc.)
+            # would silently get wrapped in AirgapCodexAgent and proceed to
+            # whatever endpoint it computes — defeating the §7 allowlist.
+            allowlist = _airgap_allowlist_from_settings(settings)
+            targets = validate_provider_for_airgap(provider.id, settings, allowlist)
+            logger.info(
+                "Air-gap egress validated for provider %s → %s",
+                provider.id,
+                sorted(targets),
+            )
             logger.info("Using AirgapCodexAgent (air-gap mode) with provider %s", provider.id)
             return AirgapCodexAgent(config, provider)
         logger.info("Using CodexAgent with provider %s", provider.id)

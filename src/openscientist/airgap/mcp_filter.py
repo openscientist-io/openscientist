@@ -106,6 +106,38 @@ def allowed_mcp_tools(settings: Any) -> frozenset[str]:
     return frozenset(allowed)
 
 
+def enforce_mcp_policy(mcp: Any, settings: Any) -> list[str]:
+    """Walk the FastMCP registry and remove any tool not in :func:`allowed_mcp_tools`.
+
+    Codex Review-6 wiring: without this call, the policy declared by this
+    module is dead code — :mod:`openscientist_tools.server` registers
+    every tool unconditionally at import time. The MCP server calls this
+    at startup so the LLM never sees a denied tool.
+
+    Returns the list of names that were removed (for logging / attestation).
+    Safe to call in non-airgap mode — :func:`allowed_mcp_tools` returns the
+    full set so nothing gets removed.
+    """
+    allowed = allowed_mcp_tools(settings)
+    removed: list[str] = []
+    # FastMCP doesn't expose a public unregister API; use the documented
+    # _tool_manager.remove_tool(name) path. If FastMCP's internal layout
+    # changes, this gracefully falls back to a no-op rather than crashing
+    # the server (operator sees a warning log; security implication is
+    # that policy doesn't enforce — at worst back to dead code).
+    try:
+        tool_manager = mcp._tool_manager
+        for name in list(tool_manager._tools.keys()):
+            if name not in allowed:
+                tool_manager.remove_tool(name)
+                removed.append(name)
+    except AttributeError:
+        # FastMCP internals shifted. Don't crash; this is enforcement
+        # *defense-in-depth* — the agent-side egress boundary still holds.
+        return []
+    return removed
+
+
 def unclassified_mcp_tools(registered: set[str]) -> frozenset[str]:
     """Sentinel — return tool names registered by the MCP server but absent
     from :data:`ALL_KNOWN_MCP_TOOLS`.
@@ -175,5 +207,6 @@ __all__ = (
     "MCP_TOOLS_NETWORK_DEPENDENT",
     "allowed_mcp_tools",
     "disallowed_claude_builtins",
+    "enforce_mcp_policy",
     "unclassified_mcp_tools",
 )

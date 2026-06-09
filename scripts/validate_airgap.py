@@ -74,6 +74,9 @@ def main() -> int:
     # Build a minimal env that the validator accepts. Use the host Ollama
     # via host.docker.internal — but for THIS script we run outside a
     # container, so just use 127.0.0.1.
+    # Defaults to gpt-oss:120b but overridable for hosts that only have :20b
+    # (Codex Review-6 gap — parity with the Tier-4 live script's env read).
+    model = os.environ.get("OPENSCIENTIST_MODEL", "gpt-oss:120b")
     test_env = {
         "OPENSCIENTIST_AIR_GAPPED": "true",
         "OPENSCIENTIST_AIRGAP_LLM_ADDR": "127.0.0.1:11434",
@@ -81,9 +84,9 @@ def main() -> int:
         # Use a writable tmpfs-substitute on macOS for the per-job CODEX_HOME.
         "OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT": "/tmp/airgap-codex-home",
         "OPENSCIENTIST_PROVIDER": "ollama",
-        "OPENSCIENTIST_MODEL": "gpt-oss:120b",
+        "OPENSCIENTIST_MODEL": model,
         "OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1",
-        "OLLAMA_MODEL": "gpt-oss:120b",
+        "OLLAMA_MODEL": model,
         # Required-but-unrelated bits the rest of Settings needs.
         "OPENSCIENTIST_SECRET_KEY": "test-secret-not-real",
         "DATABASE_URL": "postgresql+asyncpg://test@localhost/test",

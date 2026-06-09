@@ -25,6 +25,7 @@ def _airgap_settings(
     google_application_credentials: str | None = None,
     host_project_dir: str | None = None,
     phenix_host_path: str | None = None,
+    docker_socket_path: str = "/var/run/airgap-docker.sock",
 ) -> SimpleNamespace:
     """Settings stand-in covering only the attributes the runner touches.
 
@@ -60,6 +61,7 @@ def _airgap_settings(
             llm_addr=llm_addr,
             pubmed_addr=pubmed_addr,
             codex_home_root=codex_home_root,
+            docker_socket_path=docker_socket_path,
         ),
     )
 
@@ -232,10 +234,13 @@ class TestVolumesInAirgap:
         for path in volumes:
             assert "openscientist-codex-home" not in path
 
-    def test_job_dir_and_docker_socket_still_present_in_airgap(self) -> None:
-        # PR-1 keeps the existing docker.sock mount; the airgap-only socket
-        # proxy is wired in container_manager.py, a separate edit.
-        settings = _airgap_settings(enabled=True)
+    def test_airgap_substitutes_proxy_socket_for_real_docker_sock(self) -> None:
+        # Codex Review-6 BUG (fixed): the prior PR-1 test pinned mounting
+        # the REAL /var/run/docker.sock in airgap mode, defeating the
+        # network boundary (an agent with the real socket can spawn
+        # privileged sibling containers). The proxy-socket substitution
+        # at runner.py:140 is the fix; this test pins it.
+        settings = _airgap_settings(enabled=True, docker_socket_path="/var/run/airgap-docker.sock")
         volumes = JobContainerRunner._build_container_volumes(  # type: ignore[arg-type]
             settings,  # type: ignore[arg-type]
             job_id="job-42",
@@ -243,6 +248,25 @@ class TestVolumesInAirgap:
             job_mount="/agent/jobs/job-42",
         )
         assert "/host/jobs/job-42" in volumes
+        # The CONTAINER side is still /var/run/docker.sock (the in-container
+        # docker SDK reads that path); the HOST side is the PROXY socket.
+        # `volumes` is a dict whose keys are HOST paths.
+        assert "/var/run/airgap-docker.sock" in volumes
+        assert volumes["/var/run/airgap-docker.sock"]["bind"] == "/var/run/docker.sock"
+        # The real socket must NOT be a key (would mean we mounted the
+        # raw Docker daemon socket on the host side).
+        assert "/var/run/docker.sock" not in volumes
+
+    def test_non_airgap_still_mounts_real_docker_sock(self) -> None:
+        # Regression sentinel: non-airgap deployments still mount the real
+        # /var/run/docker.sock — only airgap mode swaps to the proxy.
+        settings = _airgap_settings(enabled=False)
+        volumes = JobContainerRunner._build_container_volumes(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_dir_host=Path("/host/jobs/job-42"),
+            job_mount="/agent/jobs/job-42",
+        )
         assert "/var/run/docker.sock" in volumes
 
 

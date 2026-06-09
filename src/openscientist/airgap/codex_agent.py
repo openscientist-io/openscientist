@@ -50,7 +50,9 @@ import logging
 import os
 from pathlib import Path
 
-from openscientist.agent.codex_agent import CodexAgent
+from openai_codex import AsyncCodex, CodexConfig
+
+from openscientist.agent.codex_agent import CodexAgent, _resolve_codex_bin
 from openscientist.airgap.env_allowlist import filtered_agent_env
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,15 @@ _AIRGAP_CODEX_HOME_ROOT_DEFAULT = Path("/run/openscientist-codex-home")
 
 
 class AirgapCodexAgent(CodexAgent):
-    """:class:`CodexAgent` with air-gap policy applied to its 3 overridable surfaces."""
+    """:class:`CodexAgent` with air-gap policy applied to 4 overridable surfaces.
+
+    PR-1 originally classified this as 3 overrides (``_codex_home``,
+    ``_mcp_env``, ``_ensure_auth``). Codex Review-6 (2026-06-09) caught a
+    fourth: ``_make_codex`` was passing ``os.environ`` unfiltered to the
+    Codex CLI subprocess itself, bypassing the env_allowlist for the
+    LLM-facing process. Now overridden — see :meth:`_make_codex` for the
+    rationale.
+    """
 
     def _codex_home(self) -> Path:
         """Per-job Codex home outside the export tree.
@@ -106,6 +116,36 @@ class AirgapCodexAgent(CodexAgent):
         if config.data_files:
             env["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
         return env
+
+    def _make_codex(self) -> AsyncCodex:
+        """Launch the Codex CLI subprocess with a FILTERED env, not ``os.environ``.
+
+        Codex Review-6 BUG: the base class passes ``**os.environ`` straight to
+        the subprocess at ``agent/codex_agent.py:181``. That defeats the entire
+        :func:`airgap.env_allowlist.filtered_agent_env` machinery — every
+        inactive-provider credential, the master ``OPENSCIENTIST_SECRET_KEY``,
+        and the full ``DATABASE_URL`` (with embedded creds) all reach the
+        Codex CLI process, which then has them in its own environment as it
+        does HTTP I/O to the LLM endpoint.
+
+        :meth:`_mcp_env` already filters the MCP server children's env, but
+        the Codex CLI subprocess itself is a separate launch and needs its
+        own filter. This override mirrors the base class's shape — provider
+        SDK env + ``CODEX_HOME`` overlayed on top — but seeds from the
+        allowlist instead of ``os.environ``.
+        """
+        env = {
+            **filtered_agent_env(dict(os.environ), self._provider.id),
+            **self._provider.codex_sdk_env(),
+            "CODEX_HOME": str(self._codex_home()),
+        }
+        return AsyncCodex(
+            CodexConfig(
+                codex_bin=_resolve_codex_bin(),
+                env=env,
+                cwd=str(self._job_dir()),
+            )
+        )
 
     def _ensure_auth(self) -> None:
         """No-op. Air-gap mode provisions auth via host-mounted secret.

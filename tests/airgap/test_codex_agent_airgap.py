@@ -163,6 +163,92 @@ class TestMcpEnvFiltering:
 # boundary is asserted by `tests/airgap/test_probes.py`.
 
 
+# --------------------------------------------------------- _make_codex
+
+
+class TestMakeCodexSubprocessEnv:
+    """Codex Review-6 BUG: the base class passes os.environ unfiltered to the
+    Codex CLI subprocess. Our override seeds the subprocess env from the
+    allowlist so inactive-provider creds + master secret + DATABASE_URL
+    don't reach the LLM-facing process.
+    """
+
+    def test_subprocess_env_strips_inactive_provider_creds(
+        self, airgap_agent: AirgapCodexAgent
+    ) -> None:
+        polluted = {
+            "PATH": "/bin",
+            "ANTHROPIC_API_KEY": "active-secret",
+            "OPENAI_API_KEY": "leaky",
+            "AWS_ACCESS_KEY_ID": "leaky",
+            "OPENSCIENTIST_SECRET_KEY": "leaky",
+            "DATABASE_URL": "postgresql://user:pass@db/x",
+            "GITHUB_TOKEN": "leaky",
+        }
+        with patch.dict("os.environ", polluted, clear=True):
+            with (
+                patch("openscientist.airgap.codex_agent.AsyncCodex") as mock_codex_cls,
+                patch("openscientist.airgap.codex_agent.CodexConfig") as mock_config_cls,
+            ):
+                airgap_agent._make_codex()
+        # The CodexConfig was constructed with env=...; inspect what it got.
+        assert mock_config_cls.call_count == 1
+        passed_env = mock_config_cls.call_args.kwargs["env"]
+        # Active provider creds survive.
+        assert passed_env["ANTHROPIC_API_KEY"] == "active-secret"
+        # Everything else is stripped.
+        for k in (
+            "OPENAI_API_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "OPENSCIENTIST_SECRET_KEY",
+            "DATABASE_URL",
+            "GITHUB_TOKEN",
+        ):
+            assert k not in passed_env, (
+                f"{k} reached the Codex CLI subprocess env — env_allowlist bypassed"
+            )
+        # CODEX_HOME still set (the base class invariant).
+        assert "CODEX_HOME" in passed_env
+        # Provider SDK env merged on top (anthropic's codex_sdk_env returns
+        # {} in the fake provider, so just assert the merge order didn't
+        # clobber the active provider's key).
+        assert passed_env["ANTHROPIC_API_KEY"] == "active-secret"
+
+    def test_subprocess_env_does_not_leak_secret_value_anywhere(
+        self, airgap_agent: AirgapCodexAgent
+    ) -> None:
+        # Belt-and-suspenders sentinel — the master secret's actual VALUE
+        # must not appear in any env var, even if mis-renamed.
+        polluted = {"PATH": "/bin", "OPENSCIENTIST_SECRET_KEY": "MASTER-DO-NOT-LEAK"}
+        with patch.dict("os.environ", polluted, clear=True):
+            with (
+                patch("openscientist.airgap.codex_agent.AsyncCodex"),
+                patch("openscientist.airgap.codex_agent.CodexConfig") as mock_config_cls,
+            ):
+                airgap_agent._make_codex()
+        passed_env = mock_config_cls.call_args.kwargs["env"]
+        for value in passed_env.values():
+            assert "MASTER-DO-NOT-LEAK" not in str(value)
+
+    def test_base_class_unfiltered_regression_sentinel(self, base_agent: CodexAgent) -> None:
+        # Sentinel — the base class deliberately passes os.environ unfiltered.
+        # If a future refactor changes that, this test fires and reminds us
+        # to revisit whether the subclass override is still needed.
+        polluted = {"PATH": "/bin", "OPENAI_API_KEY": "leaky"}
+        with patch.dict("os.environ", polluted, clear=True):
+            with (
+                patch("openscientist.agent.codex_agent.AsyncCodex"),
+                patch("openscientist.agent.codex_agent.CodexConfig") as mock_config_cls,
+            ):
+                base_agent._make_codex()
+        passed_env = mock_config_cls.call_args.kwargs["env"]
+        assert passed_env.get("OPENAI_API_KEY") == "leaky", (
+            "Base CodexAgent stopped passing os.environ unfiltered — "
+            "if intentional, drop the AirgapCodexAgent._make_codex override "
+            "and this regression sentinel."
+        )
+
+
 # --------------------------------------------------------- _ensure_auth
 
 

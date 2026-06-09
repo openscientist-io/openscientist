@@ -138,9 +138,24 @@ class JobContainerRunner:
         the mounted ``auth.json`` out of the exported job artifact tree
         (RFC §11 / §12.2).
         """
+        # Docker socket: in non-airgap mode the agent container mounts the
+        # real host socket so it can spawn sibling executor containers.
+        # AIR-GAP: Codex Review-6 BUG — mounting the real socket lets the
+        # agent escape the network boundary by spawning a privileged sibling.
+        # Use the operator-deployed socket proxy (RFC §9) instead. The proxy
+        # path is validated at startup by `AirgapSettings` to NOT be the
+        # real `/var/run/docker.sock`.
+        airgap = getattr(settings, "airgap", None)
+        if airgap is not None and getattr(airgap, "enabled", False):
+            socket_path = airgap.docker_socket_path
+        else:
+            socket_path = "/var/run/docker.sock"
         volumes: dict[str, dict[str, str]] = {
             str(job_dir_host): {"bind": job_mount, "mode": "rw"},
-            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+            # The CONTAINER side keeps /var/run/docker.sock so the in-container
+            # docker SDK reads the same path; the HOST side is the airgap
+            # proxy socket in airgap mode, the real socket otherwise.
+            socket_path: {"bind": "/var/run/docker.sock", "mode": "rw"},
         }
         gcp_path = settings.provider.google_application_credentials
         if gcp_path:

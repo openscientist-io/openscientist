@@ -26,6 +26,7 @@ from openscientist.airgap.mcp_filter import (
     MCP_TOOLS_NETWORK_DEPENDENT,
     allowed_mcp_tools,
     disallowed_claude_builtins,
+    enforce_mcp_policy,
     unclassified_mcp_tools,
 )
 
@@ -131,6 +132,80 @@ class TestDisallowedClaudeBuiltins:
     def test_legacy_settings_default_to_not_disabled(self) -> None:
         legacy = SimpleNamespace(container=SimpleNamespace())
         assert disallowed_claude_builtins(legacy) == frozenset()
+
+
+# --------------------------------------------------------- enforce_mcp_policy
+
+
+class TestEnforceMcpPolicy:
+    """Codex Review-6 wiring: enforce_mcp_policy walks the FastMCP registry
+    and removes any tool not in allowed_mcp_tools. Without this call, the
+    policy is dead code."""
+
+    def _fresh_mcp(self):
+        from mcp.server.fastmcp import FastMCP
+
+        m = FastMCP("test")
+
+        @m.tool()
+        def ping(message: str = "hello") -> str:  # noqa: ARG001
+            return "pong"
+
+        @m.tool()
+        def search_pubmed(query: str) -> str:  # noqa: ARG001
+            return ""
+
+        @m.tool()
+        def execute_code(code: str) -> str:  # noqa: ARG001
+            return ""
+
+        return m
+
+    def test_non_airgap_removes_nothing(self) -> None:
+        m = self._fresh_mcp()
+        s = _settings(airgap_enabled=False)
+        removed = enforce_mcp_policy(m, s)
+        assert removed == []
+
+    def test_airgap_without_pubmed_addr_removes_search_pubmed(self) -> None:
+        m = self._fresh_mcp()
+        s = _settings(airgap_enabled=True, pubmed_addr=None)
+        removed = enforce_mcp_policy(m, s)
+        assert "search_pubmed" in removed
+        assert "ping" not in removed
+        assert "execute_code" not in removed
+
+    def test_airgap_with_pubmed_addr_keeps_search_pubmed(self) -> None:
+        m = self._fresh_mcp()
+        s = _settings(airgap_enabled=True, pubmed_addr="10.0.0.6:9000")
+        removed = enforce_mcp_policy(m, s)
+        assert "search_pubmed" not in removed
+
+    def test_unknown_tool_in_registry_removed_in_airgap(self) -> None:
+        # If a future tool gets registered without a classification, airgap
+        # mode removes it. (Non-airgap is default-permissive.)
+        from mcp.server.fastmcp import FastMCP
+
+        m = FastMCP("test")
+
+        @m.tool()
+        def mystery_query(arg: str) -> str:  # noqa: ARG001
+            return ""
+
+        s = _settings(airgap_enabled=True)
+        removed = enforce_mcp_policy(m, s)
+        assert "mystery_query" in removed
+
+    def test_returns_empty_on_internal_layout_change(self) -> None:
+        # Defense-in-depth: if FastMCP's internals shift and we can't reach
+        # the tool manager, the function returns [] instead of crashing the
+        # server. The agent-side egress boundary still holds.
+        class BrokenMcp:
+            pass  # no _tool_manager attribute
+
+        s = _settings(airgap_enabled=True)
+        removed = enforce_mcp_policy(BrokenMcp(), s)
+        assert removed == []
 
 
 # --------------------------------------------------------- unclassified sentinel
