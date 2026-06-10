@@ -11,6 +11,26 @@
 FROM rust:1.95-bookworm AS codex-build
 ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
 ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
+# Keep the codex-cli build under the Docker Desktop memory cap.
+#
+# Upstream's [profile.release] is lto="fat" + codegen-units=1, which makes
+# rustc fuse every transitive crate's LLVM IR into a single module and
+# optimize it in one monolithic, single-threaded process. Empirically
+# (Codex Review-7 follow-up) that peaks at >23 GiB on aarch64 and gets
+# OOM-killed on Docker hosts capped at 16 or 23 GiB before the linker
+# ever runs.
+#
+# Thin LTO splits the optimization across codegen units and parallelizes
+# it, dropping peak RAM to ~6-8 GiB while keeping ~95% of fat-LTO's
+# runtime perf. The 5% gap is invisible for a CLI that's I/O-bound on
+# model HTTP latency. Mold replaces GNU ld at the final link for a
+# further 3-10x speedup and 30-50% lower link-time RAM — useful but not
+# load-bearing for the OOM fix; thin LTO is what unblocks the build.
+RUN apt-get update && apt-get install -y --no-install-recommends mold \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_PROFILE_RELEASE_LTO=thin \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 RUN git clone "${CODEX_REPO}" /codex \
     && git -C /codex checkout "${CODEX_REF}" \
     && cargo build --release --locked -j "${CODEX_BUILD_JOBS:-3}" --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
