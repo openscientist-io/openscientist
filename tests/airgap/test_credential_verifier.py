@@ -37,33 +37,38 @@ class TestForbiddenByName:
     """The first-stage check: certain var names must never be in the
     agent env in air-gap mode regardless of their value."""
 
-    def test_forbidden_env_vars_set_is_locked(self) -> None:
-        # Adding a new var to FORBIDDEN_ENV_VARS is a policy change worth
-        # being explicit about. Pin the set so a rewrite doesn't widen or
-        # narrow it accidentally.
-        assert FORBIDDEN_ENV_VARS == frozenset({"OPENSCIENTIST_SECRET_KEY", "DATABASE_URL"})
+    def test_forbidden_env_vars_set_is_empty_in_pr1(self) -> None:
+        # PR-1: the set is intentionally empty. DATABASE_URL and
+        # OPENSCIENTIST_SECRET_KEY are temporarily allowed through the
+        # env_allowlist (see env_allowlist.BASE_AIRGAP_ENV) because the
+        # agent needs them to read its job row. PR-2 / RFC §12.1's
+        # job-scoped credentials replace these with narrower per-job
+        # equivalents, at which point this set will be repopulated to ban
+        # the master values as a defense layer.
+        # See first end-to-end run on 2026-06-11 — banning these while
+        # the allowlist allows them through blocks every air-gap job.
+        assert FORBIDDEN_ENV_VARS == frozenset()
 
-    def test_master_secret_flagged(self) -> None:
+    def test_master_secret_passes_through_in_pr1(self) -> None:
+        # Mirrors the BASE_AIRGAP_ENV allow. PR-2 should re-flag this.
         findings = verify_env(
             {"OPENSCIENTIST_SECRET_KEY": "abc"},
             active_provider_id="anthropic",
         )
-        assert len(findings) == 1
-        f = findings[0]
-        assert f.rule_name == "forbidden-env-var"
-        assert f.severity == "block"
-        assert f.var_name == "OPENSCIENTIST_SECRET_KEY"
-        # The value itself is redacted in the context (it could be the
-        # master secret, after all).
-        assert "abc" not in f.context
+        assert findings == [], (
+            "OPENSCIENTIST_SECRET_KEY must pass the env-name check in PR-1; "
+            "PR-2 job-scoped key derivation re-bans it"
+        )
 
-    def test_database_url_flagged_even_when_innocent_value(self) -> None:
-        # If DATABASE_URL is present at all, it's a config-bypass signal.
+    def test_database_url_passes_through_in_pr1(self) -> None:
+        # Mirrors the BASE_AIRGAP_ENV allow. PR-2 should re-flag this.
         findings = verify_env(
             {"DATABASE_URL": "postgresql://reader@localhost/x"},
             active_provider_id="anthropic",
         )
-        assert any(f.var_name == "DATABASE_URL" for f in findings)
+        assert findings == [], (
+            "DATABASE_URL must pass the env-name check in PR-1; PR-2 job-scoped DB role re-bans it"
+        )
 
 
 # --------------------------------------------------------- verify_env (value scan)

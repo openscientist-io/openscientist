@@ -47,14 +47,25 @@ logger = logging.getLogger(__name__)
 
 
 # Env-var names that must never be present in the agent container env in
-# air-gap mode, regardless of value. The master secret and the full DB URL
-# are infrastructure secrets the agent never legitimately needs; if the
-# env_allowlist worked they're already stripped, and seeing them here means
-# the filter was bypassed.
+# air-gap mode, regardless of value.
+#
+# TODO(PR-2 / RFC §12.1): repopulate this set with the master
+# ``DATABASE_URL`` + ``OPENSCIENTIST_SECRET_KEY`` once the job-scoped
+# least-privilege DB role + per-job derived key mechanism lands. Until
+# then, those two are temporarily allowed through ``BASE_AIRGAP_ENV``
+# (see :mod:`openscientist.airgap.env_allowlist`) because the agent
+# legitimately needs them to read its job row and decrypt per-job data.
+# Banning them here while the env_allowlist explicitly allows them
+# would block every air-gap job at startup (verifier vs allowlist
+# contradiction surfaced by the first end-to-end run on 2026-06-11).
+#
+# Once PR-2's job-scoped credentials land, the agent will receive a
+# narrowly-scoped DB role + per-job derived key instead, and the master
+# values will once again be hard-banned here as a defense layer.
 FORBIDDEN_ENV_VARS: frozenset[str] = frozenset(
     {
-        "OPENSCIENTIST_SECRET_KEY",
-        "DATABASE_URL",
+        # PR-2: re-add "OPENSCIENTIST_SECRET_KEY" and "DATABASE_URL" here
+        # once job-scoped credentials replace the master values.
     }
 )
 
