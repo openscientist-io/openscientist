@@ -259,6 +259,13 @@ class GitHubSkillIngester(BaseSkillIngester):
             self._client = httpx.AsyncClient(
                 headers=headers,
                 timeout=30.0,
+                # GitHub returns 301 when an org/repo is renamed (e.g. the
+                # 2026-04-09 rename of K-Dense-AI/claude-scientific-skills →
+                # K-Dense-AI/scientific-agent-skills). The sibling tarball
+                # fetcher already follows redirects; this caller did not,
+                # so the latest-commit probe died on `raise_for_status()`
+                # and the whole sync aborted before any skills downloaded.
+                follow_redirects=True,
             )
         return self._client
 

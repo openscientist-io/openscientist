@@ -354,9 +354,12 @@ async def _ensure_default_skill_sources() -> None:
         {
             "source_type": "github",
             "name": "Claude Scientific Skills",
-            "url": "https://github.com/K-Dense-AI/claude-scientific-skills",
+            "url": "https://github.com/K-Dense-AI/scientific-agent-skills",
             "branch": "main",
-            "skills_path": "scientific-skills",
+            # New repo layout uses skills/ at the root (old name had
+            # scientific-skills/). Mismatched path syncs cleanly but
+            # produces 0 skills because the directory doesn't exist.
+            "skills_path": "skills",
             "is_enabled": True,
         },
         {
