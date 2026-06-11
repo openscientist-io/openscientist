@@ -18,9 +18,28 @@
 # description so open models format added lines correctly), and a web_search
 # capability gate that stops the hosted tool from corrupting tool calls on
 # non-OpenAI providers. Pinned to a commit on open-codex for reproducibility.
-FROM rust:1.95-bookworm AS codex-build
+# --platform=linux/amd64 is load-bearing: openscientist-base is amd64
+# (matches prod), so the codex binary copied into the final stage must also
+# be amd64 or the container's ELF loader can't execute it. On arm64 Macs
+# without this pin, Docker resolves rust:1.95-bookworm to arm64, builds a
+# native arm64 codex, and the final amd64 stage carries a binary the OS
+# can't run — Popen reports "FileNotFoundError" because the ELF loader
+# rejects it before exec returns. Forces Rosetta emulation of cargo, which
+# is slower (~2x), but matches the production build pipeline.
+FROM --platform=linux/amd64 rust:1.95-bookworm AS codex-build
 ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
 ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
+# Same OOM fix as Dockerfile (commit 4624c97). Upstream's [profile.release]
+# is lto="fat" + codegen-units=1 — rustc fuses every transitive crate's
+# LLVM IR into one process and peaks at >23 GiB on aarch64, OOM-killed on
+# typical Docker Desktop caps. Thin LTO + 16 codegen units parallelizes
+# the optimization, peak ~6-8 GiB, ~95% of fat-LTO runtime perf. Mold
+# replaces GNU ld for a 3-10x link speedup + 30-50% lower link-time RAM.
+RUN apt-get update && apt-get install -y --no-install-recommends mold \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_PROFILE_RELEASE_LTO=thin \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    RUSTFLAGS="-C link-arg=-fuse-ld=mold"
 RUN git clone "${CODEX_REPO}" /codex \
     && git -C /codex checkout "${CODEX_REF}" \
     && cargo build --release --locked -j "${CODEX_BUILD_JOBS:-3}" --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
