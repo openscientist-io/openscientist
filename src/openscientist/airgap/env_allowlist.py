@@ -47,6 +47,15 @@ BASE_AIRGAP_ENV: frozenset[str] = frozenset(
         "OPENSCIENTIST_AIRGAP_LLM_ADDR",
         "OPENSCIENTIST_AIRGAP_PUBMED_ADDR",
         "PUBMED_BASE_URL",
+        # Optional TCP override for the airgap Docker proxy endpoint —
+        # read by docker_proxy.docker_base_url_for_airgap(). Required for
+        # MCP-tool processes (openscientist_tools spawns a child python
+        # subprocess that runs container_manager); without it in the
+        # allowlist the agent's MCP server falls back to the conventional
+        # unix:///var/run/docker.sock path, which is broken on Docker
+        # Desktop hosts where bind-mounted Unix sockets refuse connect().
+        # Surfaced by the first end-to-end airgap+ollama job on 2026-06-12.
+        "OPENSCIENTIST_AIRGAP_DOCKER_TCP",
         # Process runtime — needed for any subprocess to start.
         "PATH",
         "HOME",

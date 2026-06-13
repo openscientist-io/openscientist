@@ -81,17 +81,43 @@ class ContainerManager:
         go through the hard-coded default-deny policy (RFC §9). The proxy
         socket path is validated at startup by :class:`AirgapSettings`
         (must not equal ``/var/run/docker.sock``).
+
+        Airgap follow-up (2026-06-12): cache the client, but ping() on
+        every access and rebuild on failure. tecnativa/docker-socket-proxy
+        runs HAProxy which closes keep-alive connections aggressively;
+        the docker SDK's pooled connections sit idle through long-running
+        ``containers.run()`` calls and return RemoteDisconnected /
+        ConnectionRefused on subsequent reuse without auto-recovering.
+        The ping is cheap (one round-trip to the proxy) and guarantees
+        callers get a live client every time.
+
+        Building a fresh client on every access was also tried but
+        produces multiple TCP handshakes per ``execute_code`` call
+        (resolve_docker_network, images.get, containers.run,
+        containers.get for cleanup, etc.), any one of which can hit a
+        transient DNS / proxy-restart hiccup and fail the whole call.
+        A single proven-alive cached client per call site is more robust.
         """
-        if self._client is None:
-            import docker
+        import docker
 
-            settings = get_settings()
-            if getattr(getattr(settings, "airgap", None), "enabled", False):
-                from openscientist.airgap.docker_proxy import docker_base_url_for_airgap
-
-                self._client = docker.DockerClient(base_url=docker_base_url_for_airgap(settings))
-            else:
+        settings = get_settings()
+        airgap_on = getattr(getattr(settings, "airgap", None), "enabled", False)
+        if not airgap_on:
+            if self._client is None:
                 self._client = docker.from_env()
+            return self._client
+
+        from openscientist.airgap.docker_proxy import docker_base_url_for_airgap
+
+        base_url = docker_base_url_for_airgap(settings)
+        if self._client is not None:
+            try:
+                self._client.ping()
+                return self._client
+            except Exception:
+                # Connection dead — fall through and rebuild.
+                self._client = None
+        self._client = docker.DockerClient(base_url=base_url)
         return self._client
 
     def _encode_executor_input(
@@ -366,7 +392,22 @@ class ContainerManager:
             )
 
             execution_result = self._parse_executor_result(result)
-            self._cleanup_container_by_name(container_name)
+
+            # Cleanup is best-effort. Don't let a transient Docker hiccup
+            # during cleanup (e.g. proxy connection drop right after the
+            # executor returned) flip a successful execution_result to
+            # success=false. Surfaced 2026-06-12: codex review found that
+            # the broad ``except Exception`` below was catching cleanup
+            # failures and recording the WHOLE call as failed even though
+            # the executor returned ``{"success": true, ...}``.
+            try:
+                self._cleanup_container_by_name(container_name)
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Best-effort cleanup of %s failed (executor result preserved): %s",
+                    container_name,
+                    cleanup_exc,
+                )
 
             logger.info(
                 "Executor container %s completed: success=%s, time=%.2fs",

@@ -25,6 +25,22 @@ import seaborn as sns
 from openscientist.exceptions import CodeExecutionTimeoutError, ForbiddenImportError
 
 # Allowed imports for sandboxed Python execution.
+#
+# The sandbox has three defense layers: (1) this AST import-whitelist
+# pre-flight, (2) the executor container runs with no network in airgap
+# mode (RFC §10.2) and a read-only-ish filesystem, (3) the agent's docker
+# socket only sees the airgap socket proxy. Given (2) + (3), the import
+# whitelist's job is to keep the agent's *code* out of dangerous APIs
+# (subprocess, ctypes, raw socket networking), NOT to forbid pure-Python
+# stdlib utilities the agent will routinely need.
+#
+# Anything missing here that the agent legitimately needs in its data
+# analyses (pathlib, io, tempfile, dataclasses, ...) produces an opaque
+# ``Import from 'X' is not allowed`` error — surfacing as red X's in the
+# investigation timeline without context because analysis_log doesn't
+# retain output_data for sandbox-rejected runs. First end-to-end torpor
+# job on 2026-06-12 surfaced this — every execute_code blocked on
+# ``import pathlib`` and the analyses appeared to silently fail.
 ALLOWED_IMPORTS = [
     # Core scientific computing
     "pandas",
@@ -34,7 +50,7 @@ ALLOWED_IMPORTS = [
     "seaborn",
     "statsmodels",
     "sklearn",
-    # Standard library (safe modules)
+    # Standard library — safe pure-Python utilities.
     "math",
     "statistics",
     "collections",
@@ -46,6 +62,24 @@ ALLOWED_IMPORTS = [
     "re",
     "json",
     "os",  # Environment variables (for API tokens)
+    "pathlib",  # ubiquitous in modern Python file I/O
+    "io",
+    "tempfile",
+    "typing",
+    "dataclasses",
+    "enum",
+    "abc",
+    "warnings",
+    "sys",
+    "copy",
+    "hashlib",
+    "base64",
+    "csv",
+    "gzip",
+    "pickle",  # safe in sandbox: no network + agent-trusted code
+    "string",
+    "uuid",
+    "random",  # pseudo-random, not crypto
     # HTTP/API access
     "requests",  # HTTP requests (for KBase, external APIs)
     # Domain-specific

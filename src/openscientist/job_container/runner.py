@@ -111,6 +111,16 @@ class JobContainerRunner:
             # internal endpoints. Safe to overlay after filtering because
             # they aren't credentials.
             env["OPENSCIENTIST_AIR_GAPPED"] = "1"
+            # Forward the optional TCP override for the airgap Docker proxy
+            # endpoint. Used on Docker Desktop / macOS hosts where bind-
+            # mounting a Unix socket into a container yields a socket inode
+            # that refuses connect() (a known file-sharing-layer limitation).
+            # Setting this var makes the agent's docker SDK speak TCP to the
+            # proxy instead of the bind-mounted Unix socket. On Linux deploys
+            # operators leave it unset and the conventional Unix path is used.
+            docker_tcp = os.environ.get("OPENSCIENTIST_AIRGAP_DOCKER_TCP")
+            if docker_tcp:
+                env["OPENSCIENTIST_AIRGAP_DOCKER_TCP"] = docker_tcp
             if settings.airgap.llm_addr:
                 env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] = settings.airgap.llm_addr
             if settings.airgap.pubmed_addr:

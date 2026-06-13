@@ -38,32 +38,52 @@ not by the container_manager).
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 # Conventional container-side Unix socket path the docker SDK looks for.
 # Operators mount their proxy here in the web container.
 _CONTAINER_DOCKER_SOCKET = "/var/run/docker.sock"
 
+# TCP override for environments where bind-mounting the proxy's Unix socket
+# into a container isn't reliable. On Docker Desktop for macOS the file-
+# sharing layer represents a bind-mounted Unix socket as a socket-typed
+# inode but rejects connect() with ECONNREFUSED — a known limitation that
+# blocks the operator-deployed proxy from being reachable from the agent
+# via the conventional path. Setting this env var to ``host:port`` makes
+# the docker SDK speak HTTP/TCP to the proxy directly; on Linux deploys
+# this should stay unset and the Unix socket path is used.
+_TCP_OVERRIDE_ENV = "OPENSCIENTIST_AIRGAP_DOCKER_TCP"
+
 
 def docker_base_url_for_airgap(settings: Any) -> str:
     """Return the ``base_url`` to hand to ``docker.DockerClient`` in airgap.
 
-    Returns a ``unix://`` URI pointing at the conventional container-side
+    Default: a ``unix://`` URI pointing at the conventional container-side
     socket (``/var/run/docker.sock``). The operator's docker-compose
     mounts the airgap proxy socket to that path inside the web container;
     inside the container the docker SDK sees a normal socket and never
-    knows it's a proxy.
+    knows it's a proxy. Right for production Linux deploys.
+
+    Override: if ``OPENSCIENTIST_AIRGAP_DOCKER_TCP`` is set, return a
+    ``tcp://`` URI pointing at the specified ``host:port``. Necessary on
+    Docker Desktop for macOS (and any other host where bind-mounting a
+    Unix socket into a container doesn't work reliably), where the
+    operator's proxy must be reached over TCP instead.
 
     The ``settings.airgap.docker_socket_path`` setting is the **host-side**
     path used by the runner for the agent container's bind-mount; it's
     irrelevant here.
 
     Args:
-        settings: Unused; retained for API compat. (Future versions might
-            offer an explicit container-side path override.)
+        settings: Unused; retained for API compat.
 
     Returns:
-        A ``unix://`` URI suitable for the docker SDK's ``base_url`` argument.
+        A ``unix://`` or ``tcp://`` URI suitable for the docker SDK's
+        ``base_url`` argument.
     """
     del settings  # not used; see docstring
+    tcp = os.environ.get(_TCP_OVERRIDE_ENV, "").strip()
+    if tcp:
+        return f"tcp://{tcp}"
     return f"unix://{_CONTAINER_DOCKER_SOCKET}"
