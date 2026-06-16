@@ -1,4 +1,4 @@
-.PHONY: start stop restart build rebuild logs shell clean clean-jobs reset-db help deploy status
+.PHONY: start stop restart build rebuild logs shell clean clean-jobs reset-db help deploy status download-exomiser
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -153,3 +153,12 @@ deploy:
 	@echo "Deployment complete!"
 	@echo "Application should be running at https://chat.alzassistant.org"
 	@echo "========================================="
+
+# --- Exomiser variant-prioritization tool (optional) -----------------------
+# Downloads the Exomiser CLI + data bundle to a host dir for bind-mounting
+# read-only into agent containers (EXOMISER_HOST_PATH). The data is ~80 GB and
+# is NOT baked into any image. Logic lives in scripts/download-exomiser.sh
+# (resumable, preflighted, staged); override versions via env, e.g.:
+#   make download-exomiser EXOMISER_DATA_VERSION=2406 EXOMISER_ASSEMBLY=hg38
+download-exomiser:
+	./scripts/download-exomiser.sh

@@ -757,6 +757,50 @@ class PhenixSettings(BaseSettings):
         return os.path.exists(about)
 
 
+class ExomiserSettings(BaseSettings):
+    """Exomiser variant-prioritization tool configuration.
+
+    Mirrors PhenixSettings: an external tool whose install dir lives on the host
+    and is bind-mounted into the agent container. ``EXOMISER_PATH`` is the path
+    seen inside the container (set by the runner to /opt/exomiser);
+    ``EXOMISER_HOST_PATH`` is the host path to bind-mount there.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    exomiser_path: str | None = Field(default=None, alias="EXOMISER_PATH")
+    exomiser_host_path: str | None = Field(default=None, alias="EXOMISER_HOST_PATH")
+
+    @field_validator("exomiser_path")
+    @classmethod
+    def validate_exomiser_path(cls, v: str | None) -> str | None:
+        """Validate EXOMISER_PATH format if set (absolute, no traversal)."""
+        return PhenixSettings._validate_absolute_path(
+            v, env_name="EXOMISER_PATH", example="/opt/exomiser"
+        )
+
+    @field_validator("exomiser_host_path")
+    @classmethod
+    def validate_exomiser_host_path(cls, v: str | None) -> str | None:
+        """Validate EXOMISER_HOST_PATH format if set."""
+        return PhenixSettings._validate_absolute_path(
+            v, env_name="EXOMISER_HOST_PATH", example="/data/exomiser/exomiser-cli-15.0.0"
+        )
+
+    @property
+    def is_available(self) -> bool:
+        """True if EXOMISER_PATH points at an install dir containing the CLI jar."""
+        import glob
+
+        if not self.exomiser_path or not os.path.isdir(self.exomiser_path):
+            return False
+        return bool(glob.glob(os.path.join(self.exomiser_path, "exomiser-cli-*.jar")))
+
+
 class BerkeleyLabSettings(BaseSettings):
     """Berkeley Lab data lakehouse configuration."""
 
@@ -824,6 +868,7 @@ class Settings(BaseSettings):
     file: FileSettings = Field(default_factory=FileSettings)
     container: ContainerSettings = Field(default_factory=ContainerSettings)
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
+    exomiser: ExomiserSettings = Field(default_factory=ExomiserSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
 
