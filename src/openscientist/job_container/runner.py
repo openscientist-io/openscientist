@@ -313,9 +313,9 @@ class JobContainerRunner:
         else:
             from openscientist.agent.factory import agent_class_for_provider_id
 
-            agent_class_for_provider_id(
-                settings.provider.provider_id
-            ).provision_host_prelaunch(settings, job_dir_resolved)
+            agent_class_for_provider_id(settings.provider.provider_id).provision_host_prelaunch(
+                settings, job_dir_resolved
+            )
         job_dir_host = to_host_path(job_dir_resolved, cs)
         env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
             self._build_launch_configuration(
