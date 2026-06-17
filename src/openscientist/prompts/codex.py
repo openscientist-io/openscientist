@@ -1,22 +1,25 @@
 """Codex agent prompt variants.
 
 The Codex agent reads its instructions from ``AGENTS.md`` and has no
-``.claude/`` directory, so the fragments drop Claude-specific paths and
-the ``Read`` tool name. Skills are delivered as native codex ``SKILL.md``
-files under ``.agents/skills/`` (see ``agent.skills.write_skills_to_codex_dir``),
-which codex auto-injects as a ``## Skills`` section, so the prompt points at
-that section and drops the nonexistent ``search_skills`` tool.
+``.claude/`` directory, so the fragments drop Claude-specific paths and the
+``Read`` tool name. Skills are written as native codex ``SKILL.md`` files
+under ``.agents/skills/<category>--<slug>/`` (see
+``agent.skills.write_skills_to_codex_dir``). The agent runs with the job dir
+as cwd, so the prompt points at the literal directory path and the agent
+discovers + reads SKILL.md files with its built-in file tools. The
+``search_skills`` tool is Claude-only and is dropped.
 """
 
 from openscientist.prompts.common import BackendFragments
 
 CODEX_FRAGMENTS = BackendFragments(
-    skills_location=(
-        "the `## Skills` section of this prompt (codex lists each available "
-        "skill and the path to its `SKILL.md` there)"
-    ),
+    skills_location="`.agents/skills/`",
     builtin_read_tool="the built-in file-reading tool",
     builtin_read_tool_short="the built-in file-reading tool",
     search_skills_doc="",
-    skills_discovery_note="",
+    skills_discovery_note=(
+        "Each skill is a subdirectory `<category>--<slug>/` containing a "
+        "`SKILL.md` file. List `.agents/skills/` to enumerate, then read "
+        "each `SKILL.md`."
+    ),
 )

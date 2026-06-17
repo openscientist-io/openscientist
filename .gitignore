@@ -82,3 +82,8 @@ data/
 
 .playwright-mcp/*.log
 shandy-prod-jobs-backup-20260307.tar.gz
+
+# Run artifact bundles (job ZIPs / extracted dumps shared for analysis)
+docs/*_artifacts.zip
+docs/*_artifacts/
+docs/eric_torpor_opus_46_run_*

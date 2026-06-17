@@ -90,11 +90,9 @@ async def write_skills_to_codex_dir(job_dir: Path) -> None:
     """Write enabled skills as codex ``SKILL.md`` files into
     ``job_dir/.agents/skills/``.
 
-    The codex agent runs with the job dir as its cwd (a git repo), so codex
-    treats ``.agents/skills/`` as a project skill root: it discovers each
-    ``SKILL.md`` and auto-injects a ``## Skills`` summary into the system
-    prompt with its own trigger rules. This is how the codex/Ollama agent
-    receives skills; the ``.claude/`` path does not apply to it.
+    The codex agent runs with the job dir as its cwd, so the prompt points at
+    this directory path and the agent reads SKILL.md files via its built-in
+    file tools. The ``.claude/`` path is Claude-specific and does not apply.
     """
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
