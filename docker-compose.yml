@@ -128,5 +128,69 @@ services:
     profiles: ["build-only"]  # Excluded from `docker compose up`
     entrypoint: ["echo", "openscientist-agent image built"]
 
+  # Local PubMed mirror — only started under the `airgap` profile. In
+  # non-airgap deployments the agent reaches public NCBI eutils directly
+  # and this service is unnecessary.
+  #
+  # Two flavours selected by COMPOSE_PROFILES:
+  # * `airgap-mock` (lightweight smoke): ~400 hand-picked abstracts built
+  #   into the image. No external data dependency. Use for CI smoke tests.
+  # * `airgap-mirror` (full corpus): bind-mounts the ~96 GB SQLite + FTS5
+  #   index built by openscientist-pubmed-mirror — all ~40M baseline
+  #   articles, FTS5-ranked. Use for real research-quality queries.
+  #
+  # Both expose the same eutils API on port 9000 and the same compose
+  # alias `pubmed-mock`, so `.env`'s PUBMED_BASE_URL=http://pubmed-mock:9000
+  # works for either; only the data depth changes.
+  pubmed-mock:
+    profiles: ["airgap-mock"]
+    build:
+      context: .
+      dockerfile: Dockerfile.pubmed-mock
+    image: ${OPENSCIENTIST_PUBMED_MOCK_IMAGE:-openscientist-pubmed-mock:latest}
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "openscientist.role=pubmed-mock"
+
+  pubmed-mirror:
+    profiles: ["airgap-mirror"]
+    build:
+      # Sibling-checkout layout: build context is the pubmed-mirror repo
+      # so its `pubmed_mirror/` package can be COPYed into the image.
+      context: ${OPENSCIENTIST_PUBMED_MIRROR_REPO:-../openscientist-pubmed-mirror}
+      dockerfile: ${PWD}/Dockerfile.pubmed-mirror
+    image: ${OPENSCIENTIST_PUBMED_MIRROR_IMAGE:-openscientist-pubmed-mirror:latest}
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    networks:
+      default:
+        aliases:
+          # Aliased to `pubmed-mock` so the agent's PUBMED_BASE_URL =
+          # http://pubmed-mock:9000 works for either flavour with no change.
+          - pubmed-mock
+    volumes:
+      # The 96 GB SQLite + FTS5 index lives outside the container. Read-only
+      # to prevent concurrent writers from corrupting the index. Operators
+      # set OPENSCIENTIST_PUBMED_DB on the host to the absolute path of the
+      # pubmed.sqlite they built (or downloaded) via openscientist-pubmed-mirror.
+      - ${OPENSCIENTIST_PUBMED_DB:?Set OPENSCIENTIST_PUBMED_DB to the host path of pubmed.sqlite}:/opt/pubmed/pubmed.sqlite:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3).read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Cold startup loads FTS5 metadata + opens the 96 GB sqlite handle;
+      # needs more time than the toy mock.
+      start_period: 30s
+    labels:
+      - "openscientist.role=pubmed-mirror"
+
 volumes:
   postgres_data:

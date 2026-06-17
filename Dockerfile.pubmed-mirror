@@ -1,0 +1,35 @@
+# Real PubMed mirror shim — replaces Dockerfile.pubmed-mock for production
+# (-grade) airgap validation. The 96 GB SQLite index is built once by the
+# `openscientist-pubmed-mirror` repo (NCBI baseline 2026, all 40M articles,
+# FTS5-indexed) and bind-mounted into the container read-only — never
+# copied into the image, which would balloon it past 100 GB.
+#
+# The shim itself is small: the `pubmed_mirror` package's `serve`
+# subcommand runs FastAPI on port 9000 with the same eutils-compatible
+# `/esearch.fcgi` and `/efetch.fcgi` endpoints the simple mock exposed,
+# so docker-compose, .env, and the agent's literature.py don't change
+# at all when swapping mock → real mirror.
+#
+# Build context expectation: this Dockerfile is invoked with build
+# context = the openscientist-pubmed-mirror repo. The docker-compose
+# `pubmed-mirror` service sets context: ../openscientist-pubmed-mirror,
+# so a sibling-checkout layout is assumed (~/PythonProject/{shandy-airgap,
+# openscientist-pubmed-mirror}).
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir fastapi==0.115.6 uvicorn==0.34.0
+
+WORKDIR /app
+COPY pubmed_mirror /app/pubmed_mirror
+
+EXPOSE 9000
+
+# /opt/pubmed/pubmed.sqlite is the bind-mount point — the host directory
+# carrying the 96 GB index is set in docker-compose.yml.
+ENV PUBMED_DB=/opt/pubmed/pubmed.sqlite
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3).read()"
+
+ENTRYPOINT ["python", "-m", "pubmed_mirror", "serve", "--host", "0.0.0.0", "--port", "9000"]
+CMD ["--db", "/opt/pubmed/pubmed.sqlite"]
