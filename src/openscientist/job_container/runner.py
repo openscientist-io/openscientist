@@ -291,13 +291,31 @@ class JobContainerRunner:
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
         job_dir_resolved = job_dir.resolve()
-        # Host-side, pre-launch prep is the agent backend's own concern. Ask the
-        # backend class for the configured provider (no agent instance here).
-        from openscientist.agent.factory import agent_class_for_provider_id
+        # Host-side, pre-launch prep is the agent backend's own concern. Ask
+        # the backend class for the configured provider and let it run.
+        #
+        # Codex review post-PR-#195-merge (2026-06-17): the factory's
+        # ``agent_class_for_provider_id`` resolves to the BASE class for a
+        # provider id (e.g. ``CodexAgent`` for Ollama/OpenAI), not the
+        # airgap variant — the airgap override lives only inside
+        # ``get_agent``. Routing pre-launch through it would mean
+        # ``CodexAgent.provision_host_prelaunch`` writes the codex auth to
+        # ``job_dir/.codex/`` even in airgap mode, while
+        # ``AirgapCodexAgent._codex_home()`` looks under
+        # ``OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT/<job_id>/`` and the agent
+        # silently launches without auth. Branch explicitly here so each
+        # mode invokes the matching ``provision_host_prelaunch``.
+        airgap_on = getattr(getattr(settings, "airgap", None), "enabled", False)
+        if airgap_on:
+            from openscientist.airgap.codex_agent import AirgapCodexAgent
 
-        agent_class_for_provider_id(settings.provider.provider_id).provision_host_prelaunch(
-            settings, job_dir_resolved
-        )
+            AirgapCodexAgent.provision_host_prelaunch(settings, job_dir_resolved)
+        else:
+            from openscientist.agent.factory import agent_class_for_provider_id
+
+            agent_class_for_provider_id(
+                settings.provider.provider_id
+            ).provision_host_prelaunch(settings, job_dir_resolved)
         job_dir_host = to_host_path(job_dir_resolved, cs)
         env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
             self._build_launch_configuration(

@@ -769,6 +769,15 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     job_id = runtime["job_id"]
     logger.info("Regenerating report for job %s", job_id)
 
+    # Codex review post-PR-#195-merge (2026-06-17): the discovery path runs
+    # the air-gap startup verifier before building the executor; the report-
+    # regeneration path was missing the same gate. Without this an operator
+    # could trigger the admin "Regenerate report" action against a job whose
+    # env/job_dir state had drifted out of policy compliance, and the
+    # report-generation Codex thread would launch unchecked. No-op outside
+    # airgap mode.
+    await _enforce_airgap_startup_policy(job_id, job_dir, get_provider().id)
+
     executor = await _build_and_prepare_executor(job_dir, runtime)
     try:
         report_outcome = await _run_report_generation_phase(
