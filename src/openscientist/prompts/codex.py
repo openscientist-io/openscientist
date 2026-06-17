@@ -19,7 +19,10 @@ CODEX_FRAGMENTS = BackendFragments(
     search_skills_doc="",
     skills_discovery_note=(
         "Each skill is a subdirectory `<category>--<slug>/` containing a "
-        "`SKILL.md` file. List `.agents/skills/` to enumerate, then read "
-        "each `SKILL.md`."
+        "`SKILL.md` file. Read them with shell commands "
+        "(e.g. `cat .agents/skills/workflow--hypothesis-generation/SKILL.md`), "
+        "NOT with `execute_code` (Python): the Python executor runs in a "
+        "separate sandbox that only sees `/data` and `/output` and cannot "
+        "access `.agents/skills/`."
     ),
 )
