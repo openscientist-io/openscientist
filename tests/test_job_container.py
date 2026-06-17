@@ -193,6 +193,50 @@ class TestJobContainerRunner:
         assert "OPENSCIENTIST_HOST_PROJECT_DIR" not in environment
         assert "OPENSCIENTIST_CONTAINER_APP_DIR" not in environment
 
+    def _launch_and_get_env(self, *, run_mode: str | None) -> dict[str, str]:
+        """Run launch() (optionally with run_mode) and return the container env."""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_container.short_id = "abc123"
+        mock_client.containers.run.return_value = mock_container
+        settings = self._make_settings(host_project_dir=None)
+
+        original_exists = Path.exists
+
+        def fake_exists(path: Path) -> bool:
+            if path == Path("/var/run/docker.sock"):
+                return False
+            return cast(bool, original_exists(path))
+
+        with (
+            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
+            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
+            patch(
+                "openscientist.job_container.runner.to_host_path",
+                return_value=Path("/app/jobs/job-123"),
+            ),
+            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
+        ):
+            runner = JobContainerRunner()
+            if run_mode is None:
+                runner.launch("job-123", Path("/app/jobs/job-123"))
+            else:
+                runner.launch("job-123", Path("/app/jobs/job-123"), run_mode=run_mode)
+
+        return cast(dict[str, str], mock_client.containers.run.call_args.kwargs["environment"])
+
+    def test_launch_sets_run_mode_env_for_report_only(self):
+        """report_only launches carry OPENSCIENTIST_RUN_MODE so the entrypoint
+        runs only the report-generation phase."""
+        env = self._launch_and_get_env(run_mode="report_only")
+        assert env["OPENSCIENTIST_RUN_MODE"] == "report_only"
+
+    def test_launch_omits_run_mode_env_by_default(self):
+        """The default discovery launch keeps a clean env (no run-mode override)."""
+        assert "OPENSCIENTIST_RUN_MODE" not in self._launch_and_get_env(run_mode=None)
+        assert "OPENSCIENTIST_RUN_MODE" not in self._launch_and_get_env(run_mode="discovery")
+
     def test_get_exit_code_looks_up_agent_container_by_labels(self):
         """Exit-code polling filters to the agent container, not job executors."""
         mock_client = MagicMock()
@@ -351,9 +395,10 @@ class TestPhenixMount:
 
 
 class TestCodexAuthProvisioning:
-    """`_provision_codex_auth` copies the codex CLI auth into the per-job
-    CODEX_HOME (agent-readable), instead of mounting the host file, which the
-    non-root agent could not read across the uid/permission boundary."""
+    """`CodexAgent.provision_host_prelaunch` copies the codex CLI auth into the
+    per-job CODEX_HOME (agent-readable), instead of mounting the host file,
+    which the non-root agent could not read across the uid/permission
+    boundary. It is the backend's host-side, pre-launch hook."""
 
     def _settings(self, codex_auth_host_path: str | None) -> MagicMock:
         settings = MagicMock()
@@ -364,12 +409,14 @@ class TestCodexAuthProvisioning:
         return settings
 
     def test_copies_auth_into_codex_home_agent_readable(self, tmp_path: Path) -> None:
+        from openscientist.agent.codex_agent import CodexAgent
+
         src = tmp_path / "host-auth.json"
         src.write_text('{"tokens": {}}')
         job_dir = tmp_path / "job"
         job_dir.mkdir()
 
-        JobContainerRunner._provision_codex_auth(self._settings(str(src)), "test-job-id", job_dir)
+        CodexAgent.provision_host_prelaunch(self._settings(str(src)), job_dir)
 
         dest = job_dir / ".codex" / "auth.json"
         assert dest.read_text() == '{"tokens": {}}'
@@ -377,15 +424,17 @@ class TestCodexAuthProvisioning:
         assert (dest.parent.stat().st_mode & 0o777) == 0o777  # agent can write config.toml
 
     def test_noop_when_unset(self, tmp_path: Path) -> None:
+        from openscientist.agent.codex_agent import CodexAgent
+
         job_dir = tmp_path / "job"
         job_dir.mkdir()
-        JobContainerRunner._provision_codex_auth(self._settings(None), "test-job-id", job_dir)
+        CodexAgent.provision_host_prelaunch(self._settings(None), job_dir)
         assert not (job_dir / ".codex").exists()
 
     def test_noop_when_source_missing(self, tmp_path: Path) -> None:
+        from openscientist.agent.codex_agent import CodexAgent
+
         job_dir = tmp_path / "job"
         job_dir.mkdir()
-        JobContainerRunner._provision_codex_auth(
-            self._settings(str(tmp_path / "nope.json")), "test-job-id", job_dir
-        )
+        CodexAgent.provision_host_prelaunch(self._settings(str(tmp_path / "nope.json")), job_dir)
         assert not (job_dir / ".codex" / "auth.json").exists()

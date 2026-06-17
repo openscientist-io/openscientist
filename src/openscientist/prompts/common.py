@@ -9,6 +9,7 @@ Claude and Codex variants share one body. See `prompts.claude` /
 """
 
 from dataclasses import dataclass
+from importlib import resources
 from typing import Any
 
 from sqlalchemy import select
@@ -32,6 +33,14 @@ class BackendFragments:
 
     builtin_read_tool_short: str
     """Shorter form of the same, as it appears in the warning line."""
+
+    search_skills_doc: str
+    """The ``**search_skills**`` tool-doc block. Present for Claude, empty for
+    codex (which has no such tool, codex surfaces skills natively)."""
+
+    skills_discovery_note: str
+    """The 'discover additional skills' note. Present for Claude, empty for
+    codex."""
 
 
 def build_system_prompt(frags: BackendFragments) -> str:
@@ -293,13 +302,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - Returns: titles, full abstracts, PMIDs
 - Full abstracts are returned so you can extract exact quotes for citations
 
-**search_skills** - Search for domain-specific analysis skills
-
-- `query`: Description of the type of analysis needed
-- `add_to_job=False`: Set True to persist the top result to this job's skill set
-- Additional skills beyond those in `.claude/skills/` may exist in the database
-
-**update_knowledge_state** - Record a confirmed finding
+{{SEARCH_SKILLS_DOC}}**update_knowledge_state** - Record a confirmed finding
 
 - `title`: Concise finding title
 - `evidence`: Statistical evidence (p-values, effect sizes, confidence intervals)
@@ -441,7 +444,7 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 4. **Choosing next step:** Use `workflow--prioritization.md` to rank options.
 5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
 
-Use `search_skills` to discover additional skills in the database beyond those pre-loaded.
+{{SKILLS_DISCOVERY_NOTE}}
 
 ## Your Approach
 
@@ -555,12 +558,50 @@ Then call `set_consensus_answer` with a 1–3 sentence direct answer.
 **Remember:** You are autonomous. Make bold scientific decisions. Pursue interesting leads. Be creative but rigorous.""")
 
     doc = "\n".join(parts)
-    # Swap the backend-divergent phrases. For the Claude fragments these are
-    # identity substitutions, so the Claude doc is unchanged.
+    return substitute_fragments(doc, frags)
+
+
+def substitute_fragments(doc: str, frags: BackendFragments) -> str:
+    """Swap the backend-divergent phrases in a Claude-authored doc.
+
+    For the Claude fragments these are identity substitutions, so a
+    Claude-authored body is unchanged. For codex they drop the ``search_skills``
+    tool, the ``.claude/skills/`` path, and the ``Read`` tool name. Skill-
+    discovery sentinels are filled first so the codex case drops the
+    ``.claude/skills/`` reference inside the ``search_skills`` block entirely.
+    Shared by the discovery job doc and the chat context so they cannot
+    diverge.
+    """
+    doc = doc.replace("{{SEARCH_SKILLS_DOC}}", frags.search_skills_doc)
+    doc = doc.replace("{{SKILLS_DISCOVERY_NOTE}}", frags.skills_discovery_note)
     doc = doc.replace("`.claude/skills/`", frags.skills_location)
     doc = doc.replace("Claude's built-in `Read` tool", frags.builtin_read_tool)
     doc = doc.replace("Claude's `Read` tool", frags.builtin_read_tool_short)
     return doc
+
+
+def read_chat_template() -> str:
+    """Read the packaged ``CHAT_CLAUDE.md`` job-chat guidance template.
+
+    The template is authored in Claude vocabulary, and ``render_chat_context``
+    applies the backend fragments to it.
+    """
+    return (
+        resources.files("openscientist.templates")
+        .joinpath("CHAT_CLAUDE.md")
+        .read_text(encoding="utf-8")
+    )
+
+
+def render_chat_context(frags: BackendFragments) -> str:
+    """The job-chat guidance with backend fragments substituted.
+
+    Routes the chat context through the same substitution as the discovery
+    job doc, so the chat agent is never told about tools or paths its backend
+    lacks. Identity for Claude; for codex it drops the ``Read`` tool name and
+    the ``.claude/skills/`` reference the raw template uses.
+    """
+    return substitute_fragments(read_chat_template(), frags)
 
 
 async def get_enabled_skills(

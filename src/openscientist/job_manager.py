@@ -50,13 +50,7 @@ def _effective_model(settings: Any) -> str | None:
     if model:
         return str(model)
     try:
-        from openscientist.providers.base import ClaudeCompatible, CodexCompatible
-
-        provider = get_provider()
-        if isinstance(provider, CodexCompatible):
-            return provider.codex_model_name()
-        if isinstance(provider, ClaudeCompatible):
-            return provider.claude_model_name()
+        return get_provider().effective_model_name()
     except Exception as exc:  # provider misconfigured, unavailable, etc.
         logger.debug("Could not resolve provider model for job: %s", exc)
     return None
@@ -595,12 +589,51 @@ class JobManager:
             self._running_jobs[job_id] = thread
             thread.start()
 
-    def _run_job(self, job_id: str) -> None:
-        """Run a job (internal, called by thread)."""
-        self._run_job_in_container(job_id)
+    def regenerate_report(self, job_id: str) -> None:
+        """Re-run only the report-generation phase for a completed job.
 
-    def _run_job_in_container(self, job_id: str) -> None:
-        """Launch an agent container for the job and block until it reaches a terminal status."""
+        Backs the admin "Regenerate report" action. Launches the agent
+        container in report-only mode (no discovery iterations: the findings in
+        the persisted KnowledgeState are reused). The job must exist, be
+        completed, and not currently running, and a concurrency slot must be
+        free. Unlike ``start_job`` this does NOT queue: report regeneration is a
+        one-off admin action, so it fails loudly rather than waiting.
+
+        Raises:
+            ValueError: If the job is missing, not completed, already running,
+                or the max concurrent limit is reached.
+        """
+        with self._lock:
+            job_info = self.get_job(job_id)
+            if job_info is None:
+                raise ValueError(f"Job {job_id} not found")
+            if job_info.status != JobStatus.COMPLETED:
+                raise ValueError(f"Job {job_id} is not completed (status: {job_info.status.value})")
+            if job_id in self._running_jobs:
+                raise ValueError(f"Job {job_id} is already running")
+            if self._get_active_job_count() >= self.max_concurrent:
+                raise ValueError("Cannot regenerate report: maximum concurrent jobs reached")
+
+            logger.info("Regenerating report for job %s", job_id)
+            thread = threading.Thread(
+                target=self._run_job,
+                args=(job_id,),
+                kwargs={"run_mode": "report_only"},
+                daemon=True,
+            )
+            self._running_jobs[job_id] = thread
+            thread.start()
+
+    def _run_job(self, job_id: str, run_mode: str = "discovery") -> None:
+        """Run a job (internal, called by thread)."""
+        self._run_job_in_container(job_id, run_mode=run_mode)
+
+    def _run_job_in_container(self, job_id: str, run_mode: str = "discovery") -> None:
+        """Launch an agent container for the job and block until it reaches a terminal status.
+
+        ``run_mode`` is "discovery" for the full loop or "report_only" to
+        re-run just the report-generation phase against the persisted findings.
+        """
         from openscientist.job_container import JobContainerRunner
 
         poll_interval = 5
@@ -611,8 +644,8 @@ class JobManager:
 
         try:
             self._update_job_status(job_id, JobStatus.RUNNING)
-            runner.launch(job_id, job_dir)
-            logger.info("Agent container launched for job %s", job_id)
+            runner.launch(job_id, job_dir, run_mode=run_mode)
+            logger.info("Agent container launched for job %s (mode=%s)", job_id, run_mode)
 
             # Poll the database until the container's agent writes a terminal status.
             # Also check if the container has exited unexpectedly (crash before DB write).

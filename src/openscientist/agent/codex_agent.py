@@ -30,25 +30,31 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openai_codex import ApprovalMode, AsyncCodex, AsyncThread, CodexConfig, Sandbox
 
 from openscientist.agent.base import (
     AbstractAgent,
+    AgentBackend,
     AgentConfig,
     IterationResult,
     TokenUsage,
     TranscriptEntry,
+    TurnOutcome,
 )
 from openscientist.providers.base import CodexCompatible
 from openscientist.transcript import CODEX
+
+if TYPE_CHECKING:
+    from openscientist.prompts.common import BackendFragments
+    from openscientist.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 _MCP_SERVER_NAME = "openscientist-tools"
 
-# Item types that are messages or reasoning rather than tool actions; everything
+# Item types that are messages or reasoning rather than tool actions. Everything
 # else (commandExecution, mcpToolCall, fileChange, ...) counts as a tool call.
 _NON_TOOL_ITEM_TYPES = frozenset({"userMessage", "agentMessage", "reasoning"})
 
@@ -63,7 +69,7 @@ _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_CODEX_TURN_TIMEOUT", "
 def _resolve_codex_bin() -> str | None:
     """Locate the codex executable for the SDK to launch.
 
-    An explicit ``OPENSCIENTIST_CODEX_BIN`` wins; otherwise fall back to a
+    An explicit ``OPENSCIENTIST_CODEX_BIN`` wins, otherwise fall back to a
     ``codex`` on ``PATH``. Returns None to let ``CodexConfig`` apply its own
     default (which will raise a clear error if no binary is found), since the
     bundled-binary dependency is intentionally not installed.
@@ -98,6 +104,62 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         super().__init__(config, provider)
         self._codex: AsyncCodex | None = None
         self._thread: AsyncThread | None = None
+
+    backend = AgentBackend.CODEX
+    file_write_tool = "apply_patch"
+
+    @classmethod
+    def prompt_fragments(cls) -> BackendFragments:
+        from openscientist.prompts.codex import CODEX_FRAGMENTS
+
+        return CODEX_FRAGMENTS
+
+    @classmethod
+    def discovery_system_prompt(
+        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+    ) -> str:
+        # Codex reads a single AGENTS.md, so its discovery system prompt is the
+        # full per-job doc (CodexAgent writes it to AGENTS.md from this prompt).
+        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
+
+    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+        from openscientist.agent.skills import write_skills_to_codex_dir
+
+        await write_skills_to_codex_dir(self._config.job_dir)
+
+    # apply_runtime_environment, chat_system_prompt, write_chat_context, and
+    # chat_model_override use the AbstractAgent defaults: codex configures its
+    # child via config.toml (no process-env routing), folds the chat guidance
+    # into the system prompt, writes no chat file, and has no model override.
+
+    @classmethod
+    def provision_host_prelaunch(cls, settings: Settings, job_dir: Path) -> None:
+        """Place the codex CLI auth into the per-job CODEX_HOME so the non-root
+        agent (uid 1001) can read it.
+
+        Mounting the host auth file directly fails on the uid/permission
+        boundary (the host file is mode 600 owned by another user), so we copy
+        it in agent-readable. ``job_dir`` is the runner-local path to the job
+        directory (the same path ``setup.py`` writes into), not the
+        host-translated bind-mount path, so the copy works whether the web
+        server runs on the host or in a container. No-op unless
+        ``codex_auth_host_path`` is set (the API-key path needs no file).
+        """
+        src = settings.provider.codex_auth_host_path
+        if not src:
+            return
+        src_path = Path(src).expanduser()
+        if not src_path.exists():
+            logger.warning("codex_auth_host_path %s does not exist, skipping", src_path)
+            return
+        codex_home = job_dir / ".codex"
+        codex_home.mkdir(parents=True, exist_ok=True)
+        # World-writable so the agent can also write config.toml into CODEX_HOME.
+        codex_home.chmod(0o777)
+        dest = codex_home / "auth.json"
+        shutil.copy2(src_path, dest)
+        dest.chmod(0o644)
+        logger.info("Provisioned codex auth into %s", dest)
 
     def _job_dir(self) -> Path:
         # Absolute: codex resolves a relative CODEX_HOME/cwd against its own
@@ -203,7 +265,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     async def _ensure_thread(self, reset_session: bool) -> AsyncThread:
         """Return a started thread, (re)building it when requested.
 
-        The app-server client persists across iterations; a reset starts a new
+        The app-server client persists across iterations. A reset starts a new
         thread (a fresh conversation) on the same client.
         """
         if reset_session:
@@ -222,13 +284,9 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 # full filesystem/network access and defers sandboxing to the
                 # container, as recommended for externally sandboxed automation.
                 sandbox=Sandbox.full_access,
-                # Headless: no human to approve actions. deny_all maps to
-                # codex's approval policy "never" (no escalation prompts and no
-                # auto-reviewer), so tools run immediately. ApprovalMode
-                # .auto_review instead runs an approval reviewer that has a
-                # deadline and times out in a headless run, failing every tool
-                # call with "automatic permission approval review did not
-                # finish before its deadline".
+                # Headless: no human to approve, so deny_all (codex policy
+                # "never") runs tools immediately. auto_review instead waits on a
+                # reviewer that times out in a headless run and fails every call.
                 approval_mode=ApprovalMode.deny_all,
                 cwd=str(self._job_dir()),
             )
@@ -261,7 +319,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         """Translate the turn's items into transcript entries by reusing the
         ``CODEX`` deserializer.
 
-        The SDK hands us parsed item objects; ``CODEX.deserialize`` consumes the
+        The SDK hands us parsed item objects, but ``CODEX.deserialize`` consumes the
         raw ``item.completed`` event shape, so each item is dumped back to its
         wire dict and wrapped in an envelope. This delegates every mapping to
         the single tested translator.
@@ -282,18 +340,19 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             result = await asyncio.wait_for(thread.run(prompt), timeout=_TURN_TIMEOUT_SECONDS)
         except TimeoutError:
             # Runaway turn (e.g. the model looping on an unsupported tool call).
-            # Cut it and let the loop continue: success=True so the orchestrator
-            # advances (the discovery loop raises on a failed turn), since work
-            # done before the cut is already persisted via the MCP tools. The
-            # report turn is gated on the file existing, not on this flag.
+            # Report it honestly as TIMED_OUT (work done before the cut is already
+            # persisted via the MCP tools); the orchestrator decides whether to
+            # advance or fail, rather than this layer claiming success.
             logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
             await self._close_codex()
-            return IterationResult(success=True, output="", tool_calls=0, transcript=[], error="")
+            return IterationResult(
+                outcome=TurnOutcome.TIMED_OUT, output="", tool_calls=0, transcript=[], error=""
+            )
         except Exception as e:
             logger.error("Codex run failed: %s", e, exc_info=True)
             await self._close_codex()
             return IterationResult(
-                success=False, output="", tool_calls=0, transcript=[], error=str(e)
+                outcome=TurnOutcome.FAILED, output="", tool_calls=0, transcript=[], error=str(e)
             )
 
         if result.usage is not None:
@@ -305,7 +364,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             if item.model_dump(mode="json").get("type") not in _NON_TOOL_ITEM_TYPES
         )
         return IterationResult(
-            success=True,
+            outcome=TurnOutcome.COMPLETED,
             output=result.final_response or "",
             tool_calls=tool_calls,
             transcript=self._to_transcript(result.items),

@@ -6,7 +6,7 @@ Use get_agent() from agent.factory to get the agent for the configured
 provider.
 """
 
-from openscientist.agent.base import IterationResult, TokenUsage
+from openscientist.agent.base import IterationResult, TokenUsage, TurnOutcome
 from openscientist.agent.mcp_specs import (
     HttpMcpServerSpec,
     McpServerSpec,
@@ -19,4 +19,5 @@ __all__ = [
     "McpServerSpec",
     "StdioMcpServerSpec",
     "TokenUsage",
+    "TurnOutcome",
 ]

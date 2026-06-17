@@ -90,7 +90,7 @@ dependencies = [
     # Claude Agent SDK (required – powers the agent execution path)
     "claude-agent-sdk>=0.1.46",
 
-    # Codex SDK (second agent backend; official OpenAI package). The codex
+    # Codex SDK (second agent backend, official OpenAI package). The codex
     # binary is provisioned separately and selected via CodexConfig.codex_bin,
     # so the musl-only openai-codex-cli-bin dependency is dropped below.
     "openai-codex>=0.1.0b2",

@@ -257,6 +257,21 @@ async def send_chat_message(
     return assistant_message
 
 
+# Prior assistant turns can be full report dumps. Replaying them verbatim
+# few-shots the model into dumping again, so cap each history message. Recent
+# intent matters more than verbatim length, and the agent can re-read job files.
+_HISTORY_MAX_CHARS = 800
+
+
+def _truncate_history(content: str) -> str:
+    """Cap a prior chat message so a long assistant report dump does not prime
+    the model to repeat it."""
+    content = content.strip()
+    if len(content) <= _HISTORY_MAX_CHARS:
+        return content
+    return content[:_HISTORY_MAX_CHARS].rstrip() + " [...truncated]"
+
+
 async def _send_message_via_executor(
     session: AsyncSession,
     job_id: UUID,
@@ -272,9 +287,8 @@ async def _send_message_via_executor(
     agent to re-analyze data or search literature when answering follow-ups.
     """
     from openscientist.agent.base import AgentConfig
-    from openscientist.agent.factory import get_agent
+    from openscientist.agent.factory import agent_class_for_provider, build_agent
     from openscientist.providers import get_provider
-    from openscientist.providers.base import ClaudeCompatible
 
     # Get chat history for continuity
     history = await get_chat_history(session, job_id, limit=10)
@@ -297,21 +311,37 @@ Important: You are discussing published research and scientific literature. You 
 
 Be concise, accurate, and cite specific papers or findings when relevant. Focus on what the research literature indicates."""
 
-    # Build prompt with job context and chat history
+    # Prompt structure matters more than wording: findings are framed as
+    # background reference, long prior turns are truncated so an old report dump
+    # does not few-shot a repeat, and the live user message comes LAST.
     prompt_parts = []
 
     job_context = await load_job_context(str(job_id))
     if job_context.strip():
+        prompt_parts.append(
+            "## Background reference for this job\n"
+            "Context from the completed job, for you to draw on when answering. "
+            "Do NOT recite or summarize it unless the user asks. Read "
+            "`final_report.md` if you need full detail."
+        )
         prompt_parts.append(job_context)
         prompt_parts.append("---")
 
     if history:
-        prompt_parts.append("Previous conversation:")
+        prompt_parts.append("## Conversation so far")
         for msg in history:
             role_label = "User" if msg.role == "user" else "Assistant"
-            prompt_parts.append(f"{role_label}: {msg.content}")
+            prompt_parts.append(f"{role_label}: {_truncate_history(msg.content)}")
         prompt_parts.append("---")
-    prompt_parts.append(message)
+
+    prompt_parts.append("## The user's new message (answer THIS, nothing else)")
+    prompt_parts.append(
+        "Respond directly to the message below. If it is not a clear question or "
+        "request, reply briefly and ask what they would like to know. Do not "
+        "summarize the job's findings unless the user explicitly asks for a "
+        "summary."
+    )
+    prompt_parts.append(f"User: {message}")
 
     prompt = "\n".join(prompt_parts)
 
@@ -321,48 +351,20 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
         len(system_prompt),
     )
 
-    # Build the agent the same way discovery does: select the backend by
-    # provider family via the factory and drive it through the shared
-    # AbstractAgent contract. The only backend-specific work is prompt/context
-    # prep below, mirroring discovery's provider-neutral setup.
+    # Backend-specific chat prep flows through the AbstractAgent contract, not
+    # isinstance: the agent class (from the provider) supplies the system prompt
+    # and model override, then the executor applies its own auth and context
+    # setup (no-ops on codex).
     provider = get_provider()
-
-    model_override: str | None = None
-    if isinstance(provider, ClaudeCompatible):
-        # setup_environment() and the .claude/CLAUDE.md chat context are
-        # Claude-family concerns (the method does not exist on CodexCompatible).
-        provider.setup_environment()
-
-        from openscientist.orchestrator.discovery import _write_chat_claude_md
-
-        claude_dir = job_dir / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        _write_chat_claude_md(claude_dir)
-
-        # Allow operators to route chat to a different model than discovery via
-        # the ANTHROPIC_CHAT_MODEL env var. This is the escape hatch when the
-        # discovery model rejects chat-style prompts under Usage Policy
-        # enforcement (e.g. Claude Opus 4.6 on Foundry refuses every chat call).
-        # When unset, chat uses the same model as discovery.
-        from openscientist.settings import get_settings
-
-        provider_settings = get_settings().provider
-        model_override = provider_settings.anthropic_chat_model or provider_settings.model
-    else:
-        # Codex-family providers (e.g. Ollama) read guidance from AGENTS.md,
-        # which CodexAgent writes from the system prompt. Fold the chat-specific
-        # guidance (the same content Claude gets via .claude/CLAUDE.md) into the
-        # system prompt so codex chat behaves identically.
-        from openscientist.orchestrator.discovery import _read_chat_claude_md_template
-
-        system_prompt = f"{system_prompt}\n\n{_read_chat_claude_md_template()}"
-
+    agent_cls = agent_class_for_provider(provider)
     config = AgentConfig(
         job_dir=job_dir,
-        system_prompt=system_prompt,
-        model_override=model_override,
+        system_prompt=agent_cls.chat_system_prompt(system_prompt),
+        model_override=agent_cls.chat_model_override(),
     )
-    executor = get_agent(config)
+    executor = build_agent(config, provider)
+    executor.apply_runtime_environment()
+    executor.write_chat_context()
 
     try:
         result = await executor.run_iteration(prompt, reset_session=True)

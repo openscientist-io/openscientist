@@ -43,11 +43,11 @@ class ProviderSettings(BaseSettings):
 
     # Provider selection
     provider_id: str = Field(
-        default="anthropic",
+        default="",
         alias="OPENSCIENTIST_PROVIDER",
         description=(
             "Provider id (anthropic, cborg, vertex, bedrock, foundry, openai, "
-            "azure-openai, ollama)."
+            "azure-openai, ollama). Required: there is no default provider."
         ),
     )
 
@@ -88,6 +88,15 @@ class ProviderSettings(BaseSettings):
 
     # Model settings
     model: str | None = Field(default=None, alias="OPENSCIENTIST_MODEL")
+    model_context_tokens: int | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_MODEL_CONTEXT_TOKENS",
+        description=(
+            "Override the model's usable context window (tokens) used to budget "
+            "prompt size. When unset, the window is probed (Ollama) or looked up "
+            "for known API models, falling back to a conservative default."
+        ),
+    )
     anthropic_chat_model: str | None = Field(
         default=None,
         alias="ANTHROPIC_CHAT_MODEL",
@@ -256,6 +265,20 @@ class ProviderSettings(BaseSettings):
                     f"Rename the variable in your environment (and .env file) and unset "
                     f"{legacy}. The legacy name is no longer accepted."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def require_provider_selected(self) -> "ProviderSettings":
+        """There is no default provider. An unset ``OPENSCIENTIST_PROVIDER`` is
+        an error so the running configuration is always explicit rather than
+        silently falling back to one vendor.
+        """
+        if not self.provider_id:
+            raise ValueError(
+                "OPENSCIENTIST_PROVIDER is not set and there is no default "
+                "provider. Set OPENSCIENTIST_PROVIDER to one of: anthropic, "
+                "cborg, vertex, bedrock, foundry, openai, azure-openai, ollama."
+            )
         return self
 
     # Per-provider model-name format. Mismatches raise at settings load so

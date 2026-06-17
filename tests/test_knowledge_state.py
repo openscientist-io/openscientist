@@ -508,11 +508,39 @@ class TestSanitizeForJson:
 class TestGetReportOutline:
     """Tests for get_report_outline() — used by the report-writing agent."""
 
-    def test_includes_full_abstracts(self, ks):
-        abstract = "A" * 1000
+    def test_includes_short_abstract_in_full(self, ks):
+        abstract = "A short grounding abstract."
         ks.add_literature("12345678", "My Paper Title", abstract)
         outline = ks.get_report_outline()
         assert abstract in outline
+
+    def test_includes_full_abstract_within_budget(self, ks):
+        # With ample budget, a long abstract is included in full (no truncation).
+        abstract = "A" * 2000
+        ks.add_literature("12345678", "My Paper Title", abstract)
+        outline = ks.get_report_outline(abstract_budget_chars=100_000)
+        assert abstract in outline
+
+    def test_omits_abstracts_past_budget_with_note(self, ks):
+        # A broad literature search must not overflow: abstracts are included in
+        # full until the budget is reached, then the rest are omitted with a note.
+        for i in range(60):
+            ks.add_literature(f"{1000000 + i}", f"Paper {i}", "Z" * 2000)
+        outline = ks.get_report_outline(abstract_budget_chars=8000)
+        abstract_text = "".join(line for line in outline.splitlines() if "Z" in line)
+        # Roughly the budget's worth of abstracts (plus one straddling paper).
+        assert len(abstract_text) < 8000 + 2000 + 200
+        assert "omitted to fit the model context" in outline
+        # Every paper is still listed by title (only abstracts are bounded).
+        assert "Paper 0" in outline and "Paper 59" in outline
+
+    def test_larger_budget_includes_more_abstracts(self, ks):
+        for i in range(60):
+            ks.add_literature(f"{2000000 + i}", f"Paper {i}", "Z" * 2000)
+        small = ks.get_report_outline(abstract_budget_chars=8000).count("Abstract:")
+        large = ks.get_report_outline(abstract_budget_chars=200_000).count("Abstract:")
+        assert large > small
+        assert large == 60  # 200k budget fits all 60 x 2000-char abstracts
 
     def test_includes_literature_titles_and_pmids(self, ks):
         ks.add_literature("99999999", "Some Important Paper", "abstract text")

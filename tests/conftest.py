@@ -46,6 +46,15 @@ if "OPENSCIENTIST_SECRET_KEY" not in os.environ:
     os.environ["OPENSCIENTIST_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
+# There is no default provider, so tests that do not select one explicitly need a
+# valid OPENSCIENTIST_PROVIDER so Settings construction does not raise.
+if "OPENSCIENTIST_PROVIDER" not in os.environ:
+    os.environ["OPENSCIENTIST_PROVIDER"] = "anthropic"
+# Pin the model context window so building report prompts never makes a live
+# Ollama probe during tests (the override path short-circuits Provider.model_profile),
+# keeping the suite hermetic and deterministic.
+if "OPENSCIENTIST_MODEL_CONTEXT_TOKENS" not in os.environ:
+    os.environ["OPENSCIENTIST_MODEL_CONTEXT_TOKENS"] = "131072"
 
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()

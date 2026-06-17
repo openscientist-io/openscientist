@@ -40,12 +40,9 @@ def _make_agent(
         system_prompt="test prompt",
         use_hypotheses=use_hypotheses,
         data_files=tuple(data_files or ()),
-    )
-    return ClaudeCodeAgent(
-        config,
-        provider or _StubProvider(),
         model_override=model_override,
     )
+    return ClaudeCodeAgent(config, provider or _StubProvider())
 
 
 def test_build_options_uses_stdio_spec_for_openscientist_tools(tmp_path: Path) -> None:

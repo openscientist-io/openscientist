@@ -5,18 +5,24 @@ Claude system prompt and ``CLAUDE.md`` are byte-identical to the
 pre-split versions.
 """
 
-from openscientist.prompts.common import BackendFragments, build_job_doc, build_system_prompt
+from openscientist.prompts.common import BackendFragments, build_job_doc
 
 CLAUDE_FRAGMENTS = BackendFragments(
     skills_location="`.claude/skills/`",
     builtin_read_tool="Claude's built-in `Read` tool",
     builtin_read_tool_short="Claude's `Read` tool",
+    search_skills_doc=(
+        "**search_skills** - Search for domain-specific analysis skills\n"
+        "\n"
+        "- `query`: Description of the type of analysis needed\n"
+        "- `add_to_job=False`: Set True to persist the top result to this job's skill set\n"
+        "- Additional skills beyond those in `.claude/skills/` may exist in the database\n"
+        "\n"
+    ),
+    skills_discovery_note=(
+        "Use `search_skills` to discover additional skills in the database beyond those pre-loaded."
+    ),
 )
-
-
-def get_claude_system_prompt() -> str:
-    """System prompt for the Claude Code agent."""
-    return build_system_prompt(CLAUDE_FRAGMENTS)
 
 
 def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:

@@ -54,6 +54,7 @@ from openai_codex import AsyncCodex, CodexConfig
 
 from openscientist.agent.codex_agent import CodexAgent, _resolve_codex_bin
 from openscientist.airgap.env_allowlist import filtered_agent_env
+from openscientist.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -161,3 +162,34 @@ class AirgapCodexAgent(CodexAgent):
         re-enable the host copy.
         """
         logger.debug("Air-gap: skipping ~/.codex/auth.json copy (host-mounted)")
+
+    @classmethod
+    def provision_host_prelaunch(cls, settings: Settings, job_dir: Path) -> None:
+        """Place the codex CLI auth into the per-job air-gap CODEX_HOME.
+
+        Mirrors :meth:`CodexAgent.provision_host_prelaunch` but writes to the
+        air-gap home root (a host path that the runner bind-mounts into the
+        container at the same path) instead of ``job_dir/.codex/``. Keeps
+        the auth file out of the exported artifact tree (RFC §12.2). No-op
+        unless ``codex_auth_host_path`` is set — Ollama is keyless.
+        """
+        import shutil
+
+        src = settings.provider.codex_auth_host_path
+        if not src:
+            return
+        src_path = Path(src).expanduser()
+        if not src_path.exists():
+            logger.warning("codex_auth_host_path %s does not exist, skipping", src_path)
+            return
+        root_env = os.environ.get(_AIRGAP_CODEX_HOME_ROOT_ENV)
+        root = Path(root_env) if root_env else _AIRGAP_CODEX_HOME_ROOT_DEFAULT
+        codex_home = root / job_dir.name
+        codex_home.mkdir(parents=True, exist_ok=True)
+        # World-writable so the agent (uid 1001) can also write config.toml
+        # into CODEX_HOME during the run.
+        codex_home.chmod(0o777)
+        dest = codex_home / "auth.json"
+        shutil.copy2(src_path, dest)
+        dest.chmod(0o644)
+        logger.info("Provisioned codex auth into %s (air-gap CODEX_HOME)", dest)

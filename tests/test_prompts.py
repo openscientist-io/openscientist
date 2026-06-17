@@ -1,36 +1,36 @@
 """Tests for prompts module."""
 
+from openscientist.agent.claude_code_agent import ClaudeCodeAgent
+from openscientist.agent.codex_agent import CodexAgent
 from openscientist.prompts import (
     build_discovery_prompt,
     format_skills_list,
-    generate_job_agents_md,
     generate_job_claude_md,
-    get_system_prompt,
 )
 
 
-class TestGetSystemPrompt:
-    """Tests for system prompt generation."""
+class TestSystemPrompt:
+    """Tests for each backend's system prompt (AbstractAgent.system_prompt)."""
 
     def test_mentions_claude_skills_dir(self):
-        prompt = get_system_prompt()
+        prompt = ClaudeCodeAgent.system_prompt()
         assert ".claude/skills/" in prompt
 
     def test_mentions_execute_code(self):
-        prompt = get_system_prompt()
+        prompt = ClaudeCodeAgent.system_prompt()
         assert "execute_code" in prompt
         assert "search_pubmed" in prompt
 
     def test_mentions_principles(self):
-        prompt = get_system_prompt()
+        prompt = ClaudeCodeAgent.system_prompt()
         assert "effect sizes" in prompt
         assert "Negative results" in prompt
 
-    def test_claude_backend_explicit_matches_default(self):
-        assert get_system_prompt(agent_backend="claude_code") == get_system_prompt()
+    def test_backends_produce_distinct_prompts(self):
+        assert ClaudeCodeAgent.system_prompt() != CodexAgent.system_prompt()
 
     def test_codex_backend_drops_claude_paths(self):
-        prompt = get_system_prompt(agent_backend="codex")
+        prompt = CodexAgent.system_prompt()
         assert ".claude/" not in prompt
         # the shared, backend-agnostic body is still present
         assert "execute_code" in prompt
@@ -46,7 +46,7 @@ class TestBackendJobDocs:
         assert "Claude's built-in `Read` tool" in doc
 
     def test_codex_doc_drops_claude_vocabulary(self):
-        doc = generate_job_agents_md(use_hypotheses=True, phenix_available=True)
+        doc = CodexAgent.job_doc(use_hypotheses=True, phenix_available=True)
         assert ".claude/" not in doc
         assert "Claude's" not in doc
         # shared body intact (a hypothesis tool, a core tool)
@@ -59,7 +59,7 @@ class TestBackendJobDocs:
         guessing host-style paths inside the executor."""
         for doc in (
             generate_job_claude_md(use_hypotheses=False, phenix_available=False),
-            generate_job_agents_md(use_hypotheses=False, phenix_available=False),
+            CodexAgent.job_doc(use_hypotheses=False, phenix_available=False),
         ):
             # The execute_code data-access contract is spelled out.
             assert 'pd.read_csv(data_files[i]["path"])' in doc
@@ -74,17 +74,50 @@ class TestBackendJobDocs:
         plt.show() save pattern the executor captures, not a manual savefig."""
         for doc in (
             generate_job_claude_md(use_hypotheses=False, phenix_available=False),
-            generate_job_agents_md(use_hypotheses=False, phenix_available=False),
+            CodexAgent.job_doc(use_hypotheses=False, phenix_available=False),
         ):
             assert "Visualize every quantitative finding" in doc
             assert "plt.show()" in doc
             assert "do not call `plt.savefig()`" in doc
 
+    def test_codex_doc_has_no_phantom_skills_refs(self):
+        """Codex gets skills via its own ## Skills injection, so the codex prompt
+        must not name the nonexistent search_skills tool or a phantom skills dir.
+        The Claude path keeps search_skills (it has the .claude/skills files)."""
+        for txt in (
+            CodexAgent.job_doc(use_hypotheses=True, phenix_available=True),
+            CodexAgent.system_prompt(),
+        ):
+            assert "search_skills" not in txt
+            assert "skills/` directory provided to you" not in txt
+        assert "search_skills" in generate_job_claude_md(use_hypotheses=True, phenix_available=True)
+
     def test_codex_doc_respects_use_hypotheses_flag(self):
-        with_h = generate_job_agents_md(use_hypotheses=True)
-        without_h = generate_job_agents_md(use_hypotheses=False)
+        with_h = CodexAgent.job_doc(use_hypotheses=True)
+        without_h = CodexAgent.job_doc(use_hypotheses=False)
         assert "add_hypothesis" in with_h
         assert "add_hypothesis" not in without_h
+
+
+class TestRenderChatContext:
+    """The job-chat context must honor backend fragments, sharing the discovery
+    substitution path so the chat agent is never told about tools/paths its
+    backend lacks."""
+
+    def test_claude_chat_context_is_identity(self):
+        from openscientist.prompts.claude import CLAUDE_FRAGMENTS
+        from openscientist.prompts.common import read_chat_template, render_chat_context
+
+        # Claude fragments are identity substitutions: the rendered context is
+        # the packaged template verbatim.
+        assert render_chat_context(CLAUDE_FRAGMENTS) == read_chat_template()
+
+    def test_codex_chat_context_drops_claude_vocabulary(self):
+        ctx = CodexAgent.chat_doc()
+        assert "Claude's" not in ctx
+        assert "`.claude/skills/`" not in ctx
+        # The guidance itself is preserved.
+        assert "execute_code" in ctx
 
 
 class TestBuildDiscoveryPrompt:

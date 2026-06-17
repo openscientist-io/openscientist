@@ -107,10 +107,12 @@ def format_figure_inventory_prompt(cards: list[FigureCard]) -> str:
         "## Available Figures",
         "",
         "The following plots were generated during the investigation. "
-        "You may embed them in the report using the syntax "
-        "`{{figure:filename.png|caption=Your caption here}}`.",
+        "You MUST embed every figure that supports a finding, using the "
+        "syntax `{{figure:filename.png|caption=Your caption here}}`. A report "
+        "that omits available figures is incomplete.",
         "",
-        "Select the most informative plots — aim for ~1 figure per major finding.",
+        "Include a figure for each major finding that has one, placed near the "
+        "text that discusses it.",
         "",
     ]
     for card in cards:

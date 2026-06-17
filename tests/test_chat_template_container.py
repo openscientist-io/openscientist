@@ -16,15 +16,14 @@ _CONTAINER_CHECK_SCRIPT = dedent(
     from importlib import resources
     from pathlib import Path
 
-    from openscientist.orchestrator.discovery import _write_chat_claude_md
+    from openscientist.prompts.common import read_chat_template
 
     template = resources.files("openscientist.templates").joinpath("CHAT_CLAUDE.md")
     claude_dir = Path("/tmp/chat-template-test/.claude")
     claude_dir.mkdir(parents=True, exist_ok=True)
 
-    _write_chat_claude_md(claude_dir)
-
     rendered = claude_dir / "CLAUDE.md"
+    rendered.write_text(read_chat_template(), encoding="utf-8")
     print(
         json.dumps(
             {

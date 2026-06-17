@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from pathlib import Path
 from typing import Any, cast
 
@@ -73,6 +72,7 @@ class JobContainerRunner:
         *,
         job_id: str,
         job_mount: str,
+        run_mode: str = "discovery",
     ) -> dict[str, str]:
         """Build the environment variables for the agent container.
 
@@ -89,6 +89,11 @@ class JobContainerRunner:
             "OPENSCIENTIST_SECRET_KEY": settings.secret_key,
             **provider_env,
         }
+        # Only set the run-mode override when it diverges from the default so
+        # ordinary discovery launches keep a clean env. The entrypoint reads
+        # OPENSCIENTIST_RUN_MODE. "report_only" re-runs just the report phase.
+        if run_mode != "discovery":
+            env["OPENSCIENTIST_RUN_MODE"] = run_mode
         # Forward the per-turn Codex timeout so the agent (CodexAgent reads
         # OPENSCIENTIST_CODEX_TURN_TIMEOUT at import) can be tuned for slow
         # local backends. Without this the agent always uses the 900s default.
@@ -227,6 +232,7 @@ class JobContainerRunner:
         *,
         job_id: str,
         job_dir_host: Path,
+        run_mode: str = "discovery",
     ) -> tuple[
         dict[str, str],
         dict[str, dict[str, str]],
@@ -241,7 +247,7 @@ class JobContainerRunner:
         )
         job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
         env = JobContainerRunner._build_container_environment(
-            settings, job_id=job_id, job_mount=job_mount
+            settings, job_id=job_id, job_mount=job_mount, run_mode=run_mode
         )
         volumes = JobContainerRunner._build_container_volumes(
             settings, job_id=job_id, job_dir_host=job_dir_host, job_mount=job_mount
@@ -256,57 +262,19 @@ class JobContainerRunner:
             return None
         return str(os.stat(socket_path).st_gid)
 
-    @staticmethod
-    def _provision_codex_auth(settings: Settings, job_id: str, job_dir: Path) -> None:
-        """Place the codex CLI auth into the per-job CODEX_HOME.
-
-        Non-airgap mode (default): writes to ``job_dir/.codex/auth.json``
-        — the legacy path the base :class:`CodexAgent` reads as its
-        ``_codex_home()``.
-
-        Airgap mode (RFC §12.2): writes to ``host_codex_home_root/<job_id>/
-        auth.json`` instead, keeping the file out of the exported artifact
-        tree. The host directory is then bind-mounted into the container at
-        the same path so the :class:`AirgapCodexAgent` finds the file at
-        ``_codex_home() / "auth.json"``.
-
-        Mounting the host auth file directly fails on the uid/permission
-        boundary (the host file is mode 600 owned by another user), so we
-        copy it in agent-readable. No-op unless ``codex_auth_host_path`` is
-        set (the API-key path needs no file).
-        """
-        src = settings.provider.codex_auth_host_path
-        if not src:
-            return
-        src_path = Path(src).expanduser()
-        if not src_path.exists():
-            logger.warning("codex_auth_host_path %s does not exist, skipping", src_path)
-            return
-
-        if getattr(getattr(settings, "airgap", None), "enabled", False):
-            host_dir, _ = JobContainerRunner._airgap_codex_home_paths(settings, job_id)
-            codex_home = host_dir
-        else:
-            codex_home = job_dir / ".codex"
-        codex_home.mkdir(parents=True, exist_ok=True)
-        # World-writable so the agent (uid 1001) can also write config.toml
-        # into CODEX_HOME during the run.
-        codex_home.chmod(0o777)
-        dest = codex_home / "auth.json"
-        shutil.copy2(src_path, dest)
-        dest.chmod(0o644)
-        logger.info("Provisioned codex auth into %s", dest)
-
-    def launch(self, job_id: str, job_dir: Path) -> Any:
+    def launch(self, job_id: str, job_dir: Path, *, run_mode: str = "discovery") -> Any:
         """
         Launch an agent container for the given job.
 
         The container runs docker/agent-entrypoint.py which calls
-        run_discovery_async(job_dir).
+        run_discovery_async(job_dir), or regenerate_report_async(job_dir) when
+        run_mode is "report_only".
 
         Args:
             job_id: Job UUID string (used for container name + labels)
             job_dir: Absolute host path to the job directory
+            run_mode: "discovery" (full loop) or "report_only" (report phase
+                only, against the already-persisted findings)
 
         Returns:
             docker.models.containers.Container object
@@ -323,13 +291,20 @@ class JobContainerRunner:
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
         job_dir_resolved = job_dir.resolve()
-        self._provision_codex_auth(settings, job_id, job_dir_resolved)
+        # Host-side, pre-launch prep is the agent backend's own concern. Ask the
+        # backend class for the configured provider (no agent instance here).
+        from openscientist.agent.factory import agent_class_for_provider_id
+
+        agent_class_for_provider_id(settings.provider.provider_id).provision_host_prelaunch(
+            settings, job_dir_resolved
+        )
         job_dir_host = to_host_path(job_dir_resolved, cs)
         env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
             self._build_launch_configuration(
                 settings,
                 job_id=job_id,
                 job_dir_host=job_dir_host,
+                run_mode=run_mode,
             )
         )
         network = self._get_network(agent_network)

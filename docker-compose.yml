@@ -44,7 +44,7 @@ services:
     # adds for agent containers. Harmless for providers that do not use it.
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # All credentials and settings come from .env (ANTHROPIC_API_KEY, CLAUDE_PROVIDER, etc.)
+    # All credentials and settings come from .env (ANTHROPIC_API_KEY, OPENSCIENTIST_PROVIDER, etc.)
     env_file:
       - path: .env
         required: false

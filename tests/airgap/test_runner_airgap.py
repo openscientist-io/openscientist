@@ -172,7 +172,11 @@ class TestEnvFilteringInAirgap:
         assert env["JOB_ID"] == "job-42"
         assert env["JOB_DIR"] == "/agent/jobs/job-42"
 
-    def test_adds_airgap_endpoint_vars(self) -> None:
+    def test_adds_airgap_endpoint_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The runner forwards PUBMED_BASE_URL from os.environ when set
+        # (operator override); for this test we want the derived form, so
+        # ensure nothing in the dev host env leaks in.
+        monkeypatch.delenv("PUBMED_BASE_URL", raising=False)
         settings = _airgap_settings(
             enabled=True,
             provider_id="azure-openai",
@@ -297,51 +301,71 @@ class TestVolumesInAirgap:
         assert "/var/run/docker.sock" in volumes
 
 
-# --------------------------------------------------------- _provision_codex_auth
+# --------------------------------------------------------- provision_host_prelaunch
 
 
 class TestProvisionAuthInAirgap:
     """RFC §12.2: auth.json must land in a host-mounted CODEX_HOME *outside*
-    the job_dir so it does not end up in the exported artifact tree."""
+    the job_dir so it does not end up in the exported artifact tree.
 
-    def test_airgap_writes_to_host_codex_home_root(self, tmp_path: Path) -> None:
+    After the PR #195 merge (2026-06-17), the legacy
+    ``JobContainerRunner._provision_codex_auth`` method was replaced by
+    backend-specific ``provision_host_prelaunch`` classmethods on each
+    agent class. ``AirgapCodexAgent.provision_host_prelaunch`` carries the
+    airgap routing (write to ``OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT/<job_id>/``
+    instead of ``job_dir/.codex/``); ``CodexAgent.provision_host_prelaunch``
+    keeps the legacy job-dir path. The runner just dispatches per-provider
+    (see :func:`JobContainerRunner.launch`).
+    """
+
+    def test_airgap_writes_to_host_codex_home_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from openscientist.airgap.codex_agent import AirgapCodexAgent
+
         src = tmp_path / "host-auth.json"
         src.write_text('{"tokens": {}}')
-        job_dir = tmp_path / "job"
+        job_dir = tmp_path / "job-42"
         job_dir.mkdir()
         codex_root = tmp_path / "codex-home-root"
+        # The airgap CODEX_HOME root is selected via env var (RFC §12.2),
+        # not the settings tree — so the runner doesn't have to know about it.
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT", str(codex_root))
 
-        settings = _airgap_settings(
-            enabled=True,
-            codex_auth_host_path=str(src),
-            codex_home_root=str(codex_root),
-        )
-        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)  # type: ignore[arg-type]
+        settings = _airgap_settings(enabled=True, codex_auth_host_path=str(src))
+        AirgapCodexAgent.provision_host_prelaunch(settings, job_dir)  # type: ignore[arg-type]
 
         # Lands at codex_root/<job_id>/auth.json — NOT in job_dir/.codex.
         assert (codex_root / "job-42" / "auth.json").read_text() == '{"tokens": {}}'
         assert not (job_dir / ".codex").exists()
 
     def test_non_airgap_writes_to_job_dir(self, tmp_path: Path) -> None:
-        # Regression sentinel for the legacy path.
+        # The non-airgap (legacy) CodexAgent classmethod still writes to
+        # job_dir/.codex/. Sentinel against accidental regression of the
+        # plain-codex path while the air-gap override evolves.
+        from openscientist.agent.codex_agent import CodexAgent
+
         src = tmp_path / "host-auth.json"
         src.write_text('{"tokens": {}}')
-        job_dir = tmp_path / "job"
+        job_dir = tmp_path / "job-42"
         job_dir.mkdir()
 
         settings = _airgap_settings(enabled=False, codex_auth_host_path=str(src))
-        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)  # type: ignore[arg-type]
+        CodexAgent.provision_host_prelaunch(settings, job_dir)  # type: ignore[arg-type]
 
         assert (job_dir / ".codex" / "auth.json").read_text() == '{"tokens": {}}'
 
-    def test_airgap_noop_when_source_unset(self, tmp_path: Path) -> None:
-        job_dir = tmp_path / "job"
+    def test_airgap_noop_when_source_unset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from openscientist.airgap.codex_agent import AirgapCodexAgent
+
+        job_dir = tmp_path / "job-42"
         job_dir.mkdir()
         codex_root = tmp_path / "codex-home-root"
-        settings = _airgap_settings(
-            enabled=True, codex_auth_host_path=None, codex_home_root=str(codex_root)
-        )
-        JobContainerRunner._provision_codex_auth(settings, "job-42", job_dir)  # type: ignore[arg-type]
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT", str(codex_root))
+        settings = _airgap_settings(enabled=True, codex_auth_host_path=None)
+        AirgapCodexAgent.provision_host_prelaunch(settings, job_dir)  # type: ignore[arg-type]
         # No auth = no file = no work done. The codex_root dir is not even
         # created (the airgap branch returns before mkdir).
         assert not codex_root.exists()

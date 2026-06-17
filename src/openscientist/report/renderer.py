@@ -15,6 +15,7 @@ import jinja2
 import markdown as md  # type: ignore[import-untyped]
 
 from openscientist.report.md_figure_ext import FigureExtension
+from openscientist.report.processor import isolate_figure_tags
 from openscientist.webapp_components.ui_components import transform_pmid_references
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,9 @@ def render_report_html(
     # 1. Apply PMID badge transforms (before markdown conversion,
     #    since transform_pmid_references works on text/markdown)
     processed = transform_pmid_references(raw_markdown)
+    # 1b. Put inline {{figure:...}} tags on their own line so the block-level
+    #     FigureExtension can convert them (the model often appends them inline).
+    processed = isolate_figure_tags(processed)
 
     # 2. Convert markdown → HTML
     #    FigureExtension handles {{figure:...}} tags and image path resolution

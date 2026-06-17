@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -31,10 +31,20 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
 )
 
-from openscientist.agent.base import AbstractAgent, AgentConfig, IterationResult, TokenUsage
+from openscientist.agent.base import (
+    AbstractAgent,
+    AgentBackend,
+    AgentConfig,
+    IterationResult,
+    TokenUsage,
+    TurnOutcome,
+)
 from openscientist.agent.mcp_specs import StdioMcpServerSpec
 from openscientist.providers.base import ClaudeCompatible
 from openscientist.transcript import CLAUDE
+
+if TYPE_CHECKING:
+    from openscientist.prompts.common import BackendFragments
 
 logger = logging.getLogger(__name__)
 
@@ -113,21 +123,66 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
     kept alive for conversation continuity across iterations.  Pass
     ``reset_session=True`` to disconnect and start a fresh session.
 
-    ``model_override`` lets callers route a single run to a different model
-    than the provider's default (used by in-page chat).
+    ``AgentConfig.model_override`` lets callers route a single run to a
+    different model than the provider's default (used by in-page chat).
     """
 
-    def __init__(
-        self,
-        config: AgentConfig,
-        provider: ClaudeCompatible,
-        *,
-        model_override: str | None = None,
-    ) -> None:
+    def __init__(self, config: AgentConfig, provider: ClaudeCompatible) -> None:
         super().__init__(config, provider)
-        self._model_override = model_override
+        self._model_override = config.model_override
         self._client: ClaudeSDKClient | None = None
         self._stderr_lines: list[str] = []
+
+    backend = AgentBackend.CLAUDE_CODE
+    file_write_tool = "Write"
+
+    @classmethod
+    def prompt_fragments(cls) -> BackendFragments:
+        from openscientist.prompts.claude import CLAUDE_FRAGMENTS
+
+        return CLAUDE_FRAGMENTS
+
+    @classmethod
+    def discovery_system_prompt(
+        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+    ) -> str:
+        # Claude gets the concise system prompt. Its rich CLAUDE.md is written
+        # separately into .claude/ by prepare_job_workspace.
+        return cls.system_prompt()
+
+    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+        from openscientist.agent.skills import write_skills_to_claude_dir
+
+        await write_skills_to_claude_dir(self._config.job_dir, use_hypotheses=use_hypotheses)
+
+    def apply_runtime_environment(self) -> None:
+        # Auth/routing flags for the Claude CLI and the tools subprocess.
+        self._provider.setup_environment()
+
+    @classmethod
+    def chat_system_prompt(cls, base_system_prompt: str) -> str:
+        # Claude reads chat guidance from .claude/CLAUDE.md (written by
+        # write_chat_context), so the system prompt is the base unchanged.
+        return base_system_prompt
+
+    def write_chat_context(self) -> None:
+        # Identity substitution keeps the file content the packaged template.
+        from openscientist.prompts.common import render_chat_context
+
+        claude_dir = self._config.job_dir / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "CLAUDE.md").write_text(
+            render_chat_context(self.prompt_fragments()), encoding="utf-8"
+        )
+
+    @classmethod
+    def chat_model_override(cls) -> str | None:
+        # ANTHROPIC_CHAT_MODEL escape hatch: route chat to a different model
+        # than discovery (e.g. when the discovery model rejects chat prompts).
+        from openscientist.settings import get_settings
+
+        provider_settings = get_settings().provider
+        return provider_settings.anthropic_chat_model or provider_settings.model
 
     @staticmethod
     async def _allow_all_tools(
@@ -325,7 +380,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         self._stderr_lines.clear()
         self._client = None
         return IterationResult(
-            success=False,
+            outcome=TurnOutcome.FAILED,
             output="",
             tool_calls=state.tool_call_count,
             transcript=CLAUDE.deserialize(state.transcript),
@@ -340,7 +395,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             return None
         logger.error("CLI returned API error as output: %s", state.final_output[:500])
         return IterationResult(
-            success=False,
+            outcome=TurnOutcome.FAILED,
             output=state.final_output,
             tool_calls=0,
             transcript=CLAUDE.deserialize(state.transcript),
@@ -359,7 +414,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         logger.error(error_message)
         self._client = None
         return IterationResult(
-            success=False,
+            outcome=TurnOutcome.FAILED,
             output="",
             tool_calls=0,
             transcript=[],
@@ -400,7 +455,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             return silent_crash
 
         return IterationResult(
-            success=True,
+            outcome=TurnOutcome.COMPLETED,
             output=state.final_output,
             tool_calls=state.tool_call_count,
             transcript=CLAUDE.deserialize(state.transcript),

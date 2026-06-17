@@ -20,6 +20,7 @@ from typing import Any
 # Re-export all public names from submodules
 from openscientist.orchestrator.discovery import (
     get_version_metadata,
+    regenerate_report_async,
     run_discovery_async,
 )
 from openscientist.orchestrator.iteration import (
@@ -52,6 +53,7 @@ __all__ = [
     "create_job",
     "get_version_metadata",
     "increment_ks_iteration",
+    "regenerate_report_async",
     "run_discovery",
     "run_discovery_async",
     "update_job_status",

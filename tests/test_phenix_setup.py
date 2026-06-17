@@ -83,6 +83,7 @@ class TestSetupPhenixEnv:
         with patch.dict(
             os.environ,
             {
+                "OPENSCIENTIST_PROVIDER": "anthropic",
                 "OPENSCIENTIST_SECRET_KEY": "test",
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
             },

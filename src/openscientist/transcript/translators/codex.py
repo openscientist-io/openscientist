@@ -2,7 +2,7 @@
 
 Translates the ``ThreadItem`` objects produced by the official ``openai-codex``
 SDK. ``CodexAgent`` dumps each item to its wire dict and wraps it in an
-``item.completed`` envelope (see ``codex_agent._to_transcript``); this module
+``item.completed`` envelope (see ``codex_agent._to_transcript``). This module
 maps those item shapes (discriminated by their camelCase ``type``) to
 :class:`TranscriptEntry` variants. The thread/turn envelope handlers are kept
 for callers that feed a full event stream.
@@ -67,7 +67,7 @@ class _CodexItem(BaseModel):
 
 
 class _UserMessageItem(_CodexItem):
-    """User-supplied prompt. ``content`` is a list of input blocks; the text
+    """User-supplied prompt. ``content`` is a list of input blocks. The text
     blocks carry the prompt."""
 
     type: Literal["userMessage"]

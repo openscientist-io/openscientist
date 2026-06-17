@@ -1,7 +1,7 @@
 """Tests for `CodexAgent` — config/AGENTS.md wiring and the run loop.
 
 The official ``openai-codex`` SDK is mocked (we patch
-``codex_agent.AsyncCodex``), so no codex binary or network is required; the
+``codex_agent.AsyncCodex``), so no codex binary or network is required. The
 tests exercise the agent's own logic: the written ``config.toml``/``AGENTS.md``,
 thread lifecycle, usage mapping, and failure handling.
 """
@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from openai_codex import ApprovalMode, Sandbox
 
-from openscientist.agent.base import AbstractAgent, AgentConfig, TokenUsage
+from openscientist.agent.base import AbstractAgent, AgentConfig, TokenUsage, TurnOutcome
 from openscientist.agent.codex_agent import CodexAgent
 from tests.helpers import StubCodexProvider
 
@@ -39,7 +39,7 @@ class _Provider(StubCodexProvider):
 
 
 class _Item:
-    """Minimal stand-in for an SDK thread item; only ``model_dump`` is used."""
+    """Minimal stand-in for an SDK thread item. Only ``model_dump`` is used."""
 
     def __init__(self, **fields: Any) -> None:
         self._fields = fields
@@ -156,7 +156,10 @@ async def test_run_iteration_cuts_runaway_turn(
     with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
         result = await agent.run_iteration("go")
 
-    assert result.success is True  # job keeps going
+    # A wall-clock cut is reported honestly as TIMED_OUT (not a fake success);
+    # the orchestrator decides whether to advance.
+    assert result.outcome is TurnOutcome.TIMED_OUT
+    assert result.success is False
     assert result.tool_calls == 0
     assert result.transcript == []
     inst.close.assert_awaited()  # runaway turn torn down

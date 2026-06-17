@@ -16,9 +16,10 @@ from uuid import UUID
 
 from nicegui import ui
 
+from openscientist.agent.factory import backend_for_provider_id
 from openscientist.artifact_packager import create_artifacts_zip
 from openscientist.async_tasks import run_sync
-from openscientist.auth import get_current_user_id, require_auth
+from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
 from openscientist.job.types import JobInfo, JobStatus
@@ -27,7 +28,6 @@ from openscientist.job_manager import _db_get_job, _db_get_share_permission
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
-from openscientist.providers import agent_backend_for_provider
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
@@ -136,15 +136,28 @@ def _timeline_border_class(code_count: int, search_count: int, finding_count: in
     return "border-l-4 border-gray-300"
 
 
-def _timeline_header_text(strapline: str, summary_text: str, is_in_progress: bool) -> str:
+def _timeline_header_text(
+    strapline: str,
+    summary_text: str,
+    is_in_progress: bool,
+    has_activity: bool = False,
+) -> str:
     if strapline:
         base_text = strapline
     elif summary_text:
         base_text = summary_text[:80] + "..." if len(summary_text) > 80 else summary_text
     elif is_in_progress:
         return "Investigation in progress..."
+    elif has_activity:
+        # The model did work this iteration (code/searches/findings are shown
+        # below) but never called save_iteration_summary. Make that explicit so
+        # the row is not misread as the iteration having done nothing.
+        return "Activity logged, but no summary recorded"
     else:
-        return "Completed"
+        # No recorded activity and no summary. Say that plainly rather than
+        # "Completed", which misleadingly read as the model declaring the whole
+        # investigation done.
+        return "No activity or summary recorded"
     return f"{base_text} [in progress]" if is_in_progress else base_text
 
 
@@ -499,7 +512,8 @@ def _render_iteration_card(
         if h.get("iteration_proposed") == iteration or h.get("iteration_tested") == iteration
     )
     border_class = _timeline_border_class(code_count, search_count, finding_count)
-    header_text = _timeline_header_text(strapline, summary_text, is_in_progress)
+    has_activity = bool(code_count or search_count or finding_count or hypothesis_count)
+    header_text = _timeline_header_text(strapline, summary_text, is_in_progress, has_activity)
 
     with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
         with expansion.add_slot("header"):
@@ -852,8 +866,6 @@ def _render_job_status_notices(context: _JobDetailContext) -> None:
         _render_ks_loading_notice(context.ks_load_error)
 
 
-_AGENT_DISPLAY = {"codex": "Codex", "claude_code": "Claude Code"}
-
 _PROVIDER_DISPLAY = {
     "anthropic": "Anthropic",
     "cborg": "CBORG",
@@ -906,8 +918,8 @@ def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[A
         badges.append(("Hypotheses", hyp_count, "orange"))
     provider_id = getattr(latest_job, "llm_provider", None)
     if provider_id:
-        backend = agent_backend_for_provider(provider_id)
-        badges.append(("Agent", _AGENT_DISPLAY.get(backend, backend), "indigo"))
+        backend = backend_for_provider_id(provider_id)
+        badges.append(("Agent", backend.display_name, "indigo"))
         badges.append(
             ("Provider", _PROVIDER_DISPLAY.get(provider_id.lower(), provider_id.title()), "teal")
         )
@@ -1149,6 +1161,63 @@ def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None
         ui.notify("Failed to generate PDF. Please try again.", type="negative")
 
 
+def _can_regenerate_report(context: _JobDetailContext) -> bool:
+    """Whether the admin "Regenerate report" control should be shown.
+
+    Admin-only, and only for completed jobs (the report phase reuses the
+    persisted findings, which only exist once the job has finished).
+    """
+    return is_current_user_admin() and context.job_info.status == JobStatus.COMPLETED
+
+
+def _regenerate_report(context: _JobDetailContext) -> None:
+    """Admin action: re-run only the report-generation phase for this job.
+
+    Launches the agent container in report-only mode (the discovery iterations
+    are not re-run; the persisted findings are reused). Overwrites the existing
+    final report, so the caller confirms first.
+    """
+    # Server-side authorization: never rely on the button only being rendered
+    # for admins. is_current_user_admin() reads the auth-time is_admin flag in
+    # app.storage.user (set during authentication, not forgeable by the client
+    # over the websocket), so re-checking it here guards the action itself.
+    if not is_current_user_admin():
+        logger.warning("Non-admin attempt to regenerate report for job %s blocked", context.job_id)
+        ui.notify("You are not authorized to regenerate reports.", type="negative")
+        return
+    try:
+        context.job_manager.regenerate_report(context.job_id)
+    except ValueError as exc:
+        ui.notify(str(exc), type="negative")
+        return
+    except Exception:
+        logger.exception("Failed to start report regeneration for job %s", context.job_id)
+        ui.notify("Failed to start report regeneration. Please try again.", type="negative")
+        return
+    ui.notify("Regenerating report. This page will update when it finishes.", type="positive")
+    ui.navigate.to(f"/job/{context.job_id}")
+
+
+def _confirm_regenerate_report(context: _JobDetailContext) -> None:
+    """Confirm before overwriting the existing report."""
+    with ui.dialog() as dialog, ui.card():
+        ui.label("Regenerate report?").classes("text-lg font-bold")
+        ui.label(
+            "This re-runs only the report-generation step using the existing "
+            "findings and overwrites the current report. The investigation "
+            "iterations are not re-run."
+        ).classes("text-sm text-gray-600")
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat color=grey")
+
+            def _confirm() -> None:
+                dialog.close()
+                _regenerate_report(context)
+
+            ui.button("Regenerate", on_click=_confirm).props("color=primary")
+    dialog.open()
+
+
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
         if pdf_path.exists() or report_path.exists():
@@ -1165,6 +1234,16 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
             on_click=lambda: _download_artifacts_zip(context.job_dir, context.job_id),
             icon="folder_zip",
         ).props("color=accent outline")
+
+        # Admin-only: re-run just the report phase against the persisted
+        # findings. Visible only to admins and only for completed jobs.
+        if _can_regenerate_report(context):
+            with ui.button(
+                "Regenerate Report",
+                on_click=lambda: _confirm_regenerate_report(context),
+                icon="refresh",
+            ).props("color=warning outline"):
+                ui.tooltip("Admin: re-run the report step using existing findings")
 
 
 def _render_report_html_iframe(job_dir: Path) -> None:

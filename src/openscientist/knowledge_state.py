@@ -24,6 +24,13 @@ from openscientist.database.session import AsyncSessionLocal
 
 KS_FILENAME = "knowledge_state.json"
 
+# Bound the literature abstracts dumped into the report-generation prompt.
+# Dumping every abstract has overflowed the model's context window, dropping the
+# tool definitions so the file-write call is never emitted. The caller passes a
+# budget from the model's context window and abstracts fill it until exhausted,
+# the rest omitted with a note. This default applies only when no budget is given.
+_DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS = 8000
+
 
 def _sanitize_for_json(obj: Any) -> Any:
     """Replace NaN/Infinity with None for JSONB compatibility."""
@@ -641,12 +648,24 @@ class KnowledgeState:
         parts.append(consensus_answer)
         parts.append("")
 
-    def get_report_outline(self) -> str:
+    def get_report_outline(self, *, abstract_budget_chars: int | None = None) -> str:
         """Get an outline of accumulated knowledge for the report prompt.
 
         Includes finding titles, hypothesis outcomes, iteration straplines,
-        and literature entries with full abstracts for citation grounding.
+        and literature entries with abstracts for citation grounding.
+
+        Args:
+            abstract_budget_chars: Total character budget for uncited-paper
+                abstracts. Abstracts are included in full until the budget is
+                reached, then omitted with a note. The caller derives this from
+                the model's context window so the prompt cannot overflow it.
+                Defaults to a conservative bound when unset.
         """
+        budget = (
+            abstract_budget_chars
+            if abstract_budget_chars is not None
+            else _DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS
+        )
         parts: list[str] = [
             f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
             "",
@@ -710,14 +729,29 @@ class KnowledgeState:
 
         if self.data["literature"]:
             parts.append(f"## Literature ({len(self.data['literature'])} papers)")
+            abstract_chars_spent = 0
+            abstracts_omitted = 0
             for lit in self.data["literature"]:
                 pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
                 parts.append(f"- **{lit['title']}**{pmid_str}")
-                # Only include abstracts for papers not already cited by findings
+                # Abstracts are a citation-grounding fallback for papers not
+                # already cited by a finding (cited papers carry their snippet).
+                # Include each in full until the budget is reached, then omit the
+                # rest, so a large literature list cannot overflow the context.
                 if str(lit.get("pmid", "")) not in cited_pmids:
                     abstract = lit.get("abstract", "")
-                    if abstract:
-                        parts.append(f"  Abstract: {abstract}")
+                    if not abstract:
+                        continue
+                    if abstract_chars_spent + len(abstract) > budget:
+                        abstracts_omitted += 1
+                        continue
+                    parts.append(f"  Abstract: {abstract}")
+                    abstract_chars_spent += len(abstract)
+            if abstracts_omitted:
+                parts.append(
+                    f"\n_({abstracts_omitted} further abstracts omitted to fit the model "
+                    "context. Cite papers through the findings above, not from titles alone.)_"
+                )
             parts.append("")
 
         # Consensus answer if exists

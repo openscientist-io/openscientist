@@ -80,7 +80,7 @@ COPY src/ ./src/
 
 # Install dependencies including claude-agent-sdk and openai-codex (both listed
 # in pyproject.toml). The official openai-codex bundles its codex binary only as
-# a musl wheel, which is dropped via the uv override in pyproject.toml; the
+# a musl wheel, which is dropped via the uv override in pyproject.toml. The
 # binary is provisioned separately below.
 RUN uv pip install --system -e .
 

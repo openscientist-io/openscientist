@@ -34,6 +34,9 @@ def server_env() -> Callable[..., dict[str, str]]:
         env = {k: v for k, v in os.environ.items() if not k.startswith("OPENSCIENTIST_")}
         env["OPENSCIENTIST_JOB_ID"] = "test-job-001"
         env["OPENSCIENTIST_JOB_DIR"] = str(job_dir)
+        # Provider has no default, so the subprocess must be given one explicitly
+        # (CI has no .env to fall back on). These tools never call the LLM.
+        env["OPENSCIENTIST_PROVIDER"] = "anthropic"
         for key, value in overrides.items():
             if value == "":
                 env.pop(key, None)

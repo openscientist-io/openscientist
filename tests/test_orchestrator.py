@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 
+from openscientist.agent.base import TurnOutcome
 from openscientist.orchestrator import (
     get_version_metadata,
     increment_ks_iteration,
@@ -244,10 +245,12 @@ class TestDiscoveryCancellationAndFailure:
         mock_executor = MagicMock()
         mock_executor.total_tokens = TokenUsage()
         mock_executor.shutdown = AsyncMock()
+        mock_executor.prepare_job_workspace = AsyncMock()
+        mock_executor.warm_model_profile = AsyncMock()
         mock_executor.run_iteration = AsyncMock(
             side_effect=[
                 IterationResult(
-                    success=True,
+                    outcome=TurnOutcome.COMPLETED,
                     output="iteration 1 complete",
                     tool_calls=0,
                     transcript=[],
@@ -265,10 +268,6 @@ class TestDiscoveryCancellationAndFailure:
                 return_value=runtime,
             ),
             patch("openscientist.orchestrator.discovery.get_provider", return_value=mock_provider),
-            patch(
-                "openscientist.orchestrator.discovery._write_skills_to_claude_dir",
-                new_callable=AsyncMock,
-            ),
             patch(
                 "openscientist.orchestrator.discovery._build_agent_executor",
                 return_value=mock_executor,
@@ -328,16 +327,18 @@ class TestDiscoveryCancellationAndFailure:
         mock_executor = MagicMock()
         mock_executor.total_tokens = TokenUsage()
         mock_executor.shutdown = AsyncMock()
+        mock_executor.prepare_job_workspace = AsyncMock()
+        mock_executor.warm_model_profile = AsyncMock()
         mock_executor.run_iteration = AsyncMock(
             side_effect=[
                 IterationResult(
-                    success=True,
+                    outcome=TurnOutcome.COMPLETED,
                     output="iteration 1 complete",
                     tool_calls=0,
                     transcript=[],
                 ),
                 IterationResult(
-                    success=False,
+                    outcome=TurnOutcome.FAILED,
                     output="",
                     tool_calls=0,
                     transcript=[],
@@ -355,10 +356,6 @@ class TestDiscoveryCancellationAndFailure:
                 return_value=runtime,
             ),
             patch("openscientist.orchestrator.discovery.get_provider", return_value=mock_provider),
-            patch(
-                "openscientist.orchestrator.discovery._write_skills_to_claude_dir",
-                new_callable=AsyncMock,
-            ),
             patch(
                 "openscientist.orchestrator.discovery._build_agent_executor",
                 return_value=mock_executor,
@@ -460,7 +457,7 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_writes_skill_files(self, tmp_path):
-        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.agent.skills import write_skills_to_claude_dir
 
         skill = self._make_skill(
             name="Hypothesis Generation",
@@ -471,9 +468,9 @@ class TestWriteSkillsToClaudeDir:
         )
 
         with (
-            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.agent.skills.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.agent.skills.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = [skill]
@@ -482,7 +479,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path)
+            await write_skills_to_claude_dir(tmp_path)
 
         skills_dir = tmp_path / ".claude" / "skills"
         assert skills_dir.is_dir()
@@ -496,12 +493,12 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_no_skills_does_not_create_skills_dir(self, tmp_path):
-        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.agent.skills import write_skills_to_claude_dir
 
         with (
-            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.agent.skills.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.agent.skills.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = []
@@ -510,7 +507,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path)
+            await write_skills_to_claude_dir(tmp_path)
 
         # .claude/ dir and CLAUDE.md are always written; skills/ subdir is not
         assert (tmp_path / ".claude" / "CLAUDE.md").exists()
@@ -518,7 +515,7 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_skill_without_description(self, tmp_path):
-        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.agent.skills import write_skills_to_claude_dir
 
         skill = self._make_skill(
             name="Stopping Criteria",
@@ -529,9 +526,9 @@ class TestWriteSkillsToClaudeDir:
         )
 
         with (
-            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.agent.skills.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.agent.skills.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = [skill]
@@ -540,7 +537,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path)
+            await write_skills_to_claude_dir(tmp_path)
 
         md_file = tmp_path / ".claude" / "skills" / "workflow--stopping-criteria.md"
         assert md_file.exists()
@@ -550,12 +547,12 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_always_writes_job_claude_md(self, tmp_path):
-        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.agent.skills import write_skills_to_claude_dir
 
         with (
-            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.agent.skills.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.agent.skills.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = []
@@ -564,7 +561,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path)
+            await write_skills_to_claude_dir(tmp_path)
 
         claude_md = tmp_path / ".claude" / "CLAUDE.md"
         assert claude_md.exists()
@@ -574,7 +571,7 @@ class TestWriteSkillsToClaudeDir:
 
     @pytest.mark.asyncio
     async def test_writes_multiple_skill_files(self, tmp_path):
-        from openscientist.orchestrator.discovery import _write_skills_to_claude_dir
+        from openscientist.agent.skills import write_skills_to_claude_dir
 
         skills = [
             self._make_skill(name="Skill A", category="cat1", slug="skill-a", content="Content A"),
@@ -582,9 +579,9 @@ class TestWriteSkillsToClaudeDir:
         ]
 
         with (
-            patch("openscientist.orchestrator.discovery.AsyncSessionLocal") as mock_session_cls,
+            patch("openscientist.agent.skills.AsyncSessionLocal") as mock_session_cls,
             patch(
-                "openscientist.orchestrator.discovery.get_enabled_skills", new_callable=AsyncMock
+                "openscientist.agent.skills.get_enabled_skills", new_callable=AsyncMock
             ) as mock_get_skills,
         ):
             mock_get_skills.return_value = skills
@@ -593,7 +590,7 @@ class TestWriteSkillsToClaudeDir:
             mock_cm.__aexit__ = AsyncMock(return_value=False)
             mock_session_cls.return_value = mock_cm
 
-            await _write_skills_to_claude_dir(tmp_path)
+            await write_skills_to_claude_dir(tmp_path)
 
         skills_dir = tmp_path / ".claude" / "skills"
         assert len(list(skills_dir.glob("*.md"))) == 2
@@ -738,7 +735,7 @@ class TestBuildReportPrompt:
         ks.add_iteration_summary(1, "Explored data", strapline="Data exploration")
         ks.add_iteration_summary(2, "Tested hypothesis A", strapline="Hypothesis A test")
 
-        prompt = build_report_prompt("What causes X?", ks)
+        prompt = build_report_prompt("What causes X?", ks, context_window_tokens=131072)
 
         # All 5 finding TITLES should appear (outline omits evidence strings)
         for i in range(5):
@@ -765,7 +762,7 @@ class TestBuildReportPrompt:
         ks.add_literature(
             "12345678", "A Relevant Paper", "This study demonstrates that X causes Y."
         )
-        prompt = build_report_prompt("What causes X?", ks)
+        prompt = build_report_prompt("What causes X?", ks, context_window_tokens=131072)
 
         # Abstract should flow through to the report prompt for citation grounding
         assert "This study demonstrates that X causes Y." in prompt
@@ -776,15 +773,35 @@ class TestBuildReportPrompt:
         from openscientist.orchestrator.iteration import build_report_prompt
 
         ks = KnowledgeState("j1", "What causes X?", 10)
-        prompt = build_report_prompt("What causes X?", ks)
+        prompt = build_report_prompt("What causes X?", ks, context_window_tokens=131072)
         assert "do not infer paper content from titles alone" in prompt
+
+    def test_report_prompt_names_the_file_write_tool(self):
+        # The model must be told exactly which tool to call, not "your
+        # file-writing tool", so it invokes it instead of printing the call.
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import (
+            build_report_prompt,
+            build_report_retry_prompt,
+        )
+
+        ks = KnowledgeState("j1", "What causes X?", 10)
+        prompt = build_report_prompt(
+            "What causes X?", ks, file_write_tool="apply_patch", context_window_tokens=131072
+        )
+        assert "`apply_patch`" in prompt
+        assert "your file-writing tool" not in prompt
+        retry = build_report_retry_prompt(
+            "What causes X?", ks, file_write_tool="apply_patch", context_window_tokens=131072
+        )
+        assert "`apply_patch`" in retry
 
     def test_report_prompt_has_citation_snippet_instruction(self):
         from openscientist.knowledge_state import KnowledgeState
         from openscientist.orchestrator.iteration import build_report_prompt
 
         ks = KnowledgeState("j1", "What causes X?", 10)
-        prompt = build_report_prompt("What causes X?", ks)
+        prompt = build_report_prompt("What causes X?", ks, context_window_tokens=131072)
         assert "use the provided citation snippets" in prompt
 
     def test_report_prompt_includes_finding_citations(self):
@@ -804,7 +821,7 @@ class TestBuildReportPrompt:
                 }
             ],
         )
-        prompt = build_report_prompt("What causes X?", ks)
+        prompt = build_report_prompt("What causes X?", ks, context_window_tokens=131072)
         assert "PMID:99999999" in prompt
         assert "significant correlation was found" in prompt
 
@@ -817,6 +834,7 @@ class TestBuildReportPrompt:
             "What causes X?",
             ks,
             description="Emphasize validated clinical endpoints.",
+            context_window_tokens=131072,
         )
         assert "Additional job context" in prompt
         assert "Emphasize validated clinical endpoints." in prompt
@@ -870,51 +888,21 @@ class TestAppendLog:
         assert "Iteration 2" in content
 
 
-# ─── _write_chat_claude_md ────────────────────────────────────────────
+# ─── packaged chat template ───────────────────────────────────────────
 
 
-class TestWriteChatClaudeMd:
-    """Tests for _write_chat_claude_md()."""
+class TestChatTemplate:
+    """The packaged CHAT_CLAUDE.md must match the repo copy so the in-image
+    template stays in sync with the source of truth. (Writing the chat context
+    is the agent's job, exercised in tests/test_job_chat.py.)"""
 
     def test_packaged_template_matches_repo_copy(self):
-        from openscientist.orchestrator.discovery import _read_chat_claude_md_template
+        from openscientist.prompts.common import read_chat_template
 
         repo_copy = (Path(__file__).resolve().parents[1] / "CHAT_CLAUDE.md").read_text(
             encoding="utf-8"
         )
-        assert _read_chat_claude_md_template() == repo_copy
-
-    def test_writes_chat_claude_md(self, tmp_path):
-        from openscientist.orchestrator.discovery import _write_chat_claude_md
-
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-
-        with patch(
-            "openscientist.orchestrator.discovery._read_chat_claude_md_template",
-            return_value="# Chat Claude\nInstructions here",
-        ):
-            _write_chat_claude_md(claude_dir)
-
-        dest = claude_dir / "CLAUDE.md"
-        assert dest.exists()
-        content = dest.read_text(encoding="utf-8")
-        assert "Chat Claude" in content
-
-    def test_missing_source_no_crash(self, tmp_path, caplog):
-        from openscientist.orchestrator.discovery import _write_chat_claude_md
-
-        claude_dir = tmp_path / ".claude"
-        claude_dir.mkdir()
-
-        with patch(
-            "openscientist.orchestrator.discovery._read_chat_claude_md_template",
-            side_effect=FileNotFoundError("missing packaged template"),
-        ):
-            _write_chat_claude_md(claude_dir)
-
-        assert not (claude_dir / "CLAUDE.md").exists()
-        assert "Failed to write chat CLAUDE.md" in caplog.text
+        assert read_chat_template() == repo_copy
 
 
 # ─── build_initial_prompt ──────────────────────────────────────────────
@@ -960,6 +948,19 @@ class TestBuildInitialPrompt:
         assert "Additional job context" in prompt
         assert "Prioritize longitudinal cohort evidence." in prompt
 
+    def test_frames_set_status_as_not_progress(self):
+        # The model used to stall after the "REQUIRED first call set_status"
+        # framing. The prompt must now make clear a status is not progress and
+        # the iteration is not complete without real analysis.
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_initial_prompt
+
+        ks = KnowledgeState("j1", "Why X?", 10)
+        prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks)
+        assert "not progress" in prompt
+        assert "not complete until" in prompt
+        assert "your very first tool call must be set_status" not in prompt.lower()
+
 
 # ─── build_iteration_prompt ────────────────────────────────────────────
 
@@ -999,22 +1000,81 @@ class TestBuildIterationPrompt:
         assert "Additional job context" in prompt
         assert "Stay focused on the uploaded assay design." in prompt
 
+    def test_forbids_status_only_turns(self):
+        # Directly counters the observed "narrate intent then stall" failure:
+        # a turn that only sets a status must be called out as a wasted iteration.
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import build_iteration_prompt
+
+        ks = KnowledgeState("j1", "Q?", 10)
+        prompt = build_iteration_prompt(3, 10, ks)
+        assert "not progress" in prompt
+        assert "wastes the iteration" in prompt
+        assert "not complete until" in prompt
+
+    def test_does_not_tell_model_to_label_summaries_with_iteration_number(self):
+        # Regression: instructing the model to call its summary "Iteration N"
+        # made gpt-oss:20b prefix every strapline, which the UI then duplicated
+        # as "Iteration N: Iteration N: ...". The number is added by the system.
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import (
+            build_initial_prompt,
+            build_iteration_prompt,
+        )
+
+        ks = KnowledgeState("j1", "Q?", 10)
+        for prompt in (
+            build_iteration_prompt(3, 10, ks),
+            build_initial_prompt("Q?", 10, [], ks),
+        ):
+            assert "in summaries" not in prompt
+            assert "Refer to" not in prompt
+
 
 class TestReportGenerationPhase:
     """Report and consensus turns, each with bounded retries (the model writes
-    each deliverable itself; the job fails honestly only if attempts run out)."""
+    each deliverable itself, and the job fails honestly only if attempts run out)."""
 
     def test_prompts_are_focused(self):
         from openscientist.orchestrator.iteration import (
             build_consensus_prompt,
             build_consensus_retry_prompt,
-            build_report_retry_prompt,
         )
 
         assert "set_consensus_answer" in build_consensus_prompt("Does X cause Y?")
         assert "Does X cause Y?" in build_consensus_prompt("Does X cause Y?")
         assert "set_consensus_answer" in build_consensus_retry_prompt("Does X cause Y?")
-        assert "/jobs/x/final_report.md" in build_report_retry_prompt("/jobs/x/final_report.md")
+
+    def test_report_retry_prompt_is_self_contained(self, tmp_path: Path):
+        """The retry must restate the whole task, not just remind the model to
+        write a file. A weak model re-anchors on the last instruction, so the
+        retry has to carry the findings outline, the required structure, and the
+        exact path -- everything the first attempt had -- plus a correction that
+        rejects describing the report instead of writing it."""
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import (
+            build_report_prompt,
+            build_report_retry_prompt,
+        )
+
+        ks = KnowledgeState("j", "What causes X?", 3)
+        retry = build_report_retry_prompt(
+            "What causes X?", ks, job_dir=tmp_path, context_window_tokens=131072
+        )
+        base = build_report_prompt(
+            "What causes X?", ks, job_dir=tmp_path, context_window_tokens=131072
+        )
+
+        # The exact write path and the research question both survive.
+        report_path = str(tmp_path.resolve() / "final_report.md")
+        assert report_path in retry
+        assert "What causes X?" in retry
+        # The retry embeds the full self-contained spec verbatim ...
+        assert base in retry
+        # ... behind a correction that names the failure mode (printed/described
+        # instead of written) so the model does not repeat it.
+        assert retry.index("That output is rejected") < retry.index(base)
+        assert "describe" in retry.lower()
 
     @staticmethod
     def _executor(record: list) -> SimpleNamespace:
@@ -1022,9 +1082,15 @@ class TestReportGenerationPhase:
 
         async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
             record.append((prompt, reset_session))
-            return IterationResult(success=True, output="", tool_calls=0, transcript=[])
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
+            )
 
-        return SimpleNamespace(run_iteration=fake_run)
+        return SimpleNamespace(
+            run_iteration=fake_run,
+            file_write_tool="Write",
+            model_profile=SimpleNamespace(context_window_tokens=131072),
+        )
 
     @pytest.mark.asyncio
     async def test_report_turn_succeeds_first_attempt(self, tmp_path: Path):
@@ -1045,7 +1111,7 @@ class TestReportGenerationPhase:
                 None,
             )
         assert ok is True
-        assert calls == [("FULL", True)]  # one attempt, fresh session
+        assert calls == [("FULL", False)]  # one attempt, continues the session
 
     @pytest.mark.asyncio
     async def test_report_turn_retries_until_written(self, tmp_path: Path):
@@ -1067,8 +1133,8 @@ class TestReportGenerationPhase:
                 None,
             )
         assert ok is True
-        # First the full prompt (fresh), then a focused retry in the same session.
-        assert calls == [("FULL", True), ("RETRY", False)]
+        # The full prompt, then a focused retry, both continue the same session.
+        assert calls == [("FULL", False), ("RETRY", False)]
 
     @pytest.mark.asyncio
     async def test_report_turn_gives_up_after_max(self, tmp_path: Path):
@@ -1105,16 +1171,78 @@ class TestReportGenerationPhase:
             calls.append(prompt)
             if len(calls) == 2:  # model records it on the second attempt
                 ks.data["consensus_answer"] = "A"
-            return IterationResult(success=True, output="", tool_calls=0, transcript=[])
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
+            )
 
         with patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks):
             await discovery._set_consensus_answer(
-                SimpleNamespace(run_iteration=fake_run),  # type: ignore[arg-type]
+                SimpleNamespace(
+                    run_iteration=fake_run,
+                    file_write_tool="Write",
+                    model_profile=SimpleNamespace(context_window_tokens=131072),
+                ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
             )
         assert ks.data["consensus_answer"] == "A"
         assert len(calls) == 2  # first attempt + one retry
+
+    @pytest.mark.asyncio
+    async def test_consensus_rejects_stale_baseline(self, tmp_path: Path):
+        # On regeneration the KS already holds the prior run's consensus. A turn
+        # that does not write a new one must NOT be accepted as fresh, so the
+        # model is re-asked until attempts run out (the stale value is never
+        # mistaken for this turn's output).
+        from openscientist.agent.base import IterationResult
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        ks.data["consensus_answer"] = "STALE from a prior run"
+        calls: list[str] = []
+
+        async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            calls.append(prompt)  # never writes a new consensus
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
+            )
+
+        with patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks):
+            await discovery._set_consensus_answer(
+                SimpleNamespace(run_iteration=fake_run, file_write_tool="Write"),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+            )
+        # Re-asked the full budget; the stale value was never accepted as fresh.
+        assert len(calls) == discovery._MAX_CONSENSUS_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_consensus_accepts_a_freshly_changed_answer_over_baseline(self, tmp_path: Path):
+        from openscientist.agent.base import IterationResult
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        ks.data["consensus_answer"] = "OLD"
+        calls: list[str] = []
+
+        async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            calls.append(prompt)
+            if len(calls) == 2:  # model writes a NEW consensus on the second attempt
+                ks.data["consensus_answer"] = "NEW"
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
+            )
+
+        with patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks):
+            await discovery._set_consensus_answer(
+                SimpleNamespace(run_iteration=fake_run, file_write_tool="Write"),  # type: ignore[arg-type]
+                tmp_path,
+                "Q?",
+            )
+        assert ks.data["consensus_answer"] == "NEW"
+        assert len(calls) == 2
 
     @pytest.mark.asyncio
     async def test_phase_happy_path(self, tmp_path: Path):
@@ -1126,7 +1254,9 @@ class TestReportGenerationPhase:
         ks.data["consensus_answer"] = "A"
 
         async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
-            return IterationResult(success=True, output="", tool_calls=0, transcript=[])
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
+            )
 
         with (
             patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks),
@@ -1136,7 +1266,11 @@ class TestReportGenerationPhase:
             patch.object(discovery, "_try_generate_report_pdf", new=AsyncMock()) as pdf,
         ):
             outcome = await discovery._run_report_generation_phase(
-                SimpleNamespace(run_iteration=fake_run),  # type: ignore[arg-type]
+                SimpleNamespace(
+                    run_iteration=fake_run,
+                    file_write_tool="Write",
+                    model_profile=SimpleNamespace(context_window_tokens=131072),
+                ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
             )
@@ -1154,7 +1288,9 @@ class TestReportGenerationPhase:
 
         async def fake_run(prompt: str, *, reset_session: bool = False) -> IterationResult:
             calls.append(prompt)
-            return IterationResult(success=False, output="", tool_calls=0, transcript=[], error="x")
+            return IterationResult(
+                outcome=TurnOutcome.FAILED, output="", tool_calls=0, transcript=[], error="x"
+            )
 
         with (
             patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks),
@@ -1164,10 +1300,307 @@ class TestReportGenerationPhase:
             patch.object(discovery, "_ensure_report_written", return_value=False),
         ):
             outcome = await discovery._run_report_generation_phase(
-                SimpleNamespace(run_iteration=fake_run),  # type: ignore[arg-type]
+                SimpleNamespace(
+                    run_iteration=fake_run,
+                    file_write_tool="Write",
+                    model_profile=SimpleNamespace(context_window_tokens=131072),
+                ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
             )
         assert outcome.success is False
-        # Report attempted _MAX times; the consensus turn is never reached.
+        # Report attempted _MAX times, so the consensus turn is never reached.
         assert len(calls) == discovery._MAX_REPORT_ATTEMPTS
+
+
+class TestRegenerateReportAsync:
+    """The admin report-only re-run reuses persisted findings and must NOT
+    re-run the discovery iterations."""
+
+    @staticmethod
+    def _runtime() -> dict[str, Any]:
+        return {
+            "job_id": "j",
+            "research_question": "Q?",
+            "description": "ctx",
+            "use_hypotheses": False,
+            "data_files": [],
+            "max_iterations": 3,
+            "investigation_mode": "autonomous",
+        }
+
+    @pytest.mark.asyncio
+    async def test_skips_discovery_loop_and_runs_report(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator import discovery
+
+        ks = KnowledgeState("j", "Q?", 3)
+        executor = SimpleNamespace()
+        report_phase = AsyncMock(return_value=discovery._ReportOutcome(success=True, error=""))
+
+        with (
+            patch.object(
+                discovery, "_load_runtime_context", new=AsyncMock(return_value=self._runtime())
+            ),
+            patch.object(
+                discovery, "_build_and_prepare_executor", new=AsyncMock(return_value=executor)
+            ),
+            patch.object(discovery, "_run_primary_discovery_loop", new=AsyncMock()) as loop,
+            patch.object(discovery, "_run_report_generation_phase", new=report_phase),
+            patch.object(
+                discovery, "_persist_final_status", new=AsyncMock(return_value="completed")
+            ),
+            patch.object(discovery, "_finalize_executor", new=AsyncMock()) as finalize,
+            patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks),
+        ):
+            result = await discovery.regenerate_report_async(tmp_path)
+
+        # The discovery iterations are never re-run, only the report phase runs.
+        loop.assert_not_awaited()
+        report_phase.assert_awaited_once()
+        # The executor is always finalized (cost record + shutdown).
+        finalize.assert_awaited_once()
+        assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_failure_marks_job_failed_and_finalizes(self, tmp_path: Path):
+        from openscientist.orchestrator import discovery
+
+        executor = SimpleNamespace()
+
+        with (
+            patch.object(
+                discovery, "_load_runtime_context", new=AsyncMock(return_value=self._runtime())
+            ),
+            patch.object(
+                discovery, "_build_and_prepare_executor", new=AsyncMock(return_value=executor)
+            ),
+            patch.object(
+                discovery,
+                "_run_report_generation_phase",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+            patch.object(discovery, "update_job_status", new=AsyncMock()) as update_status,
+            patch.object(discovery, "_finalize_executor", new=AsyncMock()) as finalize,
+            patch.object(
+                discovery.KnowledgeState,
+                "load_from_database_sync",
+                side_effect=Exception("no ks"),
+            ),
+        ):
+            result = await discovery.regenerate_report_async(tmp_path)
+
+        assert result["status"] == "failed"
+        update_status.assert_awaited()  # job marked failed
+        finalize.assert_awaited_once()  # executor still cleaned up
+
+
+class TestEnsureReportWritten:
+    """Freshness check: a stale report from a prior run must not be mistaken
+    for fresh output (the bug that made report regeneration a silent no-op)."""
+
+    @staticmethod
+    def _result():
+        from openscientist.agent.base import IterationResult
+
+        return IterationResult(
+            outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
+        )
+
+    def test_missing_file_is_not_written(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _ensure_report_written
+
+        assert _ensure_report_written(tmp_path / "final_report.md", self._result()) is False
+
+    def test_existing_file_no_baseline_is_written(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _ensure_report_written
+
+        report = tmp_path / "final_report.md"
+        report.write_text("content")
+        # No baseline (fresh job): existence is sufficient.
+        assert _ensure_report_written(report, self._result()) is True
+
+    def test_stale_file_unchanged_since_baseline_is_not_written(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _ensure_report_written
+
+        report = tmp_path / "final_report.md"
+        report.write_text("stale report from a previous run")
+        baseline = report.stat().st_mtime_ns
+        # The model claimed success but never rewrote the file: mtime == baseline.
+        assert _ensure_report_written(report, self._result(), baseline_mtime_ns=baseline) is False
+
+    def test_freshly_rewritten_file_is_written(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _ensure_report_written
+
+        report = tmp_path / "final_report.md"
+        report.write_text("stale")
+        baseline = report.stat().st_mtime_ns - 1_000_000  # report is now strictly newer
+        assert _ensure_report_written(report, self._result(), baseline_mtime_ns=baseline) is True
+
+    def test_nested_fresh_report_is_moved_into_place(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _ensure_report_written
+
+        report = tmp_path / "final_report.md"
+        nested = tmp_path / "sub" / "final_report.md"
+        nested.parent.mkdir()
+        nested.write_text("agent nested it here")
+        # No stale top-level file and no baseline: the nested file is recovered.
+        assert _ensure_report_written(report, self._result()) is True
+        assert report.exists() and report.read_text() == "agent nested it here"
+
+
+class TestReportAbstractBudget:
+    """The literature budget must scale with the model's context window."""
+
+    def test_budget_scales_with_context_and_has_a_floor(self):
+        from openscientist.orchestrator.iteration import (
+            _REPORT_PROMPT_CHARS_PER_TOKEN,
+            _REPORT_PROMPT_MIN_ABSTRACT_CHARS,
+            _REPORT_PROMPT_RESERVE_TOKENS,
+            _report_abstract_budget_chars,
+        )
+
+        big = _report_abstract_budget_chars(131072)
+        small = _report_abstract_budget_chars(16384)
+        assert big > small
+        assert big == int((131072 - _REPORT_PROMPT_RESERVE_TOKENS) * _REPORT_PROMPT_CHARS_PER_TOKEN)
+        # A context smaller than the reserve clamps to the floor, never negative.
+        assert _report_abstract_budget_chars(1000) == _REPORT_PROMPT_MIN_ABSTRACT_CHARS
+
+
+class TestRunReportTurnIntegration:
+    """Exercise _run_report_turn against a real file on disk: freshness check,
+    retries, and the file_write_tool passthrough, mocking only the LLM turn."""
+
+    @staticmethod
+    def _executor(job_dir: Path, write_on: set[int]) -> SimpleNamespace:
+        from openscientist.agent.base import IterationResult
+
+        calls = {"n": 0}
+
+        async def run(prompt: str, *, reset_session: bool = False) -> IterationResult:
+            calls["n"] += 1
+            if calls["n"] in write_on:
+                (job_dir / "final_report.md").write_text(
+                    "# Final Report\n\n" + "body " * 60, encoding="utf-8"
+                )
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED,
+                output="printed, not written",
+                tool_calls=1,
+                transcript=[],
+            )
+
+        return SimpleNamespace(
+            run_iteration=run,
+            file_write_tool="Write",
+            calls=calls,
+            model_profile=SimpleNamespace(context_window_tokens=131072),
+        )
+
+    @pytest.mark.asyncio
+    async def test_succeeds_when_model_writes_on_first_attempt(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.discovery import _run_report_turn
+
+        ex = self._executor(tmp_path, {1})
+        _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
+        assert ok is True
+        assert ex.calls["n"] == 1
+        assert (tmp_path / "final_report.md").read_text().startswith("# Final Report")
+
+    @pytest.mark.asyncio
+    async def test_recovers_when_model_writes_on_retry(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.discovery import _run_report_turn
+
+        ex = self._executor(tmp_path, {2})  # writes only on the second attempt
+        _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
+        assert ok is True
+        assert ex.calls["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_fails_when_file_never_written(self, tmp_path: Path):
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.discovery import _MAX_REPORT_ATTEMPTS, _run_report_turn
+
+        ex = self._executor(tmp_path, set())  # never writes
+        _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
+        assert ok is False
+        assert ex.calls["n"] == _MAX_REPORT_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_stale_report_is_not_accepted(self, tmp_path: Path):
+        # A leftover report from a prior run must not pass as this turn's output.
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.discovery import _run_report_turn
+
+        (tmp_path / "final_report.md").write_text("stale prior report", encoding="utf-8")
+        ex = self._executor(tmp_path, set())  # model never writes a fresh one
+        _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
+        assert ok is False
+
+
+class TestTurnOutcomePolicy:
+    """The discovery loop interprets a turn's outcome: FAILED aborts the run,
+    TIMED_OUT advances but is recorded, COMPLETED proceeds."""
+
+    @staticmethod
+    def _result(outcome: TurnOutcome, tool_calls: int = 0):
+        from openscientist.agent.base import IterationResult
+
+        return IterationResult(
+            outcome=outcome,
+            output="",
+            tool_calls=tool_calls,
+            transcript=[],
+            error="boom" if outcome is TurnOutcome.FAILED else "",
+        )
+
+    def test_failed_turn_aborts_the_run(self):
+        from openscientist.orchestrator.discovery import _check_turn_outcome
+
+        with pytest.raises(RuntimeError, match="Iteration 3 failed"):
+            _check_turn_outcome(self._result(TurnOutcome.FAILED), 3)
+
+    def test_timed_out_turn_advances(self):
+        from openscientist.orchestrator.discovery import _check_turn_outcome
+
+        # Must NOT raise: a wall-clock timeout advances the loop (work before the
+        # cut is persisted), unlike a failure.
+        _check_turn_outcome(self._result(TurnOutcome.TIMED_OUT, tool_calls=2), 2)
+
+    def test_completed_turn_advances(self):
+        from openscientist.orchestrator.discovery import _check_turn_outcome
+
+        _check_turn_outcome(self._result(TurnOutcome.COMPLETED), 1)
+
+    def test_append_log_records_timeout(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _append_log
+
+        log = tmp_path / "log.txt"
+        _append_log(log, 2, "prompt", "output", 0, write=True, timed_out=True)
+        assert "Timed out: yes" in log.read_text()
+
+    def test_append_log_omits_timeout_line_when_not_timed_out(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _append_log
+
+        log = tmp_path / "log.txt"
+        _append_log(log, 1, "prompt", "output", 1, write=True)
+        assert "Timed out" not in log.read_text()
+
+    def test_artifacts_record_timeout_from_outcome(self, tmp_path: Path):
+        from openscientist.orchestrator.discovery import _append_iteration_artifacts
+
+        provenance = tmp_path / "prov"
+        provenance.mkdir()
+        log = tmp_path / "log.txt"
+        _append_iteration_artifacts(
+            provenance_dir=provenance,
+            log_file=log,
+            iteration=4,
+            prompt="p",
+            result=self._result(TurnOutcome.TIMED_OUT),
+            overwrite_log=True,
+        )
+        assert "Timed out: yes" in log.read_text()

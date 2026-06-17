@@ -82,9 +82,9 @@ COPY pyproject.toml README.md alembic.ini uv.lock ./
 COPY src/ src/
 
 # Reinstall the project so the web image has dependencies added since the base
-# image was built — notably the openai-codex SDK used by the codex agent path
+# image was built, notably the openai-codex SDK used by the codex agent path
 # (in-page chat + discovery). The pyproject override drops the musl-only
-# openai-codex-cli-bin; the codex binary itself is provisioned above.
+# openai-codex-cli-bin. The codex binary itself is provisioned above.
 RUN uv pip install --system -e .
 
 # Create jobs directory

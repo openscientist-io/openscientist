@@ -9,15 +9,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from importlib import resources
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 
-from openscientist.agent.base import AbstractAgent, AgentConfig, IterationResult, TokenUsage
-from openscientist.agent.factory import get_agent
+from openscientist.agent.base import (
+    AbstractAgent,
+    AgentConfig,
+    IterationResult,
+    TokenUsage,
+    TurnOutcome,
+)
+from openscientist.agent.factory import agent_class_for_provider_id, get_agent
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import AsyncSessionLocal
@@ -36,15 +41,8 @@ from openscientist.orchestrator.iteration import (
     update_job_status,
     wait_for_feedback_or_timeout,
 )
-from openscientist.prompts import (
-    AgentBackend,
-    generate_job_agents_md,
-    generate_job_claude_md,
-    get_enabled_skills,
-    get_system_prompt,
-)
 from openscientist.providers import get_provider
-from openscientist.providers.base import ClaudeCompatible, Provider
+from openscientist.providers.base import Provider
 from openscientist.settings import get_settings
 from openscientist.transcript import TranscriptEntry, save_transcript
 from openscientist.version import get_version_string
@@ -74,33 +72,26 @@ def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
     return data_file
 
 
-def _backend_for(provider: Provider) -> AgentBackend:
-    """Map a provider to its agent backend name (for prompt selection)."""
-    return "claude_code" if isinstance(provider, ClaudeCompatible) else "codex"
-
-
 def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     *,
-    agent_backend: AgentBackend = "claude_code",
     use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
 ) -> AbstractAgent[Provider]:
     """Create a configured agent for discovery/report phases.
 
-    Claude gets a concise system prompt (its rich ``CLAUDE.md`` is written
-    separately into ``.claude/``). Codex reads a single ``AGENTS.md``, so
-    its system prompt is the full per-job doc, written there by the agent.
+    The backend that drives the configured provider chooses its own discovery
+    system prompt: Claude returns a concise prompt (its rich ``CLAUDE.md`` is
+    written separately into ``.claude/`` by ``prepare_job_workspace``), codex
+    returns the full per-job doc delivered via ``AGENTS.md``.
     """
-    if agent_backend == "codex":
-        system_prompt = generate_job_agents_md(
-            use_hypotheses=use_hypotheses,
-            phenix_available=get_settings().phenix.is_available,
-        )
-    else:
-        system_prompt = get_system_prompt(agent_backend="claude_code")
-    logger.info("Built %s system prompt (%d chars)", agent_backend, len(system_prompt))
+    agent_cls = agent_class_for_provider_id(get_settings().provider.provider_id)
+    system_prompt = agent_cls.discovery_system_prompt(
+        use_hypotheses=use_hypotheses,
+        phenix_available=get_settings().phenix.is_available,
+    )
+    logger.info("Built %s system prompt (%d chars)", agent_cls.backend.value, len(system_prompt))
     config = AgentConfig(
         job_dir=job_dir,
         data_file=data_file,
@@ -129,7 +120,29 @@ def _append_iteration_artifacts(
         result.output,
         result.tool_calls,
         write=overwrite_log,
+        timed_out=result.outcome is TurnOutcome.TIMED_OUT,
     )
+
+
+def _check_turn_outcome(result: IterationResult, iteration: int) -> None:
+    """Apply the loop's per-turn policy.
+
+    FAILED aborts the run. TIMED_OUT is recorded and the loop advances: the
+    turn was cut by a wall-clock timeout, and any work done before the cut is
+    already persisted via the tools, so a stalled model is surfaced (in the log
+    and the honest outcome) rather than silently passed off as success.
+    """
+    if result.outcome is TurnOutcome.FAILED:
+        logger.error("Iteration %d failed: %s", iteration, result.error)
+        raise RuntimeError(f"Iteration {iteration} failed: {result.error}")
+    if result.outcome is TurnOutcome.TIMED_OUT:
+        logger.warning(
+            "Iteration %d timed out (tool_calls=%d); advancing, work before the cut is persisted",
+            iteration,
+            result.tool_calls,
+        )
+    else:
+        logger.info("Iteration %d completed (tool_calls=%d)", iteration, result.tool_calls)
 
 
 def _sync_version_metadata_if_available(job_id: str) -> None:
@@ -190,10 +203,7 @@ async def _run_primary_discovery_loop(
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
     result = await executor.run_iteration(initial_prompt, reset_session=True)
-    if not result.success:
-        logger.error("Iteration 1 failed: %s", result.error)
-        raise RuntimeError(f"Agent loop failed: {result.error}")
-    logger.info("Iteration 1 completed (tool_calls=%d)", result.tool_calls)
+    _check_turn_outcome(result, 1)
 
     _sync_version_metadata_if_available(job_id)
     _append_iteration_artifacts(
@@ -246,11 +256,7 @@ async def _run_primary_discovery_loop(
         )
 
         result = await executor.run_iteration(iteration_prompt, reset_session=should_reset)
-        if not result.success:
-            logger.error("Iteration %d failed: %s", iteration, result.error)
-            raise RuntimeError(f"Iteration {iteration} failed: {result.error}")
-
-        logger.info("Iteration %d completed (tool_calls=%d)", iteration, result.tool_calls)
+        _check_turn_outcome(result, iteration)
         _append_iteration_artifacts(
             provenance_dir=provenance_dir,
             log_file=log_file,
@@ -286,27 +292,54 @@ def _save_report_transcript(job_dir: Path, transcript: list[TranscriptEntry]) ->
     _save_transcript(provenance_dir / "report_transcript.json", transcript)
 
 
-def _ensure_report_written(report_path: Path, report_result: IterationResult) -> bool:
-    """Ensure final_report.md exists at the expected location after the report iteration.
+def _ensure_report_written(
+    report_path: Path,
+    report_result: IterationResult,
+    *,
+    baseline_mtime_ns: int | None = None,
+) -> bool:
+    """Return True only if the report was actually (re)written this turn.
 
+    A weak model sometimes ends the turn claiming "report written" without ever
+    calling its file-writing tool. Existence alone is therefore not proof: when
+    a stale report from a previous run is already on disk (most importantly
+    during report regeneration, but also any re-run), the file "exists" yet was
+    never touched, and the turn would be wrongly accepted while the old content
+    is served.
+
+    ``baseline_mtime_ns`` is the report's modification time captured *before*
+    the turn started (None if it did not exist then). The file counts as
+    written only if it now exists and is strictly newer than that baseline.
     If the agent wrote the file to a subdirectory within the job dir, move it
-    to the expected path.  Returns False when the report cannot be found —
-    the caller marks the job as failed.
+    to the expected path. Returns False when no fresh report can be found, so
+    the caller re-asks, then marks the job as failed.
     """
-    if report_path.exists():
+
+    def _is_fresh(path: Path) -> bool:
+        if baseline_mtime_ns is None:
+            return True
+        try:
+            return path.stat().st_mtime_ns > baseline_mtime_ns
+        except OSError:
+            return False
+
+    if report_path.exists() and _is_fresh(report_path):
         return True
 
-    # Check if the agent nested the file within the job directory.
+    # Check if the agent nested the file within the job directory. A nested file
+    # is one the agent just produced, so it is fresh by construction.
     job_dir = report_path.parent
     for found in job_dir.rglob("final_report.md"):
-        if found != report_path:
-            logger.warning("Report found at %s — moving to %s", found, report_path)
+        if found != report_path and _is_fresh(found):
+            logger.warning("Report found at %s, moving to %s", found, report_path)
             found.rename(report_path)
             return True
 
     logger.error(
-        "Report file not found at %s after report iteration (agent output: %.200s)",
+        "Report file not freshly written at %s after report iteration "
+        "(exists=%s, agent output: %.200s)",
         report_path,
+        report_path.exists(),
         report_result.output,
     )
     return False
@@ -373,17 +406,34 @@ async def _run_report_turn(
 ) -> tuple[IterationResult, bool]:
     """Run the report turn, re-asking until the model creates final_report.md.
 
-    The first attempt sends the full report prompt in a fresh session. Later
-    attempts send a short focused reminder in the same session. Returns the last
-    turn result and whether the report file now exists.
+    The report turn continues the agent's existing session rather than resetting
+    it: a weak model that was reliably calling tools mid-investigation tends to
+    drop into chat mode (printing the tool call as text) when handed a large
+    "write this" prompt as the first message of a fresh session. Keeping the
+    session preserves that tool-using momentum. (A regeneration run, which has
+    no prior session, simply starts one here.) Returns the last turn result and
+    whether the report file now exists.
     """
     report_path = job_dir / "final_report.md"
-    prompt = build_report_prompt(research_question, ks, job_dir=job_dir, description=description)
+    # Snapshot the existing report's mtime (if any) so a stale file from a
+    # prior run cannot be mistaken for this turn's output: the model must
+    # produce a file strictly newer than this. None means no report yet.
+    baseline_mtime_ns = report_path.stat().st_mtime_ns if report_path.exists() else None
+    file_write_tool = executor.file_write_tool
+    context_window_tokens = executor.model_profile.context_window_tokens
+    prompt = build_report_prompt(
+        research_question,
+        ks,
+        job_dir=job_dir,
+        description=description,
+        file_write_tool=file_write_tool,
+        context_window_tokens=context_window_tokens,
+    )
     logger.info("Report generation turn (prompt: %d chars)", len(prompt))
 
-    result = await executor.run_iteration(prompt, reset_session=True)
+    result = await executor.run_iteration(prompt, reset_session=False)
     for attempt in range(1, _MAX_REPORT_ATTEMPTS + 1):
-        if _ensure_report_written(report_path, result):
+        if _ensure_report_written(report_path, result, baseline_mtime_ns=baseline_mtime_ns):
             if attempt > 1:
                 logger.info("Report written on attempt %d", attempt)
             return result, True
@@ -393,7 +443,15 @@ async def _run_report_turn(
             "Report file missing after attempt %d/%d; re-asking", attempt, _MAX_REPORT_ATTEMPTS
         )
         result = await executor.run_iteration(
-            build_report_retry_prompt(str(report_path)), reset_session=False
+            build_report_retry_prompt(
+                research_question,
+                ks,
+                job_dir=job_dir,
+                description=description,
+                file_write_tool=file_write_tool,
+                context_window_tokens=context_window_tokens,
+            ),
+            reset_session=False,
         )
     logger.error("Report file not written after %d attempts", _MAX_REPORT_ATTEMPTS)
     return result, False
@@ -402,12 +460,17 @@ async def _run_report_turn(
 async def _set_consensus_answer(
     executor: AbstractAgent[Provider], job_dir: Path, research_question: str
 ) -> None:
-    """Run the consensus turn, re-asking until the model records an answer.
+    """Run the consensus turn, re-asking until the model records a fresh answer.
 
-    The model writes the consensus itself. This only re-prompts. If the attempts
-    are exhausted the report still stands and the job completes without a
-    consensus (logged), rather than fabricating one.
+    The model writes the consensus itself. This only re-prompts. A freshness
+    guard mirrors the report file's: snapshot the prior ``consensus_answer``
+    (None on a fresh run, the previous run's answer on regeneration) and accept
+    only a value the model wrote *this* turn, so a regenerated report cannot
+    ship the stale consensus. If the attempts are exhausted the report still
+    stands and the job completes with the prior consensus (logged), rather than
+    fabricating one.
     """
+    baseline = KnowledgeState.load_from_database_sync(job_dir.name).data.get("consensus_answer")
     for attempt in range(1, _MAX_CONSENSUS_ATTEMPTS + 1):
         prompt = (
             build_consensus_prompt(research_question)
@@ -415,7 +478,8 @@ async def _set_consensus_answer(
             else build_consensus_retry_prompt(research_question)
         )
         await executor.run_iteration(prompt, reset_session=False)
-        if KnowledgeState.load_from_database_sync(job_dir.name).data.get("consensus_answer"):
+        current = KnowledgeState.load_from_database_sync(job_dir.name).data.get("consensus_answer")
+        if current and current != baseline:
             if attempt > 1:
                 logger.info("Consensus recorded on attempt %d", attempt)
             return
@@ -506,71 +570,6 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
         "investigation_mode": job.investigation_mode,
         "data_files": resolved_files,
     }
-
-
-async def _write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = False) -> None:
-    """Write CLAUDE.md and enabled skill files into job_dir/.claude/."""
-    claude_dir = job_dir / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-
-    # Write the discovery-agent JOB_CLAUDE.md (hypothesis sections conditional)
-    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses)
-
-    try:
-        async with AsyncSessionLocal(thread_safe=True) as session:
-            skills = await get_enabled_skills(session)
-        if not skills:
-            logger.info("No enabled skills to write")
-            return
-        skills_dir = claude_dir / "skills"
-        skills_dir.mkdir(parents=True, exist_ok=True)
-        for skill in skills:
-            filename = f"{skill.category}--{skill.slug}.md"
-            path = skills_dir / filename
-            header = f"# {skill.name}\n*Category: {skill.category}*\n"
-            if skill.description:
-                header += f"\n{skill.description}\n"
-            path.write_text(header + "\n" + skill.content, encoding="utf-8")
-        logger.info("Wrote %d skill files to %s", len(skills), skills_dir)
-    except Exception as e:
-        logger.warning("Failed to write skills to .claude dir: %s", e)
-
-
-def _write_chat_claude_md(claude_dir: Path) -> None:
-    """Write CHAT_CLAUDE.md content to claude_dir/CLAUDE.md (chat agent entry point)."""
-    try:
-        dest = claude_dir / "CLAUDE.md"
-        dest.write_text(_read_chat_claude_md_template(), encoding="utf-8")
-        logger.debug("Wrote chat CLAUDE.md to %s", dest)
-    except Exception as e:
-        logger.warning("Failed to write chat CLAUDE.md: %s", e)
-
-
-def _read_chat_claude_md_template() -> str:
-    """Read the packaged CHAT_CLAUDE.md template used by job chat."""
-    return (
-        resources.files("openscientist.templates")
-        .joinpath("CHAT_CLAUDE.md")
-        .read_text(encoding="utf-8")
-    )
-
-
-def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
-    """Write generated JOB_CLAUDE.md content to claude_dir/CLAUDE.md."""
-    from openscientist.settings import get_settings
-
-    try:
-        phenix_available = get_settings().phenix.is_available
-        dest = claude_dir / "CLAUDE.md"
-        dest.write_text(
-            generate_job_claude_md(
-                use_hypotheses=use_hypotheses, phenix_available=phenix_available
-            ),
-            encoding="utf-8",
-        )
-        logger.debug("Wrote job CLAUDE.md to %s (use_hypotheses=%s)", dest, use_hypotheses)
-    except Exception as e:
-        logger.warning("Failed to write job CLAUDE.md: %s", e)
 
 
 def get_version_metadata() -> dict[str, str]:
@@ -700,6 +699,115 @@ async def _enforce_airgap_startup_policy(
     )
 
 
+async def _finalize_executor(executor: AbstractAgent[Provider], job_id: str) -> None:
+    """Log token usage, persist a cost record, and shut the executor down.
+
+    Shared ``finally`` handling for both the full discovery run and the
+    report-only regeneration run so neither leaks the executor or its cost.
+    """
+    tokens = executor.total_tokens
+    logger.info(
+        "Agent executor completed: %d input tokens, %d output tokens",
+        tokens.input_tokens,
+        tokens.output_tokens,
+    )
+    try:
+        settings = get_settings()
+        provider = get_provider()
+        model_name = (
+            settings.provider.model
+            or settings.provider.anthropic_default_sonnet_model
+            or _PROVIDER_DEFAULT_MODELS.get(provider.display_name, "unknown")
+        )
+        await _persist_job_cost_record(job_id, tokens, provider.display_name, model_name)
+    except Exception as cost_err:
+        logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
+    await executor.shutdown()
+
+
+async def _build_and_prepare_executor(
+    job_dir: Path, runtime: dict[str, Any]
+) -> AbstractAgent[Provider]:
+    """Build the agent executor and run backend setup, marking the job running.
+
+    Shared by the full discovery run and the report-only regeneration path:
+    both need a configured executor whose runtime env is applied and whose
+    per-job workspace is materialised before any turn runs. Backend-specific
+    setup is the agent's own concern: apply any runtime env (Claude
+    auth/routing flags; no-op for codex) and materialise the per-job workspace
+    (enabled skills in the backend's on-disk layout).
+    """
+    use_hypotheses = runtime["use_hypotheses"]
+    all_data_files = [Path(p) for p in runtime["data_files"]]
+    executor = _build_agent_executor(
+        job_dir=job_dir,
+        data_file=_resolve_primary_data_file(runtime["data_files"]),
+        use_hypotheses=use_hypotheses,
+        data_files=all_data_files,
+    )
+    executor.apply_runtime_environment()
+    await update_job_status(job_dir, "running")
+    await executor.prepare_job_workspace(use_hypotheses=use_hypotheses)
+    # Resolve the model's context window once per job, off the event loop (the
+    # Ollama probe is blocking I/O). Cached on the agent for the report budget.
+    await executor.warm_model_profile()
+    return executor
+
+
+async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
+    """Re-run only the report-generation phase for an already-finished job.
+
+    Backs the admin "Regenerate report" action. The discovery iterations are
+    NOT re-run: every finding already lives in the persisted ``KnowledgeState``
+    and the report turn starts a fresh agent session, so this needs only the
+    configured executor and the runtime context. It overwrites
+    ``final_report.md`` (and its PDF) and persists the final job status, exactly
+    like the report tail of ``run_discovery_async``.
+    """
+    job_dir = Path(job_dir)
+    runtime = await _load_runtime_context(job_dir)
+    job_id = runtime["job_id"]
+    logger.info("Regenerating report for job %s", job_id)
+
+    executor = await _build_and_prepare_executor(job_dir, runtime)
+    try:
+        report_outcome = await _run_report_generation_phase(
+            executor=executor,
+            job_dir=job_dir,
+            research_question=runtime["research_question"],
+            description=runtime.get("description"),
+        )
+        final_status = await _persist_final_status(job_dir, report_outcome)
+        ks = KnowledgeState.load_from_database_sync(job_id)
+        return {
+            "job_id": job_id,
+            "status": final_status,
+            "iterations": ks.data["iteration"],
+            "findings": len(ks.data["findings"]),
+        }
+    except Exception as e:
+        logger.error("Report regeneration failed [%s]: %s", get_version_string(), e, exc_info=True)
+        try:
+            await update_job_status(job_dir, "failed", error_message=str(e))
+        except Exception as status_error:
+            logger.warning("Failed to persist failure status for job %s: %s", job_id, status_error)
+        try:
+            ks = KnowledgeState.load_from_database_sync(job_id)
+            iterations = ks.data["iteration"]
+            findings = len(ks.data["findings"])
+        except Exception:
+            iterations = 0
+            findings = 0
+        return {
+            "job_id": job_id,
+            "status": "failed",
+            "iterations": iterations,
+            "findings": findings,
+        }
+    finally:
+        await _finalize_executor(executor, job_id)
+
+
 async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     """
     Run autonomous discovery using the configured agent executor.
@@ -719,34 +827,15 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     job_id = runtime["job_id"]
     logger.info("Starting discovery for job %s (mode=%s)", job_id, runtime["investigation_mode"])
 
-    provider = get_provider()
-    # setup_environment() is a Claude-family concern (env/routing flags).
-    # Codex providers configure the child via the agent's config.toml.
-    if isinstance(provider, ClaudeCompatible):
-        provider.setup_environment()
-    backend = _backend_for(provider)
+    # Codex Review-6 GAP (fixed): the airgap startup verifier was dead code
+    # (only run from test fixtures). Wire it into the discovery start path
+    # so a misconfigured deployment fails fast rather than letting the agent
+    # run with broken policy. No-op when settings.airgap.enabled is False.
+    # Must run BEFORE _build_and_prepare_executor so a verifier rejection
+    # blocks executor construction.
+    await _enforce_airgap_startup_policy(job_id, job_dir, get_provider().id)
 
-    # Codex Review-6 GAP (fixed): the airgap startup verifier + probes
-    # were dead code (only run from test fixtures). Wire them into the
-    # discovery start path so a misconfigured deployment fails fast
-    # rather than letting the agent run with broken policy.
-    await _enforce_airgap_startup_policy(job_id, job_dir, provider.id)
-
-    await update_job_status(job_dir, "running")
-
-    use_hypotheses = runtime["use_hypotheses"]
-    all_data_files = [Path(p) for p in runtime["data_files"]]
-    # The .claude/ skills + CLAUDE.md are Claude-only. The Codex agent reads
-    # its instructions from the AGENTS.md it writes from the system prompt.
-    if backend == "claude_code":
-        await _write_skills_to_claude_dir(job_dir, use_hypotheses=use_hypotheses)
-    executor = _build_agent_executor(
-        job_dir=job_dir,
-        data_file=_resolve_primary_data_file(runtime["data_files"]),
-        agent_backend=backend,
-        use_hypotheses=use_hypotheses,
-        data_files=all_data_files,
-    )
+    executor = await _build_and_prepare_executor(job_dir, runtime)
     logger.info("Created agent executor for job %s", job_id)
 
     provenance_dir = job_dir / "provenance"
@@ -808,23 +897,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
         }
 
     finally:
-        tokens = executor.total_tokens
-        logger.info(
-            "Agent executor completed: %d input tokens, %d output tokens",
-            tokens.input_tokens,
-            tokens.output_tokens,
-        )
-        try:
-            settings = get_settings()
-            model_name = (
-                settings.provider.model
-                or settings.provider.anthropic_default_sonnet_model
-                or _PROVIDER_DEFAULT_MODELS.get(provider.display_name, "unknown")
-            )
-            await _persist_job_cost_record(job_id, tokens, provider.display_name, model_name)
-        except Exception as cost_err:
-            logger.warning("Failed to persist cost record for job %s: %s", job_id, cost_err)
-        await executor.shutdown()
+        await _finalize_executor(executor, job_id)
 
 
 def _save_transcript(path: Path, transcript: list[TranscriptEntry]) -> None:
@@ -840,6 +913,7 @@ def _append_log(
     output: str,
     tool_calls: int,
     write: bool = False,
+    timed_out: bool = False,
 ) -> None:
     """Append iteration summary to the log file."""
     mode = "w" if write else "a"
@@ -848,3 +922,5 @@ def _append_log(
         f.write(f"Prompt: {prompt}\n\n")
         f.write(f"Output: {output}\n\n")
         f.write(f"Tool calls: {tool_calls}\n\n")
+        if timed_out:
+            f.write("Timed out: yes (turn cut by the wall-clock limit)\n\n")

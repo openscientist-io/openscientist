@@ -644,15 +644,23 @@ class TestContainerManagerIntegration:
 
         manager = ContainerManager()
 
+        # Probe a purpose-built connectivity endpoint (Google's generate_204:
+        # tiny, no body, returns a fixed 204, and does not rate-limit or 503
+        # like httpbin.org). Any successful HTTP response proves egress works,
+        # so assert on a sentinel rather than a specific status code.
         with tempfile.TemporaryDirectory() as tmpdir:
             result = manager.execute_code(
-                code='import requests; r = requests.get("https://httpbin.org/get", timeout=5); print(r.status_code)',
+                code=(
+                    "import requests; "
+                    'r = requests.get("https://www.google.com/generate_204", timeout=10); '
+                    'print("NETWORK_OK", r.status_code)'
+                ),
                 job_id="integration-test-4",
                 output_dir=tmpdir,
             )
 
         assert result["success"] is True
-        assert "200" in result["output"]
+        assert "NETWORK_OK" in result["output"]
 
     def test_timeout_enforcement(self):
         """Test that timeout is enforced."""

@@ -19,6 +19,38 @@ _FIGURE_TAG_RE = re.compile(
     r"\}\}"
 )
 
+# A line that opens or closes a fenced code block (``` or ~~~).
+_FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+
+
+def isolate_figure_tags(markdown: str) -> str:
+    """Put each inline ``{{figure:...}}`` tag on its own line so the block-level
+    ``FigureBlockProcessor`` can convert it to an embedded ``<figure>``.
+
+    The report model routinely appends figure tags to the end of bullet/text
+    lines, but the HTML renderer only fires on a tag that is alone in its own
+    block; without this step inline tags are left as raw text and no image
+    embeds. Tags inside fenced code blocks and markdown table rows are left
+    untouched (isolating them would corrupt the code/table).
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in markdown.split("\n"):
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence or not _FIGURE_TAG_RE.search(line):
+            out.append(line)
+            continue
+        # Figure params use '|', so test for a *residual* pipe after stripping
+        # the tags: that signals a genuine table row, which we leave intact.
+        if "|" in _FIGURE_TAG_RE.sub("", line):
+            out.append(line)
+            continue
+        out.append(_FIGURE_TAG_RE.sub(lambda m: "\n\n" + m.group(0) + "\n\n", line))
+    return "\n".join(out)
+
 
 def _parse_params(raw: str) -> dict[str, str]:
     """Parse ``|key=value|key2=value2`` into a dict."""
