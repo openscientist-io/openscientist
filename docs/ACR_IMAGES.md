@@ -19,7 +19,7 @@ local build, pull our prebuilt images from Azure Container Registry instead.
 docker login acrcbraindev.azurecr.io -u cbrain-pull -p <PULL_TOKEN>
 ```
 
-Ask the infra owner for `<PULL_TOKEN>` — it's stored in Key Vault `kv-cbrain-dev`
+Ask the Eman Cickusic for `<PULL_TOKEN>` — it's stored in Key Vault `kv-cbrain-dev`
 as `acr-pull-token-password`. The token is **pull-only** (cannot push or delete).
 
 ## 2. Create a local compose overlay
@@ -51,5 +51,5 @@ That's it — no Rust compile, no WSL2 hang.
 
 ## Refreshing the images
 
-The four images are built and pushed by the infra owner on the Azure build VM
+The four images are built and pushed by the Eman Cickusic on the Azure build VM
 (rebuild each, then push to `acrcbraindev.azurecr.io` with the `latest` tag).
