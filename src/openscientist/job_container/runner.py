@@ -126,6 +126,13 @@ class JobContainerRunner:
             docker_tcp = os.environ.get("OPENSCIENTIST_AIRGAP_DOCKER_TCP")
             if docker_tcp:
                 env["OPENSCIENTIST_AIRGAP_DOCKER_TCP"] = docker_tcp
+            # RFC §7.5 opt-in for managed-LLM egress. Must be overlaid here
+            # like the other airgap-specific vars, otherwise the in-container
+            # factory defaults to False and refuses ClaudeCompatible providers
+            # (Bedrock, Foundry) even when the operator has explicitly enabled
+            # the flag in the host .env.
+            if settings.airgap.allow_managed_llm_egress:
+                env["OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS"] = "1"
             if settings.airgap.llm_addr:
                 env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] = settings.airgap.llm_addr
             if settings.airgap.pubmed_addr:

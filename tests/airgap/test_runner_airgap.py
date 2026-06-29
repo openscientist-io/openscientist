@@ -26,6 +26,7 @@ def _airgap_settings(
     host_project_dir: str | None = None,
     phenix_host_path: str | None = None,
     docker_socket_path: str = "/var/run/airgap-docker.sock",
+    allow_managed_llm_egress: bool = False,
 ) -> SimpleNamespace:
     """Settings stand-in covering only the attributes the runner touches.
 
@@ -62,6 +63,7 @@ def _airgap_settings(
             pubmed_addr=pubmed_addr,
             codex_home_root=codex_home_root,
             docker_socket_path=docker_socket_path,
+            allow_managed_llm_egress=allow_managed_llm_egress,
         ),
     )
 
@@ -197,6 +199,49 @@ class TestEnvFilteringInAirgap:
         # the addr — otherwise PubMed search silently falls back to the
         # public NCBI URL which the airgap firewall then blocks.
         assert env["PUBMED_BASE_URL"] == "http://10.0.0.6:9000/entrez/eutils"
+
+    def test_managed_llm_egress_flag_overlaid_when_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # RFC §7.5 Pattern A: the flag must be explicitly overlaid post-
+        # allowlist-filter, because the inbound env dict the runner builds
+        # never contains it (only JOB_ID, DATABASE_URL, secret_key,
+        # provider_env). Without this overlay the agent container's
+        # in-process Settings defaults the flag to False and the factory
+        # refuses any ClaudeCompatible provider — exactly the bug option-2
+        # smoke surfaced on 2026-06-29.
+        monkeypatch.delenv("PUBMED_BASE_URL", raising=False)
+        settings = _airgap_settings(
+            enabled=True,
+            provider_id="foundry",
+            allow_managed_llm_egress=True,
+        )
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
+        )
+        assert env["OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS"] == "1"
+
+    def test_managed_llm_egress_flag_omitted_when_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression: when the operator hasn't opted in, the flag MUST NOT
+        # appear in the agent container's env — otherwise the in-container
+        # Settings would read it as truthy and silently enable managed-LLM
+        # egress against operator intent.
+        monkeypatch.delenv("PUBMED_BASE_URL", raising=False)
+        settings = _airgap_settings(
+            enabled=True,
+            provider_id="ollama",
+            allow_managed_llm_egress=False,
+        )
+        env = JobContainerRunner._build_container_environment(  # type: ignore[arg-type]
+            settings,  # type: ignore[arg-type]
+            job_id="job-42",
+            job_mount="/agent/jobs/job-42",  # type: ignore[arg-type]
+        )
+        assert "OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS" not in env
 
     def test_pubmed_base_url_explicit_override_preserved(
         self, monkeypatch: pytest.MonkeyPatch

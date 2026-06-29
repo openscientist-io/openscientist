@@ -24,6 +24,8 @@ def _settings(
     *,
     llm_addr: str = "10.0.0.5:8443",
     pubmed_addr: str = "10.0.0.6:9000",
+    allow_managed_llm_egress: bool = False,
+    aws_region: str | None = None,
 ) -> SimpleNamespace:
     """Stand-in for :class:`Settings` exposing only what the factory reads.
 
@@ -46,11 +48,13 @@ def _settings(
             azure_openai_resource=None,
             airgap_bedrock_endpoint=None,
             airgap_vertex_endpoint=None,
+            aws_region=aws_region,
         ),
         airgap=SimpleNamespace(
             enabled=airgap_enabled,
             llm_addr=llm_addr,
             pubmed_addr=pubmed_addr,
+            allow_managed_llm_egress=allow_managed_llm_egress,
         ),
     )
 
@@ -179,6 +183,65 @@ class TestAirgapEnabled:
         # PR #195 / RFC §7.4 integration: ollama is now a named alternative.
         assert "ollama" in msg
         assert "gpt-oss-120b" in msg
+        # RFC §7.5: the message also points at the managed-LLM egress opt-in
+        # for the Bedrock-HIPAA use case.
+        assert "OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS" in msg
+
+    def test_claude_provider_allowed_with_managed_llm_egress(
+        self, tmp_path: Path
+    ) -> None:
+        # RFC §7.5 Pattern A: when allow_managed_llm_egress is on, a
+        # ClaudeCompatible provider (Bedrock) runs against the regular
+        # ClaudeCodeAgent. The egress validation still runs — it must be
+        # called and any failure must propagate.
+        from openscientist.agent.claude_code_agent import ClaudeCodeAgent
+
+        provider = StubClaudeProvider()
+        with (
+            patch("openscientist.agent.factory._instantiate_provider", return_value=provider),
+            patch(
+                "openscientist.agent.factory.get_settings",
+                return_value=_settings(
+                    airgap_enabled=True,
+                    allow_managed_llm_egress=True,
+                    aws_region="us-east-1",
+                ),
+            ),
+            patch(
+                "openscientist.airgap.egress_registry.validate_provider_for_airgap",
+                return_value={("bedrock-runtime.us-east-1.amazonaws.com", 443)},
+            ),
+        ):
+            agent = get_agent(AgentConfig(job_dir=tmp_path))
+        assert isinstance(agent, ClaudeCodeAgent)
+
+    def test_claude_managed_egress_still_validates_targets(
+        self, tmp_path: Path
+    ) -> None:
+        # The opt-in flag must NOT bypass the egress allowlist check —
+        # an unsupported target still has to raise, otherwise the operator
+        # could silently leak past their own allowlist.
+        from openscientist.airgap.egress_registry import AirGapPolicyError
+
+        provider = StubClaudeProvider()
+        with (
+            patch("openscientist.agent.factory._instantiate_provider", return_value=provider),
+            patch(
+                "openscientist.agent.factory.get_settings",
+                return_value=_settings(
+                    airgap_enabled=True,
+                    allow_managed_llm_egress=True,
+                ),
+            ),
+            patch(
+                "openscientist.airgap.egress_registry.validate_provider_for_airgap",
+                side_effect=AirGapPolicyError(
+                    "Provider 'stub-claude' would reach external endpoint not in allowlist"
+                ),
+            ),
+        ):
+            with pytest.raises(AirGapPolicyError, match="would reach"):
+                get_agent(AgentConfig(job_dir=tmp_path))
 
 
 class TestParseAirgapAddr:

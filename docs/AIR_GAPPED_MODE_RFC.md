@@ -445,6 +445,78 @@ behaves identically to its Azure / Bedrock / cloud-OpenAI paths.
    in tool-call faithfulness. gpt-oss-120b is well above the bar; smaller models may not be. The
    operator-facing docs should name a tested model floor.
 
+### 7.5 Managed-LLM egress (opt-in, weaker posture) — Patterns A / B / C
+
+The default §7.4 shape assumes an operator-stood-up *internal* LLM endpoint. A second use case
+exists: operators in regulated environments (HIPAA, in particular) who want to call frontier
+Claude models through a cloud provider whose contractual posture (signed BAA, audited region,
+controlled access) provides the compliance story the in-process airgap was meant to provide via
+architecture alone. Luca's deployment at Sage is the concrete driver — they want AWS Bedrock
+specifically.
+
+This subsection adds an **opt-in escape hatch** that permits egress to a single, operator-named
+managed-LLM endpoint, gated behind a separate flag from the master airgap switch. It is strictly
+weaker than the §7.4 posture and is documented as such; operators who can stand up an internal
+endpoint should prefer §7.4.
+
+**Three migration-ordered patterns:**
+
+| Pattern | Endpoint | Code change | Defensibility |
+|---|---|---|---|
+| **A — public endpoint** | `bedrock-runtime.{region}.amazonaws.com:443` (resolves to public AWS IPs) | minimal (this PR) | TLS-only; traverses public internet; BAA covers contractually |
+| **B — VPC endpoint + Private DNS** | same hostname, resolves to VPC endpoint's *private* IP via PrivateLink Private DNS | none on the OS side (DNS rewrites at AWS) | traffic never leaves AWS backbone; operator-attested |
+| **C — VPC endpoint, explicit URL** | `https://{vpce-id}.bedrock-runtime.{region}.vpce.amazonaws.com` | adds an `aws_bedrock_endpoint_url` setting; SDK passed `base_url=…` | same as B, useful when Private DNS conflicts with other zones |
+
+**Pattern A is what this PR ships.** Patterns B/C are the migration target and don't require OS
+code changes beyond C's optional endpoint-URL override (a follow-up PR — see the
+`TODO(airgap-bedrock-vpce)` marker in `airgap/egress_registry.py`).
+
+**Configuration surface.**
+
+- `OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS=true` — the master opt-in. Off by default. When
+  on, the factory permits a `ClaudeCompatible` provider (currently only `bedrock` has a registry
+  entry) and the egress registry derives the public Bedrock target from `aws_region`.
+- The operator's host firewall (nftables / cloud-provider security group) **must** independently
+  allow egress to `bedrock-runtime.{region}.amazonaws.com:443`. The application's allowlist
+  validation only checks that the provider's intended target is named — it does not configure
+  the kernel firewall.
+- Standard Bedrock auth (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_PROFILE` /
+  `AWS_BEARER_TOKEN_BEDROCK`); IRSA on EKS or instance profile on EC2 is recommended over
+  static keys.
+
+**Stricter-than-default constraints that still apply:**
+
+- All other airgap controls hold: per-job network, `internal: true`, `cap_drop=["ALL"]`,
+  executor namespace with no egress, env credential allowlist, MCP filter, etc.
+- The egress allowlist is still the single source of truth for what the agent's container can
+  reach — Pattern A just adds one external entry.
+
+**Constraints that are weakened:**
+
+- The agent runs against the **regular `ClaudeCodeAgent`**, not an `AirgapClaudeCodeAgent`
+  variant — that variant (with SDK built-in tool gating per §10.3) is not yet built. SDK
+  built-ins are ungated at the application layer. In practice the Bedrock API does not
+  support most server-side tools (web search, web fetch, code execution, MCP connector — see
+  the Anthropic Bedrock feature-support matrix), so the upstream API itself blocks most of
+  what the gating would catch. Treat this as defense-in-depth that's currently absent, not
+  as an actively exploited gap.
+- Traffic exits the per-job network. The "no route off the box" guarantee no longer holds for
+  this provider; the guarantee narrows to "no route off the box except to the named cloud LLM
+  endpoint, which is contractually bound under the cloud provider's BAA."
+
+**HIPAA story.** AWS Bedrock is on the AWS HIPAA-eligible services list with no caveats. The
+operator signs a BAA with AWS; data flowing to Anthropic Claude through Bedrock stays within
+BAA scope. Region matters for data-residency requirements (HIPAA + FIPS narrows to
+`us-east-1`, `us-east-2`, `us-west-2`, `ca-central-1`, `us-gov-east-1`, `us-gov-west-1`).
+Equivalent BAAs exist for Azure (Azure OpenAI / Foundry) and GCP (Vertex AI); the egress
+registry entries for those providers can flip from `_unsupported` to a derived endpoint by the
+same pattern when a concrete use case surfaces.
+
+**Per-job logging.** When this mode is engaged, `agent/factory.py` emits a `logger.warning(...)`
+on every agent construction naming the provider and the resolved target. This is intentionally
+noisy so the reduced-isolation posture is impossible to miss in job logs and attestation
+records.
+
 ---
 
 ## 8. Container Hardening (parity: agent and executor)
@@ -1014,15 +1086,23 @@ refactor. Non-airgap deployments continue to work; airgap stops using the proxy.
      opens cloud-OpenAI to airgap rewrites too) or add a dedicated `LocalOpenAIProvider`
      class (clearer deployment intent). Either way the egress registry entry flips from
      `_unsupported` to `_from_url(...)`. Decision can wait for Luca's in-flight work.
-   - **Bedrock (Claude):** `ClaudeCompatible`, regional SDK. Air-gap support requires either an
-     SDK-level base-URL override or routing through an Anthropic-API proxy. Both are
-     significant work and don't help against the model-quality bar (§7.4) — deferred unless a
-     concrete operator need surfaces.
-   - **Vertex:** same shape as Bedrock-Claude. Same deferral.
+   - **Bedrock (Claude):** `ClaudeCompatible`, regional SDK. **Partially resolved (§7.5
+     Pattern A).** A concrete operator need (Luca / Sage / HIPAA) surfaced; PR-N adds an opt-in
+     managed-LLM egress flag (`OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS`) that lets the
+     Bedrock provider run against its public regional endpoint, using the regular
+     `ClaudeCodeAgent` (SDK gating still absent — documented in §7.5). Patterns B (VPC endpoint
+     with Private DNS, zero code change) and C (VPC endpoint with explicit `endpoint_url`,
+     one-setting change) remain the migration target — Pattern C's small follow-up is tracked
+     as `TODO(airgap-bedrock-vpce)` in `airgap/egress_registry.py`.
+   - **Vertex:** same shape as Bedrock-Claude. Not yet wired, but the §7.5 pattern generalizes
+     — flip `_unsupported` to a `vertexai.googleapis.com:443` derivation gated on the same
+     flag when a concrete use case surfaces. Same for Azure-equivalent paths that don't
+     already have introspectable URL fields.
 
-   PR-1's egress registry refuses these three providers in air-gap mode until either Luca's
-   work lands (OpenAI case) or the explicit deferral is revisited. CBORG / Foundry / Anthropic
-   / Azure-OpenAI work today because they already have introspectable URL fields.
+   PR-1's egress registry refuses these providers in air-gap mode unless §7.5 Pattern A is
+   explicitly engaged (Bedrock today; others follow the same pattern when needed). CBORG /
+   Foundry / Anthropic / Azure-OpenAI work today because they already have introspectable URL
+   fields.
 3. **Codex `auth.json` provisioning:** cleanest source for the read-only secret mount —
    operator-managed file, K8s secret, Docker secret?
 4. **Local PubMed service tech:** eutils shim vs ES/Solr + adapter (the sibling repo currently

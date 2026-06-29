@@ -167,17 +167,51 @@ def get_agent(config: AgentConfig) -> AbstractAgent[Provider]:
     # Airgap dispatch. ClaudeCompatible providers aren't supported in PR-1
     # because we ship only the AirgapCodexAgent — the AirgapClaudeCodeAgent
     # (with SDK built-in tool gating per RFC §10.3) lands in a follow-up.
+    # Exception: the managed-LLM egress path (RFC §7.5 Pattern A, e.g.
+    # Bedrock under AWS BAA for HIPAA use cases) opt-in lets a
+    # ClaudeCompatible provider run against the regular ClaudeCodeAgent
+    # with the kernel-level allowlist as the only enforcement boundary.
+    # SDK built-ins are ungated; this is a documented gap, with VPC
+    # endpoint (Pattern B) as the migration target.
     if isinstance(provider, ClaudeCompatible):
-        raise ValueError(
-            "Air-gap mode is enabled but the active provider "
-            f"({provider.id}) is Claude-compatible. PR-1 ships only the "
-            "AirgapCodexAgent; the AirgapClaudeCodeAgent (with SDK "
-            "built-in tool gating per RFC §10.3) lands in a follow-up "
-            "PR. Switch to a Codex-compatible provider — `ollama` "
-            "(local, gpt-oss-120b is the RFC §7.4 reference), or "
-            "`openai` / `azure-openai` if you have a cloud-compatible "
-            "internal endpoint — or disable OPENSCIENTIST_AIR_GAPPED."
+        if not settings.airgap.allow_managed_llm_egress:
+            raise ValueError(
+                "Air-gap mode is enabled but the active provider "
+                f"({provider.id}) is Claude-compatible. PR-1 ships only the "
+                "AirgapCodexAgent; the AirgapClaudeCodeAgent (with SDK "
+                "built-in tool gating per RFC §10.3) lands in a follow-up "
+                "PR. Switch to a Codex-compatible provider — `ollama` "
+                "(local, gpt-oss-120b is the RFC §7.4 reference), or "
+                "`openai` / `azure-openai` if you have a cloud-compatible "
+                "internal endpoint — or disable OPENSCIENTIST_AIR_GAPPED. "
+                "For the managed-LLM egress use case (e.g. Bedrock under "
+                "AWS BAA), set "
+                "OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS=true; see "
+                "RFC §7.5."
+            )
+
+        # Pattern A path. Validate the provider's egress targets against
+        # the operator's allowlist (same gate as the Codex path), then
+        # return the regular ClaudeCodeAgent and log a loud warning so
+        # the operator sees the reduced-isolation posture in every job's
+        # logs.
+        from openscientist.airgap.egress_registry import (
+            validate_provider_for_airgap,
         )
+
+        allowlist = _airgap_allowlist_from_settings(settings)
+        targets = validate_provider_for_airgap(provider.id, settings, allowlist)
+        logger.warning(
+            "AIRGAP: managed-LLM egress enabled for provider %s → %s. "
+            "Reduced isolation: SDK built-ins are ungated and traffic "
+            "exits the per-job network to a cloud endpoint. "
+            "HIPAA-eligible under the cloud provider's BAA (e.g. AWS BAA "
+            "for Bedrock) but weaker than RFC Pattern B (VPC endpoint). "
+            "See RFC §7.5.",
+            provider.id,
+            sorted(targets),
+        )
+        return build_agent(config, provider)
     if not isinstance(provider, CodexCompatible):
         raise ValueError(
             f"Provider {type(provider).__name__} does not implement a known "

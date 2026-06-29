@@ -46,6 +46,11 @@ BASE_AIRGAP_ENV: frozenset[str] = frozenset(
         "OPENSCIENTIST_AIR_GAPPED",
         "OPENSCIENTIST_AIRGAP_LLM_ADDR",
         "OPENSCIENTIST_AIRGAP_PUBMED_ADDR",
+        # RFC §7.5 opt-in for managed-LLM egress (e.g. Bedrock under AWS
+        # BAA). Must flow into the agent container, otherwise the in-
+        # container factory.py defaults to False and refuses to start any
+        # ClaudeCompatible provider.
+        "OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS",
         "PUBMED_BASE_URL",
         # Optional TCP override for the airgap Docker proxy endpoint —
         # read by docker_proxy.docker_base_url_for_airgap(). Required for

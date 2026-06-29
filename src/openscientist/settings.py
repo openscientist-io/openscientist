@@ -923,6 +923,27 @@ class AirgapSettings(BaseSettings):
         ),
     )
 
+    allow_managed_llm_egress: bool = Field(
+        default=False,
+        alias="OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS",
+        description=(
+            "Permit egress from the per-job network to a managed LLM "
+            "endpoint that lives on the public internet (e.g. AWS Bedrock at "
+            "bedrock-runtime.{region}.amazonaws.com:443) under a BAA / "
+            "contractual control. Off by default — the default airgap "
+            "posture is zero external egress (RFC §6, §7). When True: the "
+            "factory permits ClaudeCompatible providers (Bedrock) to run, "
+            "the egress registry derives a public-endpoint target for "
+            "Bedrock, and the operator's host firewall must allow that "
+            "egress. This is RFC §7.5 Pattern A — HIPAA-eligible under the "
+            "cloud provider's BAA but strictly weaker than Pattern B (VPC "
+            "endpoint via PrivateLink). The AirgapClaudeCodeAgent variant "
+            "with SDK built-in gating (RFC §10.3) is not yet built — this "
+            "path uses the regular ClaudeCodeAgent. The kernel-level "
+            "allowlist is the only enforcement boundary."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_required_addrs(self) -> "AirgapSettings":
         """When the master switch is on, the internal addresses must be set

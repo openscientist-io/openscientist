@@ -100,6 +100,28 @@ class TestEgressTargetsFor:
         with pytest.raises(AirGapUnsupportedError, match="Bedrock provider"):
             egress_targets_for("bedrock", s)
 
+    def test_bedrock_managed_egress_pattern_a(self) -> None:
+        # RFC §7.5 Pattern A: when the operator opts in to managed-LLM
+        # egress AND aws_region is set, the registry derives the public
+        # regional endpoint.
+        s = SimpleNamespace(
+            provider=SimpleNamespace(aws_region="us-east-1"),
+            airgap=SimpleNamespace(allow_managed_llm_egress=True),
+        )
+        assert egress_targets_for("bedrock", s) == {
+            ("bedrock-runtime.us-east-1.amazonaws.com", 443)
+        }
+
+    def test_bedrock_managed_egress_requires_region(self) -> None:
+        # Pattern A still requires aws_region; without it, fall back to
+        # the unsupported error so the operator sees the misconfiguration.
+        s = SimpleNamespace(
+            provider=SimpleNamespace(aws_region=None),
+            airgap=SimpleNamespace(allow_managed_llm_egress=True),
+        )
+        with pytest.raises(AirGapUnsupportedError, match="Bedrock provider"):
+            egress_targets_for("bedrock", s)
+
     def test_vertex_unsupported_in_airgap(self) -> None:
         s = _settings()
         with pytest.raises(AirGapUnsupportedError, match="Vertex provider"):

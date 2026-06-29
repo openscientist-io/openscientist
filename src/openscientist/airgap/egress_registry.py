@@ -128,10 +128,31 @@ EGRESS_TARGETS: dict[str, Callable[[Any], set[HostPort]]] = {
             "RFC §7.4 references gpt-oss-120b as the validated reference model."
         )
     ),
-    "bedrock": lambda s: _unsupported(
-        "Bedrock provider's regional SDK client has no introspectable endpoint "
-        "and no base-URL override field on ProviderSettings. "
-        "Air-gap support for this provider is not yet wired up; see RFC §19 OQ."
+    # Bedrock: opt-in managed-LLM egress (RFC §7.5 Pattern A). When
+    # ``airgap.allow_managed_llm_egress`` is True and ``aws_region`` is set,
+    # derive the public regional endpoint and add it to the target set so the
+    # operator's allowlist gate can validate against it. Otherwise (default)
+    # refuse, because the Anthropic Bedrock SDK has no introspectable endpoint
+    # and would otherwise silently reach AWS's default regional URL.
+    # TODO(airgap-bedrock-vpce): replace the public-endpoint derivation with
+    # an explicit ``aws_bedrock_endpoint_url`` setting that operators point at
+    # their VPC endpoint (Pattern B/C, RFC §7.5). When that lands, this entry
+    # reads the override first and falls back to the public endpoint.
+    "bedrock": lambda s: (
+        _from_url(f"https://bedrock-runtime.{s.provider.aws_region}.amazonaws.com")
+        if getattr(getattr(s, "airgap", None), "allow_managed_llm_egress", False)
+        and getattr(s.provider, "aws_region", None)
+        else _unsupported(
+            "Bedrock provider's regional SDK client has no introspectable endpoint "
+            "and no base-URL override field on ProviderSettings. "
+            "For managed-LLM egress to the public Bedrock endpoint (RFC §7.5 "
+            "Pattern A, HIPAA-eligible under AWS BAA), set "
+            "OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS=true and ensure "
+            "your host firewall allows egress to "
+            "bedrock-runtime.{region}.amazonaws.com:443. Pattern B (VPC "
+            "endpoint via PrivateLink) is the recommended target state; see "
+            "RFC §7.5 / §19 OQ."
+        )
     ),
     "vertex": lambda s: _unsupported(
         "Vertex provider's regional SDK client has no introspectable endpoint "
