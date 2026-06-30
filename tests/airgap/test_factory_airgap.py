@@ -187,9 +187,7 @@ class TestAirgapEnabled:
         # for the Bedrock-HIPAA use case.
         assert "OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS" in msg
 
-    def test_claude_provider_allowed_with_managed_llm_egress(
-        self, tmp_path: Path
-    ) -> None:
+    def test_claude_provider_allowed_with_managed_llm_egress(self, tmp_path: Path) -> None:
         # RFC §7.5 Pattern A: when allow_managed_llm_egress is on, a
         # ClaudeCompatible provider (Bedrock) runs against the regular
         # ClaudeCodeAgent. The egress validation still runs — it must be
@@ -215,9 +213,7 @@ class TestAirgapEnabled:
             agent = get_agent(AgentConfig(job_dir=tmp_path))
         assert isinstance(agent, ClaudeCodeAgent)
 
-    def test_claude_managed_egress_still_validates_targets(
-        self, tmp_path: Path
-    ) -> None:
+    def test_claude_managed_egress_still_validates_targets(self, tmp_path: Path) -> None:
         # The opt-in flag must NOT bypass the egress allowlist check —
         # an unsupported target still has to raise, otherwise the operator
         # could silently leak past their own allowlist.
