@@ -266,6 +266,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and deplo
 - [Design Document](docs/DESIGN.md)
 - [Vertex AI Setup](docs/VERTEX_SETUP.md)
 - [Phenix Setup](docs/PHENIX_SETUP.md)
+- [Air-Gapped PubMed Mirror](docs/AIR_GAPPED_PUBMED.md)
 
 ## Author
 

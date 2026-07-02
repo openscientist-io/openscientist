@@ -150,6 +150,13 @@ docker cp ./jobs openscientist-openscientist-1:/app/
    docker-compose up -d
    ```
 
+### `required variable OPENSCIENTIST_PUBMED_DB is missing a value`
+
+You're building with the air-gapped PubMed mirror service present in
+`docker-compose.yml`. See `docs/AIR_GAPPED_PUBMED.md` for setup and a
+Compose-interpolation gotcha that trips this up even when you don't intend
+to use the local mirror.
+
 ### Budget exceeded
 
 Check your budget:
