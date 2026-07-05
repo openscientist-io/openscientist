@@ -35,7 +35,9 @@ from openscientist.file_loader import (
 # container has the full `openscientist` package, so this import is free) so
 # the two "what kind of file is this" implementations can't drift apart again
 # the way they did for .h5ad.
-NON_TABULAR_EXTENSIONS = HDF5_EXTENSIONS | STRUCTURE_EXTENSIONS | SEQUENCE_EXTENSIONS | IMAGE_EXTENSIONS
+NON_TABULAR_EXTENSIONS = (
+    HDF5_EXTENSIONS | STRUCTURE_EXTENSIONS | SEQUENCE_EXTENSIONS | IMAGE_EXTENSIONS
+)
 
 # Allowed imports for sandboxed Python execution.
 ALLOWED_IMPORTS = [
