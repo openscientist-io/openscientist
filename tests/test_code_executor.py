@@ -226,6 +226,16 @@ class TestLoadData:
         assert df is not None
         assert list(df.columns) == ["x", "y"]
 
+    def test_h5ad_returns_none_instead_of_crashing(self, tmp_path: Path):
+        h5ad_path = tmp_path / "data.h5ad"
+        h5ad_path.write_bytes(b"\x89HDF\r\n\x1a\nnot really hdf5 but binary")
+        assert load_data(str(h5ad_path)) is None
+
+    def test_binary_unknown_extension_returns_none_not_raise(self, tmp_path: Path):
+        data_path = tmp_path / "data.bin"
+        data_path.write_bytes(bytes(range(256)))
+        assert load_data(str(data_path)) is None
+
 
 # ─── execute_rust_code ────────────────────────────────────────────────
 

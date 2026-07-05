@@ -77,11 +77,18 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
       tool's namespace. Do not open them by guessing filesystem paths, and do
       not reuse paths you saw in the shell (such as /agent/jobs/.../data): those
       paths do not exist in this executor. Access the data through:
-        * `data`: a pandas DataFrame pre-loaded from the primary data file.
+        * `data`: a pandas DataFrame pre-loaded from the primary data file,
+          if it's a tabular format (csv/tsv/parquet/xlsx/json). For
+          non-tabular primary files (h5ad, structures, sequences, images),
+          `data` is None -- load the file yourself, see below.
         * `data_files`: a list of dicts, one per uploaded file, each with a
           `path` key that already points to the file inside this executor
-          (under /data). Read additional files with
-          `pd.read_csv(data_files[i]["path"])`.
+          (under /data). Read tabular files with
+          `pd.read_csv(data_files[i]["path"])`. Load non-tabular files
+          directly with the matching library, e.g.
+          `scanpy.read_h5ad(data_files[i]["path"])` for `.h5ad`,
+          `biopython`/`Bio.SeqIO` for sequence files, `PIL.Image.open(...)`
+          for images.
       Also available: pandas, polars, numpy, scipy, matplotlib, seaborn, plotly,
       statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython,
       scanpy, pydeseq2, and more. Plots are automatically saved to the job's

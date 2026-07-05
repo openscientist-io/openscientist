@@ -23,6 +23,19 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from openscientist.exceptions import CodeExecutionTimeoutError, ForbiddenImportError
+from openscientist.file_loader import (
+    HDF5_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    SEQUENCE_EXTENSIONS,
+    STRUCTURE_EXTENSIONS,
+)
+
+# Extensions that are never tabular data -- load_data() must not attempt to
+# parse these as CSV. Reuses file_loader.py's classification (the executor
+# container has the full `openscientist` package, so this import is free) so
+# the two "what kind of file is this" implementations can't drift apart again
+# the way they did for .h5ad.
+NON_TABULAR_EXTENSIONS = HDF5_EXTENSIONS | STRUCTURE_EXTENSIONS | SEQUENCE_EXTENSIONS | IMAGE_EXTENSIONS
 
 # Allowed imports for sandboxed Python execution.
 ALLOWED_IMPORTS = [
@@ -97,7 +110,13 @@ def validate_imports(code: str, allowed_imports: list[str]) -> None:
 
 
 def load_data(data_path: str | None) -> pd.DataFrame | None:
-    """Load tabular data from disk for code execution."""
+    """Load tabular data from disk for code execution.
+
+    Returns None for non-tabular formats (h5ad, structures, sequences,
+    images) rather than raising -- the caller still has the raw path via
+    `data_files`, and code_executor.ALLOWED_IMPORTS whitelists scanpy/
+    anndata/h5py/biopython etc. for exactly this case.
+    """
     if not data_path:
         return None
 
@@ -117,8 +136,14 @@ def load_data(data_path: str | None) -> pd.DataFrame | None:
         return pd.read_excel(path)
     if suffix == ".json":
         return pd.read_json(path)
-    # Try CSV as fallback
-    return pd.read_csv(path)
+    if suffix in NON_TABULAR_EXTENSIONS:
+        return None
+    # Unrecognized extension: best-effort CSV guess, but a wrong guess must
+    # not crash the executor before the user's own code gets to run.
+    try:
+        return pd.read_csv(path)
+    except (UnicodeDecodeError, pd.errors.ParserError, OSError):
+        return None
 
 
 def _execution_failure(
