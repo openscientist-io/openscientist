@@ -1352,6 +1352,7 @@ class TestRegenerateReportAsync:
             ),
             patch.object(discovery, "_finalize_executor", new=AsyncMock()) as finalize,
             patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks),
+            patch.object(discovery, "get_provider", return_value=SimpleNamespace(id="anthropic")),
         ):
             result = await discovery.regenerate_report_async(tmp_path)
 
@@ -1387,6 +1388,7 @@ class TestRegenerateReportAsync:
                 "load_from_database_sync",
                 side_effect=Exception("no ks"),
             ),
+            patch.object(discovery, "get_provider", return_value=SimpleNamespace(id="anthropic")),
         ):
             result = await discovery.regenerate_report_async(tmp_path)
 
