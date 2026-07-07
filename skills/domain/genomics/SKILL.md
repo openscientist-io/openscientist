@@ -154,15 +154,27 @@ false-positive rates — naive cell-level tests call hundreds of "significant" g
 even when comparing two random splits of the *same* population, with highly
 expressed genes flagged most often (Squair et al. 2021; Zimmerman et al. 2021).
 
-### Fix 1 — Pseudobulk (recommended default)
+**Required workflow: run both analyses below, then compare them.** For any
+condition-level single-cell DE, do not pick one method. Run **(1)** a pseudobulk
+analysis as the first pass and **(2)** a donor-random-intercept mixed-effects model,
+then reconcile the two gene lists (see "Compare the two analyses"). Agreement
+between an aggregation-based and a cell-level method that both respect the
+sample/donor as the replicate unit is your best guard against method-specific
+artifacts.
+
+### Analysis 1 — Pseudobulk (first pass)
 
 **When:** Comparing a given cell type across conditions in a multi-sample design.
 This is the field-standard default and the top performer for FDR control in
 benchmarks (Squair et al. 2021; Murphy & Skene 2022; Junttila et al. 2022).
 
 Sum **raw counts** across all cells of one cell type within each sample, then run a
-bulk DE tool (DESeq2/edgeR/limma-voom) on the resulting sample-level matrix. The
-statistics then reduce to the bulk RNA-seq workflow above, with an honest n.
+bulk DE tool on the resulting sample-level matrix. **Prefer DESeq2** (or
+edgeR/limma-voom) over a paired t-test on the aggregated profiles: it models the
+count mean–variance relationship and shares information across genes, whereas a
+per-gene paired t-test is underpowered at typical sample sizes and assumes
+normality the counts don't satisfy. The statistics then reduce to the bulk
+RNA-seq workflow above, with an honest n.
 
 ```python
 import anndata as ad
@@ -203,18 +215,19 @@ print(res.results_df.sort_values("padj").head())
 `muscat` (R/Bioconductor; Crowell et al. 2020) implements this aggregation-based
 workflow across all cell types at once if you prefer a turnkey tool.
 
-### Fix 2 — Mixed-effects model (random intercept per donor)
+### Analysis 2 — Mixed-effects model (random intercept per donor)
 
-**When:** You want to retain cell-level resolution, have a continuous/complex
-design, or aggregation would discard needed structure. A (generalized) linear
-mixed model with a random intercept per sample models the within-donor
-correlation directly (Zimmerman et al. 2021).
+**When:** Always, as the second pass alongside pseudobulk. The mixed model retains
+cell-level resolution and handles continuous/complex designs. A (generalized)
+linear mixed model with a **random intercept per donor** models the within-donor
+correlation directly, so the donor — not the cell — remains the unit of
+replication (Zimmerman et al. 2021).
 
 ```python
 import statsmodels.formula.api as smf
 
 # Long dataframe: one row per cell, columns "expression", "condition", "sample_id"
-# The random intercept per sample absorbs donor-level correlation.
+# The random intercept per donor absorbs donor-level correlation.
 model = smf.mixedlm("expression ~ condition", data=cell_df, groups=cell_df["sample_id"])
 result = model.fit()
 print(result.summary())  # the fixed effect of `condition` is the test of interest
@@ -223,16 +236,27 @@ print(result.summary())  # the fixed effect of `condition` is the test of intere
 **Tradeoffs:** heavier compute, convergence/fitting fragility, and sensitivity to
 the assumed count distribution. In benchmarks weighing both sensitivity *and*
 specificity, pseudobulk generally matches or beats mixed models (Murphy & Skene
-2022) — so prefer pseudobulk unless you have a specific reason.
+2022) — which is why pseudobulk is the first pass and its call list is the primary
+reference when the two disagree.
 
-### A note on metacells
+### Compare the two analyses
 
-Metacells (MetaCell, SEACells; Baran et al. 2019; Persad et al. 2023) pool
-transcriptionally similar cells *within a sample* to denoise sparse data and
-resolve fine-grained states. They are a **within-sample** representation tool and
-do **not** create independent biological replicates. Condition-level DE run on
-metacells still pseudoreplicates — you must *still* aggregate to the sample level
-(pseudobulk) or use donor random effects.
+Reconcile the pseudobulk and mixed-model results before drawing conclusions:
+
+- **Concordant genes** (significant in both, same direction) are the confident
+  hits — report these as the core finding.
+- **Pseudobulk-only** hits are usually trustworthy given its FDR control; keep them
+  but note they lack cell-level confirmation.
+- **Mixed-model-only** hits warrant scrutiny — check for convergence warnings,
+  a poorly fit count distribution, or a handful of dominant donors driving the
+  effect before believing them.
+- **Large disagreement** overall signals a problem: too few donors, an unmodeled
+  batch/covariate, or a distributional assumption violated. Investigate rather
+  than cherry-picking the list you prefer.
+
+Quantify overlap (e.g. shared significant genes, rank correlation of effect sizes
+or a scatter of the two log-fold-change estimates) and report it alongside the
+gene lists.
 
 ### Replication
 
@@ -505,8 +529,8 @@ Before interpreting results:
 ❌ **Treating single cells as biological replicates (pseudoreplication)**
 - Cells from one donor are not independent; the replicate unit is the sample/donor
 - A naive per-cell t-test/Wilcoxon inflates n by orders of magnitude → false positives
-- Use pseudobulk (default) or a donor random effect — see "Single-Cell Differential
-  Expression: Beware Pseudoreplication" above
+- Run both a pseudobulk analysis and a donor-random-intercept mixed model, then
+  compare — see "Single-Cell Differential Expression: Beware Pseudoreplication" above
 
 ## Integration with Other Data Types
 
@@ -542,10 +566,8 @@ Metabolite: Serine ↑
 3. Crowell et al. (2020) *muscat detects subpopulation-specific state transitions from multi-sample multi-condition single-cell transcriptomics data.* Nat Commun. https://doi.org/10.1038/s41467-020-19894-4
 4. Murphy & Skene (2022) *A balanced measure shows superior performance of pseudobulk methods in single-cell RNA-sequencing analysis.* Nat Commun. https://doi.org/10.1038/s41467-022-35519-4
 5. Junttila et al. (2022) *Benchmarking methods for detecting differential states between conditions from multi-subject single-cell RNA-seq data.* Brief Bioinform. https://doi.org/10.1093/bib/bbac286
-6. Baran et al. (2019) *MetaCell: analysis of single-cell RNA-seq data using K-nn graph partitions.* Genome Biol. https://doi.org/10.1186/s13059-019-1812-2
-7. Persad et al. (2023) *SEACells infers transcriptional and epigenomic cellular states from single-cell genomics data.* Nat Biotechnol. https://doi.org/10.1038/s41587-023-01716-9
-8. Hurlbert (1984) *Pseudoreplication and the design of ecological field experiments.* Ecol Monogr. https://doi.org/10.2307/1942661
-9. Heumos et al. (2023) *Best practices for single-cell analysis across modalities.* Nat Rev Genet. https://doi.org/10.1038/s41576-023-00586-w — practical DE walkthrough: https://www.sc-best-practices.org/conditions/differential_gene_expression.html
+6. Hurlbert (1984) *Pseudoreplication and the design of ecological field experiments.* Ecol Monogr. https://doi.org/10.2307/1942661
+7. Heumos et al. (2023) *Best practices for single-cell analysis across modalities.* Nat Rev Genet. https://doi.org/10.1038/s41576-023-00586-w — practical DE walkthrough: https://www.sc-best-practices.org/conditions/differential_gene_expression.html
 
 ## Key Principle
 
