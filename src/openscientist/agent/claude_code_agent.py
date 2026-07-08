@@ -144,16 +144,33 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        marduk_enabled: bool = False,
     ) -> str:
-        # Claude gets the concise system prompt. Its rich CLAUDE.md is written
-        # separately into .claude/ by prepare_job_workspace.
+        # Claude gets the concise system prompt. Its rich CLAUDE.md (including any
+        # MARDUK section) is written separately into .claude/ by
+        # prepare_job_workspace.
         return cls.system_prompt()
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(
+        self, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+    ) -> None:
         from openscientist.agent.skills import write_skills_to_claude_dir
 
-        await write_skills_to_claude_dir(self._config.job_dir, use_hypotheses=use_hypotheses)
+        await write_skills_to_claude_dir(
+            self._config.job_dir,
+            use_hypotheses=use_hypotheses,
+            marduk_enabled=marduk_enabled,
+        )
+        if marduk_enabled:
+            from openscientist.marduk_memory import write_memory_briefing
+
+            await write_memory_briefing(
+                self._config.job_dir, exclude_job_id=self._config.job_dir.name
+            )
 
     def apply_runtime_environment(self) -> None:
         # Auth/routing flags for the Claude CLI and the tools subprocess.
@@ -212,6 +229,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         env["OPENSCIENTIST_JOB_ID"] = config.job_dir.name
         env["OPENSCIENTIST_JOB_DIR"] = str(config.job_dir)
         env["OPENSCIENTIST_USE_HYPOTHESES"] = "1" if config.use_hypotheses else "0"
+        env["OPENSCIENTIST_MARDUK_ENABLED"] = "1" if config.marduk_enabled else "0"
         if config.data_file is not None:
             env["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)
         else:

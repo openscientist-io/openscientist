@@ -116,16 +116,35 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        marduk_enabled: bool = False,
     ) -> str:
         # Codex reads a single AGENTS.md, so its discovery system prompt is the
         # full per-job doc (CodexAgent writes it to AGENTS.md from this prompt).
-        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
+        return cls.job_doc(
+            use_hypotheses=use_hypotheses,
+            phenix_available=phenix_available,
+            marduk_enabled=marduk_enabled,
+        )
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(
+        self, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+    ) -> None:
         from openscientist.agent.skills import write_skills_to_codex_dir
 
         await write_skills_to_codex_dir(self._config.job_dir)
+        if marduk_enabled:
+            from openscientist.marduk_memory import write_memory_briefing
+
+            # Codex reads project docs (AGENTS.md and files it references); the
+            # briefing lands in .claude/ but is also surfaced in the AGENTS.md
+            # MARDUK section, so an agent that inspects the workspace finds it.
+            await write_memory_briefing(
+                self._config.job_dir, exclude_job_id=self._config.job_dir.name
+            )
 
     # apply_runtime_environment, chat_system_prompt, write_chat_context, and
     # chat_model_override use the AbstractAgent defaults: codex configures its
@@ -188,6 +207,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 "OPENSCIENTIST_JOB_ID": job_dir.name,
                 "OPENSCIENTIST_JOB_DIR": str(job_dir),
                 "OPENSCIENTIST_USE_HYPOTHESES": "1" if config.use_hypotheses else "0",
+                "OPENSCIENTIST_MARDUK_ENABLED": "1" if config.marduk_enabled else "0",
             }
         )
         if config.data_file is not None:

@@ -59,6 +59,7 @@ def _submit_job(
     research_question: ui.textarea,
     max_iterations: ui.number,
     use_hypotheses: ui.switch,
+    marduk_enabled: ui.switch,
     coinvestigate_mode: ui.switch,
 ) -> None:
     """Validate input and create a new discovery job."""
@@ -88,6 +89,7 @@ def _submit_job(
             data_files=data_files,
             max_iterations=int(max_iterations.value),
             use_hypotheses=use_hypotheses.value,
+            marduk_enabled=marduk_enabled.value,
             auto_start=True,
             investigation_mode=mode,
             owner_id=current_user_id,
@@ -176,6 +178,13 @@ def new_job_page() -> None:
         ).classes("text-sm text-gray-700 mt-1")
 
         ui.separator().classes("my-4")
+        marduk_enabled = ui.switch("MARDUK — Rare Disease Mode", value=False)
+        ui.label(
+            "Assist rare-disease research with Monarch Initiative tools (Monarch Knowledge "
+            "Graph, Mondo, HPO) and persistent memory that carries insights across your jobs."
+        ).classes("text-sm text-gray-700 mt-1")
+
+        ui.separator().classes("my-4")
         coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
         ui.label(
             "Requires your active participation. After each iteration, I will pause to receive your feedback."
@@ -193,6 +202,7 @@ def new_job_page() -> None:
                 research_question=research_question,
                 max_iterations=max_iterations,
                 use_hypotheses=use_hypotheses,
+                marduk_enabled=marduk_enabled,
                 coinvestigate_mode=coinvestigate_mode,
             ),
         ).classes("w-full mt-4")

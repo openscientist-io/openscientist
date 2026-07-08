@@ -77,6 +77,7 @@ def _build_agent_executor(
     data_file: Path | None,
     *,
     use_hypotheses: bool = False,
+    marduk_enabled: bool = False,
     data_files: list[Path] | None = None,
 ) -> AbstractAgent[Provider]:
     """Create a configured agent for discovery/report phases.
@@ -90,6 +91,7 @@ def _build_agent_executor(
     system_prompt = agent_cls.discovery_system_prompt(
         use_hypotheses=use_hypotheses,
         phenix_available=get_settings().phenix.is_available,
+        marduk_enabled=marduk_enabled,
     )
     logger.info("Built %s system prompt (%d chars)", agent_cls.backend.value, len(system_prompt))
     config = AgentConfig(
@@ -97,6 +99,7 @@ def _build_agent_executor(
         data_file=data_file,
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
+        marduk_enabled=marduk_enabled,
         data_files=tuple(data_files or ()),
     )
     return get_agent(config)
@@ -537,6 +540,21 @@ async def _persist_final_status(
     return final_status
 
 
+async def _sweep_marduk_memory(job_id: str) -> None:
+    """Distill a durable MARDUK memory from a completed job (best-effort).
+
+    Runs only for MARDUK jobs that completed. Never raises — a memory-sweep
+    failure must not turn a completed job into a failed one.
+    """
+    try:
+        from openscientist.marduk_memory import extract_memories_from_job
+
+        saved = await extract_memories_from_job(job_id)
+        logger.info("MARDUK memory sweep for job %s recorded %d memory item(s)", job_id, saved)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("MARDUK memory sweep failed for job %s: %s", job_id, exc)
+
+
 async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     """Load runtime job metadata from the database."""
     job_uuid = UUID(job_dir.name)
@@ -567,6 +585,7 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
         "description": getattr(job, "description", None),
         "max_iterations": job.max_iterations,
         "use_hypotheses": bool(job.use_hypotheses),
+        "marduk_enabled": bool(getattr(job, "marduk_enabled", False)),
         "investigation_mode": job.investigation_mode,
         "data_files": resolved_files,
     }
@@ -675,16 +694,20 @@ async def _build_and_prepare_executor(
     (enabled skills in the backend's on-disk layout).
     """
     use_hypotheses = runtime["use_hypotheses"]
+    marduk_enabled = runtime.get("marduk_enabled", False)
     all_data_files = [Path(p) for p in runtime["data_files"]]
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_hypotheses=use_hypotheses,
+        marduk_enabled=marduk_enabled,
         data_files=all_data_files,
     )
     executor.apply_runtime_environment()
     await update_job_status(job_dir, "running")
-    await executor.prepare_job_workspace(use_hypotheses=use_hypotheses)
+    await executor.prepare_job_workspace(
+        use_hypotheses=use_hypotheses, marduk_enabled=marduk_enabled
+    )
     # Resolve the model's context window once per job, off the event loop (the
     # Ollama probe is blocking I/O). Cached on the agent for the report budget.
     await executor.warm_model_profile()
@@ -786,6 +809,8 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             description=runtime.get("description"),
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
+        if final_status == "completed" and runtime.get("marduk_enabled", False):
+            await _sweep_marduk_memory(job_id)
         ks = KnowledgeState.load_from_database_sync(job_id)
         return {
             "job_id": job_id,
