@@ -246,7 +246,7 @@ class TestApplyAirgapPolicyFailClosed:
             side_effect=RuntimeError("settings broken for test"),
         ):
             with pytest.raises(RuntimeError, match="settings broken"):
-                srv_module._apply_airgap_policy()
+                srv_module._apply_airgap_policy()  # type: ignore[attr-defined]
 
     def test_non_airgap_settings_load_fails_silently(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Non-airgap deployment with a broken settings load — fail-open is
@@ -262,7 +262,7 @@ class TestApplyAirgapPolicyFailClosed:
             side_effect=RuntimeError("settings broken for test"),
         ):
             # Must not raise.
-            srv_module._apply_airgap_policy()
+            srv_module._apply_airgap_policy()  # type: ignore[attr-defined]
 
     def test_airgap_mode_requested_parse_handles_truthy_values(
         self, monkeypatch: pytest.MonkeyPatch
@@ -271,10 +271,14 @@ class TestApplyAirgapPolicyFailClosed:
 
         for truthy in ("1", "true", "TRUE", "yes", "on"):
             monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", truthy)
-            assert srv_module._airgap_mode_requested(), f"{truthy!r} should be truthy"
+            assert srv_module._airgap_mode_requested(), (  # type: ignore[attr-defined]
+                f"{truthy!r} should be truthy"
+            )
         for falsy in ("", "0", "false", "no", "off"):
             monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", falsy)
-            assert not srv_module._airgap_mode_requested(), f"{falsy!r} should be falsy"
+            assert not srv_module._airgap_mode_requested(), (  # type: ignore[attr-defined]
+                f"{falsy!r} should be falsy"
+            )
 
 
 # --------------------------------------------------------- unclassified sentinel
