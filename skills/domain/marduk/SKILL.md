@@ -46,6 +46,11 @@ Reach for these methods when the question involves any of:
 - **HPO Annotations (HPOA)** — disease→phenotype annotations with frequency and onset.
 - **Gene/ortholog resources** — `HGNC:` for human genes; cross-species phenotype
   evidence via model-organism databases integrated in the KG.
+- **DisMech (Disorder Mechanisms Knowledge Base)** — a curated knowledge base of disease
+  *pathophysiology*: mechanism narratives, clinical phenotypes (HPO), genetic factors, and
+  treatments (MAXO), with every claim cited to PubMed with an exact quote. It complements
+  the Monarch KG's association data with mechanistic, literature-grounded explanations —
+  the "why," not just the "what is linked to what." See "DisMech" below.
 
 Identifier prefixes you will see and should preserve verbatim (CURIEs):
 `MONDO:`, `HP:`, `HGNC:`, `OMIM:`, `ORPHA:`, `NCBIGene:`, `MGI:`, `ZFIN:`, `UBERON:`.
@@ -65,6 +70,11 @@ standard `execute_code`, `search_pubmed`, `update_knowledge_state`, etc.):
   to focus, or omit it to survey what is linked.
 - **`monarch_entity(entity_id)`** — fetch the full node record (labels, synonyms,
   description, xrefs) for a CURIE.
+- **`list_dismech_disorders(filter)`** and **`get_dismech_disorder(name, sections)`** —
+  browse/search the DisMech knowledge base and fetch a disorder's curated
+  pathophysiology record (mechanism, prevalence/epidemiology, inheritance, genetics,
+  phenotypes, treatments), each with literature-cited evidence. Records are large: pass
+  `sections` (e.g. `"prevalence,genetic,treatments"`) to focus. See "DisMech" below.
 - **`remember_finding(...)`** and **`recall_memory(...)`** — persistent cross-job memory
   (see "Persistent memory" below).
 
@@ -84,6 +94,29 @@ the association/entity tools. Never guess a CURIE.
   prioritization such as Exomiser, and other tools listed at
   <https://monarchinitiative.org/> and <https://github.com/monarch-initiative>) can be
   consulted for specialized needs; check availability before relying on any one of them.
+
+### DisMech
+
+DisMech (the Disorder Mechanisms KB, <https://github.com/monarch-initiative/dismech>,
+browsable at <https://dismech.monarchinitiative.org/app/>) is your best source for
+*mechanistic, literature-cited* rare-disease knowledge — the "why," not just "what is
+linked to what." Use the `list_dismech_disorders` / `get_dismech_disorder` tools
+(above) as the primary access path. Each disorder record contains:
+
+- a `description` and `disease_term` (its `MONDO:` id),
+- `prevalence` (population, `rate_per_100000`, prevalence class) — epidemiology,
+- `inheritance` (pattern, penetrance, de novo rate),
+- `genetic` (causative genes/variants), `pathophysiology`, and `mechanistic_hypotheses`
+  (each hypothesis flagged e.g. `CANONICAL`),
+- `phenotypes` (HPO terms with frequency), `treatments` (with mechanism and trial results),
+- and `evidence` blocks throughout: `reference` (PMID/DOI), a ≤125-char `snippet`, and an
+  `evidence_source` (`HUMAN_CLINICAL`/`MODEL_ORGANISM`/`IN_VITRO`/`COMPUTATIONAL`).
+
+Use these snippets as exact quotes when recording findings, and cross-check the
+disorder's `MONDO:` id against `monarch_entity` so DisMech and the Monarch KG line up.
+If a query shape isn't covered by the tools, the raw YAML is at
+`https://raw.githubusercontent.com/monarch-initiative/dismech/main/kb/disorders/<Name>.yaml`
+(fetch inside `execute_code`, parse with `yaml.safe_load`).
 
 ## Recommended workflow: phenotype-driven investigation
 

@@ -17,6 +17,8 @@ _MARDUK_TOOLS = {
     "search_monarch",
     "monarch_associations",
     "monarch_entity",
+    "list_dismech_disorders",
+    "get_dismech_disorder",
     "remember_finding",
     "recall_memory",
 }

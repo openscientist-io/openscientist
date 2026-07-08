@@ -385,6 +385,12 @@ query associations.
 
 - Use xrefs to bridge MONDO ↔ OMIM/Orphanet
 
+**list_dismech_disorders** / **get_dismech_disorder** - DisMech curated pathophysiology
+
+- DisMech provides literature-cited mechanism, prevalence/epidemiology, genetics, and
+  treatment records per disorder. List/search disorders, then fetch one — pass `sections`
+  (e.g. `"prevalence,genetic,treatments"`) to focus large records
+
 **remember_finding** - Save a durable insight for future jobs
 
 - `title`, `insight`, and optionally `entity_id`, `evidence`, `tags`
