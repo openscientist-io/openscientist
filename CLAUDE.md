@@ -157,6 +157,26 @@ When you need a new UI pattern used in multiple places:
 - `check_provider_config()` - Validates LLM provider setup
 - Supports: Anthropic, CBORG, Vertex AI, Bedrock, Foundry, Codex
 
+### MARDUK — Rare Disease Mode (`src/openscientist/monarch.py`, `marduk_memory.py`)
+
+MARDUK (Monarch Assistant for Rare Disease Understanding and Knowledge) is an optional
+per-job mode (`Job.marduk_enabled`) for rare-disease research with Monarch Initiative
+resources. When enabled, a job gets:
+
+- **Monarch tools** — `src/openscientist/monarch.py` (Monarch REST API v3 client) wrapped
+  by MCP tools in `src/openscientist_tools/marduk.py` (`search_monarch`,
+  `monarch_associations`, `monarch_entity`), registered only when `STATE.marduk_enabled`.
+- **Persistent memory** — `src/openscientist/marduk_memory.py` + the `marduk_memories`
+  table (user-scoped, RLS-protected). Written by the `remember_finding` tool and an
+  automatic end-of-job sweep (`extract_memories_from_job`); read by `recall_memory` and by
+  workspace injection (`.claude/MARDUK_MEMORY.md`) at job start.
+- **The `marduk-rare-disease` skill** — `skills/domain/marduk/SKILL.md`.
+
+The `marduk_enabled` flag is threaded from the new-job UI / REST API through JobManager,
+the discovery runtime, `AgentConfig`, the tools subprocess env
+(`OPENSCIENTIST_MARDUK_ENABLED`), and `ToolServerState` — mirror `use_hypotheses` when
+extending it.
+
 ### Web App (`src/openscientist/webapp_components/`)
 
 - NiceGUI-based UI

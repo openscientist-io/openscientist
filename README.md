@@ -27,7 +27,22 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 ### Skills System
 
 - **Workflow Skills**: Hypothesis generation, result interpretation, prioritization, stopping criteria
-- **Domain Skills**: Metabolomics, genomics/transcriptomics, structural biology, data science/statistics
+- **Domain Skills**: Metabolomics, genomics/transcriptomics, structural biology, data science/statistics, rare disease (MARDUK)
+
+### Rare Disease Support (MARDUK)
+
+**MARDUK** (Monarch Assistant for Rare Disease Understanding and Knowledge) is an
+optional per-job mode for rare-disease research using [Monarch Initiative](https://monarchinitiative.org/)
+resources. Enable the **"MARDUK — Rare Disease Mode"** toggle when creating a job to get:
+
+- **Monarch tools**: `search_monarch`, `monarch_associations`, `monarch_entity` — query
+  the Monarch Knowledge Graph, Mondo disease ontology, and HPO for disease/gene/phenotype
+  associations.
+- **The MARDUK skill**: phenotype-driven diagnosis and gene-prioritization guidance, plus
+  pointers to DisMech (the Disorder Mechanisms knowledge base) and other Monarch resources.
+- **Persistent memory**: durable, user-scoped insights (`remember_finding` / `recall_memory`,
+  plus an automatic end-of-job sweep) so conclusions from one rare-disease job inform your
+  future jobs. Memories are private to the user who ran the job.
 
 ### Architecture
 
@@ -36,6 +51,7 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
   - `search_pubmed`: Search literature
   - `update_knowledge_state`: Record findings
   - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
+  - `search_monarch`, `monarch_associations`, `monarch_entity`, `remember_finding`, `recall_memory` (optional, MARDUK rare-disease mode)
 - **Knowledge State**: JSON-based state tracking for findings and literature
 - **Job Manager**: Multi-job support with queueing and lifecycle management
 - **Web Interface**: NiceGUI-based UI for job submission and monitoring
