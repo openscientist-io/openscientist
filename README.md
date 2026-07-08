@@ -38,8 +38,13 @@ resources. Enable the **"MARDUK — Rare Disease Mode"** toggle when creating a 
 - **Monarch tools**: `search_monarch`, `monarch_associations`, `monarch_entity` — query
   the Monarch Knowledge Graph, Mondo disease ontology, and HPO for disease/gene/phenotype
   associations.
-- **The MARDUK skill**: phenotype-driven diagnosis and gene-prioritization guidance, plus
-  pointers to DisMech (the Disorder Mechanisms knowledge base) and other Monarch resources.
+- **DisMech tools**: `list_dismech_disorders`, `get_dismech_disorder` — pull curated
+  disease pathophysiology, prevalence/epidemiology, genetics, and treatments (with
+  literature-cited evidence) from the [DisMech](https://github.com/monarch-initiative/dismech)
+  knowledge base.
+- **The MARDUK skill**: phenotype-driven diagnosis and gene-prioritization guidance,
+  Mondo's rare-disease subset and sources, and template workflows for common rare-disease
+  questions (prevalence/epidemiology, etiology, clinical trials, and literature debates).
 - **Persistent memory**: durable, user-scoped insights (`remember_finding` / `recall_memory`,
   plus an automatic end-of-job sweep) so conclusions from one rare-disease job inform your
   future jobs. Memories are private to the user who ran the job.
@@ -51,7 +56,7 @@ resources. Enable the **"MARDUK — Rare Disease Mode"** toggle when creating a 
   - `search_pubmed`: Search literature
   - `update_knowledge_state`: Record findings
   - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
-  - `search_monarch`, `monarch_associations`, `monarch_entity`, `remember_finding`, `recall_memory` (optional, MARDUK rare-disease mode)
+  - `search_monarch`, `monarch_associations`, `monarch_entity`, `list_dismech_disorders`, `get_dismech_disorder`, `remember_finding`, `recall_memory` (optional, MARDUK rare-disease mode)
 - **Knowledge State**: JSON-based state tracking for findings and literature
 - **Job Manager**: Multi-job support with queueing and lifecycle management
 - **Web Interface**: NiceGUI-based UI for job submission and monitoring
