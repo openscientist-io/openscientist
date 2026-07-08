@@ -44,6 +44,15 @@ Reach for these methods when the question involves any of:
 - **Human Phenotype Ontology (`HP:`)** — the standard vocabulary for phenotypic
   abnormalities. Patient findings should be encoded as HPO terms before reasoning.
 - **HPO Annotations (HPOA)** — disease→phenotype annotations with frequency and onset.
+- **Unified Phenotype Ontology (uPheno, `UPHENO:`)** — integrates the species-specific
+  phenotype ontologies (HPO for human, MP for mouse, ZP for zebrafish, …) into one
+  cross-species framework. It is the semantic glue behind Monarch's cross-species
+  phenotype matching, so it is what lets a model-organism phenotype be compared to a human
+  one. See "Disease models and cross-species phenotypes" below.
+- **New Approach Methodology Ontology (NAMO, `NAMO:`)** — standardizes *New Approach
+  Methodologies* (NAMs): non-animal disease models such as organoids, cell-based models,
+  and in silico/computational models that replace, reduce, or refine animal testing. Use
+  it to describe and compare the model systems behind a disease's evidence.
 - **Gene/ortholog resources** — `HGNC:` for human genes; cross-species phenotype
   evidence via model-organism databases integrated in the KG.
 - **DisMech (Disorder Mechanisms Knowledge Base)** — a curated knowledge base of disease
@@ -53,7 +62,8 @@ Reach for these methods when the question involves any of:
   the "why," not just the "what is linked to what." See "Accessing DisMech" below.
 
 Identifier prefixes you will see and should preserve verbatim (CURIEs):
-`MONDO:`, `HP:`, `HGNC:`, `OMIM:`, `ORPHA:`, `NCBIGene:`, `MGI:`, `ZFIN:`, `UBERON:`.
+`MONDO:`, `HP:`, `UPHENO:`, `HGNC:`, `OMIM:`, `ORPHA:`, `NCBIGene:`, `MGI:`, `ZFIN:`,
+`MP:`, `ZP:`, `UBERON:`, `NAMO:`.
 
 ## Tools available in this environment
 
@@ -117,6 +127,34 @@ disorder's `MONDO:` id against `monarch_entity` so DisMech and the Monarch KG li
 If a query shape isn't covered by the tools, the raw YAML is at
 `https://raw.githubusercontent.com/monarch-initiative/dismech/main/kb/disorders/<Name>.yaml`
 (fetch inside `execute_code`, parse with `yaml.safe_load`).
+
+### Disease models and cross-species phenotypes (NAMO & uPheno)
+
+When a question concerns *how a disease is modeled* or *which phenotypes connect a model
+to the patient*, reach for these two ontologies. Neither has a dedicated tool here — use
+them as reference vocabularies, resolving terms with `search_monarch`, browsing via the
+OLS / BioPortal, or fetching the source when needed.
+
+- **uPheno (`UPHENO:`)** unifies species-specific phenotype ontologies (HPO/`HP:` human,
+  MP/`MP:` mouse, ZP/`ZP:` zebrafish, …) so a mouse or fish phenotype can be compared to a
+  human one. This is what makes cross-species evidence usable: when DisMech `animal_models`
+  or a Monarch model-organism association reports a phenotype, map it through uPheno to the
+  corresponding human `HP:` term rather than eyeballing the label. Browse via the Ontology
+  Lookup Service (`https://www.ebi.ac.uk/ols4`) or fetch `http://purl.obolibrary.org/obo/upheno.owl`;
+  see <https://github.com/obophenotype/upheno>.
+- **NAMO (`NAMO:`)** standardizes non-animal disease models — organoids, cell-based
+  models, in silico/computational models. Use it to describe and compare the model systems
+  behind a disease's evidence (e.g. distinguishing an organoid result from an in silico
+  prediction) and to reason about model validity when weighing mechanistic claims. It is a
+  LinkML schema published to BioPortal under the `NAMO` prefix
+  (<https://bioportal.bioontology.org/ontologies/NAMO>); docs at
+  <https://monarch-initiative.github.io/namo/>; source at
+  <https://github.com/monarch-initiative/namo>.
+
+Tie-in: in the etiology and literature-debate workflows below, use uPheno to align
+model-organism phenotypes with the human presentation, and NAMO to label *what kind of
+model* each piece of evidence came from — a claim resting only on an in silico model is
+weaker than one with concordant organoid and clinical evidence.
 
 ## Mondo's rare disease subset
 
