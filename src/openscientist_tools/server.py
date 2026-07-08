@@ -20,6 +20,7 @@ from openscientist_tools import (  # noqa: F401, E402
     document,
     job_meta,
     knowledge,
+    marduk,
     phenix,
     pubmed,
 )
