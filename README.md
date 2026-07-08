@@ -42,8 +42,10 @@ resources. Enable the **"MARDUK — Rare Disease Mode"** toggle when creating a 
   disease pathophysiology, prevalence/epidemiology, genetics, and treatments (with
   literature-cited evidence) from the [DisMech](https://github.com/monarch-initiative/dismech)
   knowledge base.
-- **The MARDUK skill**: phenotype-driven diagnosis and gene-prioritization guidance for
-  rare-disease research with Monarch resources.
+- **The MARDUK skill**: phenotype-driven diagnosis and gene-prioritization guidance,
+  Mondo's rare-disease subset and sources, cross-species/model resources (uPheno, NAMO),
+  and template workflows for common rare-disease questions (prevalence/epidemiology,
+  etiology, clinical trials, and literature debates).
 - **Persistent memory**: durable, user-scoped insights (`remember_finding` / `recall_memory`,
   plus an automatic end-of-job sweep) so conclusions from one rare-disease job inform your
   future jobs. Memories are private to the user who ran the job.
