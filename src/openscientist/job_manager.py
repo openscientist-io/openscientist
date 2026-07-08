@@ -102,6 +102,7 @@ async def _db_create_job(
     research_question: str,
     max_iterations: int,
     use_hypotheses: bool = False,
+    marduk_enabled: bool = False,
     investigation_mode: str = "autonomous",
     owner_id: UUID | None = None,
     short_title: str | None = None,
@@ -138,6 +139,7 @@ async def _db_create_job(
             short_title=short_title[:100] if short_title else None,
             description=description,
             use_hypotheses=use_hypotheses,
+            marduk_enabled=marduk_enabled,
             investigation_mode=investigation_mode,
             status=JobStatus.PENDING.value,
             max_iterations=max_iterations,
@@ -400,6 +402,7 @@ class JobManager:
         use_hypotheses: bool,
         investigation_mode: str,
         owner_id: str | None,
+        marduk_enabled: bool = False,
         short_title: str | None,
         description: str | None,
         pdb_code: str | None,
@@ -415,6 +418,7 @@ class JobManager:
                     research_question,
                     max_iterations,
                     use_hypotheses=use_hypotheses,
+                    marduk_enabled=marduk_enabled,
                     investigation_mode=investigation_mode,
                     owner_id=owner_uuid,
                     short_title=short_title,
@@ -474,6 +478,7 @@ class JobManager:
         data_files: list[Path],
         max_iterations: int = 10,
         use_hypotheses: bool = False,
+        marduk_enabled: bool = False,
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
         owner_id: str | None = None,
@@ -491,6 +496,8 @@ class JobManager:
             data_files: List of data file paths (can be empty for literature-only jobs)
             max_iterations: Maximum iterations
             use_hypotheses: Whether to enable hypothesis tracking tools
+            marduk_enabled: Whether to enable MARDUK rare-disease mode
+                (Monarch tools + persistent cross-job memory)
             auto_start: Whether to start job immediately
             investigation_mode: "autonomous" (default) or "coinvestigate"
             owner_id: UUID of the job owner (optional, for orphaned jobs)
@@ -524,6 +531,7 @@ class JobManager:
             research_question=research_question,
             max_iterations=max_iterations,
             use_hypotheses=use_hypotheses,
+            marduk_enabled=marduk_enabled,
             investigation_mode=investigation_mode,
             owner_id=owner_id,
             short_title=short_title,

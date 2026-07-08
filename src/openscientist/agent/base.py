@@ -145,6 +145,7 @@ class AgentConfig:
     data_file: Path | None = None
     system_prompt: str | None = None
     use_hypotheses: bool = False
+    marduk_enabled: bool = False
     data_files: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServerSpec, ...] = ()
     # Optional per-run model override. Honored by the Claude path (e.g. the
@@ -251,13 +252,20 @@ class AbstractAgent[P: Provider](abc.ABC):
         return build_system_prompt(cls.prompt_fragments())
 
     @classmethod
-    def job_doc(cls, *, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+    def job_doc(
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        marduk_enabled: bool = False,
+    ) -> str:
         """The full per-job instruction doc for this backend."""
         from openscientist.prompts.common import build_job_doc
 
         return build_job_doc(
             use_hypotheses=use_hypotheses,
             phenix_available=phenix_available,
+            marduk_enabled=marduk_enabled,
             frags=cls.prompt_fragments(),
         )
 
@@ -271,7 +279,11 @@ class AbstractAgent[P: Provider](abc.ABC):
     @classmethod
     @abc.abstractmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        marduk_enabled: bool = False,
     ) -> str:
         """The system prompt this backend uses for a discovery run.
 
@@ -283,10 +295,13 @@ class AbstractAgent[P: Provider](abc.ABC):
     # ----- per-job side effects (run where the agent instance lives) -----
 
     @abc.abstractmethod
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(
+        self, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+    ) -> None:
         """Materialise per-job files in the backend's layout (e.g. skills).
 
-        Runs in the agent process for the configured ``job_dir``.
+        Runs in the agent process for the configured ``job_dir``. When
+        ``marduk_enabled``, also injects the user's prior MARDUK memory briefing.
         """
 
     def apply_runtime_environment(self) -> None:

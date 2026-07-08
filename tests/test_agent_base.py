@@ -47,11 +47,17 @@ class _StubAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        marduk_enabled: bool = False,
     ) -> str:
         return "stub discovery prompt"
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(
+        self, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+    ) -> None:
         return None
 
 

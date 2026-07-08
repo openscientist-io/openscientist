@@ -91,6 +91,13 @@ class Job(UUIDv7Mixin, Base):
         comment="Whether hypothesis tracking tools are enabled",
     )
 
+    marduk_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="Whether MARDUK rare-disease mode (Monarch tools + memory) is enabled",
+    )
+
     investigation_mode: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
