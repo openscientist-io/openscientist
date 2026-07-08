@@ -1,16 +1,17 @@
-"""MARDUK tools: Monarch Initiative access + persistent rare-disease memory.
+"""MARDUK tools: Monarch + DisMech access + persistent rare-disease memory.
 
-Registered only when ``STATE.marduk_enabled`` (per-job MARDUK mode). Monarch
-tools are thin wrappers over ``openscientist.monarch``; memory tools wrap
-``openscientist.marduk_memory``. Every tool does the standard ``KnowledgeState``
-provenance bookkeeping, mirroring ``openscientist_tools.pubmed``.
+Registered only when ``STATE.marduk_enabled`` (per-job MARDUK mode). Monarch and
+DisMech tools are thin wrappers over ``openscientist.monarch`` /
+``openscientist.dismech``; memory tools wrap ``openscientist.marduk_memory``.
+Every tool does the standard ``KnowledgeState`` provenance bookkeeping, mirroring
+``openscientist_tools.pubmed``.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from openscientist import marduk_memory, monarch
+from openscientist import dismech, marduk_memory, monarch
 from openscientist.knowledge_state import KnowledgeState
 from openscientist_tools.server import mcp
 from openscientist_tools.state import STATE
@@ -178,6 +179,67 @@ def recall_memory(query: str = "", entity_id: str = "", limit: int = 10) -> str:
     return marduk_memory.format_memories_markdown(memories)
 
 
+def list_dismech_disorders(filter: str = "") -> str:
+    """List disorders curated in the DisMech disease-mechanisms knowledge base.
+
+    DisMech provides literature-cited pathophysiology, prevalence/epidemiology,
+    genetics, and treatments per disorder. Use this to discover which disorders
+    are covered, then fetch one with ``get_dismech_disorder``.
+
+    Args:
+        filter: Optional case-insensitive substring to narrow the list
+            (e.g. 'dysplasia'). Empty = list all.
+
+    Returns:
+        Markdown list of disorder names.
+    """
+    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks.set_agent_status("Listing DisMech disorders")
+    ks.save_to_database_sync(STATE.job_id)
+
+    filenames = dismech.find_disorders(filter) if filter else dismech.list_disorders()
+    ks.log_analysis(action="list_dismech_disorders", filter=filter, results_count=len(filenames))
+    ks.save_to_database_sync(STATE.job_id)
+    return dismech.format_disorder_list_markdown(filter, filenames)
+
+
+def get_dismech_disorder(name: str, sections: str = "") -> str:
+    """Fetch a DisMech disorder's curated mechanism record.
+
+    Returns pathophysiology, prevalence/epidemiology, inheritance, genetics,
+    phenotypes, and treatments, with literature-cited evidence. Records are large,
+    so use ``sections`` to focus on what you need.
+
+    Args:
+        name: Disorder name (e.g. 'Achondroplasia', 'Alagille syndrome'). Matched
+            case-insensitively; run ``list_dismech_disorders`` if unsure.
+        sections: Optional comma-separated sections to include, from:
+            prevalence, inheritance, genetic, pathophysiology,
+            mechanistic_hypotheses, phenotypes, treatments, animal_models.
+            Empty = all sections.
+
+    Returns:
+        Markdown record, or a not-found message with close matches.
+    """
+    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks.set_agent_status(f"DisMech: {name}")
+    ks.save_to_database_sync(STATE.job_id)
+
+    data = dismech.get_disorder(name)
+    if data is None:
+        matches = dismech.find_disorders(name)
+        ks.log_analysis(action="get_dismech_disorder", name=name, found=False)
+        ks.save_to_database_sync(STATE.job_id)
+        if matches:
+            return dismech.format_disorder_list_markdown(name, matches)
+        return f"No DisMech disorder found for '{name}'. Try `list_dismech_disorders`."
+
+    section_list = [s.strip() for s in sections.split(",") if s.strip()] or None
+    ks.log_analysis(action="get_dismech_disorder", name=name, found=True, sections=sections)
+    ks.save_to_database_sync(STATE.job_id)
+    return dismech.format_disorder_markdown(data, sections=section_list)
+
+
 def _job_owner_id() -> UUID | None:
     """Resolve the current job's owner id for memory scoping."""
     from sqlalchemy import select
@@ -198,5 +260,7 @@ if STATE.marduk_enabled:
     mcp.tool()(search_monarch)
     mcp.tool()(monarch_associations)
     mcp.tool()(monarch_entity)
+    mcp.tool()(list_dismech_disorders)
+    mcp.tool()(get_dismech_disorder)
     mcp.tool()(remember_finding)
     mcp.tool()(recall_memory)
