@@ -431,7 +431,7 @@ class TestIntegrationWithPeerModules:
     that the dataclass alone wouldn't notice."""
 
     def test_consumes_real_probe_summary(self) -> None:
-        from openscientist.airgap.probes import (
+        from openscientist.airgap.probes import (  # type: ignore[import-not-found]
             ProbeResult,
             ProbeSetSummary,
         )
@@ -461,7 +461,9 @@ class TestIntegrationWithPeerModules:
         assert record.all_gates_passed is True
 
     def test_consumes_real_export_decision(self, tmp_path: Path) -> None:
-        from openscientist.airgap.export_boundary import evaluate_export
+        from openscientist.airgap.export_boundary import (  # type: ignore[import-not-found]
+            evaluate_export,
+        )
 
         (tmp_path / "final_report.md").write_text("# Clean.\n")
         decision = evaluate_export(tmp_path)
@@ -478,7 +480,7 @@ class TestIntegrationWithPeerModules:
         assert record.all_gates_passed is True
 
     def test_consumes_real_startup_verification(self, tmp_path: Path) -> None:
-        from openscientist.airgap.credential_verifier import (
+        from openscientist.airgap.credential_verifier import (  # type: ignore[import-not-found]
             verify_airgap_startup,
         )
 
