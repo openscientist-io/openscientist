@@ -70,6 +70,11 @@ standard `execute_code`, `search_pubmed`, `update_knowledge_state`, etc.):
   to focus, or omit it to survey what is linked.
 - **`monarch_entity(entity_id)`** — fetch the full node record (labels, synonyms,
   description, xrefs) for a CURIE.
+- **`list_dismech_disorders(filter)`** and **`get_dismech_disorder(name, sections)`** —
+  browse/search the DisMech knowledge base and fetch a disorder's curated
+  pathophysiology record (mechanism, prevalence/epidemiology, inheritance, genetics,
+  phenotypes, treatments), each with literature-cited evidence. Records are large: pass
+  `sections` (e.g. `"prevalence,genetic,treatments"`) to focus. See "DisMech" below.
 - **`remember_finding(...)`** and **`recall_memory(...)`** — persistent cross-job memory
   (see "Persistent memory" below).
 
@@ -90,22 +95,57 @@ the association/entity tools. Never guess a CURIE.
   <https://monarchinitiative.org/> and <https://github.com/monarch-initiative>) can be
   consulted for specialized needs; check availability before relying on any one of them.
 
-### Accessing DisMech
+### DisMech
 
-DisMech has **no API** — its content is curated YAML on GitHub
-(<https://github.com/monarch-initiative/dismech>) and browsable at
-<https://dismech.monarchinitiative.org/app/>. To consume it from a job:
+DisMech (the Disorder Mechanisms KB, <https://github.com/monarch-initiative/dismech>,
+browsable at <https://dismech.monarchinitiative.org/app/>) is your best source for
+*mechanistic, literature-cited* rare-disease knowledge — the "why," not just "what is
+linked to what." Use the `list_dismech_disorders` / `get_dismech_disorder` tools
+(above) as the primary access path. Each disorder record contains:
 
-- Each disorder is one file at `kb/disorders/<Disease>.yaml` (e.g. `Asthma.yaml`),
-  authored against the LinkML schema in `src/dismech/schema/dismech.yaml`.
-- Fetch a specific disorder's raw YAML inside `execute_code` (Python `requests` on
-  `https://raw.githubusercontent.com/monarch-initiative/dismech/main/kb/disorders/<Disease>.yaml`)
-  and parse it with `yaml.safe_load`. To discover available disorders, list the
-  `kb/disorders/` directory via the GitHub contents API.
-- Each file gives you a mechanism narrative, HPO phenotypes, `MONDO:`/gene associations,
-  MAXO treatments, and PubMed-cited evidence snippets — use it to ground a mechanistic
-  hypothesis and to pull exact quotes for citations. Cross-check the disorder's `MONDO:`
-  id against `monarch_entity` so DisMech and the Monarch KG line up.
+- a `description` and `disease_term` (its `MONDO:` id),
+- `prevalence` (population, `rate_per_100000`, prevalence class) — epidemiology,
+- `inheritance` (pattern, penetrance, de novo rate),
+- `genetic` (causative genes/variants), `pathophysiology`, and `mechanistic_hypotheses`
+  (each hypothesis flagged e.g. `CANONICAL`),
+- `phenotypes` (HPO terms with frequency), `treatments` (with mechanism and trial results),
+- and `evidence` blocks throughout: `reference` (PMID/DOI), a ≤125-char `snippet`, and an
+  `evidence_source` (`HUMAN_CLINICAL`/`MODEL_ORGANISM`/`IN_VITRO`/`COMPUTATIONAL`).
+
+Use these snippets as exact quotes when recording findings, and cross-check the
+disorder's `MONDO:` id against `monarch_entity` so DisMech and the Monarch KG line up.
+If a query shape isn't covered by the tools, the raw YAML is at
+`https://raw.githubusercontent.com/monarch-initiative/dismech/main/kb/disorders/<Name>.yaml`
+(fetch inside `execute_code`, parse with `yaml.safe_load`).
+
+## Mondo's rare disease subset
+
+Mondo curates a **rare disease subset** — use it to judge whether a disease is actually
+rare and to find its authority sources. A term is in the subset via `in_subset: rare`,
+which is the **UNION across authorities** (a disease flagged rare by *any* source is
+included). Provenance tags distinguish the source:
+
+- `orphanet_rare`, `gard_rare`, `nord_rare` — flagged rare by Orphanet / GARD / NORD.
+- `mondo_curated_rare` — manually curated as rare from the literature when no authority
+  lists it.
+- `inferred_rare` — inherited from a rare parent term via the ontology hierarchy.
+
+Rarity thresholds vary by region (US ~1/1,500 or <200,000 persons; EU ~1/2,000; Japan
+~1/2,500), so Mondo does not impose one definition — filter by the authority relevant to
+your question. Because the subset is a union, **absence of a single authority's tag is
+weak evidence the disease is common.** Underlying disease definitions and xrefs are
+harmonized from Orphanet, OMIM, GARD, NORD, MeSH, SNOMED, ClinGen, and MedGen. Reference:
+<https://mondo.readthedocs.io/en/latest/editors-guide/rare-disease-subset/> and
+<https://mondo.monarchinitiative.org/pages/rare-disease/>.
+
+## Rare-disease context
+
+Rare diseases affect ~300 million people (~4% of the population), most are genetic, and
+sparse case counts drive long diagnostic odysseys. This shapes method: evidence is thin
+and uneven, so weigh sources carefully and prefer harmonized identifiers. Monarch
+resources are built for exactly this — e.g. cohort identification (the N3C used Mondo's
+KGX exports to find rare-disease cohorts), phenotype-driven diagnostics (Exomiser), and
+cross-disease drug repurposing (Every Cure).
 
 ## Recommended workflow: phenotype-driven investigation
 
@@ -128,6 +168,70 @@ DisMech has **no API** — its content is curated YAML on GitHub
    `search_pubmed`, especially for recently described conditions the KG may lag on.
 6. **Record findings and hypotheses** via the standard knowledge tools, and **persist
    durable conclusions** with `remember_finding` (below).
+
+## Template workflows for common rare-disease questions
+
+Structured playbooks for recurring rare-disease study questions. Each names its data
+sources and steps; adapt rather than follow rigidly, and record findings + a durable
+`remember_finding` at the end.
+
+### Prevalence & epidemiology
+
+*How common is this disease, and in whom?*
+
+1. Resolve the disease to a `MONDO:` CURIE (`search_monarch`) and confirm it is in the
+   rare disease subset (see above); note which authorities flag it.
+2. `get_dismech_disorder(name, sections="prevalence")` — read the `prevalence` block
+   (population, `rate_per_100000`, prevalence class, birth vs point prevalence) and its
+   cited evidence.
+3. Cross-check Orphanet (via the disorder's `ORPHA:` xref from `monarch_entity`) and
+   `search_pubmed` for epidemiological/registry studies; capture the exact rate, the
+   population it applies to, and the study type.
+4. Report a range, not a point estimate — prevalence figures for rare diseases vary by
+   ascertainment and region. State the denominator and source for each figure.
+
+### Etiology (genetic & molecular mechanism)
+
+*What causes it, and by what mechanism?*
+
+1. `get_dismech_disorder(name, sections="genetic,pathophysiology,mechanistic_hypotheses")`
+   for causative genes/variants, the molecular pathway, and the mechanistic hypotheses
+   (note which are flagged `CANONICAL`).
+2. Corroborate gene–disease links with `monarch_associations` (gene→disease,
+   disease→gene) and inheritance pattern; pull cross-species model evidence.
+3. `search_pubmed` for the primary reports; prefer functional/segregation evidence over
+   association alone.
+4. Distinguish established cause from candidate mechanism, and note allelic/locus
+   heterogeneity where present.
+
+### Clinical trials (completed & active)
+
+*What has been or is being tried therapeutically?*
+
+1. `get_dismech_disorder(name, sections="treatments")` — DisMech `treatments` carry
+   mechanism, approval status, and completed-trial results with citations.
+2. For active/recruiting and completed *registered* trials, query ClinicalTrials.gov from
+   `execute_code` (public REST API v2, no key):
+   `https://clinicaltrials.gov/api/v2/studies?query.cond=<disease>` — filter by
+   `filter.overallStatus` (e.g. `RECRUITING`, `COMPLETED`) and read
+   `protocolSection.statusModule` / `armsInterventionsModule`.
+3. Reconcile the two: DisMech tells you what worked and why; the registry tells you what
+   is currently enrolling. Record trial IDs (`NCT…`), phase, status, and intervention.
+
+### Literature debates & evidence–hypothesis imbalance
+
+*Where is the science genuinely contested?* Rare diseases often have few reported cases,
+so hypotheses can outrun the supporting evidence.
+
+1. Enumerate the competing hypotheses (from DisMech `mechanistic_hypotheses`, the KG, and
+   `search_pubmed`) and record each as a hypothesis with its supporting/refuting evidence.
+2. For each, tally the evidence: how many independent cases/studies, what evidence source
+   (`HUMAN_CLINICAL` vs `MODEL_ORGANISM` vs `IN_VITRO`/`COMPUTATIONAL`), and any conflicts.
+3. Flag imbalance explicitly: a hypothesis resting on a single case report or one model
+   system is weakly supported — say so rather than presenting it as settled. Note where
+   evidence is absent vs where it is contradictory (they are different).
+4. In the report, separate consensus from contested claims, and identify what evidence
+   would resolve each open debate.
 
 ## Persistent memory across jobs
 
