@@ -17,6 +17,8 @@ _MARDUK_TOOLS = {
     "search_monarch",
     "monarch_associations",
     "monarch_entity",
+    "remember_finding",
+    "recall_memory",
 }
 
 

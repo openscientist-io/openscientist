@@ -366,8 +366,9 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 ### MARDUK — Rare Disease Mode (active)
 
 This job runs in **MARDUK mode**: you have Monarch Initiative tools for rare-disease
-research. See the `marduk-rare-disease` skill for the full workflow. Resolve names to
-CURIEs first, then query associations.
+research plus a persistent memory shared across your (this user's) jobs. See the
+`marduk-rare-disease` skill for the full workflow. Resolve names to CURIEs first, then
+query associations.
 
 **search_monarch** - Search the Monarch knowledge graph for entities
 
@@ -382,7 +383,16 @@ CURIEs first, then query associations.
 
 **monarch_entity** - Full record (labels, synonyms, xrefs) for a CURIE
 
-- Use xrefs to bridge MONDO ↔ OMIM/Orphanet""")
+- Use xrefs to bridge MONDO ↔ OMIM/Orphanet
+
+**remember_finding** - Save a durable insight for future jobs
+
+- `title`, `insight`, and optionally `entity_id`, `evidence`, `tags`
+- Save reusable conclusions (confirmed links, ruled-out candidates, CURIE mappings)
+
+**recall_memory** - Search insights saved by your previous MARDUK jobs
+
+- Prior memories are also pre-loaded into `.claude/MARDUK_MEMORY.md` — read it early""")
 
     # --- Hypothesis Tracking Workflow (conditional) ---
     if use_hypotheses:

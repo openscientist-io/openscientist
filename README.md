@@ -40,6 +40,9 @@ resources. Enable the **"MARDUK — Rare Disease Mode"** toggle when creating a 
   associations.
 - **The MARDUK skill**: phenotype-driven diagnosis and gene-prioritization guidance for
   rare-disease research with Monarch resources.
+- **Persistent memory**: durable, user-scoped insights (`remember_finding` / `recall_memory`,
+  plus an automatic end-of-job sweep) so conclusions from one rare-disease job inform your
+  future jobs. Memories are private to the user who ran the job.
 
 ### Architecture
 
@@ -48,7 +51,7 @@ resources. Enable the **"MARDUK — Rare Disease Mode"** toggle when creating a 
   - `search_pubmed`: Search literature
   - `update_knowledge_state`: Record findings
   - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
-  - `search_monarch`, `monarch_associations`, `monarch_entity` (optional, MARDUK rare-disease mode)
+  - `search_monarch`, `monarch_associations`, `monarch_entity`, `remember_finding`, `recall_memory` (optional, MARDUK rare-disease mode)
 - **Knowledge State**: JSON-based state tracking for findings and literature
 - **Job Manager**: Multi-job support with queueing and lifecycle management
 - **Web Interface**: NiceGUI-based UI for job submission and monitoring
