@@ -1,0 +1,35 @@
+name: Deploy openscientist (prod)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build base + main image in ACR
+        run: |
+          ACR=${{ secrets.ACR_NAME }}
+          sed -i "s|^FROM openscientist-base:latest|FROM ${ACR}.azurecr.io/openscientist-base:latest|" Dockerfile
+          az acr build -r $ACR -t openscientist-base:latest -f Dockerfile.base .
+          TAG=prod-${{ github.sha }}
+          az acr build -r $ACR -t openscientist:$TAG -f Dockerfile .
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Redeploy on vm-openscientist-prod
+        run: |
+          ACR=${{ secrets.ACR_NAME }}
+          FULL=${ACR}.azurecr.io/openscientist:${{ env.TAG }}
+          TOK=$(az acr login -n $ACR --expose-token --query accessToken -o tsv)
+          az vm run-command invoke -g rg-openscientist-prod -n vm-openscientist-prod --command-id RunShellScript --scripts "docker login ${ACR}.azurecr.io -u 00000000-0000-0000-0000-000000000000 -p '$TOK' && sed -i 's|image: acrcbraindev.azurecr.io/openscientist:.*|image: $FULL|' /opt/openscientist/docker-compose.yml && cd /opt/openscientist && docker compose pull openscientist && docker compose up -d openscientist"
