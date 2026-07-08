@@ -18,12 +18,13 @@ import pytest
 from openscientist.agent.base import AbstractAgent, AgentBackend, IterationResult, TurnOutcome
 
 # Importing the concrete agents registers them as AbstractAgent subclasses.
-from openscientist.agent.claude_code_agent import ClaudeCodeAgent  # noqa: F401
+from openscientist.agent.claude_code_agent import ClaudeCodeAgent
 from openscientist.agent.codex_agent import CodexAgent
 from openscientist.agent.factory import (
     agent_class_for_provider_id,
     backend_for_provider_id,
 )
+from openscientist.airgap.codex_agent import AirgapCodexAgent
 from openscientist.prompts.common import BackendFragments
 from openscientist.providers import provider_class, provider_ids
 from openscientist.providers.base import Provider
@@ -79,13 +80,32 @@ def test_every_concrete_agent_declares_a_file_write_tool() -> None:
         assert isinstance(cls.file_write_tool, str) and cls.file_write_tool, cls
 
 
-def test_every_backend_has_exactly_one_agent() -> None:
+# Each backend has one primary agent. A backend may also have a closed set of
+# known variants (e.g. AirgapCodexAgent, a settings-gated hardened substitute
+# for CodexAgent in air-gap mode) -- these must be explicitly listed here so
+# an unaccounted third class for a backend still fails loudly.
+PRIMARY_AGENT_BY_BACKEND: dict[AgentBackend, type[AbstractAgent[Provider]]] = {
+    AgentBackend.CLAUDE_CODE: ClaudeCodeAgent,
+    AgentBackend.CODEX: CodexAgent,
+}
+ALLOWED_AGENT_VARIANTS_BY_BACKEND: dict[AgentBackend, set[type[AbstractAgent[Provider]]]] = {
+    AgentBackend.CODEX: {AirgapCodexAgent},
+}
+
+
+def test_every_backend_has_exactly_one_primary_agent_and_only_known_variants() -> None:
     by_backend: dict[AgentBackend, list[type[AbstractAgent[Provider]]]] = {}
     for cls in _concrete_agent_classes():
         by_backend.setdefault(cls.backend, []).append(cls)
     assert set(by_backend) == set(AgentBackend), "every AgentBackend member needs an agent"
-    for backend, classes in by_backend.items():
-        assert len(classes) == 1, f"{backend} has multiple agents: {classes}"
+    assert set(PRIMARY_AGENT_BY_BACKEND) == set(AgentBackend), "every backend needs a primary agent"
+    for backend, primary in PRIMARY_AGENT_BY_BACKEND.items():
+        variants = ALLOWED_AGENT_VARIANTS_BY_BACKEND.get(backend, set())
+        expected = {primary, *variants}
+        actual = set(by_backend[backend])
+        assert actual == expected, f"{backend} has unexpected agents: {actual}"
+        for variant in variants:
+            assert issubclass(variant, primary), variant
 
 
 def test_every_provider_resolves_to_a_concrete_agent() -> None:
