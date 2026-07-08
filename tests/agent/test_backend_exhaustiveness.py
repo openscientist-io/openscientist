@@ -149,11 +149,17 @@ def test_concrete_subclass_without_backend_is_rejected() -> None:
 
             @classmethod
             def discovery_system_prompt(
-                cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+                cls,
+                *,
+                use_hypotheses: bool = False,
+                phenix_available: bool = False,
+                marduk_enabled: bool = False,
             ) -> str:
                 return ""
 
-            async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+            async def prepare_job_workspace(
+                self, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+            ) -> None:
                 return None
 
             async def run_iteration(

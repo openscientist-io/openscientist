@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import yaml  # type: ignore[import-untyped]
 
 from openscientist import dismech
 
@@ -85,8 +86,6 @@ def test_get_disorder_direct_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
         calls.append(url)
         if url.endswith("Achondroplasia.yaml"):
-            import yaml
-
             return _FakeResponse(text=yaml.safe_dump(_SAMPLE))
         return _FakeResponse(status_code=404)
 
@@ -97,8 +96,6 @@ def test_get_disorder_direct_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_get_disorder_falls_back_to_fuzzy_match(monkeypatch: pytest.MonkeyPatch) -> None:
-    import yaml
-
     listing = [{"name": "Alagille_syndrome.yaml", "type": "file"}]
 
     def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
