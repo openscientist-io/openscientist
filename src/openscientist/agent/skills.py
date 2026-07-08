@@ -20,14 +20,18 @@ from openscientist.settings import get_settings
 logger = logging.getLogger(__name__)
 
 
-def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> None:
+def _write_job_claude_md(
+    claude_dir: Path, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+) -> None:
     """Write the generated discovery JOB CLAUDE.md into ``claude_dir``."""
     try:
         phenix_available = get_settings().phenix.is_available
         dest = claude_dir / "CLAUDE.md"
         dest.write_text(
             generate_job_claude_md(
-                use_hypotheses=use_hypotheses, phenix_available=phenix_available
+                use_hypotheses=use_hypotheses,
+                phenix_available=phenix_available,
+                marduk_enabled=marduk_enabled,
             ),
             encoding="utf-8",
         )
@@ -36,13 +40,15 @@ def _write_job_claude_md(claude_dir: Path, *, use_hypotheses: bool = False) -> N
         logger.warning("Failed to write job CLAUDE.md: %s", e)
 
 
-async def write_skills_to_claude_dir(job_dir: Path, *, use_hypotheses: bool = False) -> None:
+async def write_skills_to_claude_dir(
+    job_dir: Path, *, use_hypotheses: bool = False, marduk_enabled: bool = False
+) -> None:
     """Write CLAUDE.md and enabled skill files into ``job_dir/.claude/``."""
     claude_dir = job_dir / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write the discovery-agent JOB CLAUDE.md (hypothesis sections conditional)
-    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses)
+    # Write the discovery-agent JOB CLAUDE.md (hypothesis/MARDUK sections conditional)
+    _write_job_claude_md(claude_dir, use_hypotheses=use_hypotheses, marduk_enabled=marduk_enabled)
 
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:

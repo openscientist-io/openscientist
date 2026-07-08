@@ -32,6 +32,7 @@ class ToolServerState(BaseSettings):
     # split on `os.pathsep`.
     data_files: Annotated[tuple[Path, ...], NoDecode] = ()
     use_hypotheses: bool = False
+    marduk_enabled: bool = False
 
     @field_validator("data_files", mode="before")
     @classmethod

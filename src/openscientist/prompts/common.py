@@ -251,6 +251,7 @@ def build_job_doc(
     *,
     use_hypotheses: bool = False,
     phenix_available: bool = False,
+    marduk_enabled: bool = False,
     frags: BackendFragments,
 ) -> str:
     """Backend-agnostic per-job instructions doc (the `CLAUDE.md` / `AGENTS.md`
@@ -358,6 +359,30 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 
 - `answer`: 1–3 direct sentences answering the research question
 - Call this after writing `./final_report.md`""")
+
+    # --- MARDUK rare-disease tools (conditional) ---
+    if marduk_enabled:
+        parts.append("""
+### MARDUK — Rare Disease Mode (active)
+
+This job runs in **MARDUK mode**: you have Monarch Initiative tools for rare-disease
+research. See the `marduk-rare-disease` skill for the full workflow. Resolve names to
+CURIEs first, then query associations.
+
+**search_monarch** - Search the Monarch knowledge graph for entities
+
+- `query`: disease/gene/phenotype name (e.g., `"Marfan syndrome"`, `"FBN1"`)
+- `category` (optional): `"biolink:Disease"`, `"biolink:Gene"`, `"biolink:PhenotypicFeature"`
+- Returns matching entities with their CURIEs — the starting point for the tools below
+
+**monarch_associations** - Associations for an entity CURIE
+
+- `entity_id`: a CURIE from `search_monarch` (e.g., `"MONDO:0007947"`)
+- `category` (optional): e.g. `"biolink:DiseaseToPhenotypicFeatureAssociation"`
+
+**monarch_entity** - Full record (labels, synonyms, xrefs) for a CURIE
+
+- Use xrefs to bridge MONDO ↔ OMIM/Orphanet""")
 
     # --- Hypothesis Tracking Workflow (conditional) ---
     if use_hypotheses:
