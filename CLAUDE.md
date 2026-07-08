@@ -163,9 +163,11 @@ MARDUK (Monarch Assistant for Rare Disease Understanding and Knowledge) is an op
 per-job mode (`Job.marduk_enabled`) for rare-disease research with Monarch Initiative
 resources. When enabled, a job gets:
 
-- **Monarch tools** — `src/openscientist/monarch.py` (Monarch REST API v3 client) wrapped
-  by MCP tools in `src/openscientist_tools/marduk.py` (`search_monarch`,
-  `monarch_associations`, `monarch_entity`), registered only when `STATE.marduk_enabled`.
+- **Monarch + DisMech tools** — `src/openscientist/monarch.py` (Monarch REST API v3
+  client) and `src/openscientist/dismech.py` (DisMech GitHub reader), wrapped by MCP tools
+  in `src/openscientist_tools/marduk.py` (`search_monarch`, `monarch_associations`,
+  `monarch_entity`, `list_dismech_disorders`, `get_dismech_disorder`), registered only when
+  `STATE.marduk_enabled`.
 - **Persistent memory** — `src/openscientist/marduk_memory.py` + the `marduk_memories`
   table (user-scoped, RLS-protected). Written by the `remember_finding` tool and an
   automatic end-of-job sweep (`extract_memories_from_job`); read by `recall_memory` and by
