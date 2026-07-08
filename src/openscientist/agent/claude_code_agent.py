@@ -165,6 +165,12 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             use_hypotheses=use_hypotheses,
             marduk_enabled=marduk_enabled,
         )
+        if marduk_enabled:
+            from openscientist.marduk_memory import write_memory_briefing
+
+            await write_memory_briefing(
+                self._config.job_dir, exclude_job_id=self._config.job_dir.name
+            )
 
     def apply_runtime_environment(self) -> None:
         # Auth/routing flags for the Claude CLI and the tools subprocess.

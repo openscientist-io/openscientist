@@ -34,6 +34,9 @@ from .job_chat_message import JobChatMessage
 from .job_data_file import JobDataFile
 from .job_share import JobShare
 from .literature import Literature
+
+# MARDUK persistent memory
+from .marduk_memory import MardukMemory
 from .oauth_account import OAuthAccount
 from .plot import Plot
 
@@ -61,6 +64,7 @@ __all__ = [
     "JobDataFile",
     "JobShare",
     "Literature",
+    "MardukMemory",
     "OAuthAccount",
     "Plot",
     "ReviewToken",

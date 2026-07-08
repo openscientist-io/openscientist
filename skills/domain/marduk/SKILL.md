@@ -65,6 +65,8 @@ standard `execute_code`, `search_pubmed`, `update_knowledge_state`, etc.):
   to focus, or omit it to survey what is linked.
 - **`monarch_entity(entity_id)`** — fetch the full node record (labels, synonyms,
   description, xrefs) for a CURIE.
+- **`remember_finding(...)`** and **`recall_memory(...)`** — persistent cross-job memory
+  (see "Persistent memory" below).
 
 Always resolve a name to a CURIE with `search_monarch` first, then feed that CURIE to
 the association/entity tools. Never guess a CURIE.
@@ -102,7 +104,28 @@ the association/entity tools. Never guess a CURIE.
    model support. State assumptions; do not overstate a single-source association.
 5. **Check the literature.** Corroborate candidate disease–gene links with
    `search_pubmed`, especially for recently described conditions the KG may lag on.
-6. **Record findings and hypotheses** via the standard knowledge tools.
+6. **Record findings and hypotheses** via the standard knowledge tools, and **persist
+   durable conclusions** with `remember_finding` (below).
+
+## Persistent memory across jobs
+
+MARDUK jobs can read and write a **user-scoped memory** so conclusions from one
+investigation inform later ones. Memories are private to the user who ran the job.
+
+- At job start, relevant prior memories for this user are injected into your workspace
+  (look for `MARDUK_MEMORY.md` in the working directory). Read it early — a previous job
+  may have already resolved an entity, ruled out a candidate, or established a
+  gene–disease link you can build on.
+- Call **`recall_memory(query=...)`** to search prior memories by disease/gene/phenotype
+  or free text when you need more than what was pre-injected.
+- Call **`remember_finding(...)`** to save a durable, reusable insight — e.g. a
+  confirmed disease–gene association, a phenotype pattern that discriminates two
+  differentials, a ruled-out hypothesis, or a useful CURIE mapping. Attach the primary
+  entity CURIE (`entity_id`) and the evidence so future jobs can judge and reuse it.
+
+Write memories that are **general and reusable**, not job-specific bookkeeping: capture
+the biological conclusion and its evidence, not "iteration 3 ran a query." Prefer one
+crisp insight per memory.
 
 ## Good practice
 

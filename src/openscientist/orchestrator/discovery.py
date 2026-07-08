@@ -540,6 +540,21 @@ async def _persist_final_status(
     return final_status
 
 
+async def _sweep_marduk_memory(job_id: str) -> None:
+    """Distill a durable MARDUK memory from a completed job (best-effort).
+
+    Runs only for MARDUK jobs that completed. Never raises — a memory-sweep
+    failure must not turn a completed job into a failed one.
+    """
+    try:
+        from openscientist.marduk_memory import extract_memories_from_job
+
+        saved = await extract_memories_from_job(job_id)
+        logger.info("MARDUK memory sweep for job %s recorded %d memory item(s)", job_id, saved)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("MARDUK memory sweep failed for job %s: %s", job_id, exc)
+
+
 async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     """Load runtime job metadata from the database."""
     job_uuid = UUID(job_dir.name)
@@ -794,6 +809,8 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             description=runtime.get("description"),
         )
         final_status = await _persist_final_status(job_dir, report_outcome)
+        if final_status == "completed" and runtime.get("marduk_enabled", False):
+            await _sweep_marduk_memory(job_id)
         ks = KnowledgeState.load_from_database_sync(job_id)
         return {
             "job_id": job_id,

@@ -136,6 +136,15 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         from openscientist.agent.skills import write_skills_to_codex_dir
 
         await write_skills_to_codex_dir(self._config.job_dir)
+        if marduk_enabled:
+            from openscientist.marduk_memory import write_memory_briefing
+
+            # Codex reads project docs (AGENTS.md and files it references); the
+            # briefing lands in .claude/ but is also surfaced in the AGENTS.md
+            # MARDUK section, so an agent that inspects the workspace finds it.
+            await write_memory_briefing(
+                self._config.job_dir, exclude_job_id=self._config.job_dir.name
+            )
 
     # apply_runtime_environment, chat_system_prompt, write_chat_context, and
     # chat_model_override use the AbstractAgent defaults: codex configures its
