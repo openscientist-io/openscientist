@@ -24,6 +24,7 @@ from openscientist.agent.factory import (
     agent_class_for_provider_id,
     backend_for_provider_id,
 )
+from openscientist.airgap.claude_code_agent import AirgapClaudeCodeAgent
 from openscientist.airgap.codex_agent import AirgapCodexAgent
 from openscientist.prompts.common import BackendFragments
 from openscientist.providers import provider_class, provider_ids
@@ -90,6 +91,7 @@ PRIMARY_AGENT_BY_BACKEND: dict[AgentBackend, type[AbstractAgent[Provider]]] = {
 }
 ALLOWED_AGENT_VARIANTS_BY_BACKEND: dict[AgentBackend, set[type[AbstractAgent[Provider]]]] = {
     AgentBackend.CODEX: {AirgapCodexAgent},
+    AgentBackend.CLAUDE_CODE: {AirgapClaudeCodeAgent},
 }
 
 
