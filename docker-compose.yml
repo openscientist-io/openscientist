@@ -128,5 +128,51 @@ services:
     profiles: ["build-only"]  # Excluded from `docker compose up`
     entrypoint: ["echo", "openscientist-agent image built"]
 
+  # Air-gap Docker socket proxy (RFC section 9 / issue #218). Two containers:
+  # this one is the JSON-body-inspecting validator agent containers actually
+  # talk to (OPENSCIENTIST_AIRGAP_DOCKER_TCP=airgap-docker-proxy:2375, matching
+  # this service's name); it forwards to airgap-docker-proxy-haproxy, which
+  # holds the real Docker socket and is unreachable except from this service
+  # (see the airgap-proxy-backend network below, and validator.py's module
+  # docstring for the two-layer design).
+  airgap-docker-proxy:
+    build:
+      context: docker/airgap-docker-proxy/validator
+    image: openscientist-airgap-docker-proxy-validator:latest
+    profiles: ["airgap"]
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    environment:
+      AIRGAP_DOCKER_PROXY_BACKEND: http://airgap-docker-proxy-haproxy:2375
+      AIRGAP_DOCKER_PROXY_ALLOWED_IMAGES: ${OPENSCIENTIST_EXECUTOR_IMAGE:-openscientist-executor:latest}
+    networks:
+      - default
+      - airgap-proxy-backend
+    labels:
+      - "openscientist.role=airgap-docker-proxy"
+
+  airgap-docker-proxy-haproxy:
+    build:
+      context: docker/airgap-docker-proxy/haproxy
+    image: openscientist-airgap-docker-proxy-haproxy:latest
+    profiles: ["airgap"]
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    volumes:
+      # The one container in this whole deployment that touches the real
+      # socket. Read-write: container create/start/wait/delete all need it;
+      # read-only would break everything except the GET-only routes.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - airgap-proxy-backend
+    labels:
+      - "openscientist.role=airgap-docker-proxy-haproxy"
+
+networks:
+  # internal: true means Docker gives this network no route out and no
+  # host port publishing — airgap-docker-proxy-haproxy (the only member
+  # besides the validator) is reachable exclusively from
+  # airgap-docker-proxy, never from the agent, never from the host.
+  airgap-proxy-backend:
+    internal: true
+
 volumes:
   postgres_data:
