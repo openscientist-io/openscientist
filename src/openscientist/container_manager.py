@@ -74,11 +74,52 @@ class ContainerManager:
 
     @property
     def client(self) -> "_docker_module.DockerClient":
-        """Lazy-load Docker client."""
-        if self._client is None:
-            import docker
+        """Lazy-load Docker client.
 
-            self._client = docker.from_env()
+        In air-gap mode the client points at the airgap Docker socket proxy
+        (the validator+HAProxy two-container service, RFC §9 — see
+        ``docker/airgap-docker-proxy/`` and ``docs/AIR_GAPPED.md``) instead
+        of the real ``docker.sock``, so executor spawns go through its
+        default-deny + JSON-body-validation policy. The proxy socket path
+        is validated at startup by :class:`AirgapSettings` (must not equal
+        ``/var/run/docker.sock``).
+
+        Airgap follow-up (2026-06-12): cache the client, but ping() on
+        every access and rebuild on failure. HAProxy (the proxy's coarse
+        allowlist layer) closes keep-alive connections aggressively; the
+        docker SDK's pooled connections sit idle through long-running
+        ``containers.run()`` calls and return RemoteDisconnected /
+        ConnectionRefused on subsequent reuse without auto-recovering.
+        The ping is cheap (one round-trip to the proxy) and guarantees
+        callers get a live client every time.
+
+        Building a fresh client on every access was also tried but
+        produces multiple TCP handshakes per ``execute_code`` call
+        (resolve_docker_network, images.get, containers.run,
+        containers.get for cleanup, etc.), any one of which can hit a
+        transient DNS / proxy-restart hiccup and fail the whole call.
+        A single proven-alive cached client per call site is more robust.
+        """
+        import docker
+
+        settings = get_settings()
+        airgap_on = getattr(getattr(settings, "airgap", None), "enabled", False)
+        if not airgap_on:
+            if self._client is None:
+                self._client = docker.from_env()
+            return self._client
+
+        from openscientist.airgap.docker_proxy import docker_base_url_for_airgap
+
+        base_url = docker_base_url_for_airgap(settings)
+        if self._client is not None:
+            try:
+                self._client.ping()
+                return self._client
+            except Exception:
+                # Connection dead — fall through and rebuild.
+                self._client = None
+        self._client = docker.DockerClient(base_url=base_url)
         return self._client
 
     def _encode_executor_input(
@@ -302,7 +343,20 @@ class ContainerManager:
 
         from openscientist.job_container import resolve_docker_network
 
-        network = resolve_docker_network(self.client, get_settings().container.agent_network)
+        settings = get_settings()
+        # AIR-GAP: RFC §10.2 — the executor container has no egress route at
+        # all in air-gap mode. The kernel network namespace is fully isolated;
+        # not even the LLM endpoint is reachable from `exec()`'d Python. This
+        # is what makes the `execute_code` MCP-tool classification as local-
+        # only correct: the agent's Python can `import socket` all it wants,
+        # but the kernel drops the egress at the namespace boundary.
+        #
+        # Codex Review-6 BUG (fixed): previously the executor inherited the
+        # agent network, so the local-only classification was a lie.
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            network = "none"
+        else:
+            network = resolve_docker_network(self.client, settings.container.agent_network)
 
         try:
             # Run container
@@ -340,7 +394,22 @@ class ContainerManager:
             )
 
             execution_result = self._parse_executor_result(result)
-            self._cleanup_container_by_name(container_name)
+
+            # Cleanup is best-effort. Don't let a transient Docker hiccup
+            # during cleanup (e.g. proxy connection drop right after the
+            # executor returned) flip a successful execution_result to
+            # success=false. Surfaced 2026-06-12: codex review found that
+            # the broad ``except Exception`` below was catching cleanup
+            # failures and recording the WHOLE call as failed even though
+            # the executor returned ``{"success": true, ...}``.
+            try:
+                self._cleanup_container_by_name(container_name)
+            except Exception as cleanup_exc:
+                logger.warning(
+                    "Best-effort cleanup of %s failed (executor result preserved): %s",
+                    container_name,
+                    cleanup_exc,
+                )
 
             logger.info(
                 "Executor container %s completed: success=%s, time=%.2fs",

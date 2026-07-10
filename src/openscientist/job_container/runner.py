@@ -33,6 +33,11 @@ logger = logging.getLogger(__name__)
 
 AGENT_APP_DIR = "/agent"
 
+# Default tmpfs-style location for the per-job CODEX_HOME in air-gap mode
+# (host-side and container-side share the same path by default). Operators
+# override via `settings.airgap.codex_home_root`.
+_AIRGAP_CODEX_HOME_ROOT_DEFAULT = "/run/openscientist-codex-home"
+
 
 class JobContainerRunner:
     """Launches and stops per-job agent containers."""
@@ -50,6 +55,18 @@ class JobContainerRunner:
         return resolve_docker_network(self._docker, configured_network)
 
     @staticmethod
+    def _airgap_codex_home_paths(settings: Settings, job_id: str) -> tuple[Path, Path]:
+        """Return ``(host_dir, container_dir)`` for the per-job CODEX_HOME.
+
+        The host and container path are the same by default (operators run
+        this on Linux where ``/run`` is tmpfs); they can diverge via
+        ``settings.airgap.codex_home_root``.
+        """
+        root = settings.airgap.codex_home_root or _AIRGAP_CODEX_HOME_ROOT_DEFAULT
+        per_job = Path(root) / job_id
+        return per_job, per_job
+
+    @staticmethod
     def _build_container_environment(
         settings: Settings,
         *,
@@ -57,7 +74,12 @@ class JobContainerRunner:
         job_mount: str,
         run_mode: str = "discovery",
     ) -> dict[str, str]:
-        """Build the environment variables for the agent container."""
+        """Build the environment variables for the agent container.
+
+        In air-gap mode the env is filtered through
+        :func:`airgap.env_allowlist.filtered_agent_env` so only the active
+        provider's credentials reach the container — see RFC §12.1.
+        """
         cs = settings.container
         provider_env = settings.provider.get_container_env_vars()
         env: dict[str, str] = {
@@ -85,19 +107,96 @@ class JobContainerRunner:
             env["GOOGLE_APPLICATION_CREDENTIALS"] = "/agent/gcp-credentials.json"
         if settings.phenix.phenix_host_path:
             env["PHENIX_PATH"] = "/opt/phenix"
+
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            from openscientist.airgap.env_allowlist import filtered_agent_env
+
+            env = filtered_agent_env(env, settings.provider.provider_id)
+            # Re-add the air-gap-specific vars the agent needs to find its
+            # internal endpoints. Safe to overlay after filtering because
+            # they aren't credentials.
+            env["OPENSCIENTIST_AIR_GAPPED"] = "1"
+            # Forward the optional TCP override for the airgap Docker proxy
+            # endpoint. Used on Docker Desktop / macOS hosts where bind-
+            # mounting a Unix socket into a container yields a socket inode
+            # that refuses connect() (a known file-sharing-layer limitation).
+            # Setting this var makes the agent's docker SDK speak TCP to the
+            # proxy instead of the bind-mounted Unix socket. On Linux deploys
+            # operators leave it unset and the conventional Unix path is used.
+            docker_tcp = os.environ.get("OPENSCIENTIST_AIRGAP_DOCKER_TCP")
+            if docker_tcp:
+                env["OPENSCIENTIST_AIRGAP_DOCKER_TCP"] = docker_tcp
+            # RFC §7.5 opt-in for managed-LLM egress. Must be overlaid here
+            # like the other airgap-specific vars, otherwise the in-container
+            # factory defaults to False and refuses ClaudeCompatible providers
+            # (Bedrock, Foundry) even when the operator has explicitly enabled
+            # the flag in the host .env.
+            if settings.airgap.allow_managed_llm_egress:
+                env["OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS"] = "1"
+            if settings.airgap.llm_addr:
+                env["OPENSCIENTIST_AIRGAP_LLM_ADDR"] = settings.airgap.llm_addr
+            if settings.airgap.pubmed_addr:
+                env["OPENSCIENTIST_AIRGAP_PUBMED_ADDR"] = settings.airgap.pubmed_addr
+                # Codex Review-7 BUG #2 (B2) fix: derive PUBMED_BASE_URL
+                # from pubmed_addr so the agent's literature tool actually
+                # routes through the operator's mirror. Previously the addr
+                # was set but `literature.py` (which reads PUBMED_BASE_URL)
+                # never saw it, so the agent fell back to the public NCBI
+                # URL — which is then blocked by the airgap firewall, making
+                # PubMed search a silent dead path in airgap mode.
+                #
+                # Operators can override the derived URL by exporting
+                # PUBMED_BASE_URL explicitly (e.g. a mirror with a non-NCBI
+                # path layout) — we forward it from the host env when set;
+                # otherwise we derive ``http://<addr>/entrez/eutils`` to
+                # match the public NCBI eutils path convention operators
+                # typically replicate.
+                operator_pubmed_url = os.environ.get("PUBMED_BASE_URL")
+                if operator_pubmed_url:
+                    env["PUBMED_BASE_URL"] = operator_pubmed_url
+                else:
+                    env["PUBMED_BASE_URL"] = f"http://{settings.airgap.pubmed_addr}/entrez/eutils"
+            # The AirgapCodexAgent reads this to relocate CODEX_HOME outside
+            # job_dir. Must match the container-side bind-mount target below.
+            _host_dir, container_dir = JobContainerRunner._airgap_codex_home_paths(settings, job_id)
+            env["OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT"] = str(container_dir.parent)
         return env
 
     @staticmethod
     def _build_container_volumes(
         settings: Settings,
         *,
+        job_id: str,
         job_dir_host: Path,
         job_mount: str,
     ) -> dict[str, dict[str, str]]:
-        """Build the bind mounts for the agent container."""
+        """Build the bind mounts for the agent container.
+
+        In air-gap mode an extra mount maps the per-job host CODEX_HOME
+        subdir (where the runner already pre-placed ``auth.json``) into the
+        container at the same path the :class:`AirgapCodexAgent` will use as
+        its ``_codex_home()``. Keeps Codex's generated ``config.toml`` and
+        the mounted ``auth.json`` out of the exported job artifact tree
+        (RFC §11 / §12.2).
+        """
+        # Docker socket: in non-airgap mode the agent container mounts the
+        # real host socket so it can spawn sibling executor containers.
+        # AIR-GAP: Codex Review-6 BUG — mounting the real socket lets the
+        # agent escape the network boundary by spawning a privileged sibling.
+        # Use the operator-deployed socket proxy (RFC §9) instead. The proxy
+        # path is validated at startup by `AirgapSettings` to NOT be the
+        # real `/var/run/docker.sock`.
+        airgap = getattr(settings, "airgap", None)
+        if airgap is not None and getattr(airgap, "enabled", False):
+            socket_path = airgap.docker_socket_path
+        else:
+            socket_path = "/var/run/docker.sock"
         volumes: dict[str, dict[str, str]] = {
             str(job_dir_host): {"bind": job_mount, "mode": "rw"},
-            "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+            # The CONTAINER side keeps /var/run/docker.sock so the in-container
+            # docker SDK reads the same path; the HOST side is the airgap
+            # proxy socket in airgap mode, the real socket otherwise.
+            socket_path: {"bind": "/var/run/docker.sock", "mode": "rw"},
         }
         gcp_path = settings.provider.google_application_credentials
         if gcp_path:
@@ -112,6 +211,9 @@ class JobContainerRunner:
                 "bind": "/opt/phenix",
                 "mode": "ro",
             }
+        if getattr(getattr(settings, "airgap", None), "enabled", False):
+            host_dir, container_dir = JobContainerRunner._airgap_codex_home_paths(settings, job_id)
+            volumes[str(host_dir)] = {"bind": str(container_dir), "mode": "rw"}
         return volumes
 
     @staticmethod
@@ -155,7 +257,7 @@ class JobContainerRunner:
             settings, job_id=job_id, job_mount=job_mount, run_mode=run_mode
         )
         volumes = JobContainerRunner._build_container_volumes(
-            settings, job_dir_host=job_dir_host, job_mount=job_mount
+            settings, job_id=job_id, job_dir_host=job_dir_host, job_mount=job_mount
         )
         return env, volumes, agent_network, agent_memory, agent_cpu, agent_platform
 
@@ -196,13 +298,31 @@ class JobContainerRunner:
         # path.  Docker requires absolute paths for bind mounts; relative paths
         # are misinterpreted as named volumes.
         job_dir_resolved = job_dir.resolve()
-        # Host-side, pre-launch prep is the agent backend's own concern. Ask the
-        # backend class for the configured provider (no agent instance here).
-        from openscientist.agent.factory import agent_class_for_provider_id
+        # Host-side, pre-launch prep is the agent backend's own concern. Ask
+        # the backend class for the configured provider and let it run.
+        #
+        # Codex review post-PR-#195-merge (2026-06-17): the factory's
+        # ``agent_class_for_provider_id`` resolves to the BASE class for a
+        # provider id (e.g. ``CodexAgent`` for Ollama/OpenAI), not the
+        # airgap variant — the airgap override lives only inside
+        # ``get_agent``. Routing pre-launch through it would mean
+        # ``CodexAgent.provision_host_prelaunch`` writes the codex auth to
+        # ``job_dir/.codex/`` even in airgap mode, while
+        # ``AirgapCodexAgent._codex_home()`` looks under
+        # ``OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT/<job_id>/`` and the agent
+        # silently launches without auth. Branch explicitly here so each
+        # mode invokes the matching ``provision_host_prelaunch``.
+        airgap_on = getattr(getattr(settings, "airgap", None), "enabled", False)
+        if airgap_on:
+            from openscientist.airgap.codex_agent import AirgapCodexAgent
 
-        agent_class_for_provider_id(settings.provider.provider_id).provision_host_prelaunch(
-            settings, job_dir_resolved
-        )
+            AirgapCodexAgent.provision_host_prelaunch(settings, job_dir_resolved)
+        else:
+            from openscientist.agent.factory import agent_class_for_provider_id
+
+            agent_class_for_provider_id(settings.provider.provider_id).provision_host_prelaunch(
+                settings, job_dir_resolved
+            )
         job_dir_host = to_host_path(job_dir_resolved, cs)
         env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
             self._build_launch_configuration(
@@ -233,7 +353,18 @@ class JobContainerRunner:
             # model server running on the host (e.g. a local Ollama at
             # http://host.docker.internal:11434/v1). Harmless for providers that
             # do not use it. On Linux this is not provided by default.
-            extra_hosts={"host.docker.internal": "host-gateway"},
+            #
+            # AIR-GAP: RFC §6.2 forbids host-gateway/extra_hosts in air-gap
+            # mode (the per-job internal network + host firewall is the whole
+            # point of the network-layer guarantee; routing back to the host
+            # bypasses it). When airgap.enabled, the operator points
+            # OPENSCIENTIST_AIRGAP_LLM_ADDR at an explicit internal endpoint
+            # on the per-job network instead.
+            extra_hosts=(
+                {}
+                if getattr(getattr(settings, "airgap", None), "enabled", False)
+                else {"host.docker.internal": "host-gateway"}
+            ),
             group_add=[docker_gid] if docker_gid else [],
             labels={
                 "openscientist.job_id": job_id,

@@ -843,6 +843,152 @@ class AgentSettings(BaseSettings):
         return v
 
 
+class AirgapSettings(BaseSettings):
+    """Air-gapped / zero-egress mode configuration.
+
+    All fields are no-ops when ``enabled`` is ``False`` (the default), so the
+    rest of OpenScientist behaves byte-for-byte the same. See the design RFC
+    at ``docs/AIR_GAPPED_MODE_RFC.md``.
+
+    When ``enabled`` is ``True``, ``agent/factory.py`` selects the air-gap
+    variants of the agent backends (``AirgapCodexAgent`` for Codex-compatible
+    providers, ``AirgapClaudeCodeAgent`` for Claude-compatible ones), the
+    egress registry validates the active provider against the allowlist at
+    startup, and the credential allowlist in ``airgap/env_allowlist.py``
+    strips inactive-provider creds from the job env. Several downstream
+    pieces (host firewall, per-job network, attestation, executor namespace
+    isolation) are operator-applied per ``docs/AIR_GAPPED.md`` and are out of
+    scope for the application's own enforcement.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=False,
+        alias="OPENSCIENTIST_AIR_GAPPED",
+        description=(
+            "Master switch for air-gapped mode. When True, the agent factory "
+            "selects AirgapCodexAgent for Codex-compatible providers and "
+            "AirgapClaudeCodeAgent for Claude-compatible ones, and the "
+            "egress registry validates the active provider against the "
+            "allowlist at startup."
+        ),
+    )
+
+    llm_addr: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AIRGAP_LLM_ADDR",
+        description=(
+            "IP:port of the operator-stood-up local LLM endpoint. Used by "
+            "the egress registry's allowlist check and by container "
+            "networking. Format: 'host:port' (e.g. '10.0.0.5:8443'). "
+            "Required when enabled=True."
+        ),
+    )
+
+    pubmed_addr: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AIRGAP_PUBMED_ADDR",
+        description=(
+            "IP:port of the local PubMed mirror service. Required when "
+            "enabled=True. The literature MCP tool reads PUBMED_BASE_URL "
+            "(derived from this) instead of NCBI eutils."
+        ),
+    )
+
+    codex_home_root: str | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_AIRGAP_CODEX_HOME_ROOT",
+        description=(
+            "Override for the tmpfs root the AirgapCodexAgent uses as "
+            "per-job CODEX_HOME (defaults to /run/openscientist-codex-home, "
+            "a Linux tmpfs path). Set to a writable path for local-dev on "
+            "macOS or other non-Linux hosts where /run isn't tmpfs."
+        ),
+    )
+
+    docker_socket_path: str = Field(
+        default="/var/run/airgap-docker.sock",
+        alias="OPENSCIENTIST_AIRGAP_DOCKER_SOCKET_PATH",
+        description=(
+            "Unix socket path of the airgap Docker socket proxy (RFC §9). "
+            "The proxy is a two-container validator+HAProxy service "
+            "operators deploy via `docker compose --profile airgap up` "
+            "(see docs/AIR_GAPPED.md); the application points at it instead "
+            "of /var/run/docker.sock so executor spawns go through the "
+            "hard-coded default-deny + body-validation policy. Refusing the "
+            "real Docker socket here is the application's only enforcement "
+            "on this path; the security depends on the proxy implementation. "
+            "Ignored when OPENSCIENTIST_AIRGAP_DOCKER_TCP is set (the "
+            "TCP-based deployment shape used on Docker Desktop hosts where "
+            "Unix-socket bind-mounts don't work reliably — see "
+            "airgap/docker_proxy.py)."
+        ),
+    )
+
+    allow_managed_llm_egress: bool = Field(
+        default=False,
+        alias="OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS",
+        description=(
+            "Permit egress from the per-job network to a managed LLM "
+            "endpoint that lives on the public internet (e.g. AWS Bedrock at "
+            "bedrock-runtime.{region}.amazonaws.com:443) under a BAA / "
+            "contractual control. Off by default — the default airgap "
+            "posture is zero external egress (RFC §6, §7). When True: the "
+            "factory routes ClaudeCompatible providers to the regular "
+            "ClaudeCodeAgent instead of AirgapClaudeCodeAgent, deliberately "
+            "trading the SDK built-in tool gating (RFC §10.3) for managed-LLM "
+            "egress under the cloud provider's BAA; the egress registry still "
+            "derives a public-endpoint target for Bedrock, and the "
+            "operator's host firewall must allow that egress. This is RFC "
+            "§7.5 Pattern A — HIPAA-eligible under the cloud provider's BAA "
+            "but strictly weaker than Pattern B (VPC endpoint via "
+            "PrivateLink). The kernel-level allowlist is the only "
+            "enforcement boundary on this path."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_required_addrs(self) -> "AirgapSettings":
+        """When the master switch is on, the internal addresses must be set
+        and the configured Docker socket path must not be the real one.
+
+        Air-gap mode without an internal LLM means the agent has nothing to
+        talk to; pointing at the real docker.sock means executor spawns
+        bypass the proxy. Fail-closed at startup rather than running a
+        broken or insecure deployment.
+        """
+        if self.enabled:
+            missing = [
+                name
+                for name, val in (
+                    ("OPENSCIENTIST_AIRGAP_LLM_ADDR", self.llm_addr),
+                    ("OPENSCIENTIST_AIRGAP_PUBMED_ADDR", self.pubmed_addr),
+                )
+                if not val
+            ]
+            if missing:
+                raise ValueError(
+                    "Air-gap mode is enabled (OPENSCIENTIST_AIR_GAPPED=true) "
+                    f"but required addresses are not set: {', '.join(missing)}"
+                )
+            if self.docker_socket_path == "/var/run/docker.sock":
+                raise ValueError(
+                    "Air-gap mode is enabled but "
+                    "OPENSCIENTIST_AIRGAP_DOCKER_SOCKET_PATH points at the "
+                    "real Docker socket. Set it to your airgap Docker "
+                    "socket proxy's Unix socket path (default "
+                    "/var/run/airgap-docker.sock), or set "
+                    "OPENSCIENTIST_AIRGAP_DOCKER_TCP for the TCP deployment "
+                    "shape; see RFC §9 and docs/AIR_GAPPED.md."
+                )
+        return self
+
+
 class Settings(BaseSettings):
     """Root settings class with all configuration sections."""
 
@@ -875,6 +1021,7 @@ class Settings(BaseSettings):
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    airgap: AirgapSettings = Field(default_factory=AirgapSettings)
 
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":
