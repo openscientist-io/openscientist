@@ -95,13 +95,28 @@ def _parse_pubmed_xml(xml_text: str, pmids: list[str]) -> list[dict[str, Any]]:
                 pmid_elem = article.find(".//PMID")
                 pmid = pmid_elem.text if pmid_elem is not None else "Unknown"
 
-                # Extract title
+                # Extract title. Use itertext() rather than .text -- NCBI
+                # commonly wraps gene/protein names in <i>/<b>/<sub>/<sup>
+                # inside <ArticleTitle> (e.g. "<i>DEK</i>, a chromatin-
+                # associated oncoprotein..."), and .text only captures text
+                # before the FIRST child element, silently returning None
+                # for any title that starts with markup. That None then
+                # reached the database's NOT NULL title constraint on a
+                # real PMID (42428301) once that paper ranked as a live
+                # NCBI search result -- itertext() joins all text content
+                # regardless of nested markup.
                 title_elem = article.find(".//ArticleTitle")
-                title = title_elem.text if title_elem is not None else "No title"
+                title = (
+                    "".join(title_elem.itertext()).strip() if title_elem is not None else ""
+                ) or "No title"
 
-                # Extract abstract
+                # Extract abstract. Same itertext() fix -- AbstractText can
+                # also contain nested markup, and the previous `elem.text`
+                # filter silently dropped any such paragraph instead of
+                # just losing its formatting.
                 abstract_elems = article.findall(".//AbstractText")
-                abstract_parts = [elem.text for elem in abstract_elems if elem.text]
+                abstract_parts = ["".join(elem.itertext()).strip() for elem in abstract_elems]
+                abstract_parts = [part for part in abstract_parts if part]
                 abstract = " ".join(abstract_parts) if abstract_parts else "No abstract available"
 
                 # Extract authors
