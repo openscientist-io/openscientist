@@ -187,6 +187,181 @@ class TestRejectReasonHostConfigEscapeVectors:
         body = {"Image": "openscientist-executor:latest", "HostConfig": "not-a-dict"}
         assert validator._reject_reason(body) is not None
 
+    def test_legitimate_output_and_data_binds_accepted(self) -> None:
+        # The actual shape container_manager.py's _build_volumes() produces:
+        # one rw output mount, one ro data-file mount, both under ordinary
+        # job-scoped paths -- must NOT be rejected (this was the original
+        # bug: blanket-denying any Binds broke every real request).
+        body = _base_body(
+            Binds=[
+                "/Users/dev/shandy/jobs/abc123/output:/output:rw",
+                "/Users/dev/shandy/jobs/abc123/data:/data:ro",
+            ]
+        )
+        assert validator._reject_reason(body) is None
+
+
+class TestRejectReasonBindTraversalBypass:
+    """Adversarial review (2026-07-10) found _reject_bind_reason's original
+    bare rstrip("/") let dot-dot traversal strings evade the denylist while
+    still resolving to the real forbidden path once the kernel processes
+    the mount. These pin the fix (posixpath.normpath before comparison)."""
+
+    @pytest.fixture(autouse=True)
+    def _no_image_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(validator, "_ALLOWED_IMAGES", frozenset())
+
+    def test_dotdot_traversal_to_docker_socket_rejected(self) -> None:
+        body = _base_body(Binds=["/tmp/../var/run/docker.sock:/var/run/docker.sock:rw"])
+        assert validator._reject_reason(body) is not None
+
+    def test_dotdot_traversal_to_ssh_keys_rejected(self) -> None:
+        body = _base_body(Binds=["/tmp/../root/.ssh:/stolen:ro"])
+        assert validator._reject_reason(body) is not None
+
+    def test_doubled_leading_slash_rejected(self) -> None:
+        body = _base_body(Binds=["//etc:/stolen:ro"])
+        assert validator._reject_reason(body) is not None
+
+    def test_macos_private_alias_of_docker_socket_rejected(self) -> None:
+        body = _base_body(Binds=["/private/var/run/docker.sock:/var/run/docker.sock:rw"])
+        assert validator._reject_reason(body) is not None
+
+    def test_macos_private_etc_rejected(self) -> None:
+        body = _base_body(Binds=["/private/etc:/stolen:ro"])
+        assert validator._reject_reason(body) is not None
+
+    def test_normal_looking_job_path_still_accepted(self) -> None:
+        # Traversal-hardening must not start false-positive-rejecting
+        # ordinary paths that happen to contain no traversal at all.
+        body = _base_body(Binds=["/Users/dev/shandy/jobs/abc123/output:/output:rw"])
+        assert validator._reject_reason(body) is None
+
+
+class TestRejectReasonVolumeDriverDeviceBypass:
+    """Adversarial review (2026-07-10) found HostConfig.Mounts[].Source for
+    a "Type": "volume" mount is a volume NAME, not a path -- _bind_sources
+    originally only read .Source, so the local volume driver's bind-mount
+    escape hatch (VolumeOptions.DriverConfig.Options.device) sailed through
+    completely unchecked. This was the most severe finding: a single
+    request mounting the entire host root, no string tricks needed."""
+
+    @pytest.fixture(autouse=True)
+    def _no_image_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(validator, "_ALLOWED_IMAGES", frozenset())
+
+    def test_local_driver_device_bind_to_host_root_rejected(self) -> None:
+        body = _base_body(
+            Mounts=[
+                {
+                    "Type": "volume",
+                    "Source": "harmless-looking-name",
+                    "Target": "/host_root",
+                    "VolumeOptions": {
+                        "DriverConfig": {
+                            "Name": "local",
+                            "Options": {"type": "none", "o": "bind", "device": "/"},
+                        }
+                    },
+                }
+            ]
+        )
+        assert validator._reject_reason(body) is not None
+
+    def test_local_driver_device_bind_to_docker_socket_dir_rejected(self) -> None:
+        body = _base_body(
+            Mounts=[
+                {
+                    "Type": "volume",
+                    "Source": "another-harmless-name",
+                    "Target": "/x",
+                    "VolumeOptions": {
+                        "DriverConfig": {
+                            "Name": "local",
+                            "Options": {"type": "none", "o": "bind", "device": "/var/run"},
+                        }
+                    },
+                }
+            ]
+        )
+        assert validator._reject_reason(body) is not None
+
+    def test_volume_mount_without_driver_device_still_checked_by_name_field(self) -> None:
+        # Sanity: a genuine named-volume mount (no bind trick) has no
+        # meaningful "Source" path to reject -- shouldn't false-positive.
+        body = _base_body(
+            Mounts=[{"Type": "volume", "Source": "some-real-volume-name", "Target": "/x"}]
+        )
+        assert validator._reject_reason(body) is None
+
+
+class TestRejectReasonSecurityOptAllowlist:
+    """Adversarial review (2026-07-10) found the original blanket-deny on
+    any non-empty SecurityOpt broke every real request (container_manager.py
+    sets security_opt=["no-new-privileges:true"], a hardening flag). A
+    substring-denylist draft was also rejected on review: Docker's
+    seccomp/apparmor options accept an arbitrary custom profile (path or
+    inline JSON) that can be maximally permissive without containing the
+    literal word "unconfined" anywhere -- no denylist can be complete for
+    that in principle. Landed as an allowlist of the one legitimate value
+    instead."""
+
+    @pytest.fixture(autouse=True)
+    def _no_image_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(validator, "_ALLOWED_IMAGES", frozenset())
+
+    def test_no_new_privileges_true_accepted(self) -> None:
+        body = _base_body(SecurityOpt=["no-new-privileges:true"])
+        assert validator._reject_reason(body) is None
+
+    def test_empty_security_opt_accepted(self) -> None:
+        body = _base_body(SecurityOpt=[])
+        assert validator._reject_reason(body) is None
+
+    def test_missing_security_opt_accepted(self) -> None:
+        assert validator._reject_reason(_base_body()) is None
+
+    def test_seccomp_unconfined_rejected(self) -> None:
+        body = _base_body(SecurityOpt=["seccomp=unconfined"])
+        assert validator._reject_reason(body) is not None
+
+    def test_apparmor_unconfined_rejected(self) -> None:
+        body = _base_body(SecurityOpt=["apparmor=unconfined"])
+        assert validator._reject_reason(body) is not None
+
+    def test_seccomp_custom_profile_path_rejected(self) -> None:
+        # Not literally "unconfined" -- a custom profile can be equally
+        # permissive. The allowlist rejects it precisely because it isn't
+        # the one known-safe value, without needing to evaluate the
+        # profile's actual content.
+        body = _base_body(SecurityOpt=["seccomp=/tmp/maximally-permissive.json"])
+        assert validator._reject_reason(body) is not None
+
+    def test_selinux_label_type_spc_t_rejected(self) -> None:
+        # SELinux "super-privileged container" type -- full confinement
+        # bypass on SELinux-enforcing hosts. Real Docker syntax, not
+        # covered by a naive "unconfined"/"disable" substring check.
+        body = _base_body(SecurityOpt=["label=type:spc_t"])
+        assert validator._reject_reason(body) is not None
+
+    def test_no_new_privileges_false_rejected(self) -> None:
+        # Explicitly re-enabling privilege escalation is not the one
+        # allowed value, even though it superficially resembles it.
+        body = _base_body(SecurityOpt=["no-new-privileges:false"])
+        assert validator._reject_reason(body) is not None
+
+    def test_multiple_entries_all_must_be_allowed(self) -> None:
+        body = _base_body(SecurityOpt=["no-new-privileges:true", "seccomp=unconfined"])
+        assert validator._reject_reason(body) is not None
+
+    def test_non_list_security_opt_rejected(self) -> None:
+        body = _base_body(SecurityOpt="no-new-privileges:true")
+        assert validator._reject_reason(body) is not None
+
+    def test_non_string_entry_rejected(self) -> None:
+        body = _base_body(SecurityOpt=[123])
+        assert validator._reject_reason(body) is not None
+
 
 # --------------------------------------------------------- handle_request (integration)
 
