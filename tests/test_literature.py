@@ -83,6 +83,71 @@ class TestParsePubmedXml:
         )
         assert papers == []
 
+    def test_title_with_leading_nested_markup_not_none(self):
+        # Regression: found live against real NCBI (PMID 42428301, a paper
+        # about the "DEK" oncoprotein) -- .text only captures text before
+        # the first child element, so a title starting with <i>DEK</i>
+        # returned title=None, which then hit the database's NOT NULL
+        # constraint on literature.title. itertext() fixes it.
+        xml = """<?xml version="1.0" ?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>42428301</PMID>
+      <Article>
+        <ArticleTitle><i>DEK</i>, a chromatin-associated oncoprotein</ArticleTitle>
+        <Journal><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>"""
+        papers = _parse_pubmed_xml(xml, ["42428301"])
+        assert len(papers) == 1
+        assert papers[0]["title"] is not None
+        assert papers[0]["title"] == "DEK, a chromatin-associated oncoprotein"
+
+    def test_abstract_with_nested_markup_not_dropped(self):
+        # Same bug class in AbstractText -- the previous `elem.text` filter
+        # silently dropped any abstract paragraph that started with markup
+        # instead of losing just the formatting.
+        xml = """<?xml version="1.0" ?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>1</PMID>
+      <Article>
+        <ArticleTitle>Title</ArticleTitle>
+        <Abstract>
+          <AbstractText><i>CRISPR</i>-Cas9 enables precise gene editing.</AbstractText>
+        </Abstract>
+        <Journal><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>"""
+        papers = _parse_pubmed_xml(xml, ["1"])
+        assert papers[0]["abstract"] == "CRISPR-Cas9 enables precise gene editing."
+
+    def test_title_with_only_markup_falls_back(self):
+        # An ArticleTitle that is entirely markup with no surrounding text
+        # (edge case) must still fall back to the "No title" placeholder,
+        # not an empty string (which would also violate the NOT NULL
+        # constraint the same way None did).
+        xml = """<?xml version="1.0" ?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>2</PMID>
+      <Article>
+        <ArticleTitle><i></i></ArticleTitle>
+        <Journal><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>"""
+        papers = _parse_pubmed_xml(xml, ["2"])
+        assert papers[0]["title"] == "No title"
+
 
 # ─── search_pubmed (mocked) ──────────────────────────────────────────
 
