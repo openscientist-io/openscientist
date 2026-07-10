@@ -119,6 +119,37 @@ class TestSearchPubmed:
         papers = search_pubmed("nonexistent query xyz")
         assert papers == []
 
+    @patch.dict("os.environ", {"PUBMED_BASE_URL": "http://pubmed-mock:9000"})
+    @patch("openscientist.literature.requests.get")
+    def test_pubmed_base_url_override_routes_to_mirror(self, mock_get):
+        # Air-gap regression: PUBMED_BASE_URL was previously read nowhere
+        # in this module (base_url was a hardcoded public-NCBI literal),
+        # so setting it in the container env achieved nothing -- the
+        # agent silently kept hitting public NCBI, which the airgap
+        # firewall then blocks (a silent dead path for PubMed search).
+        resp = MagicMock()
+        resp.json.return_value = {"esearchresult": {"idlist": []}}
+        resp.raise_for_status = MagicMock()
+        mock_get.return_value = resp
+
+        search_pubmed("hypothermia metabolomics")
+
+        called_url = mock_get.call_args.args[0]
+        assert called_url.startswith("http://pubmed-mock:9000/")
+        assert "eutils.ncbi.nlm.nih.gov" not in called_url
+
+    @patch("openscientist.literature.requests.get")
+    def test_pubmed_base_url_defaults_to_public_ncbi(self, mock_get):
+        resp = MagicMock()
+        resp.json.return_value = {"esearchresult": {"idlist": []}}
+        resp.raise_for_status = MagicMock()
+        mock_get.return_value = resp
+
+        search_pubmed("hypothermia metabolomics")
+
+        called_url = mock_get.call_args.args[0]
+        assert called_url.startswith("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/")
+
 
 # ─── format_literature_for_prompt ─────────────────────────────────────
 

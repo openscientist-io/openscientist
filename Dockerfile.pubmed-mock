@@ -1,0 +1,26 @@
+# Minimal local PubMed mock for air-gap validation.
+#
+# Stands up an HTTP service that answers ``/esearch.fcgi`` and
+# ``/efetch.fcgi`` from a small bundled abstract corpus (~400 PMIDs
+# targeting torpor, hibernation, brain metabolomics, POA/KOR signaling).
+# The agent's ``search_pubmed`` MCP tool reads ``PUBMED_BASE_URL`` and
+# pointing it at this service inside the per-job network exercises the
+# air-gap PubMed codepath end-to-end without reaching public NCBI.
+#
+# Operators of a real air-gap deployment swap this image for one with
+# their own corpus. The serving shape (eutils JSON / XML) stays the
+# same — that's the contract ``openscientist.literature`` depends on.
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir fastapi==0.115.6 uvicorn==0.34.0
+
+WORKDIR /app
+COPY pubmed-mock/pubmed_mock /app/pubmed_mock
+COPY pubmed-mock/corpus /app/corpus
+
+EXPOSE 9000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9000/health', timeout=3).read()"
+
+ENTRYPOINT ["python", "-m", "pubmed_mock"]
