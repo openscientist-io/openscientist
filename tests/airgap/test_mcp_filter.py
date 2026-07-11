@@ -212,14 +212,6 @@ class TestEnforceMcpPolicy:
 # --------------------------------------------------------- _apply_airgap_policy fail-closed
 
 
-@pytest.mark.skip(
-    reason=(
-        "Tests openscientist_tools/server.py's wiring of mcp_filter "
-        "(_airgap_mode_requested, _load_settings_and_filter), which lands in "
-        "the foundation-wiring PR of the air-gapped mode split (see #209), "
-        "not this standalone mcp_filter module PR. Re-enable there."
-    )
-)
 class TestApplyAirgapPolicyFailClosed:
     """Codex Review-7 BUG #4: the prior _apply_airgap_policy silently
     fail-opened when settings load raised, so the policy enforcement was
