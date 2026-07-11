@@ -34,6 +34,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("agent-entrypoint")
 
+_AIRGAP_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _airgap_mode_requested() -> bool:
+    """Cheap, settings-free read of OPENSCIENTIST_AIR_GAPPED.
+
+    Deliberately doesn't go through openscientist.settings.get_settings() --
+    this branch doesn't have the full AirgapSettings class yet (that lands
+    in the foundation-wiring PR), and even once it does, a raw env check
+    here avoids paying for a full settings load (which requires
+    OPENSCIENTIST_SECRET_KEY etc.) before we've even decided whether the
+    credential-verification gate below should run at all.
+    """
+    return os.environ.get("OPENSCIENTIST_AIR_GAPPED", "").strip().lower() in _AIRGAP_TRUTHY  # noqa: env-ok
+
 
 async def main() -> int:
     """Run discovery for the job specified in environment variables."""
@@ -52,6 +67,26 @@ async def main() -> int:
     if not job_dir.exists():
         logger.error("Job directory does not exist: %s", job_dir)
         return 1
+
+    if _airgap_mode_requested():
+        from openscientist.airgap.credential_verifier import verify_airgap_startup
+
+        active_provider_id = os.environ.get("OPENSCIENTIST_PROVIDER", "")  # noqa: env-ok
+        verification = verify_airgap_startup(dict(os.environ), active_provider_id, job_dir)
+        for finding in verification.blocking_env + verification.blocking_files:
+            logger.error("Credential verification (blocking): %s", finding.as_dict())
+        if not verification.passed:
+            logger.error(
+                "Refusing to start job %s: %d blocking credential finding(s) in air-gapped mode",
+                job_id,
+                verification.blocking_count,
+            )
+            return 1
+        if verification.warning_count:
+            logger.warning(
+                "Credential verification passed with %d non-blocking warning(s)",
+                verification.warning_count,
+            )
 
     logger.info("Starting agent for job %s in %s (mode=%s)", job_id, job_dir, run_mode)
 
