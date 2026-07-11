@@ -363,6 +363,90 @@ class TestRejectReasonSecurityOptAllowlist:
         assert validator._reject_reason(body) is not None
 
 
+class TestRejectReasonCaseFoldingBypass:
+    """Docker's Go daemon matches JSON keys to struct fields
+    case-insensitively (last matching key wins); this validator's checks
+    use exact-case dict lookups. A body can carry a validator-safe,
+    correctly-cased field alongside a differently-cased, dangerous
+    duplicate that this validator never inspects but dockerd itself would
+    honor -- defeating every check in _reject_reason at once."""
+
+    @pytest.fixture(autouse=True)
+    def _no_image_allowlist(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(validator, "_ALLOWED_IMAGES", frozenset())
+
+    def test_duplicate_hostconfig_different_case_rejected(self) -> None:
+        # Safe "HostConfig" is what this validator checks; a sibling
+        # "hostconfig" carrying Privileged=True would be what dockerd
+        # actually honors (last matching key wins in Go's decoder).
+        body = _base_body()
+        body["hostconfig"] = {"NetworkMode": "none", "Privileged": True}
+        assert validator._reject_reason(body) is not None
+
+    def test_duplicate_image_different_case_rejected(self) -> None:
+        body = _base_body()
+        body["image"] = "not-the-executor-image:latest"
+        assert validator._reject_reason(body) is not None
+
+    def test_duplicate_privileged_within_hostconfig_rejected(self) -> None:
+        body = _base_body()
+        body["HostConfig"]["privileged"] = True
+        assert validator._reject_reason(body) is not None
+
+    def test_lone_wrong_case_privileged_rejected_with_no_decoy(self) -> None:
+        # No "Privileged" (correct case) present at all -- just a single
+        # "privileged" key. Not a case-duplicate (nothing to collide with),
+        # but Go's decoder still case-insensitively matches a lone
+        # differently-cased key to the struct field with no exact-case
+        # sibling required. A naive "reject only on duplicates" fix would
+        # miss this; field lookups must themselves be case-insensitive.
+        body = _base_body(privileged=True)
+        assert validator._reject_reason(body) is not None
+
+    def test_lone_wrong_case_binds_docker_socket_rejected(self) -> None:
+        body = _base_body(binds=["/var/run/docker.sock:/var/run/docker.sock"])
+        assert validator._reject_reason(body) is not None
+
+    def test_lone_wrong_case_image_field_checked_against_allowlist(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            validator, "_ALLOWED_IMAGES", frozenset({"openscientist-executor:latest"})
+        )
+        body = {"image": "not-the-executor-image:latest", "HostConfig": {"NetworkMode": "none"}}
+        reason = validator._reject_reason(body)
+        assert reason is not None
+        assert "not in the allowed executor image list" in reason
+
+    def test_duplicate_networkmode_different_case_rejected(self) -> None:
+        body = _base_body()
+        body["HostConfig"]["networkmode"] = "bridge"
+        assert validator._reject_reason(body) is not None
+
+    def test_case_duplicate_in_nested_mount_dict_rejected(self) -> None:
+        body = _base_body(Mounts=[{"Source": "/data", "Target": "/data", "source": "/etc"}])
+        assert validator._reject_reason(body) is not None
+
+    def test_case_duplicate_inside_list_element_rejected(self) -> None:
+        body = _base_body()
+        body["HostConfig"]["RestartPolicy"] = {"Name": "no", "name": "always"}
+        assert validator._reject_reason(body) is not None
+
+    def test_no_case_duplicates_accepted(self) -> None:
+        # Sanity check: a normal body with no case collisions anywhere
+        # still passes -- the new check isn't overly aggressive.
+        body = _base_body(SecurityOpt=["no-new-privileges:true"])
+        assert validator._reject_reason(body) is None
+
+    def test_same_case_repeated_key_not_flagged(self) -> None:
+        # Exact-case duplicate keys in a Python dict literal are impossible
+        # (the second assignment just overwrites the first), so this
+        # exercises the same-case path directly against the helper rather
+        # than via _base_body to confirm it doesn't misfire on ordinary
+        # single-key dicts.
+        assert validator._find_case_duplicate_key({"HostConfig": {}}) is None
+
+
 # --------------------------------------------------------- handle_request (integration)
 
 

@@ -44,6 +44,7 @@ import logging
 import os
 import posixpath
 import re
+from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout, web
 
@@ -125,8 +126,35 @@ _REQUIRED_NETWORK_MODE = "none"
 _SECURITY_OPT_ALLOWED = frozenset({"no-new-privileges:true"})
 
 
+def _ci_get(obj: dict, key: str) -> Any:
+    """Case-insensitive dict lookup, mirroring Go's `encoding/json`
+    struct-field matching (case-insensitive; falls back to a fold-match
+    when no exact-case key is present).
+
+    A LONE differently-cased key -- no correctly-cased sibling required --
+    is still honored by dockerd's decoder via this same fallback, so a
+    field check using plain `dict.get(field)` misses it even when there's
+    no duplicate to catch: e.g. a HostConfig containing only `"privileged"`
+    (no `"Privileged"`) is invisible to `host_config.get("Privileged")` but
+    dockerd still sets HostConfig.Privileged=True from it. Every field
+    lookup this validator relies on must go through this helper instead of
+    a bare `.get()`, or the corresponding check is bypassable with a single
+    wrong-case key and no decoy.
+
+    Safe to treat as an unambiguous single-match lookup here specifically
+    because `_reject_reason` calls `_find_case_duplicate_key` first and
+    rejects outright on any case-colliding pair -- by the time this runs,
+    at most one case variant of `key` can exist in `obj`.
+    """
+    folded = key.casefold()
+    for k, v in obj.items():
+        if isinstance(k, str) and k.casefold() == folded:
+            return v
+    return None
+
+
 def _reject_security_opt_reason(host_config: dict) -> str | None:
-    security_opt = host_config.get("SecurityOpt") or []
+    security_opt = _ci_get(host_config, "SecurityOpt") or []
     if not isinstance(security_opt, list):
         return "HostConfig.SecurityOpt must be an array"
     for entry in security_opt:
@@ -227,7 +255,7 @@ def _bind_sources(host_config: dict) -> list[str]:
     checks at all.
     """
     sources: list[str] = []
-    for entry in host_config.get("Binds") or []:
+    for entry in _ci_get(host_config, "Binds") or []:
         if not isinstance(entry, str):
             continue
         # source:target or source:target:mode -- source is everything before
@@ -235,18 +263,20 @@ def _bind_sources(host_config: dict) -> list[str]:
         # a colon themselves on Linux).
         source = entry.split(":", 1)[0]
         sources.append(source)
-    for entry in host_config.get("Mounts") or []:
+    for entry in _ci_get(host_config, "Mounts") or []:
         if not isinstance(entry, dict):
             continue
-        if isinstance(entry.get("Source"), str):
-            sources.append(entry["Source"])
-        volume_options = entry.get("VolumeOptions")
+        entry_source = _ci_get(entry, "Source")
+        if isinstance(entry_source, str):
+            sources.append(entry_source)
+        volume_options = _ci_get(entry, "VolumeOptions")
         if isinstance(volume_options, dict):
-            driver_config = volume_options.get("DriverConfig")
+            driver_config = _ci_get(volume_options, "DriverConfig")
             if isinstance(driver_config, dict):
-                options = driver_config.get("Options")
-                if isinstance(options, dict) and isinstance(options.get("device"), str):
-                    sources.append(options["device"])
+                options = _ci_get(driver_config, "Options")
+                device = _ci_get(options, "device") if isinstance(options, dict) else None
+                if isinstance(device, str):
+                    sources.append(device)
     return sources
 
 
@@ -261,29 +291,90 @@ def _reject_bind_reason(host_config: dict) -> str | None:
     return None
 
 
+def _find_case_duplicate_key(obj: object, path: str = "<body>") -> str | None:
+    """Recursively find JSON object keys that differ only by case within the
+    same object.
+
+    Docker's Go daemon unmarshals JSON with `encoding/json`, which matches
+    object keys to struct fields case-insensitively; when two keys in the
+    same object map to the same field, the LAST one in document order wins.
+    This validator's field checks below use plain, exact-case dict lookups
+    (`body.get("HostConfig")`, `host_config.get("Privileged")`, etc.). A
+    request body can therefore carry a validator-safe, correctly-cased
+    "HostConfig"/"Privileged"/etc. alongside a differently-cased, dangerous
+    duplicate ("hostconfig", "PRIVILEGED", ...) anywhere in the body or
+    nested within HostConfig -- this validator only ever sees and checks the
+    first (safe) one, while dockerd itself would honor whichever one wins
+    its own case-insensitive match, defeating every check in
+    :func:`_reject_reason` at once (including the image allowlist, since
+    `Image`/`image` collide the same way).
+
+    No legitimate Docker API client -- docker-py included, the only client
+    that reaches this validator in this codebase -- ever produces two keys
+    in the same JSON object that are equal when case-folded. Reject the
+    whole request outright rather than trying to reconcile which one is
+    "real"; there is no correct way to pick.
+
+    Deliberately field-agnostic: this also rejects case-duplicate keys
+    inside fields Go unmarshals as a plain `map[string]string` (e.g.
+    HostConfig.Sysctls, container Labels), where a collision is actually
+    harmless in dockerd (map keys are taken literally, no struct-field
+    matching applies). Accepted over-breadth in exchange for a single
+    complete check instead of a field-by-field one that could silently miss
+    the next HostConfig field this validator doesn't know about yet.
+
+    Returns a human-readable reason describing the first collision found
+    (recursing depth-first through nested objects and list elements), or
+    None if no case-duplicate keys exist anywhere in `obj`.
+    """
+    if isinstance(obj, dict):
+        seen: dict[str, str] = {}
+        for key in obj:
+            if not isinstance(key, str):
+                continue
+            folded = key.casefold()
+            if folded in seen:
+                return f"{path} contains case-duplicate keys {seen[folded]!r} and {key!r}"
+            seen[folded] = key
+        for key, value in obj.items():
+            nested = _find_case_duplicate_key(value, f"{path}.{key}")
+            if nested is not None:
+                return nested
+    elif isinstance(obj, list):
+        for i, item in enumerate(obj):
+            nested = _find_case_duplicate_key(item, f"{path}[{i}]")
+            if nested is not None:
+                return nested
+    return None
+
+
 def _reject_reason(body: dict) -> str | None:
     """Return a human-readable rejection reason, or None if the create
     request matches the shape the application's executor spawn actually
     uses."""
-    image = body.get("Image")
+    case_dup_reason = _find_case_duplicate_key(body)
+    if case_dup_reason is not None:
+        return case_dup_reason
+
+    image = _ci_get(body, "Image")
     if _ALLOWED_IMAGES and image not in _ALLOWED_IMAGES:
         return f"Image {image!r} is not in the allowed executor image list"
 
-    host_config = body.get("HostConfig") or {}
+    host_config = _ci_get(body, "HostConfig") or {}
     if not isinstance(host_config, dict):
         return "HostConfig must be an object"
 
     for field in _HOSTCONFIG_DENY_IF_TRUTHY:
-        if host_config.get(field):
+        if _ci_get(host_config, field):
             return f"HostConfig.{field} is not permitted"
 
     for field in _HOSTCONFIG_DENY_IF_NONEMPTY:
-        value = host_config.get(field)
+        value = _ci_get(host_config, field)
         if value:
             return f"HostConfig.{field} is not permitted"
 
     for field in _HOSTCONFIG_DENY_IF_HOST_MODE:
-        value = host_config.get(field)
+        value = _ci_get(host_config, field)
         if isinstance(value, str) and value.lower() == "host":
             return f"HostConfig.{field}=host is not permitted"
 
@@ -295,16 +386,18 @@ def _reject_reason(body: dict) -> str | None:
     if security_opt_reason is not None:
         return security_opt_reason
 
-    network_mode = host_config.get("NetworkMode")
+    network_mode = _ci_get(host_config, "NetworkMode")
     if network_mode != _REQUIRED_NETWORK_MODE:
         return f"HostConfig.NetworkMode must be {_REQUIRED_NETWORK_MODE!r}, got {network_mode!r}"
 
-    networking_config = body.get("NetworkingConfig")
-    if networking_config and networking_config.get("EndpointsConfig"):
+    networking_config = _ci_get(body, "NetworkingConfig")
+    if networking_config and _ci_get(networking_config, "EndpointsConfig"):
         return "NetworkingConfig.EndpointsConfig is not permitted"
 
-    restart_policy = host_config.get("RestartPolicy") or {}
-    restart_name = restart_policy.get("Name", "no") if isinstance(restart_policy, dict) else "no"
+    restart_policy = _ci_get(host_config, "RestartPolicy") or {}
+    restart_name = (
+        _ci_get(restart_policy, "Name") or "no" if isinstance(restart_policy, dict) else "no"
+    )
     if restart_name not in ("", "no"):
         return f"HostConfig.RestartPolicy.Name={restart_name!r} is not permitted"
 
