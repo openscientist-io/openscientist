@@ -7,6 +7,7 @@ Handles job lifecycle, status tracking, and cleanup.
 import argparse
 import json
 import logging
+import os
 import shutil
 import threading
 import time
@@ -628,6 +629,72 @@ class JobManager:
         """Run a job (internal, called by thread)."""
         self._run_job_in_container(job_id, run_mode=run_mode)
 
+    def _write_airgap_attestation(self, job_id: str, job_dir: Path) -> None:
+        """Sign and write ``job_dir/attestation.json`` for an air-gapped job.
+
+        No-op when air-gap mode wasn't requested (OPENSCIENTIST_AIR_GAPPED
+        unset) -- attestation is meaningless for a non-airgap deployment.
+
+        Deliberately host-side only: this runs in the main app process,
+        never inside the job/agent container, and signs with
+        OPENSCIENTIST_AIRGAP_ATTESTATION_KEY -- a value that must never be
+        forwarded into a job container's environment (see
+        _build_container_environment in job_container/runner.py, and
+        attestation.py's module docstring for why reusing
+        OPENSCIENTIST_SECRET_KEY here would let a job forge its own record).
+
+        Only the evidence this module alone can supply (job_id,
+        airgap_mode, active_provider_id, timestamp) is populated today --
+        egress_registry_result/startup_verification/export_decision/
+        probe_summary come from other airgap/ modules not yet wired into
+        this call site. AttestationRecord.all_gates_passed correctly reads
+        as False until those are filled in; that's the honest fail-closed
+        behavior, not a bug to silently work around here.
+        """
+        if os.environ.get("OPENSCIENTIST_AIR_GAPPED", "").strip().lower() not in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return
+
+        attestation_key = os.environ.get("OPENSCIENTIST_AIRGAP_ATTESTATION_KEY")
+        if not attestation_key:
+            logger.error(
+                "Air-gap mode is enabled but OPENSCIENTIST_AIRGAP_ATTESTATION_KEY is "
+                "not set -- cannot sign attestation for job %s. Skipping (job result "
+                "is unaffected; the job has no attestation record).",
+                job_id,
+            )
+            return
+
+        try:
+            from openscientist.airgap.attestation import (
+                build_attestation,
+                derive_job_attestation_key,
+                sign,
+            )
+            from openscientist.settings import get_settings
+
+            settings = get_settings()
+            record = build_attestation(
+                job_id=job_id,
+                airgap_mode=True,
+                active_provider_id=settings.provider.provider_id,
+                notes=[
+                    "Evidence from egress_registry/credential_verifier/export_boundary/"
+                    "probes is not yet wired into this attestation call site -- "
+                    "all_gates_passed reflects only what this record could verify."
+                ],
+            )
+            key = derive_job_attestation_key(attestation_key.encode(), job_id)
+            signed = sign(record, key, key_id=f"job:{job_id}")
+            (job_dir / "attestation.json").write_text(signed.to_json())
+            logger.info("Wrote air-gap attestation for job %s", job_id)
+        except Exception:
+            logger.exception("Failed to write air-gap attestation for job %s", job_id)
+
     def _run_job_in_container(self, job_id: str, run_mode: str = "discovery") -> None:
         """Launch an agent container for the job and block until it reaches a terminal status.
 
@@ -703,6 +770,7 @@ class JobManager:
             self._update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
 
         finally:
+            self._write_airgap_attestation(job_id, job_dir)
             runner.cleanup(job_id, log_dir=job_dir)
             with self._lock:
                 self._running_jobs.pop(job_id, None)

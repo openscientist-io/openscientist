@@ -18,13 +18,28 @@ Why HMAC and not a public-key signature
 ---------------------------------------
 
 Air-gap deployments don't have an external CA path by definition, and a
-per-deployment signing key derived from the master secret is the simplest
-shape that delivers tamper detection. The verifier needs the same key, so
-this is **not** non-repudiable — the operator who signs it could also forge
-it. That's fine for the threat model (the operator is trusted; §4) and
-keeps the dependency surface to ``stdlib`` only. A v2 with X.509 + a
-deployment CA is a follow-up if cross-org sharing of records becomes a
-requirement.
+per-deployment signing key delivers tamper detection with a dependency
+surface of ``stdlib`` only. The verifier needs the same key, so this is
+**not** non-repudiable — the operator who signs it could also forge it.
+That's fine for the threat model (the operator is trusted; §4). A v2 with
+X.509 + a deployment CA is a follow-up if cross-org sharing of records
+becomes a requirement.
+
+**The signing key must NOT be derived from ``settings.secret_key``.** That
+master secret is unconditionally forwarded into every job/agent container's
+environment (``job_container/runner.py``'s ``_build_container_environment``
+— the job needs it for other things, e.g. DB auth) — so it lives inside a
+DIFFERENT trust domain than "the operator": the job container is what this
+attestation is supposed to be evidence *about*, running arbitrary
+agent-directed code. If the signing key is the same secret the job already
+has, the job can import this module itself and forge its own "yes, I was
+air-gapped" record — collapsing the operator-vs-job trust boundary the
+threat model assumes. The key passed to :func:`sign` /
+:func:`derive_job_attestation_key` must come from a value that is host-only
+and never appears in a job container's environment (e.g.
+``OPENSCIENTIST_AIRGAP_ATTESTATION_KEY``, read by the orchestrator in
+``job_manager.py`` and never included in ``_build_container_environment``'s
+env dict) — distinct from ``OPENSCIENTIST_SECRET_KEY``.
 
 What's in scope here
 --------------------
@@ -330,12 +345,15 @@ def load_signed(data: str | dict[str, Any]) -> SignedAttestation:
 
 
 def derive_job_attestation_key(master_secret: bytes, job_id: str) -> bytes:
-    """Derive the per-job HMAC key from the master secret.
+    """Derive the per-job HMAC key from a host-only master secret.
 
     Mirrors the pattern in ``settings.derive_secrets`` (HMAC-SHA256 over a
-    domain tag). The orchestrator typically calls this with
-    ``settings.secret_key.encode()`` and the active job id; tests can use
-    any bytes.
+    domain tag). ``master_secret`` must be a value that never reaches a job
+    container's environment -- job_manager.py reads
+    ``OPENSCIENTIST_AIRGAP_ATTESTATION_KEY`` for this, NOT
+    ``settings.secret_key`` (which IS forwarded to job containers; using it
+    here would let a job forge its own attestation -- see this module's
+    docstring). Tests can use any bytes.
     """
     domain = b"airgap.attestation.job_key:" + job_id.encode("utf-8")
     return hmac.new(master_secret, domain, hashlib.sha256).digest()
@@ -390,7 +408,7 @@ def build_attestation(
             probe_summary=probes_summary.as_dict(),
             ... system evidence the orchestrator collected ...
         )
-        key = derive_job_attestation_key(settings.secret_key.encode(), job.id)
+        key = derive_job_attestation_key(attestation_key.encode(), job.id)  # host-only, NOT settings.secret_key
         signed = sign(record, key, key_id=f"job:{job.id}")
         (job_dir / "attestation.json").write_text(signed.to_json())
     """

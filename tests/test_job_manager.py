@@ -872,3 +872,85 @@ class TestEffectiveModel:
             "openscientist.job_manager.get_provider", side_effect=ValueError("misconfigured")
         ):
             assert _effective_model(self._settings()) is None
+
+
+class TestWriteAirgapAttestation:
+    """_write_airgap_attestation must run host-side only, sign with
+    OPENSCIENTIST_AIRGAP_ATTESTATION_KEY (never OPENSCIENTIST_SECRET_KEY,
+    which is forwarded into job containers), and no-op cleanly outside
+    air-gap mode or when misconfigured."""
+
+    def _settings(self) -> SimpleNamespace:
+        return SimpleNamespace(provider=SimpleNamespace(provider_id="foundry"))
+
+    def test_noop_when_airgap_not_requested(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENSCIENTIST_AIR_GAPPED", raising=False)
+        manager = _new_manager(tmp_path)
+        with patch("openscientist.airgap.attestation.sign") as mock_sign:
+            manager._write_airgap_attestation("job-1", tmp_path)
+        mock_sign.assert_not_called()
+        assert not (tmp_path / "attestation.json").exists()
+
+    def test_logs_error_and_skips_when_key_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", "true")
+        monkeypatch.delenv("OPENSCIENTIST_AIRGAP_ATTESTATION_KEY", raising=False)
+        manager = _new_manager(tmp_path)
+        with patch("openscientist.airgap.attestation.sign") as mock_sign:
+            manager._write_airgap_attestation("job-1", tmp_path)
+        mock_sign.assert_not_called()
+        assert not (tmp_path / "attestation.json").exists()
+        assert "OPENSCIENTIST_AIRGAP_ATTESTATION_KEY" in caplog.text
+
+    def test_writes_signed_attestation_using_dedicated_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", "true")
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAP_ATTESTATION_KEY", "host-only-test-key")
+        manager = _new_manager(tmp_path)
+        with patch("openscientist.settings.get_settings", return_value=self._settings()):
+            manager._write_airgap_attestation("job-1", tmp_path)
+
+        attestation_path = tmp_path / "attestation.json"
+        assert attestation_path.exists()
+
+        from openscientist.airgap.attestation import derive_job_attestation_key, load_signed, verify
+
+        signed = load_signed(attestation_path.read_text())
+        key = derive_job_attestation_key(b"host-only-test-key", "job-1")
+        assert verify(signed, key)
+
+        # The job's OWN key (OPENSCIENTIST_SECRET_KEY, what a job container
+        # actually has access to) must NOT verify this attestation -- that's
+        # the whole point of the fix.
+        wrong_key = derive_job_attestation_key(b"whatever-secret-key-is", "job-1")
+        assert not verify(signed, wrong_key)
+
+    def test_never_uses_secret_key_even_if_attestation_key_unset_and_secret_key_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression guard for the actual vulnerability: even if
+        # OPENSCIENTIST_SECRET_KEY is present in this (host) process's env
+        # -- which it always is -- it must never be used as a fallback
+        # signing key when the dedicated attestation key is missing.
+        monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", "true")
+        monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", "dev-secret-key-change-in-production")
+        monkeypatch.delenv("OPENSCIENTIST_AIRGAP_ATTESTATION_KEY", raising=False)
+        manager = _new_manager(tmp_path)
+        with patch("openscientist.airgap.attestation.sign") as mock_sign:
+            manager._write_airgap_attestation("job-1", tmp_path)
+        mock_sign.assert_not_called()
+
+    def test_exception_during_signing_does_not_propagate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENSCIENTIST_AIR_GAPPED", "true")
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAP_ATTESTATION_KEY", "host-only-test-key")
+        manager = _new_manager(tmp_path)
+        with patch(
+            "openscientist.settings.get_settings", side_effect=RuntimeError("settings broken")
+        ):
+            manager._write_airgap_attestation("job-1", tmp_path)  # must not raise
