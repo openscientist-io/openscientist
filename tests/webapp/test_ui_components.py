@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from openscientist.job_manager import JobStatus
-from openscientist.webapp_components import ui_components
 from openscientist.webapp_components.ui_components import (
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
@@ -16,12 +15,14 @@ from openscientist.webapp_components.ui_components import (
     STATUS_ICONS,
     _get_job_id_badge_html,
     _get_pubmed_badge_html,
-    _inject_job_id_badge_styles,
-    _inject_pubmed_badge_styles,
     get_project_resource_links,
     get_status_badge_props,
+    register_badge_head_html,
+    render_job_id_badge,
     render_job_id_slot,
+    render_pmid_badge,
     render_status_cell_slot,
+    render_text_with_pmid_links,
     transform_pmid_references,
 )
 
@@ -381,29 +382,26 @@ class TestInlineBadgeMarkup:
         assert "display:inline !important" in template
 
 
-class TestBadgeStyleInjectionIsIdempotent:
-    """add_head_html(shared=True) appends to a process-global string, so the
-    style/script injectors must only ever call it once per process, no matter
-    how many badges get rendered."""
+class TestBadgeStylesRegisteredOnceAtBootstrap:
+    """add_head_html(shared=True) appends to a process-global string with no
+    dedup, so badge CSS/JS must be registered exactly once, at app bootstrap
+    (register_badge_head_html, called from web_app._configure_host_app) --
+    never from per-render code, no matter how many badges get rendered."""
 
-    def setup_method(self):
-        ui_components._pubmed_badge_styles_injected = False
-        ui_components._job_id_badge_styles_injected = False
-
-    def teardown_method(self):
-        ui_components._pubmed_badge_styles_injected = False
-        ui_components._job_id_badge_styles_injected = False
-
-    def test_pubmed_badge_styles_injected_once_across_many_calls(self):
+    def test_register_badge_head_html_registers_both_style_blocks(self):
         with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
-            for _ in range(50):
-                _inject_pubmed_badge_styles()
+            register_badge_head_html()
 
-        mock_add.assert_called_once()
+        assert mock_add.call_count == 2
 
-    def test_job_id_badge_styles_injected_once_across_many_calls(self):
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
-            for _ in range(50):
-                _inject_job_id_badge_styles()
+    def test_rendering_many_badges_never_touches_add_head_html(self):
+        with (
+            patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add,
+            patch("openscientist.webapp_components.ui_components.ui.html"),
+        ):
+            for i in range(50):
+                render_pmid_badge(str(12000000 + i))
+                render_job_id_badge(f"12345678-1234-1234-1234-{i:012d}")
+                render_text_with_pmid_links(f"See PMID: {12000000 + i}")
 
-        mock_add.assert_called_once()
+        mock_add.assert_not_called()

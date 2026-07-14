@@ -31,7 +31,6 @@ from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
-    _inject_pubmed_badge_styles,
     render_delete_dialog,
     render_error_card,
     render_job_action_buttons,
@@ -1297,7 +1296,6 @@ document.addEventListener('click', function(e) {
 def _render_report_markdown(report_path: Path) -> None:
     with open(report_path, encoding="utf-8") as report_file:
         report_content = report_file.read()
-    _inject_pubmed_badge_styles()
     ui.markdown(transform_pmid_references(report_content)).classes("w-full")
 
 
