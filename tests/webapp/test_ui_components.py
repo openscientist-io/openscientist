@@ -15,6 +15,7 @@ from openscientist.webapp_components.ui_components import (
     STATUS_ICONS,
     _get_job_id_badge_html,
     _get_pubmed_badge_html,
+    _inject_thinking_status_styles,
     get_project_resource_links,
     get_status_badge_props,
     register_badge_head_html,
@@ -23,6 +24,7 @@ from openscientist.webapp_components.ui_components import (
     render_pmid_badge,
     render_status_cell_slot,
     render_text_with_pmid_links,
+    render_thinking_status,
     transform_pmid_references,
 )
 
@@ -403,5 +405,21 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
                 render_pmid_badge(str(12000000 + i))
                 render_job_id_badge(f"12345678-1234-1234-1234-{i:012d}")
                 render_text_with_pmid_links(f"See PMID: {12000000 + i}")
+
+        mock_add.assert_not_called()
+
+    def test_inject_thinking_status_styles_adds_head_html(self):
+        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+            _inject_thinking_status_styles()
+
+        mock_add.assert_called_once()
+
+    def test_rendering_many_thinking_statuses_never_touches_add_head_html(self):
+        """render_thinking_status is refreshed on a 2-second poll timer for any
+        actively-watched running job -- this is the call site that produced
+        the original leak, so it must never call add_head_html itself."""
+        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+            for _ in range(50):
+                render_thinking_status("Searching PubMed...")
 
         mock_add.assert_not_called()

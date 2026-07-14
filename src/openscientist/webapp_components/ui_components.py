@@ -2077,7 +2077,15 @@ def render_delete_dialog(
 
 
 def _inject_thinking_status_styles() -> None:
-    """Inject CSS for thinking status indicator into page head (idempotent)."""
+    """Register CSS for the thinking status indicator into the app-wide page head.
+
+    Must be called exactly once, at app bootstrap -- see
+    ``_inject_pubmed_badge_styles`` for why (``add_head_html(shared=True)``
+    appends unconditionally to a process-global string with no dedup, so
+    calling this from ``render_thinking_status`` -- which fires on every
+    2-second poll refresh for an actively-watched running job -- leaked
+    the same style block without bound).
+    """
     ui.add_head_html(
         """
         <style>
@@ -2169,8 +2177,6 @@ def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
         status.classes(remove="hidden")  # Show
         status.classes(add="hidden")  # Hide
     """
-    _inject_thinking_status_styles()
-
     with ui.row().classes(
         "items-center gap-3 py-3 px-4 bg-cyan-50 rounded-lg border border-cyan-200"
     ) as container:

@@ -163,3 +163,37 @@ def test_register_pwa_metadata_adds_shared_head_html(monkeypatch) -> None:
             True,
         )
     ]
+
+
+def test_configure_host_app_registers_badge_and_thinking_status_head_html_once(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """register_badge_head_html() and _inject_thinking_status_styles() must
+    each run exactly once at bootstrap, the same as _register_pwa_metadata --
+    all three call ui.add_head_html(shared=True), which appends to a
+    process-global string with no dedup, so a second call would leak."""
+    monkeypatch.setattr(web_app, "_state", web_app._AppState())
+    monkeypatch.setattr(web_app, "_register_openapi_docs", _noop)
+    monkeypatch.setattr(web_app, "_register_health_endpoint", _noop)
+    monkeypatch.setattr(web_app, "_register_robots_txt", _noop)
+    monkeypatch.setattr(web_app, "_register_api_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_oauth_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_share_routes", _noop)
+    monkeypatch.setattr(web_app, "_initialize_job_manager_runtime", _noop)
+    monkeypatch.setattr(web_app, "_register_nicegui_static_files", _noop)
+    monkeypatch.setattr(web_app, "_register_pwa_metadata", _noop)
+    monkeypatch.setattr(web_app.importlib, "import_module", lambda _name: None)
+    monkeypatch.setattr(web_app.ui, "run_with", _noop)
+
+    badge_calls: list[None] = []
+    thinking_calls: list[None] = []
+    monkeypatch.setattr(web_app, "register_badge_head_html", lambda: badge_calls.append(None))
+    monkeypatch.setattr(
+        web_app, "_inject_thinking_status_styles", lambda: thinking_calls.append(None)
+    )
+
+    web_app.create_app(tmp_path / "jobs")
+    web_app.create_app(tmp_path / "jobs")  # second call must be a no-op (already configured)
+
+    assert len(badge_calls) == 1
+    assert len(thinking_calls) == 1

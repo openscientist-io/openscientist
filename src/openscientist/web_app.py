@@ -23,7 +23,10 @@ from nicegui import app, ui
 from openscientist.job_manager import JobManager
 from openscientist.security import register_scanner_block_middleware
 from openscientist.version import get_version_string
-from openscientist.webapp_components.ui_components import register_badge_head_html
+from openscientist.webapp_components.ui_components import (
+    _inject_thinking_status_styles,
+    register_badge_head_html,
+)
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -491,6 +494,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _register_nicegui_static_files(jobs_dir)
     _register_pwa_metadata()
     register_badge_head_html()
+    _inject_thinking_status_styles()
 
     ui.run_with(
         host_app,
