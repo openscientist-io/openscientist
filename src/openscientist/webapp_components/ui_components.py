@@ -224,9 +224,18 @@ def _get_pubmed_badge_html(pmid: str) -> str:
     )
 
 
+_pubmed_badge_styles_injected = False
+_job_id_badge_styles_injected = False
+
+
 def _inject_pubmed_badge_styles() -> None:
     """Inject CSS and JS for PubMed badges into page head (idempotent)."""
-    # Using add_head_html with shared=True ensures this is only added once per client
+    global _pubmed_badge_styles_injected
+    if _pubmed_badge_styles_injected:
+        return
+    _pubmed_badge_styles_injected = True
+    # add_head_html(shared=True) appends to a process-global string (Client.shared_head_html),
+    # not per-client state, so this must only ever run once per process.
     ui.add_head_html(
         """
         <style>
@@ -275,6 +284,10 @@ def _inject_pubmed_badge_styles() -> None:
 
 def _inject_job_id_badge_styles() -> None:
     """Inject CSS and JS for job ID badges into page head (idempotent)."""
+    global _job_id_badge_styles_injected
+    if _job_id_badge_styles_injected:
+        return
+    _job_id_badge_styles_injected = True
     ui.add_head_html(
         """
         <style>

@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from openscientist.job_manager import JobStatus
+from openscientist.webapp_components import ui_components
 from openscientist.webapp_components.ui_components import (
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
@@ -15,6 +16,8 @@ from openscientist.webapp_components.ui_components import (
     STATUS_ICONS,
     _get_job_id_badge_html,
     _get_pubmed_badge_html,
+    _inject_job_id_badge_styles,
+    _inject_pubmed_badge_styles,
     get_project_resource_links,
     get_status_badge_props,
     render_job_id_slot,
@@ -376,3 +379,31 @@ class TestInlineBadgeMarkup:
 
         assert "display:inline-flex" in template
         assert "display:inline !important" in template
+
+
+class TestBadgeStyleInjectionIsIdempotent:
+    """add_head_html(shared=True) appends to a process-global string, so the
+    style/script injectors must only ever call it once per process, no matter
+    how many badges get rendered."""
+
+    def setup_method(self):
+        ui_components._pubmed_badge_styles_injected = False
+        ui_components._job_id_badge_styles_injected = False
+
+    def teardown_method(self):
+        ui_components._pubmed_badge_styles_injected = False
+        ui_components._job_id_badge_styles_injected = False
+
+    def test_pubmed_badge_styles_injected_once_across_many_calls(self):
+        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+            for _ in range(50):
+                _inject_pubmed_badge_styles()
+
+        mock_add.assert_called_once()
+
+    def test_job_id_badge_styles_injected_once_across_many_calls(self):
+        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+            for _ in range(50):
+                _inject_job_id_badge_styles()
+
+        mock_add.assert_called_once()
