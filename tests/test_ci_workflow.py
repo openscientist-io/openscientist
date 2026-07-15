@@ -14,3 +14,4 @@ def test_secret_scan_uses_open_source_gitleaks_cli() -> None:
     assert "docker run --rm" in workflow
     assert '--log-opts="$log_opts"' in workflow
     assert "github.event.pull_request.base.sha" in workflow
+    assert "permissions:\n  contents: read" in workflow

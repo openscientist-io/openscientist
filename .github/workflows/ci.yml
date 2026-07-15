@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   secret-scan:
     runs-on: ubuntu-latest
