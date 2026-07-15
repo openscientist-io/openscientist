@@ -36,21 +36,9 @@ env/
 *.swo
 *~
 
-# Environment variables (never commit real secrets)
+# Environment variables
 .env
-.env.*
-!.env.example
 .env.backup-*
-
-# Credential and key material
-gcp-credentials.json
-codex-auth.json
-**/auth.json
-service-account*.json
-*.pem
-*.key
-*.p12
-*.pfx
 
 # Locally built codex binary for ad-hoc validation. The images build codex
 # from the fork in a multi-stage build, so this large artifact never goes in.
@@ -92,11 +80,5 @@ htmlcov/
 .ruff_cache/
 data/
 
-.playwright-mcp/
 .playwright-mcp/*.log
-
-# Local archives and backups (use tools/safe_archive.sh for sanitized exports)
-*.tar.gz
-*.zip
-!tests/fixtures/**/*.gz
-!tests/fixtures/**/*.zip
+shandy-prod-jobs-backup-20260307.tar.gz
