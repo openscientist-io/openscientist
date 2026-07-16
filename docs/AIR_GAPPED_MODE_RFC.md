@@ -554,8 +554,9 @@ clones the fork's git repo and runs `cargo build`. The fork carries three load-b
 (harmony parser flattening, function-form `apply_patch`, web-search capability gate) that PR-1
 took for granted as already present.
 
-This is **incompatible with a pure "no network at image-build time" stance**. The realistic
-operator guidance is:
+**Building the image requires internet access.** Only the deployed, running containers are
+network-restricted (§6) — not the build step that produces them. The realistic operator
+guidance is:
 
 - **The image is built once with full network access**, on a non-air-gapped build host. The
   `git clone` + `cargo build` happen there, with the fork pinned to its commit hash (a checksum
