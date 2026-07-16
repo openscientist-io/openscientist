@@ -269,9 +269,12 @@ shared, for blast-radius reduction. Auto-detection fallback to `bridge` in
 
 ### 6.2 Host firewall
 
-`internal: true` is necessary but not sufficient. Air-gap mode installs **host-level nftables (and
-ip6tables) rules with default-DROP** on the per-job bridge, allowing only IP:port flows to the
-local LLM and PubMed services. These rules are part of the attestation evidence (§14).
+`internal: true` is necessary but not sufficient, but PR-1 does not install or manage nftables/
+ip6tables from the app. Network isolation in PR-1 is Docker `network="none"` on the executor
+container plus the airgap Docker socket proxy (§9); any host-level firewall is the operator's
+responsibility, documented in `docs/AIR_GAPPED.md`, not code this project runs with elevated
+privileges. `firewall.py` (in-app nftables/ip6tables apply/teardown) remains deferred to PR-2 —
+see §21 v4.5.2.
 
 - Forbid `host-gateway` and `extra_hosts`. PR #195's web/agent images add `extra_hosts:
   ["host.docker.internal:host-gateway"]` so the OS server can reach an Ollama daemon running
@@ -1145,6 +1148,23 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 ---
 
 ## 21. Revision Log
+
+**v4.5.2 (2026-07-16) — nftables was never implemented; corrected in review:**
+
+Luca Cappelletti's review of PR #209 flagged §6.2's host-firewall
+claims and asked whether the operator needs to run nftables/ip6tables
+manually. Answer: no in-app nftables/ip6tables automation exists or
+was ever built. §6.2's "installs host-level nftables rules" language
+was early planning that didn't survive into PR-1. What actually landed
+is Docker `network="none"` on the executor container plus the airgap
+Docker socket proxy (§9); any host-level firewall is an
+operator-provisioned concern documented in `docs/AIR_GAPPED.md`, not
+code this project runs with root. `firewall.py` remains PR-2 scope
+(§21 v4.5, v4.5.1 B3 already cover the socket-proxy path in detail).
+§6.2's prose is rewritten in place to state the actual PR-1 design
+rather than the abandoned nftables plan; the guarantee statement in §4
+and §6.1/§9 references to Docker-network + socket-proxy enforcement
+were already accurate and are unchanged.
 
 **v4.5.1 (2026-06-09) — Codex Review-7 fixes + drift cleanup:**
 
