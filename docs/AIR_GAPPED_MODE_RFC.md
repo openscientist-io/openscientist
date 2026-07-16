@@ -276,14 +276,15 @@ responsibility, documented in `docs/AIR_GAPPED.md`, not code this project runs w
 privileges. `firewall.py` (in-app nftables/ip6tables apply/teardown) remains deferred to PR-2 —
 see §21 v4.5.2.
 
-- Forbid `host-gateway` and `extra_hosts`. PR #195's web/agent images add `extra_hosts:
-  ["host.docker.internal:host-gateway"]` so the OS server can reach an Ollama daemon running
-  on the Docker host. **In air-gap mode this is forbidden** — air-gap deployments point
-  `OPENSCIENTIST_AIRGAP_LLM_ADDR` at an explicit internal IP/hostname (e.g. an Ollama instance
-  on the per-job internal network or a separate internal-network service); the `host.docker
-  .internal` shortcut is replaced with the operator-controlled allowlisted endpoint. The
-  runner's air-gap branch must drop the `extra_hosts` parameter regardless of what PR #195
-  sets in the non-air-gap path.
+- Forbid `host-gateway` and `extra_hosts` in air-gap mode. Ollama always runs on the host, never
+  inside Docker (true on `main` today and in these PRs) — no GPU passthrough into a container is
+  ever needed. Non-air-gapped jobs reach it via `extra_hosts: ["host.docker.internal:host-gateway"]`,
+  letting the agent container address the host-run Ollama directly. **In air-gap mode this
+  shortcut is forbidden** — `host.docker.internal` gives a container a general path to the host's
+  network, which would be a backdoor around the per-job firewall this section exists to build.
+  Air-gapped jobs instead get exactly one explicit, firewall-allowlisted address via
+  `OPENSCIENTIST_AIRGAP_LLM_ADDR`. The runner's air-gap branch drops the `extra_hosts` parameter
+  regardless of what the non-air-gap path sets.
 - Single network attachment per container.
 - Drop `NET_RAW`.
 - Require patched Docker Engine (CVE-2024-29018 leaked DNS externally on certain Moby versions).
@@ -1165,6 +1166,19 @@ code this project runs with root. `firewall.py` remains PR-2 scope
 rather than the abandoned nftables plan; the guarantee statement in §4
 and §6.1/§9 references to Docker-network + socket-proxy enforcement
 were already accurate and are unchanged.
+
+Separately, Luca also flagged the §6.2 `extra_hosts`/`host.docker.internal`
+bullet as confusing: it described the air-gap LLM address as reachable
+via "an Ollama instance on the per-job internal network," which reads
+as if Ollama might be Docker-network-joined. It never is — Ollama is
+always a host process, in both `main` today and these PRs. Only the
+container's path to it changes: non-air-gapped jobs use
+`host.docker.internal` (Luca's own suggestion, already what's
+implemented); air-gapped jobs disable that shortcut entirely (it's a
+backdoor around the per-job firewall) and use a single explicit
+`OPENSCIENTIST_AIRGAP_LLM_ADDR` instead. The bullet is reworded to say
+this directly instead of implying Ollama's location is Docker-network
+dependent.
 
 **v4.5.1 (2026-06-09) — Codex Review-7 fixes + drift cleanup:**
 
