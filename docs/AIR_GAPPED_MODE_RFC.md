@@ -397,15 +397,15 @@ runtimes. The operator chooses one based on their hardware budget; gpt-oss-120b 
 H100 (or quantized on consumer hardware), gpt-oss-20b on much less. The same pattern works with
 any open-weight model that ships a compliant Responses-API surface.
 
-**This isn't speculative.** Luca's in-flight `BedrockOpenAIProvider` (PR #190) runs **the same
-gpt-oss-120b model through the same Responses API** at Bedrock's Mantle endpoint. A
-self-hosted vLLM serving the same weights at `https://10.0.0.5:8443/v1` is operationally
-identical from the Codex CLI's perspective — only the `base_url` and auth surface change. A
-``LocalOpenAIProvider`` (or a generalized ``OPENAI_BASE_URL`` override on
-``OpenAIDirectProvider``) is a ~30-line copy of `bedrock_openai.py` once it lands.
+**This isn't speculative.** §21 v4.4's Tier-4 validation already ran this end-to-end against a
+live Ollama daemon serving `gpt-oss-120b` on real hardware — a genuine Responses-API round trip
+returning a real token, not a mock. A self-hosted vLLM serving the same weights at
+`https://10.0.0.5:8443/v1` is operationally identical from the Codex CLI's perspective — only the
+`base_url` and auth surface change. A ``LocalOpenAIProvider`` (or a generalized
+``OPENAI_BASE_URL`` override on ``OpenAIDirectProvider``) is a ~30-line copy of `ollama.py`.
 
 **Provider class.** The agent reaches the local endpoint through a `CodexCompatible` provider on
-the established template (compare `azure_openai.py` and `bedrock_openai.py`):
+the established template (compare `azure_openai.py` and `ollama.py`):
 
 ```python
 class LocalOpenAIProvider(CodexCompatible):
@@ -1149,6 +1149,20 @@ The "guarantee" claim should always be cited with §4's precise statement and th
 ---
 
 ## 21. Revision Log
+
+**v4.5.3 (2026-07-16) — §7.4 no longer leans on the Bedrock proof-point:**
+
+Luca's review questioned whether Bedrock's Mantle endpoint actually serves
+open-weight models over the Responses API — a claim this project has no
+way to independently verify and, more importantly, doesn't need: Bedrock
+was never the shipped local-model path (Ollama is), and PR #190's
+`BedrockOpenAIProvider` never merged. §7.4's "this isn't speculative"
+paragraph now cites the already-landed, already-verified Ollama Tier-4
+live test (§21 v4.4) instead of Bedrock, and the provider-class comparison
+points at the real `ollama.py` rather than the unmerged `bedrock_openai.py`.
+The §19 OQ#2 and v4.2 mentions of `BedrockOpenAIProvider` are left as-is —
+they're citing it as a naming-pattern precedent / historical record, not
+as a working-system claim.
 
 **v4.5.2 (2026-07-16) — nftables was never implemented; corrected in review:**
 
