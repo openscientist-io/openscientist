@@ -1085,12 +1085,11 @@ refactor. Non-airgap deployments continue to work; airgap stops using the proxy.
    `*_base_url` field on `ProviderSettings` today (`settings.py:62-142`). The resolution path is
    now clearer for each:
    - **OpenAI:** the air-gap shape (§7.4) is a `CodexCompatible` provider pointing at a local
-     OpenAI-compatible server (vLLM serving gpt-oss-120b). This is what Luca is trending toward
-     in his Codex-provider series (`BedrockOpenAIProvider` is the latest in pattern). Concrete
-     change: either generalize `OpenAIDirectProvider` to read `OPENAI_BASE_URL` (smaller diff,
-     opens cloud-OpenAI to airgap rewrites too) or add a dedicated `LocalOpenAIProvider`
-     class (clearer deployment intent). Either way the egress registry entry flips from
-     `_unsupported` to `_from_url(...)`. Decision can wait for Luca's in-flight work.
+     OpenAI-compatible server (Ollama serving gpt-oss-120b, the only stack actually validated
+     against the contract per §7.4). Concrete change: either generalize `OpenAIDirectProvider`
+     to read `OPENAI_BASE_URL` (smaller diff, opens cloud-OpenAI to airgap rewrites too) or add
+     a dedicated `LocalOpenAIProvider` class (clearer deployment intent). Either way the egress
+     registry entry flips from `_unsupported` to `_from_url(...)`.
    - **Bedrock (Claude):** `ClaudeCompatible`, regional SDK. **Partially resolved (§7.5
      Pattern A).** A concrete operator need (Luca / Sage / HIPAA) surfaced; PR-N adds an opt-in
      managed-LLM egress flag (`OPENSCIENTIST_AIRGAP_ALLOW_MANAGED_LLM_EGRESS`) that lets the
