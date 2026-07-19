@@ -843,6 +843,22 @@ class AgentSettings(BaseSettings):
         return v
 
 
+class AirgapSettings(BaseSettings):
+    """Air-gapped mode configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(
+        default=False,
+        alias="OPENSCIENTIST_AIRGAPPED",
+        description="Block network egress from untrusted containers.",
+    )
+
+
 class Settings(BaseSettings):
     """Root settings class with all configuration sections."""
 
@@ -875,6 +891,7 @@ class Settings(BaseSettings):
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    airgap: AirgapSettings = Field(default_factory=AirgapSettings)
 
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":

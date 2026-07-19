@@ -302,7 +302,13 @@ class ContainerManager:
 
         from openscientist.job_container import resolve_docker_network
 
-        network = resolve_docker_network(self.client, get_settings().container.agent_network)
+        # Air-gapped executors run untrusted code and need no network, so use
+        # Docker's no-networking "none" network. Otherwise attach the resolved
+        # compose network, unchanged.
+        if get_settings().airgap.enabled:
+            network = "none"
+        else:
+            network = resolve_docker_network(self.client, get_settings().container.agent_network)
 
         try:
             # Run container

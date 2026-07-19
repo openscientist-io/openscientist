@@ -441,6 +441,7 @@ class TestBuildVolumesHostTranslation:
         mock_settings.container.executor_cpu = 0.5
         mock_settings.container.executor_timeout = 120
         mock_settings.container.agent_network = None
+        mock_settings.airgap.enabled = False
         return mgr, mock_client, mock_settings
 
     @staticmethod
@@ -544,6 +545,93 @@ class TestBuildVolumesHostTranslation:
             )
 
         assert str(data_dir) in self._get_run_volumes(mock_client)
+
+
+class TestExecuteCodeAirgapNetwork:
+    """Executor network selection under the air-gap flag."""
+
+    def _setup(self):
+        from openscientist.container_manager import ContainerManager
+
+        mgr = ContainerManager()
+        mock_client = MagicMock()
+        mgr._client = mock_client
+        mock_client.containers.run.return_value = json.dumps(
+            {
+                "success": True,
+                "output": "",
+                "plots": [],
+                "error": None,
+                "execution_time": 0.1,
+            }
+        ).encode()
+        mock_client.containers.get.return_value = MagicMock()
+
+        mock_settings = MagicMock()
+        mock_settings.container.container_app_dir = "/app"
+        mock_settings.container.host_project_dir = None
+        mock_settings.container.executor_image = "test:latest"
+        mock_settings.container.executor_memory = "2g"
+        mock_settings.container.executor_cpu = 0.5
+        mock_settings.container.executor_timeout = 120
+        mock_settings.container.agent_network = "openscientist_default"
+        return mgr, mock_client, mock_settings
+
+    @staticmethod
+    def _run_kwargs(mock_client: MagicMock) -> dict[str, object]:
+        return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
+
+    def test_airgap_enabled_uses_no_network(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup()
+        mock_settings.airgap.enabled = True
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch(
+                "openscientist.job_container.resolve_docker_network",
+                return_value="openscientist_default",
+            ) as mock_resolve,
+        ):
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="airgap-on",
+                output_dir=str(output_dir),
+            )
+
+        kwargs = self._run_kwargs(mock_client)
+        assert kwargs.get("network") == "none"
+        assert "network_mode" not in kwargs
+        mock_resolve.assert_not_called()
+
+    def test_airgap_disabled_uses_resolved_network(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup()
+        mock_settings.airgap.enabled = False
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch(
+                "openscientist.job_container.resolve_docker_network",
+                return_value="openscientist_default",
+            ) as mock_resolve,
+        ):
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="airgap-off",
+                output_dir=str(output_dir),
+            )
+
+        kwargs = self._run_kwargs(mock_client)
+        assert kwargs.get("network") == "openscientist_default"
+        assert "network_mode" not in kwargs
+        mock_resolve.assert_called_once()
 
 
 class TestGetContainerManager:
