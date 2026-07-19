@@ -220,6 +220,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             env["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
         else:
             env.pop("OPENSCIENTIST_DATA_FILES", None)
+        env.update(config.tool_server_env)
         return env
 
     def _build_options(self) -> ClaudeAgentOptions:

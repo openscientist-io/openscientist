@@ -33,6 +33,7 @@ def _make_agent(
     use_hypotheses: bool = False,
     model_override: str | None = None,
     provider: ClaudeCompatible | None = None,
+    tool_server_env: dict[str, str] | None = None,
 ) -> ClaudeCodeAgent:
     config = AgentConfig(
         job_dir=tmp_path,
@@ -41,6 +42,7 @@ def _make_agent(
         use_hypotheses=use_hypotheses,
         data_files=tuple(data_files or ()),
         model_override=model_override,
+        tool_server_env=tool_server_env or {},
     )
     return ClaudeCodeAgent(config, provider or _StubProvider())
 
@@ -85,6 +87,17 @@ def test_subprocess_env_includes_job_id_and_job_dir(tmp_path: Path) -> None:
 
     assert env["OPENSCIENTIST_JOB_ID"] == tmp_path.name
     assert env["OPENSCIENTIST_JOB_DIR"] == str(tmp_path)
+
+
+def test_subprocess_env_merges_tool_server_env(tmp_path: Path) -> None:
+    """AgentConfig.tool_server_env is merged into the subprocess env. The chat
+    path injects the per-job exec token this way, never via global os.environ."""
+    env = _make_agent(
+        tmp_path,
+        tool_server_env={"OPENSCIENTIST_EXEC_TOKEN": "job-9.tok", "X_EXTRA": "1"},
+    )._build_subprocess_env()
+    assert env["OPENSCIENTIST_EXEC_TOKEN"] == "job-9.tok"
+    assert env["X_EXTRA"] == "1"
 
 
 def test_subprocess_env_inherits_critical_parent_vars(

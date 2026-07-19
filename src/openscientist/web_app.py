@@ -406,6 +406,15 @@ async def _start_background_tasks(engine: Any) -> None:
     except Exception as e:
         logger.warning("Failed to start skill sync scheduler: %s", e)
 
+    # Start the execution broker
+    try:
+        from openscientist.exec_broker import start_exec_broker
+
+        await start_exec_broker()
+        logger.info("Execution broker started")
+    except Exception as e:
+        logger.warning("Failed to start execution broker: %s", e)
+
 
 def _initialize_job_manager_runtime(jobs_dir: Path) -> None:
     if _state.job_manager is not None:

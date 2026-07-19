@@ -11,12 +11,15 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from openscientist.code_executor import format_execution_result
-from openscientist.container_manager import get_container_manager
+from openscientist.exec_broker_client import BrokerError, execute_code_via_broker
 from openscientist.file_loader import get_file_info, load_data_file
+from openscientist.job_container.utils import to_host_path
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import get_settings
 from openscientist_tools.server import mcp
 from openscientist_tools.state import STATE
 
@@ -141,39 +144,51 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
     provenance_dir = STATE.job_dir / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
 
-    container_mgr = get_container_manager()
+    cs = get_settings().container
+
+    def _to_host(path: Path) -> str:
+        # Resolve and map to the host path the broker mounts.
+        return str(to_host_path(path.resolve(), cs))
+
+    job_id = STATE.job_dir.name
+    host_output_dir = _to_host(provenance_dir)
 
     result: dict[str, Any]
-    if language == "python":
-        data_files: list[dict[str, Any]] = []
-        for df_path in STATE.data_files:
-            if not df_path.exists():
-                raise FileNotFoundError(f"Data file not found: {df_path}")
-            data_files.append(get_file_info(df_path))
+    try:
+        if language == "python":
+            data_files: list[dict[str, Any]] = []
+            for df_path in STATE.data_files:
+                if not df_path.exists():
+                    raise FileNotFoundError(f"Data file not found: {df_path}")
+                info = get_file_info(df_path)
+                info["path"] = _to_host(Path(info["path"]))
+                data_files.append(info)
 
-        primary_data_path = str(STATE.data_files[0]) if STATE.data_files else None
+            primary_data_path = _to_host(STATE.data_files[0]) if STATE.data_files else None
 
-        result = container_mgr.execute_code(
-            code=code,
-            job_id=STATE.job_dir.name,
-            data_path=primary_data_path,
-            output_dir=provenance_dir,
-            timeout=60,
-            description=description,
-            iteration=int(ks.data["iteration"]),
-            data_files=data_files,
-            language="python",
-        )
-    else:
-        result = container_mgr.execute_code(
-            code=code,
-            job_id=STATE.job_dir.name,
-            output_dir=provenance_dir,
-            timeout=300 if language == "rust" else 60,
-            description=description,
-            iteration=int(ks.data["iteration"]),
-            language=language,
-        )
+            result = execute_code_via_broker(
+                code=code,
+                language="python",
+                job_id=job_id,
+                output_dir=host_output_dir,
+                data_path=primary_data_path,
+                data_files=data_files,
+                description=description,
+                iteration=int(ks.data["iteration"]),
+                timeout=60,
+            )
+        else:
+            result = execute_code_via_broker(
+                code=code,
+                language=language,
+                job_id=job_id,
+                output_dir=host_output_dir,
+                description=description,
+                iteration=int(ks.data["iteration"]),
+                timeout=300 if language == "rust" else 60,
+            )
+    except BrokerError as exc:
+        return f"❌ ERROR: code execution service unavailable: {exc}"
 
     ks.log_analysis(
         action="execute_code",

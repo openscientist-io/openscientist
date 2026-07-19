@@ -267,7 +267,14 @@ async def _send_message_via_executor(
     """
     from openscientist.agent.base import AgentConfig
     from openscientist.agent.factory import agent_class_for_provider, build_agent
+    from openscientist.exec_broker_client import (
+        EXEC_BROKER_URL_ENV,
+        EXEC_TOKEN_ENV,
+        container_broker_base_url,
+    )
+    from openscientist.job_container.secrets import make_exec_placeholder
     from openscientist.providers import get_provider
+    from openscientist.settings import get_settings
 
     # Get chat history for continuity
     history = await get_chat_history(session, job_id, limit=10)
@@ -340,6 +347,11 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
         job_dir=job_dir,
         system_prompt=agent_cls.chat_system_prompt(system_prompt),
         model_override=agent_cls.chat_model_override(),
+        tool_server_env={
+            # Chat's tools run in-process here, so hand them this job's exec token.
+            EXEC_TOKEN_ENV: make_exec_placeholder(get_settings().secret_key, str(job_id)),
+            EXEC_BROKER_URL_ENV: container_broker_base_url(),
+        },
     )
     executor = build_agent(config, provider)
     executor.apply_runtime_environment()

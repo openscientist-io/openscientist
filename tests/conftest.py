@@ -55,6 +55,11 @@ if "OPENSCIENTIST_PROVIDER" not in os.environ:
 # keeping the suite hermetic and deterministic.
 if "OPENSCIENTIST_MODEL_CONTEXT_TOKENS" not in os.environ:
     os.environ["OPENSCIENTIST_MODEL_CONTEXT_TOKENS"] = "131072"
+# openscientist_tools binds STATE at import, so give it dummy job values.
+if "OPENSCIENTIST_JOB_ID" not in os.environ:
+    os.environ["OPENSCIENTIST_JOB_ID"] = "test-job"
+if "OPENSCIENTIST_JOB_DIR" not in os.environ:
+    os.environ["OPENSCIENTIST_JOB_DIR"] = "/tmp/openscientist-test-job"
 
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()

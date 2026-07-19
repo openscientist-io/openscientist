@@ -11,7 +11,7 @@ import pytest
 
 from docker import errors as docker_errors
 from openscientist.job_container.runner import AGENT_APP_DIR, JobContainerRunner
-from openscientist.job_container.secrets import derive_job_secret
+from openscientist.job_container.secrets import derive_job_secret, make_exec_placeholder
 from openscientist.settings import Settings
 
 
@@ -94,6 +94,30 @@ class TestJobContainerRunner:
         assert environment["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
         assert environment["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
         assert run_kwargs["volumes"]["/host/project/jobs/job-123"]["bind"] == environment["JOB_DIR"]
+
+    def test_launch_omits_docker_socket_and_group_add(self):
+        """The job container no longer mounts the Docker socket or joins its group."""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_container.short_id = "abc123"
+        mock_client.containers.run.return_value = mock_container
+        settings = self._make_settings(host_project_dir="/host/project")
+
+        with (
+            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
+            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
+            patch(
+                "openscientist.job_container.runner.to_host_path",
+                return_value=Path("/host/project/jobs/job-123"),
+            ),
+        ):
+            runner = JobContainerRunner()
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+
+        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
+        assert "/var/run/docker.sock" not in run_kwargs["volumes"]
+        assert "group_add" not in run_kwargs
 
     def test_launch_uses_agent_image_from_settings(self):
         """Launch passes the configured agent_image to containers.run.
@@ -490,3 +514,13 @@ class TestJobSecretInjection:
         assert settings.secret_key == derived
         expected_storage = hmac.new(derived.encode(), b"storage_secret", hashlib.sha256).hexdigest()
         assert settings.auth.storage_secret == expected_storage
+
+    def test_env_injects_exec_token_and_broker_url(self) -> None:
+        """The container env carries a per-job exec placeholder and the broker URL."""
+        settings = self._settings(master="master-key")
+        env = JobContainerRunner._build_container_environment(
+            cast(Settings, settings), job_id="job-x", job_mount="/agent/jobs/job-x"
+        )
+        assert env["OPENSCIENTIST_EXEC_TOKEN"] == make_exec_placeholder("master-key", "job-x")
+        assert env["OPENSCIENTIST_EXEC_TOKEN"].startswith("job-x.")
+        assert env["OPENSCIENTIST_EXEC_BROKER_URL"].endswith(":8082")

@@ -194,6 +194,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             env["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)
         if config.data_files:
             env["OPENSCIENTIST_DATA_FILES"] = os.pathsep.join(str(p) for p in config.data_files)
+        env.update(config.tool_server_env)
         return env
 
     def _write_codex_config(self) -> None:

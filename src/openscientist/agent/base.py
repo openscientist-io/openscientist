@@ -13,7 +13,8 @@ import abc
 import asyncio
 import enum
 import inspect
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -151,6 +152,9 @@ class AgentConfig:
     # ANTHROPIC_CHAT_MODEL escape hatch for in-page chat). The codex path
     # sources its model from the provider, so this is ignored there.
     model_override: str | None = None
+    # Per-invocation env for the tools subprocess. Threaded here, not via global
+    # os.environ, so concurrent chats cannot leak one job's exec token.
+    tool_server_env: Mapping[str, str] = field(default_factory=dict)
 
 
 class AbstractAgent[P: Provider](abc.ABC):

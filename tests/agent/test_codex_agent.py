@@ -110,6 +110,12 @@ def test_construct_exposes_config_and_provider(tmp_path: Path) -> None:
     assert agent.total_tokens == TokenUsage()
 
 
+def test_mcp_env_merges_tool_server_env(tmp_path: Path) -> None:
+    """AgentConfig.tool_server_env reaches the codex MCP server env table."""
+    agent = _agent(tmp_path, tool_server_env={"OPENSCIENTIST_EXEC_TOKEN": "job-9.tok"})
+    assert agent._mcp_env()["OPENSCIENTIST_EXEC_TOKEN"] == "job-9.tok"
+
+
 # ── run loop ───────────────────────────────────────────────────────────
 
 

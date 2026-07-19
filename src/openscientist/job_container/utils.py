@@ -8,8 +8,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from docker import errors as docker_errors
-
 if TYPE_CHECKING:
     import docker as _docker_module
 
@@ -39,11 +37,25 @@ def to_host_path(path: Path, cs: HostPathSettings) -> Path:
         return path
 
 
+def to_container_path(path: Path, cs: HostPathSettings) -> Path:
+    """Inverse of to_host_path. A path outside host_project_dir is returned unchanged."""
+    if not cs.host_project_dir:
+        return path
+
+    try:
+        relative = path.relative_to(Path(cs.host_project_dir))
+        return Path(cs.container_app_dir) / relative
+    except ValueError:
+        return path
+
+
 def resolve_docker_network(
     client: "_docker_module.DockerClient",
     configured_network: str | None,
 ) -> str:
     """Resolve the Docker network for sibling containers."""
+    from docker import errors as docker_errors
+
     if configured_network:
         return configured_network
 
