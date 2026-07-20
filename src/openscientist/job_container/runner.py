@@ -168,6 +168,27 @@ class JobContainerRunner:
         )
         return env, volumes, agent_network, agent_memory, agent_cpu, agent_platform
 
+    @staticmethod
+    def _airgap_firewall_config(
+        settings: Settings,
+    ) -> tuple[list[str] | None, str | None, list[str] | None, dict[str, str]]:
+        """Firewall launch overrides (cap_add, user, entrypoint, extra_env) for
+        air-gapped mode, or neutral values when off."""
+        if not settings.airgap.enabled:
+            return None, None, None, {}
+        from openscientist.job_container.egress import (
+            derive_egress_allowlist,
+            format_egress_allowlist,
+        )
+
+        allow = format_egress_allowlist(derive_egress_allowlist(settings))
+        return (
+            ["NET_ADMIN"],
+            "root",
+            ["/agent-firewall-entrypoint.sh"],
+            {"OPENSCIENTIST_FIREWALL_ALLOW": allow},
+        )
+
     def launch(self, job_id: str, job_dir: Path, *, run_mode: str = "discovery") -> Any:
         """
         Launch an agent container for the given job.
@@ -214,6 +235,8 @@ class JobContainerRunner:
             )
         )
         network = self._get_network(agent_network)
+        cap_add, run_user, entrypoint, firewall_env = self._airgap_firewall_config(settings)
+        env.update(firewall_env)
 
         container = self._docker.containers.run(
             image=cs.agent_image,
@@ -227,6 +250,9 @@ class JobContainerRunner:
             nano_cpus=int(agent_cpu * 1e9),
             platform=agent_platform or None,
             security_opt=["no-new-privileges:true"],
+            cap_add=cap_add,
+            user=run_user,
+            entrypoint=entrypoint,
             # Map host.docker.internal to the host gateway so a job can reach a
             # model server running on the host (e.g. a local Ollama at
             # http://host.docker.internal:11434/v1). Harmless for providers that

@@ -48,6 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi8 \
     shared-mime-info \
     fonts-liberation \
+    nftables \
+    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -76,6 +78,10 @@ RUN chmod +x /usr/local/bin/codex
 
 # Copy agent entrypoint
 COPY docker/agent-entrypoint.py /agent-entrypoint.py
+
+# Air-gapped egress firewall entrypoint (used when the runner enables airgap).
+COPY docker/agent-firewall-entrypoint.sh /agent-firewall-entrypoint.sh
+RUN chmod +x /agent-firewall-entrypoint.sh
 
 # Switch to non-root user
 USER agent
