@@ -117,9 +117,17 @@ class JobContainerRunner:
         volumes: dict[str, dict[str, str]] = {
             str(job_dir_host): {"bind": job_mount, "mode": "rw"},
         }
-        gcp_path = settings.provider.google_application_credentials
-        if gcp_path:
-            gcp_host_path = settings.provider.gcp_credentials_host_path or gcp_path
+        # gcp_credentials_host_path is the operator-provided *host* path (see
+        # .env.example's GCP_CREDENTIALS_HOST_PATH / GCP_CREDENTIALS_FILE). We
+        # must not fall back to google_application_credentials here: that's
+        # the container-internal path (/app/gcp-credentials.json, baked into
+        # the web image's Dockerfile ENV unconditionally, regardless of
+        # provider), and bind-mounting it as if it were a host path fails on
+        # any host where that literal path isn't separately shared with
+        # Docker -- breaking job launch even for providers that never touch
+        # GCP (Ollama, Anthropic, etc).
+        gcp_host_path = settings.provider.gcp_credentials_host_path
+        if gcp_host_path:
             volumes[str(gcp_host_path)] = {
                 "bind": "/agent/gcp-credentials.json",
                 "mode": "ro",
