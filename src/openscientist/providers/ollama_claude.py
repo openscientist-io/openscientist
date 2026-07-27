@@ -22,6 +22,7 @@ web-side LLM proxy and never learns the Ollama address, and the proxy forwards
 from __future__ import annotations
 
 import logging
+import os
 
 from openscientist.models import ModelProfile
 from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
@@ -80,10 +81,19 @@ class OllamaClaudeProvider(ClaudeCompatible):
     def claude_sdk_env(self) -> dict[str, str]:
         """Auth env vars the claude-agent-sdk CLI must see."""
         p = get_settings().provider
-        return {
+        env = {
             "ANTHROPIC_BASE_URL": self._anthropic_base_url(),
             "ANTHROPIC_API_KEY": p.anthropic_api_key or KEYLESS_PLACEHOLDER,
         }
+        # The CLI's default output cap is sized for a frontier model's window
+        # and exceeds a typical self-hosted one outright, so a talkative local
+        # model overruns it and the turn dies with "Claude's response exceeded
+        # the N output token maximum". Leave room for the prompt instead. An
+        # operator-set value wins.
+        if "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in os.environ:
+            window = self.model_profile().context_window_tokens
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max(1024, min(8192, window // 4)))
+        return env
 
     def llm_upstream(self) -> LlmUpstream | None:
         # Keyless: forward to Ollama with no injected auth. This is resolved

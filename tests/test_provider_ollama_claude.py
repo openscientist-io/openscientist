@@ -206,3 +206,40 @@ def test_upstream_disables_thinking_so_the_sdk_can_parse_the_reply() -> None:
         upstream = p.llm_upstream()
     assert upstream is not None
     assert upstream.request_overrides == {"thinking": {"type": "disabled"}}
+
+
+# --- output token cap -----------------------------------------------------------
+
+
+def test_output_cap_leaves_room_for_the_prompt(monkeypatch) -> None:
+    """The CLI's default cap exceeds a typical self-hosted window outright, so a
+    talkative model overruns it and the turn dies."""
+    monkeypatch.delenv("CLAUDE_CODE_MAX_OUTPUT_TOKENS", raising=False)
+    p = _provider()
+    settings = _settings(model_context_tokens=32768)
+    with (
+        patch("openscientist.providers.ollama_claude.get_settings", return_value=settings),
+        patch("openscientist.providers._ollama_common.get_settings", return_value=settings),
+    ):
+        env = p.claude_sdk_env()
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "8192"
+
+
+def test_output_cap_scales_down_with_a_small_window(monkeypatch) -> None:
+    monkeypatch.delenv("CLAUDE_CODE_MAX_OUTPUT_TOKENS", raising=False)
+    p = _provider()
+    settings = _settings(model_context_tokens=8192)
+    with (
+        patch("openscientist.providers.ollama_claude.get_settings", return_value=settings),
+        patch("openscientist.providers._ollama_common.get_settings", return_value=settings),
+    ):
+        env = p.claude_sdk_env()
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "2048"
+
+
+def test_operator_set_output_cap_wins(monkeypatch) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_MAX_OUTPUT_TOKENS", "4096")
+    p = _provider()
+    with patch("openscientist.providers.ollama_claude.get_settings", return_value=_settings()):
+        env = p.claude_sdk_env()
+    assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in env
