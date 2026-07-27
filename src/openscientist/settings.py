@@ -88,6 +88,15 @@ class ProviderSettings(BaseSettings):
 
     # Model settings
     model: str | None = Field(default=None, alias="OPENSCIENTIST_MODEL")
+    claude_code_max_output_tokens: int | None = Field(
+        default=None,
+        alias="CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        description=(
+            "Cap on a single CLI response, in tokens. When unset, a self-hosted "
+            "provider derives one from the model's context window; the CLI's own "
+            "default is sized for a frontier model and overruns a smaller window."
+        ),
+    )
     model_context_tokens: int | None = Field(
         default=None,
         alias="OPENSCIENTIST_MODEL_CONTEXT_TOKENS",
@@ -365,6 +374,11 @@ class ProviderSettings(BaseSettings):
 
     def _apply_model_env_vars(self, env_vars: dict[str, str]) -> None:
         self._set_env_if_present(env_vars, "OPENSCIENTIST_MODEL", self.model)
+        self._set_env_if_present(
+            env_vars,
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            str(self.claude_code_max_output_tokens) if self.claude_code_max_output_tokens else None,
+        )
         # The agent budgets prompts against this. A self-hosted window is
         # normally probed from the live server, but an air-gapped container is
         # firewalled off from it, so the operator's override is the only source

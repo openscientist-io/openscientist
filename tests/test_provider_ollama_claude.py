@@ -19,6 +19,7 @@ def _settings(
     model: str | None = None,
     anthropic_base_url: str | None = None,
     anthropic_api_key: str | None = None,
+    claude_code_max_output_tokens: int | None = None,
     model_context_tokens: int | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -28,6 +29,7 @@ def _settings(
             model=model,
             anthropic_base_url=anthropic_base_url,
             anthropic_api_key=anthropic_api_key,
+            claude_code_max_output_tokens=claude_code_max_output_tokens,
             model_context_tokens=model_context_tokens,
         )
     )
@@ -222,7 +224,7 @@ def test_output_cap_leaves_room_for_the_prompt(monkeypatch) -> None:
         patch("openscientist.providers._ollama_common.get_settings", return_value=settings),
     ):
         env = p.claude_sdk_env()
-    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "8192"
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "16384"
 
 
 def test_output_cap_scales_down_with_a_small_window(monkeypatch) -> None:
@@ -234,7 +236,7 @@ def test_output_cap_scales_down_with_a_small_window(monkeypatch) -> None:
         patch("openscientist.providers._ollama_common.get_settings", return_value=settings),
     ):
         env = p.claude_sdk_env()
-    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "2048"
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "4096"
 
 
 def test_operator_set_output_cap_wins(monkeypatch) -> None:
@@ -243,3 +245,17 @@ def test_operator_set_output_cap_wins(monkeypatch) -> None:
     with patch("openscientist.providers.ollama_claude.get_settings", return_value=_settings()):
         env = p.claude_sdk_env()
     assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in env
+
+
+def test_settings_output_cap_wins_and_reaches_the_container(monkeypatch) -> None:
+    """The env-only escape hatch never reached the agent container; the setting
+    is forwarded, so it has to take precedence here too."""
+    monkeypatch.delenv("CLAUDE_CODE_MAX_OUTPUT_TOKENS", raising=False)
+    p = _provider()
+    settings = _settings(model_context_tokens=32768, claude_code_max_output_tokens=12000)
+    with (
+        patch("openscientist.providers.ollama_claude.get_settings", return_value=settings),
+        patch("openscientist.providers._ollama_common.get_settings", return_value=settings),
+    ):
+        env = p.claude_sdk_env()
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "12000"

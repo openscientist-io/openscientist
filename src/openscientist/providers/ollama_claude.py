@@ -88,11 +88,14 @@ class OllamaClaudeProvider(ClaudeCompatible):
         # The CLI's default output cap is sized for a frontier model's window
         # and exceeds a typical self-hosted one outright, so a talkative local
         # model overruns it and the turn dies with "Claude's response exceeded
-        # the N output token maximum". Leave room for the prompt instead. An
-        # operator-set value wins.
-        if "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in os.environ:
+        # the N output token maximum". Size it from the actual window instead.
+        # Half, not a quarter: an open-weight model narrating its analysis blew
+        # through a 32k/4 cap on every iteration of a two-iteration run.
+        if p.claude_code_max_output_tokens:
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(p.claude_code_max_output_tokens)
+        elif "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in os.environ:
             window = self.model_profile().context_window_tokens
-            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max(1024, min(8192, window // 4)))
+            env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max(1024, min(16384, window // 2)))
         return env
 
     def llm_upstream(self) -> LlmUpstream | None:
