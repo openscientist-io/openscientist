@@ -119,11 +119,11 @@ def test_get_provider_selects_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
         clear_settings_cache()
 
 
-# --- context window probe (_ollama_http_base / _probe_ollama_context_tokens) ----
+# --- context window probe (shared helpers in _ollama_common) ----
 
 
 def test_ollama_http_base_strips_v1() -> None:
-    from openscientist.providers.ollama import _ollama_http_base
+    from openscientist.providers._ollama_common import ollama_http_base as _ollama_http_base
 
     assert _ollama_http_base("http://host:11434/v1") == "http://host:11434"
     assert _ollama_http_base("http://host:11434/v1/") == "http://host:11434"
@@ -131,8 +131,10 @@ def test_ollama_http_base_strips_v1() -> None:
 
 
 def test_probe_reads_loaded_context_from_api_ps() -> None:
-    from openscientist.providers import ollama as ollama_mod
-    from openscientist.providers.ollama import _probe_ollama_context_tokens
+    from openscientist.providers import _ollama_common as ollama_mod
+    from openscientist.providers._ollama_common import (
+        probe_ollama_context_tokens as _probe_ollama_context_tokens,
+    )
 
     payload = {"models": [{"name": "gpt-oss:120b", "context_length": 131072}]}
     with patch.object(ollama_mod.requests, "get", return_value=_resp(payload)) as get:
@@ -141,8 +143,10 @@ def test_probe_reads_loaded_context_from_api_ps() -> None:
 
 
 def test_probe_matches_model_name_prefix() -> None:
-    from openscientist.providers import ollama as ollama_mod
-    from openscientist.providers.ollama import _probe_ollama_context_tokens
+    from openscientist.providers import _ollama_common as ollama_mod
+    from openscientist.providers._ollama_common import (
+        probe_ollama_context_tokens as _probe_ollama_context_tokens,
+    )
 
     payload = {"models": [{"name": "gpt-oss:120b-q4", "context_length": 40000}]}
     with patch.object(ollama_mod.requests, "get", return_value=_resp(payload)):
@@ -150,8 +154,10 @@ def test_probe_matches_model_name_prefix() -> None:
 
 
 def test_probe_falls_back_to_api_show_when_not_loaded() -> None:
-    from openscientist.providers import ollama as ollama_mod
-    from openscientist.providers.ollama import _probe_ollama_context_tokens
+    from openscientist.providers import _ollama_common as ollama_mod
+    from openscientist.providers._ollama_common import (
+        probe_ollama_context_tokens as _probe_ollama_context_tokens,
+    )
 
     with (
         patch.object(ollama_mod.requests, "get", return_value=_resp({"models": []})),
@@ -166,8 +172,10 @@ def test_probe_falls_back_to_api_show_when_not_loaded() -> None:
 
 
 def test_probe_returns_none_on_empty_responses() -> None:
-    from openscientist.providers import ollama as ollama_mod
-    from openscientist.providers.ollama import _probe_ollama_context_tokens
+    from openscientist.providers import _ollama_common as ollama_mod
+    from openscientist.providers._ollama_common import (
+        probe_ollama_context_tokens as _probe_ollama_context_tokens,
+    )
 
     with (
         patch.object(ollama_mod.requests, "get", return_value=_resp({"models": []})),
@@ -179,8 +187,10 @@ def test_probe_returns_none_on_empty_responses() -> None:
 def test_probe_returns_none_on_connection_error() -> None:
     import requests
 
-    from openscientist.providers import ollama as ollama_mod
-    from openscientist.providers.ollama import _probe_ollama_context_tokens
+    from openscientist.providers import _ollama_common as ollama_mod
+    from openscientist.providers._ollama_common import (
+        probe_ollama_context_tokens as _probe_ollama_context_tokens,
+    )
 
     with (
         patch.object(ollama_mod.requests, "get", side_effect=requests.ConnectionError("down")),
@@ -193,12 +203,11 @@ def test_probe_returns_none_on_connection_error() -> None:
 
 
 def test_model_profile_override_wins_without_probing() -> None:
+    settings = _settings(model_context_tokens=65536)
     with (
-        patch(
-            "openscientist.providers.ollama.get_settings",
-            return_value=_settings(model_context_tokens=65536),
-        ),
-        patch("openscientist.providers.ollama._probe_ollama_context_tokens") as probe,
+        patch("openscientist.providers.ollama.get_settings", return_value=settings),
+        patch("openscientist.providers._ollama_common.get_settings", return_value=settings),
+        patch("openscientist.providers._ollama_common.probe_ollama_context_tokens") as probe,
     ):
         profile = OllamaProvider().model_profile()
     assert profile.context_window_tokens == 65536
@@ -208,8 +217,10 @@ def test_model_profile_override_wins_without_probing() -> None:
 def test_model_profile_uses_live_probe() -> None:
     with (
         patch("openscientist.providers.ollama.get_settings", return_value=_settings()),
+        patch("openscientist.providers._ollama_common.get_settings", return_value=_settings()),
         patch(
-            "openscientist.providers.ollama._probe_ollama_context_tokens", return_value=131072
+            "openscientist.providers._ollama_common.probe_ollama_context_tokens",
+            return_value=131072,
         ) as probe,
     ):
         profile = OllamaProvider().model_profile()
@@ -225,8 +236,12 @@ def test_model_profile_probe_failure_logs_warning_and_defaults(caplog) -> None:
 
     with (
         patch("openscientist.providers.ollama.get_settings", return_value=_settings()),
-        patch("openscientist.providers.ollama._probe_ollama_context_tokens", return_value=None),
-        caplog.at_level(logging.WARNING, logger="openscientist.providers.ollama"),
+        patch("openscientist.providers._ollama_common.get_settings", return_value=_settings()),
+        patch(
+            "openscientist.providers._ollama_common.probe_ollama_context_tokens",
+            return_value=None,
+        ),
+        caplog.at_level(logging.WARNING, logger="openscientist.providers._ollama_common"),
     ):
         profile = OllamaProvider().model_profile()
     assert profile.context_window_tokens == models._DEFAULT_CONTEXT_TOKENS

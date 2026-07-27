@@ -26,6 +26,7 @@ _PROVIDER_CLASS_PATHS: dict[str, tuple[str, str]] = {
     "openai": ("openscientist.providers.openai", "OpenAIDirectProvider"),
     "azure-openai": ("openscientist.providers.azure_openai", "AzureOpenAIProvider"),
     "ollama": ("openscientist.providers.ollama", "OllamaProvider"),
+    "ollama-claude": ("openscientist.providers.ollama_claude", "OllamaClaudeProvider"),
 }
 
 
