@@ -7,9 +7,11 @@ streams the response. Listens on a fixed internal port, unpublished to the host.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import uvicorn
@@ -69,6 +71,27 @@ def _presented_credential(request: Request) -> str | None:
     return None
 
 
+def _apply_request_overrides(body: bytes, overrides: dict[str, Any]) -> bytes:
+    """Merge an upstream's required request fields into a JSON body.
+
+    Only fills in keys the caller did not set, so the agent stays in control of
+    anything it does send. A body that is not a JSON object is passed through
+    untouched -- the proxy forwards every path, not just the Messages API.
+    """
+    if not overrides or not body:
+        return body
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(payload, dict):
+        return body
+    merged = {**overrides, **payload}
+    if merged == payload:
+        return body
+    return json.dumps(merged).encode()
+
+
 def create_llm_proxy_app(
     *,
     master_key: Callable[[], str],
@@ -87,7 +110,7 @@ def create_llm_proxy_app(
             logger.warning("LLM proxy: active provider is not supported")
             return Response("provider not supported", status_code=502)
 
-        body = await request.body()
+        body = _apply_request_overrides(await request.body(), target.request_overrides)
         headers = {
             k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS
         }

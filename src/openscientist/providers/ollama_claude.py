@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 # is what actually authenticates the container.
 KEYLESS_PLACEHOLDER = "ollama-local"
 
+# A reasoning model (qwen3.6, gpt-oss, ...) emits Anthropic `thinking` blocks by
+# default, but Ollama omits the `signature` field that real extended thinking
+# carries and that the Claude SDK's parser requires -- every turn dies with
+# "Missing required field in assistant message: 'signature'". The CLI never
+# sends a `thinking` field of its own, so the proxy adds this to disable it,
+# which makes Ollama return a plain text block instead.
+DISABLE_THINKING: dict[str, object] = {"thinking": {"type": "disabled"}}
+
 
 class OllamaClaudeProvider(ClaudeCompatible):
     """Local Ollama server as a Claude agent backend (open-weight models)."""
@@ -83,7 +91,11 @@ class OllamaClaudeProvider(ClaudeCompatible):
         # rather than _anthropic_base_url() (which would be the proxy itself).
         # The root form matters: the proxy appends the request path, which
         # already carries /v1/messages.
-        return LlmUpstream(ollama_http_base(get_settings().provider.ollama_base_url), {})
+        return LlmUpstream(
+            ollama_http_base(get_settings().provider.ollama_base_url),
+            {},
+            request_overrides=DISABLE_THINKING,
+        )
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         # The CLI sends the placeholder so the proxy authenticates the container.

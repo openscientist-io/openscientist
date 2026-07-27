@@ -57,6 +57,10 @@ class LlmUpstream:
 
     base_url: str
     auth_headers: dict[str, str]
+    # Merged into JSON request bodies by the proxy, for upstreams that need a
+    # field the Claude CLI never sends. Top-level keys only; a key already
+    # present in the body wins, so the agent can still override.
+    request_overrides: dict[str, Any] = field(default_factory=dict)
 
 
 class AirgapEgress(enum.Enum):

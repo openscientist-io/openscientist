@@ -427,6 +427,23 @@ class TestProviderContainerEnvVars:
         assert "AZURE_OPENAI_API_KEY" not in env
         assert "AZURE_OPENAI_RESOURCE" not in env
 
+    def test_model_context_tokens_forwarded_to_the_job_container(self):
+        """An air-gapped container is firewalled off from the Ollama server, so
+        it cannot probe the window; the operator override is its only source."""
+        settings = ProviderSettings(
+            OPENSCIENTIST_PROVIDER="ollama-claude",
+            OPENSCIENTIST_MODEL_CONTEXT_TOKENS=32768,
+        )
+        assert settings.get_container_env_vars()["OPENSCIENTIST_MODEL_CONTEXT_TOKENS"] == "32768"
+
+    def test_model_context_tokens_omitted_when_unset(self):
+        # Explicit None: a developer .env would otherwise supply a value here.
+        settings = ProviderSettings(
+            OPENSCIENTIST_PROVIDER="ollama-claude",
+            OPENSCIENTIST_MODEL_CONTEXT_TOKENS=None,
+        )
+        assert "OPENSCIENTIST_MODEL_CONTEXT_TOKENS" not in settings.get_container_env_vars()
+
     def test_ollama_vars_passed_for_codex_provider(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="ollama",

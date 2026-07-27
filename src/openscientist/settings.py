@@ -365,6 +365,16 @@ class ProviderSettings(BaseSettings):
 
     def _apply_model_env_vars(self, env_vars: dict[str, str]) -> None:
         self._set_env_if_present(env_vars, "OPENSCIENTIST_MODEL", self.model)
+        # The agent budgets prompts against this. A self-hosted window is
+        # normally probed from the live server, but an air-gapped container is
+        # firewalled off from it, so the operator's override is the only source
+        # there -- without forwarding it the budget silently collapses to the
+        # conservative default and the report gets over-trimmed.
+        self._set_env_if_present(
+            env_vars,
+            "OPENSCIENTIST_MODEL_CONTEXT_TOKENS",
+            str(self.model_context_tokens) if self.model_context_tokens else None,
+        )
         self._set_env_if_present(
             env_vars, "ANTHROPIC_SMALL_FAST_MODEL", self.anthropic_small_fast_model
         )

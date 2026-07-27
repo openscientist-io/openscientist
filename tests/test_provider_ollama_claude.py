@@ -193,3 +193,16 @@ def test_setup_environment_clears_a_leftover_cborg_token(monkeypatch) -> None:
 
     assert "ANTHROPIC_AUTH_TOKEN" not in os.environ
     assert "CLAUDE_CODE_USE_VERTEX" not in os.environ
+
+
+# --- thinking-block incompatibility --------------------------------------------
+
+
+def test_upstream_disables_thinking_so_the_sdk_can_parse_the_reply() -> None:
+    """Ollama emits `thinking` blocks with no `signature`, which the Claude SDK
+    parser rejects outright ("Missing required field ... 'signature'")."""
+    p = _provider()
+    with patch("openscientist.providers.ollama_claude.get_settings", return_value=_settings()):
+        upstream = p.llm_upstream()
+    assert upstream is not None
+    assert upstream.request_overrides == {"thinking": {"type": "disabled"}}

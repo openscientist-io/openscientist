@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 from types import SimpleNamespace
 from typing import cast
 
@@ -620,3 +621,42 @@ class TestAirgapPosture:
         p = active_provider(**env)
         routed = bool(p.proxy_env_overrides(proxy_base_url="http://x", placeholder="y"))
         assert (p.airgap_egress().mode is AirgapEgress.PROXY) == routed
+
+
+# --- upstream request overrides -------------------------------------------------
+
+
+def test_request_overrides_are_merged_into_a_json_body() -> None:
+    from openscientist.llm_proxy import _apply_request_overrides
+
+    body = json.dumps({"model": "qwen3.6:35b-a3b", "messages": []}).encode()
+    out = _apply_request_overrides(body, {"thinking": {"type": "disabled"}})
+    assert json.loads(out) == {
+        "model": "qwen3.6:35b-a3b",
+        "messages": [],
+        "thinking": {"type": "disabled"},
+    }
+
+
+def test_request_overrides_do_not_clobber_a_field_the_agent_sent() -> None:
+    from openscientist.llm_proxy import _apply_request_overrides
+
+    body = json.dumps({"thinking": {"type": "enabled", "budget_tokens": 1024}}).encode()
+    out = _apply_request_overrides(body, {"thinking": {"type": "disabled"}})
+    assert json.loads(out)["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+
+
+def test_request_overrides_pass_through_non_json_and_empty_bodies() -> None:
+    from openscientist.llm_proxy import _apply_request_overrides
+
+    override = {"thinking": {"type": "disabled"}}
+    assert _apply_request_overrides(b"", override) == b""
+    assert _apply_request_overrides(b"not json", override) == b"not json"
+    assert _apply_request_overrides(b"[1,2,3]", override) == b"[1,2,3]"
+
+
+def test_no_overrides_leaves_the_body_byte_identical() -> None:
+    from openscientist.llm_proxy import _apply_request_overrides
+
+    body = json.dumps({"model": "claude-sonnet-4"}).encode()
+    assert _apply_request_overrides(body, {}) is body
