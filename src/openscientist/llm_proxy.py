@@ -72,11 +72,15 @@ def _presented_credential(request: Request) -> str | None:
 
 
 def _apply_request_overrides(body: bytes, overrides: dict[str, Any]) -> bytes:
-    """Merge an upstream's required request fields into a JSON body.
+    """Force an upstream's required request fields into a JSON body.
 
-    Only fills in keys the caller did not set, so the agent stays in control of
-    anything it does send. A body that is not a JSON object is passed through
-    untouched -- the proxy forwards every path, not just the Messages API.
+    These take precedence over what the caller sent. They exist for hard
+    upstream incompatibilities -- a field the agent may set but this upstream
+    cannot honour without producing a reply the agent then fails to parse -- so
+    deferring to the caller would just reinstate the bug intermittently,
+    whenever the CLI happened to send the field. A body that is not a JSON
+    object is passed through untouched: the proxy forwards every path, not just
+    the Messages API.
     """
     if not overrides or not body:
         return body
@@ -86,7 +90,10 @@ def _apply_request_overrides(body: bytes, overrides: dict[str, Any]) -> bytes:
         return body
     if not isinstance(payload, dict):
         return body
-    merged = {**overrides, **payload}
+    forced = sorted(k for k in overrides if k in payload and payload[k] != overrides[k])
+    if forced:
+        logger.info("LLM proxy: forcing upstream-required field(s) over caller values: %s", forced)
+    merged = {**payload, **overrides}
     if merged == payload:
         return body
     return json.dumps(merged).encode()

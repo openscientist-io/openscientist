@@ -638,12 +638,25 @@ def test_request_overrides_are_merged_into_a_json_body() -> None:
     }
 
 
-def test_request_overrides_do_not_clobber_a_field_the_agent_sent() -> None:
+def test_request_overrides_win_over_a_field_the_agent_sent() -> None:
+    """Deferring to the caller reinstates the bug intermittently: the CLI sends
+    `thinking` only sometimes, and every time it does, the upstream replies with
+    a block the SDK cannot parse."""
     from openscientist.llm_proxy import _apply_request_overrides
 
     body = json.dumps({"thinking": {"type": "enabled", "budget_tokens": 1024}}).encode()
     out = _apply_request_overrides(body, {"thinking": {"type": "disabled"}})
-    assert json.loads(out)["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+    assert json.loads(out)["thinking"] == {"type": "disabled"}
+
+
+def test_request_overrides_leave_unrelated_fields_alone() -> None:
+    from openscientist.llm_proxy import _apply_request_overrides
+
+    body = json.dumps({"model": "qwen3.6:35b-a3b", "max_tokens": 8192, "stream": True}).encode()
+    out = json.loads(_apply_request_overrides(body, {"thinking": {"type": "disabled"}}))
+    assert out["model"] == "qwen3.6:35b-a3b"
+    assert out["max_tokens"] == 8192
+    assert out["stream"] is True
 
 
 def test_request_overrides_pass_through_non_json_and_empty_bodies() -> None:
