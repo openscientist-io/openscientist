@@ -239,11 +239,11 @@ class ProviderSettings(BaseSettings):
 
     @staticmethod
     def _unknown_provider_warnings(provider: str) -> list[str]:
-        return [
-            f"Unknown provider '{provider}'. "
-            "Valid options: anthropic, cborg, vertex, bedrock, foundry, openai, "
-            "azure-openai, ollama"
-        ]
+        # Derived from the registry, not restated: a hand-maintained copy here
+        # silently reports a newly-registered provider as unknown.
+        from openscientist.providers import provider_ids
+
+        return [f"Unknown provider '{provider}'. Valid options: {', '.join(provider_ids())}"]
 
     _LEGACY_ENV_VAR_RENAMES = (
         ("CLAUDE_PROVIDER", "OPENSCIENTIST_PROVIDER"),
@@ -344,6 +344,7 @@ class ProviderSettings(BaseSettings):
             "openai": lambda: [],
             "azure-openai": lambda: [],
             "ollama": lambda: [],
+            "ollama-claude": lambda: [],
         }
         warnings = warning_builders.get(
             provider, lambda: self._unknown_provider_warnings(provider)

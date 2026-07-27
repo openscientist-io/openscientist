@@ -185,6 +185,30 @@ class TestProviderSettings:
         assert settings.provider_id == "foundry"
         assert caplog.text == ""
 
+    def test_no_registered_provider_is_reported_as_unknown(self, caplog):
+        """Registering a provider must be enough to make it configurable.
+
+        The warning dispatch used to restate the provider list by hand, so a
+        newly-registered provider was rejected at startup as "Unknown provider"
+        despite resolving fine through the registry.
+        """
+        from openscientist.providers import provider_ids
+
+        for provider_id in provider_ids():
+            caplog.clear()
+            with caplog.at_level(logging.WARNING, logger="openscientist.settings"):
+                ProviderSettings(OPENSCIENTIST_PROVIDER=provider_id)
+            assert "Unknown provider" not in caplog.text, provider_id
+
+    def test_unknown_provider_warning_lists_every_registered_provider(self, caplog):
+        """The suggestion list is derived, so it cannot drift from the registry."""
+        from openscientist.providers import provider_ids
+
+        with caplog.at_level(logging.WARNING, logger="openscientist.settings"):
+            ProviderSettings(OPENSCIENTIST_PROVIDER="nope")
+        for provider_id in provider_ids():
+            assert provider_id in caplog.text
+
 
 class TestProviderIdEnvVar:
     """Tests for OPENSCIENTIST_PROVIDER and rejection of the removed CLAUDE_PROVIDER."""
