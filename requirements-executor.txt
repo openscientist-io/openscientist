@@ -51,3 +51,19 @@ plotly>=5.0.0
 
 # Differential expression analysis
 pydeseq2>=0.4.0
+
+# Simulation — kinetic / systems biology
+# Both ship cp312 wheels, so they add no compile time to the image.
+libroadrunner>=2.9      # SBML ODE + stochastic solvers, C++ core
+copasi-basico>=0.86     # COPASI: reaction DSL, steady state, scans, fitting
+#
+# Deliberately excluded, do not add without reading this:
+#   cobra (FBA) — cobra 0.31.1 requires pandas>=1.0,<3.0, which conflicts with
+#     the pandas>=3.0.0 pin above. Leaving it unpinned does NOT fix this: the
+#     resolver silently backslides to cobra 0.18.1 (2020), which then fails at
+#     import on numpy 2 (`from numpy import float_`). Re-add only once cobra
+#     supports pandas 3; tests/test_simulation_stack.py fails when that lands.
+#   antimony / tellurium / phrasedml — sdist-only for cp312 linux, so each adds
+#     a multi-minute C++ build to the image. basico's reaction DSL covers the
+#     same model-authoring ergonomics with a wheel.
+# See skills/domain/simulation/SKILL.md.
