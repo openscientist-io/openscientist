@@ -110,6 +110,23 @@ class TestSimulationDeclarations:
         assert "cobra" in content, "Skill must name cobra to explain its absence"
         assert "not" in content.lower() and "available" in content.lower()
 
+    def test_simulation_modules_pass_the_import_whitelist(self):
+        """Simulation modules survive validate_imports in the executor.
+
+        Installing a package in the executor image is not enough: execute_code
+        runs every snippet through ALLOWED_IMPORTS first, so a package that is
+        installed but not whitelisted fails at runtime with ForbiddenImportError.
+        Distribution names and module names differ here (libroadrunner ->
+        roadrunner, copasi-basico -> basico), which is what makes this easy to
+        miss.
+        """
+        from openscientist.code_executor import ALLOWED_IMPORTS, validate_imports
+
+        for module in ("roadrunner", "basico"):
+            # Raises ForbiddenImportError if the module is not whitelisted
+            validate_imports(f"import {module}", ALLOWED_IMPORTS)
+            validate_imports(f"from {module} import something", ALLOWED_IMPORTS)
+
 
 class TestCobraPandasConflict:
     """Guards the reason cobra is excluded, so we notice when it is fixed."""

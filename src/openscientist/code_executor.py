@@ -69,6 +69,11 @@ ALLOWED_IMPORTS = [
     "scanpy",
     "anndata",
     "h5py",
+    # Simulation (see skills/domain/simulation/SKILL.md). Module names differ
+    # from the distribution names in requirements-executor.txt:
+    # libroadrunner -> roadrunner, copasi-basico -> basico.
+    "roadrunner",
+    "basico",
 ]
 
 
