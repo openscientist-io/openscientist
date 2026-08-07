@@ -754,7 +754,7 @@ class TestBuiltinSkillsIngestion:
         stats = await ingester.sync_source(db_session, source)
 
         assert stats["errors"] == 0
-        assert stats["created"] == 10
+        assert stats["created"] == 11
 
         # Verify all expected slugs are present
         stmt = select(Skill).where(Skill.source_id == source.id)
@@ -768,6 +768,7 @@ class TestBuiltinSkillsIngestion:
             "kbase-query",
             "metabolomics",
             "phenix-tools-reference",
+            "simulation",
             "hypothesis-generation",
             "prioritization",
             "result-interpretation",
@@ -775,10 +776,10 @@ class TestBuiltinSkillsIngestion:
         }
         assert set(skills.keys()) == expected_slugs
 
-        # Verify 6 domain + 4 workflow category split
+        # Verify 7 domain + 4 workflow category split
         domain_skills = [s for s in skills.values() if s.category == "domain"]
         workflow_skills = [s for s in skills.values() if s.category == "workflow"]
-        assert len(domain_skills) == 6
+        assert len(domain_skills) == 7
         assert len(workflow_skills) == 4
 
         # Spot-check one skill's metadata
