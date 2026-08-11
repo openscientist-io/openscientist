@@ -313,9 +313,16 @@ class AbstractAgent[P: Provider](abc.ABC):
     def _write_skill(self, skills_root: Path, skill: Skill) -> None:
         """Write one skill as ``<skills_root>/<name>/SKILL.md`` (the Agent
         Skills layout codex and omp discover). Claude overrides for its own."""
+        from openscientist.prompts.common import apply_mcp_tool_prefix
+
         skill_dir = skills_root / f"{skill.category}--{skill.slug}"
         skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(render_skill_md(skill), encoding="utf-8")
+        # Skill bodies name MCP tools bare like the rest of the prompts, so a
+        # backend that namespaces them needs the same rewrite the system and turn
+        # prompts get; otherwise a skill teaches a name that will not resolve.
+        # No-op wherever the prefix is empty, which is Claude and codex.
+        body = apply_mcp_tool_prefix(render_skill_md(skill), self.prompt_fragments())
+        (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
 
     def _job_env_overlay(self, job_dir: Path) -> dict[str, str]:
         """Per-job ``OPENSCIENTIST_*`` env for the tools subprocess. Each backend

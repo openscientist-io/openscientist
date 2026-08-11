@@ -214,6 +214,47 @@ class TestBuildArgs:
         assert "--model=opus-override" in agent._build_args(tmp_path, tmp_path, tmp_path)
 
 
+class TestTurnPrompt:
+    def test_mcp_tool_names_are_namespaced_for_omp(self, tmp_path: Path) -> None:
+        """The orchestrator names MCP tools bare, which is what Claude and codex
+        expose. omp exposes them as ``mcp__openscientist_tools_<name>``, so a bare
+        name comes back "Tool ... not found" and the analysis turn is lost."""
+        agent = _agent(tmp_path)
+        written = agent._write_turn_prompt(
+            "Call `execute_code` to analyse, then `update_knowledge_state`."
+        ).read_text()
+        assert "`mcp__openscientist_tools_execute_code`" in written
+        assert "`mcp__openscientist_tools_update_knowledge_state`" in written
+        assert "`execute_code`" not in written
+
+    def test_skill_bodies_are_namespaced_too(self, tmp_path: Path) -> None:
+        """Skills are a third prompt surface. A skill that names `execute_code`
+        bare teaches omp's agent a name that returns "Tool ... not found"."""
+        from openscientist.database.models import Skill
+
+        skill = Skill(
+            slug="demo",
+            category="workflow",
+            name="Demo",
+            description="d",
+            content="Run analysis with `execute_code`.",
+        )
+        agent = _agent(tmp_path)
+        agent._write_skill(tmp_path / "skills", skill)
+        body = (tmp_path / "skills" / "workflow--demo" / "SKILL.md").read_text()
+        assert "`mcp__openscientist_tools_execute_code`" in body
+        assert "`execute_code`" not in body
+
+    def test_builtin_tool_names_are_left_alone(self, tmp_path: Path) -> None:
+        """Only MCP tools are namespaced. omp's own tools are called bare, and the
+        report turn tells the agent to call ``write``."""
+        agent = _agent(tmp_path)
+        written = agent._write_turn_prompt("Call the `write` tool, then `read`.").read_text()
+        assert "`write`" in written
+        assert "`read`" in written
+        assert "mcp__openscientist_tools_write" not in written
+
+
 class TestOmpConfigOverlay:
     def test_disables_xdev_so_mcp_tools_are_callable(self, tmp_path: Path) -> None:
         """With xdev on, the MCP tools are xd:// devices driven through write
