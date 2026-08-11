@@ -387,13 +387,16 @@ def test_prelaunch_env_injects_the_probed_window(spec: Spec) -> None:
     assert env == {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": "40960"}
 
 
-def test_prelaunch_env_is_empty_when_operator_pinned_the_window(spec: Spec) -> None:
+def test_prelaunch_env_forwards_the_operator_pin(spec: Spec) -> None:
+    """The pin is set in this process, but the container resolves the window on
+    its own side, so returning nothing left it probing and silently taking the
+    8192 fallback -- the outcome pinning exists to prevent. Still no probe here."""
     with (
         patch(_BASE_SETTINGS_PATH, return_value=spec.settings(model_context_tokens=1234)),
         patch.object(spec.cls, "_probe_context_tokens") as probe,
     ):
         env = spec.cls().prelaunch_model_context_env()
-    assert env == {}
+    assert env == {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": "1234"}
     probe.assert_not_called()
 
 

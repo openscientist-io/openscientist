@@ -324,10 +324,15 @@ class Provider(abc.ABC):
     def prelaunch_model_context_env(self) -> dict[str, str]:
         """Window resolved app-side and injected as ``OPENSCIENTIST_MODEL_CONTEXT_TOKENS``,
         because the proxied container cannot probe a root path like llama.cpp's ``/props``.
-        Empty when the operator pinned the window or the provider does not probe.
+        Empty only when nothing is pinned and the provider does not probe.
         """
-        if get_settings().provider.model_context_tokens is not None:
-            return {}
+        pinned = get_settings().provider.model_context_tokens
+        if pinned is not None:
+            # Pass the pin on rather than skip it. It is set in this process's
+            # environment, but the container resolves the window again on its own
+            # side, so returning nothing here left it probing -- the very thing
+            # pinning exists to avoid -- and silently taking the 8192 fallback.
+            return {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": str(pinned)}
         window = self.probe_context_window()
         if not window:
             return {}
