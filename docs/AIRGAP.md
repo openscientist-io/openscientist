@@ -56,7 +56,8 @@ OPENSCIENTIST_AIRGAPPED=true
 OPENSCIENTIST_SECRET_KEY=          # openssl rand -hex 32
 ```
 
-Then one provider block. `.env.example` documents all of them; three common choices:
+Then one provider block. Every variable is documented inline in `.env.example`
+(Options 1–10); three common choices:
 
 ```bash
 # Anthropic
@@ -86,6 +87,14 @@ Context window: llama.cpp is read from `/props` at launch. Ollama cannot report
 its window before the model loads, and vLLM does not advertise one, so for those
 two set `OPENSCIENTIST_MODEL_CONTEXT_TOKENS` (e.g. `131072`) or prompts are
 budgeted against a conservative default.
+
+Where to get a credential:
+
+| provider | |
+|---|---|
+| Anthropic | <https://console.anthropic.com> → API keys |
+| Azure AI Foundry | Azure portal → your AI Foundry resource → **Keys and Endpoint**. `OPENSCIENTIST_MODEL` is the deployment name from **Model deployments**, not a model ID. |
+| Self-hosted (vLLM / Ollama / llama.cpp) | none needed |
 
 **Self-hosting removes the inference carve-out entirely** — the model runs on
 your machine and nothing leaves it. The hosted options above still send the
