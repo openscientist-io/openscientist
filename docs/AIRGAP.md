@@ -74,6 +74,25 @@ Roughly 40M articles, ~3.5 h, ~90 GB.
 mirror: it loads an arbitrary slice, so real queries return zero hits and the
 agent reports no literature rather than an error.
 
+## Log in
+
+The UI needs an authenticated session. For a local evaluation, use the built-in
+mock login rather than registering an OAuth app — add to `.env`:
+
+```bash
+OPENSCIENTIST_DEV_MODE=true
+```
+
+then `make restart` and open `http://localhost:8080/auth/mock/admin-login`. That
+signs you in as `admin@mock.local`, auto-approved.
+
+**Local evaluation only.** These routes return 404 unless `OPENSCIENTIST_DEV_MODE`
+is set, and anyone who can reach the port can sign in as admin. For a real
+deployment configure a proper OAuth provider instead.
+
+Dev mode also turns on uvicorn auto-reload, so editing anything under `src/`
+restarts the app — and a restart cancels running jobs.
+
 ## Verify
 
 UI at `http://localhost:8080`. Submit a job, then while it runs:
