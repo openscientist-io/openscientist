@@ -44,14 +44,37 @@ git clone <repository-url> && cd openscientist
 cp .env.example .env
 ```
 
-Set in `.env`:
+Set the basics in `.env`:
 
 ```bash
 OPENSCIENTIST_AIRGAPPED=true
 OPENSCIENTIST_SECRET_KEY=          # openssl rand -hex 32
-OPENSCIENTIST_PROVIDER=foundry     # and that provider's credentials
-OPENSCIENTIST_MODEL=claude-opus-4-6
 ```
+
+Then one provider block. `.env.example` documents all of them; three common choices:
+
+```bash
+# Anthropic
+OPENSCIENTIST_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+OPENSCIENTIST_MODEL=claude-opus-4-6
+
+# Azure AI Foundry — OPENSCIENTIST_MODEL is the *deployment* name
+OPENSCIENTIST_PROVIDER=foundry
+ANTHROPIC_FOUNDRY_BASE_URL=https://<resource>.services.ai.azure.com/anthropic
+ANTHROPIC_FOUNDRY_API_KEY=...
+OPENSCIENTIST_MODEL=claude-opus-4-6
+
+# Ollama — no credential, no external inference at all
+OPENSCIENTIST_PROVIDER=ollama
+OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+OPENSCIENTIST_MODEL=<model you have pulled>
+OPENSCIENTIST_MODEL_CONTEXT_TOKENS=131072   # Ollama can't report this before load
+```
+
+Ollama is the only option with no inference carve-out — the model runs on your
+machine, so nothing leaves it. The hosted options still send the model turn to
+their API through the local proxy.
 
 ```bash
 make build
