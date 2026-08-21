@@ -43,6 +43,13 @@ ${accept_rules}    }
 }
 NFT
 
+# Drop root and every capability, then run the agent as the unprivileged user.
+# setpriv changes uid/gid but not HOME; Docker set HOME=/root at container
+# start (derived from the --user root this script needs for nftables), which
+# the agent uid can't read. Reset it so HOME-relative lookups (e.g. asyncpg's
+# default SSL client-key probe) don't hit a permission error instead of a
+# clean "not found".
+export HOME=/home/agent
 if [ "$#" -eq 0 ]; then
     set -- python /agent-entrypoint.py
 fi
