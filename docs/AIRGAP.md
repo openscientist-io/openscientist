@@ -71,6 +71,14 @@ ANTHROPIC_FOUNDRY_BASE_URL=https://<resource>.services.ai.azure.com/anthropic
 ANTHROPIC_FOUNDRY_API_KEY=...
 OPENSCIENTIST_MODEL=claude-opus-4-6
 
+# Google Vertex AI — see the air-gap caveat above; needs a private endpoint
+OPENSCIENTIST_PROVIDER=vertex
+ANTHROPIC_VERTEX_PROJECT_ID=<gcp-project-id>
+GCP_CREDENTIALS_FILE=/host/path/service-account.json   # compose mounts this
+GCP_CREDENTIALS_HOST_PATH=/host/path/service-account.json
+CLOUD_ML_REGION=us-east5
+OPENSCIENTIST_MODEL=claude-opus-4-6
+
 # Self-hosted, no credential — model runs on your own machine
 OPENSCIENTIST_PROVIDER=vllm        # or: ollama, llamacpp
 VLLM_BASE_URL=http://host.docker.internal:8000/v1
@@ -94,6 +102,8 @@ Where to get a credential:
 |---|---|
 | Anthropic | <https://console.anthropic.com> → API keys |
 | Azure AI Foundry | Azure portal → your AI Foundry resource → **Keys and Endpoint**. `OPENSCIENTIST_MODEL` is the deployment name from **Model deployments**, not a model ID. |
+| Google Vertex AI | GCP console → IAM → **Service Accounts** → create a key (JSON), and enable the Vertex AI API on the project. Both `GCP_CREDENTIALS_FILE` and `GCP_CREDENTIALS_HOST_PATH` are *host* paths to that file. |
+| AWS Bedrock | A bearer token (`AWS_BEARER_TOKEN_BEDROCK`) works through the proxy; SigV4 keys do not — see the caveat above. |
 | Self-hosted (vLLM / Ollama / llama.cpp) | none needed |
 
 **Self-hosting removes the inference carve-out entirely** — the model runs on
