@@ -65,16 +65,26 @@ ANTHROPIC_FOUNDRY_BASE_URL=https://<resource>.services.ai.azure.com/anthropic
 ANTHROPIC_FOUNDRY_API_KEY=...
 OPENSCIENTIST_MODEL=claude-opus-4-6
 
-# Ollama — no credential, no external inference at all
-OPENSCIENTIST_PROVIDER=ollama
-OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
-OPENSCIENTIST_MODEL=<model you have pulled>
-OPENSCIENTIST_MODEL_CONTEXT_TOKENS=131072   # Ollama can't report this before load
+# Self-hosted, no credential — model runs on your own machine
+OPENSCIENTIST_PROVIDER=vllm        # or: ollama, llamacpp
+VLLM_BASE_URL=http://host.docker.internal:8000/v1
+OPENSCIENTIST_MODEL=<model your server is serving>
 ```
 
-Ollama is the only option with no inference carve-out — the model runs on your
-machine, so nothing leaves it. The hosted options still send the model turn to
-their API through the local proxy.
+The three self-hosted options differ only in base URL and default port —
+`OLLAMA_BASE_URL` (11434), `VLLM_BASE_URL` (8000), `LLAMACPP_BASE_URL` (8080).
+Use `host.docker.internal` rather than `localhost`: the agent container has to
+reach a server running on the host. Each takes an optional `*_API_KEY` if you
+launched the server with one.
+
+Context window: llama.cpp is read from `/props` at launch. Ollama cannot report
+its window before the model loads, and vLLM does not advertise one, so for those
+two set `OPENSCIENTIST_MODEL_CONTEXT_TOKENS` (e.g. `131072`) or prompts are
+budgeted against a conservative default.
+
+**Self-hosting removes the inference carve-out entirely** — the model runs on
+your machine and nothing leaves it. The hosted options above still send the
+model turn to their API through the local proxy.
 
 ```bash
 make build
