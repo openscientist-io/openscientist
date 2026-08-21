@@ -13,7 +13,15 @@ from pathlib import Path
 
 from openscientist.pubmed_mirror.download import download_baseline
 from openscientist.pubmed_mirror.ingest import ingest_files
-from openscientist.settings import get_settings
+from openscientist.settings import DatabaseSettings, get_settings
+
+
+def loader_dsn(db: DatabaseSettings) -> str:
+    """DSN for the ingest: migrations run as the DATABASE_URL role, so it owns
+    the search index that ``ingest_files`` drops and rebuilds. The admin role
+    has DML grants plus BYPASSRLS, not ownership, and cannot DROP INDEX.
+    """
+    return db.effective_database_url
 
 
 def main() -> None:
@@ -29,7 +37,7 @@ def main() -> None:
     total = asyncio.run(
         ingest_files(
             files,
-            dsn=get_settings().database.effective_admin_database_url,
+            dsn=loader_dsn(get_settings().database),
             max_articles=args.max_articles,
         )
     )
