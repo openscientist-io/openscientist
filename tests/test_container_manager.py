@@ -135,6 +135,75 @@ class TestContainerManagerUnit:
         assert result["success"] is False
         assert "image not found" in result["error"].lower()
 
+    def test_execute_code_oom_killed_gets_clear_message(self):
+        """An OOM-killed container should say so, not just 'exit status 137'."""
+        import docker.errors
+
+        from openscientist.container_manager import ContainerManager
+
+        manager = ContainerManager(memory_limit="2g")
+
+        mock_client = MagicMock()
+        manager._client = mock_client
+        mock_client.containers.run.side_effect = docker.errors.ContainerError(
+            container="test-container",
+            exit_status=137,
+            command="python -m openscientist_executor",
+            image="openscientist-executor:latest",
+            stderr=b"",
+        )
+
+        mock_container = MagicMock()
+        mock_container.logs.return_value = b""
+        mock_container.attrs = {"State": {"OOMKilled": True}}
+        mock_client.containers.get.return_value = mock_container
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = manager.execute_code(
+                code="x = [0] * 10**12",
+                job_id="test-job-oom",
+                output_dir=tmpdir,
+            )
+
+        assert result["success"] is False
+        assert "ran out of memory" in result["error"].lower()
+        assert "2g" in result["error"]
+        mock_container.remove.assert_called_once_with(force=True)
+
+    def test_execute_code_container_error_without_oom_unchanged(self):
+        """A non-OOM ContainerError keeps the existing generic message."""
+        import docker.errors
+
+        from openscientist.container_manager import ContainerManager
+
+        manager = ContainerManager()
+
+        mock_client = MagicMock()
+        manager._client = mock_client
+        mock_client.containers.run.side_effect = docker.errors.ContainerError(
+            container="test-container",
+            exit_status=1,
+            command="python -m openscientist_executor",
+            image="openscientist-executor:latest",
+            stderr=b"",
+        )
+
+        mock_container = MagicMock()
+        mock_container.logs.return_value = b""
+        mock_container.attrs = {"State": {"OOMKilled": False}}
+        mock_client.containers.get.return_value = mock_container
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = manager.execute_code(
+                code="raise RuntimeError('boom')",
+                job_id="test-job-generic-error",
+                output_dir=tmpdir,
+            )
+
+        assert result["success"] is False
+        assert "ran out of memory" not in result["error"].lower()
+        assert "Container execution failed" in result["error"]
+
     def test_cleanup_job_containers(self):
         """Test cleanup of containers by job ID."""
         from openscientist.container_manager import ContainerManager

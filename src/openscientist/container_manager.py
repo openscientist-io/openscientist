@@ -360,16 +360,34 @@ class ContainerManager:
         except docker.errors.ContainerError as e:
             logger.error("Container %s failed with error: %s", container_name, e)
 
-            # Try to get logs
+            # Try to get logs and check whether the kernel OOM-killed the
+            # container (exit code 137). Without this check, a too-small
+            # dataset for the configured memory_limit surfaces as a bare
+            # "non-zero exit status 137" message -- indistinguishable from
+            # any other crash, and not self-explanatory to the person who
+            # hit it.
+            oom_killed = False
             try:
                 container = self.client.containers.get(container_name)
                 logs = container.logs().decode("utf-8")
+                oom_killed = bool(container.attrs.get("State", {}).get("OOMKilled"))
                 container.remove(force=True)
             except docker.errors.NotFound:
                 logs = str(e)
 
+            if oom_killed:
+                error_message = (
+                    f"Execution ran out of memory (limit: {self.memory_limit}). "
+                    "The dataset or computation likely exceeded the container's "
+                    "memory limit -- try a smaller dataset, a more memory-efficient "
+                    "approach (e.g. chunking, sparse matrices), or contact an "
+                    "organizer to raise the limit."
+                )
+            else:
+                error_message = f"Container execution failed: {e}"
+
             return _container_error_result(
-                error=f"Container execution failed: {e}",
+                error=error_message,
                 output=logs[:2000],
             )
 
