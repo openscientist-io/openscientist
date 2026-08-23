@@ -595,6 +595,16 @@ Write the report to `./final_report.md` (relative path — do NOT use absolute p
 
 Then call `set_consensus_answer` with a 1–3 sentence direct answer.
 
+### Citation hygiene
+
+Before writing any `Surname et al. Year (PMID: ...)` attribution, call
+`validate_citation(author, pmid, year)` to confirm the cited surname is on
+the paper's author list. A common failure mode is reaching for a recognizable
+name from the literature and pinning it on a real PMID whose topic you
+remember (e.g. "Lopera et al. (PMID: 40637118)" when Lopera isn't on that
+paper). The tool returns `actual_first_author` and `suggested_citation` — use
+them if anything's flagged. A post-process pass auto-corrects survivors.
+
 ---
 
 **Remember:** You are autonomous. Make bold scientific decisions. Pursue interesting leads. Be creative but rigorous.""")

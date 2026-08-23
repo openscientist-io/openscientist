@@ -517,6 +517,19 @@ async def _run_report_generation_phase(
         await _set_consensus_answer(executor, job_dir, research_question)
 
         try:
+            from openscientist.references.validator import annotate_in_place
+
+            summary = annotate_in_place(report_path)
+            logger.info(
+                "Citation post-process: %d/%d instances flagged across %d distinct PMIDs; "
+                "References section appended",
+                summary["n_flagged_instances"],
+                summary["n_citation_instances"],
+                summary["n_flagged_pmids"],
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-soft: leave the report unchanged
+            logger.warning("Citation annotation failed: %s", exc)
+        try:
             await _try_generate_report_pdf(report_path)
         except (ValueError, OSError, OpenScientistError) as exc:
             logger.warning("PDF generation failed: %s", exc)

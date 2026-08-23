@@ -259,6 +259,7 @@ and iteration summaries.
 5. **Citation integrity:**
    - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
    - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
+   - **Before writing any `Surname et al. Year (PMID: ...)` attribution, call `validate_citation(author, pmid, year)`** and use the returned `suggested_citation` if anything is flagged. Catches wrong-author citations at composition time so the post-process gate doesn't have to rewrite them.
 
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.
 It must be a complete, self-contained document, not a summary or index. Writing this
