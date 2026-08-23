@@ -78,6 +78,10 @@ make build
 make start
 ```
 
+### Air-gapped deployment
+
+To run with no internet access from the agent containers, see [docs/AIRGAP.md](docs/AIRGAP.md).
+
 ### Access the UI
 
 Open your browser to `http://localhost:8080`
