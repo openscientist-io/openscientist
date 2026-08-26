@@ -36,9 +36,13 @@ env/
 *.swo
 *~
 
-# Environment variables
+# Environment variables — broad patterns to catch ad-hoc backups like
+# `.env-back`, `.env-back-pre-X`, `env-new-azure`, etc. that have historically
+# slipped through narrower rules. These files routinely hold live API keys.
 .env
-.env.backup-*
+.env.*
+.env-*
+env-*
 
 # Locally built codex binary for ad-hoc validation. The images build codex
 # from the fork in a multi-stage build, so this large artifact never goes in.
@@ -82,3 +86,8 @@ data/
 
 .playwright-mcp/*.log
 shandy-prod-jobs-backup-20260307.tar.gz
+
+# Internal operations notes — deploy plans, outreach drafts, anything that
+# may contain user emails, API key holder names, or prod stats. Public docs
+# go elsewhere under docs/.
+docs/plans/

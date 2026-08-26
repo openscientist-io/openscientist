@@ -246,6 +246,11 @@ def jobs_page() -> None:
 
     badges_container = ui.row().classes("w-full")
 
+    if is_configured and can_start_jobs:
+        with ui.row().classes("w-full items-center gap-1 text-sm text-gray-600"):
+            ui.label("Running a common analysis like gene set enrichment?")
+            ui.link("Start one →", "/new").classes("text-primary no-underline hover:underline")
+
     with ui.tabs().classes("w-full") as tabs:
         my_jobs_tab = ui.tab("My Jobs", icon="work")
         shared_tab = ui.tab("Shared with me", icon="people")
