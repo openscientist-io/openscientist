@@ -16,9 +16,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai_codex import ApprovalMode, Sandbox
+from openai_codex.generated.v2_all import ItemCompletedNotification, TurnCompletedNotification
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, TokenUsage, TurnOutcome
 from openscientist.agent.codex_agent import CodexAgent
+from openscientist.transcript import ShellExecution, TaskNotification
+from openscientist.transcript.io import load_transcript
 from tests.helpers import StubCodexProvider
 
 
@@ -138,6 +141,54 @@ async def test_run_iteration_success(tmp_path: Path) -> None:
     thread.run.assert_awaited_once_with("hello")
 
 
+@pytest.mark.asyncio
+async def test_streaming_turn_persists_completed_items_live(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    item_event = ItemCompletedNotification.model_validate(
+        {
+            "completedAtMs": 1,
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "commandExecution",
+                "id": "shell-1",
+                "command": "python inspect.py",
+                "commandActions": [],
+                "cwd": "/job",
+                "status": "completed",
+                "aggregatedOutput": "QC complete",
+                "exitCode": 0,
+            },
+        }
+    )
+    completed_event = TurnCompletedNotification.model_validate(
+        {
+            "threadId": "thread-1",
+            "turn": {"id": "turn-1", "items": [], "status": "completed"},
+        }
+    )
+    stream_closed = False
+
+    async def notifications():
+        nonlocal stream_closed
+        try:
+            yield SimpleNamespace(payload=item_event)
+            yield SimpleNamespace(payload=completed_event)
+        finally:
+            stream_closed = True
+
+    stream = notifications()
+    turn = SimpleNamespace(id="turn-1", stream=MagicMock(return_value=stream))
+    thread = SimpleNamespace(turn=AsyncMock(return_value=turn))
+
+    result = await agent._run_streaming_turn(thread, "inspect")  # type: ignore[arg-type]
+
+    assert len(result.items) == 1
+    assert stream_closed is True
+    live_path = tmp_path / "provenance" / "current_turn_transcript.json"
+    assert any(isinstance(entry, ShellExecution) for entry in load_transcript(live_path))
+
+
 async def test_run_iteration_cuts_runaway_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -170,8 +221,86 @@ async def test_run_iteration_cuts_runaway_turn(
     assert result.outcome is TurnOutcome.TIMED_OUT
     assert result.success is False
     assert result.tool_calls == 0
-    assert result.transcript == []
+    assert len(result.transcript) == 1
+    assert isinstance(result.transcript[0], TaskNotification)
+    assert result.transcript[0].status == "timed_out"
     inst.close.assert_awaited()  # runaway turn torn down
+
+
+@pytest.mark.asyncio
+async def test_timeout_preserves_partial_streamed_tool_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timeout returns and persists tool activity received before the cut."""
+    import asyncio
+
+    from openai_codex import AsyncThread
+
+    from openscientist.agent import codex_agent
+
+    monkeypatch.setattr(codex_agent, "_TURN_TIMEOUT_SECONDS", 0.01)
+    agent = _agent(tmp_path)
+    thread = AsyncThread(MagicMock(), "thread-1")
+    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=thread))
+
+    async def partial_turn(_thread: AsyncThread, _prompt: str) -> object:
+        agent._upsert_partial_item(
+            _Item(
+                id="c1",
+                type="commandExecution",
+                command="python inspect.py",
+                aggregated_output="HTTP 500 from executor",
+                exit_code=1,
+                status="failed",
+            )
+        )
+        await asyncio.sleep(5)
+        return _turn()
+
+    monkeypatch.setattr(agent, "_run_streaming_turn", partial_turn)
+
+    result = await agent.run_iteration("go")
+
+    assert result.outcome is TurnOutcome.TIMED_OUT
+    assert result.tool_calls == 1
+    assert any(isinstance(entry, ShellExecution) for entry in result.transcript)
+    assert isinstance(result.transcript[-1], TaskNotification)
+    assert result.transcript[-1].status == "timed_out"
+    assert (tmp_path / "provenance" / "current_turn_transcript.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_interrupts_active_streaming_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from openai_codex import AsyncThread
+
+    agent = _agent(tmp_path)
+    thread = AsyncThread(MagicMock(), "thread-1")
+    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=thread))
+    active_turn = MagicMock()
+    active_turn.interrupt = AsyncMock()
+    started = asyncio.Event()
+
+    async def partial_turn(_thread: AsyncThread, _prompt: str) -> object:
+        agent._active_turn = active_turn
+        started.set()
+        try:
+            await asyncio.sleep(5)
+        finally:
+            agent._active_turn = None
+        return _turn()
+
+    monkeypatch.setattr(agent, "_run_streaming_turn", partial_turn)
+    task = asyncio.create_task(agent.run_iteration("go"))
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    active_turn.interrupt.assert_awaited_once()
 
 
 async def test_usage_subtraction_accumulates(tmp_path: Path) -> None:
@@ -408,6 +537,10 @@ def test_unknown_item_becomes_unknown_entry() -> None:
     assert len(entries) == 1
     assert entries[0].type == "unknown_entry"
     assert entries[0].source == "codex"
+
+
+def test_unknown_item_does_not_count_as_a_tool_call() -> None:
+    assert CodexAgent._tool_call_count([_Item(id="u1", type="futureThing")]) == 0
 
 
 # ── thread options + auth provisioning ─────────────────────────────────
