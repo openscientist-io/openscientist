@@ -421,42 +421,27 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 fallback = text
         return fallback
 
-    async def _run_streaming_turn(self, thread: AsyncThread, prompt: str) -> TurnResult:
-        """Run a turn while retaining each item as its event arrives."""
-        self._partial_items = []
-        self._partial_usage = None
+    def _record_turn_event(self, payload: Any, turn_id: str) -> TurnCompletedNotification | None:
+        """Apply one notification to the live turn state."""
+        if (
+            isinstance(payload, ItemStartedNotification)
+            and payload.turn_id == turn_id
+            and payload.item is not None
+        ):
+            self._upsert_partial_item(payload.item)
+            return None
+        if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn_id:
+            self._upsert_partial_item(payload.item)
+            return None
+        if isinstance(payload, ThreadTokenUsageUpdatedNotification) and payload.turn_id == turn_id:
+            self._partial_usage = payload.token_usage
+            return None
+        if isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn_id:
+            return payload
+        return None
 
-        turn = await thread.turn(prompt)
-        self._active_turn = turn
-        completed: TurnCompletedNotification | None = None
-        # AsyncTurn.stream is an async generator at runtime, but the SDK exposes
-        # the narrower AsyncIterator annotation. The local cast lets us close it
-        # deterministically after completion, interruption, or cancellation.
-        stream = cast(AsyncGenerator[Notification, None], turn.stream())
-        try:
-            async for event in stream:
-                payload = event.payload
-                if (
-                    isinstance(payload, ItemStartedNotification)
-                    and payload.turn_id == turn.id
-                    and payload.item is not None
-                ):
-                    self._upsert_partial_item(payload.item)
-                if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
-                    self._upsert_partial_item(payload.item)
-                elif (
-                    isinstance(payload, ThreadTokenUsageUpdatedNotification)
-                    and payload.turn_id == turn.id
-                ):
-                    self._partial_usage = payload.token_usage
-                elif isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn.id:
-                    completed = payload
-        finally:
-            await stream.aclose()
-            self._active_turn = None
-
-        if completed is None:
-            raise RuntimeError("turn completed event not received")
+    def _completed_turn_result(self, completed: TurnCompletedNotification) -> TurnResult:
+        """Convert a terminal notification into the SDK aggregate result."""
         status = getattr(completed.turn.status, "value", str(completed.turn.status))
         if status == "failed":
             error = completed.turn.error
@@ -474,6 +459,31 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             final_response=self._final_response_from_items(self._partial_items),
             usage=self._partial_usage,
         )
+
+    async def _run_streaming_turn(self, thread: AsyncThread, prompt: str) -> TurnResult:
+        """Run a turn while retaining each item as its event arrives."""
+        self._partial_items = []
+        self._partial_usage = None
+
+        turn = await thread.turn(prompt)
+        self._active_turn = turn
+        completed: TurnCompletedNotification | None = None
+        # AsyncTurn.stream is an async generator at runtime, but the SDK exposes
+        # the narrower AsyncIterator annotation. The local cast lets us close it
+        # deterministically after completion, interruption, or cancellation.
+        stream = cast(AsyncGenerator[Notification, None], turn.stream())
+        try:
+            async for event in stream:
+                terminal = self._record_turn_event(event.payload, turn.id)
+                if terminal is not None:
+                    completed = terminal
+        finally:
+            await stream.aclose()
+            self._active_turn = None
+
+        if completed is None:
+            raise RuntimeError("turn completed event not received")
+        return self._completed_turn_result(completed)
 
     @staticmethod
     def _tool_call_count(items: list[Any]) -> int:
@@ -499,6 +509,86 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             logger.warning("Failed to persist terminal Codex notification", exc_info=True)
         return transcript
 
+    async def _interrupt_active_turn(self, reason: str) -> bool:
+        """Best-effort interruption; report whether a live turn existed."""
+        turn = self._active_turn
+        if turn is None:
+            return False
+        try:
+            await turn.interrupt()
+        except Exception:
+            logger.debug("Interrupting %s Codex turn failed", reason, exc_info=True)
+        return True
+
+    @staticmethod
+    async def _cancel_turn_task(turn_task: asyncio.Task[Any]) -> None:
+        """Cancel a turn consumer and retrieve its terminal exception."""
+        if not turn_task.done():
+            turn_task.cancel()
+        await asyncio.gather(turn_task, return_exceptions=True)
+
+    async def _execute_turn(self, thread: AsyncThread, prompt: str) -> Any:
+        """Run one aggregate or streaming turn with bounded cancellation."""
+        if isinstance(thread, AsyncThread):
+            turn_coro = self._run_streaming_turn(thread, prompt)
+        else:
+            # Preserve compatibility with SDK-like test/provider adapters
+            # that expose only the older aggregate run contract.
+            turn_coro = thread.run(prompt)
+        turn_task = asyncio.create_task(turn_coro)
+        try:
+            done, _ = await asyncio.wait({turn_task}, timeout=_TURN_TIMEOUT_SECONDS)
+            if done:
+                return turn_task.result()
+
+            if await self._interrupt_active_turn("timed-out"):
+                await asyncio.wait({turn_task}, timeout=5.0)
+            await self._cancel_turn_task(turn_task)
+            raise TimeoutError
+        except asyncio.CancelledError:
+            await self._interrupt_active_turn("cancelled")
+            await self._cancel_turn_task(turn_task)
+            await self._close_codex()
+            raise
+
+    async def _timed_out_result(self) -> IterationResult:
+        """Close a timed-out turn while preserving its partial evidence."""
+        logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
+        if self._partial_usage is not None:
+            self._token_usage += self._usage_from_payload(self._partial_usage)
+        tool_calls = self._tool_call_count(self._partial_items)
+        transcript = self._partial_transcript_with_notification(
+            status="timed_out",
+            summary=(
+                f"Codex turn exceeded {_TURN_TIMEOUT_SECONDS}s after "
+                f"{tool_calls} recorded tool calls."
+            ),
+        )
+        await self._close_codex()
+        return IterationResult(
+            outcome=TurnOutcome.TIMED_OUT,
+            output="",
+            tool_calls=tool_calls,
+            transcript=transcript,
+            error=f"Codex turn exceeded {_TURN_TIMEOUT_SECONDS}s",
+        )
+
+    async def _failed_result(self, error: Exception) -> IterationResult:
+        """Close a failed turn while preserving its partial evidence."""
+        logger.error("Codex run failed: %s", error, exc_info=True)
+        transcript = self._partial_transcript_with_notification(
+            status="failed",
+            summary=f"Codex turn failed: {error}",
+        )
+        await self._close_codex()
+        return IterationResult(
+            outcome=TurnOutcome.FAILED,
+            output="",
+            tool_calls=self._tool_call_count(self._partial_items),
+            transcript=transcript,
+            error=str(error),
+        )
+
     async def run_iteration(self, prompt: str, *, reset_session: bool = False) -> IterationResult:
         """Run one turn on the codex thread and return its result.
 
@@ -507,80 +597,17 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         """
         self._partial_items = []
         self._partial_usage = None
-        turn_task: asyncio.Task[Any] | None = None
         try:
             thread = await self._ensure_thread(reset_session)
-            if isinstance(thread, AsyncThread):
-                turn_coro = self._run_streaming_turn(thread, prompt)
-            else:
-                # Preserve compatibility with SDK-like test/provider adapters
-                # that expose only the older aggregate run contract.
-                turn_coro = thread.run(prompt)
-            turn_task = asyncio.create_task(turn_coro)
-            done, _ = await asyncio.wait({turn_task}, timeout=_TURN_TIMEOUT_SECONDS)
-            if done:
-                result = turn_task.result()
-            else:
-                # Interrupt before cancellation: the stream consumer clears the
-                # active turn reference in its finally block.
-                if self._active_turn is not None:
-                    try:
-                        await self._active_turn.interrupt()
-                    except Exception:
-                        logger.debug("Interrupting timed-out Codex turn failed", exc_info=True)
-                    await asyncio.wait({turn_task}, timeout=5.0)
-                if not turn_task.done():
-                    turn_task.cancel()
-                await asyncio.gather(turn_task, return_exceptions=True)
-                raise TimeoutError
-        except asyncio.CancelledError:
-            if self._active_turn is not None:
-                try:
-                    await self._active_turn.interrupt()
-                except Exception:
-                    logger.debug("Interrupting cancelled Codex turn failed", exc_info=True)
-            if turn_task is not None and not turn_task.done():
-                turn_task.cancel()
-                await asyncio.gather(turn_task, return_exceptions=True)
-            await self._close_codex()
-            raise
+            result = await self._execute_turn(thread, prompt)
         except TimeoutError:
             # Runaway turn (e.g. the model looping on an unsupported tool call).
             # Report it honestly as TIMED_OUT (work done before the cut is already
             # persisted via the MCP tools); the orchestrator decides whether to
             # advance or fail, rather than this layer claiming success.
-            logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
-            if self._partial_usage is not None:
-                self._token_usage += self._usage_from_payload(self._partial_usage)
-            transcript = self._partial_transcript_with_notification(
-                status="timed_out",
-                summary=(
-                    f"Codex turn exceeded {_TURN_TIMEOUT_SECONDS}s after "
-                    f"{self._tool_call_count(self._partial_items)} recorded tool calls."
-                ),
-            )
-            await self._close_codex()
-            return IterationResult(
-                outcome=TurnOutcome.TIMED_OUT,
-                output="",
-                tool_calls=self._tool_call_count(self._partial_items),
-                transcript=transcript,
-                error=f"Codex turn exceeded {_TURN_TIMEOUT_SECONDS}s",
-            )
-        except Exception as e:
-            logger.error("Codex run failed: %s", e, exc_info=True)
-            transcript = self._partial_transcript_with_notification(
-                status="failed",
-                summary=f"Codex turn failed: {e}",
-            )
-            await self._close_codex()
-            return IterationResult(
-                outcome=TurnOutcome.FAILED,
-                output="",
-                tool_calls=self._tool_call_count(self._partial_items),
-                transcript=transcript,
-                error=str(e),
-            )
+            return await self._timed_out_result()
+        except Exception as error:
+            return await self._failed_result(error)
 
         if result.usage is not None:
             self._token_usage += self._usage_from_payload(result.usage)
