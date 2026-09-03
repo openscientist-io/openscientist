@@ -33,6 +33,10 @@ DEFAULT_HOSTS = {"postgres": ["172.26.0.2"], "openscientist": ["172.26.0.3"]}
 # nft loads the ruleset and setpriv drops privileges.
 REQUIRED_PACKAGES = ("nftables", "util-linux")
 
+_POSIX_SHELL_ONLY = pytest.mark.skipif(
+    os.name == "nt", reason="requires POSIX shell and executable semantics"
+)
+
 
 class Rendered:
     """What the stubs captured from one run of the entrypoint."""
@@ -150,6 +154,7 @@ def _render(
     )
 
 
+@_POSIX_SHELL_ONLY
 class TestRulesetRendering:
     def test_ruleset_is_exactly_this(self, tmp_path: Path) -> None:
         rendered = _render(tmp_path, "postgres:5432,openscientist:8082")
@@ -258,6 +263,7 @@ class TestRulesetRendering:
         assert rendered.nft_argv == ["-f", "-"]
 
 
+@_POSIX_SHELL_ONLY
 class TestPrivilegeDrop:
     def test_root_and_all_capabilities_are_dropped(self, tmp_path: Path) -> None:
         rendered = _render(tmp_path, "postgres:5432")
@@ -287,6 +293,7 @@ class TestPrivilegeDrop:
 
 
 @pytest.mark.parametrize("shell", ["dash", "bash"])
+@_POSIX_SHELL_ONLY
 def test_the_script_runs_under_posix_shells(tmp_path: Path, shell: str) -> None:
     """The agent image's /bin/sh is dash, so a bashism breaks every air-gapped job."""
     binary = shutil.which(shell)
@@ -421,10 +428,18 @@ class _Lab:
     def run_probe(self, allow: str, source: str, target: str) -> dict[str, Any]:
         container = self._client.containers.run(
             TEST_IMAGE,
-            entrypoint=["/agent-firewall-entrypoint.sh"],
-            command=["python3", "-c", source],
+            entrypoint=["/bin/sh", "-c"],
+            command=[
+                "sed 's/\\r$//' /source-entrypoint.sh > /tmp/entrypoint.sh && "
+                "chmod +x /tmp/entrypoint.sh && "
+                'exec /tmp/entrypoint.sh "$@"',
+                "agent-firewall-entrypoint",
+                "python3",
+                "-c",
+                source,
+            ],
             environment={"OPENSCIENTIST_FIREWALL_ALLOW": allow, "PROBE_TARGET": target},
-            volumes={str(SCRIPT): {"bind": "/agent-firewall-entrypoint.sh", "mode": "ro"}},
+            volumes={str(SCRIPT): {"bind": "/source-entrypoint.sh", "mode": "ro"}},
             network=self.network.name,
             user="root",
             cap_add=["NET_ADMIN"],
