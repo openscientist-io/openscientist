@@ -219,7 +219,15 @@ class OmpAgent(AbstractAgent[Provider]):
         omp_dir = self._omp_dir()
         omp_dir.mkdir(parents=True, exist_ok=True)
         path = omp_dir / "omp-config.yml"
-        path.write_text(yaml.safe_dump({"tools": {"xdev": False}}), encoding="utf-8")
+        config: dict[str, object] = {"tools": {"xdev": False}}
+        # omp reads sampling from its config file, not the provider env, so a
+        # pinned temperature only reaches the model through here. Compared
+        # against None because 0 is the value an operator pins for a
+        # reproducible run.
+        temperature = get_settings().omp.temperature
+        if temperature is not None:
+            config["temperature"] = temperature
+        path.write_text(yaml.safe_dump(config), encoding="utf-8")
         return path
 
     def _write_system_prompt(self) -> Path:

@@ -670,6 +670,30 @@ class AgentSettings(BaseSettings):
         return v
 
 
+class OmpSettings(BaseSettings):
+    """Configuration for the omp harness, which reads its own config file.
+
+    omp takes its sampling settings from ``.omp/omp-config.yml`` rather than the
+    provider environment, so anything an operator pins has to reach the agent
+    through here.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    temperature: float | None = Field(
+        default=None,
+        alias="OPENSCIENTIST_OMP_TEMPERATURE",
+        description=(
+            "Sampling temperature for the omp harness. Unset leaves omp's own "
+            "default. Set 0 for a reproducible run."
+        ),
+    )
+
+
 class AirgapSettings(BaseSettings):
     """Master switch for air-gapped features."""
 
@@ -719,6 +743,7 @@ class Settings(BaseSettings):
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)
+    omp: OmpSettings = Field(default_factory=OmpSettings)
 
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":
