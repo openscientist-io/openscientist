@@ -5,9 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -19,7 +27,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      # The lock file pins the exact source hash. A required transitive package
+      # is sdist-only, so uv's blanket --no-build mode cannot install this graph.
+      - run: uv sync --locked  # NOSONAR
 
       - name: Lint
         run: uv run ruff check src/ tests/
@@ -29,6 +39,7 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +51,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      # The lock file pins the exact source hash. A required transitive package
+      # is sdist-only, so uv's blanket --no-build mode cannot install this graph.
+      - run: uv sync --locked  # NOSONAR
 
       - name: Type check
         run: uv run mypy src/openscientist/ tests/
@@ -48,6 +61,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     needs: [lint, typecheck]
+    timeout-minutes: 45
 
     permissions:
       contents: read
@@ -83,14 +97,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      # The lock file pins the exact source hash. A required transitive package
+      # is sdist-only, so uv's blanket --no-build mode cannot install this graph.
+      - run: uv sync --locked  # NOSONAR
 
       - name: Unit & Integration Tests
         # Live third-party APIs are deselected: NCBI rate limits by IP and the
         # shared runner egress makes those tests fail unrelated to the change.
         # The environment comes from the preceding step, so the interpreter is
         # called directly and this step touches no dependencies.
-        run: .venv/bin/python -m pytest -m "not network" --cov=src/openscientist --cov-report=term-missing --cov-report=xml
+        run: >-
+          .venv/bin/python -m pytest
+          -m "not network"
+          --cov=src/openscientist
+          --cov-report=term-missing
+          --cov-report=xml
+          --junitxml=pytest-results.xml
 
       - name: Publish coverage report
         uses: actions/upload-artifact@v7
@@ -117,6 +139,15 @@ jobs:
           files: ./coverage.xml
           disable_search: true
           fail_ci_if_error: false
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: error
+          retention-days: 14
 
   sonarcloud:
     needs: test

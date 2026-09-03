@@ -1,4 +1,4 @@
-.PHONY: start stop restart build rebuild logs shell clean clean-jobs reset-db help deploy status
+.PHONY: start stop restart build rebuild logs shell clean clean-jobs reset-db help deploy status quality-fast quality-contract quality-integration
 
 # Deployment configuration
 DEPLOY_HOST ?= gassh
@@ -32,6 +32,11 @@ help:
 	@echo "  make shell      - Open shell in main container"
 	@echo "  make clean      - Remove containers and volumes"
 	@echo "  make reset-db   - Flush database and run migrations"
+	@echo ""
+	@echo "Quality:"
+	@echo "  make quality-fast        - Lock, compile, lint, format, and type checks"
+	@echo "  make quality-contract    - Backend-neutral contract tests (no Docker)"
+	@echo "  make quality-integration - Full coverage suite (requires Docker)"
 	@echo ""
 	@echo "Deployment:"
 	@echo "  make deploy     - Deploy to production server"
@@ -112,6 +117,15 @@ reset-db:
 status:
 	@echo "Job status:"
 	docker compose -f $(COMPOSE_FILE) exec openscientist python -m openscientist.job_manager summary
+
+quality-fast:
+	uv run python -m openscientist.quality fast
+
+quality-contract:
+	uv run python -m openscientist.quality contract
+
+quality-integration:
+	uv run python -m openscientist.quality integration
 
 # Deploy to production server
 deploy:
