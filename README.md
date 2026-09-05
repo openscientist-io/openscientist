@@ -20,9 +20,10 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 - **Autonomous Discovery**: Runs iterative hypothesis-testing loop using an agentic coding assistant
 - **Domain-Agnostic**: Works with genomics, transcriptomics, proteomics, metabolomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
-- **Multi-Provider Support**: Works with Google Vertex AI, CBORG, AWS Bedrock, or Azure AI Foundry for model access
+- **Multiple Agent Harnesses**: Runs investigations with Claude Code, OpenAI Codex, or OMP
+- **Multi-Provider Support**: Connects to Anthropic, CBORG, Vertex AI, Bedrock, Azure AI Foundry, OpenAI, Azure OpenAI, Ollama, vLLM, or llama.cpp
 - **Cost Tracking**: Project-level budget monitoring with provider-specific cost APIs
-- **Sandboxed Execution**: Safe Python code execution for data analysis
+- **Sandboxed Execution**: Runs model-written Python, Rust, and SPARQL in resource-limited executor containers
 
 ### Skills System
 
@@ -32,13 +33,20 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 ### Architecture
 
 - **MCP Tools**: Provides tools via Model Context Protocol
-  - `execute_code`: Run Python analysis
+  - `execute_code`: Run Python, Rust, or SPARQL analysis
   - `search_pubmed`: Search literature
   - `update_knowledge_state`: Record findings
   - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
-- **Knowledge State**: JSON-based state tracking for findings and literature
+- **Knowledge State**: PostgreSQL-backed tracking for findings, hypotheses, literature, analysis logs, and iteration summaries
 - **Job Manager**: Multi-job support with queueing and lifecycle management
-- **Web Interface**: NiceGUI-based UI for job submission and monitoring
+- **Web and REST Interfaces**: NiceGUI UI plus an authenticated FastAPI API
+
+With container isolation enabled, each job runs in a dedicated agent container.
+The agent calls the standalone `openscientist-tools` MCP server, which routes
+model-written analysis through an execution broker into short-lived executor
+containers. Executor containers have resource limits and no network in
+air-gapped mode; the agent container can also run behind a default-deny egress
+firewall.
 
 ### Structural Biology Support (Optional)
 
@@ -47,7 +55,9 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 - Structure comparison and superposition
 - Validation metrics (clash score, backbone geometry)
 - AlphaFold confidence analysis
-- **See `docs/PHENIX_SETUP.md` for installation instructions**
+
+See the Phenix section in [.env.example](.env.example) for installation and
+configuration notes.
 
 ## Quick Start
 
@@ -56,11 +66,8 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 - Python 3.12+
 - Docker (for containerized deployment)
 - `uv` package manager
-- One of the following for model access:
-  - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
-  - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
-  - **AWS Bedrock**: AWS account with Bedrock access (see below)
-  - **Azure AI Foundry**: Azure subscription with Foundry resource (see below)
+- Credentials for one of the supported model providers (self-hosted providers
+  can run locally, and may not require an API key)
 
 ### Installation
 
@@ -94,124 +101,54 @@ Open your browser to `http://localhost:8080`
 
 ```
 openscientist/
-├── src/openscientist/            # Core Python package
-│   ├── agent/             # AgentExecutor protocol and ClaudeCodeAgent
-│   ├── job/               # Job lifecycle, scheduling, and types
-│   ├── orchestrator/      # Discovery orchestration (setup, iteration, report)
-│   ├── providers/         # Model provider integrations
-│   │   ├── base.py        # Base provider interface
-│   │   ├── messaging.py   # Consolidated send_message / client factory
-│   │   ├── cborg.py       # CBORG provider
-│   │   ├── vertex.py      # Google Vertex AI provider
-│   │   ├── bedrock.py     # AWS Bedrock provider
-│   │   └── foundry.py     # Azure AI Foundry provider
-│   ├── tools/             # @tool-decorated callables for agent
-│   ├── mcp_server/        # MCP tools server
-│   ├── web_app.py         # NiceGUI web interface
-│   ├── knowledge_state.py # JSON-based state storage
-│   ├── code_executor.py   # Sandboxed Python execution
-│   └── literature.py      # PubMed search
-├── CLAUDE.md              # Development guide and system prompt
-├── jobs/                  # Job results (created at runtime)
-├── Dockerfile             # Docker image definition
-├── docker-compose.yml     # Container orchestration
-└── Makefile               # Build and deployment commands
+├── src/
+│   ├── openscientist/             # Web app, API, orchestration, and persistence
+│   │   ├── agent/                 # Claude Code, Codex, and OMP harnesses
+│   │   ├── api/                   # Authenticated REST endpoints
+│   │   ├── database/              # PostgreSQL models, RLS, and migrations
+│   │   ├── job_container/         # Per-job container lifecycle and egress policy
+│   │   ├── orchestrator/          # Iterative discovery and report generation
+│   │   ├── providers/             # LLM provider and cost integrations
+│   │   ├── report/                # Markdown, HTML, PDF, and figure rendering
+│   │   └── transcript/            # Backend-neutral transcript schema
+│   ├── openscientist_tools/       # Standalone scientific MCP server
+│   └── openscientist_executor/    # Isolated code-execution entry point
+├── skills/                        # Built-in workflow and domain skills
+├── tests/                         # Unit and integration tests
+├── Dockerfile.agent               # Per-job agent image
+├── Dockerfile.executor            # Analysis executor image
+└── docker-compose.yml             # Web app and PostgreSQL services
 ```
 
 ## Configuration
 
 ### Model Providers
 
-OpenScientist supports multiple model providers. Choose one and configure it in your `.env` file:
+`OPENSCIENTIST_PROVIDER` selects model routing and authentication.
+`OPENSCIENTIST_HARNESS` independently selects the coding-agent runtime; its
+default value, `auto`, derives a compatible harness from the provider:
 
-#### Option 1: CBORG (Lawrence Berkeley National Lab)
+| Automatic harness | Provider IDs |
+|-------------------|--------------|
+| **Claude Code** | `anthropic`, `cborg`, `vertex`, `bedrock`, `foundry` |
+| **Codex** | `openai`, `azure-openai`, `ollama` |
+| **OMP** | `vllm`, `llamacpp` |
 
-```bash
-# Provider selection
-OPENSCIENTIST_PROVIDER=cborg
+Set `OPENSCIENTIST_HARNESS=omp` to use OMP with any registered provider.
+Explicit `claude_code` and `codex` selections require a compatible provider
+family.
 
-# CBORG credentials
-ANTHROPIC_AUTH_TOKEN=your-cborg-token
-ANTHROPIC_BASE_URL=https://api.cborg.lbl.gov
-```
-
-**Cost Tracking**: Real-time via CBORG API (`/key/info`, `/user/daily/activity`)
-
-#### Option 2: Google Vertex AI
-
-```bash
-# Provider selection
-OPENSCIENTIST_PROVIDER=vertex
-
-# Vertex AI configuration
-ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
-CLOUD_ML_REGION=us-east5
-VERTEX_REGION_CLAUDE_4_5_SONNET=us-east5
-VERTEX_REGION_CLAUDE_4_5_HAIKU=us-east5
-
-# BigQuery billing export (for cost tracking)
-GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
-```
-
-**Cost Tracking**: Via GCP BigQuery billing export (1-6 hour lag)
-**Setup Guide**: See `docs/VERTEX_SETUP.md` for detailed instructions
-
-#### Option 3: AWS Bedrock
+Choose a provider and copy its credential settings from
+[.env.example](.env.example):
 
 ```bash
-# Provider selection
-OPENSCIENTIST_PROVIDER=bedrock
-
-# AWS configuration
-AWS_REGION=us-east-1
-
-# Authentication (choose one):
-# Option A: Access keys
-AWS_ACCESS_KEY_ID=your-access-key-id
-AWS_SECRET_ACCESS_KEY=your-secret-access-key
-
-# Option B: AWS profile
-# AWS_PROFILE=your-profile-name
-
-# Option C: Bedrock API key
-# AWS_BEARER_TOKEN_BEDROCK=your-bedrock-api-key
+OPENSCIENTIST_PROVIDER=anthropic
+# Add the credentials for the selected provider.
 ```
 
-**Cost Tracking**: Via AWS Cost Explorer (24-48 hour lag)
-**Note**: Requires IAM permissions for `bedrock:InvokeModel` and `ce:GetCostAndUsage`
-
-#### Option 4: Azure AI Foundry (Microsoft Foundry)
-
-```bash
-# Provider selection
-OPENSCIENTIST_PROVIDER=foundry
-
-# Azure resource configuration
-ANTHROPIC_FOUNDRY_RESOURCE=your-resource-name
-# Or use full URL:
-# ANTHROPIC_FOUNDRY_BASE_URL=https://your-resource.services.ai.azure.com/anthropic
-
-# Authentication (choose one):
-# Option A: API key (recommended for testing)
-ANTHROPIC_FOUNDRY_API_KEY=your-azure-api-key
-
-# Option B: Azure Entra ID (automatic - no API key needed)
-# Run: az login
-# Or configure managed identity for production
-
-# Model deployment names (optional - defaults shown)
-ANTHROPIC_DEFAULT_SONNET_MODEL=claude-sonnet-4-5
-ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5
-ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6
-
-# For cost tracking (optional):
-AZURE_SUBSCRIPTION_ID=your-subscription-id
-```
-
-**Cost Tracking**: Via Azure Cost Management API (implementation in progress)
-**Setup Guide**: See [Claude Code Foundry docs](https://code.claude.com/docs/en/microsoft-foundry)
-**Note**: Requires Azure RBAC permissions (`Azure AI User` or `Cognitive Services User` role)
+`OPENSCIENTIST_MODEL` optionally overrides the provider's default model. Cost
+tracking and authentication capabilities vary by provider; `.env.example`
+documents the corresponding settings.
 
 ### Budget Controls
 
@@ -240,10 +177,8 @@ OPENSCIENTIST_DEV_MODE=true
 
 ### Job Manager Settings
 
-In `src/openscientist/web_app.py`:
-
-- `max_concurrent`: Maximum concurrent jobs (default: 1)
-- `jobs_dir`: Directory for job data (default: `jobs/`)
+- `OPENSCIENTIST_MAX_CONCURRENT_JOBS`: Maximum concurrent jobs (default: `1`)
+- `OPENSCIENTIST_JOBS_DIR`: Directory for job artifacts (default: `jobs/`)
 
 ### Legacy Bootstrap (Filesystem -> DB)
 
@@ -264,8 +199,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and deplo
 ## Documentation
 
 - [Design Document](docs/DESIGN.md)
-- [Vertex AI Setup](docs/VERTEX_SETUP.md)
-- [Phenix Setup](docs/PHENIX_SETUP.md)
+- [Deployment Guide](docs/DEPLOYMENT.md)
+- [Security Review](docs/SECURITY_REVIEW.md)
+- [Environment Configuration](.env.example)
 
 ## Author
 

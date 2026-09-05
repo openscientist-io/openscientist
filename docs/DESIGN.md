@@ -3,7 +3,7 @@
 ## Design Document
 
 **Status:** Implemented
-**Last Updated:** December 2025
+**Last Updated:** July 2026
 
 ---
 
@@ -37,7 +37,8 @@ Domain-specific knowledge is provided through a **skills system** rather than ha
 
 ### Code-Writing Agent
 
-Rather than providing pre-defined statistical functions, OpenScientist writes Python code to analyze data. This gives it:
+Rather than providing only pre-defined statistical functions, OpenScientist writes Python,
+Rust, or SPARQL code to analyze data. This gives it:
 - **Flexibility**: Can invent novel analyses on the fly
 - **Transparency**: All analysis code is logged and reproducible
 - **Autonomy**: Not limited to anticipated use cases
@@ -55,7 +56,11 @@ OpenScientist proactively searches PubMed to inform hypothesis generation and in
 
 ### How It Works
 
-OpenScientist uses an **agentic coding assistant** as its reasoning engine. The current implementation uses Claude Code CLI in headless mode, though the architecture is designed to potentially support other agentic frameworks in the future.
+OpenScientist uses an **agentic coding assistant** as its reasoning engine. The
+provider configures model routing and authentication, while the harness selects
+the coding-agent runtime. In automatic mode, Claude-compatible providers run
+Claude Code, OpenAI-compatible providers run Codex, and self-hosted vLLM or
+llama.cpp providers run OMP. OMP can also be selected for any provider.
 
 The orchestrator spawns the agent with:
 - A system prompt containing the research question and context
@@ -63,50 +68,39 @@ The orchestrator spawns the agent with:
 - Access to domain-specific skills
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  OpenScientist CONTAINER                                           │
-│                                                             │
-│  ┌─────────────────────┐    ┌─────────────────────────┐    │
-│  │   NiceGUI Web UI    │    │    Job Manager          │    │
-│  │   - Submit jobs     │───▶│    - Queue jobs         │    │
-│  │   - Monitor progress│    │    - Track status       │    │
-│  │   - View results    │    │    - Manage lifecycle   │    │
-│  └─────────────────────┘    └──────────┬──────────────┘    │
-│                                        │                    │
-│                                        ▼                    │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │   Orchestrator (per job)                              │  │
-│  │   - Spawns agentic coding assistant                   │  │
-│  │   - Runs N iterations of discovery                    │  │
-│  │   - Saves transcripts and provenance                  │  │
-│  │   - Handles coinvestigate mode feedback               │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                         │                                   │
-│           ┌─────────────┴─────────────┐                    │
-│           ▼                           ▼                    │
-│  ┌─────────────────┐        ┌─────────────────────┐        │
-│  │  Agentic        │◀──────▶│  MCP Server         │        │
-│  │  Coding         │        │  - execute_code     │        │
-│  │  Assistant      │        │  - search_pubmed    │        │
-│  │                 │        │  - update_knowledge │        │
-│  │  Reasons about  │        │  - save_summary     │        │
-│  │  what to do     │        │  - phenix_tools*    │        │
-│  │  next           │        │                     │        │
-│  └─────────────────┘        └─────────────────────┘        │
-│                                        │                    │
-│                                        ▼                    │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │   Knowledge State (JSON)                              │  │
-│  │   - Findings with evidence                            │  │
-│  │   - Literature references                             │  │
-│  │   - Analysis log                                      │  │
-│  │   - Iteration summaries                               │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+NiceGUI Web UI / FastAPI REST API
+                 │
+                 ▼
+       PostgreSQL-backed Job Manager
+                 │
+                 ▼
+       Per-job Agent Container
+       ├── Claude Code
+       ├── Codex
+       └── OMP
+                 │
+                 ▼
+      openscientist-tools MCP Server
+       ├── execute_code ──▶ Execution Broker ──▶ Executor Container
+       ├── search_pubmed
+       ├── update_knowledge_state
+       ├── read_document
+       └── optional Phenix tools
+                 │
+                 ▼
+ PostgreSQL Knowledge State + Job Artifacts
+       ├── findings and hypotheses
+       ├── literature and analysis logs
+       ├── transcripts and figures
+       └── Markdown, HTML, and PDF reports
 ```
 
-> **Note:** The current implementation is built around Claude Code CLI and Anthropic's Claude models. Future versions will support other agentic frameworks.
+Agent containers isolate each investigation from the web process. Model-written
+analysis is isolated again in short-lived, resource-limited executor containers
+launched through an internal execution broker. In air-gapped mode, executor
+containers have no network and the agent container uses a default-deny egress
+firewall that permits only required internal services and the selected model
+provider.
 
 ### The Discovery Loop
 
@@ -145,15 +139,18 @@ At completion, OpenScientist generates a final report synthesizing all findings.
 
 ### Multi-Provider Support
 
-OpenScientist supports multiple LLM providers:
+OpenScientist supports three agent harnesses across multiple LLM providers:
 
-| Provider | Use Case |
-|----------|----------|
-| **Vertex AI** | Google Cloud with budget controls |
-| **CBORG** | Lawrence Berkeley Lab's Claude API proxy |
-| **Bedrock** | AWS (work in prorgress) |
+| Automatic harness | Providers |
+|-------------------|-----------|
+| **Claude Code** | Anthropic, CBORG, Vertex AI, AWS Bedrock, Azure AI Foundry |
+| **Codex** | OpenAI, Azure OpenAI, Ollama |
+| **OMP** | vLLM, llama.cpp |
 
-Each provider has its own cost tracking and budget enforcement.
+Provider integrations configure authentication, model routing, and any available
+cost tracking or budget enforcement. Harness selection is orthogonal: OMP can
+drive any registered provider, while explicit Claude Code and Codex selections
+require a compatible provider family.
 
 ### Skills System
 
@@ -171,7 +168,8 @@ Skills are modular packages of domain expertise that guide the agent's reasoning
 - `structural-biology` - Structure validation, AlphaFold interpretation
 - `data-science` - General statistical analysis
 
-Community-contributed domain skills are being developed in the [open-science-skills](https://github.com/justaddcoffee/open-science-skills) repository. Pluggable skill installation is planned for a future release.
+Built-in skills ship with the application. Administrators can also register and
+sync external GitHub skill sources through the skills API.
 
 ### MCP Tools
 
@@ -179,8 +177,9 @@ The agent interacts with the scientific environment through MCP (Model Context P
 
 | Tool | Purpose |
 |------|---------|
-| `execute_code` | Run Python code for data analysis |
+| `execute_code` | Run Python, Rust, or SPARQL for data analysis |
 | `search_pubmed` | Search PubMed for relevant papers |
+| `read_document` | Read supported PDF, Word, or Excel documents |
 | `update_knowledge_state` | Record a confirmed finding |
 | `save_iteration_summary` | Save summary of what was done |
 | `run_phenix_tool`* | Run Phenix structural biology tools |
@@ -193,7 +192,7 @@ The agent interacts with the scientific environment through MCP (Model Context P
 Every action is logged for reproducibility:
 - **Transcripts**: Full agent conversation for each iteration
 - **Analysis log**: All code executed with outputs
-- **Knowledge state**: Structured record of findings
+- **Knowledge state**: PostgreSQL-backed structured record of findings, hypotheses, and literature
 - **Visualizations**: All generated plots with metadata
 
 ---
@@ -229,11 +228,11 @@ The agent is generally good at understanding data in many formats beyond those l
 
 ## Deployment
 
-OpenScientist runs as a Docker container:
+OpenScientist uses Docker Compose for the web application and PostgreSQL. It
+builds separate agent and executor images that are launched on demand:
 
 ```bash
 make build            # Build the Docker image
-make build-no-cache   # Build without cache (for dependency updates)
 make start            # Start the container
 make restart          # Restart without rebuilding
 ```
@@ -251,8 +250,6 @@ See `docs/DEPLOYMENT.md` for detailed instructions.
 
 ## Future Directions
 
-- **Pluggable skills**: Install community-contributed domain skills from open-science-skills
-- **Alternative agents**: Support for other agentic frameworks beyond Claude Code
 - **Swarm mode**: Multiple specialized agents working in parallel
 - **Interactive steering**: Real-time guidance during autonomous runs
 - **Experiment design**: Agent proposes follow-up experiments
