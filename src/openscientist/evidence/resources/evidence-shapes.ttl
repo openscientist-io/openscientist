@@ -1,0 +1,179 @@
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix hcm: <https://w3id.org/hcmo/ontology/hcm#> .
+@prefix hcm-bio: <https://w3id.org/hcmo/ontology/hcm/bio#> .
+@prefix hcm-obs: <https://w3id.org/hcmo/ontology/hcm/obs#> .
+@prefix hcm-tech: <https://w3id.org/hcmo/ontology/hcm/tech#> .
+@prefix osc: <https://example.org/openscientist/evidence#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix qudt: <http://qudt.org/schema/qudt/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schema: <http://schema.org/> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix sosa: <http://www.w3.org/ns/sosa/> .
+@prefix stato: <http://purl.obolibrary.org/obo/STATO_> .
+@prefix time: <http://www.w3.org/2006/time#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+osc:InvestigationShape a sh:NodeShape ;
+  sh:targetClass osc:Investigation ;
+  sh:property [ sh:path dcterms:identifier ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:researchQuestion ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:jobStatus ; sh:in ( "completed" "running" "failed" "cancelled" ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path prov:startedAtTime ; sh:datatype xsd:dateTime ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:hasSemanticManifest ; sh:class osc:SemanticManifest ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:hasHypothesis ; sh:class osc:Hypothesis ; sh:minCount 1 ] ;
+  sh:property [ sh:path osc:hasFinding ; sh:class osc:Finding ; sh:minCount 1 ] .
+
+osc:SemanticManifestShape a sh:NodeShape ;
+  sh:targetClass osc:SemanticManifest ;
+  sh:class prov:Entity ;
+  sh:property [ sh:path osc:semanticManifestSha256 ; sh:pattern "^[0-9a-f]{64}$" ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:evidenceContractVersion ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:authoritativeState ; sh:in ( "openscientist-postgresql" ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:projectionMode ; sh:in ( "deterministic-read-only" ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:includesVocabulary ; sh:class osc:VocabularySnapshot ; sh:minCount 3 ] .
+
+osc:VocabularySnapshotShape a sh:NodeShape ;
+  sh:targetClass osc:VocabularySnapshot ;
+  sh:class prov:Entity ;
+  sh:property [ sh:path dcterms:identifier ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:vocabularyVersion ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:versionIri ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:sha256 ; sh:pattern "^[0-9a-f]{64}$" ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:HypothesisShape a sh:NodeShape ;
+  sh:targetClass osc:Hypothesis ;
+  sh:property [ sh:path dcterms:description ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:hypothesisStatus ; sh:in ( "pending" "testing" "supported" "rejected" ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:class osc:Investigation ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:DataFileShape a sh:NodeShape ;
+  sh:targetClass osc:DataFile ;
+  sh:class prov:Entity ;
+  sh:class hcm-tech:TimeSeries ;
+  sh:property [ sh:path dcterms:title ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-tech:hasFileFormat ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-tech:hasStoragePath ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:byteSize ; sh:datatype xsd:integer ; sh:minInclusive 1 ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:sha256 ; sh:pattern "^[0-9a-f]{64}$" ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:recordsObservation ; sh:class hcm-obs:BehaviorObservation ; sh:minCount 1 ] .
+
+osc:AnalysisActivityShape a sh:NodeShape ;
+  sh:targetClass osc:AnalysisActivity ;
+  sh:class prov:Activity ;
+  sh:property [ sh:path dcterms:description ; sh:minCount 1 ] ;
+  sh:property [ sh:path osc:success ; sh:datatype xsd:boolean ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:codeSha256 ; sh:pattern "^[0-9a-f]{64}$" ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path prov:used ; sh:class osc:DataFile ; sh:minCount 1 ] ;
+  sh:property [ sh:path prov:generated ; sh:class osc:StatisticalResult ; sh:minCount 1 ] ;
+  sh:property [ sh:path prov:wasInformedBy ; sh:class osc:Investigation ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:StatisticalResultShape a sh:NodeShape ;
+  sh:targetClass osc:StatisticalResult ;
+  sh:class prov:Entity ;
+  sh:class stato:0000401 ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path schema:value ; sh:nodeKind sh:Literal ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path qudt:hasUnit ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:class osc:AnalysisActivity ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:CitationShape a sh:NodeShape ;
+  sh:targetClass osc:Citation ;
+  sh:property [ sh:path osc:citesLiterature ; sh:class osc:LiteratureReference ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:citationSnippet ; sh:minLength 1 ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:citationValidationStatus ; sh:in ( "verified" "verified_normalized" ) ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:FindingShape a sh:NodeShape ;
+  sh:targetClass osc:Finding ;
+  sh:class prov:Entity ;
+  sh:property [ sh:path dcterms:title ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:evidenceText ; sh:minLength 1 ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:findingStatus ; sh:in ( "supported" "rejected" "provisional" ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:inferenceScope ; sh:in ( "individual" "sample" "population" "causal" ) ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:experimentalUnitCount ; sh:datatype xsd:integer ; sh:minInclusive 1 ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path osc:addressesHypothesis ; sh:class osc:Hypothesis ; sh:minCount 1 ] ;
+  sh:property [ sh:path prov:wasGeneratedBy ; sh:class osc:AnalysisActivity ; sh:minCount 1 ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:qualifiedValueShape [ sh:class osc:DataFile ] ; sh:qualifiedMinCount 1 ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:qualifiedValueShape [ sh:class osc:StatisticalResult ] ; sh:qualifiedMinCount 1 ] ;
+  sh:property [ sh:path prov:wasDerivedFrom ; sh:qualifiedValueShape [ sh:class osc:LiteratureReference ] ; sh:qualifiedMinCount 1 ] ;
+  sh:property [ sh:path osc:hasCitation ; sh:class osc:Citation ; sh:minCount 1 ] ;
+  sh:sparql [
+    sh:message "A supported finding must be generated only by successful analysis activities." ;
+    sh:select """
+      PREFIX osc: <https://example.org/openscientist/evidence#>
+      PREFIX prov: <http://www.w3.org/ns/prov#>
+      SELECT $this WHERE {
+        $this osc:findingStatus "supported" ; prov:wasGeneratedBy ?activity .
+        FILTER NOT EXISTS { ?activity osc:success true }
+      }
+    """
+  ] ;
+  sh:sparql [
+    sh:message "A supported population-level finding cannot be based on only one experimental unit." ;
+    sh:select """
+      PREFIX osc: <https://example.org/openscientist/evidence#>
+      SELECT $this WHERE {
+        $this osc:findingStatus "supported" ;
+              osc:inferenceScope "population" ;
+              osc:experimentalUnitCount ?count .
+        FILTER (?count < 2)
+      }
+    """
+  ] .
+
+hcm:MonitoredEnclosureEvidenceShape a sh:NodeShape ;
+  sh:targetClass hcm:MonitoredEnclosure ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm:hasEnclosureIdentifier ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm:hasDimensions ; sh:class hcm:EnclosureDimensions ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-tech:monitoredBy ; sh:class hcm-tech:Sensor ; sh:minCount 1 ] .
+
+hcm:EnclosureDimensionsEvidenceShape a sh:NodeShape ;
+  sh:targetClass hcm:EnclosureDimensions ;
+  sh:property [ sh:path hcm:hasWidthQuantity ; sh:class qudt:QuantityValue ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm:hasLengthQuantity ; sh:class qudt:QuantityValue ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm:hasHeightQuantity ; sh:class qudt:QuantityValue ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:QuantityValueShape a sh:NodeShape ;
+  sh:targetClass qudt:QuantityValue ;
+  sh:property [ sh:path qudt:numericValue ; sh:minExclusive 0 ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path qudt:hasUnit ; sh:nodeKind sh:IRI ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+hcm-bio:SubjectEvidenceShape a sh:NodeShape ;
+  sh:targetClass hcm-bio:Subject ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-bio:hasSpecies ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-bio:hasHousingAssignment ; sh:class hcm-bio:HousingAssignment ; sh:minCount 1 ] .
+
+hcm-bio:HousingAssignmentEvidenceShape a sh:NodeShape ;
+  sh:targetClass hcm-bio:HousingAssignment ;
+  sh:property [ sh:path hcm-bio:assignedToEnclosure ; sh:class hcm:MonitoredEnclosure ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path time:hasTime ; sh:class time:Interval ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+osc:IntervalShape a sh:NodeShape ;
+  sh:targetClass time:Interval ;
+  sh:property [ sh:path time:hasBeginning ; sh:class time:Instant ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path time:hasEnd ; sh:class time:Instant ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:sparql [
+    sh:message "An interval beginning must be earlier than its end." ;
+    sh:select """
+      PREFIX time: <http://www.w3.org/2006/time#>
+      SELECT $this WHERE {
+        $this time:hasBeginning/time:inXSDDateTime ?start ; time:hasEnd/time:inXSDDateTime ?end .
+        FILTER (?start >= ?end)
+      }
+    """
+  ] .
+
+hcm-tech:SensorEvidenceShape a sh:NodeShape ;
+  sh:targetClass hcm-tech:Sensor ;
+  sh:property [ sh:path rdfs:label ; sh:minCount 1 ] ;
+  sh:property [ sh:path hcm-tech:hasSensorIdentifier ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-tech:installedIn ; sh:class hcm:MonitoredEnclosure ; sh:minCount 1 ; sh:maxCount 1 ] .
+
+hcm-obs:BehaviorObservationEvidenceShape a sh:NodeShape ;
+  sh:targetClass hcm-obs:BehaviorObservation ;
+  sh:property [ sh:path sosa:hasFeatureOfInterest ; sh:class hcm-bio:Subject ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path sosa:madeBySensor ; sh:class hcm-tech:Sensor ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path sosa:hasResult ; sh:class hcm-obs:BehaviorResult ; sh:minCount 1 ; sh:maxCount 1 ] ;
+  sh:property [ sh:path hcm-obs:occursIn ; sh:class hcm:MonitoredEnclosure ; sh:minCount 1 ; sh:maxCount 1 ] .
