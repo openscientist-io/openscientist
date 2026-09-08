@@ -222,7 +222,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             f"command = {_toml_str(sys.executable)}",
             'args = ["-m", "openscientist_tools"]',
             f"[mcp_servers.{_MCP_SERVER_NAME}.env]",
-            *(f"{key} = {_toml_str(value)}" for key, value in self._mcp_env().items()),
+            *(f"{_toml_str(key)} = {_toml_str(value)}" for key, value in self._mcp_env().items()),
         ]
         (home / "config.toml").write_text("\n".join(lines) + "\n")
 

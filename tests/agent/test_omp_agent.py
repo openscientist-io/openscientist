@@ -22,6 +22,10 @@ from openscientist.providers.base import OmpModelCatalog, self_hosted_omp_model_
 from openscientist.transcript import AssistantText, Reasoning, ToolCall, ToolResult, UserPrompt
 from tests.helpers import StubClaudeProvider
 
+_POSIX_PROCESS_GROUP_ONLY = pytest.mark.skipif(
+    os.name == "nt", reason="POSIX process groups are unavailable on Windows"
+)
+
 
 class _Provider(StubClaudeProvider):
     """Claude-family stub with a concrete model name for arg assertions."""
@@ -535,6 +539,7 @@ class TestRunIteration:
         assert result.outcome is TurnOutcome.TIMED_OUT
 
     @pytest.mark.asyncio
+    @_POSIX_PROCESS_GROUP_ONLY
     async def test_timeout_kills_the_process_tree(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -607,6 +612,7 @@ class TestRunIteration:
         assert result.outcome is TurnOutcome.TIMED_OUT
 
     @pytest.mark.asyncio
+    @_POSIX_PROCESS_GROUP_ONLY
     async def test_cancellation_kills_the_process_tree(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -640,6 +646,7 @@ class TestRunIteration:
             pytest.fail(f"grandchild {child_pid} survived cancellation")
 
     @pytest.mark.asyncio
+    @_POSIX_PROCESS_GROUP_ONLY
     async def test_refuses_to_signal_its_own_process_group(self) -> None:
         """The group kill is only safe because omp is spawned as a group leader.
         Signal 0 is used so this stays harmless even if the guard were broken,
@@ -654,6 +661,7 @@ class TestRunIteration:
             await proc.wait()
 
     @pytest.mark.asyncio
+    @_POSIX_PROCESS_GROUP_ONLY
     async def test_signals_the_group_when_session_leader(self) -> None:
         proc = await asyncio.create_subprocess_exec(
             "sleep",
