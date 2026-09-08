@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from unittest.mock import patch
+
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,3 +70,19 @@ async def test_expert_description_is_truncated(db_session: AsyncSession) -> None
 
     for row in rows:
         assert len(row["description"]) <= 123  # 120 + "..."
+
+
+@pytest.mark.asyncio
+async def test_page_loads_the_catalog_without_a_user_context(db_session: AsyncSession) -> None:
+    """The experts tab reads public catalog data, so it needs no user scoping."""
+    from openscientist.webapp_components.pages import skills_list
+
+    @asynccontextmanager
+    async def _session_ctx() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    with patch.object(skills_list, "get_session_ctx", _session_ctx):
+        rows = await skills_list._load_experts()
+
+    assert {r["slug"] for r in rows} >= {"research-lead", "data-scientist"}
+    assert [r["slug"] for r in rows] == sorted(r["slug"] for r in rows)

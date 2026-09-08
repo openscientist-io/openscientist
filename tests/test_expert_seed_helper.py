@@ -164,3 +164,71 @@ def test_all_seed_rows_inherit_orchestrator_model() -> None:
     """Every seeded expert uses model='inherit'."""
     for row in all_seed_rows():
         assert row.model == "inherit", f"{row.slug}: expected model='inherit', got {row.model!r}"
+
+
+def _vendored(tmp_path: Path, text: str) -> Path:
+    """Write a stand-in vendored file under a known contract filename."""
+    path = tmp_path / "citations_agent.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _parse(path: Path) -> SeedRow:
+    return parse_vendored_file(path, source="anthropic", slug="citations-agent")
+
+
+def test_a_file_without_frontmatter_is_rejected(tmp_path: Path) -> None:
+    """A vendored file must declare its metadata, not just prose."""
+    with pytest.raises(ValueError, match="does not start with YAML frontmatter"):
+        _parse(_vendored(tmp_path, "You are an expert.\n"))
+
+
+def test_an_unterminated_frontmatter_fence_is_rejected(tmp_path: Path) -> None:
+    """An unclosed fence would silently swallow the prompt body."""
+    with pytest.raises(ValueError, match="malformed"):
+        _parse(_vendored(tmp_path, "---\nname: citations\nYou are an expert.\n"))
+
+
+def test_frontmatter_that_is_not_a_mapping_is_rejected(tmp_path: Path) -> None:
+    """A YAML list where a mapping belongs has no fields to read."""
+    with pytest.raises(ValueError, match="not a mapping"):
+        _parse(_vendored(tmp_path, "---\n- one\n- two\n---\nbody\n"))
+
+
+def test_empty_frontmatter_falls_back_to_the_slug(tmp_path: Path) -> None:
+    """No declared fields is legal: the slug names the expert."""
+    row = _parse(_vendored(tmp_path, "---\n\n---\nYou are an expert.\n"))
+
+    assert row.name == "citations-agent"
+    assert row.description == ""
+    assert row.prompt == "You are an expert."
+    assert row.tools is None
+
+
+def test_a_tools_field_of_the_wrong_type_is_rejected(tmp_path: Path) -> None:
+    """`tools` must be a list or a comma-separated string, nothing else."""
+    with pytest.raises(ValueError, match="Unexpected `tools` field type"):
+        _parse(_vendored(tmp_path, "---\ntools: 7\n---\nbody\n"))
+
+
+def test_a_file_outside_the_vendoring_contract_is_rejected(tmp_path: Path) -> None:
+    """An unlisted file has no category, so its row cannot be built."""
+    path = tmp_path / "not_in_contract.md"
+    path.write_text("---\nname: x\n---\nbody\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="No category in contract"):
+        parse_vendored_file(path, source="anthropic", slug="citations-agent")
+
+
+def test_tools_declared_as_a_yaml_list_are_kept_individually(tmp_path: Path) -> None:
+    """A YAML list must not be flattened into one comma-joined entry."""
+    row = _parse(_vendored(tmp_path, "---\ntools:\n  - Read\n  - Write\n---\nbody\n"))
+
+    assert row.tools == ["Read", "Write"]
+
+
+def test_a_foreign_mcp_tool_is_dropped_from_a_yaml_list(tmp_path: Path) -> None:
+    """An expert must not be seeded asking for another server's MCP tool."""
+    row = _parse(_vendored(tmp_path, "---\ntools:\n  - Read\n  - mcp__other__thing\n---\nbody\n"))
+
+    assert row.tools == ["Read"]

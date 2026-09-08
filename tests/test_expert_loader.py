@@ -276,3 +276,22 @@ async def test_load_values_are_agentdefinition_instances(db_session: AsyncSessio
 
     result = await load_enabled_experts(db_session)
     assert isinstance(result["instance-check"], AgentDefinition)
+
+
+@pytest.mark.asyncio
+async def test_a_tools_array_holding_a_non_string_drops_only_that_expert(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A tools array the SDK could not accept costs one expert, not the roster."""
+    session = _FakeSession(
+        [
+            _expert(slug="bad-tools", tools=["Read", 7]),
+            _expert(slug="good", tools=["Read"]),
+        ]
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = await load_enabled_experts(session)  # type: ignore[arg-type]
+
+    assert set(result) == {"good"}
+    assert "must contain only strings" in caplog.text
