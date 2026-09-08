@@ -43,6 +43,7 @@ from openai_codex import (
     TurnResult,
 )
 from openai_codex.generated.v2_all import (
+    CommandExecutionOutputDeltaNotification,
     ItemCompletedNotification,
     ItemStartedNotification,
     ThreadItem,
@@ -93,6 +94,15 @@ _TOOL_ITEM_TYPES = frozenset(
 # cut and the loop continues. Tool calls completed before the cut are already
 # persisted. Override with OPENSCIENTIST_CODEX_TURN_TIMEOUT (seconds).
 _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_CODEX_TURN_TIMEOUT", "900"))
+
+# Live transcript snapshots are intentionally coalesced. App-server can emit
+# output deltas much faster than a JSON transcript can be translated and
+# atomically replaced, and doing that work inline would stall event intake.
+_TRANSCRIPT_FLUSH_INTERVAL_SECONDS = 0.05
+
+# Cleanup must not turn a bounded turn timeout into an unbounded wait when the
+# SDK process or one of its async generators is unhealthy.
+_CLEANUP_TIMEOUT_SECONDS = 5.0
 
 
 def _resolve_codex_bin() -> str | None:
@@ -159,8 +169,13 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         self._codex: AsyncCodex | None = None
         self._thread: AsyncThread | None = None
         self._active_turn: AsyncTurnHandle | None = None
-        self._partial_items: list[ThreadItem] = []
+        self._partial_items: dict[str, ThreadItem] = {}
+        self._command_output_deltas: dict[str, list[str]] = {}
+        self._anonymous_item_sequence = 0
         self._partial_usage: ThreadTokenUsage | None = None
+        self._partial_usage_accounted = False
+        self._transcript_dirty = False
+        self._transcript_flush_task: asyncio.Task[None] | None = None
 
     backend = AgentBackend.CODEX
     file_write_tool = "apply_patch"
@@ -298,13 +313,11 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     async def _close_codex(self) -> None:
         """Tear down the app-server client and drop the thread."""
-        if self._codex is not None:
-            try:
-                await self._codex.close()
-            except Exception:  # best-effort cleanup
-                logger.debug("Closing codex client failed", exc_info=True)
+        codex = self._codex
         self._codex = None
         self._thread = None
+        if codex is not None:
+            await self._run_bounded_cleanup(codex.close(), "closing Codex client")
 
     async def _ensure_thread(self, reset_session: bool) -> AsyncThread:
         """Return a started thread, (re)building it when requested.
@@ -381,29 +394,100 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         """Return the atomically updated transcript exposed during a turn."""
         return self._job_dir() / "provenance" / "current_turn_transcript.json"
 
-    def _persist_partial_transcript(self) -> None:
-        """Persist completed work without allowing telemetry to fail the turn."""
+    def _partial_item_values(self) -> list[ThreadItem]:
+        """Return items in first-seen order for transcript/result consumers."""
+        return self._materialize_partial_items(
+            self._partial_items,
+            self._command_output_deltas,
+        )
+
+    @staticmethod
+    def _materialize_partial_items(
+        items_by_id: dict[str, ThreadItem], output_deltas: dict[str, list[str]]
+    ) -> list[ThreadItem]:
+        """Apply buffered command deltas to an ordered item snapshot."""
+        items: list[ThreadItem] = []
+        for key, item in items_by_id.items():
+            deltas = output_deltas.get(key)
+            if not deltas:
+                items.append(item)
+                continue
+            item_payload = item.model_dump(mode="json")
+            output = str(item_payload.get("aggregated_output") or "") + "".join(deltas)
+            items.append(ThreadItem.model_validate({**item_payload, "aggregated_output": output}))
+        return items
+
+    def _save_partial_transcript(
+        self,
+        items_by_id: dict[str, ThreadItem],
+        output_deltas: dict[str, list[str]],
+    ) -> None:
+        """Translate and save a snapshot from a worker thread."""
+        items = self._materialize_partial_items(items_by_id, output_deltas)
+        save_transcript(self._live_transcript_path(), self._to_transcript(items))
+
+    async def _transcript_writer(self) -> None:
+        """Coalesce event bursts and keep blocking JSON/file work off the loop."""
         try:
-            save_transcript(
-                self._live_transcript_path(),
-                self._to_transcript(self._partial_items),
-            )
-        except Exception:
-            logger.warning("Failed to persist live Codex transcript", exc_info=True)
+            await asyncio.sleep(_TRANSCRIPT_FLUSH_INTERVAL_SECONDS)
+            while self._transcript_dirty:
+                self._transcript_dirty = False
+                item_snapshot = dict(self._partial_items)
+                delta_snapshot = {
+                    key: list(deltas) for key, deltas in self._command_output_deltas.items()
+                }
+                try:
+                    await asyncio.to_thread(
+                        self._save_partial_transcript,
+                        item_snapshot,
+                        delta_snapshot,
+                    )
+                except Exception:
+                    logger.warning("Failed to persist live Codex transcript", exc_info=True)
+                if self._transcript_dirty:
+                    await asyncio.sleep(_TRANSCRIPT_FLUSH_INTERVAL_SECONDS)
+        finally:
+            self._transcript_flush_task = None
+
+    def _schedule_partial_transcript_persist(self) -> None:
+        """Mark the snapshot dirty and ensure one background writer exists."""
+        self._transcript_dirty = True
+        task = self._transcript_flush_task
+        if task is None or task.done():
+            self._transcript_flush_task = asyncio.create_task(self._transcript_writer())
+
+    async def _flush_partial_transcript(self) -> None:
+        """Wait until the newest live snapshot has reached disk."""
+        if self._transcript_dirty and self._transcript_flush_task is None:
+            self._transcript_flush_task = asyncio.create_task(self._transcript_writer())
+        while self._transcript_flush_task is not None:
+            await self._transcript_flush_task
 
     def _upsert_partial_item(self, item: Any) -> None:
-        """Retain started items and replace them with completed forms by ID."""
-        item_id = item.model_dump(mode="json").get("id")
+        """Retain started items and replace them in O(1) by stable item ID."""
+        item_payload = item.model_dump(mode="json")
+        item_id = item_payload.get("id")
         if item_id:
-            for index, existing in enumerate(self._partial_items):
-                if existing.model_dump(mode="json").get("id") == item_id:
-                    self._partial_items[index] = item
-                    break
-            else:
-                self._partial_items.append(item)
+            key = f"id:{item_id}"
         else:
-            self._partial_items.append(item)
-        self._persist_partial_transcript()
+            self._anonymous_item_sequence += 1
+            key = f"anonymous:{self._anonymous_item_sequence}"
+        self._partial_items[key] = item
+        if item_payload.get("status") != "inProgress":
+            self._command_output_deltas.pop(key, None)
+        self._schedule_partial_transcript_persist()
+
+    def _append_command_output(self, payload: CommandExecutionOutputDeltaNotification) -> None:
+        """Merge command output deltas into the live started-item snapshot."""
+        key = f"id:{payload.item_id}"
+        item = self._partial_items.get(key)
+        if item is None:
+            return
+        item_payload = item.model_dump(mode="json")
+        if item_payload.get("type") != "commandExecution":
+            return
+        self._command_output_deltas.setdefault(key, []).append(payload.delta)
+        self._schedule_partial_transcript_persist()
 
     @staticmethod
     def _final_response_from_items(items: list[Any]) -> str:
@@ -423,17 +507,19 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     def _record_turn_event(self, payload: Any, turn_id: str) -> TurnCompletedNotification | None:
         """Apply one notification to the live turn state."""
-        if (
-            isinstance(payload, ItemStartedNotification)
-            and payload.turn_id == turn_id
-            and payload.item is not None
-        ):
+        if getattr(payload, "turn_id", turn_id) != turn_id:
+            return None
+        if isinstance(payload, ItemStartedNotification):
+            if payload.item is not None:
+                self._upsert_partial_item(payload.item)
+            return None
+        if isinstance(payload, ItemCompletedNotification):
             self._upsert_partial_item(payload.item)
             return None
-        if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn_id:
-            self._upsert_partial_item(payload.item)
+        if isinstance(payload, CommandExecutionOutputDeltaNotification):
+            self._append_command_output(payload)
             return None
-        if isinstance(payload, ThreadTokenUsageUpdatedNotification) and payload.turn_id == turn_id:
+        if isinstance(payload, ThreadTokenUsageUpdatedNotification):
             self._partial_usage = payload.token_usage
             return None
         if isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn_id:
@@ -443,10 +529,12 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     def _completed_turn_result(self, completed: TurnCompletedNotification) -> TurnResult:
         """Convert a terminal notification into the SDK aggregate result."""
         status = getattr(completed.turn.status, "value", str(completed.turn.status))
-        if status == "failed":
+        if status != "completed":
             error = completed.turn.error
             message = getattr(error, "message", None) if error is not None else None
-            raise RuntimeError(message or "Codex turn failed")
+            raise RuntimeError(message or f"Codex turn ended with status {status}")
+
+        items = self._partial_item_values()
 
         return TurnResult(
             id=completed.turn.id,
@@ -455,15 +543,18 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             started_at=completed.turn.started_at,
             completed_at=completed.turn.completed_at,
             duration_ms=completed.turn.duration_ms,
-            items=list(self._partial_items),
-            final_response=self._final_response_from_items(self._partial_items),
+            items=items,
+            final_response=self._final_response_from_items(items),
             usage=self._partial_usage,
         )
 
     async def _run_streaming_turn(self, thread: AsyncThread, prompt: str) -> TurnResult:
         """Run a turn while retaining each item as its event arrives."""
-        self._partial_items = []
+        self._partial_items = {}
+        self._command_output_deltas = {}
+        self._anonymous_item_sequence = 0
         self._partial_usage = None
+        self._partial_usage_accounted = False
 
         turn = await thread.turn(prompt)
         self._active_turn = turn
@@ -478,8 +569,9 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 if terminal is not None:
                     completed = terminal
         finally:
-            await stream.aclose()
             self._active_turn = None
+            await self._run_bounded_cleanup(stream.aclose(), "closing Codex turn stream")
+            await self._flush_partial_transcript()
 
         if completed is None:
             raise RuntimeError("turn completed event not received")
@@ -494,7 +586,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     def _partial_transcript_with_notification(
         self, *, status: str, summary: str
     ) -> list[TranscriptEntry]:
-        transcript = self._to_transcript(self._partial_items)
+        transcript = self._to_transcript(self._partial_item_values())
         transcript.append(
             TaskNotification(
                 task_id="codex-turn",
@@ -503,29 +595,69 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 output_file="",
             )
         )
+        return transcript
+
+    async def _persist_terminal_transcript(self, transcript: list[TranscriptEntry]) -> None:
+        """Write a terminal snapshot after all coalesced live writes finish."""
+        await self._flush_partial_transcript()
         try:
-            save_transcript(self._live_transcript_path(), transcript)
+            await asyncio.to_thread(save_transcript, self._live_transcript_path(), transcript)
         except Exception:
             logger.warning("Failed to persist terminal Codex notification", exc_info=True)
-        return transcript
+
+    @staticmethod
+    def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+        """Retrieve a detached cleanup task's result to avoid noisy warnings."""
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
+
+    @classmethod
+    async def _run_bounded_cleanup(cls, awaitable: Any, action: str) -> bool:
+        """Run one best-effort cleanup action without waiting indefinitely."""
+        task = asyncio.ensure_future(awaitable)
+        done, _ = await asyncio.wait({task}, timeout=_CLEANUP_TIMEOUT_SECONDS)
+        if not done:
+            task.cancel()
+            task.add_done_callback(cls._consume_task_exception)
+            logger.warning("Timed out while %s", action)
+            return False
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.debug("Cancelled while %s", action)
+            return False
+        except Exception:
+            logger.debug("Failed while %s", action, exc_info=True)
+            return False
+        return True
 
     async def _interrupt_active_turn(self, reason: str) -> bool:
         """Best-effort interruption; report whether a live turn existed."""
         turn = self._active_turn
         if turn is None:
             return False
-        try:
-            await turn.interrupt()
-        except Exception:
-            logger.debug("Interrupting %s Codex turn failed", reason, exc_info=True)
+        await self._run_bounded_cleanup(turn.interrupt(), f"interrupting {reason} Codex turn")
         return True
 
-    @staticmethod
-    async def _cancel_turn_task(turn_task: asyncio.Task[Any]) -> None:
+    @classmethod
+    async def _cancel_turn_task(cls, turn_task: asyncio.Task[Any]) -> None:
         """Cancel a turn consumer and retrieve its terminal exception."""
         if not turn_task.done():
             turn_task.cancel()
-        await asyncio.gather(turn_task, return_exceptions=True)
+        done, _ = await asyncio.wait({turn_task}, timeout=_CLEANUP_TIMEOUT_SECONDS)
+        if not done:
+            turn_task.add_done_callback(cls._consume_task_exception)
+            logger.warning("Timed out while cancelling Codex turn task")
+            return
+        cls._consume_task_exception(turn_task)
+
+    def _account_partial_usage(self) -> None:
+        """Accumulate the latest per-turn usage exactly once on every exit."""
+        if self._partial_usage is not None and not self._partial_usage_accounted:
+            self._token_usage += self._usage_from_payload(self._partial_usage)
+            self._partial_usage_accounted = True
 
     async def _execute_turn(self, thread: AsyncThread, prompt: str) -> Any:
         """Run one aggregate or streaming turn with bounded cancellation."""
@@ -541,8 +673,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             if done:
                 return turn_task.result()
 
-            if await self._interrupt_active_turn("timed-out"):
-                await asyncio.wait({turn_task}, timeout=5.0)
+            await self._interrupt_active_turn("timed-out")
             await self._cancel_turn_task(turn_task)
             raise TimeoutError
         except asyncio.CancelledError:
@@ -554,9 +685,9 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     async def _timed_out_result(self) -> IterationResult:
         """Close a timed-out turn while preserving its partial evidence."""
         logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
-        if self._partial_usage is not None:
-            self._token_usage += self._usage_from_payload(self._partial_usage)
-        tool_calls = self._tool_call_count(self._partial_items)
+        self._account_partial_usage()
+        items = self._partial_item_values()
+        tool_calls = self._tool_call_count(items)
         transcript = self._partial_transcript_with_notification(
             status="timed_out",
             summary=(
@@ -564,6 +695,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 f"{tool_calls} recorded tool calls."
             ),
         )
+        await self._persist_terminal_transcript(transcript)
         await self._close_codex()
         return IterationResult(
             outcome=TurnOutcome.TIMED_OUT,
@@ -576,15 +708,17 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     async def _failed_result(self, error: Exception) -> IterationResult:
         """Close a failed turn while preserving its partial evidence."""
         logger.error("Codex run failed: %s", error, exc_info=True)
+        self._account_partial_usage()
         transcript = self._partial_transcript_with_notification(
             status="failed",
             summary=f"Codex turn failed: {error}",
         )
+        await self._persist_terminal_transcript(transcript)
         await self._close_codex()
         return IterationResult(
             outcome=TurnOutcome.FAILED,
             output="",
-            tool_calls=self._tool_call_count(self._partial_items),
+            tool_calls=self._tool_call_count(self._partial_item_values()),
             transcript=transcript,
             error=str(error),
         )
@@ -595,11 +729,24 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         The turn's items are translated to a transcript and per-turn token
         usage is accumulated.
         """
-        self._partial_items = []
+        if self._transcript_flush_task is not None:
+            await self._transcript_flush_task
+        self._partial_items = {}
+        self._command_output_deltas = {}
+        self._anonymous_item_sequence = 0
         self._partial_usage = None
+        self._partial_usage_accounted = False
         try:
             thread = await self._ensure_thread(reset_session)
             result = await self._execute_turn(thread, prompt)
+        except asyncio.CancelledError:
+            self._account_partial_usage()
+            transcript = self._partial_transcript_with_notification(
+                status="cancelled",
+                summary="Codex turn was cancelled.",
+            )
+            await self._persist_terminal_transcript(transcript)
+            raise
         except TimeoutError:
             # Runaway turn (e.g. the model looping on an unsupported tool call).
             # Report it honestly as TIMED_OUT (work done before the cut is already
@@ -610,7 +757,8 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             return await self._failed_result(error)
 
         if result.usage is not None:
-            self._token_usage += self._usage_from_payload(result.usage)
+            self._partial_usage = result.usage
+        self._account_partial_usage()
 
         tool_calls = self._tool_call_count(result.items)
         return IterationResult(

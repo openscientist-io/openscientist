@@ -8,6 +8,7 @@ thread lifecycle, usage mapping, and failure handling.
 
 from __future__ import annotations
 
+import asyncio
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,8 +16,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai_codex import ApprovalMode, Sandbox
-from openai_codex.generated.v2_all import ItemCompletedNotification, TurnCompletedNotification
+from openai_codex import ApprovalMode, AsyncThread, Sandbox
+from openai_codex.generated.v2_all import (
+    CommandExecutionOutputDeltaNotification,
+    ItemCompletedNotification,
+    ItemStartedNotification,
+    ThreadTokenUsageUpdatedNotification,
+    TurnCompletedNotification,
+)
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, TokenUsage, TurnOutcome
 from openscientist.agent.codex_agent import CodexAgent
@@ -49,6 +56,18 @@ class _Item:
 
     def model_dump(self, mode: str = "json") -> dict[str, Any]:
         return dict(self._fields)
+
+
+class _StreamingThread(AsyncThread):
+    """AsyncThread subtype whose turn is supplied by a test."""
+
+    __slots__ = ("_stub_turn",)
+
+    def __init__(self, turn: Any) -> None:
+        self._stub_turn = turn
+
+    async def turn(self, prompt: Any, **kwargs: Any) -> Any:  # type: ignore[override]
+        return self._stub_turn
 
 
 def _usage(*, input_tokens: int, cached: int, output: int, reasoning: int = 0) -> SimpleNamespace:
@@ -98,6 +117,54 @@ def _patch_codex(turn: SimpleNamespace) -> tuple[MagicMock, MagicMock]:
     inst.thread_start = AsyncMock(return_value=thread)
     inst.close = AsyncMock()
     return mock_codex_cls, thread
+
+
+def _command_started(*, item_id: str = "shell-1") -> ItemStartedNotification:
+    return ItemStartedNotification.model_validate(
+        {
+            "startedAtMs": 1,
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "commandExecution",
+                "id": item_id,
+                "command": "python inspect.py",
+                "commandActions": [],
+                "cwd": "/job",
+                "status": "inProgress",
+            },
+        }
+    )
+
+
+def _command_output(
+    delta: str, *, item_id: str = "shell-1"
+) -> CommandExecutionOutputDeltaNotification:
+    return CommandExecutionOutputDeltaNotification.model_validate(
+        {
+            "delta": delta,
+            "itemId": item_id,
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+        }
+    )
+
+
+def _usage_event() -> ThreadTokenUsageUpdatedNotification:
+    breakdown = {
+        "inputTokens": 30,
+        "cachedInputTokens": 10,
+        "outputTokens": 9,
+        "reasoningOutputTokens": 4,
+        "totalTokens": 39,
+    }
+    return ThreadTokenUsageUpdatedNotification.model_validate(
+        {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "tokenUsage": {"last": breakdown, "total": breakdown},
+        }
+    )
 
 
 # ── scaffold (unchanged contract) ──────────────────────────────────────
@@ -189,6 +256,129 @@ async def test_streaming_turn_persists_completed_items_live(tmp_path: Path) -> N
     assert any(isinstance(entry, ShellExecution) for entry in load_transcript(live_path))
 
 
+@pytest.mark.asyncio
+async def test_started_item_is_replaced_in_place_on_completion(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    completed = ItemCompletedNotification.model_validate(
+        {
+            "completedAtMs": 2,
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "item": {
+                "type": "commandExecution",
+                "id": "shell-1",
+                "command": "python inspect.py",
+                "commandActions": [],
+                "cwd": "/job",
+                "status": "completed",
+                "aggregatedOutput": "finished",
+                "exitCode": 0,
+            },
+        }
+    )
+
+    agent._record_turn_event(_command_started(), "turn-1")
+    agent._record_turn_event(_command_output("partial"), "turn-1")
+    agent._record_turn_event(completed, "turn-1")
+    await agent._flush_partial_transcript()
+
+    items = agent._partial_item_values()
+    assert len(items) == 1
+    assert items[0].model_dump(mode="json")["aggregated_output"] == "finished"
+
+
+@pytest.mark.asyncio
+async def test_command_output_deltas_are_retained_before_completion(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+
+    agent._record_turn_event(_command_started(), "turn-1")
+    agent._record_turn_event(_command_output("HTTP 500 "), "turn-1")
+    agent._record_turn_event(_command_output("from executor"), "turn-1")
+    await agent._flush_partial_transcript()
+
+    transcript = load_transcript(agent._live_transcript_path())
+    shell = next(entry for entry in transcript if isinstance(entry, ShellExecution))
+    assert shell.output == "HTTP 500 from executor"
+
+
+@pytest.mark.asyncio
+async def test_burst_events_are_coalesced_into_one_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = _agent(tmp_path)
+    save = MagicMock()
+    monkeypatch.setattr(agent, "_save_partial_transcript", save)
+
+    for index in range(100):
+        agent._upsert_partial_item(_Item(id=f"item-{index}", type="plan", text="step"))
+    await agent._flush_partial_transcript()
+
+    assert save.call_count == 1
+    assert len(save.call_args.args[0]) == 100
+
+
+@pytest.mark.asyncio
+async def test_stream_failure_preserves_delta_output_and_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent = _agent(tmp_path)
+
+    async def notifications():
+        yield SimpleNamespace(payload=_command_started())
+        yield SimpleNamespace(payload=_command_output("executor failed"))
+        yield SimpleNamespace(payload=_usage_event())
+        raise RuntimeError("stream disconnected")
+
+    turn = SimpleNamespace(
+        id="turn-1",
+        stream=MagicMock(return_value=notifications()),
+        interrupt=AsyncMock(),
+    )
+    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=_StreamingThread(turn)))
+
+    result = await agent.run_iteration("inspect")
+
+    assert result.outcome is TurnOutcome.FAILED
+    assert result.tool_calls == 1
+    shell = next(entry for entry in result.transcript if isinstance(entry, ShellExecution))
+    assert shell.output == "executor failed"
+    assert agent.total_tokens == TokenUsage(
+        input_tokens=20,
+        output_tokens=5,
+        cache_read_tokens=10,
+        reasoning_tokens=4,
+    )
+    persisted = load_transcript(agent._live_transcript_path())
+    assert isinstance(persisted[-1], TaskNotification)
+    assert persisted[-1].status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_stream_is_explicitly_closed_when_iteration_raises(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+
+    class FailingStream:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def __aiter__(self) -> FailingStream:
+            return self
+
+        async def __anext__(self) -> Any:
+            raise RuntimeError("broken stream")
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    stream = FailingStream()
+    turn = SimpleNamespace(id="turn-1", stream=MagicMock(return_value=stream))
+    thread = _StreamingThread(turn)
+
+    with pytest.raises(RuntimeError, match="broken stream"):
+        await agent._run_streaming_turn(thread, "inspect")
+    assert stream.closed is True
+
+
 async def test_run_iteration_cuts_runaway_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -231,41 +421,41 @@ async def test_run_iteration_cuts_runaway_turn(
 async def test_timeout_preserves_partial_streamed_tool_activity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A timeout returns and persists tool activity received before the cut."""
-    import asyncio
-
-    from openai_codex import AsyncThread
-
+    """A timeout returns output and usage received before item completion."""
     from openscientist.agent import codex_agent
 
     monkeypatch.setattr(codex_agent, "_TURN_TIMEOUT_SECONDS", 0.01)
     agent = _agent(tmp_path)
-    thread = AsyncThread(MagicMock(), "thread-1")
-    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=thread))
+    stream_closed = asyncio.Event()
 
-    async def partial_turn(_thread: AsyncThread, _prompt: str) -> object:
-        agent._upsert_partial_item(
-            _Item(
-                id="c1",
-                type="commandExecution",
-                command="python inspect.py",
-                aggregated_output="HTTP 500 from executor",
-                exit_code=1,
-                status="failed",
-            )
-        )
-        await asyncio.sleep(5)
-        return _turn()
+    async def notifications():
+        try:
+            yield SimpleNamespace(payload=_command_started())
+            yield SimpleNamespace(payload=_command_output("HTTP 500 from executor"))
+            yield SimpleNamespace(payload=_usage_event())
+            await asyncio.sleep(5)
+        finally:
+            stream_closed.set()
 
-    monkeypatch.setattr(agent, "_run_streaming_turn", partial_turn)
+    turn = SimpleNamespace(
+        id="turn-1",
+        stream=MagicMock(return_value=notifications()),
+        interrupt=AsyncMock(),
+    )
+    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=_StreamingThread(turn)))
 
     result = await agent.run_iteration("go")
 
     assert result.outcome is TurnOutcome.TIMED_OUT
     assert result.tool_calls == 1
-    assert any(isinstance(entry, ShellExecution) for entry in result.transcript)
+    shell = next(entry for entry in result.transcript if isinstance(entry, ShellExecution))
+    assert shell.output == "HTTP 500 from executor"
     assert isinstance(result.transcript[-1], TaskNotification)
     assert result.transcript[-1].status == "timed_out"
+    assert agent.total_tokens.input_tokens == 20
+    assert agent.total_tokens.cache_read_tokens == 10
+    assert stream_closed.is_set()
+    turn.interrupt.assert_awaited_once()
     assert (tmp_path / "provenance" / "current_turn_transcript.json").exists()
 
 
@@ -273,34 +463,79 @@ async def test_timeout_preserves_partial_streamed_tool_activity(
 async def test_cancellation_interrupts_active_streaming_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import asyncio
-
-    from openai_codex import AsyncThread
-
     agent = _agent(tmp_path)
-    thread = AsyncThread(MagicMock(), "thread-1")
-    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=thread))
-    active_turn = MagicMock()
-    active_turn.interrupt = AsyncMock()
     started = asyncio.Event()
+    stream_closed = asyncio.Event()
 
-    async def partial_turn(_thread: AsyncThread, _prompt: str) -> object:
-        agent._active_turn = active_turn
-        started.set()
+    async def notifications():
         try:
+            yield SimpleNamespace(payload=_command_started())
+            yield SimpleNamespace(payload=_command_output("partial output"))
+            yield SimpleNamespace(payload=_usage_event())
+            started.set()
             await asyncio.sleep(5)
         finally:
-            agent._active_turn = None
-        return _turn()
+            stream_closed.set()
 
-    monkeypatch.setattr(agent, "_run_streaming_turn", partial_turn)
+    turn = SimpleNamespace(
+        id="turn-1",
+        stream=MagicMock(return_value=notifications()),
+        interrupt=AsyncMock(),
+    )
+    monkeypatch.setattr(agent, "_ensure_thread", AsyncMock(return_value=_StreamingThread(turn)))
     task = asyncio.create_task(agent.run_iteration("go"))
     await started.wait()
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
         await task
-    active_turn.interrupt.assert_awaited_once()
+    turn.interrupt.assert_awaited_once()
+    assert stream_closed.is_set()
+    assert agent.total_tokens.input_tokens == 20
+    transcript = load_transcript(agent._live_transcript_path())
+    shell = next(entry for entry in transcript if isinstance(entry, ShellExecution))
+    assert shell.output == "partial output"
+    assert isinstance(transcript[-1], TaskNotification)
+    assert transcript[-1].status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_timeout_does_not_wait_for_stuck_awaitable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openscientist.agent import codex_agent
+
+    monkeypatch.setattr(codex_agent, "_CLEANUP_TIMEOUT_SECONDS", 0.01)
+    agent = _agent(tmp_path)
+    release = asyncio.Event()
+
+    async def ignores_first_cancellation() -> None:
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+
+    completed = await asyncio.wait_for(
+        agent._run_bounded_cleanup(ignores_first_cancellation(), "testing cleanup"),
+        timeout=0.2,
+    )
+    assert completed is False
+
+    release.set()
+    await asyncio.sleep(0)
+
+
+def test_interrupted_terminal_event_is_not_reported_as_completed(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    interrupted = TurnCompletedNotification.model_validate(
+        {
+            "threadId": "thread-1",
+            "turn": {"id": "turn-1", "items": [], "status": "interrupted"},
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="status interrupted"):
+        agent._completed_turn_result(interrupted)
 
 
 async def test_usage_subtraction_accumulates(tmp_path: Path) -> None:
@@ -334,6 +569,21 @@ def test_usage_from_payload_math() -> None:
 
 def test_usage_from_payload_none_last() -> None:
     assert CodexAgent._usage_from_payload(SimpleNamespace(last=None)) == TokenUsage()
+
+
+def test_partial_usage_is_accounted_exactly_once(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    agent._partial_usage = _usage(input_tokens=30, cached=10, output=9, reasoning=4)  # type: ignore[assignment]
+
+    agent._account_partial_usage()
+    agent._account_partial_usage()
+
+    assert agent.total_tokens == TokenUsage(
+        input_tokens=20,
+        output_tokens=5,
+        cache_read_tokens=10,
+        reasoning_tokens=4,
+    )
 
 
 async def test_run_iteration_writes_config_and_agents_md(
