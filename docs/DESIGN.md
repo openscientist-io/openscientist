@@ -3,7 +3,7 @@
 ## Design Document
 
 **Status:** Implemented
-**Last Updated:** July 2026
+**Last Updated:** September 2026
 
 ---
 
@@ -83,9 +83,10 @@ NiceGUI Web UI / FastAPI REST API
       openscientist-tools MCP Server
        ├── execute_code ──▶ Execution Broker ──▶ Executor Container
        ├── search_pubmed
-       ├── update_knowledge_state
        ├── read_document
-       └── optional Phenix tools
+       ├── update_knowledge_state
+       ├── save_iteration_summary
+       └── optional Phenix tools, including AlphaFold confidence parsing
                  │
                  ▼
  PostgreSQL Knowledge State + Job Artifacts
@@ -165,7 +166,7 @@ Skills are modular packages of domain expertise that guide the agent's reasoning
 **Domain Skills** (domain-specific):
 - `metabolomics` - Pathway analysis, flux calculations
 - `genomics` - Differential expression, enrichment analysis
-- `structural-biology` - Structure validation, AlphaFold interpretation
+- `phenix-tools-reference` - Structure validation and AlphaFold interpretation
 - `data-science` - General statistical analysis
 
 Built-in skills ship with the application. Administrators can also register and
@@ -184,6 +185,7 @@ The agent interacts with the scientific environment through MCP (Model Context P
 | `save_iteration_summary` | Save summary of what was done |
 | `run_phenix_tool`* | Run Phenix structural biology tools |
 | `compare_structures`* | Compare protein structures |
+| `parse_alphafold_confidence`* | Extract AlphaFold confidence metrics |
 
 *Phenix tools require optional Phenix installation.
 

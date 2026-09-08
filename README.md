@@ -20,7 +20,7 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 - **Autonomous Discovery**: Runs iterative hypothesis-testing loop using an agentic coding assistant
 - **Domain-Agnostic**: Works with genomics, transcriptomics, proteomics, metabolomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
-- **Multiple Agent Harnesses**: Runs investigations with Claude Code, OpenAI Codex, or OMP
+- **Multiple Agent Harnesses**: Runs investigations with Claude Code, Codex, or OMP
 - **Multi-Provider Support**: Connects to Anthropic, CBORG, Vertex AI, Bedrock, Azure AI Foundry, OpenAI, Azure OpenAI, Ollama, vLLM, or llama.cpp
 - **Cost Tracking**: Project-level budget monitoring with provider-specific cost APIs
 - **Sandboxed Execution**: Runs model-written Python, Rust, and SPARQL in resource-limited executor containers
@@ -35,7 +35,9 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 - **MCP Tools**: Provides tools via Model Context Protocol
   - `execute_code`: Run Python, Rust, or SPARQL analysis
   - `search_pubmed`: Search literature
+  - `read_document`: Read supported PDF, Word, or Excel documents
   - `update_knowledge_state`: Record findings
+  - `save_iteration_summary`: Record each iteration's progress
   - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
 - **Knowledge State**: PostgreSQL-backed tracking for findings, hypotheses, literature, analysis logs, and iteration summaries
 - **Job Manager**: Multi-job support with queueing and lifecycle management
@@ -107,6 +109,7 @@ openscientist/
 │   │   ├── api/                   # Authenticated REST endpoints
 │   │   ├── database/              # PostgreSQL models, RLS, and migrations
 │   │   ├── job_container/         # Per-job container lifecycle and egress policy
+│   │   ├── job_manager.py         # Job queueing and lifecycle management
 │   │   ├── orchestrator/          # Iterative discovery and report generation
 │   │   ├── providers/             # LLM provider and cost integrations
 │   │   ├── report/                # Markdown, HTML, PDF, and figure rendering
@@ -117,7 +120,8 @@ openscientist/
 ├── tests/                         # Unit and integration tests
 ├── Dockerfile.agent               # Per-job agent image
 ├── Dockerfile.executor            # Analysis executor image
-└── docker-compose.yml             # Web app and PostgreSQL services
+├── docker-compose.yml             # Web app and PostgreSQL services
+└── Makefile                       # Build, test, and deployment commands
 ```
 
 ## Configuration
