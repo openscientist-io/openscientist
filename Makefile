@@ -119,13 +119,13 @@ status:
 	docker compose -f $(COMPOSE_FILE) exec openscientist python -m openscientist.job_manager summary
 
 quality-fast:
-	uv run python -m openscientist.quality fast
+	uv run --locked python -m openscientist.quality fast
 
 quality-contract:
-	uv run python -m openscientist.quality contract
+	uv run --locked python -m openscientist.quality contract
 
 quality-integration:
-	uv run python -m openscientist.quality integration
+	uv run --locked python -m openscientist.quality integration
 
 # Deploy to production server
 deploy:

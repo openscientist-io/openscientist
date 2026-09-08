@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
-import subprocess
+
+# This module is the repository's intentionally narrow command runner.
+import subprocess  # nosec B404
 import sys
 from collections.abc import Callable, Sequence
 from contextlib import suppress
@@ -12,6 +15,7 @@ from typing import Protocol
 
 BLOCKED_EXIT_CODE = 2
 TESTS_DIR = "tests/"
+Command = tuple[str, ...]
 
 # Public, backend-neutral contracts that do not require PostgreSQL or Docker.
 CONTRACT_TESTS = (
@@ -71,14 +75,21 @@ def require_docker(
 
 def _run_commands(
     label: str,
-    commands: Sequence[Sequence[str]],
+    commands: Sequence[Command],
     *,
     env: dict[str, str] | None = None,
 ) -> int:
     for command in commands:
-        rendered = subprocess.list2cmdline(list(command))
+        # JSON is an unambiguous cross-platform display format and is never executed.
+        rendered = json.dumps(command, ensure_ascii=False)
         print(f"[{label}] $ {rendered}", flush=True)
-        result = subprocess.run(command, check=False, env=env)
+        # Commands are private, immutable repository constants. No shell parses them.
+        result = subprocess.run(  # nosec B603  # nosemgrep
+            command,
+            check=False,
+            env=env,
+            shell=False,
+        )
         if result.returncode:
             print(
                 f"[{label}] FAILED with exit code {result.returncode}: {rendered}",
@@ -137,6 +148,8 @@ def run_integration() -> int:
                 "not network",
                 "--cov=src/openscientist",
                 "--cov-report=term-missing",
+                "--cov-report=xml",
+                "--junitxml=pytest-results.xml",
             ),
         ),
         env=integration_env,
