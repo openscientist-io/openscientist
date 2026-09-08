@@ -247,6 +247,53 @@ class TestBuildArgs:
         assert "--model=opus-override" in agent._build_args(tmp_path, tmp_path, tmp_path)
 
 
+class TestTurnPrompt:
+    def test_skill_bodies_are_namespaced_too(self, tmp_path: Path) -> None:
+        """Skills are a third prompt surface. A skill that names `execute_code`
+        bare teaches omp's agent a name that returns "Tool ... not found"."""
+        from openscientist.database.models import Skill
+
+        skill = Skill(
+            slug="demo",
+            category="workflow",
+            name="Demo",
+            description="d",
+            content="Run analysis with `execute_code`.",
+        )
+        agent = _agent(tmp_path)
+        agent._write_skill(tmp_path / "skills", skill)
+        body = (tmp_path / "skills" / "workflow--demo" / "SKILL.md").read_text()
+        assert "`mcp__openscientist_tools_execute_code`" in body
+        assert "`execute_code`" not in body
+
+    def test_the_research_question_is_not_rewritten(self, tmp_path: Path) -> None:
+        """The turn prompt carries the scientist's own words, and they mark code
+        the way anyone does. A question about a local helper called
+        ``execute_code`` must reach the model exactly as it was asked."""
+        agent = _agent(tmp_path)
+        question = "Why does our `execute_code` helper drop rows, and does execute_code() retry?"
+        written = agent._write_turn_prompt(question).read_text()
+        assert written == question
+
+    def test_skill_callable_form_is_namespaced(self, tmp_path: Path) -> None:
+        """The shipped skills call tools without backticks, for example
+        ``search_pubmed("...")`` in the metabolomics skill, so backticked-only
+        rewriting still leaves a skill teaching an unresolvable name."""
+        from openscientist.database.models import Skill
+
+        skill = Skill(
+            slug="demo",
+            category="workflow",
+            name="Demo",
+            description="d",
+            content='Search with search_pubmed("ATP depletion mechanism").',
+        )
+        agent = _agent(tmp_path)
+        agent._write_skill(tmp_path / "skills", skill)
+        body = (tmp_path / "skills" / "workflow--demo" / "SKILL.md").read_text()
+        assert 'mcp__openscientist_tools_search_pubmed("ATP depletion mechanism")' in body
+
+
 class TestMissingMcpToolsGuard:
     """Keys off the server's handshake marker, not the agent's own tool calls."""
 

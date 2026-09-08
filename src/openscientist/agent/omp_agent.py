@@ -230,7 +230,9 @@ class OmpAgent(AbstractAgent[Provider]):
         return path
 
     def _write_turn_prompt(self, prompt: str) -> Path:
-        # Passed as ``@<path>`` so a large prompt never hits the argv limit.
+        # Passed as ``@<path>`` so a large prompt never hits the argv limit. The
+        # prompt arrives already namespaced by whoever wrote its instructions,
+        # because only they can tell their own words from the scientist's.
         omp_dir = self._omp_dir()
         omp_dir.mkdir(parents=True, exist_ok=True)
         path = omp_dir / "turn_prompt.md"

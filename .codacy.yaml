@@ -1,0 +1,9 @@
+---
+# Bandit's assert_used and hardcoded-password rules describe a test suite's normal shape.
+engines:
+  bandit:
+    exclude_paths:
+      - "tests/**"
+  duplication:
+    exclude_paths:
+      - "tests/**"

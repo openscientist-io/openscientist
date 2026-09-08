@@ -245,7 +245,7 @@ def test_prelaunch_env_injects_the_probed_window() -> None:
     assert env == {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": "40960"}
 
 
-def test_prelaunch_env_is_empty_when_operator_pinned_the_window() -> None:
+def test_prelaunch_env_forwards_the_operator_pin() -> None:
     from openscientist.providers import ollama as ollama_mod
 
     s = _settings(model_context_tokens=1234)
@@ -254,7 +254,7 @@ def test_prelaunch_env_is_empty_when_operator_pinned_the_window() -> None:
         patch.object(ollama_mod, "_probe_ollama_context_tokens") as probe,
     ):
         env = OllamaProvider().prelaunch_model_context_env()
-    assert env == {}
+    assert env == {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": "1234"}
     probe.assert_not_called()
 
 

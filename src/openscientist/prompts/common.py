@@ -8,6 +8,7 @@ Claude and Codex variants share one body. See `prompts.claude` /
 `prompts.codex` for the concrete fragments and public entry points.
 """
 
+import re
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any
@@ -70,18 +71,46 @@ MCP_TOOL_NAMES: tuple[str, ...] = (
     "parse_alphafold_confidence",
 )
 
+# The three ways a prompt marks a name as a tool to call: backticked, bold, or
+# an actual call. A name already carrying the prefix is preceded by a word
+# character and cannot match.
+_MCP_TOOL_MENTION = re.compile(
+    r"(?<!\w)(?:`(?P<tick>{names})`|\*\*(?P<bold>{names})\*\*|(?P<call>{names})(?=[ \t]*\())".format(
+        names="|".join(MCP_TOOL_NAMES)
+    )
+)
+
+
+def _prefixed_mention(match: re.Match[str], prefix: str) -> str:
+    if name := match.group("tick"):
+        return f"`{prefix}{name}`"
+    if name := match.group("bold"):
+        return f"**{prefix}{name}**"
+    return f"{prefix}{match.group('call')}"
+
+
+def namespace_tool_mentions(doc: str, prefix: str) -> str:
+    """Rewrite MCP tool names in ``doc`` into the backend's callable name.
+
+    Covers every form the prompts use to mark a tool as callable, because the
+    skills write ``search_pubmed("...")`` and the shared doc writes
+    ``**execute_code**``, and a form left bare teaches a name the backend
+    cannot resolve. An empty prefix is the identity, so Claude and codex
+    bodies are unchanged.
+
+    Pass only text this repository authored. A turn prompt also carries the
+    scientist's question, description and feedback, and rewriting a tool name
+    inside those puts a question to the model that nobody asked, so callers
+    namespace their own instructions before interpolating anyone else's words.
+    """
+    if not prefix:
+        return doc
+    return _MCP_TOOL_MENTION.sub(lambda m: _prefixed_mention(m, prefix), doc)
+
 
 def apply_mcp_tool_prefix(doc: str, frags: BackendFragments) -> str:
-    """Rewrite backticked MCP tool names into the backend's callable name.
-
-    An empty prefix is the identity, so Claude and codex bodies are unchanged.
-    Idempotent: an already-prefixed mention no longer matches the bare pattern.
-    """
-    if not frags.mcp_tool_prefix:
-        return doc
-    for name in MCP_TOOL_NAMES:
-        doc = doc.replace(f"`{name}`", f"`{frags.mcp_tool_prefix}{name}`")
-    return doc
+    """Rewrite MCP tool names in text this repository authored end to end."""
+    return namespace_tool_mentions(doc, frags.mcp_tool_prefix)
 
 
 def build_system_prompt(frags: BackendFragments) -> str:

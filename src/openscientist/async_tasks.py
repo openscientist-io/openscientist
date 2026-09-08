@@ -51,24 +51,38 @@ def create_background_task(
 
 
 def run_sync(coro: Coroutine[Any, Any, _T], *, timeout: float = 30) -> _T:
-    """Run an async coroutine from synchronous code.
+    """Run an async coroutine from synchronous code, bounded by ``timeout``.
 
-    When called from within a running event loop (e.g., NiceGUI handlers),
-    runs the coroutine in a separate thread with its own event loop.
-    Otherwise, uses ``asyncio.run()`` directly.
+    The deadline lives inside the coroutine's own loop, so it cancels the work
+    rather than abandoning it: at ``timeout`` the coroutine is cancelled and
+    its unwinding is awaited before ``TimeoutError`` reaches the caller. It is
+    therefore cooperative, and a coroutine that refuses to unwind still delays
+    the caller. Bound the work itself (for a query, the database's own
+    ``statement_timeout``) when a hard wall is required.
+
+    ``asyncio.run`` owns the loop in both paths, so task cancellation, async
+    generator shutdown and executor shutdown all happen as usual.
 
     Args:
         coro: The coroutine to execute.
-        timeout: Maximum wait time in seconds when running in a thread.
+        timeout: Seconds before the coroutine is cancelled.
 
     Returns:
         The coroutine's return value.
+
+    Raises:
+        TimeoutError: The deadline passed and the coroutine was cancelled.
     """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(coro)
+        return asyncio.run(_bounded(coro, timeout))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(asyncio.run, coro)
-        return future.result(timeout=timeout)
+        return executor.submit(asyncio.run, _bounded(coro, timeout)).result()
+
+
+async def _bounded(coro: Coroutine[Any, Any, _T], timeout: float) -> _T:
+    """Await the coroutine under the deadline, on the loop that runs it, so a
+    cancellation reaches it and its cleanup completes before we return."""
+    return await asyncio.wait_for(coro, timeout)

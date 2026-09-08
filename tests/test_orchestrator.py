@@ -436,7 +436,7 @@ class TestDiscoveryCancellationAndFailure:
             ),
             patch("openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
             patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
-            patch("openscientist.orchestrator.discovery._sync_version_metadata_if_available"),
+            patch("openscientist.orchestrator.discovery._sync_version_metadata"),
             patch(
                 "openscientist.orchestrator.discovery.KnowledgeState.load_from_database_sync",
                 return_value=ks,
@@ -524,7 +524,7 @@ class TestDiscoveryCancellationAndFailure:
             ),
             patch("openscientist.orchestrator.discovery.update_job_status", new_callable=AsyncMock),
             patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
-            patch("openscientist.orchestrator.discovery._sync_version_metadata_if_available"),
+            patch("openscientist.orchestrator.discovery._sync_version_metadata"),
             patch(
                 "openscientist.orchestrator.discovery.KnowledgeState.load_from_database_sync",
                 return_value=ks,
@@ -1017,7 +1017,7 @@ class TestBuildInitialPrompt:
         ks = KnowledgeState("j1", "Why X?", 10)
         ks.set_data_summary({"columns": ["a", "b"], "n_samples": 100, "files": ["data.csv"]})
 
-        prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks)
+        prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks, tool_prefix="")
         assert "Why X?" in prompt
         assert "data.csv" in prompt
         assert "iteration 1 of 10" in prompt
@@ -1028,7 +1028,7 @@ class TestBuildInitialPrompt:
 
         ks = KnowledgeState("j1", "Lit only?", 5)
 
-        prompt = build_initial_prompt("Lit only?", 5, [], ks)
+        prompt = build_initial_prompt("Lit only?", 5, [], ks, tool_prefix="")
         assert "No data files" in prompt
         assert "literature search" in prompt
 
@@ -1043,6 +1043,7 @@ class TestBuildInitialPrompt:
             [],
             ks,
             description="Prioritize longitudinal cohort evidence.",
+            tool_prefix="",
         )
         assert "Additional job context" in prompt
         assert "Prioritize longitudinal cohort evidence." in prompt
@@ -1055,7 +1056,7 @@ class TestBuildInitialPrompt:
         from openscientist.orchestrator.iteration import build_initial_prompt
 
         ks = KnowledgeState("j1", "Why X?", 10)
-        prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks)
+        prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks, tool_prefix="")
         assert "not progress" in prompt
         assert "not complete until" in prompt
         assert "your very first tool call must be set_status" not in prompt.lower()
@@ -1072,7 +1073,7 @@ class TestBuildIterationPrompt:
         from openscientist.orchestrator.iteration import build_iteration_prompt
 
         ks = KnowledgeState("j1", "Q?", 10)
-        prompt = build_iteration_prompt(3, 10, ks, pending_feedback="Focus on X")
+        prompt = build_iteration_prompt(3, 10, ks, pending_feedback="Focus on X", tool_prefix="")
         assert "Scientist Feedback" in prompt
         assert "Focus on X" in prompt
 
@@ -1081,7 +1082,7 @@ class TestBuildIterationPrompt:
         from openscientist.orchestrator.iteration import build_iteration_prompt
 
         ks = KnowledgeState("j1", "Q?", 10)
-        prompt = build_iteration_prompt(2, 10, ks, pending_feedback=None)
+        prompt = build_iteration_prompt(2, 10, ks, pending_feedback=None, tool_prefix="")
         assert "Scientist Feedback" not in prompt
         assert "Iteration 2 of 10" in prompt
 
@@ -1095,6 +1096,7 @@ class TestBuildIterationPrompt:
             10,
             ks,
             description="Stay focused on the uploaded assay design.",
+            tool_prefix="",
         )
         assert "Additional job context" in prompt
         assert "Stay focused on the uploaded assay design." in prompt
@@ -1106,7 +1108,7 @@ class TestBuildIterationPrompt:
         from openscientist.orchestrator.iteration import build_iteration_prompt
 
         ks = KnowledgeState("j1", "Q?", 10)
-        prompt = build_iteration_prompt(3, 10, ks)
+        prompt = build_iteration_prompt(3, 10, ks, tool_prefix="")
         assert "not progress" in prompt
         assert "wastes the iteration" in prompt
         assert "not complete until" in prompt
@@ -1123,8 +1125,8 @@ class TestBuildIterationPrompt:
 
         ks = KnowledgeState("j1", "Q?", 10)
         for prompt in (
-            build_iteration_prompt(3, 10, ks),
-            build_initial_prompt("Q?", 10, [], ks),
+            build_iteration_prompt(3, 10, ks, tool_prefix=""),
+            build_initial_prompt("Q?", 10, [], ks, tool_prefix=""),
         ):
             assert "in summaries" not in prompt
             assert "Refer to" not in prompt
@@ -1140,9 +1142,12 @@ class TestReportGenerationPhase:
             build_consensus_retry_prompt,
         )
 
-        assert "set_consensus_answer" in build_consensus_prompt("Does X cause Y?")
-        assert "Does X cause Y?" in build_consensus_prompt("Does X cause Y?")
-        assert "set_consensus_answer" in build_consensus_retry_prompt("Does X cause Y?")
+        consensus = build_consensus_prompt("Does X cause Y?", tool_prefix="")
+        assert "set_consensus_answer" in consensus
+        assert "Does X cause Y?" in consensus
+        assert "set_consensus_answer" in build_consensus_retry_prompt(
+            "Does X cause Y?", tool_prefix=""
+        )
 
     def test_report_retry_prompt_is_self_contained(self, tmp_path: Path):
         """The retry must restate the whole task, not just remind the model to
@@ -1189,6 +1194,7 @@ class TestReportGenerationPhase:
             run_iteration=fake_run,
             file_write_tool="Write",
             model_profile=SimpleNamespace(context_window_tokens=131072),
+            prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
         )
 
     @pytest.mark.asyncio
@@ -1280,6 +1286,7 @@ class TestReportGenerationPhase:
                     run_iteration=fake_run,
                     file_write_tool="Write",
                     model_profile=SimpleNamespace(context_window_tokens=131072),
+                    prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
                 ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
@@ -1309,7 +1316,11 @@ class TestReportGenerationPhase:
 
         with patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks):
             await discovery._set_consensus_answer(
-                SimpleNamespace(run_iteration=fake_run, file_write_tool="Write"),  # type: ignore[arg-type]
+                SimpleNamespace(
+                    run_iteration=fake_run,
+                    file_write_tool="Write",
+                    prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
+                ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
             )
@@ -1336,7 +1347,11 @@ class TestReportGenerationPhase:
 
         with patch.object(discovery.KnowledgeState, "load_from_database_sync", return_value=ks):
             await discovery._set_consensus_answer(
-                SimpleNamespace(run_iteration=fake_run, file_write_tool="Write"),  # type: ignore[arg-type]
+                SimpleNamespace(
+                    run_iteration=fake_run,
+                    file_write_tool="Write",
+                    prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
+                ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
             )
@@ -1369,6 +1384,7 @@ class TestReportGenerationPhase:
                     run_iteration=fake_run,
                     file_write_tool="Write",
                     model_profile=SimpleNamespace(context_window_tokens=131072),
+                    prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
                 ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
@@ -1403,6 +1419,7 @@ class TestReportGenerationPhase:
                     run_iteration=fake_run,
                     file_write_tool="Write",
                     model_profile=SimpleNamespace(context_window_tokens=131072),
+                    prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
                 ),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",

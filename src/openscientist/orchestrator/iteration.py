@@ -21,6 +21,7 @@ from openscientist.database.session import AsyncSessionLocal
 from openscientist.job.types import JobStatus
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import notify_job_status_change
+from openscientist.prompts.common import namespace_tool_mentions
 
 logger = logging.getLogger(__name__)
 
@@ -72,36 +73,39 @@ def build_initial_prompt(
     data_files: list[str],
     ks: KnowledgeState,
     description: str | None = None,
+    *,
+    tool_prefix: str,
 ) -> str:
-    """Build the prompt for iteration 1."""
+    """Build the prompt for iteration 1.
+
+    ``tool_prefix`` namespaces the MCP tool names in the instructions this
+    module writes. It is applied before the scientist's question and
+    description are interpolated, so their words reach the model as written.
+    """
     description_context = _format_job_description_section(description)
     if data_files:
+        access_note = namespace_tool_mentions(
+            "- Accessing data in `execute_code`: the primary file is pre-loaded "
+            "as the `data` DataFrame, and every file is listed in `data_files` "
+            "with a ready-to-read `path`. Do not construct file paths yourself "
+            "or reuse paths from the shell. They do not exist in the code "
+            "executor.",
+            tool_prefix,
+        )
         data_context = (
             f"Data summary:\n"
             f"- Files: {data_files}\n"
             f"- Columns: {ks.data['data_summary'].get('columns', [])}\n"
             f"- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}\n"
-            f"- Accessing data in execute_code: the primary file is pre-loaded "
-            f"as the `data` DataFrame, and every file is listed in `data_files` "
-            f"with a ready-to-read `path`. Do not construct file paths yourself "
-            f"or reuse paths from the shell. They do not exist in the code "
-            f"executor."
+            f"{access_note}"
         )
     else:
         data_context = (
             "No data files provided. You may use literature search and computational methods."
         )
 
-    return f"""Begin autonomous discovery for this research question:
-
-{research_question}
-{description_context}
-
-You are on iteration 1 of {max_iterations}.
-
-{data_context}
-
-Tools (MCP): `execute_code` (analysis, stats, plots), `search_pubmed` (literature),
+    instructions = namespace_tool_mentions(
+        """Tools (MCP): `execute_code` (analysis, stats, plots), `search_pubmed` (literature),
 `update_knowledge_state` (record a finding with its evidence), `save_iteration_summary`
 (end-of-iteration recap), `set_status` (optional progress label).
 
@@ -113,7 +117,20 @@ An iteration is not complete until you run analysis and record it:
 `set_status` is only a label, not progress. Do not end your turn after only calling it:
 if you announce an action, perform it with a tool before the turn ends.
 
-Start now.
+Start now.""",
+        tool_prefix,
+    )
+
+    return f"""Begin autonomous discovery for this research question:
+
+{research_question}
+{description_context}
+
+You are on iteration 1 of {max_iterations}.
+
+{data_context}
+
+{instructions}
 """
 
 
@@ -123,8 +140,14 @@ def build_iteration_prompt(
     ks: KnowledgeState,
     pending_feedback: str | None = None,
     description: str | None = None,
+    *,
+    tool_prefix: str,
 ) -> str:
-    """Build the prompt for iterations 2-N."""
+    """Build the prompt for iterations 2-N.
+
+    ``tool_prefix`` namespaces the MCP tool names in these instructions only,
+    leaving the scientist's feedback and description as written.
+    """
     description_context = _format_job_description_section(description)
     feedback_section = ""
     if pending_feedback:
@@ -138,6 +161,17 @@ the scientist's suggestions with your own analysis of what will be most producti
 
 ---
 """
+    instructions = namespace_tool_mentions(
+        """An iteration is not complete until you run analysis and record it:
+1. Call `execute_code` and/or `search_pubmed` this turn to make real progress.
+2. Record findings with `update_knowledge_state`.
+3. Finish with `save_iteration_summary` (1-2 sentences).
+
+`set_status` is only a label, not progress, and a status-only turn wastes the iteration.
+If you announce an action (for example "Performing pathway enrichment"), perform it with a
+tool before the turn ends, not just describe it.""",
+        tool_prefix,
+    )
     return f"""# Iteration {iteration} of {max_iterations}
 {feedback_section}
 {description_context}
@@ -145,14 +179,7 @@ the scientist's suggestions with your own analysis of what will be most producti
 
 ---
 
-An iteration is not complete until you run analysis and record it:
-1. Call `execute_code` and/or `search_pubmed` this turn to make real progress.
-2. Record findings with `update_knowledge_state`.
-3. Finish with `save_iteration_summary` (1-2 sentences).
-
-`set_status` is only a label, not progress, and a status-only turn wastes the iteration.
-If you announce an action (for example "Performing pathway enrichment"), perform it with a
-tool before the turn ends, not just describe it."""
+{instructions}"""
 
 
 def build_report_prompt(
@@ -266,21 +293,25 @@ report is the only task for this step. The consensus answer comes as a separate 
 """
 
 
-def build_consensus_prompt(research_question: str) -> str:
+def build_consensus_prompt(research_question: str, *, tool_prefix: str) -> str:
     """Prompt for the dedicated consensus-answer turn.
 
     Run as its own single-purpose turn after the report so a weaker model does
     not drop the report by trying to do both at once. The model writes the
     consensus itself.
     """
+    instruction = namespace_tool_mentions(
+        """Call the `set_consensus_answer` tool with a direct 1-3 sentence answer to the research
+question. Be direct, no citations, no hedging. Calling that tool is the only action
+for this step.""",
+        tool_prefix,
+    )
     return f"""The final report is written. Now record the consensus answer for this
 research question:
 
 {research_question}
 
-Call the `set_consensus_answer` tool with a direct 1-3 sentence answer to the research
-question. Be direct, no citations, no hedging. Calling that tool is the only action
-for this step."""
+{instruction}"""
 
 
 def build_report_retry_prompt(
@@ -333,10 +364,14 @@ The full task is restated below so nothing is missing. Follow it exactly.
     return correction + base
 
 
-def build_consensus_retry_prompt(research_question: str) -> str:
+def build_consensus_retry_prompt(research_question: str, *, tool_prefix: str) -> str:
     """Focused re-ask when the consensus turn did not record an answer."""
-    return f"""You did NOT record the consensus answer. Call the `set_consensus_answer`
-tool now with a direct 1-3 sentence answer to the research question:
+    opening = namespace_tool_mentions(
+        "You did NOT record the consensus answer. Call the `set_consensus_answer`\n"
+        "tool now with a direct 1-3 sentence answer to the research question:",
+        tool_prefix,
+    )
+    return f"""{opening}
 
 {research_question}
 

@@ -7,6 +7,7 @@ calls via asyncio.run().
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text, update
 
 from openscientist.agent.base import (
     AbstractAgent,
@@ -52,6 +53,13 @@ from openscientist.transcript import TranscriptEntry, save_transcript
 from openscientist.version import get_version_string
 
 logger = logging.getLogger(__name__)
+
+# Provenance is a single small update, so anything slower than this is a
+# database in trouble, and the run should carry on without the stamp. The
+# statement bound lives in the database. The deadline covers the rest of the
+# attempt, which the database cannot see.
+_STAMP_TIMEOUT_MS = 10_000
+_STAMP_DEADLINE_SECONDS = 30.0
 
 
 class _DiscoveryCancelledError(RuntimeError):
@@ -149,14 +157,34 @@ def _check_turn_outcome(result: IterationResult, iteration: int) -> None:
         logger.info("Iteration %d completed (tool_calls=%d)", iteration, result.tool_calls)
 
 
-def _sync_version_metadata_if_available(job_id: str) -> None:
-    """Store runtime version metadata in knowledge state when available."""
-    version_info = get_version_metadata()
-    if not version_info:
-        return
-    ks = KnowledgeState.load_from_database_sync(job_id)
-    ks.set_version_info(version_info)
-    ks.save_to_database_sync(job_id)
+async def _sync_version_metadata(job_id: str) -> None:
+    """Record runtime version provenance on the job, best effort.
+
+    Provenance is not a result, so anything that will not take it costs the run
+    its version strings and nothing more. It used to load and save the whole
+    knowledge state through the sync bridge, which turned one slow write into a
+    failed run. Two bounds apply to the write, because neither covers the
+    other: ``statement_timeout`` stops a slow statement inside the database,
+    and the surrounding deadline covers what the database cannot see (name
+    resolution, connecting, acquiring a connection, cleanup). It does not bound
+    metadata collection, whose blocking subprocesses hold the loop and carry
+    their own limits, but a failure there is still caught here.
+    """
+    try:
+        async with asyncio.timeout(_STAMP_DEADLINE_SECONDS):
+            version_info = get_version_metadata()
+            if not version_info:
+                return
+            async with AsyncSessionLocal() as session:
+                await session.execute(text(f"SET LOCAL statement_timeout = {_STAMP_TIMEOUT_MS}"))
+                await session.execute(
+                    update(JobModel)
+                    .where(JobModel.id == UUID(job_id))
+                    .values(version_info=version_info)
+                )
+                await session.commit()
+    except Exception as e:
+        logger.warning("Could not record version provenance for job %s: %s", job_id, e)
 
 
 async def _wait_for_coinvestigate_feedback(
@@ -203,13 +231,14 @@ async def _run_primary_discovery_loop(
         data_files,
         ks,
         description=runtime.get("description"),
+        tool_prefix=executor.prompt_fragments().mcp_tool_prefix,
     )
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
     result = await executor.run_iteration(initial_prompt, reset_session=True)
     _check_turn_outcome(result, 1)
 
-    _sync_version_metadata_if_available(job_id)
+    await _sync_version_metadata(job_id)
     _append_iteration_artifacts(
         provenance_dir=provenance_dir,
         log_file=log_file,
@@ -249,6 +278,7 @@ async def _run_primary_discovery_loop(
             ks,
             pending_feedback,
             description=runtime.get("description"),
+            tool_prefix=executor.prompt_fragments().mcp_tool_prefix,
         )
         pending_feedback = None
         should_reset = iteration % reset_interval == 1
@@ -475,11 +505,12 @@ async def _set_consensus_answer(
     fabricating one.
     """
     baseline = KnowledgeState.load_from_database_sync(job_dir.name).data.get("consensus_answer")
+    tool_prefix = executor.prompt_fragments().mcp_tool_prefix
     for attempt in range(1, _MAX_CONSENSUS_ATTEMPTS + 1):
         prompt = (
-            build_consensus_prompt(research_question)
+            build_consensus_prompt(research_question, tool_prefix=tool_prefix)
             if attempt == 1
-            else build_consensus_retry_prompt(research_question)
+            else build_consensus_retry_prompt(research_question, tool_prefix=tool_prefix)
         )
         await executor.run_iteration(prompt, reset_session=False)
         current = KnowledgeState.load_from_database_sync(job_dir.name).data.get("consensus_answer")
