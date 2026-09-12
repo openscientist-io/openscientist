@@ -20,6 +20,12 @@ administrator can turn A2A off or on; other users can view connection details
 and follow the link to create or revoke API keys. Changes persist in
 PostgreSQL and other open pages refresh within five seconds.
 
+The same page includes a **Try it with the Go client** box with copyable install,
+API-key entry, send, and get commands. The commands use this deployment's URL;
+the API key is entered privately in the caller's terminal.
+
+![Go client quickstart in the A2A settings page](images/a2a/a2a-go-client.jpg)
+
 Turning off blocks discovery and all subsequent A2A requests with HTTP 503,
 including get, list, cancel, and callers with cached agent cards. Already
 accepted jobs and waiting send requests continue. Manage those jobs in the UI,

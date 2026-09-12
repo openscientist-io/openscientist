@@ -6,7 +6,12 @@ from nicegui import ui
 
 from openscientist.api.a2a import change_enabled, service_status
 from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
-from openscientist.webapp_components.ui_components import render_alert_banner, render_navigator
+from openscientist.settings import get_settings
+from openscientist.webapp_components.ui_components import (
+    render_a2a_quickstart,
+    render_alert_banner,
+    render_navigator,
+)
 from openscientist.webapp_components.utils import setup_timer_cleanup
 
 
@@ -41,6 +46,8 @@ async def a2a_page() -> None:
                 "text-sm font-mono"
             )
             notices = ui.column().classes("w-full")
+
+        render_a2a_quickstart(get_settings().auth.app_url)
 
         busy = False
         updating = False
