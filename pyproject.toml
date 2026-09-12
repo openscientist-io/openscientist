@@ -68,6 +68,7 @@ dependencies = [
 
     # REST API
     "slowapi>=0.1.9",  # Rate limiting for FastAPI
+    "a2a-sdk==1.1.2",  # A2A protocol types and JSON-RPC validation
 
     # Type hints
     "typing-extensions>=4.8.0",
@@ -205,6 +206,7 @@ dev = [
     "types-fpdf2>=2.7.0",
     "types-docker>=7.0.0",
     "types-PyYAML>=6.0",
+    "types-protobuf>=6.32.1",
     "pre-commit>=3.5.0",
     "testcontainers[postgres]>=4.0.0",
     "cairosvg>=2.8.2",

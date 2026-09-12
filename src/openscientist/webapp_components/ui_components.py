@@ -1036,6 +1036,7 @@ def _build_navigation_items(
         [
             ("Skills", "school", "/skills", active_page == "skills"),
             ("API Keys", "vpn_key", "/api-keys", active_page == "api-keys"),
+            ("A2A", "hub", "/a2a-settings", active_page == "a2a"),
             ("Docs", "description", "/docs", active_page == "docs"),
         ]
     )
@@ -1165,11 +1166,33 @@ def render_navigator(
 
     with ui.header().classes("items-center justify-between"):
         _render_navigation_brand()
+        render_a2a_status()
         hamburger = ui.button(icon="menu", on_click=lambda: drawer.set_value(True)).props(
             "flat color=white"
         )
         hamburger.style("display: none").classes("mobile-menu-btn")
         _render_desktop_navigation(nav_items, extra_buttons, active_style, inactive_style)
+
+
+def render_a2a_status() -> None:
+    """Show confirmed A2A admission status in the shared navigation header."""
+    from openscientist.api.a2a import service_status
+    from openscientist.webapp_components.utils import setup_timer_cleanup
+
+    button = ui.button(
+        "Checking A2A…", icon="hub", on_click=lambda: ui.navigate.to("/a2a-settings")
+    )
+    button.props("flat color=white dense")
+
+    async def refresh() -> None:
+        try:
+            data = await service_status()
+            button.set_text("A2A running" if data["enabled"] else "A2A off")
+        except Exception:
+            button.set_text("A2A unavailable")
+
+    timers = setup_timer_cleanup()
+    timers.append(ui.timer(5, refresh, immediate=True))
 
 
 def render_pending_approval_notice() -> None:

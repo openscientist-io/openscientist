@@ -137,6 +137,10 @@ render_alert_banner(
 
 Use `get_status_badge_props()` and `render_status_cell_slot()` for job status display.
 
+`render_a2a_status()` provides the shared navigation indicator for A2A admission
+status and links to `/a2a-settings`. It reads the persisted server setting and
+shows unavailable when that state cannot be confirmed.
+
 ### Adding New Components
 
 When you need a new UI pattern used in multiple places:
