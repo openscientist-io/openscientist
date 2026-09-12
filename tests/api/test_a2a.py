@@ -1,59 +1,21 @@
 """A2A wire, ownership and lifecycle tests against real PostgreSQL records."""
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-import pytest_asyncio
 from a2a.types import a2a_pb2 as wire
 from fastapi import FastAPI
 from google.protobuf.json_format import ParseDict
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, select, text
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy import select
 
-from openscientist.api import a2a, auth
-from openscientist.api.endpoints import jobs
-from openscientist.database.models import A2ASettings, A2ATask, Administrator, APIKey, Job, User
+from openscientist.api import a2a
+from openscientist.database.models import A2ASettings, A2ATask, APIKey, Job
 from openscientist.database.rls import set_current_user
-from openscientist.database.session import get_session
-from openscientist.job_manager import JobManager
-from openscientist.settings import clear_settings_cache
-
-
-@dataclass
-class Environment:
-    client: AsyncClient
-    factory: async_sessionmaker[AsyncSession]
-    manager: JobManager
-    users: list[User]
-    tokens: list[str]
-    started: list[str]
-    app_session: Callable[[], AbstractAsyncContextManager[AsyncSession]]
-    admin_session: Callable[[], AbstractAsyncContextManager[AsyncSession]]
-
-    def use_user(self, index: int) -> None:
-        self.client.headers["Authorization"] = f"Bearer {self.tokens[index]}"
-
-    async def rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        response = await self.client.post(
-            "/a2a", json={"jsonrpc": "2.0", "id": "test", "method": method, "params": params or {}}
-        )
-        assert response.status_code == 200, response.text
-        return cast(dict[str, Any], response.json())
-
-    async def state(self, task_id: str, state: str) -> None:
-        async with self.factory() as session:
-            job = await session.get(Job, UUID(task_id))
-            assert job is not None
-            job.status = state
-            await session.commit()
+from tests.a2a_fixtures import Environment
 
 
 def message(prompt: str = "analyze arbitrary data", **extra: Any) -> dict[str, Any]:
@@ -68,93 +30,6 @@ def message(prompt: str = "analyze arbitrary data", **extra: Any) -> dict[str, A
     }
 
 
-@pytest_asyncio.fixture
-async def environment(
-    test_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> AsyncIterator[Environment]:
-    """Use the real manager and DB; replace only budget lookup and execution."""
-    monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
-    monkeypatch.setenv("OPENSCIENTIST_MODEL", "claude-test-model")
-    monkeypatch.setenv("APP_URL", "https://example.org/scientist")
-    clear_settings_cache()
-    factory = async_sessionmaker(test_engine, expire_on_commit=False)
-
-    @asynccontextmanager
-    async def admin_session() -> AsyncIterator[AsyncSession]:
-        async with factory() as session:
-            yield session
-
-    @asynccontextmanager
-    async def app_session() -> AsyncIterator[AsyncSession]:
-        async with factory() as session:
-            await session.execute(text("SET ROLE openscientist_app"))
-            try:
-                yield session
-            finally:
-                await session.rollback()
-                await session.execute(text("RESET ROLE"))
-                await session.commit()
-
-    monkeypatch.setattr(a2a, "get_session_ctx", app_session)
-    monkeypatch.setattr(a2a, "get_admin_session", admin_session)
-    monkeypatch.setattr(auth, "get_admin_session", admin_session)
-    users = [
-        User(
-            email=f"a2a-{uuid4()}@example.org",
-            name="A2A Test",
-            is_approved=i != 2,
-            ntfy_enabled=False,
-        )
-        for i in range(3)
-    ]
-    tokens = []
-    async with factory() as session:
-        session.add_all(users)
-        await session.flush()
-        session.add(Administrator(user_id=users[0].id))
-        for user in users:
-            secret = uuid4().hex
-            session.add(APIKey(user_id=user.id, name="client", key_hash=auth.hash_secret(secret)))
-            tokens.append(f"client:{secret}")
-        setting = await session.get(A2ASettings, 1)
-        assert setting is not None
-        setting.enabled = True
-        await session.commit()
-
-    manager = await asyncio.to_thread(JobManager, jobs_dir=tmp_path)
-    started: list[str] = []
-    monkeypatch.setattr(manager, "_check_budget_before_creation", lambda: None)
-    monkeypatch.setattr(manager, "start_job", started.append)
-    monkeypatch.setattr(manager, "_start_next_queued_job", lambda: None)
-    monkeypatch.setattr(a2a, "_get_job_manager", lambda: manager)
-    monkeypatch.setattr(jobs, "_get_job_manager", lambda: manager)
-    app = FastAPI()
-
-    async def rest_session() -> AsyncIterator[AsyncSession]:
-        async with app_session() as session:
-            yield session
-
-    app.dependency_overrides[get_session] = rest_session
-    app.include_router(a2a.router)
-    app.include_router(jobs.router, prefix="/api/v1")
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            env = Environment(
-                client, factory, manager, users, tokens, started, app_session, admin_session
-            )
-            env.use_user(0)
-            yield env
-    finally:
-        async with factory() as session:
-            await session.execute(delete(Job).where(Job.owner_id.in_([u.id for u in users])))
-            await session.execute(delete(User).where(User.id.in_([u.id for u in users])))
-            setting = await session.get(A2ASettings, 1)
-            assert setting is not None
-            setting.enabled = True
-            await session.commit()
-        clear_settings_cache()
-
-
 async def test_discovery_and_existing_api_key_auth(environment: Environment) -> None:
     env = environment
     discovery = await env.client.get("/.well-known/agent-card.json")
@@ -166,6 +41,7 @@ async def test_discovery_and_existing_api_key_auth(environment: Environment) -> 
     assert discovery.json()["securityRequirements"] == [{"schemes": {"apiKey": []}}]
     assert "apiKey" in card.security_requirements[0].schemes
     assert not card.capabilities.streaming
+    assert discovery.json()["capabilities"] == {"streaming": False, "pushNotifications": False}
     assert discovery.headers["cache-control"] == "no-store"
     env.client.headers.pop("Authorization")
     assert (await env.client.post("/a2a", json={})).status_code in {401, 403}
@@ -181,6 +57,94 @@ async def test_discovery_and_existing_api_key_auth(environment: Environment) -> 
     env.use_user(0)
     assert (await env.client.post("/a2a", json={})).status_code == 401
     assert not env.started
+
+
+async def test_host_app_registers_authenticated_a2a_routes(environment: Environment) -> None:
+    from openscientist.web_app import _register_api_routes
+
+    host = FastAPI()
+    _register_api_routes(host)
+    async with AsyncClient(transport=ASGITransport(app=host), base_url="http://test") as client:
+        assert (await client.get("/.well-known/agent-card.json")).json()["name"] == "openscientist"
+        assert (await client.get("/api/v1/a2a/settings")).status_code in {401, 403}
+        client.headers["Authorization"] = f"Bearer {environment.tokens[0]}"
+        assert (await client.get("/api/v1/a2a/settings")).json()["enabled"]
+        result = await client.post(
+            "/a2a", json={"jsonrpc": "2.0", "id": "list", "method": "ListTasks"}
+        )
+        assert result.json()["result"]["tasks"] == []
+
+
+async def test_blocking_send_observes_committed_job_updates(
+    environment: Environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A separate DB session can complete a waiting send without local notification."""
+    env = environment
+    observed_submission = asyncio.Event()
+    original_get_task = a2a.get_task
+
+    async def observe(user_id: UUID, task_id: str) -> dict[str, Any]:
+        task = await original_get_task(user_id, task_id)
+        if task["status"]["state"] == "TASK_STATE_SUBMITTED":
+            observed_submission.set()
+        return task
+
+    monkeypatch.setattr(a2a, "get_task", observe)
+    params = message()
+    params["configuration"] = {"historyLength": 1}
+    async with asyncio.timeout(10):
+        pending = asyncio.create_task(env.rpc("SendMessage", params))
+        try:
+            await observed_submission.wait()
+            assert not pending.done()
+            task_id = env.started[-1]
+            (env.manager.jobs_dir / task_id / "final_report.md").write_text("Completed elsewhere")
+            await env.state(task_id, "completed")
+            task = (await pending)["result"]["task"]
+        finally:
+            if not pending.done():
+                pending.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await pending
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert len(task["history"]) == 1
+    assert task["artifacts"][0]["parts"] == [{"text": "Completed elsewhere"}]
+
+
+@pytest.mark.parametrize("report_kind", ["oversized", "symlink", "summary"])
+async def test_report_bounds_and_external_file_isolation(
+    environment: Environment, report_kind: str
+) -> None:
+    env = environment
+    task = (await env.rpc("SendMessage", message()))["result"]["task"]
+    task_id = task["id"]
+    report = env.manager.jobs_dir / task_id / "final_report.md"
+    if report_kind == "oversized":
+        report.write_text("a" * 1_000_010)
+    elif report_kind == "symlink":
+        outside = env.manager.jobs_dir / "other-owner-report.md"
+        outside.write_text("Another user's private report")
+        report.symlink_to(outside)
+    else:
+        async with env.factory() as session:
+            job = await session.get(Job, UUID(task_id))
+            assert job is not None
+            job.result_summary = "Stored summary"
+            await session.commit()
+    await env.state(task_id, "completed")
+    result = (await env.rpc("GetTask", {"id": task_id}))["result"]
+    if report_kind == "symlink":
+        assert "artifacts" not in result
+        assert len(result["history"]) == 1
+    else:
+        output = result["artifacts"][0]["parts"][0]["text"]
+        if report_kind == "oversized":
+            assert (
+                output
+                == "a" * 1_000_000 + "\n[Report truncated; open the job for the full report.]"
+            )
+        else:
+            assert output == "Stored summary"
 
 
 async def test_send_uses_normal_job_manager_and_returns_report(environment: Environment) -> None:
@@ -320,6 +284,8 @@ async def test_lifecycle_cancellation_and_disconnect(environment: Environment) -
         ("SendMessage", message(contextId="other"), -32004),
         ("SendMessage", message(taskId="other"), -32004),
         ("SendMessage", message(role="ROLE_AGENT"), -32602),
+        ("SendMessage", message(extensions=["https://example.org/extension"]), -32004),
+        ("SendMessage", message(referenceTaskIds=["other"]), -32004),
         ("SendMessage", message(parts=[{"url": "file:///tmp/data"}]), -32005),
         ("SendMessage", message(parts=[{"text": "data", "mediaType": "text/html"}]), -32005),
     ],
@@ -334,12 +300,60 @@ async def test_validation(
 async def test_bad_envelopes_and_settings(environment: Environment) -> None:
     env = environment
     assert (await env.client.post("/a2a", content="{")).json()["error"]["code"] == -32700
-    for body in [[], {}, {"jsonrpc": "2.0", "id": True, "method": "ListTasks"}]:
+    for body in [
+        [],
+        {},
+        {"jsonrpc": "2.0", "id": True, "method": "ListTasks"},
+        {"jsonrpc": "1.0", "id": "bad", "method": "ListTasks"},
+    ]:
         assert (await env.client.post("/a2a", json=body)).json()["error"]["code"] == -32600
     for settings_body in [{}, {"enabled": "false"}, {"enabled": 1}, {"enabled": False, "extra": 1}]:
         assert (await env.client.put("/api/v1/a2a/settings", json=settings_body)).status_code == 422
     env.client.headers["A2A-Version"] = "0.3"
     assert (await env.rpc("ListTasks"))["error"]["code"] == -32009
+
+
+@pytest.mark.parametrize(
+    ("configuration", "code"),
+    [({"acceptedOutputModes": ["image/png"]}, -32005), ({"historyLength": -1}, -32602)],
+)
+async def test_unsupported_send_configuration(
+    environment: Environment, configuration: dict[str, Any], code: int
+) -> None:
+    params = message()
+    params["configuration"] = configuration
+    assert (await environment.rpc("SendMessage", params))["error"]["code"] == code
+    assert not environment.started
+
+
+async def test_protocol_extensions_and_tenants_are_rejected(environment: Environment) -> None:
+    env = environment
+    assert (await env.rpc("ListTasks", {"tenant": "other"}))["error"]["code"] == -32602
+    env.client.headers["A2A-Extensions"] = "https://example.org/extension"
+    assert (await env.rpc("ListTasks"))["error"]["code"] == -32004
+
+
+async def test_non_cancellable_manager_state(environment: Environment) -> None:
+    env = environment
+    task = (await env.rpc("SendMessage", message()))["result"]["task"]
+    await env.state(task["id"], "generating_report")
+    assert (await env.rpc("CancelTask", {"id": task["id"]}))["error"]["code"] == -32002
+    assert (await env.rpc("GetTask", {"id": task["id"]}))["result"]["status"][
+        "state"
+    ] == "TASK_STATE_WORKING"
+
+
+async def test_cancel_requires_persisted_confirmation(
+    environment: Environment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = environment
+    task = (await env.rpc("SendMessage", message()))["result"]["task"]
+    # A manager returning before it persists cancellation must not imply success.
+    monkeypatch.setattr(env.manager, "cancel_job", lambda _job_id: None)
+    assert (await env.rpc("CancelTask", {"id": task["id"]}))["error"]["code"] == -32002
+    assert (await env.rpc("GetTask", {"id": task["id"]}))["result"]["status"][
+        "state"
+    ] == "TASK_STATE_SUBMITTED"
 
 
 async def test_rls_cannot_read_other_users_protocol_metadata(environment: Environment) -> None:

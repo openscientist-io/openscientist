@@ -155,7 +155,8 @@ async def agent_card() -> dict[str, Any]:
             )
         ],
     )
-    result: dict[str, Any] = MessageToDict(card, always_print_fields_with_no_presence=True)
+    result: dict[str, Any] = MessageToDict(card)
+    result["capabilities"] = {"streaming": False, "pushNotifications": False}
     result["securitySchemes"] = {"apiKey": {"httpAuthSecurityScheme": {"scheme": "bearer"}}}
     # JSON scope values are arrays (Go SDK wire format), not the raw
     # protobuf StringList wrapper. Bearer credentials require no scopes.
@@ -303,9 +304,11 @@ async def send(params: wire.SendMessageRequest, user: User) -> dict[str, Any]:
     )
     # Disconnecting the caller must not interrupt an accepted job submission.
     task = await asyncio.shield(submission)
-    while not config.return_immediately and task["status"]["state"] not in _TERMINAL | {
-        "TASK_STATE_INPUT_REQUIRED"
-    }:
+    # Jobs are persisted and can change in another process; a local asyncio.Event
+    # would miss those updates. Keep bounded-rate DB polling until the job manager
+    # provides cross-process notifications (for example, PostgreSQL LISTEN/NOTIFY).
+    done_states = _TERMINAL | {"TASK_STATE_INPUT_REQUIRED"}
+    while not config.return_immediately and task["status"]["state"] not in done_states:  # NOSONAR
         await asyncio.sleep(1)
         task = await get_task(user.id, task["id"])
     length = config.history_length if config.HasField("history_length") else None
