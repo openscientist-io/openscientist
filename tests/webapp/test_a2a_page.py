@@ -41,14 +41,15 @@ async def test_a2a_settings_page(
             await browser.should_not_see("Enable A2A server")
             return
 
-        browser.find(ui.switch).click()
+        # Simulate the browser's model event; click() only assigns the Python value.
+        browser.find(ui.switch).trigger("update:modelValue", False)
         await browser.should_see("A2A off")
         async with env.factory() as session:
             saved = await session.get(A2ASettings, 1)
             assert saved is not None and not saved.enabled
         await browser.open("/")
         await browser.should_see("A2A off")
-        browser.find(ui.switch).click()
+        browser.find(ui.switch).trigger("update:modelValue", True)
         await browser.should_see("A2A running")
 
         # Removing admin rights while the page is open must revoke this control.
@@ -57,7 +58,7 @@ async def test_a2a_settings_page(
                 delete(Administrator).where(Administrator.user_id == env.users[0].id)
             )
             await session.commit()
-        browser.find(ui.switch).click()
+        browser.find(ui.switch).trigger("update:modelValue", False)
         await browser.should_see("Could not change A2A settings. Administrator access is required.")
         async with env.factory() as session:
             saved = await session.get(A2ASettings, 1)

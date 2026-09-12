@@ -332,7 +332,10 @@ async def dispatch(params: ProtoMessage, user: User) -> dict[str, Any]:
             raise errors.TaskNotCancelableError(
                 "This job cannot be canceled through the job manager in its current state"
             ) from exc
-        return await get_task(user.id, task["id"])
+        canceled = await get_task(user.id, task["id"])
+        if canceled["status"]["state"] != "TASK_STATE_CANCELED":
+            raise errors.TaskNotCancelableError("The job manager has not confirmed cancellation")
+        return canceled
     if isinstance(params, wire.ListTasksRequest):
         size = params.page_size or 50
         if not 1 <= size <= 100:
