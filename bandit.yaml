@@ -1,0 +1,5 @@
+# Pytest assertions are test expectations, not runtime security controls.
+assert_used:
+  skips:
+    - "*_test.py"
+    - "*test_*.py"
