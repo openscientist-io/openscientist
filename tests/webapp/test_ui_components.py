@@ -418,8 +418,19 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
         """render_thinking_status is refreshed on a 2-second poll timer for any
         actively-watched running job -- this is the call site that produced
         the original leak, so it must never call add_head_html itself."""
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
-            for _ in range(50):
-                render_thinking_status("Searching PubMed...")
+        from nicegui import Client, ui
+
+        # Own a slot rather than relying on the auto-index client's global
+        # state, which browser simulations intentionally reset between tests.
+        client = Client(ui.page("/thinking-status-test"))
+        try:
+            with (
+                client,
+                patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add,
+            ):
+                for _ in range(50):
+                    render_thinking_status("Searching PubMed...")
+        finally:
+            client.delete()
 
         mock_add.assert_not_called()
