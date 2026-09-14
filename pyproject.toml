@@ -102,6 +102,10 @@ dependencies = [
     # SPARQL queries against remote endpoints
     "SPARQLWrapper>=2.0.0",
 
+    # Experimental machine-verifiable evidence bundles
+    "rdflib>=7.5.0",
+    "pyshacl>=0.30.0",
+
     # Progress bars for the PubMed mirror ingest CLI
     "tqdm>=4.67.0",
 ]
