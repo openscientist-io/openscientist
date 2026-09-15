@@ -352,7 +352,28 @@ class TestOmpConfigOverlay:
         agent = _agent(tmp_path)
         path = agent._write_omp_config()
         assert path == tmp_path.resolve() / ".omp" / "omp-config.yml"
-        assert yaml.safe_load(path.read_text()) == {"tools": {"xdev": False}}
+        assert yaml.safe_load(path.read_text())["tools"] == {"xdev": False}
+
+    def test_no_temperature_key_when_unset(self, tmp_path: Path) -> None:
+        """Unset means omp keeps whatever its own default gives."""
+        import yaml
+
+        written = yaml.safe_load(_agent(tmp_path)._write_omp_config().read_text())
+        assert "temperature" not in written
+
+    def test_writes_the_configured_temperature(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Zero is the point of the setting, so it must survive as a number
+        rather than be dropped for being falsy."""
+        import yaml
+
+        settings = type("Settings", (), {"omp": type("Omp", (), {"temperature": 0.0})()})()
+        monkeypatch.setattr("openscientist.agent.omp_agent.get_settings", lambda: settings)
+
+        path = _agent(tmp_path)._write_omp_config()
+
+        assert yaml.safe_load(path.read_text())["temperature"] == 0.0
 
 
 class TestModelCatalog:
