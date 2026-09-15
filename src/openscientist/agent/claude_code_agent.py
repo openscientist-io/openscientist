@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -25,6 +26,7 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 from claude_agent_sdk.types import (
+    AgentDefinition,
     McpStdioServerConfig,
     PermissionResultAllow,
     TextBlock,
@@ -106,6 +108,9 @@ class _IterationState:
     """Mutable state captured while processing one SDK streaming response."""
 
     tool_call_count: int = 0
+    subagent_call_count: int = 0
+    subagent_names: set[str] = field(default_factory=set)
+    subagent_log: list[str] = field(default_factory=list)  # ordered, with duplicates
     transcript: list[dict[str, Any]] = field(default_factory=list)
     final_output: str = ""
 
@@ -152,6 +157,12 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
     def __init__(self, config: AgentConfig, provider: ClaudeCompatible) -> None:
         super().__init__(config, provider)
         self._model_override = config.model_override
+        # Defensive copy: callers may reuse or mutate their mapping after
+        # construction, but the agents registered at session init must be
+        # frozen from the caller's perspective.
+        self._experts: dict[str, AgentDefinition] | None = (
+            dict(config.experts) if config.experts is not None else None
+        )
         self._client: ClaudeSDKClient | None = None
         self._stderr_lines: list[str] = []
 
@@ -168,11 +179,15 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
     ) -> str:
         # Claude gets the concise system prompt. Its rich CLAUDE.md is written
         # separately into .claude/ by prepare_job_workspace.
-        return cls.system_prompt()
+        return cls.system_prompt(experts)
 
     async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
         # Claude's rich per-job CLAUDE.md is always written; skills follow.
@@ -190,6 +205,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
                 generate_job_claude_md(
                     use_hypotheses=use_hypotheses,
                     phenix_available=get_settings().phenix.is_available,
+                    experts=self._config.experts,
                 ),
                 encoding="utf-8",
             )
@@ -289,6 +305,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             cwd=str(job_dir),
             stderr=self._stderr_callback,
             extra_args={},
+            agents=self._experts,
         )
 
     def _apply_provider_env(self) -> None:
@@ -359,6 +376,24 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             "input": getattr(block, "input", {}),
         }
 
+    def _is_subagent_call(self, block: ToolUseBlock) -> str | None:
+        """Return the expert slug if this tool call is a subagent delegation, else None.
+
+        The SDK emits subagent invocations as ToolUseBlock with
+        name="Agent" (current) or name="Task" (older SDK versions).
+        The expert slug is in block.input["subagent_type"].
+        """
+        if not self._experts:
+            return None
+        # "Agent" (current SDK) or "Task" (older SDK).
+        if block.name not in ("Agent", "Task"):
+            return None
+        block_input = getattr(block, "input", {}) or {}
+        candidate = block_input.get("subagent_type", "")
+        if isinstance(candidate, str) and candidate in self._experts:
+            return candidate
+        return None
+
     def _handle_content_list(self, raw_content: list[object], state: _IterationState) -> None:
         """Convert SDK content blocks into transcript items."""
         content_items: list[dict[str, object]] = []
@@ -371,6 +406,12 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
                 state.tool_call_count += 1
                 logger.debug("Tool call: %s", block.name)
                 content_items.append(self._tool_use_item(block, state.tool_call_count))
+                expert_slug = self._is_subagent_call(block)
+                if expert_slug:
+                    state.subagent_call_count += 1
+                    state.subagent_names.add(expert_slug)
+                    state.subagent_log.append(expert_slug)
+                    logger.info("Subagent delegation: %s", expert_slug)
         if content_items:
             state.transcript.append({"type": "assistant", "message": {"content": content_items}})
 
@@ -501,6 +542,9 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             tool_calls=state.tool_call_count,
             transcript=CLAUDE.deserialize(state.transcript),
             error="",
+            subagent_calls=state.subagent_call_count,
+            subagent_names=frozenset(state.subagent_names),
+            subagent_log=tuple(state.subagent_log),
         )
 
     async def shutdown(self) -> None:

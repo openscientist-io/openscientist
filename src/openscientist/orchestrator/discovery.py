@@ -12,11 +12,13 @@ import logging
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select, text, update
 
 from openscientist.agent.base import (
@@ -27,10 +29,11 @@ from openscientist.agent.base import (
     TokenUsage,
     TurnOutcome,
 )
+from openscientist.agent.expert_loader import load_enabled_experts
 from openscientist.agent.factory import agent_class_for_provider_id, get_agent
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import AsyncSessionLocal, get_admin_session
 from openscientist.exceptions import OpenScientistError
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
@@ -84,12 +87,13 @@ def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
     return data_file
 
 
-def _build_agent_executor(
+async def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     *,
     use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
+    experts: Mapping[str, AgentDefinition] | None = None,
 ) -> AbstractAgent[Provider]:
     """Create a configured agent for discovery/report phases.
 
@@ -97,11 +101,24 @@ def _build_agent_executor(
     system prompt: Claude returns a concise prompt (its rich ``CLAUDE.md`` is
     written separately into ``.claude/`` by ``prepare_job_workspace``), codex
     returns the full per-job doc delivered via ``AGENTS.md``.
+
+    Experts default to the enabled catalog. A catalog that cannot be read
+    costs the run its delegation roster, not the run itself.
     """
+    if experts is None:
+        try:
+            async with get_admin_session() as session:
+                experts = await load_enabled_experts(session)
+        except Exception as e:
+            logger.warning("Failed to load experts: %s", e)
+            experts = {}
+    if experts:
+        logger.info("Loaded %d enabled expert subagents", len(experts))
     agent_cls = agent_class_for_provider_id(get_settings().provider.provider_id)
     system_prompt = agent_cls.discovery_system_prompt(
         use_hypotheses=use_hypotheses,
         phenix_available=get_settings().phenix.is_available,
+        experts=experts,
     )
     logger.info("Built %s system prompt (%d chars)", agent_cls.backend.value, len(system_prompt))
     config = AgentConfig(
@@ -110,8 +127,26 @@ def _build_agent_executor(
         system_prompt=system_prompt,
         use_hypotheses=use_hypotheses,
         data_files=tuple(data_files or ()),
+        experts=experts,
     )
     return get_agent(config)
+
+
+def _record_subagent_delegations(
+    job_id: str, result: IterationResult, subagent_log: list[str]
+) -> None:
+    """Add one analysis_log entry per subagent call (not per unique name).
+
+    ``subagent_log`` is the ordered list of expert slugs collected
+    during stream handling — one entry per invocation, preserving
+    duplicates so the UI count matches the actual delegation count.
+    """
+    if not subagent_log:
+        return
+    ks = KnowledgeState.load_from_database_sync(job_id)
+    for name in subagent_log:
+        ks.log_analysis(action="delegate_to_expert", description=f"Delegated to {name}")
+    ks.save_to_database_sync(job_id)
 
 
 def _append_iteration_artifacts(
@@ -131,6 +166,8 @@ def _append_iteration_artifacts(
         prompt,
         result.output,
         result.tool_calls,
+        subagent_calls=result.subagent_calls,
+        subagent_names=result.subagent_names,
         write=overwrite_log,
         timed_out=result.outcome is TurnOutcome.TIMED_OUT,
     )
@@ -247,6 +284,7 @@ async def _run_primary_discovery_loop(
         result=result,
         overwrite_log=True,
     )
+    _record_subagent_delegations(job_id, result, list(result.subagent_log))
     if max_iterations > 1:
         increment_ks_iteration(job_id)
     await _assert_job_not_cancelled(job_id)
@@ -298,6 +336,7 @@ async def _run_primary_discovery_loop(
             prompt=iteration_prompt,
             result=result,
         )
+        _record_subagent_delegations(job_id, result, list(result.subagent_log))
 
         if iteration < max_iterations:
             increment_ks_iteration(job_id)
@@ -774,7 +813,7 @@ async def _build_and_prepare_executor(
     """
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
-    executor = _build_agent_executor(
+    executor = await _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
         use_hypotheses=use_hypotheses,
@@ -939,6 +978,8 @@ def _append_log(
     prompt: str,
     output: str,
     tool_calls: int,
+    subagent_calls: int = 0,
+    subagent_names: frozenset[str] = frozenset(),
     write: bool = False,
     timed_out: bool = False,
 ) -> None:
@@ -951,3 +992,7 @@ def _append_log(
         f.write(f"Tool calls: {tool_calls}\n\n")
         if timed_out:
             f.write("Timed out: yes (turn cut by the wall-clock limit)\n\n")
+        if subagent_calls:
+            f.write(
+                f"Subagent delegations: {subagent_calls} ({', '.join(sorted(subagent_names))})\n\n"
+            )

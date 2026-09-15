@@ -1,6 +1,9 @@
 """Tests for prompts module."""
 
+import re
 from types import SimpleNamespace
+
+from claude_agent_sdk.types import AgentDefinition
 
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
 from openscientist.agent.codex_agent import CodexAgent
@@ -9,6 +12,31 @@ from openscientist.prompts import (
     format_skills_list,
     generate_job_claude_md,
 )
+
+_EXPECTED_EXPERT_SLUGS: list[str] = [
+    "research-lead",
+    "research-subagent",
+    "citations-agent",
+    "data-scientist",
+    "python-pro",
+    "scientific-literature-researcher",
+    "data-researcher",
+    "research-analyst",
+]
+
+
+def _canned_experts() -> dict[str, AgentDefinition]:
+    """Build a small, deterministic expert set for prompt tests."""
+    return {
+        "alpha": AgentDefinition(
+            description="Use for task type A",
+            prompt="you are alpha",
+        ),
+        "beta": AgentDefinition(
+            description="Use for task type B",
+            prompt="you are beta",
+        ),
+    }
 
 
 class TestSystemPrompt:
@@ -256,3 +284,64 @@ class TestFormatSkillsList:
         skills = {"my-skill": {}}
         result = format_skills_list(skills)
         assert "No description" in result
+
+
+class TestSystemPromptExpertDelegation:
+    """Tests for the Expert Delegation section of the system prompt."""
+
+    def test_no_delegation_section_when_experts_is_none(self) -> None:
+        """No experts means no delegation section in the prompt."""
+        prompt = ClaudeCodeAgent.system_prompt()
+        assert "Expert Delegation" not in prompt
+        for slug in _EXPECTED_EXPERT_SLUGS:
+            assert slug not in prompt
+
+    def test_delegation_section_reflects_supplied_experts(self) -> None:
+        """Supplied experts dict renders a delegation section."""
+        experts = _canned_experts()
+        prompt = ClaudeCodeAgent.system_prompt(experts)
+        assert "Expert Delegation" in prompt
+        for slug, agent_def in experts.items():
+            assert slug in prompt, f"supplied slug {slug!r} missing"
+            assert agent_def.description in prompt
+
+    def test_unregistered_slug_not_in_rendered_prompt(self) -> None:
+        """Unsupplied slugs do not appear in the prompt."""
+        prompt = ClaudeCodeAgent.system_prompt(_canned_experts())
+        for stale_slug in _EXPECTED_EXPERT_SLUGS:
+            assert stale_slug not in prompt
+
+    def test_empty_experts_dict_omits_delegation_section(self) -> None:
+        """An empty dict is equivalent to None — no delegation section."""
+        assert "Expert Delegation" not in ClaudeCodeAgent.system_prompt({})
+
+    def test_delegation_language_present_when_experts_supplied(self) -> None:
+        assert "delegate" in ClaudeCodeAgent.system_prompt(_canned_experts()).lower()
+
+    def test_delegation_section_length_is_bounded(self) -> None:
+        """Delegation section stays within a sensible size range."""
+        prompt = ClaudeCodeAgent.system_prompt(_canned_experts())
+        match = re.search(
+            r"(?im)^##\s*expert delegation\s*$(.+?)(?=^##\s|\Z)",
+            prompt,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert match is not None
+        section = match.group(1).strip()
+        assert 100 <= len(section) <= 3000, (
+            f"Expert Delegation section length is {len(section)} chars; expected 100 <= N <= 3000"
+        )
+
+    def test_claude_job_doc_carries_the_roster(self) -> None:
+        """The roster reaches CLAUDE.md too, not only the system prompt."""
+        experts = _canned_experts()
+        doc = ClaudeCodeAgent.job_doc(experts=experts)
+        assert "Expert Delegation" in doc
+        for slug in experts:
+            assert slug in doc
+
+    def test_backends_without_subagents_omit_the_roster(self) -> None:
+        """Codex registers no subagents, so its discovery prompt must not
+        advertise experts it cannot spawn."""
+        prompt = CodexAgent.discovery_system_prompt(experts=_canned_experts())
+        assert "Expert Delegation" not in prompt

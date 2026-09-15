@@ -29,6 +29,7 @@ import logging
 import os
 import shutil
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -47,6 +48,8 @@ from openscientist.providers.base import CodexCompatible
 from openscientist.transcript import CODEX
 
 if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
+
     from openscientist.prompts.common import BackendFragments
     from openscientist.settings import Settings
 
@@ -145,10 +148,15 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
     ) -> str:
         # Codex reads a single AGENTS.md, so its discovery system prompt is the
         # full per-job doc (CodexAgent writes it to AGENTS.md from this prompt).
+        # It registers no subagents, so the expert roster is dropped.
         return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
 
     # apply_runtime_environment, chat_system_prompt, write_chat_context, and

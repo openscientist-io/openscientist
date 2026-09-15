@@ -10,14 +10,21 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 from uuid import UUID
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.agent.expert_loader import (
+    ExpertPayload,
+    experts_from_payload,
+    experts_to_payload,
+    load_enabled_experts,
+)
 from openscientist.database.models import Job, JobChatMessage
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import AsyncSessionLocal, get_admin_session
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
@@ -256,14 +263,26 @@ def _truncate_history(content: str) -> str:
     return content[:_HISTORY_MAX_CHARS].rstrip() + " [...truncated]"
 
 
+class ChatRequest(TypedDict):
+    """One chat turn's request, handed to the container as JSON."""
+
+    system_prompt: str
+    model_override: str | None
+    prompt: str
+    experts: dict[str, ExpertPayload]
+
+
 async def _build_chat_request(
     session: AsyncSession,
     job_id: UUID,
     message: str,
-) -> dict[str, str | None]:
+) -> ChatRequest:
     """Build one chat turn's request on the web side, where the DB and RLS
     context are available. The prompt bundles the job context and recent history
-    so the container needs no database access to run the turn."""
+    so the container needs no database access to run the turn.
+
+    The expert roster travels in the request for the same reason: the web side
+    reads the catalog, the container only registers what it is handed."""
     from openscientist.agent.factory import agent_class_for_provider
     from openscientist.providers import get_provider
 
@@ -318,11 +337,26 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
 
     provider = get_provider()
     agent_cls = agent_class_for_provider(provider)
-    return {
-        "system_prompt": agent_cls.chat_system_prompt(system_prompt),
-        "model_override": agent_cls.chat_model_override(),
-        "prompt": prompt,
-    }
+    return ChatRequest(
+        system_prompt=agent_cls.chat_system_prompt(system_prompt),
+        model_override=agent_cls.chat_model_override(),
+        prompt=prompt,
+        experts=experts_to_payload(await _load_chat_experts()),
+    )
+
+
+async def _load_chat_experts() -> dict[str, AgentDefinition]:
+    """The enabled expert roster for a chat turn.
+
+    Fail-open: a catalog the web side cannot read costs the turn its experts,
+    never the user's message.
+    """
+    try:
+        async with get_admin_session() as session:
+            return await load_enabled_experts(session)
+    except Exception as e:
+        logger.warning("Failed to load experts for chat: %s", e)
+        return {}
 
 
 async def _send_message_via_container(
@@ -377,6 +411,7 @@ async def run_chat_turn_async(job_dir: Path) -> dict[str, str]:
         job_dir=job_dir,
         system_prompt=request["system_prompt"],
         model_override=request.get("model_override"),
+        experts=experts_from_payload(request.get("experts") or {}),
     )
     executor = build_agent(config, get_provider())
     executor.apply_runtime_environment()

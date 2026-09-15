@@ -1,4 +1,4 @@
-"""Skills list page."""
+"""Skills & Expert Agents page."""
 
 import logging
 from collections.abc import Callable
@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from openscientist.auth import get_current_user_id, require_auth
-from openscientist.database.models import Skill, SkillSource
+from openscientist.database.models import Expert, Skill, SkillSource
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
 from openscientist.webapp_components.ui_components import (
@@ -24,11 +24,27 @@ from openscientist.webapp_components.utils import get_event_value, setup_timer_c
 
 logger = logging.getLogger(__name__)
 
+# -- Skills table columns --
+
 _SKILL_COLUMNS: list[dict[str, Any]] = [
     {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
     {"name": "category", "label": "Category", "field": "category", "align": "center"},
     {"name": "source", "label": "Source", "field": "source", "align": "left"},
     {"name": "last_synced", "label": "Last Synced", "field": "last_synced", "align": "left"},
+]
+
+# -- Expert Agents table columns --
+
+_EXPERT_COLUMNS: list[dict[str, Any]] = [
+    {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
+    {
+        "name": "description",
+        "label": "Description",
+        "field": "description",
+        "align": "left",
+    },
+    {"name": "category", "label": "Category", "field": "category", "align": "center"},
+    {"name": "source", "label": "Source", "field": "source", "align": "left"},
 ]
 
 
@@ -58,6 +74,23 @@ def _skill_rows(rows_data: list[tuple[Skill, SkillSource | None]]) -> list[dict[
             }
         )
     return rows
+
+
+def _expert_rows(experts: list[Expert]) -> list[dict[str, Any]]:
+    """Serialize Expert rows for the experts table."""
+    return [
+        {
+            "slug": e.slug,
+            "name": e.name,
+            "description": (
+                e.description[:120] + "..." if len(e.description) > 120 else e.description
+            ),
+            "category": e.category,
+            "category_color": get_category_color(e.category),
+            "source": e.source,
+        }
+        for e in experts
+    ]
 
 
 def _skills_stmt(search: str, category: str | None) -> Any:
@@ -109,6 +142,15 @@ async def _load_skills(search: str, category: str | None) -> list[dict[str, Any]
     return _skill_rows(list(result.tuples().all()))
 
 
+async def _load_experts() -> list[dict[str, Any]]:
+    """Load enabled expert agents (public catalog, no per-user scoping)."""
+    async with get_session_ctx() as session:
+        result = await session.execute(
+            select(Expert).where(Expert.is_enabled.is_(True)).order_by(Expert.slug)
+        )
+    return _expert_rows(list(result.scalars().all()))
+
+
 def _render_no_results(
     *,
     empty_container: ui.element,
@@ -153,62 +195,81 @@ def _apply_table_visibility(
     )
 
 
+_CATEGORY_BADGE_SLOT = r"""
+<q-td :props="props">
+    <q-badge :color="props.row.category_color" outline>
+        {{ props.row.category }}
+    </q-badge>
+</q-td>
+"""
+
+
 @ui.page("/skills")
 @require_auth
 async def skills_page() -> None:
-    """Skills list page."""
-    ui.page_title("Skills - OpenScientist")
+    """Skills & Expert Agents page."""
+    ui.page_title("Skills & Expert Agents - OpenScientist")
     _active_timers = setup_timer_cleanup()
     render_navigator(active_page="skills")
 
     state: dict[str, Any] = {"search": "", "category": None, "categories": []}
 
-    with ui.column().classes("w-full"):
-        with ui.row().classes("w-full gap-4 mb-4 items-end flex-wrap"):
-            search_input = ui.input(
-                label="Search skills",
-                placeholder="Search by name, description, or content...",
-            ).classes("flex-grow min-w-64")
-            search_input.props("clearable outlined dense")
+    # -- Tab bar --
+    with ui.tabs().classes("w-full") as tabs:
+        ui.tab("skills", label="Skills", icon="auto_stories")
+        ui.tab("experts", label="Expert Agents", icon="psychology")
 
-            category_select = ui.select(
-                options=[],
-                label="Category",
-                value=None,
-            ).classes("min-w-48")
-            category_select.props("clearable outlined dense")
+    with ui.tab_panels(tabs, value="skills").classes("w-full"):
+        # ── Skills panel ──────────────────────────────────────────
+        with ui.tab_panel("skills"):
+            with ui.column().classes("w-full"):
+                with ui.row().classes("w-full gap-4 mb-4 items-end flex-wrap"):
+                    search_input = ui.input(
+                        label="Search skills",
+                        placeholder="Search by name, description, or content...",
+                    ).classes("flex-grow min-w-64")
+                    search_input.props("clearable outlined dense")
 
-        skills_table = ui.table(
-            columns=_SKILL_COLUMNS,
-            rows=[],
-            row_key="id",
-            pagination=10,
-        ).classes("w-full")
-        skills_table.add_slot("body-cell-name", render_skill_name_slot())
-        skills_table.add_slot(
-            "body-cell-category",
-            r"""
-            <q-td :props="props">
-                <q-badge :color="props.row.category_color" outline>
-                    {{ props.row.category }}
-                </q-badge>
-            </q-td>
-            """,
-        )
-        skills_table.on(
-            "view-skill",
-            lambda e: ui.navigate.to(f"/skill/{e.args['category']}/{e.args['slug']}"),
-        )
-        empty_container = ui.column().classes("w-full hidden")
+                    category_select = ui.select(
+                        options=[],
+                        label="Category",
+                        value=None,
+                    ).classes("min-w-48")
+                    category_select.props("clearable outlined dense")
+
+                skills_table = ui.table(
+                    columns=_SKILL_COLUMNS,
+                    rows=[],
+                    row_key="id",
+                    pagination=10,
+                ).classes("w-full")
+                skills_table.add_slot("body-cell-name", render_skill_name_slot())
+                skills_table.add_slot("body-cell-category", _CATEGORY_BADGE_SLOT)
+                skills_table.on(
+                    "view-skill",
+                    lambda e: ui.navigate.to(f"/skill/{e.args['category']}/{e.args['slug']}"),
+                )
+                empty_container = ui.column().classes("w-full hidden")
+
+        # ── Expert Agents panel ───────────────────────────────────
+        with ui.tab_panel("experts"):
+            with ui.column().classes("w-full"):
+                experts_table = ui.table(
+                    columns=_EXPERT_COLUMNS,
+                    rows=[],
+                    row_key="slug",
+                ).classes("w-full")
+                experts_table.add_slot("body-cell-category", _CATEGORY_BADGE_SLOT)
+                experts_empty = ui.column().classes("w-full hidden")
+
+    # -- Event handlers --
 
     def clear_search() -> None:
-        """Clear search and trigger async reload."""
         search_input.value = ""
         state["search"] = ""
         ui.timer(0.1, load_skills, once=True)
 
     async def load_categories() -> None:
-        """Load available categories and refresh category dropdown."""
         try:
             categories = await _load_categories()
             state["categories"] = categories
@@ -218,7 +279,6 @@ async def skills_page() -> None:
             logger.error("Failed to load categories: %s", exc, exc_info=True)
 
     async def load_skills() -> None:
-        """Load skills from database with active filters."""
         try:
             rows = await _load_skills(state["search"], state["category"])
             _apply_table_visibility(
@@ -231,6 +291,24 @@ async def skills_page() -> None:
         except Exception as exc:
             logger.error("Failed to load skills: %s", exc, exc_info=True)
             ui.notify("Failed to load skills. Please try again.", type="negative")
+
+    async def load_experts() -> None:
+        try:
+            rows = await _load_experts()
+            experts_table.rows = rows
+            experts_table.update()
+            if rows:
+                experts_table.classes(remove="hidden")
+                experts_empty.classes(add="hidden")
+            else:
+                experts_table.classes(add="hidden")
+                experts_empty.classes(remove="hidden")
+                experts_empty.clear()
+                with experts_empty:
+                    render_empty_state("No expert agents available yet.")
+        except Exception as exc:
+            logger.error("Failed to load experts: %s", exc, exc_info=True)
+            ui.notify("Failed to load expert agents. Please try again.", type="negative")
 
     async def on_search_change(e: Any) -> None:
         state["search"] = get_event_value(e) or ""
@@ -246,5 +324,6 @@ async def skills_page() -> None:
     async def initial_load() -> None:
         await load_categories()
         await load_skills()
+        await load_experts()
 
     _active_timers.append(ui.timer(0.1, initial_load, once=True))

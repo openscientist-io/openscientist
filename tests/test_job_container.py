@@ -73,7 +73,10 @@ class TestJobContainerRunner:
                 agent_image=agent_image,
             ),
             provider=provider,
-            database=SimpleNamespace(effective_database_url="postgresql://db"),
+            database=SimpleNamespace(
+                effective_database_url="postgresql://db",
+                effective_admin_database_url="postgresql://db",
+            ),
             phenix=SimpleNamespace(phenix_host_path=None),
             airgap=SimpleNamespace(enabled=False),
             secret_key="secret",
@@ -130,6 +133,10 @@ class TestJobContainerRunner:
         assert environment["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
         assert environment["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
         assert run_kwargs["volumes"]["/host/project/jobs/job-123"]["bind"] == environment["JOB_DIR"]
+        # The experts catalog is world-readable, so the container reads it
+        # through DATABASE_URL. Handing it the RLS-bypassing admin URL would
+        # give an untrusted container privileged database access.
+        assert "ADMIN_DATABASE_URL" not in environment
 
     def test_launch_omits_docker_socket_and_group_add(self):
         """The job container no longer mounts the Docker socket or joins its group."""
@@ -364,6 +371,7 @@ class TestPhenixMount:
         settings.container.agent_cpu = 2.0
         settings.secret_key = "test-secret"
         settings.database.effective_database_url = "postgresql+asyncpg://test"
+        settings.database.effective_admin_database_url = "postgresql+asyncpg://admin-test"
         settings.provider.get_container_env_vars.return_value = {}
         settings.provider.google_application_credentials = None
         settings.provider.gcp_credentials_host_path = None
