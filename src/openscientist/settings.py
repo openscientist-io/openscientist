@@ -48,7 +48,8 @@ class ProviderSettings(BaseSettings):
         alias="OPENSCIENTIST_PROVIDER",
         description=(
             "Provider id (anthropic, cborg, vertex, bedrock, foundry, openai, "
-            "azure-openai, ollama, vllm, llamacpp). Required: there is no default provider."
+            "azure-openai, ollama, vllm, llamacpp, bedrock-openai). "
+            "Required: there is no default provider."
         ),
     )
 
@@ -118,6 +119,14 @@ class ProviderSettings(BaseSettings):
     # --api-key needs LLAMACPP_API_KEY.
     llamacpp_base_url: str = Field(default="http://localhost:8080/v1", alias="LLAMACPP_BASE_URL")
     llamacpp_api_key: str | None = Field(default=None, alias="LLAMACPP_API_KEY")
+
+    # AWS Bedrock OpenAI (Codex agent backend, OpenAI gpt-oss models via the
+    # Bedrock "Mantle" Responses endpoint). Distinct from the bedrock provider,
+    # which serves Anthropic models through the Bedrock runtime.
+    bedrock_api_key: str | None = Field(default=None, alias="BEDROCK_API_KEY")
+    bedrock_region: str = Field(default="us-east-1", alias="BEDROCK_REGION")
+    bedrock_model: str = Field(default="openai.gpt-oss-120b", alias="BEDROCK_MODEL")
+    bedrock_stream_max_retries: int = Field(default=5, alias="BEDROCK_STREAM_MAX_RETRIES")
 
     # Model settings
     model: str | None = Field(default=None, alias="OPENSCIENTIST_MODEL")
@@ -227,7 +236,8 @@ class ProviderSettings(BaseSettings):
             raise ValueError(
                 "OPENSCIENTIST_PROVIDER is not set and there is no default "
                 "provider. Set OPENSCIENTIST_PROVIDER to one of: anthropic, "
-                "cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, vllm, llamacpp."
+                "cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, "
+                "vllm, llamacpp, bedrock-openai."
             )
         return self
 
@@ -245,7 +255,8 @@ class ProviderSettings(BaseSettings):
         except ValueError:
             logger.warning(
                 "Provider config: Unknown provider %r. Valid options: anthropic, "
-                "cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, vllm, llamacpp.",
+                "cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, "
+                "vllm, llamacpp, bedrock-openai.",
                 self.provider_id,
             )
             return self
