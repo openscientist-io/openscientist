@@ -88,13 +88,10 @@ class ProviderSettings(BaseSettings):
     # OpenAI (Codex agent backend)
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
-    # Azure OpenAI Service (Codex agent backend, OpenAI models via Azure).
-    # Azure routes by deployment name in the URL, so the deployment is carried
-    # separately from the model. Distinct from the foundry provider, which
-    # serves Anthropic models via Azure AI Foundry.
+    # Azure OpenAI Service as a Codex backend. OPENSCIENTIST_MODEL names the
+    # Azure deployment, which Azure routes on as the request-body model.
     azure_openai_api_key: str | None = Field(default=None, alias="AZURE_OPENAI_API_KEY")
     azure_openai_resource: str | None = Field(default=None, alias="AZURE_OPENAI_RESOURCE")
-    azure_openai_deployment: str | None = Field(default=None, alias="AZURE_OPENAI_DEPLOYMENT")
     azure_openai_api_version: str | None = Field(default=None, alias="AZURE_OPENAI_API_VERSION")
     # How many times codex reconnects through Azure's intermittent streaming
     # disconnects before failing the turn (openai/codex#9936). Raise it for

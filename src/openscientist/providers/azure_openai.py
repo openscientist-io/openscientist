@@ -1,8 +1,8 @@
 """Azure OpenAI Service provider (drives the Codex agent).
 
-Routes the Codex agent at an Azure-hosted OpenAI deployment. Azure selects
-the model by the deployment name in the URL path, not by the model name in
-the request body, so the deployment is configured separately from the model.
+Routes the Codex agent at an Azure-hosted OpenAI deployment. On Azure's
+OpenAI v1 surface the deployment name is the request-body model, so
+``OPENSCIENTIST_MODEL`` names it.
 Authentication is an ``AZURE_OPENAI_API_KEY`` sent as a Bearer token.
 
 This is distinct from ``FoundryProvider``, which is ``ClaudeCompatible`` and
@@ -40,7 +40,6 @@ class AzureOpenAIProvider(CodexCompatible):
             [
                 ("AZURE_OPENAI_API_KEY", provider.azure_openai_api_key),
                 ("AZURE_OPENAI_RESOURCE", provider.azure_openai_resource),
-                ("AZURE_OPENAI_DEPLOYMENT", provider.azure_openai_deployment),
                 ("AZURE_OPENAI_API_VERSION", provider.azure_openai_api_version),
                 ("AZURE_OPENAI_STREAM_MAX_RETRIES", str(provider.azure_openai_stream_max_retries)),
             ]
@@ -59,9 +58,10 @@ class AzureOpenAIProvider(CodexCompatible):
                 "AZURE_OPENAI_RESOURCE is required (the <resource> in "
                 "https://<resource>.openai.azure.com)."
             )
-        if not provider.azure_openai_deployment:
+        if not provider.model:
             errors.append(
-                "AZURE_OPENAI_DEPLOYMENT is required (the deployment name configured in Azure)."
+                "OPENSCIENTIST_MODEL is required (the Azure deployment name, which "
+                "Azure routes on as the request-body model)."
             )
         return errors
 
@@ -77,10 +77,8 @@ class AzureOpenAIProvider(CodexCompatible):
         )
 
     def _base_url(self) -> str:
-        # Azure serves the Responses API on the OpenAI v1 surface
-        # (.../openai/v1/responses), not under /deployments/<name>/. Codex
-        # appends "/responses" to base_url, and the deployment is sent as the
-        # model name in the request body (see codex_model_name).
+        # Azure serves the Responses API on the OpenAI v1 surface, not under
+        # /deployments/<name>/. Codex appends "/responses" to base_url.
         return f"https://{get_settings().provider.azure_openai_resource}.openai.azure.com/openai/v1"
 
     def llm_upstream(self) -> LlmUpstream | None:
@@ -120,11 +118,8 @@ class AzureOpenAIProvider(CodexCompatible):
         return lines
 
     def codex_model_name(self) -> str | None:
-        # The deployment name is sent as the request-body model, which is how
-        # Azure routes on the v1 surface. Default to the deployment unless
-        # OPENSCIENTIST_MODEL is set.
-        s = get_settings().provider
-        return s.model or s.azure_openai_deployment
+        # Azure routes on the deployment name sent as the request-body model.
+        return get_settings().provider.model
 
     def codex_model_provider_id(self) -> str:
         return "azure-openai"

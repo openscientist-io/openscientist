@@ -37,7 +37,6 @@ def active_provider(monkeypatch):
         "OPENAI_API_KEY",
         "AZURE_OPENAI_API_KEY",
         "AZURE_OPENAI_RESOURCE",
-        "AZURE_OPENAI_DEPLOYMENT",
         "OPENSCIENTIST_LLM_PROXY_URL",
         "ANTHROPIC_FOUNDRY_RESOURCE",
         "ANTHROPIC_FOUNDRY_BASE_URL",
@@ -242,7 +241,7 @@ class TestCodexUpstream:
             OPENSCIENTIST_PROVIDER="azure-openai",
             AZURE_OPENAI_API_KEY="az-real",
             AZURE_OPENAI_RESOURCE="myres",
-            AZURE_OPENAI_DEPLOYMENT="gpt5",
+            OPENSCIENTIST_MODEL="gpt5",
         )
         assert provider.llm_upstream() == LlmUpstream(
             "https://myres.openai.azure.com/openai/v1", {"authorization": "Bearer az-real"}
@@ -313,7 +312,7 @@ class TestCodexProxiedEnv:
             OPENSCIENTIST_PROVIDER="azure-openai",
             AZURE_OPENAI_API_KEY="az-real",
             AZURE_OPENAI_RESOURCE="myres",
-            AZURE_OPENAI_DEPLOYMENT="gpt5",
+            OPENSCIENTIST_MODEL="gpt5",
         )
         env = provider.proxied_container_env(
             proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
@@ -410,7 +409,7 @@ class TestCodexConfigRedirect:
             OPENSCIENTIST_PROVIDER="azure-openai",
             AZURE_OPENAI_API_KEY="az-real",
             AZURE_OPENAI_RESOURCE="myres",
-            AZURE_OPENAI_DEPLOYMENT="gpt5",
+            OPENSCIENTIST_MODEL="gpt5",
             OPENSCIENTIST_LLM_PROXY_URL="http://openscientist:8081",
         )
         assert 'base_url = "http://openscientist:8081"' in provider.codex_config_overrides()
@@ -420,7 +419,7 @@ class TestCodexConfigRedirect:
             OPENSCIENTIST_PROVIDER="azure-openai",
             AZURE_OPENAI_API_KEY="az-real",
             AZURE_OPENAI_RESOURCE="myres",
-            AZURE_OPENAI_DEPLOYMENT="gpt5",
+            OPENSCIENTIST_MODEL="gpt5",
         )
         toml = provider.codex_config_overrides()
         assert 'base_url = "https://myres.openai.azure.com/openai/v1"' in toml
@@ -648,7 +647,7 @@ class TestAirgapPosture:
             OPENSCIENTIST_PROVIDER="azure-openai",
             AZURE_OPENAI_API_KEY="k",
             AZURE_OPENAI_RESOURCE="r",
-            AZURE_OPENAI_DEPLOYMENT="d",
+            OPENSCIENTIST_MODEL="d",
         )
         assert p.airgap_egress().mode is AirgapEgress.PROXY
 
