@@ -9,11 +9,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.api.rate_limits import MUTATING_RATE_LIMIT, limiter
 from openscientist.auth.middleware import get_current_user_id
 from openscientist.database.models import JobShare, User
 from openscientist.database.rls import set_current_user
@@ -120,8 +121,10 @@ CURRENT_SESSION_USER_DEP = Depends(get_current_user_from_session)
 
 
 @router.post("/job/{job_id}")
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def create_share(
     job_id: str,
+    request: Request,
     share_data: ShareCreate,
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
@@ -138,6 +141,7 @@ async def create_share(
     Returns:
         Persisted share metadata for the target user.
     """
+    _ = request
     # Set RLS context
     await set_current_user(session, user.id)
 
@@ -183,8 +187,10 @@ async def list_job_shares(
 
 
 @router.delete("/{share_id}")
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def revoke_share(
     share_id: str,
+    request: Request,
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> dict[str, Any]:
@@ -199,6 +205,7 @@ async def revoke_share(
     Returns:
         Success payload consumed by the web UI.
     """
+    _ = request
     # Set RLS context
     await set_current_user(session, user.id)
 

@@ -5,10 +5,11 @@ Provides web UI for job submission, monitoring, and results viewing.
 """
 
 import argparse
+import asyncio
 import importlib
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -34,33 +35,6 @@ ASSETS_DIR = Path(__file__).parent / "assets"
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 JOBS_DIR_ENV = "OPENSCIENTIST_JOBS_DIR"
 
-
-# ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
-# When a container (e.g. feedback_container) is .clear()-ed, child timers
-# lose their parent slot but keep firing until on_disconnect cleanup runs.
-# The base timer's inner try/except only covers the *callback*, not the
-# `with self._get_context():` call at line 90 of timer.py, so the error
-# propagates to the background task handler and fills the log.
-# Patch: return nullcontext() and deactivate the timer instead of raising.
-def _patch_nicegui_timer() -> None:
-    from contextlib import nullcontext
-
-    from nicegui.elements.timer import Timer as _NiceGUITimer
-
-    _orig = _NiceGUITimer._get_context
-
-    def _safe_get_context(self):  # type: ignore[no-untyped-def]
-        try:
-            return _orig(self)
-        except RuntimeError:
-            self.deactivate()
-            return nullcontext()
-
-    _NiceGUITimer._get_context = _safe_get_context  # type: ignore[method-assign]
-
-
-_patch_nicegui_timer()
-# ─────────────────────────────────────────────────────────────────────────────
 
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
@@ -148,6 +122,67 @@ class _AppState:
 
 
 _state = _AppState()
+
+
+def _log_startup_posture(env: Mapping[str, str] | None = None) -> None:
+    """Log the security-relevant configuration the app actually resolved.
+
+    A guard you cannot see firing is indistinguishable from no guard. The
+    check that rejects dev mode in production reads OPENSCIENTIST_ENVIRONMENT,
+    but the deployed .env files set a bare ENVIRONMENT, so for seven weeks it
+    silently never ran and prod served the mock-auth routes -- including one
+    that grants admin -- on a public address. Nothing in the logs said so.
+
+    Printing what was resolved, rather than what was configured, makes that
+    class of mismatch visible in the first few lines instead of never.
+    """
+    from openscientist.settings import AppEnvironment, get_settings
+
+    environ = os.environ if env is None else env
+    settings = get_settings()
+    dev_mode = settings.dev.dev_mode
+    environment = settings.dev.environment
+
+    logger.info("Environment:   %s", environment.value)
+    logger.info(
+        "Dev mode:      %s (mock auth routes %s)",
+        "ENABLED" if dev_mode else "disabled",
+        "REACHABLE" if dev_mode else "return 404",
+    )
+    logger.info(
+        "OAuth:         %s",
+        "configured" if settings.auth.is_oauth_configured else "not configured",
+    )
+
+    # The exact mismatch described above: a bare ENVIRONMENT is set, so the
+    # deployment believes it declared an environment, while the setting that
+    # the production guard reads was never provided and fell back to its
+    # default.
+    stray = environ.get("ENVIRONMENT")
+    if stray and not environ.get("OPENSCIENTIST_ENVIRONMENT"):
+        logger.warning(
+            "ENVIRONMENT=%s is set but OPENSCIENTIST_ENVIRONMENT is not, so the "
+            "environment resolved to %s from the default. The check that rejects "
+            "dev mode in production reads OPENSCIENTIST_ENVIRONMENT and cannot "
+            "see ENVIRONMENT. Set OPENSCIENTIST_ENVIRONMENT to make it effective.",
+            stray,
+            environment.value,
+        )
+
+    if dev_mode and environment is not AppEnvironment.DEVELOPMENT:
+        logger.warning(
+            "Dev mode is enabled outside a development environment. The mock "
+            "auth routes, including /auth/mock/admin-login which grants admin, "
+            "are reachable by anyone who can reach this server."
+        )
+    if dev_mode and str(stray).lower() == "production":
+        logger.warning(
+            "Dev mode is enabled on a deployment labelled production, so "
+            "/auth/mock/login and /auth/mock/admin-login are serving anyone who "
+            "can reach this server, and the latter grants admin. Set "
+            "OPENSCIENTIST_DEV_MODE=false, or OPENSCIENTIST_ENVIRONMENT="
+            "production to make startup refuse this combination outright."
+        )
 
 
 def _register_oauth_routes() -> None:
@@ -473,6 +508,8 @@ def _create_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]
             logger.error("Failed to initialize database: %s", e)
             logger.warning("Application will continue but database features may not work")
         yield
+        if _state.job_manager is not None:
+            await asyncio.to_thread(_state.job_manager.shutdown, timeout=30.0)
 
     return lifespan
 
@@ -503,6 +540,11 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     """Configure middleware, routes, and mounted NiceGUI app before startup."""
     if _state.app_configured:
         return
+
+    from openscientist.api.rate_limits import configure_host_rate_limiting, wire_rate_limiter
+
+    configure_host_rate_limiting(host_app)
+    wire_rate_limiter(app)
 
     # Middleware and routes must be registered before startup.
     register_scanner_block_middleware(host_app)
@@ -615,6 +657,8 @@ def main(
         return  # Exit after running error mode
 
     logger.info("Settings validated successfully")
+
+    _log_startup_posture()
 
     from openscientist.settings import get_settings
 

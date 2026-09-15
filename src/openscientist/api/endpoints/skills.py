@@ -9,13 +9,14 @@ import logging
 from datetime import datetime
 from typing import TypedDict
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from openscientist.api.auth import get_current_user_from_api_key
+from openscientist.api.rate_limits import MUTATING_RATE_LIMIT, limiter
 from openscientist.api.utils import parse_uuid
 from openscientist.database.models import Skill, SkillSource, User
 from openscientist.database.rls import set_current_user
@@ -386,7 +387,9 @@ async def list_skill_sources(
 
 
 @router.post("/sources", response_model=SkillSourceResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def create_skill_source(
+    request: Request,
     source_data: SkillSourceCreate,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
@@ -396,6 +399,7 @@ async def create_skill_source(
 
     The source will be synced automatically by the background scheduler.
     """
+    _ = request
     await set_current_user(session, user.id)
 
     # Validate source type specific fields
@@ -429,8 +433,10 @@ async def create_skill_source(
 
 
 @router.post("/sources/{source_id}/sync", response_model=SyncTriggerResponse)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def sync_skill_source_endpoint(
     source_id: str,
+    request: Request,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> SyncTriggerResponse:
@@ -439,6 +445,7 @@ async def sync_skill_source_endpoint(
 
     Requires admin access (enforced by RLS policy).
     """
+    _ = request
     await set_current_user(session, user.id)
 
     # Verify admin access by trying to read the source (RLS will block non-admins)
@@ -476,8 +483,10 @@ async def sync_skill_source_endpoint(
 
 
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def delete_skill_source(
     source_id: str,
+    request: Request,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
@@ -486,6 +495,7 @@ async def delete_skill_source(
 
     This will also delete all skills from this source (cascade).
     """
+    _ = request
     await set_current_user(session, user.id)
 
     source_uuid = parse_uuid(source_id, "source_id")

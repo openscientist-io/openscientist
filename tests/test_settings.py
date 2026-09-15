@@ -1,12 +1,16 @@
 """Tests for centralized settings module."""
 
+import hashlib
+import hmac
 import logging
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
 from openscientist.settings import (
+    AppEnvironment,
     AuthSettings,
     BudgetSettings,
     ContainerSettings,
@@ -14,6 +18,7 @@ from openscientist.settings import (
     FileSettings,
     PhenixSettings,
     ProviderSettings,
+    Settings,
     clear_settings_cache,
     get_settings,
 )
@@ -238,6 +243,18 @@ class TestProviderIdEnvVar:
         monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
         monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
         with pytest.raises(ValueError, match="CLAUDE_PROVIDER has been renamed"):
+            ProviderSettings()
+
+    def test_unset_provider_raises_clear_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """An unset OPENSCIENTIST_PROVIDER fails closed with no vendor default."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("OPENSCIENTIST_PROVIDER", raising=False)
+        monkeypatch.delenv("CLAUDE_PROVIDER", raising=False)
+        with pytest.raises(ValueError, match="OPENSCIENTIST_PROVIDER is not set"):
             ProviderSettings()
 
 
@@ -585,6 +602,191 @@ class TestDatabaseSettings:
         """SQL_ECHO defaults to False."""
         settings = DatabaseSettings(DATABASE_URL="postgresql+asyncpg://x:x@localhost/x")
         assert settings.sql_echo is False
+
+
+class TestSettingsAdminDatabaseUrl:
+    """Tests for root Settings validation of ADMIN_DATABASE_URL."""
+
+    def _configure_base_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        dev_mode: str,
+    ) -> str:
+        database_url = "postgresql+asyncpg://app:pass@host:5432/db"
+        monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", "test-secret-key")
+        monkeypatch.setenv("DATABASE_URL", database_url)
+        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
+        monkeypatch.setenv("OPENSCIENTIST_DEV_MODE", dev_mode)
+        return database_url
+
+    def test_production_requires_admin_database_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Production mode fails when ADMIN_DATABASE_URL is missing."""
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, dev_mode="false")
+        monkeypatch.delenv("ADMIN_DATABASE_URL", raising=False)
+
+        with pytest.raises(ValidationError, match="ADMIN_DATABASE_URL is required"):
+            Settings()
+
+    def test_development_warns_and_falls_back_to_database_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Development mode allows fallback with a single warning."""
+        monkeypatch.chdir(tmp_path)
+        database_url = self._configure_base_env(monkeypatch, dev_mode="true")
+        monkeypatch.delenv("ADMIN_DATABASE_URL", raising=False)
+
+        with caplog.at_level(logging.WARNING, logger="openscientist.settings"):
+            settings = Settings()
+
+        assert settings.database.effective_admin_database_url == database_url
+        admin_warnings = [
+            record
+            for record in caplog.records
+            if record.levelname == "WARNING" and "ADMIN_DATABASE_URL" in record.message
+        ]
+        assert len(admin_warnings) == 1
+
+    def test_production_uses_admin_database_url_without_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Production mode succeeds when ADMIN_DATABASE_URL is configured."""
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, dev_mode="false")
+        admin_url = "postgresql+asyncpg://admin:pass@host:5432/db"
+        monkeypatch.setenv("ADMIN_DATABASE_URL", admin_url)
+
+        with caplog.at_level(logging.WARNING, logger="openscientist.settings"):
+            settings = Settings()
+
+        assert settings.database.effective_admin_database_url == admin_url
+        admin_warnings = [
+            record
+            for record in caplog.records
+            if record.levelname == "WARNING" and "ADMIN_DATABASE_URL" in record.message
+        ]
+        assert admin_warnings == []
+
+
+class TestSettingsDeriveSecrets:
+    """Tests for HMAC derivation of auth secrets from the master key."""
+
+    def test_derive_secrets_from_master_secret_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Auth secrets are deterministic HMAC-SHA256 digests of the master key."""
+        monkeypatch.chdir(tmp_path)
+        master_secret = "fixed-master-secret-for-hmac-test"
+        monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", master_secret)
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://app:pass@host:5432/db")
+        monkeypatch.setenv("ADMIN_DATABASE_URL", "postgresql+asyncpg://admin:pass@host:5432/db")
+        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
+        monkeypatch.delenv("CLAUDE_PROVIDER", raising=False)
+
+        settings = Settings()
+
+        key = master_secret.encode()
+        assert (
+            settings.auth.storage_secret
+            == hmac.new(key, b"storage_secret", hashlib.sha256).hexdigest()
+        )
+        assert (
+            settings.auth.token_encryption_key
+            == hmac.new(key, b"token_encryption_key", hashlib.sha256).hexdigest()
+        )
+
+
+class TestSettingsDevModeNotInProduction:
+    """Tests for R14: reject OPENSCIENTIST_DEV_MODE in production."""
+
+    def _configure_base_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        environment: str | None,
+        dev_mode: str,
+    ) -> None:
+        monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", "test-secret-key")
+        monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://app:pass@host:5432/db")
+        monkeypatch.setenv("ADMIN_DATABASE_URL", "postgresql+asyncpg://admin:pass@host:5432/db")
+        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
+        monkeypatch.setenv("OPENSCIENTIST_DEV_MODE", dev_mode)
+        if environment is None:
+            monkeypatch.delenv("OPENSCIENTIST_ENVIRONMENT", raising=False)
+        else:
+            monkeypatch.setenv("OPENSCIENTIST_ENVIRONMENT", environment)
+
+    def test_production_with_dev_mode_enabled_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, environment="production", dev_mode="true")
+
+        with pytest.raises(ValidationError, match="OPENSCIENTIST_DEV_MODE cannot be enabled"):
+            Settings()
+
+    def test_production_with_dev_mode_disabled_succeeds(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, environment="production", dev_mode="false")
+
+        settings = Settings()
+        assert settings.dev.environment == AppEnvironment.PRODUCTION
+        assert settings.dev.dev_mode is False
+
+    def test_development_with_dev_mode_enabled_succeeds(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, environment="development", dev_mode="true")
+
+        settings = Settings()
+        assert settings.dev.environment == AppEnvironment.DEVELOPMENT
+        assert settings.dev.dev_mode is True
+
+    def test_default_environment_is_development_and_allows_dev_mode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Unset OPENSCIENTIST_ENVIRONMENT remains development (backward compatible)."""
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, environment=None, dev_mode="true")
+
+        settings = Settings()
+        assert settings.dev.environment == AppEnvironment.DEVELOPMENT
+        assert settings.dev.dev_mode is True
+
+    def test_invalid_environment_value_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        self._configure_base_env(monkeypatch, environment="staging", dev_mode="false")
+
+        with pytest.raises(ValidationError):
+            Settings()
 
 
 class TestAuthSettings:

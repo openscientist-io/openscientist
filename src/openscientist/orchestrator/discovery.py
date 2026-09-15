@@ -35,13 +35,13 @@ from openscientist.exceptions import OpenScientistError
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
-    _get_job_status,
     build_consensus_prompt,
     build_consensus_retry_prompt,
     build_initial_prompt,
     build_iteration_prompt,
     build_report_prompt,
     build_report_retry_prompt,
+    get_job_status,
     increment_ks_iteration,
     update_job_status,
     wait_for_feedback_or_timeout,
@@ -205,7 +205,7 @@ async def _wait_for_coinvestigate_feedback(
 
 async def _assert_job_not_cancelled(job_id: str) -> None:
     """Raise if the job was cancelled by the user."""
-    status = await _get_job_status(job_id)
+    status = await get_job_status(job_id)
     if status == "cancelled":
         raise _DiscoveryCancelledError(f"Job {job_id} was cancelled")
 

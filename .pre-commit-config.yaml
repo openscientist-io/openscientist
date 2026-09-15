@@ -28,6 +28,18 @@ repos:
         pass_filenames: false
         args: [--tb=auto, --ignore=tests/zz_e2e, --ignore=tests/webapp/pages]
 
+      - id: no-direct-push-to-main
+        name: block direct pushes to main
+        entry: tools/check_no_direct_push_to_main.sh
+        language: script
+        pass_filenames: false
+        stages: [pre-push]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.22.1
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:

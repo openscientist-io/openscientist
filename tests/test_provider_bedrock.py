@@ -256,3 +256,71 @@ class TestBedrockClaudeCompatible:
                 BedrockProvider().claude_model_name()
                 == "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
             )
+
+
+class TestBedrockCostAndMessages:
+    """Coverage for the cost + message paths (audit Priority-7)."""
+
+    def _provider(self) -> BedrockProvider:
+        with patch("openscientist.providers.bedrock.get_settings", return_value=_mock_settings()):
+            return BedrockProvider()
+
+    def test_get_cost_info_returns_spend(self) -> None:
+        provider = self._provider()
+        ce = MagicMock()
+        ce.get_cost_and_usage.return_value = {
+            "ResultsByTime": [{"Total": {"UnblendedCost": {"Amount": "1.50"}}}]
+        }
+        with (
+            patch("openscientist.providers.bedrock.get_settings", return_value=_mock_settings()),
+            patch("boto3.client", return_value=ce),
+        ):
+            info = provider.get_cost_info(lookback_hours=24)
+        assert info.provider_name == "AWS Bedrock"
+        assert info.total_spend_usd == 1.5
+        assert info.recent_spend_usd == 1.5
+
+    def test_get_cost_info_handles_cost_explorer_error(self) -> None:
+        provider = self._provider()
+        ce = MagicMock()
+        ce.get_cost_and_usage.side_effect = RuntimeError("access denied")
+        with (
+            patch("openscientist.providers.bedrock.get_settings", return_value=_mock_settings()),
+            patch("boto3.client", return_value=ce),
+        ):
+            info = provider.get_cost_info()
+        assert info.total_spend_usd is None
+        assert info.recent_spend_usd is None
+        assert "unavailable" in (info.data_lag_note or "").lower()
+
+    async def test_send_message_uses_bedrock_client(self) -> None:
+        provider = self._provider()
+        with (
+            patch("openscientist.providers.bedrock.get_settings", return_value=_mock_settings()),
+            patch("anthropic.AnthropicBedrock") as mock_client_cls,
+            patch(
+                "openscientist.providers.bedrock.send_anthropic_message",
+                return_value="hello",
+            ) as mock_send,
+        ):
+            result = await provider.send_message([{"role": "user", "content": "hi"}])
+        assert result == "hello"
+        mock_client_cls.assert_called_once()
+        assert mock_send.called
+
+    async def test_send_message_with_tools_uses_bedrock_client(self) -> None:
+        provider = self._provider()
+        with (
+            patch("openscientist.providers.bedrock.get_settings", return_value=_mock_settings()),
+            patch("anthropic.AnthropicBedrock") as mock_client_cls,
+            patch(
+                "openscientist.providers.bedrock.send_anthropic_message_with_tools",
+                return_value={"stop_reason": "end_turn", "content": []},
+            ) as mock_send,
+        ):
+            result = await provider.send_message_with_tools(
+                [{"role": "user", "content": "hi"}], tools=[]
+            )
+        assert result["stop_reason"] == "end_turn"
+        mock_client_cls.assert_called_once()
+        assert mock_send.called

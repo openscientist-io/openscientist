@@ -20,25 +20,32 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 - **Autonomous Discovery**: Runs iterative hypothesis-testing loop using an agentic coding assistant
 - **Domain-Agnostic**: Works with genomics, transcriptomics, proteomics, metabolomics, and other scientific data
 - **Literature-Grounded**: Searches PubMed for mechanistic insights
-- **Multi-Provider Support**: Works with Google Vertex AI, CBORG, AWS Bedrock, or Azure AI Foundry for model access
-- **Cost Tracking**: Project-level budget monitoring with provider-specific cost APIs
-- **Sandboxed Execution**: Safe Python code execution for data analysis
+- **Multi-Provider Support**: Eight model providers across two agent backends (see [Model Providers](#model-providers))
+- **Cost Tracking**: Project-level budget monitoring, with provider spend APIs and per-job token cost estimation
+- **Sandboxed Execution**: Python code runs in an isolated, read-only executor container
 
 ### Skills System
 
 - **Workflow Skills**: Hypothesis generation, result interpretation, prioritization, stopping criteria
 - **Domain Skills**: Metabolomics, genomics/transcriptomics, structural biology, data science/statistics
 
+Built-in skills live in `skills/`. Each agent backend materialises the enabled skills into the job workspace in its own layout.
+
 ### Architecture
 
-- **MCP Tools**: Provides tools via Model Context Protocol
+- **Agent abstraction**: `AbstractAgent` with two backends — `ClaudeCodeAgent` (Claude Code SDK) and `CodexAgent` (Codex CLI). The backend is derived from the configured provider; there is no separate switch.
+- **MCP Tools**: The `openscientist_tools` package (`src/openscientist_tools/`) runs as a stdio subprocess MCP server spawned by the agent.
   - `execute_code`: Run Python analysis
   - `search_pubmed`: Search literature
-  - `update_knowledge_state`: Record findings
-  - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (optional, requires Phenix)
-- **Knowledge State**: JSON-based state tracking for findings and literature
-- **Job Manager**: Multi-job support with queueing and lifecycle management
-- **Web Interface**: NiceGUI-based UI for job submission and monitoring
+  - `read_document`: Extract text from PDF, Word, and Excel files
+  - `update_knowledge_state`, `add_hypothesis`, `update_hypothesis`: Record findings and hypotheses
+  - `save_iteration_summary`, `set_status`, `set_job_title`, `set_consensus_answer`: Job metadata
+  - `run_phenix_tool`, `compare_structures`, `parse_alphafold_confidence` (registered only when Phenix is available)
+- **Container-per-job**: Each job runs in an ephemeral agent container; each code execution runs in a further read-only executor container. No application container mounts the host Docker socket — access goes through a restricted `docker-socket-proxy`.
+- **PostgreSQL**: System of record for users, jobs, findings, hypotheses, and costs, with Row-Level Security and Alembic-managed schema.
+- **Web Interface**: NiceGUI UI plus a FastAPI REST API, with OAuth authentication (Google, GitHub, ORCID).
+
+See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture.
 
 ### Structural Biology Support (Optional)
 
@@ -47,20 +54,17 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 - Structure comparison and superposition
 - Validation metrics (clash score, backbone geometry)
 - AlphaFold confidence analysis
-- **See `docs/PHENIX_SETUP.md` for installation instructions**
+
+Phenix is not bundled. Install it on the host and point `PHENIX_HOST_PATH` at the installation; Docker Compose mounts it read-only into the container at `/opt/phenix`. See the Phenix variables in [.env.example](.env.example). The Phenix tools register only when the installation is detected.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.12+
-- Docker (for containerized deployment)
+- Docker and Docker Compose v2
 - `uv` package manager
-- One of the following for model access:
-  - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
-  - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
-  - **AWS Bedrock**: AWS account with Bedrock access (see below)
-  - **Azure AI Foundry**: Azure subscription with Foundry resource (see below)
+- Credentials for one supported model provider — see [Model Providers](#model-providers)
 
 ### Installation
 
@@ -71,12 +75,20 @@ cd openscientist
 
 # Create .env file (copy from example and configure)
 cp .env.example .env
-# Edit .env with your provider credentials
+# Edit .env: set OPENSCIENTIST_SECRET_KEY, OPENSCIENTIST_PROVIDER, and provider credentials
+# Also uncomment and set POSTGRES_PASSWORD — the initial migration requires it (see note below)
 
 # Build and start
 make build
 make start
+
+# Apply database migrations (not applied automatically at startup)
+docker compose exec openscientist alembic upgrade head
 ```
+
+> **`POSTGRES_PASSWORD` is required for the first migration.** The initial migration creates the `openscientist_admin` database role and fails with `POSTGRES_PASSWORD must be set before running migrations` if the variable is missing from the app container's environment. It is commented out in `.env.example` and reaches the container only via `.env`, so a first run with an unmodified `.env` will fail at this step. Later migrations do not need it.
+
+To skip building images locally, use the prebuilt images described in [docs/ACR_IMAGES.md](docs/ACR_IMAGES.md).
 
 ### Access the UI
 
@@ -92,39 +104,74 @@ Open your browser to `http://localhost:8080`
 
 ## Project Structure
 
-```
+```text
 openscientist/
-├── src/openscientist/            # Core Python package
-│   ├── agent/             # AgentExecutor protocol and ClaudeCodeAgent
-│   ├── job/               # Job lifecycle, scheduling, and types
-│   ├── orchestrator/      # Discovery orchestration (setup, iteration, report)
-│   ├── providers/         # Model provider integrations
-│   │   ├── base.py        # Base provider interface
-│   │   ├── messaging.py   # Consolidated send_message / client factory
-│   │   ├── cborg.py       # CBORG provider
-│   │   ├── vertex.py      # Google Vertex AI provider
-│   │   ├── bedrock.py     # AWS Bedrock provider
-│   │   └── foundry.py     # Azure AI Foundry provider
-│   ├── tools/             # @tool-decorated callables for agent
-│   ├── mcp_server/        # MCP tools server
-│   ├── web_app.py         # NiceGUI web interface
-│   ├── knowledge_state.py # JSON-based state storage
-│   ├── code_executor.py   # Sandboxed Python execution
-│   └── literature.py      # PubMed search
-├── CLAUDE.md              # Development guide and system prompt
-├── jobs/                  # Job results (created at runtime)
-├── Dockerfile             # Docker image definition
-├── docker-compose.yml     # Container orchestration
-└── Makefile               # Build and deployment commands
+├── src/
+│   ├── openscientist/          # Core Python package
+│   │   ├── agent/              # AbstractAgent, AgentBackend, ClaudeCodeAgent, CodexAgent, factory
+│   │   ├── api/                # FastAPI REST endpoints and rate limits
+│   │   ├── auth/               # OAuth providers (Google, GitHub, ORCID, mock), sessions, middleware
+│   │   ├── database/           # SQLAlchemy models and Alembic migrations
+│   │   ├── job/                # Job lifecycle, scheduling, types, CLI
+│   │   ├── job_container/      # Container-per-job launching
+│   │   ├── orchestrator/       # Discovery orchestration (setup, iteration, report)
+│   │   ├── prompts/            # System prompts (common + claude/codex variants)
+│   │   ├── providers/          # Model provider registry and implementations
+│   │   ├── transcript/         # Typed transcript schema and per-backend translators
+│   │   ├── webapp_components/  # NiceGUI pages and shared components
+│   │   ├── container_manager.py# Executor container lifecycle
+│   │   ├── settings.py         # Pydantic settings
+│   │   └── web_app.py          # Application entry point
+│   └── openscientist_tools/    # Standalone MCP tool server (run as a subprocess)
+├── docker/                     # Agent entrypoint, Postgres init (roles/RLS)
+├── skills/                     # Built-in workflow and domain skills
+├── tools/                      # Repository helper scripts
+├── tests/                      # Test suite
+├── docs/                       # Documentation (see index below)
+├── jobs/                       # Job results (created at runtime)
+├── Dockerfile*                 # Base, app, agent, and executor images
+├── docker-compose.yml          # Container orchestration
+└── Makefile                    # Build and deployment commands
 ```
 
 ## Configuration
 
+[.env.example](.env.example) is the canonical reference for every supported environment variable. The sections below cover the most common setup; consult `.env.example` for the complete set.
+
+### Required Settings
+
+| Variable | Notes |
+|---|---|
+| `OPENSCIENTIST_SECRET_KEY` | Master secret; all auth keys are derived from it. Generate with `openssl rand -hex 32`. |
+| `DATABASE_URL` | PostgreSQL DSN. Set automatically under Docker Compose from the `POSTGRES_*` values. |
+| `OPENSCIENTIST_PROVIDER` | Provider id. Required — there is no default, and an unset value raises at startup. |
+| Provider credentials | Depends on the provider selected. |
+
 ### Model Providers
 
-OpenScientist supports multiple model providers. Choose one and configure it in your `.env` file:
+Set `OPENSCIENTIST_PROVIDER` to one of the eight registered providers. The agent backend follows from that choice — you do not select it separately.
 
-#### Option 1: CBORG (Lawrence Berkeley National Lab)
+| `OPENSCIENTIST_PROVIDER` | Provider | Agent backend |
+|---|---|---|
+| `anthropic` | Anthropic API | Claude Code |
+| `cborg` | CBORG (Lawrence Berkeley National Lab) | Claude Code |
+| `vertex` | Google Vertex AI | Claude Code |
+| `bedrock` | AWS Bedrock | Claude Code |
+| `foundry` | Azure AI Foundry | Claude Code |
+| `openai` | OpenAI | Codex |
+| `azure-openai` | Azure OpenAI | Codex |
+| `ollama` | Ollama (local models) | Codex |
+
+Optionally set `OPENSCIENTIST_MODEL` to a model id valid for the selected provider.
+
+#### Option 1: Anthropic
+
+```bash
+OPENSCIENTIST_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+#### Option 2: CBORG (Lawrence Berkeley National Lab)
 
 ```bash
 # Provider selection
@@ -137,7 +184,7 @@ ANTHROPIC_BASE_URL=https://api.cborg.lbl.gov
 
 **Cost Tracking**: Real-time via CBORG API (`/key/info`, `/user/daily/activity`)
 
-#### Option 2: Google Vertex AI
+#### Option 3: Google Vertex AI
 
 ```bash
 # Provider selection
@@ -155,9 +202,9 @@ GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
 ```
 
 **Cost Tracking**: Via GCP BigQuery billing export (1-6 hour lag)
-**Setup Guide**: See `docs/VERTEX_SETUP.md` for detailed instructions
+**Setup Guide**: See the Vertex AI variables in [.env.example](.env.example), and [Claude Code on Vertex AI](https://code.claude.com/docs/en/google-vertex-ai)
 
-#### Option 3: AWS Bedrock
+#### Option 4: AWS Bedrock
 
 ```bash
 # Provider selection
@@ -181,7 +228,7 @@ AWS_SECRET_ACCESS_KEY=your-secret-access-key
 **Cost Tracking**: Via AWS Cost Explorer (24-48 hour lag)
 **Note**: Requires IAM permissions for `bedrock:InvokeModel` and `ce:GetCostAndUsage`
 
-#### Option 4: Azure AI Foundry (Microsoft Foundry)
+#### Option 5: Azure AI Foundry (Microsoft Foundry)
 
 ```bash
 # Provider selection
@@ -213,6 +260,24 @@ AZURE_SUBSCRIPTION_ID=your-subscription-id
 **Setup Guide**: See [Claude Code Foundry docs](https://code.claude.com/docs/en/microsoft-foundry)
 **Note**: Requires Azure RBAC permissions (`Azure AI User` or `Cognitive Services User` role)
 
+#### Options 6-8: Codex-backend providers
+
+These providers run the Codex agent backend rather than Claude Code. The agent image ships the `codex` CLI, so no extra host installation is needed.
+
+```bash
+# OpenAI
+OPENSCIENTIST_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+
+# Azure OpenAI
+OPENSCIENTIST_PROVIDER=azure-openai
+
+# Ollama (local models; no API key)
+OPENSCIENTIST_PROVIDER=ollama
+```
+
+See [.env.example](.env.example) for the endpoint, deployment, and model variables each of these accepts.
+
 ### Budget Controls
 
 Set application-level budget limits (optional):
@@ -240,10 +305,17 @@ OPENSCIENTIST_DEV_MODE=true
 
 ### Job Manager Settings
 
-In `src/openscientist/web_app.py`:
+Configured through the environment, not by editing source:
 
-- `max_concurrent`: Maximum concurrent jobs (default: 1)
-- `jobs_dir`: Directory for job data (default: `jobs/`)
+```bash
+# Maximum concurrent jobs (default: 1)
+OPENSCIENTIST_MAX_CONCURRENT_JOBS=1
+
+# Job data directory (default: jobs/)
+OPENSCIENTIST_JOBS_DIR=jobs
+```
+
+Each concurrent job is a separate agent container, so size this against `OPENSCIENTIST_AGENT_MEMORY` and `OPENSCIENTIST_AGENT_CPU`.
 
 ### Legacy Bootstrap (Filesystem -> DB)
 
@@ -259,13 +331,35 @@ can be assigned later from the admin UI.
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and deployment.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, branch strategy, and the PR process.
 
 ## Documentation
 
-- [Design Document](docs/DESIGN.md)
-- [Vertex AI Setup](docs/VERTEX_SETUP.md)
-- [Phenix Setup](docs/PHENIX_SETUP.md)
+**Architecture and configuration**
+
+- [Design Document](docs/DESIGN.md) — architecture, agent abstraction, providers, MCP tools, containers, persistence
+- [.env.example](.env.example) — canonical reference for every environment variable
+- [Container Images (ACR)](docs/ACR_IMAGES.md) — using prebuilt agent/executor images
+- [Discovery Agent Reference](docs/DISCOVERY_AGENT_REFERENCE.md) — the agent's system prompt, for review
+
+**Operations**
+
+- [Deployment Guide](docs/DEPLOYMENT.md) — configuration, Compose architecture, operations, troubleshooting
+- [Environments](docs/ENVIRONMENTS.md) — development/staging/production model and promotion path
+- [CI/CD](docs/CICD.md) — CI gates and the deployment pipelines
+- [Maintenance](docs/MAINTENANCE.md) — dependencies, migrations, backups, rotation, rollback
+- [Database Migrations](src/openscientist/database/migrations/README.md) — Alembic revision policy
+
+**Engineering process**
+
+- [Contributing](CONTRIBUTING.md) — setup, testing, branch and commit conventions
+- [Code Review and Change Governance](docs/code-review-governance.md) — branch strategy, review expectations, CI gates
+- [QA and Testing](docs/QA.md) — test suite, coverage policy, acceptance validation
+- [Security Review](docs/SECURITY_REVIEW.md) — findings and remediation status
+
+**History**
+
+- [Agent Abstraction Migration Record](docs/AGENT_ABSTRACTION_DEPLOYMENT.md) — completed refactor, plus the legacy transcript migration step
 
 ## Author
 

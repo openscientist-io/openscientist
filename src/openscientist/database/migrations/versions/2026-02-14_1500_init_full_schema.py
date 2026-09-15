@@ -16,6 +16,7 @@ This migration creates the complete OpenScientist database schema including:
 This is a consolidated migration that replaces the previous incremental migrations.
 """
 
+import os
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -1696,12 +1697,19 @@ def upgrade() -> None:
     # =========================================================================
     # CREATE OPENSCIENTIST_ADMIN ROLE WITH BYPASSRLS
     # =========================================================================
+    admin_password = os.environ.get("POSTGRES_PASSWORD")
+    if not admin_password:
+        raise RuntimeError(
+            "POSTGRES_PASSWORD must be set before running migrations. "
+            "This creates the openscientist_admin role."
+        )
+
     op.execute(
-        """
+        f"""
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'openscientist_admin') THEN
-                CREATE ROLE openscientist_admin WITH LOGIN PASSWORD 'openscientist_dev_password' BYPASSRLS;
+                CREATE ROLE openscientist_admin WITH LOGIN PASSWORD '{admin_password}' BYPASSRLS;
             END IF;
         END
         $$

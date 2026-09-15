@@ -3,6 +3,8 @@
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
+
 from openscientist.auth import oauth
 
 
@@ -32,7 +34,7 @@ def _make_settings() -> SimpleNamespace:
     )
 
 
-def test_get_oauth_client_requests_orcid_openid_scope(monkeypatch) -> None:
+def test_get_oauth_client_requests_orcid_openid_scope(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(oauth, "_oauth", None)
     monkeypatch.setattr(oauth, "get_settings", _make_settings)
     monkeypatch.setattr(oauth, "OAuth", FakeOAuth)

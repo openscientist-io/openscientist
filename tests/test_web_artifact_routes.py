@@ -5,6 +5,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -19,7 +20,7 @@ from openscientist.webapp_components.artifact_routes import router
 from tests.helpers import enable_rls
 
 
-def _build_app(db_session: AsyncSession, acting_user_id) -> FastAPI:
+def _build_app(db_session: AsyncSession, acting_user_id: UUID) -> FastAPI:
     app = FastAPI()
 
     async def override_get_session():
@@ -39,8 +40,8 @@ def _build_app(db_session: AsyncSession, acting_user_id) -> FastAPI:
 async def test_web_download_streams_zip_for_owner(
     db_session: AsyncSession,
     test_user: User,
-    tmp_path,
-):
+    tmp_path: Path,
+) -> None:
     job = Job(
         owner_id=test_user.id,
         research_question="Artifacts download job",
@@ -83,8 +84,8 @@ async def test_web_download_forbidden_for_non_owner(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-    tmp_path,
-):
+    tmp_path: Path,
+) -> None:
     job = Job(
         owner_id=test_user.id,
         research_question="Private job",

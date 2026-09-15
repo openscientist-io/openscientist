@@ -1,5 +1,6 @@
 """Tests for database encryption utilities."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,7 +14,7 @@ from openscientist.database.crypto import (
 )
 
 
-def _patch_encryption_key(key: str | None):
+def _patch_encryption_key(key: str | None) -> Any:
     """Return a context manager that patches the token_encryption_key setting."""
     from openscientist.database import crypto
 

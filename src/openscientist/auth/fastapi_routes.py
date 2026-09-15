@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
+from openscientist.api.rate_limits import AUTH_RATE_LIMIT, limiter
 from openscientist.auth.oauth import get_oauth_client
 from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider, OrcidProvider
 from openscientist.auth.routes import create_or_update_user, create_session
@@ -47,7 +48,8 @@ def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
 
 
 @router.get("/mock/login")
-async def mock_oauth_login() -> RedirectResponse:
+@limiter.limit(AUTH_RATE_LIMIT)
+async def mock_oauth_login(request: Request) -> RedirectResponse:
     """
     Mock OAuth login (development only).
 
@@ -98,7 +100,8 @@ async def mock_oauth_login() -> RedirectResponse:
 
 
 @router.get("/mock/admin-login")
-async def mock_admin_oauth_login() -> RedirectResponse:
+@limiter.limit(AUTH_RATE_LIMIT)
+async def mock_admin_oauth_login(request: Request) -> RedirectResponse:
     """
     Mock OAuth login for admin user (development only).
 
@@ -107,6 +110,7 @@ async def mock_admin_oauth_login() -> RedirectResponse:
 
     Security Warning: Never enable this in production!
     """
+    _ = request
     settings = get_settings()
     if not settings.dev.dev_mode:
         raise HTTPException(status_code=404, detail="Mock auth not enabled")
@@ -168,6 +172,7 @@ async def mock_admin_oauth_login() -> RedirectResponse:
 
 
 @router.post("/mock/callback")
+@limiter.limit(AUTH_RATE_LIMIT)
 async def mock_oauth_callback(request: Request) -> RedirectResponse:
     """
     Handle mock OAuth callback (development only).
@@ -228,6 +233,7 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
 
 
 @router.get("/{provider}/login")
+@limiter.limit(AUTH_RATE_LIMIT)
 async def oauth_login(provider: str, request: Request) -> RedirectResponse:
     """
     Initiate OAuth login flow.
@@ -261,6 +267,7 @@ async def oauth_login(provider: str, request: Request) -> RedirectResponse:
 
 
 @router.get("/{provider}/callback")
+@limiter.limit(AUTH_RATE_LIMIT)
 async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
     """
     Handle OAuth callback.
@@ -323,6 +330,7 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
 
 
 @router.get("/logout")
+@limiter.limit(AUTH_RATE_LIMIT)
 async def logout(request: Request) -> RedirectResponse:
     """Handle logout by invalidating session."""
     session_token = request.cookies.get("session_token")
@@ -363,13 +371,15 @@ def generate_review_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-async def redeem_review_token(token: str) -> RedirectResponse:
+@limiter.limit(AUTH_RATE_LIMIT)
+async def redeem_review_token(token: str, request: Request) -> RedirectResponse:
     """
     Redeem a review token to create/login an anonymous reviewer.
 
     On first use: creates an anonymous User and marks the token as redeemed.
     On subsequent uses: creates a new session for the existing anonymous user.
     """
+    _ = request
     token_hash = _hash_token(token)
 
     async with get_admin_session() as db:

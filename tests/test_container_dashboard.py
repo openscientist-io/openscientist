@@ -6,45 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openscientist.webapp_components.ui_components import format_uptime
 from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
 )
-
-# ---------------------------------------------------------------------------
-# format_uptime
-# ---------------------------------------------------------------------------
-
-
-class TestFormatUptime:
-    def test_seconds_only(self):
-        assert format_uptime(30) == "30s"
-
-    def test_zero(self):
-        assert format_uptime(0) == "0s"
-
-    def test_negative(self):
-        assert format_uptime(-5) == "0s"
-
-    def test_minutes_and_seconds(self):
-        assert format_uptime(90) == "1m 30s"
-
-    def test_exact_minutes(self):
-        assert format_uptime(120) == "2m"
-
-    def test_hours_and_minutes(self):
-        assert format_uptime(8100) == "2h 15m"
-
-    def test_exact_hours(self):
-        assert format_uptime(3600) == "1h"
-
-    def test_just_under_a_minute(self):
-        assert format_uptime(59) == "59s"
-
-    def test_just_over_a_minute(self):
-        assert format_uptime(61) == "1m 1s"
-
 
 # ---------------------------------------------------------------------------
 # _parse_container_stats

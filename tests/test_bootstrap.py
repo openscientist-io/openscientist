@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -27,7 +28,7 @@ from openscientist.database.models import (
 from tests.helpers import fake_admin_session
 
 
-def _write_json(path, payload: dict) -> None:
+def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
@@ -52,7 +53,7 @@ def test_derive_uuidv7_seed_time_from_filesystem_uses_earliest_fallback_timestam
 
 
 @pytest.mark.asyncio
-async def test_generate_uuidv7_uses_seed_time_when_provided(db_session: AsyncSession):
+async def test_generate_uuidv7_uses_seed_time_when_provided(db_session: AsyncSession) -> None:
     seed_time = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
     generated = await bootstrap_module._generate_uuidv7(db_session, seed_time=seed_time)
     extracted = (
@@ -70,9 +71,9 @@ async def test_generate_uuidv7_uses_seed_time_when_provided(db_session: AsyncSes
 @pytest.mark.asyncio
 async def test_bootstrap_creates_job_and_syncs_modern_knowledge_state(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -217,9 +218,9 @@ async def test_bootstrap_creates_job_and_syncs_modern_knowledge_state(
 @pytest.mark.asyncio
 async def test_bootstrap_preserves_version_info_from_knowledge_state(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -264,9 +265,9 @@ async def test_bootstrap_preserves_version_info_from_knowledge_state(
 @pytest.mark.asyncio
 async def test_bootstrap_ignores_non_dict_version_info(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -310,9 +311,9 @@ async def test_bootstrap_ignores_non_dict_version_info(
 @pytest.mark.asyncio
 async def test_bootstrap_migrates_legacy_knowledge_state_format(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -425,9 +426,9 @@ async def test_bootstrap_migrates_legacy_knowledge_state_format(
 @pytest.mark.asyncio
 async def test_bootstrap_preserves_search_pubmed_extra_fields(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """search_pubmed analysis log entries must preserve query and results_count."""
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
@@ -488,9 +489,9 @@ async def test_bootstrap_preserves_search_pubmed_extra_fields(
 @pytest.mark.asyncio
 async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -581,9 +582,9 @@ async def test_bootstrap_migrates_non_uuid_legacy_folder_and_payload_ids(
 @pytest.mark.asyncio
 async def test_bootstrap_dry_run_non_uuid_legacy_does_not_rename_or_write(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -630,9 +631,9 @@ async def test_bootstrap_dry_run_non_uuid_legacy_does_not_rename_or_write(
 @pytest.mark.asyncio
 async def test_bootstrap_migrates_when_config_missing_but_ks_has_legacy_id(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -681,9 +682,9 @@ async def test_bootstrap_migrates_when_config_missing_but_ks_has_legacy_id(
 @pytest.mark.asyncio
 async def test_bootstrap_seeds_uuidv7_time_from_filesystem(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -693,7 +694,7 @@ async def test_bootstrap_seeds_uuidv7_time_from_filesystem(
     observed_seed_times: list[datetime | None] = []
     migrated_uuid = UUID("44444444-4444-4444-8444-444444444444")
 
-    def _fake_seed(_job_dir) -> datetime:
+    def _fake_seed(_job_dir: Path) -> datetime:
         return expected_seed
 
     async def _fake_uuidv7(_session: AsyncSession, seed_time: datetime | None = None) -> UUID:
@@ -729,9 +730,9 @@ async def test_bootstrap_seeds_uuidv7_time_from_filesystem(
 @pytest.mark.asyncio
 async def test_bootstrap_skips_when_config_and_ks_are_both_invalid_json(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -753,9 +754,9 @@ async def test_bootstrap_skips_when_config_and_ks_are_both_invalid_json(
 @pytest.mark.asyncio
 async def test_bootstrap_dry_run_counts_orphaned_jobs(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -791,9 +792,9 @@ async def test_bootstrap_dry_run_counts_orphaned_jobs(
 @pytest.mark.asyncio
 async def test_bootstrap_is_idempotent(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),
@@ -858,9 +859,9 @@ async def test_bootstrap_is_idempotent(
 @pytest.mark.asyncio
 async def test_bootstrap_migrates_iteration_summaries_for_multiple_jobs(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
         fake_admin_session(db_session),

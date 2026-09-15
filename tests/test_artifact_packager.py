@@ -2,6 +2,7 @@
 
 import stat
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,7 @@ from openscientist.artifact_packager import (
 )
 
 
-def _open_zip(job_dir) -> zipfile.ZipFile:
+def _open_zip(job_dir: Path) -> zipfile.ZipFile:
     archive_path = job_dir / "artifacts.zip"
     create_artifacts_zip_file(job_dir, archive_path, "j1")
     return zipfile.ZipFile(archive_path)

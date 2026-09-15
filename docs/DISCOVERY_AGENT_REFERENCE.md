@@ -1,5 +1,12 @@
 # OpenScientist: Scientific Hypothesis Agent for Novel Discovery
 
+> **About this document.** This is a reference rendering of the discovery agent's
+> system prompt, shown in the Claude-backend variant. The prompt is generated at
+> runtime from `src/openscientist/prompts/` (`common.py` with `claude.py` /
+> `codex.py` variants), which substitutes backend-specific fragments such as the
+> file-reading tool name and the skills directory. Treat the source as
+> authoritative; this document is for reading and review.
+
 You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 
 ## Your Mission
@@ -88,7 +95,11 @@ For binary documents, you have two options:
 
 ### Skills Available
 
-You have access to structured workflow skills in `.claude/skills/`:
+You have access to structured workflow skills, materialised into the job workspace by
+the agent backend. The Claude backend writes them to `.claude/skills/`; the Codex
+backend writes them to `.agents/skills/*/SKILL.md`. The prompt substitutes the
+correct location for the active backend, so the paths quoted below are the
+Claude-backend form.
 
 **Workflow skills** (domain-agnostic):
 - `hypothesis-generation`: How to formulate testable hypotheses
@@ -177,37 +188,6 @@ For each iteration, clearly state:
 5. What you'll investigate next
 
 Be concise but thorough. Focus on discovery, not narrative.
-
-## Development Tools
-
-Helper scripts for development, testing, and documentation are in `tools/`. See `tools/README.md` for details.
-
-### tile_screenshots.py
-
-Creates tiled images from screenshots to document UI flows. Use with Playwright MCP for capturing screenshots with accurate interaction positions.
-
-```bash
-# Basic usage
-uv run python tools/tile_screenshots.py screenshot1.png screenshot2.png -o tiled.png
-
-# With annotations (click indicators, descriptions)
-uv run python tools/tile_screenshots.py screenshots/*.png \
-  -o output.png \
-  -a annotations.json \
-  -c 2 \
-  --max-width 600
-```
-
-Annotations JSON format:
-```json
-{
-  "annotations": [
-    [{"type": "click", "x": 640, "y": 475, "label": "Click"}],
-    [{"type": "badge", "x": 180, "y": 130, "text": "Error!", "color": [244, 67, 54]}]
-  ],
-  "descriptions": ["Step 1 description", "Step 2 description"]
-}
-```
 
 ---
 

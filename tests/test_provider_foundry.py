@@ -1,5 +1,6 @@
 """Tests for Azure Foundry provider."""
 
+import os
 import sys
 import types
 from types import SimpleNamespace
@@ -46,11 +47,11 @@ async def test_send_message_derives_foundry_base_url_from_resource():
             return SimpleNamespace(content=[FakeTextBlock("ok")])
 
     fake_anthropic = types.ModuleType("anthropic")
-    fake_anthropic.Anthropic = FakeAnthropicClient
+    fake_anthropic.Anthropic = FakeAnthropicClient  # type: ignore[attr-defined]
 
     fake_types = types.ModuleType("anthropic.types")
-    fake_types.MessageParam = dict
-    fake_types.TextBlock = FakeTextBlock
+    fake_types.MessageParam = dict  # type: ignore[attr-defined]
+    fake_types.TextBlock = FakeTextBlock  # type: ignore[attr-defined]
 
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None)
     with (
@@ -82,17 +83,17 @@ async def test_send_message_uses_entra_id_token_when_no_api_key():
             return SimpleNamespace(content=[FakeTextBlock("ok")])
 
     fake_anthropic = types.ModuleType("anthropic")
-    fake_anthropic.Anthropic = FakeAnthropicClient
+    fake_anthropic.Anthropic = FakeAnthropicClient  # type: ignore[attr-defined]
 
     fake_anthropic_types = types.ModuleType("anthropic.types")
-    fake_anthropic_types.MessageParam = dict
-    fake_anthropic_types.TextBlock = FakeTextBlock
+    fake_anthropic_types.MessageParam = dict  # type: ignore[attr-defined]
+    fake_anthropic_types.TextBlock = FakeTextBlock  # type: ignore[attr-defined]
 
     # Fake azure.identity with a credential that returns a known token
     fake_token = SimpleNamespace(token="entra-id-token-abc123")
     fake_credential = SimpleNamespace(get_token=lambda _scope: fake_token)
     fake_azure_identity = types.ModuleType("azure.identity")
-    fake_azure_identity.DefaultAzureCredential = lambda: fake_credential  # type: ignore[assignment]
+    fake_azure_identity.DefaultAzureCredential = lambda: fake_credential  # type: ignore[attr-defined]
 
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None, api_key=None)
     with (
@@ -143,16 +144,16 @@ async def test_send_message_with_tools_uses_entra_id_token_when_no_api_key():
             )
 
     fake_anthropic = types.ModuleType("anthropic")
-    fake_anthropic.Anthropic = FakeAnthropicClient
+    fake_anthropic.Anthropic = FakeAnthropicClient  # type: ignore[attr-defined]
 
     fake_anthropic_types = types.ModuleType("anthropic.types")
-    fake_anthropic_types.ToolParam = dict
-    fake_anthropic_types.ToolUseBlock = FakeToolUseBlock
+    fake_anthropic_types.ToolParam = dict  # type: ignore[attr-defined]
+    fake_anthropic_types.ToolUseBlock = FakeToolUseBlock  # type: ignore[attr-defined]
 
     fake_token = SimpleNamespace(token="entra-id-token-xyz789")
     fake_credential = SimpleNamespace(get_token=lambda _scope: fake_token)
     fake_azure_identity = types.ModuleType("azure.identity")
-    fake_azure_identity.DefaultAzureCredential = lambda: fake_credential  # type: ignore[assignment]
+    fake_azure_identity.DefaultAzureCredential = lambda: fake_credential  # type: ignore[attr-defined]
 
     settings = _settings_for_foundry(resource="lab-foundry", base_url=None, api_key=None)
     with (
@@ -189,6 +190,55 @@ def _mock_settings(
     mock_settings.provider.anthropic_foundry_api_key = api_key
     mock_settings.provider.model = model
     return mock_settings
+
+
+class TestFoundrySetupEnvironment:
+    """Tests for FoundryProvider.setup_environment() env cleanup."""
+
+    def test_sets_foundry_flag(self) -> None:
+        with (
+            patch("openscientist.providers.foundry.get_settings", return_value=_mock_settings()),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            FoundryProvider().setup_environment()
+            assert os.environ.get("CLAUDE_CODE_USE_FOUNDRY") == "1"
+
+    def test_clears_conflicting_provider_and_auth_vars(self) -> None:
+        seeded = {
+            "CLAUDE_CODE_USE_VERTEX": "1",
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "ANTHROPIC_VERTEX_PROJECT_ID": "proj",
+            "VERTEX_REGION_CLAUDE_4_5_SONNET": "us-east5",
+            "VERTEX_REGION_CLAUDE_4_5_HAIKU": "us-east5",
+            "AWS_BEARER_TOKEN_BEDROCK": "bearer-tok",
+            "ANTHROPIC_API_KEY": "sk-test",
+            "ANTHROPIC_AUTH_TOKEN": "auth-tok",
+        }
+        with (
+            patch("openscientist.providers.foundry.get_settings", return_value=_mock_settings()),
+            patch.dict(os.environ, seeded, clear=True),
+        ):
+            FoundryProvider().setup_environment()
+            assert os.environ.get("CLAUDE_CODE_USE_FOUNDRY") == "1"
+            for var in seeded:
+                assert var not in os.environ
+
+    def test_clears_empty_auth_stubs(self) -> None:
+        seeded = {
+            "ANTHROPIC_API_KEY": "",
+            "ANTHROPIC_AUTH_TOKEN": "",
+            "ANTHROPIC_BASE_URL": "",
+            "AWS_PROFILE": "",
+            "AWS_SESSION_TOKEN": "",
+        }
+        with (
+            patch("openscientist.providers.foundry.get_settings", return_value=_mock_settings()),
+            patch.dict(os.environ, seeded, clear=True),
+        ):
+            FoundryProvider().setup_environment()
+            assert os.environ.get("CLAUDE_CODE_USE_FOUNDRY") == "1"
+            for var in seeded:
+                assert var not in os.environ
 
 
 class TestFoundryClaudeCompatible:
@@ -263,3 +313,51 @@ class TestFoundryClaudeCompatible:
         settings = _mock_settings(model=None)
         with patch("openscientist.providers.foundry.get_settings", return_value=settings):
             assert FoundryProvider().claude_model_name() == "claude-sonnet-4-5"
+
+
+class TestFoundryCostAndBaseUrl:
+    """Coverage for _resolve_base_url + get_cost_info early paths (Priority-7)."""
+
+    def _provider(self) -> FoundryProvider:
+        with patch("openscientist.providers.foundry.get_settings", return_value=_mock_settings()):
+            return FoundryProvider()
+
+    def test_resolve_base_url_prefers_explicit_url(self) -> None:
+        s = _mock_settings(resource="res", base_url="https://explicit.example/anthropic")
+        with patch("openscientist.providers.foundry.get_settings", return_value=s):
+            assert FoundryProvider()._resolve_base_url() == "https://explicit.example/anthropic"
+
+    def test_resolve_base_url_derives_from_resource(self) -> None:
+        s = _mock_settings(resource="lab-foundry", base_url=None)
+        with patch("openscientist.providers.foundry.get_settings", return_value=s):
+            assert (
+                FoundryProvider()._resolve_base_url()
+                == "https://lab-foundry.services.ai.azure.com/anthropic"
+            )
+
+    def test_resolve_base_url_raises_when_unconfigured(self) -> None:
+        provider = self._provider()
+        bad = _mock_settings(resource=None, base_url=None, api_key="k")
+        with patch("openscientist.providers.foundry.get_settings", return_value=bad):
+            with pytest.raises(ValueError, match="endpoint not configured"):
+                provider._resolve_base_url()
+
+    def test_get_cost_info_without_subscription_id(self) -> None:
+        s = _mock_settings()
+        s.provider.azure_subscription_id = None
+        with patch("openscientist.providers.foundry.get_settings", return_value=s):
+            info = FoundryProvider().get_cost_info()
+        assert info.total_spend_usd is None
+        assert "AZURE_SUBSCRIPTION_ID" in (info.data_lag_note or "")
+
+    def test_get_cost_info_without_service_principal(self) -> None:
+        s = _mock_settings()
+        s.provider.azure_subscription_id = "sub-123"
+        s.provider.azure_tenant_id = None
+        s.provider.azure_client_id = None
+        s.provider.azure_client_secret = None
+        s.provider.azure_resource_group = None
+        with patch("openscientist.providers.foundry.get_settings", return_value=s):
+            info = FoundryProvider().get_cost_info()
+        assert info.total_spend_usd is None
+        assert "AZURE_TENANT_ID" in (info.data_lag_note or "")

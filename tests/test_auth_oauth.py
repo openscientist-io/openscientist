@@ -26,7 +26,7 @@ def _clear_cached_settings_between_tests():
 
 
 @pytest.mark.asyncio
-async def test_create_new_user_with_oauth(db_session: AsyncSession):
+async def test_create_new_user_with_oauth(db_session: AsyncSession) -> None:
     """Test creating a new user via OAuth."""
     user = await create_or_update_user(
         db_session,
@@ -60,7 +60,7 @@ async def test_create_new_user_with_oauth(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_update_existing_oauth_account(db_session: AsyncSession):
+async def test_update_existing_oauth_account(db_session: AsyncSession) -> None:
     """Test updating an existing OAuth account with new tokens."""
     # Create initial user and OAuth account
     user = await create_or_update_user(
@@ -103,7 +103,7 @@ async def test_update_existing_oauth_account(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_link_multiple_oauth_providers(db_session: AsyncSession):
+async def test_link_multiple_oauth_providers(db_session: AsyncSession) -> None:
     """Test linking multiple OAuth providers to one user."""
     # Create user with GitHub
     user = await create_or_update_user(
@@ -144,7 +144,7 @@ async def test_link_multiple_oauth_providers(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_bootstrap_admin_granted_for_verified_allowlisted_login(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Allowlisted + verified login should auto-create Administrator and set approval."""
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", " Admin@Example.com ")
     clear_settings_cache()
@@ -172,7 +172,7 @@ async def test_bootstrap_admin_granted_for_verified_allowlisted_login(
 @pytest.mark.asyncio
 async def test_bootstrap_admin_denied_for_unverified_allowlisted_login(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Allowlisted login without verified email should not grant admin."""
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "pending@example.com")
     clear_settings_cache()
@@ -199,7 +199,7 @@ async def test_bootstrap_admin_denied_for_unverified_allowlisted_login(
 @pytest.mark.asyncio
 async def test_bootstrap_admin_not_granted_when_email_not_allowlisted(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Verified login not in BOOTSTRAP_ADMIN_EMAILS should not grant admin."""
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "someone@example.com")
     clear_settings_cache()
@@ -226,7 +226,7 @@ async def test_bootstrap_admin_not_granted_when_email_not_allowlisted(
 @pytest.mark.asyncio
 async def test_bootstrap_admin_grant_is_non_revoking(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Removing an email from BOOTSTRAP_ADMIN_EMAILS should not auto-revoke admin."""
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "carry@example.com")
     clear_settings_cache()
@@ -267,7 +267,7 @@ async def test_bootstrap_admin_grant_is_non_revoking(
 
 
 @pytest.mark.asyncio
-async def test_create_session(db_session: AsyncSession, test_user: User):
+async def test_create_session(db_session: AsyncSession, test_user: User) -> None:
     """Test creating a session for a user."""
     session = await create_session(db_session, str(test_user.id))
 
@@ -284,7 +284,7 @@ async def test_create_session(db_session: AsyncSession, test_user: User):
 @pytest.mark.asyncio
 async def test_session_token_uniqueness(
     db_session: AsyncSession, test_user: User, test_user2: User
-):
+) -> None:
     """Test that session IDs are unique."""
     session1 = await create_session(db_session, str(test_user.id))
     session2 = await create_session(db_session, str(test_user2.id))
@@ -293,7 +293,7 @@ async def test_session_token_uniqueness(
 
 
 @pytest.mark.asyncio
-async def test_expired_session(db_session: AsyncSession, test_user: User):
+async def test_expired_session(db_session: AsyncSession, test_user: User) -> None:
     """Test that expired sessions are not valid."""
     # Create session with past expiry
     session = DBSession(
@@ -319,7 +319,7 @@ async def test_expired_session(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_valid_session(db_session: AsyncSession, test_user: User):
+async def test_valid_session(db_session: AsyncSession, test_user: User) -> None:
     """Test that valid sessions return the correct user."""
     # Create valid session
     session = DBSession(
@@ -346,7 +346,7 @@ async def test_valid_session(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_multiple_sessions_same_user(db_session: AsyncSession, test_user: User):
+async def test_multiple_sessions_same_user(db_session: AsyncSession, test_user: User) -> None:
     """Test that a user can have multiple active sessions."""
     session1 = await create_session(db_session, str(test_user.id))
     session2 = await create_session(db_session, str(test_user.id))
@@ -357,7 +357,7 @@ async def test_multiple_sessions_same_user(db_session: AsyncSession, test_user: 
 
 
 @pytest.mark.asyncio
-async def test_delete_session(db_session: AsyncSession, test_user: User):
+async def test_delete_session(db_session: AsyncSession, test_user: User) -> None:
     """Test deleting a session (logout)."""
     session = await create_session(db_session, str(test_user.id))
     session_id = session.id
@@ -375,7 +375,7 @@ async def test_delete_session(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_user_cascade_delete_sessions(db_session: AsyncSession):
+async def test_user_cascade_delete_sessions(db_session: AsyncSession) -> None:
     """Test that deleting a user deletes their sessions."""
     # Create user and sessions
     user = User(email="delete_me@example.com", name="Delete Me")
@@ -399,7 +399,7 @@ async def test_user_cascade_delete_sessions(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_oauth_account_cascade_delete(db_session: AsyncSession):
+async def test_oauth_account_cascade_delete(db_session: AsyncSession) -> None:
     """Test that deleting a user deletes their OAuth accounts."""
     user = await create_or_update_user(
         db_session,
@@ -425,7 +425,7 @@ async def test_oauth_account_cascade_delete(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_inactive_user_cannot_authenticate(db_session: AsyncSession):
+async def test_inactive_user_cannot_authenticate(db_session: AsyncSession) -> None:
     """Test that inactive users cannot authenticate."""
     # Create inactive user
     user = User(
@@ -450,7 +450,7 @@ async def test_inactive_user_cannot_authenticate(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_oauth_provider_uniqueness(db_session: AsyncSession):
+async def test_oauth_provider_uniqueness(db_session: AsyncSession) -> None:
     """Test that provider + provider_user_id combination is unique."""
     # Create first OAuth account
     user1 = await create_or_update_user(

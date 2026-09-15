@@ -26,6 +26,46 @@ services:
       retries: 5
       start_period: 10s
 
+  # Restricted Docker API proxy (R6). The ONLY container that mounts the host
+  # Docker socket. The web app and the per-job agent containers reach it over
+  # TCP (DOCKER_HOST=tcp://docker-socket-proxy:2375) instead of mounting the raw
+  # socket, so they can only call the whitelisted endpoints below (create/start/
+  # stop/wait/list/inspect/logs/remove containers + inspect/pull images).
+  # Everything else — exec, info, networks, volumes, build, swarm, secrets — is
+  # denied, closing the container-escape path an unrestricted socket mount opens.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    environment:
+      CONTAINERS: 1   # list / inspect / logs / create agent + executor containers
+      IMAGES: 1       # inspect / pull the agent + executor images
+      POST: 1         # allow the POST verbs above (create / start / stop / wait)
+      DELETE: 1       # allow container removal (job cleanup)
+      PING: 1         # docker.from_env() liveness check
+      VERSION: 1      # docker.from_env() API-version negotiation
+      # Everything else explicitly denied (these are the defaults; listed for clarity):
+      INFO: 0
+      EXEC: 0
+      NETWORKS: 0
+      VOLUMES: 0
+      BUILD: 0
+      COMMIT: 0
+      AUTH: 0
+      SYSTEM: 0
+      SWARM: 0
+      SECRETS: 0
+      CONFIGS: 0
+      SERVICES: 0
+      TASKS: 0
+      NODES: 0
+      PLUGINS: 0
+      DISTRIBUTION: 0
+      SESSION: 0
+      EVENTS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # No published ports: only reachable on the internal compose network.
+
   openscientist:
     stdin_open: true # docker run -i
     tty: true        # docker run -t
@@ -34,10 +74,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      docker-socket-proxy:
+        condition: service_started
     ports:
       - "${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    # JobManager.shutdown() drains in-flight job threads with up to a 30s
+    # timeout on SIGTERM; Compose's default 10s grace period would SIGKILL
+    # the process before that window elapses, so extend it to fit.
+    stop_grace_period: 35s
     # Map host.docker.internal to the host gateway so the in-page chat's codex
     # agent can reach a host-local model endpoint (e.g. Ollama at
     # http://host.docker.internal:11434/v1). Mirrors what job_container/runner.py
@@ -53,6 +99,11 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-openscientist}:${POSTGRES_PASSWORD:-openscientist_dev_password}@postgres:5432/${POSTGRES_DB:-openscientist}
       ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_PASSWORD:-openscientist_dev_password}@postgres:5432/${POSTGRES_DB:-openscientist}
       PORT: ${PORT:-8080}
+
+      # Talk to Docker only via the restricted socket proxy (the
+      # docker-socket-proxy service below) — the app never sees the raw host
+      # socket. Sibling/agent containers are created through this endpoint. (R6)
+      DOCKER_HOST: tcp://docker-socket-proxy:2375
 
       # Phenix: PHENIX_HOST_PATH points to a Linux x86_64 Phenix directory on the
       # host.  It is mounted read-only at /opt/phenix; PHENIX_PATH is the
@@ -107,11 +158,19 @@ services:
       # Mount built-in skills directory
       - ./skills:/app/skills:ro
 
-      # Mount Docker socket for sibling container execution
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Registry auth for pulling the agent/executor images from a PRIVATE
+      # registry (e.g. ACR). Point OPENSCIENTIST_DOCKER_CONFIG at a docker
+      # config.json holding pull credentials; the app's docker client
+      # (docker.from_env(), talking to the docker-socket-proxy over TCP) sends
+      # them as registry auth on images/create. Defaults to an empty-but-valid
+      # config so local/dev with public images works unchanged. Without valid
+      # creds, jobs fail at startup with
+      # "401 ... images/create ... authentication required".
+      - ${OPENSCIENTIST_DOCKER_CONFIG:-./docker/empty-docker-config.json}:/root/.docker/config.json:ro
 
-    group_add:
-      - "${DOCKER_GID:-999}"
+      # NOTE: the host Docker socket is deliberately NOT mounted here. Sibling
+      # container creation goes through the docker-socket-proxy service via
+      # DOCKER_HOST (set above), which restricts the reachable API surface. (R6)
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

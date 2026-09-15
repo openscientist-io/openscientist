@@ -21,15 +21,17 @@ from openscientist.database.models.job import Job as JobModel
 from openscientist.database.models.literature import Literature
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import AsyncSessionLocal
+from openscientist.knowledge_state_report import (
+    get_report_outline as _render_report_outline,
+)
+from openscientist.knowledge_state_report import (
+    get_report_summary as _render_report_summary,
+)
+from openscientist.knowledge_state_report import (
+    get_summary as _render_summary,
+)
 
 KS_FILENAME = "knowledge_state.json"
-
-# Bound the literature abstracts dumped into the report-generation prompt.
-# Dumping every abstract has overflowed the model's context window, dropping the
-# tool definitions so the file-write call is never emitted. The caller passes a
-# budget from the model's context window and abstracts fill it until exhausted,
-# the rest omitted with a note. This default applies only when no budget is given.
-_DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS = 8000
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -417,51 +419,7 @@ class KnowledgeState:
         Returns:
             Formatted summary of KS state
         """
-        summary_parts = [
-            f"# Knowledge Graph Summary (Iteration {self.data['iteration']})",
-            "",
-            "## Research Question",
-            self.data["config"]["research_question"],
-            "",
-            "## Data",
-            f"- Files: {self.data['data_summary'].get('files', [])}",
-            f"- Samples: {self.data['data_summary'].get('n_samples', 'Unknown')}",
-            f"- Features: {self.data['data_summary'].get('n_features', 'Unknown')}",
-            "",
-            "## Progress",
-            f"- Hypotheses tested: {len([h for h in self.data['hypotheses'] if h['status'] != 'pending'])}",
-            f"- Findings confirmed: {len(self.data['findings'])}",
-            f"- Literature reviewed: {len(self.data['literature'])}",
-            "",
-        ]
-
-        # Recent findings
-        if self.data["findings"]:
-            summary_parts.append("## Recent Findings")
-            summary_parts.extend(
-                f"- **{finding['title']}**: {finding['evidence']}"
-                for finding in self.data["findings"][-3:]
-            )
-            summary_parts.append("")
-
-        # Active hypotheses
-        pending = [h for h in self.data["hypotheses"] if h["status"] == "pending"]
-        if pending:
-            summary_parts.append("## Pending Hypotheses")
-            summary_parts.extend(f"- {hyp['id']}: {hyp['statement']}" for hyp in pending[-3:])
-            summary_parts.append("")
-
-        # Rejected hypotheses (learn from failures)
-        rejected = [h for h in self.data["hypotheses"] if h["status"] == "rejected"]
-        if rejected:
-            summary_parts.append("## Rejected Hypotheses (avoid repeating)")
-            summary_parts.extend(
-                f"- {hyp['id']}: {hyp['statement']} - {hyp.get('result', {}).get('conclusion', 'No conclusion')}"
-                for hyp in rejected[-3:]
-            )
-            summary_parts.append("")
-
-        return "\n".join(summary_parts)
+        return _render_summary(self.data)
 
     def get_report_summary(self) -> str:
         """
@@ -474,179 +432,7 @@ class KnowledgeState:
         Returns:
             Formatted comprehensive summary of KS state
         """
-        all_hypotheses = self.data["hypotheses"]
-        supported, rejected, pending = self._split_hypotheses_by_status(all_hypotheses)
-
-        parts = self._report_intro_section()
-        self._append_data_summary_section(parts)
-        self._append_progress_overview_section(parts, all_hypotheses, supported, rejected, pending)
-        self._append_investigation_timeline_section(parts)
-        self._append_findings_section(parts)
-        self._append_supported_hypotheses_section(parts, supported)
-        self._append_rejected_hypotheses_section(parts, rejected)
-        self._append_pending_hypotheses_section(parts, pending)
-        self._append_literature_section(parts)
-        self._append_consensus_answer_section(parts)
-        return "\n".join(parts)
-
-    @staticmethod
-    def _split_hypotheses_by_status(
-        all_hypotheses: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-        """Split hypotheses into supported, rejected, and pending groups."""
-        supported = [hyp for hyp in all_hypotheses if hyp["status"] == "supported"]
-        rejected = [hyp for hyp in all_hypotheses if hyp["status"] == "rejected"]
-        pending = [hyp for hyp in all_hypotheses if hyp["status"] == "pending"]
-        return supported, rejected, pending
-
-    def _report_intro_section(self) -> list[str]:
-        """Build the report summary header section."""
-        return [
-            f"# Comprehensive Knowledge Summary (After {self.data['iteration']} iterations)",
-            "",
-            "## Research Question",
-            self.data["config"]["research_question"],
-            "",
-        ]
-
-    def _append_data_summary_section(self, parts: list[str]) -> None:
-        """Append data summary section when available."""
-        data_summary = self.data.get("data_summary", {})
-        if not data_summary:
-            return
-        parts.append("## Data Summary")
-        parts.append(f"- Files: {data_summary.get('files', [])}")
-        parts.append(f"- Samples: {data_summary.get('n_samples', 'Unknown')}")
-        parts.append(f"- Features: {data_summary.get('n_features', 'Unknown')}")
-        parts.append("")
-
-    def _append_progress_overview_section(
-        self,
-        parts: list[str],
-        all_hypotheses: list[dict[str, Any]],
-        supported: list[dict[str, Any]],
-        rejected: list[dict[str, Any]],
-        pending: list[dict[str, Any]],
-    ) -> None:
-        """Append high-level counts covering hypotheses/findings/literature."""
-        parts.append("## Progress Overview")
-        parts.append(f"- Total hypotheses proposed: {len(all_hypotheses)}")
-        parts.append(f"- Supported: {len(supported)}")
-        parts.append(f"- Rejected: {len(rejected)}")
-        parts.append(f"- Pending: {len(pending)}")
-        parts.append(f"- Findings confirmed: {len(self.data['findings'])}")
-        parts.append(f"- Literature reviewed: {len(self.data['literature'])}")
-        parts.append("")
-
-    def _append_investigation_timeline_section(self, parts: list[str]) -> None:
-        """Append ordered iteration summaries."""
-        summaries = self.data.get("iteration_summaries", [])
-        if not summaries:
-            return
-        parts.append("## Investigation Timeline")
-        for entry in sorted(summaries, key=lambda item: item["iteration"]):
-            strapline = entry.get("strapline", "")
-            label = f" — {strapline}" if strapline else ""
-            parts.append(f"- **Iteration {entry['iteration']}{label}:** {entry['summary']}")
-        parts.append("")
-
-    def _append_findings_section(self, parts: list[str]) -> None:
-        """Append all findings with evidence and optional metadata."""
-        findings = self.data["findings"]
-        if not findings:
-            return
-        parts.append("## All Findings")
-        for finding in findings:
-            parts.append(f"### {finding['id']}: {finding['title']}")
-            parts.append(f"- **Evidence:** {finding['evidence']}")
-            if finding.get("biological_interpretation"):
-                parts.append(f"- **Interpretation:** {finding['biological_interpretation']}")
-            if finding.get("supporting_hypotheses"):
-                parts.append(
-                    f"- **Supporting hypotheses:** {', '.join(finding['supporting_hypotheses'])}"
-                )
-            if finding.get("literature_support"):
-                parts.append(
-                    f"- **Literature support:** {', '.join(finding['literature_support'])}"
-                )
-            if finding.get("plots"):
-                parts.append(f"- **Plots:** {', '.join(finding['plots'])}")
-            parts.append("")
-
-    @staticmethod
-    def _append_hypothesis_result_details(parts: list[str], result: dict[str, Any]) -> None:
-        """Append optional hypothesis result fields."""
-        if result.get("summary"):
-            parts.append(f"- **Result:** {result['summary']}")
-        if result.get("p_value"):
-            parts.append(f"- **P-value:** {result['p_value']}")
-        if result.get("effect_size"):
-            parts.append(f"- **Effect size:** {result['effect_size']}")
-        if result.get("conclusion"):
-            parts.append(f"- **Conclusion:** {result['conclusion']}")
-
-    def _append_supported_hypotheses_section(
-        self, parts: list[str], supported: list[dict[str, Any]]
-    ) -> None:
-        """Append all supported hypotheses and measured outcomes."""
-        if not supported:
-            return
-        parts.append("## Supported Hypotheses")
-        for hypothesis in supported:
-            parts.append(f"### {hypothesis['id']}: {hypothesis['statement']}")
-            self._append_hypothesis_result_details(parts, hypothesis.get("result") or {})
-            parts.append("")
-
-    def _append_rejected_hypotheses_section(
-        self, parts: list[str], rejected: list[dict[str, Any]]
-    ) -> None:
-        """Append rejected hypotheses with conclusions."""
-        if not rejected:
-            return
-        parts.append("## Rejected Hypotheses")
-        for hypothesis in rejected:
-            parts.append(f"### {hypothesis['id']}: {hypothesis['statement']}")
-            result = hypothesis.get("result") or {}
-            if result.get("conclusion"):
-                parts.append(f"- **Conclusion:** {result['conclusion']}")
-            elif result.get("summary"):
-                parts.append(f"- **Result:** {result['summary']}")
-            parts.append("")
-
-    @staticmethod
-    def _append_pending_hypotheses_section(parts: list[str], pending: list[dict[str, Any]]) -> None:
-        """Append still-pending hypotheses as remaining knowledge gaps."""
-        if not pending:
-            return
-        parts.append("## Knowledge Gaps (Pending Hypotheses)")
-        parts.extend(f"- {hypothesis['id']}: {hypothesis['statement']}" for hypothesis in pending)
-        parts.append("")
-
-    def _append_literature_section(self, parts: list[str]) -> None:
-        """Append reviewed literature titles and compact abstracts."""
-        literature_entries = self.data["literature"]
-        if not literature_entries:
-            return
-        parts.append("## Literature Reviewed")
-        for literature in literature_entries:
-            pmid_str = f" (PMID: {literature['pmid']})" if literature.get("pmid") else ""
-            parts.append(f"- **{literature['title']}**{pmid_str}")
-            abstract = literature.get("abstract", "")
-            if abstract:
-                truncated = abstract[:200] + "..." if len(abstract) > 200 else abstract
-                parts.append(f"  Abstract: {truncated}")
-            if literature.get("relevance_to"):
-                parts.append(f"  Relevant to: {', '.join(literature['relevance_to'])}")
-        parts.append("")
-
-    def _append_consensus_answer_section(self, parts: list[str]) -> None:
-        """Append consensus answer when one has been produced."""
-        consensus_answer = self.data.get("consensus_answer")
-        if not consensus_answer:
-            return
-        parts.append("## Previous Consensus Answer")
-        parts.append(consensus_answer)
-        parts.append("")
+        return _render_report_summary(self.data)
 
     def get_report_outline(self, *, abstract_budget_chars: int | None = None) -> str:
         """Get an outline of accumulated knowledge for the report prompt.
@@ -661,106 +447,7 @@ class KnowledgeState:
                 the model's context window so the prompt cannot overflow it.
                 Defaults to a conservative bound when unset.
         """
-        budget = (
-            abstract_budget_chars
-            if abstract_budget_chars is not None
-            else _DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS
-        )
-        parts: list[str] = [
-            f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
-            "",
-            "## Research Question",
-            self.data["config"]["research_question"],
-            "",
-        ]
-
-        # Progress counts
-        all_hyps = self.data["hypotheses"]
-        supported = [h for h in all_hyps if h["status"] == "supported"]
-        rejected = [h for h in all_hyps if h["status"] == "rejected"]
-        parts.append("## Progress")
-        parts.append(f"- {len(self.data['findings'])} findings confirmed")
-        parts.append(
-            f"- {len(all_hyps)} hypotheses ({len(supported)} supported, {len(rejected)} rejected)"
-        )
-        parts.append(f"- {len(self.data['literature'])} papers reviewed")
-        parts.append("")
-
-        # Investigation timeline — straplines only
-        summaries = self.data.get("iteration_summaries", [])
-        if summaries:
-            parts.append("## Investigation Timeline")
-            for entry in sorted(summaries, key=lambda e: e["iteration"]):
-                strapline = entry.get("strapline", entry.get("summary", "")[:120])
-                parts.append(f"- Iteration {entry['iteration']}: {strapline}")
-            parts.append("")
-
-        # Findings — titles with citations when available
-        if self.data["findings"]:
-            parts.append("## Findings")
-            for finding in self.data["findings"]:
-                parts.append(f"- {finding['id']}: {finding['title']}")
-                if finding.get("evidence"):
-                    parts.append(f"  Statistical evidence: {finding['evidence']}")
-                for c in finding.get("citations", []):
-                    status = c.get("validation_status", "unchecked")
-                    pmid = c.get("pmid", "?")
-                    snippet = c.get("snippet", "")
-                    explanation = c.get("explanation", "")
-                    parts.append(f'  - PMID:{pmid} [{status}]: "{snippet}"')
-                    if explanation:
-                        parts.append(f"    → {explanation}")
-            parts.append("")
-
-        # Hypotheses — one-line status
-        if all_hyps:
-            parts.append("## Hypotheses")
-            parts.extend(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}" for hyp in all_hyps)
-            parts.append("")
-
-        # Literature — titles with abstracts for citation grounding.
-        # Papers already cited by findings get title+PMID only (the snippet
-        # is the grounding); uncited papers include full abstracts as fallback.
-        cited_pmids: set[str] = set()
-        for finding in self.data["findings"]:
-            for c in finding.get("citations", []):
-                if c.get("pmid"):
-                    cited_pmids.add(str(c["pmid"]))
-
-        if self.data["literature"]:
-            parts.append(f"## Literature ({len(self.data['literature'])} papers)")
-            abstract_chars_spent = 0
-            abstracts_omitted = 0
-            for lit in self.data["literature"]:
-                pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
-                parts.append(f"- **{lit['title']}**{pmid_str}")
-                # Abstracts are a citation-grounding fallback for papers not
-                # already cited by a finding (cited papers carry their snippet).
-                # Include each in full until the budget is reached, then omit the
-                # rest, so a large literature list cannot overflow the context.
-                if str(lit.get("pmid", "")) not in cited_pmids:
-                    abstract = lit.get("abstract", "")
-                    if not abstract:
-                        continue
-                    if abstract_chars_spent + len(abstract) > budget:
-                        abstracts_omitted += 1
-                        continue
-                    parts.append(f"  Abstract: {abstract}")
-                    abstract_chars_spent += len(abstract)
-            if abstracts_omitted:
-                parts.append(
-                    f"\n_({abstracts_omitted} further abstracts omitted to fit the model "
-                    "context. Cite papers through the findings above, not from titles alone.)_"
-                )
-            parts.append("")
-
-        # Consensus answer if exists
-        if self.data.get("consensus_answer"):
-            parts.append("## Current Consensus Answer")
-            parts.append(self.data["consensus_answer"])
-            parts.append("")
-
-        return "\n".join(parts)
+        return _render_report_outline(self.data, abstract_budget_chars=abstract_budget_chars)
 
     def set_version_info(self, version_info: dict[str, str]) -> None:
         """

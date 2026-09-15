@@ -1,15 +1,22 @@
 # Security Review
 
-**Date:** 2026-03-10
+**Original review:** 2026-03-10
+**Last updated:** 2026-08-26 — statuses re-verified against the current implementation
 **Scope:** Full codebase review of the OpenScientist web application
+
+A finding is marked *Resolved* here only where the remediation was verified in current code or configuration. Findings that could not be verified as fixed are preserved as open, unchanged.
 
 ---
 
 ## Executive Summary
 
-OpenScientist has a **solid security foundation**. User authentication relies on industry-standard OAuth (Google, GitHub), sessions are stored in the database with secure cookies, and every database table enforces row-level security so users can only see their own data. Agent jobs run inside isolated Docker containers with resource limits and privilege restrictions. Secrets are encrypted at rest, and API key verification uses constant-time comparison to prevent timing attacks.
+OpenScientist has a **solid security foundation**. User authentication relies on industry-standard OAuth (Google, GitHub, ORCID), sessions are stored in the database with secure cookies, and every sensitive database table enforces row-level security so users can only see their own data. Agent jobs run inside isolated Docker containers with resource limits and privilege restrictions. Secrets are encrypted at rest, and API key verification uses constant-time comparison to prevent timing attacks.
 
-The main areas for improvement are **operational security gaps** rather than architectural flaws: there is no audit logging for admin actions, most API endpoints lack rate limiting, the web server container runs as root, and there are no per-iteration timeouts or token budgets to prevent runaway agents. None of these are exploitable in a default deployment, but addressing them would significantly strengthen the overall security posture.
+Four findings from the original review have since been remediated and verified: the raw Docker socket mount was replaced with a restricted socket proxy, all application images now run as non-root users, rate limiting was extended from a single endpoint to authentication and state-changing endpoints, and automated dependency vulnerability scanning is now enforced in CI.
+
+Most remaining gaps are **operational**: there is no audit logging for admin actions, no explicit CSRF token validation, no per-iteration timeout or token budget to bound a runaway agent, and base images are not pinned to digests.
+
+One architectural gap persists. The socket proxy must permit container creation for jobs to run, and it authorises by API path and method rather than by request content, so a compromised application container can still create a sibling container with arbitrary bind mounts and reach the host. The proxy is a substantial reduction in reachable API surface, not a container-escape boundary; it is tracked as an open High finding below.
 
 ---
 
@@ -17,7 +24,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 ### Authentication and Sessions
 
-- **OAuth 2.0 with major providers.** Users sign in through Google or GitHub using the Authlib library. No passwords are stored or managed by the application.
+- **OAuth 2.0 with major providers.** Users sign in through Google, GitHub, or ORCID using the Authlib library (a mock provider is available for development only). No passwords are stored or managed by the application.
 - **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
 - **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, not in browser-side storage. Logging out deletes the database record.
 - **User approval workflow.** New users must be explicitly approved by an admin before they can run jobs, preventing open access.
@@ -35,7 +42,9 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
-- **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only.
+- **Non-root across all images.** The web application (`USER openscientist`, UID 1001), agent (`USER agent`, UID 1001), and executor (`USER executor`) images all drop to a non-root user.
+- **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container with a read-only root filesystem. Input data is mounted read-only.
+- **No raw Docker socket in application containers.** A `docker-socket-proxy` sidecar is the only container that mounts `/var/run/docker.sock`; everything else reaches the Docker API through it over `DOCKER_HOST`. `tests/test_docker_compose_security.py` asserts these properties, so the boundary is regression-tested rather than only documented.
 
 ### Input Validation
 
@@ -66,18 +75,20 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 ## What's Missing or Could Be Improved
 
-### Critical
+### Resolved Since the Original Review
 
-| Finding | Description | Recommended Next Step |
-|---------|-------------|----------------------|
-| **Web server runs as root** | The main application container does not set a non-root `USER` in its Dockerfile. If the web process is compromised, the attacker has root inside the container. | Add a non-root user to the Dockerfile and run the application as that user. |
-| **Docker socket mounted read-write** | The web server and agent containers mount `/var/run/docker.sock` with read-write access. A compromise of either container could spawn arbitrary sibling containers on the host. | Evaluate whether the web server truly needs socket access, or if a Docker API proxy with restricted permissions could be used instead. |
+| Finding | Original severity | Verification |
+|---------|-------------------|--------------|
+| **Web server runs as root** | Critical | **Resolved.** `Dockerfile` creates the `openscientist` user/group (UID/GID 1001) and sets `USER openscientist` before `CMD`. `Dockerfile.agent` sets `USER agent` (UID 1001) and `Dockerfile.executor` sets `USER executor`. No application image now runs as root. |
+| **Docker socket mounted read-write** | Critical | **Resolved.** The raw socket mount is removed. A `docker-socket-proxy` service is the only container with socket access (mounted read-only, no published ports); the web app and agent containers reach it over `DOCKER_HOST=tcp://docker-socket-proxy:2375`, restricted to the container/image verbs the job lifecycle needs (create/start/stop/wait/list/inspect/logs/remove, plus image inspect/pull). `EXEC`, `INFO`, `NETWORKS`, `VOLUMES`, `BUILD`, `SWARM`, and `SECRETS` are denied. Asserted by `tests/test_docker_compose_security.py`. **Residual risk remains** — see the open finding below. |
+| **No rate limiting on most endpoints** | High | **Largely resolved.** slowapi limits are now applied via `src/openscientist/api/rate_limits.py`: `AUTH_RATE_LIMIT` (10/minute) across all seven auth routes in `auth/fastapi_routes.py`, `MUTATING_RATE_LIMIT` (30/minute) on state-changing job, key, share, and skill endpoints plus the webapp share routes, and `HEALTH_RATE_LIMIT` (10/minute) on `/health`. Read-only endpoints remain unthrottled — see the open finding below. |
+| **No automated dependency vulnerability scanning** | Medium | **Resolved.** CI runs `pip-audit --local --desc` on every push and pull request and `actions/dependency-review-action@v4` with `fail-on-severity: high` on pull requests. `.github/dependabot.yml` opens weekly update PRs for pip, Docker, and GitHub Actions. gitleaks secret scanning runs in CI and as a pre-commit hook. |
 
 ### High
 
 | Finding | Description | Recommended Next Step |
 |---------|-------------|----------------------|
-| **No rate limiting on most endpoints** | Only the health-check endpoint has rate limiting (10/minute via slowapi). Login, job creation, file upload, and token redemption endpoints have no throttling. | Extend rate limiting to all public-facing and authentication-related endpoints. |
+| **Container creation via the socket proxy is still a host-escape vector** | Residual risk after the socket-proxy remediation above. The proxy must permit `POST /containers/create` for the job lifecycle to work (`CONTAINERS: 1`, `POST: 1`), and it authorises by API path and HTTP method — it does not inspect request bodies. A compromised web or agent container can therefore create a sibling container with arbitrary bind mounts (for example `/:/host`) or privileged options and read or modify the host filesystem. The proxy substantially reduces the reachable API surface compared with a raw socket mount, but it is not a container-escape boundary. | Filter creation requests rather than only gating verbs — for example an authorising broker that validates image, mounts, and security options against an allowlist, or moving job execution to a runtime that does not require Docker API access from the application. |
 | **No audit logging for admin actions** | Admin operations (user approvals, job reassignment, token creation/revocation) are logged to the application logger but not to a persistent, tamper-evident audit table. | Create an `audit_log` database table and record all admin actions with timestamps, actor, and details. |
 | **No CSRF token validation** | While `samesite=lax` cookies provide partial protection, there is no explicit CSRF token for state-changing form submissions. | Add CSRF token generation and validation for all POST/PUT/DELETE operations. |
 | **Credentials passed to agent containers via environment variables** | Provider API keys and the database URL (including password) are injected into agent containers as plain environment variables. If a container is compromised, all credentials are exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of long-lived credentials. |
@@ -89,8 +100,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 |---------|-------------|----------------------|
 | **No per-iteration timeout or token budget** | An individual agent iteration can run indefinitely and consume unlimited tokens. The only safety limit is the total iteration count (max 20). | Add a wall-clock timeout (e.g., 15 minutes) and a maximum token spend per iteration. |
 | **No Content Security Policy (CSP) headers** | No CSP headers are set. While cookies are `httponly`, CSP would add defense-in-depth against cross-site scripting. | Configure CSP headers in the reverse proxy or application middleware. |
-| **OpenAPI docs exposed without authentication** | `/api-docs`, `/api-redoc`, and `/openapi.json` are accessible to anyone, revealing the full API surface to potential attackers. | Require authentication for API documentation, or disable it in production. |
-| **No automated dependency vulnerability scanning** | There is no evidence of Dependabot, Snyk, or similar tooling monitoring the 35+ direct dependencies for known CVEs. | Enable automated CVE scanning in CI (e.g., GitHub Dependabot, `pip-audit`, or Snyk). |
+| **OpenAPI docs exposed without authentication** | `/api-docs`, `/api-redoc`, and `/openapi.json` are registered on the host app with no auth dependency (`web_app.py`), so the full `/api/` surface is readable by anyone. Still open. | Require authentication for API documentation, or disable it in production. |
+| **Read-only endpoints remain unthrottled** | Rate limiting now covers authentication and state-changing endpoints, but `GET` endpoints (job listing, job detail, artifact retrieval) have no limit and can still be used to hammer the service. | Extend `slowapi` coverage to read endpoints, or apply a global default limit. |
 | **No secret key rotation mechanism** | Changing `OPENSCIENTIST_SECRET_KEY` invalidates all sessions and encrypted data. There is no graceful rotation workflow. | Implement key rotation support that re-encrypts data with the new key while still accepting the old key during a transition window. |
 | **Job shares don't expire** | Once a job is shared with another user, access is permanent unless manually revoked. | Add optional expiry to job shares and a user-facing revocation interface. |
 | **Review tokens don't require expiry** | Token expiry is optional. A never-expiring token that leaks could be used indefinitely. | Make expiry mandatory with a reasonable default (e.g., 7 days, maximum 1 year). |
@@ -115,17 +126,19 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Authentication (OAuth) | Strong | Industry-standard OAuth 2.0 with secure cookies |
+| Authentication (OAuth) | Strong | Industry-standard OAuth 2.0 (Google, GitHub, ORCID) with secure cookies |
 | Session management | Strong | Database-backed, expiring, httponly/secure/samesite |
 | Secrets at rest | Strong | Fernet encryption, HMAC-derived keys, hashed API keys |
 | Database access control | Strong | Row-Level Security on all sensitive tables |
 | Input validation | Strong | Pydantic schemas, file magic-number checks, parameterized SQL |
-| Container isolation | Good | Per-job containers with resource limits and `no-new-privileges` |
+| Container isolation | Good | Per-job containers, read-only executor FS, resource limits, `no-new-privileges`, restricted socket proxy |
+| Container privileges | Good | All images run non-root and no raw Docker socket is mounted; but permitted container creation remains a host-escape vector (see open finding) |
+| Dependency scanning | Strong | `pip-audit` + dependency review in CI, weekly Dependabot, gitleaks secret scanning |
 | Job access control | Good | Ownership checks at API + database layer; explicit sharing |
 | Review tokens | Good | Hashed, race-safe, revocable; but expiry should be mandatory |
-| Rate limiting | Needs Work | Only one endpoint protected; all others are unthrottled |
+| Rate limiting | Good | Auth (10/min) and mutating (30/min) endpoints throttled; read endpoints still unthrottled |
 | Audit logging | Needs Work | No persistent audit trail for admin or sensitive operations |
 | CSRF protection | Needs Work | Partial (`samesite=lax`); no explicit token validation |
-| Container privileges | Needs Work | Web server runs as root; Docker socket mounted read-write |
-| Dependency scanning | Needs Work | No automated CVE monitoring |
+| Image provenance | Needs Work | Base images not pinned to SHA-256 digests; no SBOM |
 | Execution guardrails | Needs Work | No per-iteration timeout or token budget |
+| API documentation exposure | Needs Work | `/api-docs`, `/api-redoc`, `/openapi.json` unauthenticated |

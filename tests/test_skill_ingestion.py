@@ -42,7 +42,7 @@ def build_repo_tarball(files: dict[str, str], root: str = "owner-repo-sha") -> b
 class TestSkillParser:
     """Tests for SkillParser."""
 
-    def test_parse_valid_skill(self, sample_skill_markdown: str):
+    def test_parse_valid_skill(self, sample_skill_markdown: str) -> None:
         """Test parsing a valid skill markdown file."""
         parser = SkillParser()
         parsed = parser.parse_content(sample_skill_markdown, "skills/testing/test-skill.md")
@@ -152,7 +152,7 @@ slug: custom-slug
         parsed = parser.parse_content(content, "different-name.md")
         assert parsed.slug == "custom-slug"
 
-    def test_parse_file(self, tmp_path: Path, sample_skill_markdown: str):
+    def test_parse_file(self, tmp_path: Path, sample_skill_markdown: str) -> None:
         """Test parsing from file."""
         skill_file = tmp_path / "test-skill.md"
         skill_file.write_text(sample_skill_markdown)
@@ -382,7 +382,7 @@ class TestGitHubSkillIngester:
     async def test_github_ingester_end_to_end_with_kdense_format(
         self,
         db_session: AsyncSession,
-    ):
+    ) -> None:
         """Test end-to-end GitHub skill ingestion with K-Dense format.
 
         Verifies that:
@@ -494,7 +494,7 @@ Access PubChem compound data.
     async def test_sync_skips_when_commit_sha_unchanged(
         self,
         db_session: AsyncSession,
-    ):
+    ) -> None:
         """Test that sync short-circuits when commit SHA is unchanged."""
         ingester = GitHubSkillIngester()
 
@@ -533,7 +533,7 @@ Access PubChem compound data.
     async def test_sync_force_bypasses_sha_check(
         self,
         db_session: AsyncSession,
-    ):
+    ) -> None:
         """Test that force=True bypasses the commit SHA short-circuit."""
         ingester = GitHubSkillIngester()
 
@@ -578,7 +578,7 @@ Access PubChem compound data.
     async def test_sync_proceeds_when_commit_sha_changed(
         self,
         db_session: AsyncSession,
-    ):
+    ) -> None:
         """Test that sync proceeds when commit SHA differs from stored."""
         ingester = GitHubSkillIngester()
 
@@ -628,7 +628,7 @@ class TestLocalSkillIngester:
         self,
         db_session: AsyncSession,
         sample_skill_markdown: str,
-    ):
+    ) -> None:
         """Test syncing skills from local directory."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create skill files (must be SKILL.md in subdirectory)
@@ -673,7 +673,7 @@ class TestLocalSkillIngester:
         self,
         db_session: AsyncSession,
         sample_skill_markdown: str,
-    ):
+    ) -> None:
         """Test updating skills on re-sync."""
         with tempfile.TemporaryDirectory() as tmpdir:
             skills_dir = Path(tmpdir) / "skills"
@@ -714,7 +714,7 @@ class TestLocalSkillIngester:
             assert stats3["updated"] == 1
 
     @pytest.mark.asyncio
-    async def test_sync_invalid_source_type(self, db_session: AsyncSession):
+    async def test_sync_invalid_source_type(self, db_session: AsyncSession) -> None:
         """Test that syncing with wrong source type raises error."""
         source = SkillSource(
             name="GitHub Source",
@@ -736,7 +736,7 @@ class TestBuiltinSkillsIngestion:
     """Integration tests for loading the real built-in skills from skills/."""
 
     @pytest.mark.asyncio
-    async def test_builtin_skills_load(self, db_session: AsyncSession):
+    async def test_builtin_skills_load(self, db_session: AsyncSession) -> None:
         """Test that all built-in SKILL.md files ingest successfully."""
         assert BUILTIN_SKILLS_DIR.is_dir(), f"skills dir not found: {BUILTIN_SKILLS_DIR}"
 

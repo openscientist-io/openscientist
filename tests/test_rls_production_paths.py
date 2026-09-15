@@ -15,7 +15,7 @@ from tests.helpers import enable_rls
 
 
 @pytest.mark.asyncio
-async def test_create_job_then_get_as_owner(db_session: AsyncSession):
+async def test_create_job_then_get_as_owner(db_session: AsyncSession) -> None:
     """Owner can read their own job via RLS-filtered query."""
     user = User(email="owner_prod@example.com", name="Owner")
     db_session.add(user)
@@ -37,7 +37,7 @@ async def test_create_job_then_get_as_owner(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_create_job_then_get_as_other_user(db_session: AsyncSession):
+async def test_create_job_then_get_as_other_user(db_session: AsyncSession) -> None:
     """Non-owner cannot read another user's job via RLS-filtered query."""
     alice = User(email="alice_prod@example.com", name="Alice")
     bob = User(email="bob_prod@example.com", name="Bob")
@@ -58,7 +58,7 @@ async def test_create_job_then_get_as_other_user(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_with_rls_filters_by_owner(db_session: AsyncSession):
+async def test_list_jobs_with_rls_filters_by_owner(db_session: AsyncSession) -> None:
     """Listing jobs under RLS returns only the current user's jobs."""
     alice = User(email="alice_list@example.com", name="Alice")
     bob = User(email="bob_list@example.com", name="Bob")
@@ -143,7 +143,7 @@ async def test_get_session_query_filters_by_owner(test_engine):
 
 
 @pytest.mark.asyncio
-async def test_list_jobs_without_rls_returns_all(db_session: AsyncSession):
+async def test_list_jobs_without_rls_returns_all(db_session: AsyncSession) -> None:
     """Without RLS (admin session), all jobs are visible regardless of owner.
 
     Documents intentional behavior: internal operations (scheduler,

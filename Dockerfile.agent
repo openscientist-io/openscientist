@@ -11,20 +11,14 @@
 #   openscientist.job_id=<uuid>   set by JobContainerRunner at runtime
 #   openscientist.type=agent
 
-# --- Stage: build the open-codex CLI from the fork --------------------------
-# The open-codex branch carries the fixes that let codex drive open-weight
-# models served by Ollama: flatten MCP namespace tools for providers without
-# namespace support, a function-form apply_patch (with a +-prefix patch-body
-# description so open models format added lines correctly), and a web_search
-# capability gate that stops the hosted tool from corrupting tool calls on
-# non-OpenAI providers. Pinned to a commit on open-codex for reproducibility.
-FROM rust:1.95-bookworm AS codex-build
-ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
-ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
-RUN git clone "${CODEX_REPO}" /codex \
-    && git -C /codex checkout "${CODEX_REF}" \
-    && cargo build --release --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
-    && cp /codex/codex-rs/target/release/codex /usr/local/bin/codex
+# --- The pinned codex CLI ---------------------------------------------------
+# Built separately by Dockerfile.codex and copied in, so this image needs no
+# Rust toolchain and rebuilds in minutes. Override for a local build that has
+# no registry access:
+#   docker build -f Dockerfile.codex -t openscientist-codex:local .
+#   docker build -f Dockerfile.agent --build-arg CODEX_IMAGE=openscientist-codex:local .
+ARG CODEX_IMAGE=acrcbraindev.azurecr.io/openscientist-codex:8f8009fc
+FROM ${CODEX_IMAGE} AS codex-build
 
 FROM openscientist-base:latest
 

@@ -90,7 +90,7 @@ async def test_create_chat_message(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test creating a chat message."""
     _ = test_user
     message = JobChatMessage(
@@ -114,7 +114,7 @@ async def test_chat_conversation_flow(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test a full conversation flow with user and assistant messages."""
     _ = test_user
     # User asks a question
@@ -154,7 +154,7 @@ async def test_get_chat_history(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test retrieving chat history."""
     _ = test_user
     # Create multiple messages
@@ -187,7 +187,7 @@ async def test_chat_history_limit(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test that chat history respects limit parameter."""
     _ = test_user
     # Create 20 messages
@@ -211,7 +211,7 @@ async def test_chat_messages_per_job(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test that chat messages are isolated per job."""
     # Create second job
     job2 = Job(
@@ -253,7 +253,7 @@ async def test_chat_messages_per_job(
 async def test_cascade_delete_chat_messages(
     db_session: AsyncSession,
     test_user: User,
-):
+) -> None:
     """Test that deleting a job deletes its chat messages."""
     # Create job with messages
     job = Job(
@@ -427,7 +427,7 @@ async def test_chat_message_role_validation(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test that chat messages have proper role values."""
     _ = test_user
     # Create user message
@@ -466,7 +466,7 @@ async def test_chat_access_with_rls(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that chat messages respect RLS policies."""
     # Create job for test_user
     job = Job(
@@ -510,7 +510,7 @@ async def test_send_chat_message_success(
     test_user: User,
     test_job: Job,
     temp_jobs_dir: Path,
-):
+) -> None:
     """send_chat_message runs the turn in a container and stores both messages."""
     _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
@@ -536,7 +536,7 @@ async def test_send_chat_message_cleans_up_ipc_files(
     test_user: User,
     test_job: Job,
     temp_jobs_dir: Path,
-):
+) -> None:
     """The request and response files are removed after the turn."""
     _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
@@ -555,7 +555,7 @@ async def test_send_chat_message_raises_on_container_failure(
     test_user: User,
     test_job: Job,
     temp_jobs_dir: Path,
-):
+) -> None:
     """A failed container raises and stores no messages."""
     _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
@@ -575,7 +575,7 @@ async def test_send_chat_message_raises_on_error_response(
     test_user: User,
     test_job: Job,
     temp_jobs_dir: Path,
-):
+) -> None:
     """An error reply in the response file raises and stores no messages."""
     _ = test_user
     job_dir = temp_jobs_dir / str(test_job.id)
@@ -594,7 +594,8 @@ async def test_build_chat_request_keeps_system_prompt_small(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+    temp_jobs_dir: Path,
+) -> None:
     """Job context goes in the prompt, never the system prompt (which the claude
     CLI passes as an arg subject to ARG_MAX)."""
     _ = test_user
@@ -626,7 +627,8 @@ async def test_build_chat_request_codex_folds_guidance(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+    temp_jobs_dir: Path,
+) -> None:
     """Codex has no model override and folds the chat guidance into the system
     prompt (delivered via AGENTS.md, not the Claude-only CLAUDE.md)."""
     _ = test_user
@@ -642,7 +644,7 @@ async def test_build_chat_request_codex_folds_guidance(
 
 
 @pytest.mark.asyncio
-async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
+async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path) -> None:
     """The container-side turn reads the request, runs the agent with the
     request's system prompt, and writes the reply."""
     job_dir = temp_jobs_dir / "chat-turn"
@@ -669,7 +671,7 @@ async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_run_chat_turn_async_records_error(temp_jobs_dir: Path):
+async def test_run_chat_turn_async_records_error(temp_jobs_dir: Path) -> None:
     """A failed turn is captured as an error in the response file, not raised."""
     job_dir = temp_jobs_dir / "chat-turn-err"
     job_dir.mkdir()

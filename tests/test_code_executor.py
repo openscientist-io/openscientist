@@ -2,7 +2,8 @@
 
 import shutil
 from pathlib import Path
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import Mock, call, patch
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -53,12 +54,195 @@ class TestValidateImports:
         # "from scipy.stats import ttest_ind" → top-level is "scipy"
         validate_imports("from scipy.stats import ttest_ind", ["scipy"])
 
-    def test_os_allowed_when_listed(self):
-        validate_imports("import os", ["os"])
-
     def test_os_forbidden_when_not_listed(self):
         with pytest.raises(ForbiddenImportError):
             validate_imports("import os", ["pandas"])
+
+    def test_requests_forbidden(self):
+        with pytest.raises(ForbiddenImportError):
+            validate_imports("import requests", ["pandas", "numpy"])
+
+
+# ─── restricted sandbox ───────────────────────────────────────────────
+
+
+class TestRestrictedExecution:
+    """Tests for hardened sandbox builtins, imports, and SafeOs."""
+
+    @pytest.fixture
+    def plots_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / "plots"
+        d.mkdir()
+        return d
+
+    def test_import_os_blocked(self, plots_dir):
+        result = execute_code("import os", data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "not allowed" in result["error"]
+
+    def test_import_requests_blocked(self, plots_dir):
+        result = execute_code("import requests", data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "not allowed" in result["error"]
+
+    def test_dunder_import_os_blocked(self, plots_dir):
+        result = execute_code('__import__("os")', data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "not allowed" in result["error"]
+
+    def test_os_environ_unavailable(self, plots_dir):
+        code = """
+try:
+    os.environ
+    print('available')
+except AttributeError:
+    print('unavailable')
+"""
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "unavailable" in result["output"]
+
+    def test_os_system_unavailable(self, plots_dir):
+        code = """
+try:
+    os.system('echo hi')
+    print('available')
+except AttributeError:
+    print('unavailable')
+"""
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "unavailable" in result["output"]
+
+    def test_open_blocked(self, plots_dir):
+        result = execute_code("open('test.txt')", data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "NameError" in result["error"]
+
+    def test_eval_blocked(self, plots_dir):
+        result = execute_code("eval('1+1')", data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "NameError" in result["error"]
+
+    def test_exec_blocked(self, plots_dir):
+        result = execute_code("exec('x=1')", data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "NameError" in result["error"]
+
+    def test_compile_blocked(self, plots_dir):
+        result = execute_code("compile('x=1', '<s>', 'exec')", data=None, plots_dir=plots_dir)
+        assert result["success"] is False
+        assert "NameError" in result["error"]
+
+    def test_safe_os_path_helpers_work(self, plots_dir):
+        code = """
+print(os.path.join('a', 'b'))
+print(os.path.basename('/tmp/foo.txt'))
+print(os.path.dirname('/tmp/foo.txt'))
+print(os.path.splitext('a.csv')[1])
+print(os.path.exists('.'))
+print(os.path.isfile('.'))
+print(os.path.isdir('.'))
+print(os.sep)
+print(isinstance(os.getcwd(), str))
+print(isinstance(os.listdir('.'), list))
+"""
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "a/b" in result["output"] or "a\\b" in result["output"]
+        assert "foo.txt" in result["output"]
+        assert ".csv" in result["output"]
+        assert "True" in result["output"]
+
+    def test_safe_path_no_dict(self, plots_dir):
+        code = """
+try:
+    os.path.__dict__
+    print('available')
+except AttributeError:
+    print('unavailable')
+"""
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "unavailable" in result["output"]
+
+    def test_safe_path_no_real_os_module(self, plots_dir):
+        code = "print(hasattr(os.path, 'os'))"
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "False" in result["output"]
+
+    def test_numpy_still_works(self, plots_dir):
+        code = "import numpy.linalg; print(numpy.linalg.norm([3, 4]))"
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "5.0" in result["output"]
+
+    def test_pandas_still_works(self, plots_dir):
+        code = "import pandas as pd; print(pd.DataFrame({'x': [1]}).shape)"
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "(1, 1)" in result["output"]
+
+    def test_scipy_from_import_still_works(self, plots_dir):
+        code = "from scipy import stats; print(hasattr(stats, 'ttest_ind'))"
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "True" in result["output"]
+
+    def test_sklearn_from_import_still_works(self, plots_dir):
+        code = "from sklearn.metrics import accuracy_score; print(accuracy_score([0,1],[0,1]))"
+        result = execute_code(code, data=None, plots_dir=plots_dir)
+        assert result["success"] is True
+        assert "1.0" in result["output"]
+
+
+# ─── signal alarm helpers ─────────────────────────────────────────────
+
+
+class TestSignalAlarmHelpers:
+    """Tests for cross-platform timeout alarm setup and teardown."""
+
+    def test_set_and_clear_timeout_alarm_unix_like(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import openscientist.code_executor as code_executor
+        from openscientist.code_executor import (
+            _clear_timeout_alarm,
+            _set_timeout_alarm,
+            timeout_handler,
+        )
+
+        mock_alarm = Mock()
+        mock_signal_fn = Mock()
+        sigalrm = 14
+
+        monkeypatch.setattr(code_executor, "_signal_alarm", mock_alarm)
+        monkeypatch.setattr(code_executor.signal, "signal", mock_signal_fn)
+        monkeypatch.setattr(code_executor.signal, "SIGALRM", sigalrm, raising=False)
+
+        _set_timeout_alarm(10)
+
+        mock_signal_fn.assert_called_once_with(sigalrm, timeout_handler)
+        mock_alarm.assert_called_once_with(10)
+
+        _clear_timeout_alarm()
+
+        mock_alarm.assert_has_calls([call(10), call(0)])
+
+    def test_set_and_clear_timeout_alarm_windows_like(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import openscientist.code_executor as code_executor
+        from openscientist.code_executor import _clear_timeout_alarm, _set_timeout_alarm
+
+        mock_signal_fn = Mock()
+
+        monkeypatch.setattr(code_executor, "_signal_alarm", None)
+        monkeypatch.setattr(code_executor.signal, "signal", mock_signal_fn)
+
+        _set_timeout_alarm(10)
+        _clear_timeout_alarm()
+
+        mock_signal_fn.assert_not_called()
 
 
 # ─── execute_code ─────────────────────────────────────────────────────
@@ -199,11 +383,11 @@ class TestLoadData:
     def test_none_path_returns_none(self):
         assert load_data(None) is None
 
-    def test_missing_path_raises(self, tmp_path: Path):
+    def test_missing_path_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             load_data(str(tmp_path / "missing.csv"))
 
-    def test_load_csv(self, tmp_path: Path):
+    def test_load_csv(self, tmp_path: Path) -> None:
         csv_path = tmp_path / "data.csv"
         csv_path.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
         df = load_data(str(csv_path))
@@ -211,7 +395,7 @@ class TestLoadData:
         assert list(df.columns) == ["a", "b"]
         assert len(df) == 2
 
-    def test_load_tsv(self, tmp_path: Path):
+    def test_load_tsv(self, tmp_path: Path) -> None:
         tsv_path = tmp_path / "data.tsv"
         tsv_path.write_text("a\tb\n1\t2\n", encoding="utf-8")
         df = load_data(str(tsv_path))
@@ -219,19 +403,19 @@ class TestLoadData:
         assert list(df.columns) == ["a", "b"]
         assert len(df) == 1
 
-    def test_csv_fallback_for_unknown_extension(self, tmp_path: Path):
+    def test_csv_fallback_for_unknown_extension(self, tmp_path: Path) -> None:
         data_path = tmp_path / "data.custom"
         data_path.write_text("x,y\n5,6\n", encoding="utf-8")
         df = load_data(str(data_path))
         assert df is not None
         assert list(df.columns) == ["x", "y"]
 
-    def test_h5ad_returns_none_instead_of_crashing(self, tmp_path: Path):
+    def test_h5ad_returns_none_instead_of_crashing(self, tmp_path: Path) -> None:
         h5ad_path = tmp_path / "data.h5ad"
         h5ad_path.write_bytes(b"\x89HDF\r\n\x1a\nnot really hdf5 but binary")
         assert load_data(str(h5ad_path)) is None
 
-    def test_binary_unknown_extension_returns_none_not_raise(self, tmp_path: Path):
+    def test_binary_unknown_extension_returns_none_not_raise(self, tmp_path: Path) -> None:
         data_path = tmp_path / "data.bin"
         data_path.write_bytes(bytes(range(256)))
         assert load_data(str(data_path)) is None
@@ -317,7 +501,7 @@ class TestExecuteSparqlCode:
     def test_sets_descriptive_user_agent(self, plots_dir):
         """A descriptive User-Agent is required by Wikidata's policy (generic
         library defaults get throttled/blocked). The wrapper must carry ours."""
-        sparql_json = {"head": {"vars": []}, "results": {"bindings": []}}
+        sparql_json: dict[str, Any] = {"head": {"vars": []}, "results": {"bindings": []}}
         query = "# ENDPOINT: https://example.org/sparql\nSELECT ?s WHERE { }"
         with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
             mock_cls.return_value.query.return_value.convert.return_value = sparql_json
@@ -372,13 +556,13 @@ class TestExecuteSparqlCode:
         query = "# ENDPOINT: https://example.org/sparql\nSELECT ?s WHERE { }"
         with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
             mock_instance = mock_cls.return_value
-            mock_instance.query.side_effect = SPARQLWrapperException("bad query")
+            mock_instance.query.side_effect = SPARQLWrapperException(b"bad query")
             result = execute_sparql_code(query, plots_dir)
         assert result["success"] is False
         assert "SPARQL query error" in result["error"]
 
     def test_execution_time_tracked(self, plots_dir):
-        sparql_json = {"head": {"vars": []}, "results": {"bindings": []}}
+        sparql_json: dict[str, Any] = {"head": {"vars": []}, "results": {"bindings": []}}
         query = "# ENDPOINT: https://example.org/sparql\nSELECT * WHERE { }"
         with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
             mock_instance = mock_cls.return_value

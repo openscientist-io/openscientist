@@ -17,7 +17,7 @@ async def test_skill_rls_public_read(
     db_session: AsyncSession,
     test_user: User,
     test_skill: Skill,
-):
+) -> None:
     """Test that authenticated users can read enabled skills."""
     # Set user context (not bypass)
     await set_current_user(db_session, test_user.id)
@@ -36,7 +36,7 @@ async def test_skill_unique_category_slug(
     db_session: AsyncSession,
     test_skill_source: SkillSource,  # Required for test_skill fixture
     test_skill: Skill,
-):
+) -> None:
     """Test unique constraint on (category, slug)."""
     _ = test_skill_source
     from sqlalchemy.exc import IntegrityError
@@ -63,7 +63,7 @@ async def test_skill_unique_category_slug(
 async def test_skill_version_increment(
     db_session: AsyncSession,
     test_skill: Skill,
-):
+) -> None:
     """Test skill version tracking."""
     assert test_skill.version == 1
 

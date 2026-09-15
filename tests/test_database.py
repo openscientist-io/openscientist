@@ -31,7 +31,7 @@ from openscientist.database.models import (
 
 
 @pytest.mark.asyncio
-async def test_user_creation(db_session: AsyncSession):
+async def test_user_creation(db_session: AsyncSession) -> None:
     """Test creating a user with UUIDv7 ID generation."""
     user = User(
         email="newuser@example.com",
@@ -51,7 +51,7 @@ async def test_user_creation(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_job_creation_with_owner(db_session: AsyncSession, test_user: User):
+async def test_job_creation_with_owner(db_session: AsyncSession, test_user: User) -> None:
     """Test creating a job with an owner."""
     job = Job(
         owner_id=test_user.id,
@@ -77,7 +77,7 @@ async def test_job_creation_with_owner(db_session: AsyncSession, test_user: User
 
 
 @pytest.mark.asyncio
-async def test_orphaned_job_creation(db_session: AsyncSession):
+async def test_orphaned_job_creation(db_session: AsyncSession) -> None:
     """Test creating a job without an owner (orphaned job)."""
     job = Job(
         owner_id=None,
@@ -94,7 +94,7 @@ async def test_orphaned_job_creation(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_api_key_creation(db_session: AsyncSession, test_user: User):
+async def test_api_key_creation(db_session: AsyncSession, test_user: User) -> None:
     """Test creating an API key for a user."""
     api_key = APIKey(
         user_id=test_user.id,
@@ -116,7 +116,7 @@ async def test_api_key_creation(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_session_creation(db_session: AsyncSession, test_user: User):
+async def test_session_creation(db_session: AsyncSession, test_user: User) -> None:
     """Test creating a user session."""
     expires_at = datetime.now(UTC) + timedelta(days=7)
     session = DBSession(
@@ -132,7 +132,7 @@ async def test_session_creation(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_oauth_account_creation(db_session: AsyncSession, test_user: User):
+async def test_oauth_account_creation(db_session: AsyncSession, test_user: User) -> None:
     """Test creating an OAuth account linked to a user."""
     oauth_account = OAuthAccount(
         user_id=test_user.id,
@@ -156,7 +156,9 @@ async def test_oauth_account_creation(db_session: AsyncSession, test_user: User)
 
 
 @pytest.mark.asyncio
-async def test_job_share_creation(db_session: AsyncSession, test_user: User, test_user2: User):
+async def test_job_share_creation(
+    db_session: AsyncSession, test_user: User, test_user2: User
+) -> None:
     """Test creating a job share between two users."""
     # Create a job owned by test_user
     job = Job(
@@ -185,7 +187,7 @@ async def test_job_share_creation(db_session: AsyncSession, test_user: User, tes
 
 
 @pytest.mark.asyncio
-async def test_hypothesis_finding_relationship(db_session: AsyncSession, test_job: Job):
+async def test_hypothesis_finding_relationship(db_session: AsyncSession, test_job: Job) -> None:
     """Test creating hypotheses and findings with relationships."""
     # Create hypothesis
     hypothesis = Hypothesis(
@@ -230,7 +232,7 @@ async def test_hypothesis_finding_relationship(db_session: AsyncSession, test_jo
 
 
 @pytest.mark.asyncio
-async def test_literature_creation(db_session: AsyncSession, test_job: Job):
+async def test_literature_creation(db_session: AsyncSession, test_job: Job) -> None:
     """Test creating literature records."""
     literature = Literature(
         job_id=test_job.id,
@@ -252,7 +254,7 @@ async def test_literature_creation(db_session: AsyncSession, test_job: Job):
 
 
 @pytest.mark.asyncio
-async def test_analysis_log_creation(db_session: AsyncSession, test_job: Job):
+async def test_analysis_log_creation(db_session: AsyncSession, test_job: Job) -> None:
     """Test creating analysis log entries."""
     log = AnalysisLog(
         job_id=test_job.id,
@@ -275,7 +277,7 @@ async def test_analysis_log_creation(db_session: AsyncSession, test_job: Job):
 
 
 @pytest.mark.asyncio
-async def test_plot_creation(db_session: AsyncSession, test_job: Job):
+async def test_plot_creation(db_session: AsyncSession, test_job: Job) -> None:
     """Test creating plot metadata."""
     plot = Plot(
         job_id=test_job.id,
@@ -295,7 +297,9 @@ async def test_plot_creation(db_session: AsyncSession, test_job: Job):
 
 
 @pytest.mark.asyncio
-async def test_chat_message_creation(db_session: AsyncSession, test_job: Job, test_user: User):
+async def test_chat_message_creation(
+    db_session: AsyncSession, test_job: Job, test_user: User
+) -> None:
     """Test creating chat messages."""
     _ = test_user
     message = JobChatMessage(
@@ -313,7 +317,7 @@ async def test_chat_message_creation(db_session: AsyncSession, test_job: Job, te
 
 
 @pytest.mark.asyncio
-async def test_cost_record_creation(db_session: AsyncSession, test_job: Job):
+async def test_cost_record_creation(db_session: AsyncSession, test_job: Job) -> None:
     """Test creating cost records."""
     cost = CostRecord(
         job_id=test_job.id,
@@ -341,7 +345,7 @@ async def test_cost_record_creation(db_session: AsyncSession, test_job: Job):
 
 
 @pytest.mark.asyncio
-async def test_cascade_delete_job(db_session: AsyncSession, test_user: User):
+async def test_cascade_delete_job(db_session: AsyncSession, test_user: User) -> None:
     """Test that deleting a job cascades to related records."""
     # Create job with related records
     job = Job(
@@ -382,7 +386,7 @@ async def test_cascade_delete_job(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_uuidv7_time_ordering(db_session: AsyncSession):
+async def test_uuidv7_time_ordering(db_session: AsyncSession) -> None:
     """Test that UUIDv7 IDs are time-ordered."""
     # Create multiple users in sequence
     user1 = User(email="user1@test.com", name="User 1")

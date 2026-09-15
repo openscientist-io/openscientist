@@ -1,0 +1,89 @@
+name: Deploy openscientist (dev)
+
+on:
+  push:
+    branches: [ "development" ]
+  workflow_dispatch:
+
+concurrency:
+  # Serialize deploys per env: az vm run-command allows only one execution per VM
+  # at a time, so overlapping runs (e.g. batch-merges to main) hit a Conflict and
+  # fail. Queue them instead of racing; never cancel an in-flight deploy midway.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # openscientist runs on vm-openscientist-dev via docker-compose (spawns agent/executor
+      # containers), NOT a Container App. Build server-side in ACR (the Rust Codex build OOMs
+      # low-RAM hosts), then redeploy the web container on the VM.
+      - name: Build base + main image in ACR
+        run: |
+          ACR=${{ secrets.ACR_NAME }}
+          # main Dockerfile has 'FROM openscientist-base:latest' (unqualified) -> qualify to our ACR
+          acr_build() {
+            for attempt in 1 2 3; do
+              az acr build -r $ACR "$@" && return 0
+              echo "acr build failed (attempt $attempt), retrying in 60s" >&2
+              sleep 60
+            done
+            return 1
+          }
+          # The base carries system packages and the locked Python deps, so it only
+          # changes when those inputs change. Tagging it by a hash of those inputs
+          # means an ordinary deploy reuses it instead of rebuilding it.
+          #
+          # This is not only about speed. Building an image FROM a base that was
+          # pushed moments earlier fails reproducibly with "failed to get layer
+          # ... layer does not exist", even when the base is pinned by digest and
+          # the build is retried; the same build succeeds against a base that has
+          # had a few minutes to settle. Reusing the base avoids that window
+          # entirely, and the sleep below covers the rare deploy that rebuilds it.
+          BASE_KEY=$(cat Dockerfile.base pyproject.toml uv.lock | sha256sum | cut -c1-12)
+          if az acr repository show -n $ACR --image openscientist-base:$BASE_KEY >/dev/null 2>&1; then
+            echo "base image openscientist-base:$BASE_KEY already built, reusing"
+          else
+            acr_build -t openscientist-base:$BASE_KEY -t openscientist-base:latest -f Dockerfile.base .
+            echo "waiting for the freshly pushed base to become consistent"
+            sleep 180
+          fi
+          sed -i "s|^FROM openscientist-base:latest|FROM ${ACR}.azurecr.io/openscientist-base:${BASE_KEY}|" Dockerfile Dockerfile.agent Dockerfile.executor
+          # The agent and executor images run the same src/ as the web image but
+          # were only ever built by hand, so they froze on a June build while the
+          # web image kept shipping. The key-replacement proxy landed after that
+          # build, so the agent ignored the proxy, sent the runner's placeholder
+          # key straight to Azure, and failed every job with a 401 that reads
+          # like a bad credential. Building them here keeps the halves in step.
+          #
+          # The tag is per environment, never :latest. All three environments
+          # previously shared openscientist-agent:latest, so a dev deploy would
+          # have replaced the image prod runs. Each VM's compose pins its own tag.
+          acr_build -t openscientist-agent:dev -f Dockerfile.agent .
+          acr_build -t openscientist-executor:dev -f Dockerfile.executor .
+          TAG=dev-${{ github.sha }}
+          acr_build -t openscientist:$TAG -f Dockerfile .
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Redeploy on vm-openscientist-dev
+        run: |
+          ACR=${{ secrets.ACR_NAME }}
+          FULL=${ACR}.azurecr.io/openscientist:${{ env.TAG }}
+          TOK=$(az acr login -n $ACR --expose-token --query accessToken -o tsv)
+          # The image ships migrations but nothing applied them, so a release
+          # carrying a schema change left the database behind and every query
+          # touching a new column failed at runtime. Migrating between the pull
+          # and the restart means the new code never starts against an old
+          # schema, and a failed migration aborts the deploy with the previous
+          # container still serving.
+          az vm run-command invoke -g rg-openscientist-dev -n vm-openscientist-dev --command-id RunShellScript --scripts "docker login ${ACR}.azurecr.io -u 00000000-0000-0000-0000-000000000000 -p '$TOK' && sed -i 's|image: acrcbraindev.azurecr.io/openscientist:.*|image: $FULL|' /opt/openscientist/docker-compose.yml && cd /opt/openscientist && docker compose pull openscientist && docker compose run --rm openscientist alembic upgrade head && docker compose up -d openscientist"

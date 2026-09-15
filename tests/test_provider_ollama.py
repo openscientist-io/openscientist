@@ -201,7 +201,9 @@ def test_model_profile_uses_live_probe() -> None:
     probe.assert_called_once_with("http://localhost:11434/v1", "gpt-oss:20b")
 
 
-def test_model_profile_probe_failure_logs_warning_and_defaults(caplog) -> None:
+def test_model_profile_probe_failure_logs_warning_and_defaults(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     import logging
 
     from openscientist import models

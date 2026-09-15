@@ -8,15 +8,11 @@ CORS, and error handling.
 import logging
 
 from fastapi import APIRouter, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from .endpoints import jobs_router, keys_router, shares_router, skills_router
+from .rate_limits import HEALTH_RATE_LIMIT, limiter
 
 logger = logging.getLogger(__name__)
-
-# Create rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 # Create main API router
 api_router = APIRouter(prefix="/api/v1")
@@ -30,7 +26,7 @@ api_router.include_router(skills_router)
 
 # Health check endpoint (no auth required)
 @api_router.get("/health", tags=["Health"])
-@limiter.limit("10/minute")
+@limiter.limit(HEALTH_RATE_LIMIT)
 async def health_check(request: Request) -> dict[str, str]:
     """
     Health check endpoint.

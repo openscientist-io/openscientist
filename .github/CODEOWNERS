@@ -1,0 +1,9 @@
+# CODEOWNERS
+#
+# Intentionally left blank for now — no code-owner rules are enforced yet.
+#
+# When the team/GitHub groups are set up, add rules here so PRs touching the
+# listed paths automatically request review from the owners. Example:
+#   *                          @org/maintainers
+#   /.github/workflows/        @org/maintainers
+#   /src/openscientist/auth/   @org/security-owners

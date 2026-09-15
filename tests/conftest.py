@@ -46,6 +46,8 @@ if "OPENSCIENTIST_SECRET_KEY" not in os.environ:
     os.environ["OPENSCIENTIST_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
+if "ADMIN_DATABASE_URL" not in os.environ:
+    os.environ["ADMIN_DATABASE_URL"] = os.environ["DATABASE_URL"]
 # There is no default provider, so tests that do not select one explicitly need a
 # valid OPENSCIENTIST_PROVIDER so Settings construction does not raise.
 if "OPENSCIENTIST_PROVIDER" not in os.environ:
@@ -252,6 +254,7 @@ def test_database_url(postgres_container: PostgresContainer | None) -> str:
 
     # Propagate the real URL so thread-safe session factories connect correctly
     os.environ["DATABASE_URL"] = url
+    os.environ["ADMIN_DATABASE_URL"] = url
     from openscientist.settings import clear_settings_cache
 
     clear_settings_cache()

@@ -385,7 +385,7 @@ def increment_ks_iteration(job_id: str) -> None:
     ks.save_to_database_sync(job_id)
 
 
-async def _get_job_status(job_id: str) -> str | None:
+async def get_job_status(job_id: str) -> str | None:
     """Fetch current job status from the database."""
     try:
         async with AsyncSessionLocal(thread_safe=True) as session:
@@ -545,7 +545,7 @@ async def wait_for_feedback_or_timeout(
             logger.info("Feedback timeout after %.0fs - auto-continuing", elapsed)
             return {"outcome": "timeout", "feedback_text": None}
 
-        status = await _get_job_status(job_id)
+        status = await get_job_status(job_id)
         if status == "cancelled":
             logger.info("Job cancelled while waiting for feedback")
             return {"outcome": "cancelled", "feedback_text": None}

@@ -1,12 +1,15 @@
 """Tests for authentication middleware behavior."""
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 from openscientist.auth import middleware
 
 
-def _make_fake_context(session_token: str | None = None):
+def _make_fake_context(
+    session_token: str | None = None,
+) -> tuple[SimpleNamespace, SimpleNamespace, dict]:
     """Build fake NiceGUI app/ui objects for middleware tests."""
     storage = {"existing": "value"}
     cookies = {}
@@ -32,7 +35,7 @@ def test_require_auth_sync_rejects_invalid_cookie_session(monkeypatch):
     monkeypatch.setattr(middleware, "app", fake_app)
     monkeypatch.setattr(middleware, "ui", fake_ui)
 
-    async def _fake_validate_session(_token: str):
+    async def _fake_validate_session(_token: str) -> None:
         return None
 
     monkeypatch.setattr(middleware, "validate_session", _fake_validate_session)
@@ -56,7 +59,7 @@ def test_require_auth_sync_accepts_valid_session_and_populates_storage(monkeypat
     monkeypatch.setattr(middleware, "app", fake_app)
     monkeypatch.setattr(middleware, "ui", fake_ui)
 
-    async def _fake_validate_session(_token: str):
+    async def _fake_validate_session(_token: str) -> dict[str, Any]:
         return {
             "user_id": "123e4567-e89b-12d3-a456-426614174000",
             "email": "valid@example.com",

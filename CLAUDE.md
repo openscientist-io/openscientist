@@ -5,22 +5,26 @@ OpenScientist (Scientific Hypothesis Agent for Novel Discovery) is a web applica
 ## Project Structure
 
 ```text
-src/openscientist/
-├── agent/            # AgentExecutor protocol and ClaudeCodeAgent
-├── api/              # FastAPI REST endpoints
-├── auth/             # Authentication (OAuth, sessions, middleware)
-├── database/         # SQLAlchemy models and migrations
-├── job/              # Job lifecycle, scheduling, and types
-├── job_container/    # Container-per-job isolation
-├── mcp_server/       # MCP server for agent tools
-├── orchestrator/     # Discovery orchestration (setup, iteration, report)
-├── providers/        # LLM provider abstractions (Anthropic, Vertex, etc.)
-├── tools/            # @tool-decorated callables for SDK agent path
-├── webapp_components/# NiceGUI pages and components
-├── prompts.py        # Agent system prompts
-├── settings.py       # Pydantic settings with TOML support
-└── web_app.py        # Main application entry point
+src/
+├── openscientist/
+│   ├── agent/            # AbstractAgent, AgentBackend, ClaudeCodeAgent, CodexAgent, factory
+│   ├── api/              # FastAPI REST endpoints and rate limits
+│   ├── auth/             # Authentication (OAuth, sessions, middleware)
+│   ├── database/         # SQLAlchemy models and Alembic migrations
+│   ├── job/              # Job lifecycle, scheduling, types, CLI
+│   ├── job_container/    # Container-per-job isolation
+│   ├── orchestrator/     # Discovery orchestration (setup, iteration, report)
+│   ├── prompts/          # Agent system prompts (common.py + claude.py/codex.py)
+│   ├── providers/        # LLM provider registry and implementations
+│   ├── transcript/       # Typed transcript schema and per-backend translators
+│   ├── webapp_components/# NiceGUI pages and components
+│   ├── container_manager.py  # Executor container lifecycle
+│   ├── settings.py       # Pydantic settings with TOML support
+│   └── web_app.py        # Main application entry point
+└── openscientist_tools/  # Standalone MCP tool server, run as `python -m openscientist_tools`
 ```
+
+Agent tools live in the **separate top-level `openscientist_tools` package**, not inside `openscientist`. The agent spawns it as a stdio subprocess MCP server.
 
 ## Development Setup
 
@@ -59,10 +63,10 @@ uv run pytest --cov=openscientist
 @pytest_asyncio.fixture
 async def test_job(db_session: AsyncSession, webapp_user: User) -> Job:
     job = Job(
-        owner_id=webapp_user.id,
-        title="Test research question",
-        status="pending",
-    )
+ owner_id=webapp_user.id,
+ research_question="Test research question",
+ status="pending",
+ )
     db_session.add(job)
     await db_session.commit()
     return job
@@ -148,14 +152,20 @@ When you need a new UI pattern used in multiple places:
 
 ### Authentication (`src/openscientist/auth/`)
 
-- OAuth providers (Google, GitHub, mock for dev)
+- OAuth providers (Google, GitHub, ORCID, plus a mock provider for dev)
 - Session management with cookies
 - `@require_auth` decorator for protected pages
 
 ### Providers (`src/openscientist/providers/`)
 
 - `check_provider_config()` - Validates LLM provider setup
-- Supports: Anthropic, CBORG, Vertex AI, Bedrock, Foundry, Codex
+- Registry (`_PROVIDER_CLASS_PATHS`): `anthropic`, `cborg`, `vertex`, `bedrock`, `foundry` (Claude Code backend); `openai`, `azure-openai`, `ollama` (Codex backend)
+
+### Agents (`src/openscientist/agent/`)
+
+- `AbstractAgent` is the backend-agnostic interface; `AgentBackend` identifies the runtime
+- `ClaudeCodeAgent` and `CodexAgent` are the two implementations
+- `factory.py` derives the backend from the configured provider — there is no separate backend setting
 
 ### Web App (`src/openscientist/webapp_components/`)
 
@@ -165,19 +175,15 @@ When you need a new UI pattern used in multiple places:
 
 ## Development Tools
 
-See `tools/README.md` for helper scripts.
+Helper scripts in `tools/`:
 
-### tile_screenshots.py
-
-Creates tiled images from screenshots for documenting UI flows:
-
-```bash
-uv run python tools/tile_screenshots.py \
-  screenshots/*.png \
-  -o output.png \
-  -a annotations.json \
-  -c 2
-```
+| Script | Purpose |
+|---|---|
+| `check_coverage_delta.py` | Compares coverage against the `main` baseline; used by the CI `coverage-delta` job |
+| `check_no_direct_push_to_main.sh` | Pre-push hook blocking direct pushes to `main` |
+| `migrate_legacy_transcripts.py` | One-off migration of pre-typed-format job transcripts |
+| `codex_test_mcp_server.py` | Local MCP fixture for Codex backend development |
+| `safe_archive.sh` | Archive helper |
 
 ## Environment Variables
 
@@ -188,11 +194,22 @@ uv run python tools/tile_screenshots.py \
 | `OPENSCIENTIST_PROVIDER` | Yes    | Provider name (anthropic, cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, vllm, llamacpp). There is no default: an unset value raises at startup. The previous name `CLAUDE_PROVIDER` is no longer accepted and raises at startup if set. |
 | `OPENSCIENTIST_MODEL`  | No       | Model id for the selected provider. The previous name `ANTHROPIC_MODEL` is no longer accepted and raises at startup if set. |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
+| `ADMIN_DATABASE_URL`   | Unless `OPENSCIENTIST_DEV_MODE=true` | Connects as `openscientist_admin` (BYPASSRLS) for admin/background operations. Startup fails if unset while dev mode is off; the gate is `OPENSCIENTIST_DEV_MODE`, not `OPENSCIENTIST_ENVIRONMENT`. |
+| `OPENSCIENTIST_ENVIRONMENT` | No  | `development` (default) or `production`. Production rejects `OPENSCIENTIST_DEV_MODE=true`. |
 | `OPENSCIENTIST_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
 | `OPENSCIENTIST_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
 
+This table covers the essentials only. `.env.example` is the canonical, complete reference.
+
 ## Related Documentation
 
+- `.env.example` - Canonical reference for every environment variable
 - `docs/DESIGN.md` - Architecture and design decisions
-- `docs/DEPLOYMENT.md` - Production deployment guide
+- `docs/DEPLOYMENT.md` - Deployment guide and operations
+- `docs/ENVIRONMENTS.md` - Development/staging/production model and promotion path
+- `docs/CICD.md` - CI gates and deployment pipelines
+- `docs/QA.md` - Testing approach and coverage policy
+- `docs/code-review-governance.md` - Branch strategy and review process
+- `docs/MAINTENANCE.md` - Maintenance and operational procedures
+- `docs/SECURITY_REVIEW.md` - Security findings and status
 - `docs/DISCOVERY_AGENT_REFERENCE.md` - Discovery agent prompt reference

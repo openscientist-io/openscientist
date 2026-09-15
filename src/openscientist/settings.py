@@ -10,14 +10,24 @@ import hmac
 import logging
 import os
 import re
+from enum import StrEnum
 from functools import lru_cache
+from typing import Any
 
+from dotenv import dotenv_values
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 _SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 _VALID_HARNESSES = ("auto", "claude_code", "codex", "omp")
+
+
+class AppEnvironment(StrEnum):
+    """Deployment environment identity for the OpenScientist application."""
+
+    DEVELOPMENT = "development"
+    PRODUCTION = "production"
 
 
 class DevSettings(BaseSettings):
@@ -29,6 +39,14 @@ class DevSettings(BaseSettings):
         extra="ignore",
     )
 
+    environment: AppEnvironment = Field(
+        default=AppEnvironment.DEVELOPMENT,
+        alias="OPENSCIENTIST_ENVIRONMENT",
+        description=(
+            "Deployment environment (development or production). "
+            "Production rejects OPENSCIENTIST_DEV_MODE=true."
+        ),
+    )
     dev_mode: bool = Field(default=False, alias="OPENSCIENTIST_DEV_MODE")
     simulate_provider_error: bool = Field(default=False, alias="SIMULATE_PROVIDER_ERROR")
 
@@ -686,14 +704,29 @@ class AirgapSettings(BaseSettings):
     )
 
 
+# Section name -> the BaseSettings subclass that validates it. Consulted by
+# ``Settings._load_environment_once`` so each section is constructed from a
+# single shared environment snapshot instead of independently re-reading
+# ``.env`` from disk.
+_SECTION_CLASSES: dict[str, type[BaseSettings]] = {
+    "dev": DevSettings,
+    "provider": ProviderSettings,
+    "database": DatabaseSettings,
+    "auth": AuthSettings,
+    "budget": BudgetSettings,
+    "file": FileSettings,
+    "container": ContainerSettings,
+    "phenix": PhenixSettings,
+    "berkeley_lab": BerkeleyLabSettings,
+    "agent": AgentSettings,
+    "airgap": AirgapSettings,
+}
+
+
 class Settings(BaseSettings):
     """Root settings class with all configuration sections."""
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(extra="ignore")
 
     # Master secret — all auth secrets are derived from this via HMAC-SHA256
     secret_key: str = Field(alias="OPENSCIENTIST_SECRET_KEY")
@@ -707,7 +740,10 @@ class Settings(BaseSettings):
         description="Base URL for OpenScientist (used in notifications and share links)",
     )
 
-    # Nested settings
+    # Nested settings. ``_load_environment_once`` always supplies these
+    # explicitly; the default_factory here only matters for constructing a
+    # bare ``Settings`` outside the normal env-driven path (e.g. in tests
+    # that bypass the validator via ``model_construct``).
     dev: DevSettings = Field(default_factory=DevSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
@@ -720,6 +756,41 @@ class Settings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _load_environment_once(cls, data: Any) -> Any:
+        """Parse ``.env`` exactly once and fan the result out to every section.
+
+        Each nested settings class still knows how to validate and read its
+        own slice of the environment (so it remains independently usable, as
+        existing tests and ``migrations/env.py`` do). What changes is *who*
+        reads ``.env`` from disk: previously every one of the ten sections
+        opened and parsed the file itself via its own ``default_factory``
+        construction, an eleven-way repeat of the same read. Here we read it
+        once, then construct each section with ``_env_file=None`` (skipping
+        its own dotenv source) plus the already-parsed values, so the file
+        is never re-read.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        dotenv_values_map = {k: v for k, v in dotenv_values(".env").items() if v is not None}
+        # Exclude leading-underscore keys so nothing here can collide with
+        # pydantic-settings' own dunder init kwargs (e.g. ``_env_file``).
+        env = {
+            k: v for k, v in {**dotenv_values_map, **os.environ}.items() if not k.startswith("_")
+        }
+
+        # Explicit constructor kwargs (e.g. from tests) take precedence over
+        # both the real environment and the .env file.
+        merged = {**env, **data}
+
+        for name, section_cls in _SECTION_CLASSES.items():
+            if name not in merged:
+                merged[name] = section_cls(_env_file=None, **env)  # type: ignore[arg-type]
+
+        return merged
+
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":
         """Derive auth secrets from the master OPENSCIENTIST_SECRET_KEY via HMAC-SHA256."""
@@ -729,6 +800,33 @@ class Settings(BaseSettings):
             key, b"token_encryption_key", hashlib.sha256
         ).hexdigest()
         return self
+
+    @model_validator(mode="after")
+    def validate_dev_mode_not_in_production(self) -> "Settings":
+        """Reject OPENSCIENTIST_DEV_MODE when OPENSCIENTIST_ENVIRONMENT is production."""
+        if self.dev.environment == AppEnvironment.PRODUCTION and self.dev.dev_mode:
+            raise ValueError(
+                "OPENSCIENTIST_DEV_MODE cannot be enabled when "
+                "OPENSCIENTIST_ENVIRONMENT=production. Disable OPENSCIENTIST_DEV_MODE "
+                "or set OPENSCIENTIST_ENVIRONMENT=development."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_admin_database_url(self) -> "Settings":
+        """Require ADMIN_DATABASE_URL outside development; warn when falling back in dev."""
+        if self.database.admin_database_url:
+            return self
+        if self.dev.dev_mode:
+            logger.warning(
+                "ADMIN_DATABASE_URL is not set; falling back to DATABASE_URL for admin "
+                "operations. Configure a separate admin connection in production."
+            )
+            return self
+        raise ValueError(
+            "ADMIN_DATABASE_URL is required when OPENSCIENTIST_DEV_MODE is not enabled. "
+            "Set ADMIN_DATABASE_URL to a PostgreSQL URL using the elevated admin role."
+        )
 
 
 @lru_cache(maxsize=1)

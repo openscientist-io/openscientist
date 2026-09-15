@@ -86,6 +86,7 @@ class TestSetupPhenixEnv:
                 "OPENSCIENTIST_PROVIDER": "anthropic",
                 "OPENSCIENTIST_SECRET_KEY": "test",
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
+                "ADMIN_DATABASE_URL": "postgresql+asyncpg://admin:admin@localhost/x",
             },
             clear=True,
         ):

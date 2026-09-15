@@ -23,7 +23,7 @@ from tests.helpers import fake_admin_session
 
 
 @pytest.mark.asyncio
-async def test_list_orphaned_jobs(db_session: AsyncSession, test_user: User):
+async def test_list_orphaned_jobs(db_session: AsyncSession, test_user: User) -> None:
     """Test listing orphaned jobs (owner_id=NULL)."""
     # Create orphaned jobs
     orphaned_job1 = Job(
@@ -62,7 +62,7 @@ async def test_list_orphaned_jobs(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_assign_orphaned_job_to_user(db_session: AsyncSession, test_user: User):
+async def test_assign_orphaned_job_to_user(db_session: AsyncSession, test_user: User) -> None:
     """Test assigning an orphaned job to a user."""
     # Create orphaned job
     orphaned_job = Job(
@@ -93,7 +93,7 @@ async def test_assign_orphaned_job_to_user(db_session: AsyncSession, test_user: 
 
 
 @pytest.mark.asyncio
-async def test_user_claims_orphaned_job(db_session: AsyncSession, test_user: User):
+async def test_user_claims_orphaned_job(db_session: AsyncSession, test_user: User) -> None:
     """Test a user claiming an orphaned job."""
     # Create orphaned job
     orphaned_job = Job(
@@ -125,7 +125,7 @@ async def test_user_claims_orphaned_job(db_session: AsyncSession, test_user: Use
 
 
 @pytest.mark.asyncio
-async def test_search_orphaned_jobs_by_title(db_session: AsyncSession):
+async def test_search_orphaned_jobs_by_title(db_session: AsyncSession) -> None:
     """Test searching orphaned jobs by title."""
     # Create orphaned jobs with different titles
     jobs = [
@@ -166,7 +166,7 @@ async def test_search_orphaned_jobs_by_title(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_list_all_users(db_session: AsyncSession, test_user: User, test_user2: User):
+async def test_list_all_users(db_session: AsyncSession, test_user: User, test_user2: User) -> None:
     """Test listing all users for assignment purposes."""
     _ = (test_user, test_user2)
     # Query all users
@@ -181,7 +181,7 @@ async def test_list_all_users(db_session: AsyncSession, test_user: User, test_us
 
 
 @pytest.mark.asyncio
-async def test_search_users_by_email(db_session: AsyncSession):
+async def test_search_users_by_email(db_session: AsyncSession) -> None:
     """Test searching users by email for assignment."""
     # Create users with various emails
     users = [
@@ -204,7 +204,7 @@ async def test_search_users_by_email(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_search_users_by_name(db_session: AsyncSession):
+async def test_search_users_by_name(db_session: AsyncSession) -> None:
     """Test searching users by name for assignment."""
     users = [
         User(email="user1@test.com", name="Dr. Jane Smith"),
@@ -229,7 +229,7 @@ async def test_search_users_by_name(db_session: AsyncSession):
 async def test_assign_multiple_orphaned_jobs_to_same_user(
     db_session: AsyncSession,
     test_user: User,
-):
+) -> None:
     """Test assigning multiple orphaned jobs to the same user."""
     # Create multiple orphaned jobs
     jobs = [
@@ -265,7 +265,7 @@ async def test_cannot_assign_already_owned_job(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that jobs with owners cannot be reassigned as orphaned."""
     _ = test_user2
     # Create job owned by test_user
@@ -289,7 +289,7 @@ async def test_cannot_assign_already_owned_job(
 
 
 @pytest.mark.asyncio
-async def test_orphaned_job_count(db_session: AsyncSession, test_user: User):
+async def test_orphaned_job_count(db_session: AsyncSession, test_user: User) -> None:
     """Test getting count of orphaned jobs."""
     # Create mix of orphaned and owned jobs
     for i in range(3):
@@ -321,7 +321,7 @@ async def test_orphaned_job_count(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_filter_orphaned_jobs_by_status(db_session: AsyncSession):
+async def test_filter_orphaned_jobs_by_status(db_session: AsyncSession) -> None:
     """Test filtering orphaned jobs by status."""
     # Create orphaned jobs with different statuses
     statuses = ["pending", "running", "completed", "failed"]
@@ -349,7 +349,7 @@ async def test_filter_orphaned_jobs_by_status(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
+async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession) -> None:
     """Test that orphaned jobs are sorted by creation date."""
     from datetime import datetime, timedelta
 
@@ -384,7 +384,7 @@ async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_set_user_approval_status_can_remove_approval(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Admin helper can remove approval from an approved user."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -412,7 +412,7 @@ async def test_set_user_approval_status_can_remove_approval(
 @pytest.mark.asyncio
 async def test_set_user_approval_status_rejects_self_unapprove(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Admin helper should reject removing approval from the current user."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -445,7 +445,7 @@ async def test_set_user_approval_status_rejects_self_unapprove(
 @pytest.mark.asyncio
 async def test_set_user_approval_status_noop_when_already_pending(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Admin helper should report noop when user is already pending."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -470,7 +470,7 @@ async def test_set_user_approval_status_noop_when_already_pending(
 @pytest.mark.asyncio
 async def test_set_user_approval_status_handles_missing_user(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """Admin helper should return not found for unknown user IDs."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -513,7 +513,9 @@ def test_admin_page_defaults_to_users_tab():
 
 
 @pytest.mark.asyncio
-async def test_delete_user_removes_user(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+async def test_delete_user_removes_user(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """delete_user should remove the user from the database."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -537,7 +539,7 @@ async def test_delete_user_removes_user(db_session: AsyncSession, monkeypatch: p
 @pytest.mark.asyncio
 async def test_delete_user_rejects_self_delete(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """delete_user should prevent admins from deleting themselves."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -566,7 +568,7 @@ async def test_delete_user_rejects_self_delete(
 @pytest.mark.asyncio
 async def test_delete_user_handles_missing_user(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     """delete_user should return not found for unknown user IDs."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",
@@ -580,7 +582,9 @@ async def test_delete_user_handles_missing_user(
 
 
 @pytest.mark.asyncio
-async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+async def test_delete_user_orphans_jobs(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Deleting a user should orphan their jobs (SET NULL on owner_id)."""
     monkeypatch.setattr(
         "openscientist.webapp_components.pages.admin.get_admin_session",

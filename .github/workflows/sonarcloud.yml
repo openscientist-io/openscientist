@@ -19,6 +19,12 @@ jobs:
           name: coverage-xml
 
       - name: Scan
+        # Inherited from upstream, which has SONAR_TOKEN configured. This fork
+        # does not, so the scan cannot authenticate and must not fail the
+        # build -- the same reasoning as the Codecov step in ci.yml. Quality is
+        # still gated by lint, typecheck, test and coverage-delta. Drop this
+        # line once SONAR_TOKEN is set on the repo.
+        continue-on-error: true
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f  # v8.2.1
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

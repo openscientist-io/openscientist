@@ -5,8 +5,10 @@ Executes Python code with timeouts, import whitelisting, and safety measures.
 """
 
 import ast
+import builtins
 import io
 import json
+import os as _os
 import signal
 import time
 import traceback
@@ -60,9 +62,6 @@ ALLOWED_IMPORTS = [
     "time",
     "re",
     "json",
-    "os",  # Environment variables (for API tokens)
-    # HTTP/API access
-    "requests",  # HTTP requests (for KBase, external APIs)
     # Domain-specific
     "networkx",  # Network/graph analysis (for pathways)
     # Single-cell genomics
@@ -70,6 +69,140 @@ ALLOWED_IMPORTS = [
     "anndata",
     "h5py",
 ]
+
+# Explicit allowlist of safe builtins for sandboxed execution.
+_BUILTIN_ALLOWLIST: tuple[str, ...] = (
+    "abs",
+    "all",
+    "any",
+    "bin",
+    "bool",
+    "bytearray",
+    "bytes",
+    "chr",
+    "complex",
+    "dict",
+    "divmod",
+    "enumerate",
+    "filter",
+    "float",
+    "format",
+    "frozenset",
+    "getattr",
+    "hasattr",
+    "hex",
+    "id",
+    "int",
+    "isinstance",
+    "issubclass",
+    "iter",
+    "len",
+    "list",
+    "map",
+    "max",
+    "min",
+    "next",
+    "oct",
+    "ord",
+    "pow",
+    "print",
+    "range",
+    "repr",
+    "reversed",
+    "round",
+    "set",
+    "slice",
+    "sorted",
+    "str",
+    "sum",
+    "tuple",
+    "zip",
+    "ArithmeticError",
+    "AssertionError",
+    "AttributeError",
+    "Exception",
+    "FloatingPointError",
+    "ImportError",
+    "IndexError",
+    "KeyError",
+    "LookupError",
+    "NameError",
+    "NotImplementedError",
+    "OSError",
+    "OverflowError",
+    "RuntimeError",
+    "StopIteration",
+    "SyntaxError",
+    "TypeError",
+    "ValueError",
+    "ZeroDivisionError",
+    "Ellipsis",
+    "False",
+    "None",
+    "NotImplemented",
+    "True",
+)
+
+
+class _SafePath:
+    """Minimal read-only path helper shim; does not expose os.path module."""
+
+    __slots__ = ()
+
+    join = staticmethod(_os.path.join)
+    basename = staticmethod(_os.path.basename)
+    dirname = staticmethod(_os.path.dirname)
+    splitext = staticmethod(_os.path.splitext)
+    exists = staticmethod(_os.path.exists)
+    isfile = staticmethod(_os.path.isfile)
+    isdir = staticmethod(_os.path.isdir)
+
+
+class _SafeOs:
+    """Minimal read-only os shim for sandboxed path helpers."""
+
+    __slots__ = ("path",)
+
+    sep = _os.sep
+
+    def __init__(self) -> None:
+        self.path = _SafePath()
+
+    @staticmethod
+    def getcwd() -> str:
+        return _os.getcwd()
+
+    @staticmethod
+    def listdir(path: str = ".") -> list[str]:
+        return _os.listdir(path)
+
+
+def _safe_import(
+    name: str,
+    globals: dict[str, Any] | None = None,
+    locals: dict[str, Any] | None = None,
+    fromlist: tuple[str, ...] = (),
+    level: int = 0,
+) -> Any:
+    """Import only modules whose top-level package is in ALLOWED_IMPORTS."""
+    if level != 0:
+        raise ForbiddenImportError("Relative imports are not allowed")
+
+    top_level = name.split(".")[0]
+    if top_level not in ALLOWED_IMPORTS:
+        raise ForbiddenImportError(
+            f"Import of '{name}' is not allowed. Allowed imports: {', '.join(ALLOWED_IMPORTS)}"
+        )
+
+    return builtins.__import__(name, globals, locals, fromlist, level)
+
+
+def _build_restricted_builtins() -> dict[str, Any]:
+    """Build a builtins dict from an explicit allowlist plus safe __import__."""
+    builtins_dict = builtins.__dict__
+    restricted = {name: builtins_dict[name] for name in _BUILTIN_ALLOWLIST if name in builtins_dict}
+    restricted["__import__"] = _safe_import
+    return restricted
 
 
 def timeout_handler(_signum: int, _frame: Any) -> None:
@@ -179,7 +312,8 @@ def _build_execution_namespace(
         "np": np,
         "plt": plt,
         "sns": sns,
-        "__builtins__": __builtins__,
+        "os": _SafeOs(),
+        "__builtins__": _build_restricted_builtins(),
     }
 
 
@@ -195,15 +329,18 @@ def _next_plot_number(plots_dir: Path) -> int:
     return max_number
 
 
+_signal_alarm = getattr(signal, "alarm", None)
+
+
 def _set_timeout_alarm(timeout: int) -> None:
-    if hasattr(signal, "SIGALRM"):
+    if _signal_alarm is not None and hasattr(signal, "SIGALRM"):
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout)
+        _signal_alarm(timeout)
 
 
 def _clear_timeout_alarm() -> None:
-    if hasattr(signal, "SIGALRM"):
-        signal.alarm(0)
+    if _signal_alarm is not None:
+        _signal_alarm(0)
 
 
 def _plot_metadata(
@@ -580,7 +717,8 @@ def execute_rust_code(
         _seeded_cargo = Path("/usr/local/cargo")
         if _seeded_cargo.exists():
             env.setdefault("CARGO_HOME", str(_seeded_cargo))
-            env.setdefault("CARGO_TARGET_DIR", str(_seeded_cargo / "target"))
+        # Build artifacts must land on writable storage (executor root is read-only).
+        env["CARGO_TARGET_DIR"] = str(Path(tmpdir) / "target")
 
         try:
             run_result = subprocess.run(

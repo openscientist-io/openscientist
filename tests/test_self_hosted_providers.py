@@ -9,6 +9,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -240,7 +241,7 @@ def test_get_provider_selects_the_provider(spec: Spec, monkeypatch: pytest.Monke
 
 
 def test_missing_model_surfaces_as_a_config_error(
-    spec: Spec, monkeypatch: pytest.MonkeyPatch, tmp_path
+    spec: Spec, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Requiring a served model must reach the operator, not crash the app."""
     from openscientist.providers import check_provider_config
@@ -347,7 +348,7 @@ def test_model_profile_probes_through_the_proxy_when_air_gapped(
 
 
 def test_model_profile_probe_failure_logs_warning_and_defaults(
-    spec: Spec, monkeypatch: pytest.MonkeyPatch, caplog
+    spec: Spec, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     monkeypatch.delenv(LLM_PROXY_URL_ENV, raising=False)
     with (

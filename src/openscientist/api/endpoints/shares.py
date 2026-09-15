@@ -9,11 +9,12 @@ Provides REST API endpoints for managing job shares, including:
 
 import logging
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.api.auth import get_current_user_from_api_key
+from openscientist.api.rate_limits import MUTATING_RATE_LIMIT, limiter
 from openscientist.database.models import JobShare, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session
@@ -112,7 +113,9 @@ class UserSearchResponse(BaseModel):
     status_code=status.HTTP_201_CREATED,
     summary="Share a job with another user",
 )
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def create_share(
+    request: Request,
     share_data: ShareCreate,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
@@ -131,6 +134,7 @@ async def create_share(
     Returns:
         Persisted share metadata for the target user.
     """
+    _ = request
     # Set RLS context
     await set_current_user(session, user.id)
 
@@ -190,8 +194,10 @@ async def list_job_shares(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Revoke a job share",
 )
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def revoke_share(
     share_id: str,
+    request: Request,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
@@ -205,6 +211,7 @@ async def revoke_share(
         user: Authenticated API-key user.
         session: Request-scoped database session.
     """
+    _ = request
     # Set RLS context
     await set_current_user(session, user.id)
 

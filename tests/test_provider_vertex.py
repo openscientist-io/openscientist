@@ -283,3 +283,47 @@ class TestVertexClaudeCompatible:
         settings = _mock_settings(self._creds_file(tmp_path), model=None)
         with patch("openscientist.providers.vertex.get_settings", return_value=settings):
             assert VertexProvider().claude_model_name() == "claude-sonnet-4-5@20250929"
+
+
+class TestVertexRuntimeGuards:
+    """Coverage for the cost + message defensive paths (audit Priority-7)."""
+
+    def _valid(self, tmp_path: Path) -> MagicMock:
+        creds = tmp_path / "sa.json"
+        creds.write_text("{}")
+        return _mock_settings(str(creds))
+
+    def _provider(self, tmp_path: Path) -> VertexProvider:
+        settings = self._valid(tmp_path)
+        with patch("openscientist.providers.vertex.get_settings", return_value=settings):
+            return VertexProvider()
+
+    def test_get_cost_info_raises_without_credentials(self, tmp_path: Path) -> None:
+        from openscientist.exceptions import ProviderError
+
+        provider = self._provider(tmp_path)
+        bad = self._valid(tmp_path)
+        bad.provider.google_application_credentials = None
+        with patch("openscientist.providers.vertex.get_settings", return_value=bad):
+            with pytest.raises(ProviderError, match="GOOGLE_APPLICATION_CREDENTIALS"):
+                provider.get_cost_info()
+
+    async def test_send_message_requires_project_and_region(self, tmp_path: Path) -> None:
+        provider = self._provider(tmp_path)
+        bad = self._valid(tmp_path)
+        bad.provider.cloud_ml_region = None
+        with patch("openscientist.providers.vertex.get_settings", return_value=bad):
+            with pytest.raises(ValueError, match="project_id and region"):
+                await provider.send_message([{"role": "user", "content": "hi"}])
+
+    async def test_send_message_with_tools_requires_project_and_region(
+        self, tmp_path: Path
+    ) -> None:
+        provider = self._provider(tmp_path)
+        bad = self._valid(tmp_path)
+        bad.provider.anthropic_vertex_project_id = None
+        with patch("openscientist.providers.vertex.get_settings", return_value=bad):
+            with pytest.raises(ValueError, match="project_id and region"):
+                await provider.send_message_with_tools(
+                    [{"role": "user", "content": "hi"}], tools=[]
+                )

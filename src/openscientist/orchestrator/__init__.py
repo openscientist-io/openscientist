@@ -24,6 +24,7 @@ from openscientist.orchestrator.discovery import (
     run_discovery_async,
 )
 from openscientist.orchestrator.iteration import (
+    get_job_status,
     increment_ks_iteration,
     update_job_status,
     wait_for_feedback_or_timeout,
@@ -51,6 +52,7 @@ def run_discovery(job_dir: Path) -> dict[str, Any]:
 
 __all__ = [
     "create_job",
+    "get_job_status",
     "get_version_metadata",
     "increment_ks_iteration",
     "regenerate_report_async",

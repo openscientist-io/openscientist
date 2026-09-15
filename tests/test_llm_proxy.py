@@ -22,7 +22,7 @@ from openscientist.job_container.secrets import (
 )
 from openscientist.llm_proxy import container_proxy_base_url, create_llm_proxy_app
 from openscientist.providers import get_provider
-from openscientist.providers.base import AirgapEgress, LlmUpstream
+from openscientist.providers.base import AirgapEgress, LlmUpstream, Provider
 from openscientist.settings import Settings, get_settings
 
 
@@ -59,7 +59,7 @@ def active_provider(monkeypatch):
         "GITHUB_TOKEN",
     )
 
-    def _select(**env: str):
+    def _select(**env: str) -> Provider:
         for key in reset:
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("OPENSCIENTIST_PROVIDER", env.pop("OPENSCIENTIST_PROVIDER"))
@@ -602,7 +602,10 @@ class TestRunnerInjection:
         settings = SimpleNamespace(
             container=SimpleNamespace(host_project_dir=None),
             provider=SimpleNamespace(google_application_credentials=None),
-            database=SimpleNamespace(effective_database_url="postgresql://db"),
+            database=SimpleNamespace(
+                effective_database_url="postgresql://db",
+                effective_admin_database_url="postgresql://admin-db",
+            ),
             phenix=SimpleNamespace(phenix_host_path=None),
             airgap=SimpleNamespace(enabled=False),
             secret_key="master-key",

@@ -8,7 +8,7 @@ import json
 import tempfile
 from datetime import UTC
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -410,6 +410,189 @@ class TestToHostPath:
         assert result == Path("/app/jobs/123/data")
 
 
+class TestExecutorRunConfig:
+    """Unit tests for hardened executor container run configuration."""
+
+    def _make_manager(self):
+        from openscientist.container_manager import ContainerManager
+
+        return ContainerManager()
+
+    def _setup_execute_code(self):
+        mgr = self._make_manager()
+        mock_client = MagicMock()
+        mgr._client = mock_client
+
+        mock_client.containers.run.return_value = json.dumps(
+            {
+                "success": True,
+                "output": "",
+                "plots": [],
+                "error": None,
+                "execution_time": 0.1,
+            }
+        ).encode()
+        mock_client.containers.get.return_value = MagicMock()
+
+        mock_settings = MagicMock()
+        mock_settings.container.container_app_dir = "/app"
+        mock_settings.container.host_project_dir = None
+        mock_settings.container.executor_image = "test:latest"
+        mock_settings.container.executor_memory = "2g"
+        mock_settings.container.executor_cpu = 0.5
+        mock_settings.container.executor_timeout = 120
+        return mgr, mock_client, mock_settings
+
+    @staticmethod
+    def _get_run_kwargs(mock_client: MagicMock) -> dict[Any, Any]:
+        return cast(dict[Any, Any], mock_client.containers.run.call_args.kwargs)
+
+    @staticmethod
+    def _get_run_volumes(mock_client: MagicMock) -> dict[str, dict[str, str]]:
+        return cast(
+            dict[str, dict[str, str]], TestExecutorRunConfig._get_run_kwargs(mock_client)["volumes"]
+        )
+
+    def test_network_mode_always_none(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(code='print("hi")', job_id="test-network", output_dir=str(output_dir))
+
+        kwargs = self._get_run_kwargs(mock_client)
+        assert kwargs["network_mode"] == "none"
+        assert "network" not in kwargs
+
+    def test_read_only_root_enabled(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(code='print("hi")', job_id="test-readonly", output_dir=str(output_dir))
+
+        assert self._get_run_kwargs(mock_client)["read_only"] is True
+
+    def test_tmpfs_tmp_options(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(code='print("hi")', job_id="test-tmpfs", output_dir=str(output_dir))
+
+        tmp_options = self._get_run_kwargs(mock_client)["tmpfs"]["/tmp"]
+        assert "size=512m" in tmp_options
+        assert "nosuid" in tmp_options
+        assert "nodev" in tmp_options
+        assert "mode=1777" in tmp_options
+        assert "noexec" not in tmp_options
+
+    def test_output_mount_is_rw(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(
+                code='print("hi")', job_id="test-output-rw", output_dir=str(output_dir)
+            )
+
+        volumes = self._get_run_volumes(mock_client)
+        output_mount = next(m for m in volumes.values() if m["bind"] == "/output")
+        assert output_mount["mode"] == "rw"
+
+    def test_data_mounts_are_ro(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        data_file = data_dir / "file.csv"
+        data_file.write_text("a,b\n1,2\n")
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="test-data-ro",
+                output_dir=str(output_dir),
+                data_files=[{"path": str(data_file), "name": "file.csv"}],
+            )
+
+        volumes = self._get_run_volumes(mock_client)
+        data_mounts = [m for m in volumes.values() if m["bind"].startswith("/data")]
+        assert data_mounts
+        assert all(m["mode"] == "ro" for m in data_mounts)
+
+    def test_no_environment_passed(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(code='print("hi")', job_id="test-no-env", output_dir=str(output_dir))
+
+        assert "environment" not in self._get_run_kwargs(mock_client)
+
+    def test_resource_limits_preserved(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        from openscientist.container_manager import ContainerManager
+
+        mgr = ContainerManager(memory_limit="4g", cpu_limit=1.25)
+        mock_client = MagicMock()
+        mgr._client = mock_client
+        mock_client.containers.run.return_value = json.dumps(
+            {"success": True, "output": "", "plots": [], "error": None, "execution_time": 0.1}
+        ).encode()
+        mock_client.containers.get.return_value = MagicMock()
+
+        mock_settings = MagicMock()
+        mock_settings.container.container_app_dir = "/app"
+        mock_settings.container.host_project_dir = None
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(code='print("hi")', job_id="test-limits", output_dir=str(output_dir))
+
+        kwargs = self._get_run_kwargs(mock_client)
+        assert kwargs["mem_limit"] == "4g"
+        assert kwargs["nano_cpus"] == int(1.25 * 1e9)
+
+    def test_security_settings_preserved(self, tmp_path: Path) -> None:
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup_execute_code()
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
+            mgr.execute_code(code='print("hi")', job_id="job-secure", output_dir=str(output_dir))
+
+        kwargs = self._get_run_kwargs(mock_client)
+        assert kwargs["user"] == "executor"
+        assert kwargs["security_opt"] == ["no-new-privileges:true"]
+        assert kwargs["stop_signal"] == "SIGKILL"
+        assert kwargs["labels"]["openscientist.job_id"] == "job-secure"
+        assert kwargs["labels"]["openscientist.type"] == "executor"
+
+
 class TestBuildVolumesHostTranslation:
     """Tests for host path translation in _build_volumes via execute_code."""
 
@@ -459,10 +642,7 @@ class TestBuildVolumesHostTranslation:
         mgr, mock_client, mock_settings = self._setup_execute_code()
         mock_settings.container.host_project_dir = "/host/project"
 
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
-        ):
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
             # Use an output_dir under /app to trigger translation
             output_dir = tmp_path / "provenance"
             output_dir.mkdir()
@@ -506,7 +686,6 @@ class TestBuildVolumesHostTranslation:
         with (
             patch("openscientist.container_manager.get_settings", return_value=mock_settings),
             patch("openscientist.container_manager.to_host_path", side_effect=mock_to_host_path),
-            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
         ):
             output_dir = tmp_path / "out"
             output_dir.mkdir()
@@ -531,10 +710,7 @@ class TestBuildVolumesHostTranslation:
         data_file = data_dir / "file.csv"
         data_file.write_text("a,b\n1,2\n")
 
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
-        ):
+        with patch("openscientist.container_manager.get_settings", return_value=mock_settings):
             output_dir = tmp_path / "out"
             output_dir.mkdir()
             mgr.execute_code(
@@ -548,7 +724,7 @@ class TestBuildVolumesHostTranslation:
 
 
 class TestExecuteCodeAirgapNetwork:
-    """Executor network selection under the air-gap flag."""
+    """The executor has no network, with or without the air-gap flag."""
 
     def _setup(self):
         from openscientist.container_manager import ContainerManager
@@ -603,8 +779,11 @@ class TestExecuteCodeAirgapNetwork:
             )
 
         kwargs = self._run_kwargs(mock_client)
-        assert kwargs.get("network") == "none"
-        assert "network_mode" not in kwargs
+        # This fork pins the executor to no networking unconditionally
+        # (16d97c9 "security: harden executor container isolation"), so the
+        # airgap flag does not change the outcome here.
+        assert kwargs.get("network_mode") == "none"
+        assert "network" not in kwargs
         mock_resolve.assert_not_called()
 
     def test_airgap_disabled_uses_resolved_network(self, tmp_path: Path) -> None:
@@ -629,9 +808,12 @@ class TestExecuteCodeAirgapNetwork:
             )
 
         kwargs = self._run_kwargs(mock_client)
-        assert kwargs.get("network") == "openscientist_default"
-        assert "network_mode" not in kwargs
-        mock_resolve.assert_called_once()
+        # Still no networking: the executor runs untrusted code and is isolated
+        # regardless of the airgap flag. See the note above.
+        assert kwargs.get("network_mode") == "none"
+        assert "network" not in kwargs
+        # No compose network is resolved: there is nothing to attach to.
+        mock_resolve.assert_not_called()
 
 
 class TestGetContainerManager:
@@ -726,29 +908,31 @@ class TestContainerManagerIntegration:
         assert result["success"] is True
         assert "(3, 1)" in result["output"]
 
-    def test_network_enabled(self):
-        """Test that network access is available (needed for requests, SPARQL, cargo, etc.)."""
+    def test_network_isolated(self):
+        """Executor image with network_mode=none must block outbound connections."""
         from openscientist.container_manager import ContainerManager
 
         manager = ContainerManager()
+        probe_script = """
+import socket
+try:
+    socket.create_connection(("1.1.1.1", 80), timeout=3)
+    print("NETWORK_OK")
+except OSError:
+    print("NETWORK_BLOCKED")
+"""
+        output = manager.client.containers.run(
+            image=manager.image,
+            network_mode="none",
+            user="executor",
+            entrypoint=[],
+            remove=True,
+            command=["python", "-c", probe_script.strip()],
+        )
 
-        # Probe a purpose-built connectivity endpoint (Google's generate_204:
-        # tiny, no body, returns a fixed 204, and does not rate-limit or 503
-        # like httpbin.org). Any successful HTTP response proves egress works,
-        # so assert on a sentinel rather than a specific status code.
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code=(
-                    "import requests; "
-                    'r = requests.get("https://www.google.com/generate_204", timeout=10); '
-                    'print("NETWORK_OK", r.status_code)'
-                ),
-                job_id="integration-test-4",
-                output_dir=tmpdir,
-            )
-
-        assert result["success"] is True
-        assert "NETWORK_OK" in result["output"]
+        text = output.decode("utf-8") if isinstance(output, bytes) else output
+        assert "NETWORK_BLOCKED" in text
+        assert "NETWORK_OK" not in text
 
     def test_timeout_enforcement(self):
         """Test that timeout is enforced."""

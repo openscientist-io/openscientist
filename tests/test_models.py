@@ -35,9 +35,11 @@ def test_known_context_tokens_prefix_match():
 
 def test_known_context_tokens_picks_longest_prefix():
     # Two entries match the same id; the longer (more specific) prefix wins.
-    with patch.dict(models._KNOWN_CONTEXT_TOKENS, {"gpt-4": 8_000, "gpt-4o": 128_000}, clear=False):
-        assert _known_context_tokens("gpt-4o") == 128_000
-        assert _known_context_tokens("gpt-4-turbo") == 8_000
+    with patch.dict(
+        models._KNOWN_CONTEXT_TOKENS, {"zzz-model": 8_000, "zzz-model-xl": 128_000}, clear=False
+    ):
+        assert _known_context_tokens("zzz-model-xl") == 128_000
+        assert _known_context_tokens("zzz-model-mini") == 8_000
 
 
 def test_default_model_profile_override_wins():
@@ -52,9 +54,27 @@ def test_default_model_profile_uses_known_table():
     )
 
 
+def test_known_context_tokens_strips_bedrock_qualifiers():
+    assert _known_context_tokens("us.anthropic.claude-sonnet-4-5-20250929-v1:0") == 200_000
+    assert _known_context_tokens("eu.anthropic.claude-haiku-4-5-20251001-v1:0") == 200_000
+
+
+def test_known_context_tokens_strips_vertex_qualifiers():
+    assert _known_context_tokens("claude-3-5-sonnet@20250929") == 200_000
+
+
 def test_default_model_profile_falls_back_to_default():
     profile = default_model_profile("mystery-model", override=None)
     assert profile.context_window_tokens == models._DEFAULT_CONTEXT_TOKENS
+
+
+def test_default_model_profile_warns_on_unknown_model(caplog):
+    with caplog.at_level("WARNING", logger="openscientist.models"):
+        default_model_profile("mystery-model", override=None)
+    assert any(
+        record.levelname == "WARNING" and "mystery-model" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_default_model_profile_handles_missing_model_id():

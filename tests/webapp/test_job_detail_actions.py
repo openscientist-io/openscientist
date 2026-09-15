@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openscientist.job.types import JobStatus
-from openscientist.webapp_components.pages import job_detail
+from openscientist.webapp_components.pages import job_detail, job_detail_report
 
 
 def _context(status: JobStatus) -> SimpleNamespace:
@@ -35,8 +35,8 @@ def _action_context() -> SimpleNamespace:
     ],
 )
 def test_can_regenerate_report_gating(is_admin: bool, status: JobStatus, expected: bool) -> None:
-    with patch.object(job_detail, "is_current_user_admin", return_value=is_admin):
-        assert job_detail._can_regenerate_report(_context(status)) is expected  # type: ignore[arg-type]
+    with patch.object(job_detail_report, "is_current_user_admin", return_value=is_admin):
+        assert job_detail_report._can_regenerate_report(_context(status)) is expected  # type: ignore[arg-type]
 
 
 def test_regenerate_action_blocks_non_admin_server_side() -> None:
@@ -44,10 +44,10 @@ def test_regenerate_action_blocks_non_admin_server_side() -> None:
     non-admin, even if the button were somehow triggered."""
     context = _action_context()
     with (
-        patch.object(job_detail, "is_current_user_admin", return_value=False),
-        patch.object(job_detail, "ui"),  # swallow notify/navigate
+        patch.object(job_detail_report, "is_current_user_admin", return_value=False),
+        patch.object(job_detail_report, "ui"),  # swallow notify/navigate
     ):
-        job_detail._regenerate_report(context)  # type: ignore[arg-type]
+        job_detail_report._regenerate_report(context)  # type: ignore[arg-type]
     context.job_manager.regenerate_report.assert_not_called()
 
 
@@ -55,10 +55,10 @@ def test_regenerate_action_calls_manager_for_admin() -> None:
     """An admin action reaches the manager with the job id."""
     context = _action_context()
     with (
-        patch.object(job_detail, "is_current_user_admin", return_value=True),
-        patch.object(job_detail, "ui"),  # swallow notify/navigate
+        patch.object(job_detail_report, "is_current_user_admin", return_value=True),
+        patch.object(job_detail_report, "ui"),  # swallow notify/navigate
     ):
-        job_detail._regenerate_report(context)  # type: ignore[arg-type]
+        job_detail_report._regenerate_report(context)  # type: ignore[arg-type]
     context.job_manager.regenerate_report.assert_called_once_with("job-1")
 
 
@@ -95,7 +95,8 @@ class TestTimelineHeaderText:
 
 class TestDownloadArtifactsZipStreamsOverHttp:
     def test_triggers_http_download_of_session_route(self) -> None:
-        with patch.object(job_detail, "ui") as mock_ui:
-            job_detail._download_artifacts_zip("job-1")
+        # The r9 refactor moved this helper into job_detail_report.
+        with patch.object(job_detail_report, "ui") as mock_ui:
+            job_detail_report._download_artifacts_zip("job-1")
 
         mock_ui.download.assert_called_once_with("/web/jobs/job-1/artifacts.zip")

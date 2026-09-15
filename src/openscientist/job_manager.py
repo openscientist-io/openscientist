@@ -4,8 +4,7 @@ Job manager for OpenScientist discovery jobs.
 Handles job lifecycle, status tracking, and cleanup.
 """
 
-import argparse
-import json
+import concurrent.futures
 import logging
 import shutil
 import threading
@@ -26,7 +25,7 @@ from openscientist.database.models.job_share import JobShare
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import AsyncSessionLocal
 from openscientist.exceptions import ProviderError
-from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
+from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult, RunMode
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import notify_job_status_change
 from openscientist.orchestrator import create_job
@@ -34,6 +33,19 @@ from openscientist.providers import get_provider
 from openscientist.version import get_version_string
 
 logger = logging.getLogger(__name__)
+
+# Statuses a job thread is still alive for: the poll loop in
+# _run_job_in_container only exits on completed/failed/cancelled, so a job
+# awaiting feedback or generating its report still has a live thread tracked
+# in _running_jobs.
+_NON_TERMINAL_STATUSES = frozenset(
+    {
+        JobStatus.RUNNING,
+        JobStatus.QUEUED,
+        JobStatus.AWAITING_FEEDBACK,
+        JobStatus.GENERATING_REPORT,
+    }
+)
 
 
 def _effective_model(settings: Any) -> str | None:
@@ -313,6 +325,7 @@ class JobManager:
         self.max_concurrent = max_concurrent
         self._running_jobs: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+        self._shutting_down = False
 
         # Clean up any stale running/queued jobs from previous restart
         self._cleanup_stale_jobs()
@@ -333,12 +346,7 @@ class JobManager:
         stale_count = 0
         for job_info in self._list_operational_jobs():
             job_id = job_info.job_id
-            if job_info.status in [
-                JobStatus.RUNNING,
-                JobStatus.QUEUED,
-                JobStatus.AWAITING_FEEDBACK,
-                JobStatus.GENERATING_REPORT,
-            ]:
+            if job_info.status in _NON_TERMINAL_STATUSES:
                 logger.warning(
                     "Marking stale job %s as cancelled (was %s)",
                     job_id,
@@ -567,6 +575,9 @@ class JobManager:
             ValueError: If job not found or already running
         """
         with self._lock:
+            if self._shutting_down:
+                raise ValueError("Job manager is shutting down; cannot start new jobs")
+
             # Check job exists
             job_info = self.get_job(job_id)
             if job_info is None:
@@ -604,6 +615,8 @@ class JobManager:
                 or the max concurrent limit is reached.
         """
         with self._lock:
+            if self._shutting_down:
+                raise ValueError("Job manager is shutting down; cannot start new jobs")
             job_info = self.get_job(job_id)
             if job_info is None:
                 raise ValueError(f"Job {job_id} not found")
@@ -618,21 +631,21 @@ class JobManager:
             thread = threading.Thread(
                 target=self._run_job,
                 args=(job_id,),
-                kwargs={"run_mode": "report_only"},
+                kwargs={"run_mode": RunMode.REPORT_ONLY},
                 daemon=True,
             )
             self._running_jobs[job_id] = thread
             thread.start()
 
-    def _run_job(self, job_id: str, run_mode: str = "discovery") -> None:
+    def _run_job(self, job_id: str, run_mode: RunMode = RunMode.DISCOVERY) -> None:
         """Run a job (internal, called by thread)."""
         self._run_job_in_container(job_id, run_mode=run_mode)
 
-    def _run_job_in_container(self, job_id: str, run_mode: str = "discovery") -> None:
+    def _run_job_in_container(self, job_id: str, run_mode: RunMode = RunMode.DISCOVERY) -> None:
         """Launch an agent container for the job and block until it reaches a terminal status.
 
-        ``run_mode`` is "discovery" for the full loop or "report_only" to
-        re-run just the report-generation phase against the persisted findings.
+        ``run_mode`` is RunMode.DISCOVERY for the full loop or RunMode.REPORT_ONLY
+        to re-run just the report-generation phase against the persisted findings.
         """
         from openscientist.job_container import JobContainerRunner
 
@@ -681,10 +694,13 @@ class JobManager:
                         job_id,
                         exit_code,
                     )
+                    container_logs = runner.get_logs(job_id)
                     self._update_job_status(
                         job_id,
                         JobStatus.FAILED,
-                        error_message=f"Agent container exited with code {exit_code}",
+                        error_message=self._build_container_failure_message(
+                            exit_code, container_logs
+                        ),
                     )
                     return
 
@@ -708,9 +724,57 @@ class JobManager:
                 self._running_jobs.pop(job_id, None)
             self._start_next_queued_job()
 
+    def _build_container_failure_message(self, exit_code: int, container_logs: str | None) -> str:
+        """Compose a diagnostic message for an agent container that exited
+        non-zero before writing a terminal status.
+
+        The agent entrypoint catches its own exceptions, logs the traceback to
+        stderr, and exits 1 — so without surfacing the container logs here the
+        failure is opaque in the UI. Include the log tail plus a hint for the
+        most common local-dev misconfiguration.
+        """
+        parts = [f"Agent container exited with code {exit_code}."]
+
+        hint = self._host_project_dir_hint()
+        if hint:
+            parts.append(hint)
+
+        if container_logs:
+            parts.append(f"Last container log lines:\n{container_logs.strip()}")
+
+        return "\n\n".join(parts)
+
+    def _host_project_dir_hint(self) -> str | None:
+        """Return a fix hint when the agent job directory was likely mounted empty.
+
+        When the web app itself runs inside Docker but OPENSCIENTIST_HOST_PROJECT_DIR
+        is unset, sibling agent containers bind-mount a non-existent host path, so
+        the job directory arrives empty and the agent crashes immediately on
+        startup. Detect that specific case and point the operator at the fix.
+        """
+        try:
+            from openscientist.settings import get_settings
+
+            in_container = Path("/.dockerenv").exists()
+            host_project_dir = get_settings().container.host_project_dir
+        except Exception:  # pragma: no cover - defensive; settings load elsewhere
+            return None
+
+        if in_container and not host_project_dir:
+            return (
+                "Likely cause: the web app is running in Docker but "
+                "OPENSCIENTIST_HOST_PROJECT_DIR is not set, so the agent container's "
+                "job directory is mounted empty. Set OPENSCIENTIST_HOST_PROJECT_DIR to "
+                "the absolute host path of the project (the directory that contains "
+                "./jobs) and recreate the web container."
+            )
+        return None
+
     def _start_next_queued_job(self) -> None:
         """Start the next queued job if slots available."""
         with self._lock:
+            if self._shutting_down:
+                return
             if self._get_active_job_count() >= self.max_concurrent:
                 return
 
@@ -766,6 +830,84 @@ class JobManager:
 
         # Start next queued job if any
         self._start_next_queued_job()
+
+    def shutdown(self, timeout: float = 30.0) -> None:
+        """Drain in-flight job threads gracefully before process exit.
+
+        Job threads are daemon threads (see ``start_job``), so on their own
+        they would be killed the instant the process exits, leaving
+        containers running and job rows stuck at RUNNING forever. This stops
+        the active jobs the same way ``cancel_job`` does — mark cancelled in
+        the DB, then SIGTERM the container — and waits up to ``timeout``
+        total for their worker threads to notice and exit. Also blocks
+        ``start_job``/``regenerate_report``/``_start_next_queued_job`` from
+        spawning new threads for the remainder of the process lifetime, so a
+        job finishing mid-drain can't queue a fresh one behind our back.
+
+        Cancelling and stopping containers happens concurrently across jobs:
+        ``JobContainerRunner.stop`` blocks for up to its own 10s timeout per
+        container, so doing this one job at a time would let N concurrent
+        jobs burn up to N*10s before the join phase below even starts,
+        blowing well past ``timeout`` when more than one job is running.
+        """
+        with self._lock:
+            self._shutting_down = True
+            job_ids = list(self._running_jobs.keys())
+            threads = list(self._running_jobs.values())
+
+        if not threads:
+            return
+
+        logger.info("Shutting down: draining %d in-flight job(s)", len(threads))
+
+        from openscientist.job_container import JobContainerRunner
+
+        runner = JobContainerRunner()
+
+        def _cancel_and_stop(job_id: str) -> None:
+            job_info = self.get_job(job_id)
+            if job_info is not None and job_info.status in _NON_TERMINAL_STATUSES:
+                self._update_job_status(
+                    job_id,
+                    JobStatus.CANCELLED,
+                    cancellation_reason="Server shut down while job was running",
+                )
+                try:
+                    runner.stop(job_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to stop container for job %s during shutdown: %s", job_id, e
+                    )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(job_ids)) as pool:
+            list(pool.map(_cancel_and_stop, job_ids))
+
+        per_thread_timeout = timeout / len(threads)
+        stuck_job_ids = []
+        for job_id, thread in zip(job_ids, threads, strict=True):
+            thread.join(timeout=per_thread_timeout)
+            if thread.is_alive():
+                stuck_job_ids.append(job_id)
+
+        if stuck_job_ids:
+            logger.warning(
+                "%d job thread(s) did not exit within %.1fs shutdown timeout: %s",
+                len(stuck_job_ids),
+                timeout,
+                stuck_job_ids,
+            )
+            with self._lock:
+                for job_id in stuck_job_ids:
+                    self._running_jobs.pop(job_id, None)
+            for job_id in stuck_job_ids:
+                try:
+                    runner.cleanup(job_id, log_dir=self.jobs_dir / job_id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clean up container for job %s during shutdown: %s", job_id, e
+                    )
+
+        logger.info("Job manager shutdown complete")
 
     def get_job(self, job_id: str) -> JobInfo | None:
         """
@@ -956,7 +1098,7 @@ class JobManager:
         return {
             "total_jobs": len(jobs),
             "status_counts": status_counts,
-            "cost_info": cost_info,
+            "cost_info": cost_info.to_dict() if cost_info is not None else None,
             "budget_check": budget_check,
         }
 
@@ -1042,103 +1184,16 @@ class JobManager:
 
 
 def main() -> None:
-    """CLI entry point for job manager."""
-    parser = argparse.ArgumentParser(description="OpenScientist Job Manager")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    """CLI entry point for job manager.
 
-    # List jobs
-    list_parser = subparsers.add_parser("list", help="List jobs")
-    list_parser.add_argument("--status", help="Filter by status")
-    list_parser.add_argument("--limit", type=int, help="Limit number of jobs")
+    Compatibility wrapper: the implementation now lives in
+    :mod:`openscientist.job.cli`. Imported lazily to avoid a circular import
+    (``job.cli`` imports :class:`JobManager` from this module at module load
+    time).
+    """
+    from openscientist.job.cli import main as _cli_main
 
-    # Get job
-    get_parser = subparsers.add_parser("get", help="Get job info")
-    get_parser.add_argument("job_id", help="Job ID")
-
-    # Delete job
-    delete_parser = subparsers.add_parser("delete", help="Delete job")
-    delete_parser.add_argument("job_id", help="Job ID")
-
-    # Cleanup
-    cleanup_parser = subparsers.add_parser("cleanup", help="Clean up old jobs")
-    cleanup_parser.add_argument("--days", type=int, default=7, help="Delete jobs older than N days")
-    cleanup_parser.add_argument(
-        "--delete-completed", action="store_true", help="Delete completed jobs too"
-    )
-
-    # Summary
-    subparsers.add_parser("summary", help="Get job summary")
-
-    # Bootstrap filesystem jobs into DB
-    bootstrap_parser = subparsers.add_parser(
-        "bootstrap",
-        help="Bootstrap filesystem jobs into the database",
-    )
-    bootstrap_parser.add_argument(
-        "--jobs-dir",
-        default="jobs",
-        help="Directory containing job folders (default: jobs)",
-    )
-    bootstrap_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Scan and report without writing database changes",
-    )
-
-    args = parser.parse_args()
-
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
-    if args.command == "bootstrap":
-        from openscientist.bootstrap import bootstrap_jobs_from_filesystem_sync
-
-        result = bootstrap_jobs_from_filesystem_sync(
-            jobs_dir=Path(args.jobs_dir),
-            dry_run=args.dry_run,
-        )
-        print(json.dumps(result.to_dict(), indent=2))
-        return
-
-    # Create job manager
-    manager = JobManager()
-
-    # Execute command
-    if args.command == "list":
-        status = JobStatus(args.status) if args.status else None
-        jobs = manager.list_jobs(status=status, limit=args.limit)
-
-        print(f"{'Job ID':<20} {'Status':<12} {'Iterations':<12} {'Findings':<10} {'Created At'}")
-        print("-" * 80)
-
-        for job in jobs:
-            print(
-                f"{job.job_id:<20} {job.status.value:<12} "
-                f"{job.iterations_completed}/{job.max_iterations:<6} "
-                f"{job.findings_count:<10} {job.created_at}"
-            )
-
-    elif args.command == "get":
-        job_result = manager.get_job(args.job_id)
-        if job_result is None:
-            print(f"Job {args.job_id} not found")
-        else:
-            print(json.dumps(job_result.to_dict(), indent=2))
-
-    elif args.command == "delete":
-        manager.delete_job(args.job_id)
-        print(f"Deleted job {args.job_id}")
-
-    elif args.command == "cleanup":
-        deleted = manager.cleanup_old_jobs(days=args.days, keep_completed=not args.delete_completed)
-        print(f"Deleted {deleted} jobs")
-
-    elif args.command == "summary":
-        summary = manager.get_job_summary()
-        print(json.dumps(summary, indent=2))
+    _cli_main()
 
 
 if __name__ == "__main__":

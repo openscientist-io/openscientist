@@ -178,15 +178,13 @@ class TestValidateUploadedFile:
 
     def test_executable_content_raises(self, tmp_path):
         """Executable MIME types should be rejected."""
-        with patch("openscientist.file_loader.magic") as mock_magic:
+        with patch("openscientist.file_loader.magic", create=True) as mock_magic:
             mock_magic.from_buffer.return_value = "application/x-executable"
-            with pytest.raises(ValueError, match="Executable file detected"):
-                validate_uploaded_file(tmp_path / "data.csv", b"fake-binary")
+            with patch("openscientist.file_loader.HAS_MAGIC", True):
+                with pytest.raises(ValueError, match="Executable file detected"):
+                    validate_uploaded_file(tmp_path / "data.csv", b"fake-binary")
 
     def test_validation_works_without_python_magic(self, tmp_path):
         """When python-magic is unavailable, validation should use fallback MIME."""
-        with (
-            patch("openscientist.file_loader.HAS_MAGIC", False),
-            patch("openscientist.file_loader.magic", None),
-        ):
+        with patch("openscientist.file_loader.HAS_MAGIC", False):
             validate_uploaded_file(tmp_path / "data.csv", b"a,b\n1,2\n")

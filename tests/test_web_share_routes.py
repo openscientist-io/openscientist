@@ -22,7 +22,7 @@ async def test_web_share_create_uses_admin_lookup_for_target_user(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """
     Creating a web share should resolve target users via admin lookup.
 
@@ -90,7 +90,7 @@ async def test_web_share_create_rejects_inactive_target_user(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Web share creation should reject inactive target users."""
     job = Job(
         owner_id=test_user.id,

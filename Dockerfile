@@ -1,20 +1,11 @@
 # Dockerfile for OpenScientist
 # Builds on openscientist-base which includes Python, Node.js, uv, and Claude CLI
 
-# --- Stage: build the open-codex CLI from the fork --------------------------
-# The open-codex branch carries the fixes that let codex drive open-weight
-# models served by Ollama: flatten MCP namespace tools for providers without
-# namespace support, a function-form apply_patch (with a +-prefix patch-body
-# description so open models format added lines correctly), and a web_search
-# capability gate that stops the hosted tool from corrupting tool calls on
-# non-OpenAI providers. Pinned to a commit on open-codex for reproducibility.
-FROM rust:1.95-bookworm AS codex-build
-ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
-ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
-RUN git clone "${CODEX_REPO}" /codex \
-    && git -C /codex checkout "${CODEX_REF}" \
-    && cargo build --release --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
-    && cp /codex/codex-rs/target/release/codex /usr/local/bin/codex
+# The pinned codex binary, built separately by Dockerfile.codex. Declared as a
+# stage because the classic builder does not expand build args inside
+# 'COPY --from=', which fails with "invalid reference format".
+ARG CODEX_IMAGE=acrcbraindev.azurecr.io/openscientist-codex:8f8009fc
+FROM ${CODEX_IMAGE} AS codex-bin
 
 FROM openscientist-base:latest
 
@@ -49,17 +40,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the open-codex CLI built in the codex-build stage above. Used by
-# discovery AND in-page job chat when an OpenAI/codex/Ollama provider is
-# selected (the chat agent runs in this web process, so it needs codex here).
-# Built from the fork rather than the upstream release because the open-weight
-# fixes are not yet upstream.
-COPY --from=codex-build /usr/local/bin/codex /usr/local/bin/codex
+# Install the open-codex CLI. Rather than recompiling it from Rust here (a heavy
+# codex-rs release build that OOMs / hits the 1h timeout on ACR's default
+# Basic-tier build agent), copy the identical pinned binary already built into
+# the agent image (Dockerfile.agent, same CODEX_REF). When CODEX_REF changes,
+# rebuild openscientist-agent (on a host with enough RAM); this image and every
+# deploy then just copy the prebuilt binary — no Rust toolchain in the web build.
+COPY --from=codex-bin /usr/local/bin/codex /usr/local/bin/codex
 RUN chmod +x /usr/local/bin/codex
 
 # Copy project files — deps already installed in base
 COPY pyproject.toml README.md alembic.ini uv.lock ./
 COPY src/ src/
+# web_app resolves BUILTIN_SKILLS_DIR to /app/skills. Without this the
+# built-in source fails every boot with 'Path does not exist: /app/skills'
+# and the bundled skills are silently missing from every environment.
+COPY skills/ skills/
 
 # Reinstall the project so the web image has dependencies added since the base
 # image was built, notably the openai-codex SDK used by the codex agent path
@@ -72,8 +68,11 @@ RUN uv export --locked --no-dev --no-emit-project --format requirements-txt \
     && uv pip install --system --no-deps -e . \
     && rm /tmp/requirements.txt
 
-# Create jobs directory
-RUN mkdir -p jobs
+RUN groupadd --gid 1001 openscientist \
+    && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash openscientist
+
+RUN mkdir -p jobs .nicegui \
+    && chown -R openscientist:openscientist jobs .nicegui
 
 # Expose port for NiceGUI
 EXPOSE 8080
@@ -84,5 +83,7 @@ ENV OPENSCIENTIST_COMMIT=${OPENSCIENTIST_COMMIT}
 ENV OPENSCIENTIST_BUILD_TIME=${BUILD_TIME}
 # Fixed path for GCP credentials (mounted via GCP_CREDENTIALS_FILE in docker-compose)
 ENV GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
+
+USER openscientist
 
 CMD ["python", "-m", "openscientist.web_app", "--host", "0.0.0.0", "--port", "8080"]

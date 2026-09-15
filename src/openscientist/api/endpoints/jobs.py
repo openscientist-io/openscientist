@@ -31,6 +31,7 @@ from starlette.datastructures import FormData
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from openscientist.api.auth import get_current_user_from_api_key
+from openscientist.api.rate_limits import MUTATING_RATE_LIMIT, limiter
 from openscientist.api.utils import parse_uuid
 from openscientist.artifact_packager import create_artifacts_zip_file
 from openscientist.database.models import Job, User
@@ -353,6 +354,7 @@ async def _parse_job_create_request(
 
 
 @router.post("", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def create_job(
     request: Request,
     user: User = CURRENT_USER_DEP,
@@ -539,8 +541,10 @@ async def get_job_status(
 
 
 @router.post("/{job_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def cancel_job(
     job_id: str,
+    request: Request,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
@@ -549,6 +553,7 @@ async def cancel_job(
 
     The job will stop at the next iteration checkpoint.
     """
+    _ = request
     job = await get_job_by_id(job_id, user, session)
 
     if not job:

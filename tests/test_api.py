@@ -87,7 +87,7 @@ async def test_api_key_authentication(
     db_session: AsyncSession,
     test_user: User,
     test_api_key_with_secret: tuple,
-):
+) -> None:
     """Test API key authentication flow."""
     api_key, full_key = test_api_key_with_secret
 
@@ -105,7 +105,7 @@ async def test_api_key_authentication(
 
 
 @pytest.mark.asyncio
-async def test_expired_api_key(db_session: AsyncSession, test_user: User):
+async def test_expired_api_key(db_session: AsyncSession, test_user: User) -> None:
     """Test that inactive API keys are filtered out."""
     # Create inactive API key
     secret = "expired_secret"
@@ -130,7 +130,7 @@ async def test_expired_api_key(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_inactive_api_key(db_session: AsyncSession, test_user: User):
+async def test_inactive_api_key(db_session: AsyncSession, test_user: User) -> None:
     """Test that inactive API keys are not valid."""
     secret = "inactive_secret"
     api_key = APIKey(
@@ -154,7 +154,7 @@ async def test_inactive_api_key(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_revoke_api_key(db_session: AsyncSession, test_user: User):
+async def test_revoke_api_key(db_session: AsyncSession, test_user: User) -> None:
     """Test revoking an API key."""
     secret = "to_revoke"
     api_key = APIKey(
@@ -176,7 +176,7 @@ async def test_revoke_api_key(db_session: AsyncSession, test_user: User):
 
 
 @pytest.mark.asyncio
-async def test_multiple_api_keys_same_user(db_session: AsyncSession, test_user: User):
+async def test_multiple_api_keys_same_user(db_session: AsyncSession, test_user: User) -> None:
     """Test that a user can have multiple API keys."""
     key1 = APIKey(
         user_id=test_user.id,
@@ -205,7 +205,9 @@ async def test_multiple_api_keys_same_user(db_session: AsyncSession, test_user: 
 
 
 @pytest.mark.asyncio
-async def test_duplicate_api_key_name_same_user_rejected(db_session: AsyncSession, test_user: User):
+async def test_duplicate_api_key_name_same_user_rejected(
+    db_session: AsyncSession, test_user: User
+) -> None:
     """The same user should not be able to create duplicate key names."""
     db_session.add_all(
         [
@@ -228,7 +230,7 @@ async def test_duplicate_api_key_name_same_user_rejected(db_session: AsyncSessio
 
 
 @pytest.mark.asyncio
-async def test_api_key_last_used_update(db_session: AsyncSession, test_user: User):
+async def test_api_key_last_used_update(db_session: AsyncSession, test_user: User) -> None:
     """Test updating last_used_at timestamp."""
     api_key = APIKey(
         user_id=test_user.id,
@@ -256,7 +258,7 @@ async def test_job_access_via_api_key(
     db_session: AsyncSession,
     test_user: User,
     test_job: Job,
-):
+) -> None:
     """Test that jobs are accessible when authenticated with API key."""
     # Set RLS context with user
     await set_current_user(db_session, test_user.id)
@@ -276,7 +278,7 @@ async def test_cannot_access_other_user_jobs(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that API key cannot access other users' jobs."""
     # Create job for user2
     job = Job(
@@ -301,7 +303,7 @@ async def test_cannot_access_other_user_jobs(
 
 
 @pytest.mark.asyncio
-async def test_cascade_delete_api_keys(db_session: AsyncSession):
+async def test_cascade_delete_api_keys(db_session: AsyncSession) -> None:
     """Test that deleting a user deletes their API keys."""
     # Create user and API key
     user = User(email="delete_keys@example.com", name="Delete Keys")
@@ -336,7 +338,7 @@ async def test_api_key_name_not_unique_across_users(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that different users can have API keys with the same name."""
     key1 = APIKey(
         user_id=test_user.id,
@@ -366,7 +368,7 @@ async def test_api_key_wrong_secret(
     db_session: AsyncSession,
     test_user: User,
     test_api_key_with_secret: tuple,
-):
+) -> None:
     """Test that wrong secret doesn't authenticate."""
     _ = (db_session, test_user)
     api_key, full_key = test_api_key_with_secret

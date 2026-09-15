@@ -21,7 +21,7 @@ async def test_share_job_with_view_permission(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test sharing a job with view permission."""
     # Create job owned by test_user
     job = Job(
@@ -65,7 +65,7 @@ async def test_share_job_with_edit_permission(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test sharing a job with edit permission."""
     # Create job owned by test_user
     job = Job(
@@ -112,7 +112,7 @@ async def test_unshared_job_not_accessible(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that unshared jobs are not accessible to other users."""
     # Create job owned by test_user
     job = Job(
@@ -142,7 +142,7 @@ async def test_revoke_job_share(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test revoking a job share."""
     # Create and share job
     job = Job(
@@ -189,7 +189,7 @@ async def test_share_job_with_multiple_users(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test sharing a job with multiple users."""
     # Create third user
     user3 = User(email="user3@example.com", name="User 3")
@@ -244,7 +244,7 @@ async def test_update_share_permission(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test updating share permission from view to edit."""
     # Create and share job
     job = Job(
@@ -279,7 +279,7 @@ async def test_list_shared_with_me_jobs(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test listing jobs shared with a user."""
     # Create multiple jobs and share some with test_user2
     job1 = Job(
@@ -330,7 +330,7 @@ async def test_list_shared_with_me_jobs(
 async def test_owner_always_has_access(
     db_session: AsyncSession,
     test_user: User,
-):
+) -> None:
     """Test that job owners always have access regardless of shares."""
     job = Job(
         owner_id=test_user.id,
@@ -357,7 +357,7 @@ async def test_cannot_share_same_job_twice_to_same_user(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that duplicate shares are prevented."""
     job = Job(
         owner_id=test_user.id,
@@ -396,7 +396,7 @@ async def test_cascade_delete_shares_with_job(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Test that deleting a job deletes its shares."""
     job = Job(
         owner_id=test_user.id,
@@ -432,7 +432,7 @@ async def test_cascade_delete_shares_with_job(
 
 
 @pytest.mark.asyncio
-async def test_orphaned_job_visibility(db_session: AsyncSession, test_user: User):
+async def test_orphaned_job_visibility(db_session: AsyncSession, test_user: User) -> None:
     """Test that orphaned jobs (owner_id=NULL) have special visibility rules."""
     # Create orphaned job
     orphaned_job = Job(

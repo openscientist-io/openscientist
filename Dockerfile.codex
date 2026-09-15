@@ -1,0 +1,30 @@
+# Dockerfile.codex — openscientist-codex image (the pinned codex CLI binary)
+#
+# Carries nothing but /usr/local/bin/codex so both the agent image and the web
+# image can copy it without a Rust toolchain. Build this ONLY when CODEX_REF
+# changes; the release build of codex-rs needs more RAM and time than ACR's
+# Basic tier gives a build step, so run it somewhere with headroom:
+#
+#   docker build -f Dockerfile.codex -t openscientist-codex:<ref-prefix> .
+#   docker push <registry>/openscientist-codex:<ref-prefix>
+#
+# Then bump CODEX_IMAGE in Dockerfile and Dockerfile.agent to the new tag.
+# Leaving that bump undone is safe: the builds keep copying the previous
+# pinned binary rather than silently picking up a different codex.
+
+# The open-codex branch carries the fixes that let codex drive open-weight
+# models served by Ollama: flatten MCP namespace tools for providers without
+# namespace support, a function-form apply_patch (with a +-prefixed patch-body
+# description so open models format added lines correctly), and a web_search
+# capability gate that stops the hosted tool from corrupting tool calls on
+# non-OpenAI providers. Pinned to a commit on open-codex for reproducibility.
+FROM rust:1.95-bookworm AS codex-build
+ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
+ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
+RUN git clone "${CODEX_REPO}" /codex \
+    && git -C /codex checkout "${CODEX_REF}" \
+    && cargo build --release --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
+    && cp /codex/codex-rs/target/release/codex /usr/local/bin/codex
+
+FROM scratch
+COPY --from=codex-build /usr/local/bin/codex /usr/local/bin/codex

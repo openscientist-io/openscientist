@@ -20,6 +20,7 @@ override, live probe, conservative default) for self-hosted servers.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -32,13 +33,25 @@ _DEFAULT_CONTEXT_TOKENS = 8192
 # Known API models (trained windows). Self-hosted models are probed instead,
 # because their deployment can cap the window below the trained maximum.
 _KNOWN_CONTEXT_TOKENS: dict[str, int] = {
+    # Claude 4.x
     "claude-opus-4": 200_000,
     "claude-sonnet-4": 200_000,
     "claude-haiku-4": 200_000,
+    # Claude 3.x
     "claude-3-5-sonnet": 200_000,
+    "claude-3-5-haiku": 200_000,
+    "claude-3-opus": 200_000,
+    "claude-3-sonnet": 200_000,
+    "claude-3-haiku": 200_000,
+    # OpenAI
     "gpt-4o": 128_000,
+    "gpt-4-turbo": 128_000,
     "gpt-4.1": 1_047_576,
+    "gpt-4": 8_192,
     "gpt-5": 400_000,
+    "o1": 200_000,
+    "o3": 200_000,
+    "o4-mini": 200_000,
 }
 
 
@@ -51,12 +64,29 @@ class ModelProfile:
     # Room to grow: max_output_tokens, supports_tool_use, vision, reasoning, ...
 
 
+def _strip_provider_qualifiers(model_id: str) -> str:
+    """Strip Bedrock/Vertex id decorations down to the bare model name.
+
+    Examples: ``us.anthropic.claude-sonnet-4-5-20250929-v1:0`` ->
+    ``claude-sonnet-4-5``; ``claude-sonnet-4-5@20250929`` -> ``claude-sonnet-4-5``.
+    """
+    model_id = re.sub(r"^(?:us|eu|ap)\.anthropic\.", "", model_id)
+    model_id = re.sub(r"-\d{8}.*$", "", model_id)
+    model_id = re.sub(r"@\d{8}$", "", model_id)
+    return model_id
+
+
 def _known_context_tokens(model_id: str) -> int | None:
-    """Look up a known API model's window by longest-matching prefix."""
-    matches = [(p, ctx) for p, ctx in _KNOWN_CONTEXT_TOKENS.items() if model_id.startswith(p)]
-    if not matches:
-        return None
-    return max(matches, key=lambda pc: len(pc[0]))[1]
+    """Look up a known API model's window by longest-matching prefix.
+
+    Tries the raw id first, then a Bedrock/Vertex-qualifier-stripped id, so
+    provider-qualified model ids resolve to the same entry as their bare name.
+    """
+    for mid in (model_id, _strip_provider_qualifiers(model_id)):
+        matches = [(p, ctx) for p, ctx in _KNOWN_CONTEXT_TOKENS.items() if mid.startswith(p)]
+        if matches:
+            return max(matches, key=lambda pc: len(pc[0]))[1]
+    return None
 
 
 def default_model_profile(model_id: str | None, override: int | None) -> ModelProfile:
@@ -72,8 +102,9 @@ def default_model_profile(model_id: str | None, override: int | None) -> ModelPr
     known = _known_context_tokens(mid)
     if known:
         return ModelProfile(id=mid, context_window_tokens=known)
-    logger.info(
-        "No context window known for model %s; defaulting to %d tokens",
+    logger.warning(
+        "No context window size known for model %s; defaulting to %d tokens. "
+        "Add this model to _KNOWN_CONTEXT_TOKENS in models.py.",
         mid,
         _DEFAULT_CONTEXT_TOKENS,
     )

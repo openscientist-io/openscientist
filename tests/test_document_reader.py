@@ -134,6 +134,7 @@ class TestXlsxExtraction:
 
         # First sheet (default)
         ws1 = wb.active
+        assert ws1 is not None
         ws1.title = "Data"
         ws1["A1"] = "Name"
         ws1["B1"] = "Value"

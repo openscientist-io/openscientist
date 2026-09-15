@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,7 +17,7 @@ from openscientist.database.rls import set_current_user
 from tests.helpers import enable_rls, fake_admin_session
 
 
-def _write_json(path, payload: dict) -> None:
+def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
@@ -25,9 +26,9 @@ def _write_json(path, payload: dict) -> None:
 @pytest.mark.asyncio
 async def test_bootstrap_orphan_then_assign_changes_visibility(
     db_session: AsyncSession,
-    temp_jobs_dir,
+    temp_jobs_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
-):
+) -> None:
     """Legacy filesystem jobs should migrate as orphaned and then be claimable."""
     monkeypatch.setattr(
         "openscientist.bootstrap.get_admin_session",
@@ -161,7 +162,7 @@ async def test_assign_orphaned_job_rejects_already_owned(
     db_session: AsyncSession,
     test_user: User,
     test_user2: User,
-):
+) -> None:
     """Assignment helper should not reassign jobs that already have an owner."""
     owned_job = Job(
         owner_id=test_user.id,
@@ -188,7 +189,7 @@ async def test_assign_orphaned_job_rejects_already_owned(
 async def test_assign_orphaned_job_handles_missing_job(
     db_session: AsyncSession,
     test_user: User,
-):
+) -> None:
     """Assignment helper should report missing jobs."""
     result = await assign_orphaned_job(
         session=db_session,
@@ -202,7 +203,7 @@ async def test_assign_orphaned_job_handles_missing_job(
 @pytest.mark.asyncio
 async def test_assign_orphaned_job_handles_missing_user(
     db_session: AsyncSession,
-):
+) -> None:
     """Assignment helper should report missing users before changing ownership."""
     orphan_job = Job(
         owner_id=None,

@@ -15,7 +15,7 @@ from openscientist.database.models import APIKey, User
 async def test_db_session_fixture_teardown_handles_manual_rollback(
     db_session: AsyncSession,
     test_user: User,
-):
+) -> None:
     """
     Manual rollback after an IntegrityError should not trigger teardown warnings.
 

@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from openscientist.api.auth import (
     get_current_user_from_api_key,
     hash_secret,
 )
+from openscientist.api.rate_limits import MUTATING_RATE_LIMIT, limiter
 from openscientist.database.models import APIKey, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
@@ -70,7 +71,9 @@ class APIKeyListResponse(BaseModel):
 
 
 @router.post("", response_model=APIKeyCreateResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def create_api_key(
+    request: Request,
     key_data: APIKeyCreate,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
@@ -83,6 +86,7 @@ async def create_api_key(
 
     Rate limit: 10 keys per user maximum.
     """
+    _ = request
     # Set RLS context
     await set_current_user(session, user.id)
 
@@ -168,8 +172,10 @@ async def list_api_keys(
 
 
 @router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(MUTATING_RATE_LIMIT)
 async def revoke_api_key(
     key_id: UUID,
+    request: Request,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
@@ -178,6 +184,7 @@ async def revoke_api_key(
 
     Revoked keys cannot be reactivated - create a new key instead.
     """
+    _ = request
     # Set RLS context
     await set_current_user(session, user.id)
 

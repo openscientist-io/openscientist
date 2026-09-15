@@ -30,6 +30,7 @@ from openscientist.exec_broker_client import (
     EXEC_TOKEN_ENV,
     container_broker_base_url,
 )
+from openscientist.job.types import RunMode
 from openscientist.job_container.secrets import (
     derive_job_secret,
     make_exec_placeholder,
@@ -69,7 +70,7 @@ class JobContainerRunner:
         job_id: str,
         job_mount: str,
         provider_env: dict[str, str],
-        run_mode: str = "discovery",
+        run_mode: RunMode = RunMode.DISCOVERY,
     ) -> dict[str, str]:
         """Build the environment variables for the agent container."""
         cs = settings.container
@@ -78,17 +79,26 @@ class JobContainerRunner:
             "JOB_ID": job_id,
             "JOB_DIR": job_mount,
             "DATABASE_URL": settings.database.effective_database_url,
+            # Settings refuses to construct without this outside dev mode, and the
+            # agent builds Settings on startup, so omitting it killed every job at
+            # import with "ADMIN_DATABASE_URL is required". The agent never opens an
+            # admin session, but it must still be able to load its configuration.
+            "ADMIN_DATABASE_URL": settings.database.effective_admin_database_url,
             "OPENSCIENTIST_SECRET_KEY": derive_job_secret(settings.secret_key, job_id),
             # Per-job execution credential the broker verifies, plus the broker URL.
             EXEC_TOKEN_ENV: make_exec_placeholder(settings.secret_key, job_id),
             EXEC_BROKER_URL_ENV: container_broker_base_url(),
+            # Agent containers reach Docker only through the restricted socket
+            # proxy (docker-socket-proxy), never the raw host socket. from_env()
+            # picks this up automatically for the agent's ContainerManager.
+            "DOCKER_HOST": os.environ.get("DOCKER_HOST", "tcp://docker-socket-proxy:2375"),
             **provider_env,
         }
         # Only set the run-mode override when it diverges from the default so
         # ordinary discovery launches keep a clean env. The entrypoint reads
-        # OPENSCIENTIST_RUN_MODE. "report_only" re-runs just the report phase.
-        if run_mode != "discovery":
-            env["OPENSCIENTIST_RUN_MODE"] = run_mode
+        # OPENSCIENTIST_RUN_MODE. REPORT_ONLY re-runs just the report phase.
+        if run_mode != RunMode.DISCOVERY:
+            env["OPENSCIENTIST_RUN_MODE"] = run_mode.value
         # Forward the per-turn Codex timeout so the agent (CodexAgent reads
         # OPENSCIENTIST_CODEX_TURN_TIMEOUT at import) can be tuned for slow
         # local backends. Without this the agent always uses the 900s default.
@@ -114,19 +124,21 @@ class JobContainerRunner:
     ) -> dict[str, dict[str, str]]:
         """Build the bind mounts for the agent container."""
         volumes: dict[str, dict[str, str]] = {
-            str(job_dir_host): {"bind": job_mount, "mode": "rw"},
+            # Use as_posix() so Docker volume keys stay forward-slash on Windows
+            # (str(Path(...)) would otherwise produce backslash keys).
+            job_dir_host.as_posix(): {"bind": job_mount, "mode": "rw"},
         }
         # Mount only the operator-provided host creds. google_application_credentials
         # is the container-internal path (Dockerfile ENV), not a valid host source.
         gcp_host_path = settings.provider.gcp_credentials_host_path
         if gcp_host_path:
-            volumes[str(gcp_host_path)] = {
+            volumes[Path(gcp_host_path).as_posix()] = {
                 "bind": AGENT_GCP_CREDENTIALS_PATH,
                 "mode": "ro",
             }
         phenix_host = settings.phenix.phenix_host_path
         if phenix_host:
-            volumes[str(Path(phenix_host).expanduser().resolve())] = {
+            volumes[Path(phenix_host).expanduser().resolve().as_posix()] = {
                 "bind": "/opt/phenix",
                 "mode": "ro",
             }
@@ -155,7 +167,7 @@ class JobContainerRunner:
         *,
         job_id: str,
         job_dir_host: Path,
-        run_mode: str = "discovery",
+        run_mode: RunMode = RunMode.DISCOVERY,
     ) -> tuple[
         dict[str, str],
         dict[str, dict[str, str]],
@@ -217,19 +229,19 @@ class JobContainerRunner:
             {"OPENSCIENTIST_FIREWALL_ALLOW": allow},
         )
 
-    def launch(self, job_id: str, job_dir: Path, *, run_mode: str = "discovery") -> Any:
+    def launch(self, job_id: str, job_dir: Path, *, run_mode: RunMode = RunMode.DISCOVERY) -> Any:
         """
         Launch an agent container for the given job.
 
         The container runs docker/agent-entrypoint.py which calls
         run_discovery_async(job_dir), or regenerate_report_async(job_dir) when
-        run_mode is "report_only".
+        run_mode is RunMode.REPORT_ONLY.
 
         Args:
             job_id: Job UUID string (used for container name + labels)
             job_dir: Absolute host path to the job directory
-            run_mode: "discovery" (full loop) or "report_only" (report phase
-                only, against the already-persisted findings)
+            run_mode: RunMode.DISCOVERY (full loop) or RunMode.REPORT_ONLY
+                (report phase only, against the already-persisted findings)
 
         Returns:
             docker.models.containers.Container object
@@ -252,7 +264,7 @@ class JobContainerRunner:
         *,
         job_id: str,
         job_dir: Path,
-        run_mode: str,
+        run_mode: RunMode,
         name: str,
         container_type: str,
     ) -> Any:
@@ -319,7 +331,7 @@ class JobContainerRunner:
         container = self._start_agent_container(
             job_id=job_id,
             job_dir=job_dir,
-            run_mode="chat",
+            run_mode=RunMode.CHAT,
             name=name,
             container_type="chat",
         )
@@ -422,3 +434,26 @@ class JobContainerRunner:
         except docker_errors.DockerException as error:
             logger.warning("Failed to find container for job %s: %s", job_id, error)
             return None
+
+    def get_logs(self, job_id: str, *, tail: int = 50) -> str | None:
+        """
+        Return the most recent log lines from the agent container, or None.
+
+        Surfaces the real failure reason when a container exits non-zero before
+        writing a terminal status: the entrypoint logs its traceback to stderr,
+        which the parent would otherwise discard. Returns None when the
+        container is missing or its logs cannot be read.
+        """
+        container = self._find_container(job_id)
+        if container is None:
+            return None
+        try:
+            raw = container.logs(stdout=True, stderr=True, tail=tail)
+        except docker_errors.APIError as error:
+            if self._is_not_found_error(error):
+                return None
+            logger.warning("Failed to get logs for job %s: %s", job_id, error)
+            return None
+        if not isinstance(raw, bytes):
+            return None
+        return raw.decode("utf-8", errors="replace")

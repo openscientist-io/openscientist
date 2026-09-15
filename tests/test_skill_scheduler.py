@@ -22,7 +22,7 @@ class TestSkillSyncSchedulerCaching:
     async def test_skips_recently_synced_source_from_db(
         self,
         db_session: AsyncSession,
-    ):
+    ) -> None:
         """Scheduler skips a source whose DB last_synced_at is recent, even with empty in-memory cache."""
         source = SkillSource(
             name="Recent Source",
@@ -52,7 +52,7 @@ class TestSkillSyncSchedulerCaching:
     async def test_sync_source_by_id_passes_force(
         self,
         db_session: AsyncSession,
-    ):
+    ) -> None:
         """sync_source_by_id passes force=True, bypassing rate limits and SHA check."""
         source = SkillSource(
             name="Force Source",
