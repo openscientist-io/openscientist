@@ -400,7 +400,6 @@ class TestProviderContainerEnvVars:
             OPENSCIENTIST_PROVIDER="azure-openai",
             AZURE_OPENAI_API_KEY="az-key",
             AZURE_OPENAI_RESOURCE="myres",
-            AZURE_OPENAI_DEPLOYMENT="mydep",
             AZURE_OPENAI_API_VERSION="2025-04-01-preview",
         )
 
@@ -409,7 +408,6 @@ class TestProviderContainerEnvVars:
         assert env["OPENSCIENTIST_PROVIDER"] == "azure-openai"
         assert env["AZURE_OPENAI_API_KEY"] == "az-key"
         assert env["AZURE_OPENAI_RESOURCE"] == "myres"
-        assert env["AZURE_OPENAI_DEPLOYMENT"] == "mydep"
         assert env["AZURE_OPENAI_API_VERSION"] == "2025-04-01-preview"
 
     def test_azure_openai_vars_omitted_when_unset(self, monkeypatch, tmp_path):
@@ -421,7 +419,6 @@ class TestProviderContainerEnvVars:
         for var in (
             "AZURE_OPENAI_API_KEY",
             "AZURE_OPENAI_RESOURCE",
-            "AZURE_OPENAI_DEPLOYMENT",
             "AZURE_OPENAI_API_VERSION",
         ):
             monkeypatch.delenv(var, raising=False)

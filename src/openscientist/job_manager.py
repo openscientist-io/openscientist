@@ -40,11 +40,11 @@ def _effective_model(settings: Any) -> str | None:
     """Resolve the model the active provider will actually use, for recording
     on the job so the UI can show a model badge.
 
-    ``OPENSCIENTIST_MODEL`` (and the anthropic default) are checked first, but
-    codex providers may carry their model in provider-specific config (for example
-    the Azure deployment) or in a provider default, so when those are unset we ask
-    the provider itself. Returns None when nothing resolves (for example codex
-    on the account default), leaving the job with a provider badge only.
+    ``OPENSCIENTIST_MODEL`` (and the anthropic default) are checked first, but a
+    provider may carry its model in a provider default (Ollama's, for example), so
+    when those are unset we ask the provider itself. Returns None when nothing
+    resolves (for example codex on the account default), leaving the job with a
+    provider badge only.
     """
     model = settings.provider.model or settings.provider.anthropic_default_sonnet_model
     if model:
