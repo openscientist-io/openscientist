@@ -1,6 +1,7 @@
 """Page modules for the web application."""
 
 # Import all page functions to register routes
+from openscientist.webapp_components.pages.a2a import a2a_page
 from openscientist.webapp_components.pages.admin import admin_page
 from openscientist.webapp_components.pages.api_keys import api_keys_page
 from openscientist.webapp_components.pages.docs import docs_page
@@ -14,6 +15,7 @@ from openscientist.webapp_components.pages.skill_detail import skill_detail_page
 from openscientist.webapp_components.pages.skills_list import skills_page
 
 __all__ = [
+    "a2a_page",
     "admin_page",
     "api_keys_page",
     "docs_page",

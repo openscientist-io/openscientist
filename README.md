@@ -39,6 +39,7 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 - **Knowledge State**: JSON-based state tracking for findings and literature
 - **Job Manager**: Multi-job support with queueing and lifecycle management
 - **Web Interface**: NiceGUI-based UI for job submission and monitoring
+- **Agent-to-Agent API**: Call the same configured agent through [A2A](docs/A2A.md), with existing API-key authentication and an administrator on/off control
 
 ### Structural Biology Support (Optional)
 

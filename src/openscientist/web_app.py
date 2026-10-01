@@ -165,8 +165,10 @@ def _register_api_routes(host_app: FastAPI) -> None:
     """Register REST API routes with the host FastAPI app."""
     try:
         from openscientist.api import api_router
+        from openscientist.api.a2a import router as a2a_router
 
         host_app.include_router(api_router)
+        host_app.include_router(a2a_router)
         logger.info("REST API routes registered at /api/v1")
     except Exception as e:
         logger.warning("Failed to register API routes: %s", e)
