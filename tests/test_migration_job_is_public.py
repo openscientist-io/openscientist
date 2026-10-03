@@ -57,7 +57,10 @@ def scratch_database_url(test_database_url: str) -> Iterator[str]:
     scratch_url = _with_database(test_database_url, name)
     try:
         has_uuidv7 = asyncio.run(
-            _fetchval(_asyncpg_dsn(scratch_url), "SELECT to_regproc('uuidv7') IS NOT NULL")
+            # to_regprocedure, not to_regproc: PostgreSQL 18 overloads uuidv7
+            # (with and without an interval), and to_regproc returns NULL for an
+            # overloaded name, which would skip this test exactly where it can run.
+            _fetchval(_asyncpg_dsn(scratch_url), "SELECT to_regprocedure('uuidv7()') IS NOT NULL")
         )
         if not has_uuidv7:
             pytest.skip("the schema needs PostgreSQL 18's built-in uuidv7()")
