@@ -145,11 +145,13 @@ async def test_public_job_is_read_only_for_other_users(
     await enable_rls(db_session)
     await set_current_user(db_session, test_user2.id)
 
-    result = await db_session.execute(
+    await db_session.execute(
         update(Job).where(Job.id == job.id).values(research_question="changed")
     )
 
-    assert result.rowcount == 0
+    await set_current_user(db_session, test_user.id)
+    stored = await db_session.execute(select(Job.research_question).where(Job.id == job.id))
+    assert stored.scalar_one() == "Public visibility job"
 
 
 @pytest.mark.asyncio
