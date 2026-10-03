@@ -48,6 +48,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 - **Job ownership enforced at every layer.** API endpoints verify that the requesting user owns (or has been explicitly shared on) a job. RLS provides a database-level safety net.
 - **Explicit sharing model.** Jobs can be shared with specific users at "view" or "edit" permission levels through a dedicated `job_shares` table.
+- **Opt-in public visibility.** A job owner can set `jobs.is_public` to let any signed-in user read the job by ID or link (issue #296). SELECT-only RLS policies admit the job and its analysis rows (hypotheses, findings, literature, analysis log, iteration summaries, feedback, plots); uploaded input files, chat messages, cost records and shares stay owner/share-only, and the artifacts download omits the job's `data/` upload directory for such viewers. A database trigger restricts changing the flag to the owner, since RLS cannot restrict individual columns and `edit` shares may update the job row. Public jobs are not listed on other users' job pages, and there is no anonymous access.
 - **Admin access requires both authentication and admin status.** Admin pages are protected by stacked `@require_auth` and `@require_admin` decorators. Admins cannot remove their own approval.
 
 ### Review Tokens

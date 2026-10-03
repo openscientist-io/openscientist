@@ -14,6 +14,10 @@ from openscientist.artifact_packager import create_artifacts_zip_file
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
+from openscientist.share_service import (
+    PUBLIC_VIEWER_EXCLUDED_DIRS,
+    viewer_has_direct_access,
+)
 from openscientist.webapp_components.share_routes import get_current_user_from_session
 
 router = APIRouter(prefix="/web/jobs", include_in_schema=False)
@@ -47,6 +51,11 @@ async def download_job_artifacts(
             detail="Job directory not found",
         )
 
+    # A job readable only because it is public comes without the owner's uploads.
+    excluded_dirs = (
+        () if await viewer_has_direct_access(session, job, user.id) else PUBLIC_VIEWER_EXCLUDED_DIRS
+    )
+
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
         prefix=f"openscientist_{job.id}_",
@@ -60,6 +69,7 @@ async def download_job_artifacts(
             job_dir=job_dir,
             archive_path=archive_path,
             job_id=str(job.id),
+            excluded_top_level_dirs=excluded_dirs,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)

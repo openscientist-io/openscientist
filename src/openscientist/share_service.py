@@ -170,6 +170,74 @@ async def create_or_update_share(
     return new_share, target_user
 
 
+# Top-level job-directory entries withheld from a viewer who can see a job only
+# because it is public. ``data/`` holds the owner's uploaded input files, which
+# may be unpublished or restricted even when the analysis is shared openly.
+PUBLIC_VIEWER_EXCLUDED_DIRS: tuple[str, ...] = ("data",)
+
+
+async def set_job_public(
+    session: AsyncSession,
+    owner_id: UUID,
+    *,
+    job_id: str,
+    is_public: bool,
+    not_owned_detail: str,
+) -> Job:
+    """
+    Make an owned job readable by any signed-in user, or private again.
+
+    Args:
+        session: Request-scoped database session.
+        owner_id: Authenticated user ID that must own the job.
+        job_id: Job UUID as a string.
+        is_public: New visibility.
+        not_owned_detail: Error message used when ownership check fails.
+
+    Returns:
+        The updated job record.
+
+    Raises:
+        HTTPException: If the job is missing/inaccessible, or owned by another user.
+    """
+    job = await get_owned_job(
+        session,
+        owner_id,
+        job_id,
+        not_owned_detail=not_owned_detail,
+    )
+    job.is_public = is_public
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
+async def viewer_has_direct_access(session: AsyncSession, job: Job, user_id: UUID) -> bool:
+    """
+    Return whether a user owns a job or has it shared with them.
+
+    A user who can read a job only because it is public gets False, and is
+    shown the job without the owner's uploaded inputs.
+
+    Args:
+        session: Database session with the viewer's RLS context applied.
+        job: A job the viewer can already read.
+        user_id: The viewer.
+
+    Returns:
+        True for the owner or a share recipient, otherwise False.
+    """
+    if job.owner_id == user_id:
+        return True
+    result = await session.execute(
+        select(JobShare.id).where(
+            JobShare.job_id == job.id,
+            JobShare.shared_with_user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def list_shares_for_owned_job(
     session: AsyncSession,
     owner_id: UUID,

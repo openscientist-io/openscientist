@@ -1,5 +1,8 @@
 [run]
 source = src/openscientist
+# SQLAlchemy's async API runs queries on greenlets; without this, every line
+# after an awaited query in an async function is reported as never run.
+concurrency = greenlet,thread
 omit =
     */tests/*
     */__pycache__/*
