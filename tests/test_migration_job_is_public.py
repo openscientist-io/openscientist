@@ -21,6 +21,8 @@ from alembic.config import Config
 PROJECT_ROOT = Path(__file__).parent.parent
 COLUMN_REVISION = "add_job_is_public"
 BEFORE_COLUMN_REVISION = "add_version_info"
+RLS_REVISION = "add_job_public_rls"
+PUBLIC_POLICY_COUNT = 11  # jobs + 7 job-scoped tables + 3 junction tables
 
 
 def _asyncpg_dsn(url: str) -> str:
@@ -102,3 +104,41 @@ def test_add_job_is_public_adds_and_drops_the_column(
 
     command.upgrade(config, COLUMN_REVISION)
     assert _column_count(scratch_database_url) == 1
+
+
+def _rls_state(url: str) -> dict[str, object]:
+    dsn = _asyncpg_dsn(url)
+    return {
+        "policies": asyncio.run(
+            _fetchval(
+                dsn, "SELECT count(*) FROM pg_policies WHERE policyname LIKE '%\\_select\\_public'"
+            )
+        ),
+        "trigger": asyncio.run(
+            _fetchval(dsn, "SELECT count(*) FROM pg_trigger WHERE tgname = 'jobs_guard_is_public'")
+        ),
+        "function": asyncio.run(
+            _fetchval(dsn, "SELECT to_regproc('jobs_guard_is_public') IS NOT NULL")
+        ),
+    }
+
+
+def test_add_job_public_rls_adds_and_removes_the_access_rules(
+    scratch_database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", scratch_database_url)
+    config = _alembic_config()
+
+    command.upgrade(config, RLS_REVISION)
+    assert _rls_state(scratch_database_url) == {
+        "policies": PUBLIC_POLICY_COUNT,
+        "trigger": 1,
+        "function": True,
+    }
+
+    command.downgrade(config, COLUMN_REVISION)
+    assert _rls_state(scratch_database_url) == {"policies": 0, "trigger": 0, "function": False}
+    assert _column_count(scratch_database_url) == 1
+
+    command.upgrade(config, RLS_REVISION)
+    assert _rls_state(scratch_database_url)["policies"] == PUBLIC_POLICY_COUNT
