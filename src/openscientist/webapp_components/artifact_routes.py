@@ -14,6 +14,7 @@ from openscientist.artifact_packager import create_artifacts_zip_file
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
+from openscientist.share_service import withheld_artifact_dirs
 from openscientist.webapp_components.share_routes import get_current_user_from_session
 
 router = APIRouter(prefix="/web/jobs", include_in_schema=False)
@@ -47,6 +48,8 @@ async def download_job_artifacts(
             detail="Job directory not found",
         )
 
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
         prefix=f"openscientist_{job.id}_",
@@ -60,6 +63,7 @@ async def download_job_artifacts(
             job_dir=job_dir,
             archive_path=archive_path,
             job_id=str(job.id),
+            excluded_top_level_dirs=excluded_dirs,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
