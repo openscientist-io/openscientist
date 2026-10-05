@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -48,6 +48,7 @@ class Job(UUIDv7Mixin, Base):
         llm_config: LLM configuration (model, temperature, etc.)
         error_message: Error message if job failed
         result_summary: Final analysis summary
+        is_public: Whether the owner has made the job readable by any signed-in user
         owner: Related User object
         shares: Job sharing permissions
         data_files: Uploaded data files for this job
@@ -155,6 +156,14 @@ class Job(UUIDv7Mixin, Base):
         JSONB,
         nullable=True,
         comment="Structured data summary used for prompting and UI",
+    )
+
+    is_public: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        default=False,
+        comment="Owner has made this job readable by any signed-in user",
     )
 
     version_info: Mapped[dict[str, Any] | None] = mapped_column(
