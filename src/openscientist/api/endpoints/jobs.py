@@ -38,7 +38,11 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job_manager import JobManager
-from openscientist.share_service import PUBLIC_VIEWER_EXCLUDED_DIRS, viewer_has_direct_access
+from openscientist.share_service import (
+    PUBLIC_VIEWER_EXCLUDED_DIRS,
+    set_job_public,
+    viewer_has_direct_access,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +119,7 @@ class JobResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration number")
     pdb_code: str | None = Field(None, description="PDB code")
     space_group: str | None = Field(None, description="Space group")
+    is_public: bool = Field(False, description="Whether any signed-in user can read this job")
 
 
 class JobListResponse(BaseModel):
@@ -154,6 +159,19 @@ class _JobResponseFields(TypedDict):
     current_iteration: int
     pdb_code: str | None
     space_group: str | None
+    is_public: bool
+
+
+class JobVisibilityUpdate(BaseModel):
+    """Request to change who can read a job."""
+
+    is_public: bool = Field(
+        ...,
+        description=(
+            "True lets any signed-in user read the job, without its uploaded "
+            "input files; false restores owner/share-only access"
+        ),
+    )
 
 
 async def get_job_by_id(
@@ -207,6 +225,7 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "current_iteration": job.current_iteration,
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
+        "is_public": job.is_public,
     }
 
 
@@ -583,6 +602,32 @@ async def cancel_job(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to cancel job",
         ) from e
+
+
+@router.put("/{job_id}/visibility")
+async def update_job_visibility(
+    job_id: str,
+    update: JobVisibilityUpdate,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> JobDetailResponse:
+    """
+    Make a job readable by any signed-in user, or private again (owner only).
+
+    A public job is reachable by ID or link but is not listed on other users'
+    job pages. Viewers who are neither the owner nor a share recipient do not
+    receive the job's uploaded input files.
+    """
+    await set_current_user(session, user.id)
+    job = await set_job_public(
+        session,
+        user.id,
+        job_id=job_id,
+        is_public=update.is_public,
+        not_owned_detail="Only the job owner can change its visibility",
+    )
+    logger.info("Set job %s is_public=%s for user %s", job.id, job.is_public, user.email)
+    return _job_to_detail_response(job)
 
 
 @router.get("/{job_id}/report")

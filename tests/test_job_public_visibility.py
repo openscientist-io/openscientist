@@ -229,6 +229,33 @@ def _api_app(db_session: AsyncSession, user: User):
 
 
 @pytest.mark.asyncio
+async def test_visibility_endpoint_is_owner_only(
+    db_session: AsyncSession, test_user: User, test_user2: User
+):
+    job = await _job(db_session, test_user, is_public=False)
+    await enable_rls(db_session)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_api_app(db_session, test_user)), base_url="http://test"
+    ) as client:
+        response = await client.put(f"/api/v1/jobs/{job.id}/visibility", json={"is_public": True})
+    assert response.status_code == 200, response.text
+    assert response.json()["is_public"] is True
+
+    async with AsyncClient(
+        transport=ASGITransport(app=_api_app(db_session, test_user2)), base_url="http://test"
+    ) as client:
+        detail = await client.get(f"/api/v1/jobs/{job.id}")
+        listing = await client.get("/api/v1/jobs")
+        denied = await client.put(f"/api/v1/jobs/{job.id}/visibility", json={"is_public": False})
+
+    assert detail.status_code == 200
+    assert detail.json()["is_public"] is True
+    assert str(job.id) not in {item["id"] for item in listing.json()["jobs"]}
+    assert denied.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_public_viewer_artifacts_omit_uploads_but_owner_gets_them(
     db_session: AsyncSession, test_user: User, test_user2: User, tmp_path
 ):
