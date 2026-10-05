@@ -238,6 +238,26 @@ async def viewer_has_direct_access(session: AsyncSession, job: Job, user_id: UUI
     return result.scalar_one_or_none() is not None
 
 
+async def withheld_artifact_dirs(session: AsyncSession, job: Job, user_id: UUID) -> tuple[str, ...]:
+    """
+    Return the job-directory entries to leave out of a viewer's artifacts download.
+
+    A viewer who can read the job only because it is public gets it without the
+    owner's uploaded inputs; the owner and share recipients get everything.
+
+    Args:
+        session: Database session with the viewer's RLS context applied.
+        job: A job the viewer can already read.
+        user_id: The viewer.
+
+    Returns:
+        Top-level directory names to exclude (empty for direct access).
+    """
+    if await viewer_has_direct_access(session, job, user_id):
+        return ()
+    return PUBLIC_VIEWER_EXCLUDED_DIRS
+
+
 async def list_shares_for_owned_job(
     session: AsyncSession,
     owner_id: UUID,
