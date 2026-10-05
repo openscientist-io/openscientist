@@ -28,7 +28,12 @@ from openscientist.database.models import (
     User,
 )
 from openscientist.database.rls import set_current_user
-from openscientist.share_service import set_job_public, viewer_has_direct_access
+from openscientist.share_service import (
+    PUBLIC_VIEWER_EXCLUDED_DIRS,
+    set_job_public,
+    viewer_has_direct_access,
+    withheld_artifact_dirs,
+)
 from tests.helpers import enable_rls
 
 
@@ -343,3 +348,18 @@ async def test_viewer_has_direct_access_only_for_owner_and_share_recipients(
     assert await viewer_has_direct_access(db_session, job, test_user.id) is True
     await set_current_user(db_session, test_user2.id)
     assert await viewer_has_direct_access(db_session, job, test_user2.id) is False
+
+
+@pytest.mark.asyncio
+async def test_withheld_artifact_dirs_hide_uploads_only_from_public_viewers(
+    db_session: AsyncSession, test_user: User, test_user2: User
+):
+    job = await _job(db_session, test_user, is_public=True)
+    await enable_rls(db_session)
+
+    await set_current_user(db_session, test_user.id)
+    assert await withheld_artifact_dirs(db_session, job, test_user.id) == ()
+    await set_current_user(db_session, test_user2.id)
+    assert (
+        await withheld_artifact_dirs(db_session, job, test_user2.id) == PUBLIC_VIEWER_EXCLUDED_DIRS
+    )

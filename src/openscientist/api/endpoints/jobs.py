@@ -38,11 +38,7 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job_manager import JobManager
-from openscientist.share_service import (
-    PUBLIC_VIEWER_EXCLUDED_DIRS,
-    set_job_public,
-    viewer_has_direct_access,
-)
+from openscientist.share_service import set_job_public, withheld_artifact_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -745,12 +741,9 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
-    # Build ZIP archive on disk to avoid holding large archives in memory.
-    # A job readable only because it is public comes without the owner's uploads.
-    excluded_dirs = (
-        () if await viewer_has_direct_access(session, job, user.id) else PUBLIC_VIEWER_EXCLUDED_DIRS
-    )
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
 
+    # Build ZIP archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
         prefix=f"openscientist_{job.id}_",
