@@ -149,7 +149,7 @@ def new_job_page() -> None:
 
         research_question = ui.textarea(
             label="Research Question",
-            placeholder="e.g., What metabolic pathways are affected by hypothermia?",
+            placeholder="e.g., What interesting patterns can be found in the attached data, and what biological mechanisms explain them?",
             validation={"Too short": lambda value: len(value) >= 10},
         ).classes("w-full")
 
