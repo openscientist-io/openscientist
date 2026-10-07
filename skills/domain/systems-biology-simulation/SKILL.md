@@ -18,7 +18,7 @@ Simulation complements, not replaces, data analysis. Use it to turn a mechanisti
 
 1. **Find a model.** `search_biomodels(query=...)` for curated SBML models; `search_pubmed` for papers whose supplement has a model. If the user uploaded a model file, it is in `data_files` (file_type `"model"`).
 2. **Fetch it.** `fetch_biomodel(model_id=...)` saves `provenance/biomodels/<id>.xml`; inside `execute_code` the path is `/output/biomodels/<id>.xml`.
-3. **Static check (no compute).** List species, reactions, parameters and rate laws. Confirm the parameter you want to perturb actually appears in a rate law — models sometimes declare parameters they never read. Note units and the time scale.
+3. **Static check (no compute).** List species, reactions, parameters and rate laws. Confirm the parameter you want to perturb actually appears in a rate law — models sometimes declare parameters they never read. Note units and the time scale. Check whether the model is deterministic or stochastic: particle-number models with terms like `X*(X-1)` were built for Gillespie simulation, and CVODE will give small negative values for them — use `rr.setIntegrator("gillespie")` and average replicates instead.
 4. **Time one run.** Simulate the baseline once and print the wall-clock time. Size every later scan from that number so the whole `execute_code` call fits the `timeout=` you request (60 s default; the server has a configurable maximum, typically 600 s).
 5. **Baseline, then perturbations.** One condition or one small scan per call. Save every result to `/output` as CSV plus a plot so later calls and the report can use them.
 6. **Record findings** with `update_knowledge_state`: the model ID, the perturbation, the quantitative effect (fold change, time to half-max, steady state), and the comparison to data or literature. Negative results count.
@@ -31,10 +31,10 @@ Simulation complements, not replaces, data analysis. Use it to turn a mechanisti
 ```python
 import roadrunner, time
 rr = roadrunner.RoadRunner("/output/biomodels/BIOMD0000000462.xml")
-print("species:", rr.getFloatingSpeciesIds())
-print("params:", rr.getGlobalParameterIds())
-print("reactions:", rr.getReactionIds())
-print("initial values:", dict(zip(rr.getFloatingSpeciesIds(), rr.getFloatingSpeciesInitialConcentrations())))
+print("species:", rr.model.getFloatingSpeciesIds())
+print("params:", rr.model.getGlobalParameterIds())
+print("reactions:", rr.model.getReactionIds())
+print("initial values:", dict(zip(rr.model.getFloatingSpeciesIds(), rr.model.getFloatingSpeciesInitConcentrations())))
 # Rate laws, human-readable, via Antimony:
 import antimony
 antimony.loadSBMLFile("/output/biomodels/BIOMD0000000462.xml")
@@ -48,7 +48,7 @@ import roadrunner, time, pandas as pd, matplotlib.pyplot as plt
 rr = roadrunner.RoadRunner("/output/biomodels/BIOMD0000000462.xml")
 t0 = time.perf_counter()
 res = rr.simulate(0, 100, 501)           # start, end, points
-print(f"one run: {time.perf_counter()-t0:.2f}s")
+print(f"one run: {time.perf_counter()-t0:.3f}s")   # ODE models of ~10 species take milliseconds
 df = pd.DataFrame(res, columns=res.colnames)
 df.to_csv("/output/sim_baseline.csv", index=False)
 df.plot(x="time"); plt.title("baseline"); plt.savefig("/output/sim_baseline.png")
@@ -90,7 +90,7 @@ Save the Antimony text to `/output/model.ant` and the SBML to `/output/model.xml
 
 ```python
 rr.steadyState()
-print(dict(zip(rr.getFloatingSpeciesIds(), rr.getFloatingSpeciesConcentrations())))
+print(dict(zip(rr.model.getFloatingSpeciesIds(), rr.model.getFloatingSpeciesConcentrations())))
 # Scaled control coefficients (metabolic control analysis):
 print(rr.getScaledFluxControlCoefficientMatrix())
 ```

@@ -97,6 +97,8 @@ def test_search_backend_parses_models(fake_biomodels: MagicMock) -> None:
     assert results[0]["url"].endswith("/BIOMD0000000462")
     _, kwargs = fake_biomodels.call_args
     assert kwargs["params"] == {"query": "amyloid", "numResults": 10, "format": "json"}
+    # The live API over-returns on small numResults, so the cap is enforced client-side.
+    assert len(biomodels.search_biomodels_backend("amyloid", 1)) == 1
 
 
 def test_fetch_backend_writes_file_and_counts(fake_biomodels: MagicMock, tmp_path: Path) -> None:

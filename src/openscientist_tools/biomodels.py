@@ -55,7 +55,8 @@ def search_biomodels_backend(query: str, max_results: int) -> list[dict[str, Any
         f"{BIOMODELS_BASE_URL}/search",
         params={"query": query, "numResults": max_results, "format": "json"},
     )
-    models = payload.get("models") or []
+    # The API treats numResults as a hint and can return more; cap it here.
+    models = (payload.get("models") or [])[:max_results]
     results: list[dict[str, Any]] = []
     for m in models:
         if not isinstance(m, dict) or not m.get("id"):
@@ -183,7 +184,7 @@ def fetch_biomodel(model_id: str, description: str = "") -> str:
 
         import roadrunner
         rr = roadrunner.RoadRunner("/output/biomodels/BIOMD0000000462.xml")
-        print(rr.getFloatingSpeciesIds()); print(rr.getGlobalParameterIds())
+        print(rr.model.getFloatingSpeciesIds()); print(rr.model.getGlobalParameterIds())
         res = rr.simulate(0, 100, 500)
 
     Args:
