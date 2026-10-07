@@ -776,10 +776,10 @@ class TestBuiltinSkillsIngestion:
         }
         assert set(skills.keys()) == expected_slugs
 
-        # Verify 6 domain + 4 workflow category split
+        # Verify 7 domain + 4 workflow category split
         domain_skills = [s for s in skills.values() if s.category == "domain"]
         workflow_skills = [s for s in skills.values() if s.category == "workflow"]
-        assert len(domain_skills) == 6
+        assert len(domain_skills) == 7
         assert len(workflow_skills) == 4
 
         # Spot-check one skill's metadata
