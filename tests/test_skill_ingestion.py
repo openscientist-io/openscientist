@@ -754,7 +754,7 @@ class TestBuiltinSkillsIngestion:
         stats = await ingester.sync_source(db_session, source)
 
         assert stats["errors"] == 0
-        assert stats["created"] == 10
+        assert stats["created"] == 11
 
         # Verify all expected slugs are present
         stmt = select(Skill).where(Skill.source_id == source.id)
@@ -772,6 +772,7 @@ class TestBuiltinSkillsIngestion:
             "prioritization",
             "result-interpretation",
             "stopping-criteria",
+            "systems-biology-simulation",
         }
         assert set(skills.keys()) == expected_slugs
 
