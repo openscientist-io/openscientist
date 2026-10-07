@@ -90,7 +90,7 @@ jobs:
         # shared runner egress makes those tests fail unrelated to the change.
         # The environment comes from the preceding step, so the interpreter is
         # called directly and this step touches no dependencies.
-        run: .venv/bin/python -m pytest -m "not network" --cov=src/openscientist --cov-report=term-missing --cov-report=xml
+        run: .venv/bin/python -m pytest -m "not network" --cov=src/openscientist --cov=src/openscientist_tools --cov-report=term-missing --cov-report=xml
 
       - name: Publish coverage report
         uses: actions/upload-artifact@v7
