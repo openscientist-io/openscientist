@@ -70,8 +70,17 @@ def _ensure_data_loaded() -> str | None:
         return err
 
 
+#: Default per-call timeouts (seconds) when the agent does not ask for one.
+_DEFAULT_TIMEOUTS = {"python": 60, "rust": 300, "sparql": 60}
+
+
 @mcp.tool()
-def execute_code(code: str, language: str = "python", description: str = "") -> str:
+def execute_code(
+    code: str,
+    language: str = "python",
+    description: str = "",
+    timeout: int | None = None,
+) -> str:
     """Execute code to analyze data.
 
     Supported languages:
@@ -97,6 +106,11 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
       scanpy, pydeseq2, and more. Plots are automatically saved to the job's
       plots directory. Choose Python unless a specific reason (performance,
       structured knowledge lookup) justifies another language.
+      Systems-biology simulation: `roadrunner` (libRoadRunner, SBML/CVODE),
+      `antimony` (Antimony <-> SBML), `libsbml`, `basico` (COPASI), `libsedml`,
+      `libcombine`. Model files fetched with `fetch_biomodel` live under
+      `/output/biomodels/` inside this executor. Run ONE condition or scan per
+      call and pass `timeout=` for anything that may exceed 60 s.
     - "rust": Use when Python is too slow — e.g., tight inner loops over >1M rows,
       custom numerical algorithms, or performance-critical computation. Compiled and
       run with cargo. Pre-seeded crates available without imports or downloads:
@@ -118,12 +132,19 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
         code: Code or query to execute
         language: Language to use ("python", "rust", or "sparql"). Default: "python"
         description: Optional description of what you're investigating
+        timeout: Optional wall-clock limit in seconds for this call. Defaults to
+            60 (Python/SPARQL) or 300 (Rust). The server clamps requests to its
+            configured maximum, so ask for what you need and check the result
+            for a timeout error rather than assuming the full value was granted.
 
     Returns:
         Formatted execution result with output, plots (Python only), and any errors
     """
     if language not in ("python", "rust", "sparql"):
         return f"❌ ERROR: Unsupported language '{language}'. Supported: 'python', 'rust', 'sparql'"
+    if timeout is not None and timeout < 1:
+        return "❌ ERROR: timeout must be a positive number of seconds"
+    effective_timeout = timeout if timeout is not None else _DEFAULT_TIMEOUTS[language]
 
     load_error = _ensure_data_loaded()
     if load_error and language not in ("rust", "sparql"):
@@ -175,7 +196,7 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
                 data_files=data_files,
                 description=description,
                 iteration=int(ks.data["iteration"]),
-                timeout=60,
+                timeout=effective_timeout,
             )
         else:
             result = execute_code_via_broker(
@@ -185,7 +206,7 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
                 output_dir=host_output_dir,
                 description=description,
                 iteration=int(ks.data["iteration"]),
-                timeout=300 if language == "rust" else 60,
+                timeout=effective_timeout,
             )
     except BrokerError as exc:
         return f"❌ ERROR: code execution service unavailable: {exc}"

@@ -83,6 +83,16 @@ HDF5_EXTENSIONS = {
     ".hdf5",
 }
 
+# Systems-biology model files. SBML is XML, so a bare .xml is classified as a
+# model rather than left "unknown" and then mis-parsed as CSV by load_data.
+MODEL_EXTENSIONS = {
+    ".sbml",
+    ".xml",
+    ".ant",  # Antimony
+    ".omex",  # COMBINE archive (SBML + SED-ML)
+    ".sedml",
+}
+
 
 # Re-exported from openscientist.exceptions for convenience at this import path
 __all__ = ["FileTooBigError", "UnsupportedFileTypeError"]
@@ -142,6 +152,8 @@ def get_file_info(file_path: Path) -> dict[str, Any]:
         file_type = "image"
     elif extension in HDF5_EXTENSIONS:
         file_type = "hdf5"
+    elif extension in MODEL_EXTENSIONS:
+        file_type = "model"
     else:
         file_type = "unknown"
 
@@ -236,7 +248,7 @@ def load_data_file(file_path: Path) -> pd.DataFrame | None:
         logger.info("Loading tabular file: %s (%s)", file_path.name, info["extension"])
         return load_tabular_file(file_path)
 
-    if info["file_type"] in ["structure", "sequence", "hdf5"]:
+    if info["file_type"] in ["structure", "sequence", "hdf5", "model"]:
         logger.info(
             "Non-tabular file detected: %s (%s). Agent will access file directly.",
             file_path.name,

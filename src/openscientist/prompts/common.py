@@ -69,6 +69,8 @@ MCP_TOOL_NAMES: tuple[str, ...] = (
     "run_phenix_tool",
     "compare_structures",
     "parse_alphafold_confidence",
+    "search_biomodels",
+    "fetch_biomodel",
 )
 
 # The three ways a prompt marks a name as a tool to call: backticked, bold, or
@@ -122,6 +124,7 @@ def build_system_prompt(frags: BackendFragments) -> str:
 You have access to tools:
 - `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2, and more), `language="rust"` (compiled via cargo; pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools, num-traits — only use pre-seeded crates, adding others will fail; only reach for Rust when Python is genuinely too slow, compilation overhead is significant), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query; always add a LIMIT clause; prefer simple targeted queries over complex multi-join ones)
 - `search_pubmed`: Search scientific literature for relevant papers
+- `search_biomodels` / `fetch_biomodel`: Find and download curated SBML models from BioModels, then simulate them in `execute_code` with `roadrunner` or `basico` (see the systems-biology-simulation skill)
 - `update_knowledge_state`: Record a confirmed finding
 - `set_status`: Update your current status message — keep it short, a brief phrase (e.g., "Analyzing correlation between X and Y")
 - `set_job_title`: Set a short, descriptive title for this job — a concise noun phrase, not a sentence (e.g., "Kinase inhibitor binding analysis")
@@ -471,6 +474,29 @@ Always use hypothesis tracking — even for literature-only investigations.""")
 - `pae_json`: Optional PAE JSON file""")
 
     parts.append("""
+### Systems-Biology Simulation
+
+When the question concerns the dynamics of a biological process (enzyme kinetics, signalling, aggregation, pharmacology, disease progression), consider testing it with a mechanistic model rather than data alone. Read the bundled `domain--systems-biology-simulation.md` skill first; it has the recipes and the rules below in full.
+
+**search_biomodels** - Search the BioModels repository (curated SBML models) by keyword
+
+- `query`: e.g. `"amyloid aggregation"`, `"MAPK cascade"`, `"insulin glucose"`
+- Returns model IDs (`BIOMD…`/`MODEL…`), names, and the source publication
+
+**fetch_biomodel** - Download a BioModels entry as SBML into this job
+
+- `model_id`: e.g. `"BIOMD0000000462"`
+- The file is saved to `provenance/biomodels/<id>.xml` and is reachable inside `execute_code` as `/output/biomodels/<id>.xml`
+- Returns the model's metadata and a summary of its species, reactions and parameters
+
+Then simulate in `execute_code` with `roadrunner` (SBML, CVODE) or `basico` (COPASI). You may also write a model from scratch in Antimony with `antimony.loadAntimonyString(...)` -> `antimony.getSBMLString(...)`.
+
+Rules:
+- **Static check first.** Read the model's reactions and parameters before running anything; confirm the parameter you plan to perturb is actually used by a rate law.
+- **Time one run before any scan.** Report the wall-clock cost of a single simulation, then size the scan so the whole call fits the `timeout=` you request (default 60 s, server maximum applies).
+- **One condition or one small scan per `execute_code` call.** Save results to `/output` as CSV and plots so later calls and the report can reuse them.
+- If the needed compute clearly exceeds what fits (large replicate batches, agent-based or spatial models), record that as a finding with the estimated CPU-hours rather than attempting it.
+
 ### Reading Data Files
 
 There are two distinct path worlds. Do not mix them:
