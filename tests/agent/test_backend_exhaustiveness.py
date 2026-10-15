@@ -179,9 +179,9 @@ def test_prompts_are_fully_substituted() -> None:
         assert isinstance(cls.prompt_fragments(), BackendFragments)
         for text in (
             cls.system_prompt(),
-            cls.job_doc(use_hypotheses=True, phenix_available=True),
+            cls.job_doc(phenix_available=True),
             cls.chat_doc(),
-            cls.discovery_system_prompt(use_hypotheses=True, phenix_available=True),
+            cls.discovery_system_prompt(phenix_available=True),
         ):
             assert text, cls
             assert "{{" not in text and "}}" not in text, f"unsubstituted sentinel in {cls}"
@@ -190,7 +190,7 @@ def test_prompts_are_fully_substituted() -> None:
 def test_codex_prompts_drop_claude_vocabulary() -> None:
     for text in (
         CodexAgent.chat_doc(),
-        CodexAgent.discovery_system_prompt(use_hypotheses=True, phenix_available=True),
+        CodexAgent.discovery_system_prompt(phenix_available=True),
     ):
         assert "Claude's" not in text
         assert "`.claude/skills/`" not in text
@@ -209,12 +209,10 @@ def test_concrete_subclass_without_backend_is_rejected() -> None:
                 raise NotImplementedError
 
             @classmethod
-            def discovery_system_prompt(
-                cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-            ) -> str:
+            def discovery_system_prompt(cls, *, phenix_available: bool = False) -> str:
                 return ""
 
-            async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+            async def prepare_job_workspace(self) -> None:
                 return None
 
             async def run_iteration(

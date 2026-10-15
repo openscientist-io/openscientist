@@ -30,7 +30,6 @@ def _make_agent(
     *,
     data_file: Path | None = None,
     data_files: list[Path] | None = None,
-    use_hypotheses: bool = False,
     model_override: str | None = None,
     provider: ClaudeCompatible | None = None,
     tool_server_env: dict[str, str] | None = None,
@@ -39,7 +38,6 @@ def _make_agent(
         job_dir=tmp_path,
         data_file=data_file,
         system_prompt="test prompt",
-        use_hypotheses=use_hypotheses,
         data_files=tuple(data_files or ()),
         model_override=model_override,
         tool_server_env=tool_server_env or {},
@@ -115,12 +113,9 @@ def test_subprocess_env_inherits_critical_parent_vars(
     assert env["PATH"] == "/test/bin:/usr/bin"
 
 
-@pytest.mark.parametrize("use_hypotheses,expected", [(True, "1"), (False, "0")])
-def test_subprocess_env_use_hypotheses_flag(
-    tmp_path: Path, use_hypotheses: bool, expected: str
-) -> None:
-    executor = _make_agent(tmp_path, use_hypotheses=use_hypotheses)
-    assert executor._build_subprocess_env()["OPENSCIENTIST_USE_HYPOTHESES"] == expected
+def test_subprocess_env_has_no_hypothesis_flag(tmp_path: Path) -> None:
+    """The removed hypothesis opt-in no longer reaches the tools subprocess."""
+    assert "OPENSCIENTIST_USE_HYPOTHESES" not in _make_agent(tmp_path)._build_subprocess_env()
 
 
 def test_subprocess_env_data_file_optional(tmp_path: Path) -> None:
@@ -196,7 +191,7 @@ async def test_built_spec_spawns_subprocess_that_lists_all_tools(
 
     monkeypatch.setenv("DATABASE_URL", test_database_url)
 
-    executor = _make_agent(tmp_path, use_hypotheses=True)
+    executor = _make_agent(tmp_path)
     options = executor._build_options()
     mcp_servers = options.mcp_servers
     assert isinstance(mcp_servers, dict)
@@ -215,9 +210,8 @@ async def test_built_spec_spawns_subprocess_that_lists_all_tools(
             tools = await session.list_tools()
             names = {t.name for t in tools.tools}
 
-    # The standalone server registers all 13 agent tools plus the
-    # `ping` smoke tool. With `use_hypotheses=True` (set on the spec env),
-    # add_hypothesis and update_hypothesis are included.
+    # The standalone server registers the agent tools plus the `ping` smoke
+    # tool. The retired hypothesis-tracking tools are never offered.
     assert "ping" in names
     assert {
         "read_document",
@@ -227,7 +221,6 @@ async def test_built_spec_spawns_subprocess_that_lists_all_tools(
         "save_iteration_summary",
         "set_consensus_answer",
         "update_knowledge_state",
-        "add_hypothesis",
-        "update_hypothesis",
         "execute_code",
     } <= names
+    assert not {"add_hypothesis", "update_hypothesis"} & names

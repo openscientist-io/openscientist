@@ -48,12 +48,10 @@ class _StubAgent(AbstractAgent[ClaudeCompatible]):
         return _STUB_FRAGMENTS
 
     @classmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
+    def discovery_system_prompt(cls, *, phenix_available: bool = False) -> str:
         return "stub discovery prompt"
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(self) -> None:
         return None
 
 
@@ -116,7 +114,6 @@ def test_agent_config_defaults(tmp_path: Path) -> None:
     config = AgentConfig(job_dir=tmp_path)
     assert config.data_file is None
     assert config.system_prompt is None
-    assert config.use_hypotheses is False
     assert config.data_files == ()
     assert config.mcp_servers == ()
 
@@ -127,13 +124,11 @@ def test_agent_config_all_fields(tmp_path: Path) -> None:
         job_dir=tmp_path,
         data_file=tmp_path / "primary.csv",
         system_prompt="do science",
-        use_hypotheses=True,
         data_files=(tmp_path / "a.csv", tmp_path / "b.csv"),
         mcp_servers=(spec,),
     )
     assert config.data_file == tmp_path / "primary.csv"
     assert config.system_prompt == "do science"
-    assert config.use_hypotheses is True
     assert config.data_files == (tmp_path / "a.csv", tmp_path / "b.csv")
     assert config.mcp_servers == (spec,)
 

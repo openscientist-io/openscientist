@@ -160,7 +160,6 @@ Each provider has its own cost tracking and budget enforcement.
 Skills are modular packages of domain expertise that guide the agent's reasoning:
 
 **Workflow Skills** (domain-agnostic):
-- `hypothesis-generation` - How to formulate testable hypotheses
 - `result-interpretation` - How to interpret statistical results
 - `prioritization` - How to decide what to investigate next
 - `stopping-criteria` - When to stop investigating

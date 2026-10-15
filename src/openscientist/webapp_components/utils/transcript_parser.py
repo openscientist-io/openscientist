@@ -13,6 +13,8 @@ _OPENSCIENTIST_TOOL_NAMES = frozenset(
         "execute_code",
         "search_pubmed",
         "update_knowledge_state",
+        # Retired tools, kept so transcripts of jobs that ran while the
+        # hypothesis opt-in existed still render their tool calls.
         "add_hypothesis",
         "update_hypothesis",
         "save_iteration_summary",

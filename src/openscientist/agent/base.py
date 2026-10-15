@@ -147,7 +147,6 @@ class AgentConfig:
     job_dir: Path
     data_file: Path | None = None
     system_prompt: str | None = None
-    use_hypotheses: bool = False
     data_files: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServerSpec, ...] = ()
     # Optional per-run model override. Honored by the Claude path (e.g. the
@@ -261,15 +260,11 @@ class AbstractAgent[P: Provider](abc.ABC):
         return build_system_prompt(cls.prompt_fragments())
 
     @classmethod
-    def job_doc(cls, *, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+    def job_doc(cls, *, phenix_available: bool = False) -> str:
         """The full per-job instruction doc for this backend."""
         from openscientist.prompts.common import build_job_doc
 
-        return build_job_doc(
-            use_hypotheses=use_hypotheses,
-            phenix_available=phenix_available,
-            frags=cls.prompt_fragments(),
-        )
+        return build_job_doc(phenix_available=phenix_available, frags=cls.prompt_fragments())
 
     @classmethod
     def chat_doc(cls) -> str:
@@ -280,9 +275,7 @@ class AbstractAgent[P: Provider](abc.ABC):
 
     @classmethod
     @abc.abstractmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
+    def discovery_system_prompt(cls, *, phenix_available: bool = False) -> str:
         """The system prompt this backend uses for a discovery run.
 
         Claude returns the concise ``system_prompt`` (its rich doc is written
@@ -292,7 +285,7 @@ class AbstractAgent[P: Provider](abc.ABC):
 
     # ----- per-job side effects (run where the agent instance lives) -----
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(self) -> None:
         """Materialise the per-job workspace (enabled skills in this backend's
         layout). Backends needing a job doc or MCP config override and call
         ``super()``."""
@@ -339,7 +332,6 @@ class AbstractAgent[P: Provider](abc.ABC):
         env: dict[str, str] = {
             "OPENSCIENTIST_JOB_ID": job_dir.name,
             "OPENSCIENTIST_JOB_DIR": str(job_dir),
-            "OPENSCIENTIST_USE_HYPOTHESES": "1" if config.use_hypotheses else "0",
         }
         if config.data_file is not None:
             env["OPENSCIENTIST_DATA_FILE"] = str(config.data_file)

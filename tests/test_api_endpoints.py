@@ -1042,6 +1042,7 @@ class TestJobEndpoints:
                         "description": "Created via multipart API",
                         "research_question": "How does uploaded data affect output?",
                         "max_iterations": "7",
+                        # Removed opt-in; an old client sending it is tolerated.
                         "use_hypotheses": "true",
                         "investigation_mode": "coinvestigate",
                     },
@@ -1056,7 +1057,7 @@ class TestJobEndpoints:
         mock_job_manager.create_job.assert_called_once()
         called_kwargs = mock_job_manager.create_job.call_args.kwargs
         assert called_kwargs["max_iterations"] == 7
-        assert called_kwargs["use_hypotheses"] is True
+        assert "use_hypotheses" not in called_kwargs
         assert called_kwargs["investigation_mode"] == "coinvestigate"
         assert captured_uploads["names"] == ["dataset.csv", "notes.txt"]
         assert captured_uploads["contents"] == ["a,b\n1,2\n", "hello\n"]

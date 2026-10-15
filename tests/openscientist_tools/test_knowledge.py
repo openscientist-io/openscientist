@@ -17,11 +17,7 @@ from sqlalchemy import delete
 from openscientist.database import AsyncSessionLocal
 from openscientist.database.models.job import Job
 from openscientist.knowledge_state import KnowledgeState
-from openscientist_tools.knowledge import (
-    add_hypothesis,
-    update_hypothesis,
-    update_knowledge_state,
-)
+from openscientist_tools.knowledge import update_knowledge_state
 from openscientist_tools.state import STATE
 
 
@@ -142,68 +138,6 @@ def test_update_knowledge_state_with_mismatch_citation(
     assert "snippet not found in abstract" in result
 
 
-def test_add_hypothesis_returns_id_and_records(
-    patched_ks_persistence: KnowledgeState,
-) -> None:
-    result = add_hypothesis("Cold exposure increases carnosine via X pathway")
-    assert result == "✅ Hypothesis H001 added: Cold exposure increases carnosine via X pathway"
-    hyps = patched_ks_persistence.data["hypotheses"]
-    assert len(hyps) == 1
-    assert hyps[0]["id"] == "H001"
-    assert hyps[0]["statement"] == "Cold exposure increases carnosine via X pathway"
-
-
-def test_update_hypothesis_invalid_status(
-    patched_ks_persistence: KnowledgeState,
-) -> None:
-    result = update_hypothesis(hypothesis_id="H001", status="bogus")
-    assert result.startswith("❌ Invalid status 'bogus'")
-    assert "pending, testing, supported, rejected" in result
-
-
-def test_update_hypothesis_nonexistent_id_returns_error(
-    patched_ks_persistence: KnowledgeState,
-) -> None:
-    result = update_hypothesis(hypothesis_id="H999", status="supported")
-    assert result.startswith("❌ ")
-
-
-def test_update_hypothesis_supported_includes_emoji_and_result(
-    patched_ks_persistence: KnowledgeState,
-) -> None:
-    patched_ks_persistence.add_hypothesis(statement="Stub", proposed_by="agent")
-    patched_ks_persistence.data["iteration"] = 4
-
-    result = update_hypothesis(
-        hypothesis_id="H001",
-        status="supported",
-        result_summary="strong correlation",
-        p_value="p=0.001",
-        effect_size="r=0.7",
-        conclusion="primary mechanism likely",
-    )
-    assert result == "✅ Hypothesis H001 updated to 'supported'"
-    entry = next(h for h in patched_ks_persistence.data["hypotheses"] if h["id"] == "H001")
-    assert entry["status"] == "supported"
-    assert entry["tested_at_iteration"] == 4
-    assert entry["result"]["summary"] == "strong correlation"
-    assert entry["result"]["p_value"] == "p=0.001"
-
-
-@pytest.mark.parametrize(
-    "status,emoji",
-    [("testing", "🔬"), ("supported", "✅"), ("rejected", "❌")],
-)
-def test_update_hypothesis_status_emoji_map(
-    patched_ks_persistence: KnowledgeState,
-    status: str,
-    emoji: str,
-) -> None:
-    patched_ks_persistence.add_hypothesis(statement="Stub", proposed_by="agent")
-    result = update_hypothesis(hypothesis_id="H001", status=status)
-    assert result == f"{emoji} Hypothesis H001 updated to '{status}'"
-
-
 # ----- Full-call subprocess + real-DB tests, one per tool -----
 
 
@@ -214,8 +148,6 @@ async def test_update_knowledge_state_via_subprocess(
     test_database_url: str,
     _apply_migrations_once: None,
 ) -> None:
-    """update_knowledge_state is unconditional, so this runs WITHOUT
-    OPENSCIENTIST_USE_HYPOTHESES set, matching the default production env."""
     job_id = uuid4()
     async with _spawned_for_job(
         server_env,
@@ -240,13 +172,15 @@ async def test_update_knowledge_state_via_subprocess(
         assert reloaded.data["findings"][0]["title"] == "Subprocess finding"
 
 
-async def test_add_hypothesis_via_subprocess(
+async def test_hypothesis_tools_are_not_registered(
     tmp_path: Path,
     server_env: Callable[..., dict[str, str]],
     server_params: Callable[[dict[str, str]], StdioServerParameters],
     test_database_url: str,
     _apply_migrations_once: None,
 ) -> None:
+    """The hypothesis-tracking opt-in was removed: the server never exposes
+    add_hypothesis/update_hypothesis, even if a stale env var asks for it."""
     job_id = uuid4()
     async with _spawned_for_job(
         server_env,
@@ -255,103 +189,6 @@ async def test_add_hypothesis_via_subprocess(
         test_database_url,
         job_id,
         env_overrides={"OPENSCIENTIST_USE_HYPOTHESES": "1"},
-    ) as mcp:
-        response = await mcp.call_tool("add_hypothesis", {"statement": "Cold induces carnosine"})
-        assert _text(response) == "✅ Hypothesis H001 added: Cold induces carnosine"
-
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
-        assert len(reloaded.data["hypotheses"]) == 1
-        assert reloaded.data["hypotheses"][0]["statement"] == "Cold induces carnosine"
-
-
-async def test_update_hypothesis_via_subprocess(
-    tmp_path: Path,
-    server_env: Callable[..., dict[str, str]],
-    server_params: Callable[[dict[str, str]], StdioServerParameters],
-    test_database_url: str,
-    _apply_migrations_once: None,
-) -> None:
-    job_id = uuid4()
-    async with AsyncSessionLocal(thread_safe=True) as setup:
-        setup.add(
-            Job(
-                id=job_id,
-                research_question="seeded hypothesis",
-                llm_provider="mock",
-                llm_config={"model": "mock-model-v1"},
-                status="pending",
-            )
-        )
-        await setup.commit()
-    try:
-        seeded = KnowledgeState.load_from_database_sync(str(job_id))
-        seeded.add_hypothesis(statement="Seed statement", proposed_by="agent")
-        seeded.save_to_database_sync(str(job_id))
-
-        env = server_env(tmp_path, OPENSCIENTIST_JOB_ID=str(job_id))
-        env["DATABASE_URL"] = test_database_url
-        env["OPENSCIENTIST_SECRET_KEY"] = os.environ["OPENSCIENTIST_SECRET_KEY"]
-        env["OPENSCIENTIST_USE_HYPOTHESES"] = "1"
-
-        async with stdio_client(server_params(env)) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                response = await session.call_tool(
-                    "update_hypothesis",
-                    {"hypothesis_id": "H001", "status": "supported"},
-                )
-                assert _text(response) == "✅ Hypothesis H001 updated to 'supported'"
-
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
-        entry = next(h for h in reloaded.data["hypotheses"] if h["id"] == "H001")
-        assert entry["status"] == "supported"
-    finally:
-        async with AsyncSessionLocal(thread_safe=True) as cleanup:
-            await cleanup.execute(delete(Job).where(Job.id == job_id))
-            await cleanup.commit()
-
-
-# ----- Conditional registration tests -----
-
-
-async def test_hypothesis_tools_present_when_use_hypotheses_true(
-    tmp_path: Path,
-    server_env: Callable[..., dict[str, str]],
-    server_params: Callable[[dict[str, str]], StdioServerParameters],
-    test_database_url: str,
-    _apply_migrations_once: None,
-) -> None:
-    job_id = uuid4()
-    async with _spawned_for_job(
-        server_env,
-        server_params,
-        tmp_path,
-        test_database_url,
-        job_id,
-        env_overrides={"OPENSCIENTIST_USE_HYPOTHESES": "1"},
-    ) as mcp:
-        tools = await mcp.list_tools()
-        names = {t.name for t in tools.tools}
-        assert "update_knowledge_state" in names
-        assert "add_hypothesis" in names
-        assert "update_hypothesis" in names
-
-
-async def test_hypothesis_tools_absent_when_use_hypotheses_false(
-    tmp_path: Path,
-    server_env: Callable[..., dict[str, str]],
-    server_params: Callable[[dict[str, str]], StdioServerParameters],
-    test_database_url: str,
-    _apply_migrations_once: None,
-) -> None:
-    job_id = uuid4()
-    async with _spawned_for_job(
-        server_env,
-        server_params,
-        tmp_path,
-        test_database_url,
-        job_id,
-        env_overrides={"OPENSCIENTIST_USE_HYPOTHESES": "0"},
     ) as mcp:
         tools = await mcp.list_tools()
         names = {t.name for t in tools.tools}

@@ -89,14 +89,12 @@ class OmpAgent(AbstractAgent[Provider]):
         return OMP_FRAGMENTS
 
     @classmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
+    def discovery_system_prompt(cls, *, phenix_available: bool = False) -> str:
         # omp takes one system prompt, so (like codex) it gets the full job doc.
-        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
+        return cls.job_doc(phenix_available=phenix_available)
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
-        await super().prepare_job_workspace(use_hypotheses=use_hypotheses)
+    async def prepare_job_workspace(self) -> None:
+        await super().prepare_job_workspace()
         self._write_mcp_config()
 
     # apply_runtime_environment/chat_*/write_chat_context use the AbstractAgent

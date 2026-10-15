@@ -213,7 +213,7 @@ async def test_run_iteration_writes_config_and_agents_md(
     # Codex passes only the config env table to the MCP child, never its own
     # process env, so the parent environment must be forwarded explicitly.
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@db:5432/x")
-    agent = _agent(tmp_path, system_prompt="do science", use_hypotheses=True)
+    agent = _agent(tmp_path, system_prompt="do science")
     mock_codex_cls, _ = _patch_codex(_turn(usage=None))
 
     with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
@@ -225,7 +225,7 @@ async def test_run_iteration_writes_config_and_agents_md(
     mcp = cfg["mcp_servers"]["openscientist-tools"]
     assert mcp["args"] == ["-m", "openscientist_tools"]
     assert mcp["env"]["OPENSCIENTIST_JOB_DIR"] == str(tmp_path)
-    assert mcp["env"]["OPENSCIENTIST_USE_HYPOTHESES"] == "1"
+    assert "OPENSCIENTIST_USE_HYPOTHESES" not in mcp["env"]
     assert mcp["env"]["DATABASE_URL"] == "postgresql+asyncpg://u:p@db:5432/x"
     assert (tmp_path / "AGENTS.md").read_text() == "do science"
 

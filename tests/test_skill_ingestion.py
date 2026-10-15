@@ -6,6 +6,7 @@ Tests SkillParser for markdown parsing, GitHubSkillIngester for API interactions
 """
 
 import io
+import shutil
 import tarfile
 import tempfile
 from pathlib import Path
@@ -714,6 +715,51 @@ class TestLocalSkillIngester:
             assert stats3["updated"] == 1
 
     @pytest.mark.asyncio
+    async def test_sync_removes_skills_whose_file_disappeared(
+        self,
+        db_session: AsyncSession,
+        sample_skill_markdown: str,
+    ):
+        """A skill retired from the repo is deleted on the next sync, so it stops
+        being materialised into new jobs (the built-in hypothesis-generation
+        skill was removed this way)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_dir = Path(tmpdir) / "skills"
+            keep_dir = skills_dir / "keep"
+            retired_dir = skills_dir / "retired"
+            keep_dir.mkdir(parents=True)
+            retired_dir.mkdir(parents=True)
+            (keep_dir / "SKILL.md").write_text(sample_skill_markdown)
+            (retired_dir / "SKILL.md").write_text(
+                sample_skill_markdown.replace("name: Test Skill", "name: Retired Skill")
+            )
+
+            source = SkillSource(
+                name="Local Prune Test",
+                source_type="local",
+                path=tmpdir,
+                skills_path="skills",
+                is_enabled=True,
+            )
+            db_session.add(source)
+            await db_session.commit()
+            await db_session.refresh(source)
+
+            ingester = LocalSkillIngester()
+            stats1 = await ingester.sync_source(db_session, source)
+            assert stats1["created"] == 2
+            assert stats1["removed"] == 0
+
+            shutil.rmtree(retired_dir)
+            stats2 = await ingester.sync_source(db_session, source)
+            assert stats2["removed"] == 1
+            assert stats2["unchanged"] == 1
+
+            stmt = select(Skill).where(Skill.source_id == source.id)
+            remaining = list((await db_session.execute(stmt)).scalars().all())
+            assert [s.source_path for s in remaining] == ["skills/keep/SKILL.md"]
+
+    @pytest.mark.asyncio
     async def test_sync_invalid_source_type(self, db_session: AsyncSession):
         """Test that syncing with wrong source type raises error."""
         source = SkillSource(
@@ -754,7 +800,7 @@ class TestBuiltinSkillsIngestion:
         stats = await ingester.sync_source(db_session, source)
 
         assert stats["errors"] == 0
-        assert stats["created"] == 10
+        assert stats["created"] == 9
 
         # Verify all expected slugs are present
         stmt = select(Skill).where(Skill.source_id == source.id)
@@ -768,18 +814,17 @@ class TestBuiltinSkillsIngestion:
             "kbase-query",
             "metabolomics",
             "phenix-tools-reference",
-            "hypothesis-generation",
             "prioritization",
             "result-interpretation",
             "stopping-criteria",
         }
         assert set(skills.keys()) == expected_slugs
 
-        # Verify 6 domain + 4 workflow category split
+        # Verify 6 domain + 3 workflow category split
         domain_skills = [s for s in skills.values() if s.category == "domain"]
         workflow_skills = [s for s in skills.values() if s.category == "workflow"]
         assert len(domain_skills) == 6
-        assert len(workflow_skills) == 4
+        assert len(workflow_skills) == 3
 
         # Spot-check one skill's metadata
         genomics = skills["genomics"]

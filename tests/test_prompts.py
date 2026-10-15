@@ -43,16 +43,16 @@ class TestBackendJobDocs:
     """The Claude (CLAUDE.md) and Codex (AGENTS.md) per-job docs."""
 
     def test_claude_doc_keeps_claude_vocabulary(self):
-        doc = generate_job_claude_md(use_hypotheses=True, phenix_available=True)
+        doc = generate_job_claude_md(phenix_available=True)
         assert ".claude/skills/" in doc
         assert "Claude's built-in `Read` tool" in doc
 
     def test_codex_doc_drops_claude_vocabulary(self):
-        doc = CodexAgent.job_doc(use_hypotheses=True, phenix_available=True)
+        doc = CodexAgent.job_doc(phenix_available=True)
         assert ".claude/" not in doc
         assert "Claude's" not in doc
-        # shared body intact (a hypothesis tool, a core tool)
-        assert "add_hypothesis" in doc
+        # shared body intact (two core tools)
+        assert "update_knowledge_state" in doc
         assert "save_iteration_summary" in doc
 
     def test_docs_route_tabular_to_execute_code(self):
@@ -60,8 +60,8 @@ class TestBackendJobDocs:
         data/data_files contract, not a file reader, so the model stops
         guessing host-style paths inside the executor."""
         for doc in (
-            generate_job_claude_md(use_hypotheses=False, phenix_available=False),
-            CodexAgent.job_doc(use_hypotheses=False, phenix_available=False),
+            generate_job_claude_md(phenix_available=False),
+            CodexAgent.job_doc(phenix_available=False),
         ):
             # The execute_code data-access contract is spelled out.
             assert 'pd.read_csv(data_files[i]["path"])' in doc
@@ -75,8 +75,8 @@ class TestBackendJobDocs:
         """Findings should be visualized, and the prompt must specify the
         plt.show() save pattern the executor captures, not a manual savefig."""
         for doc in (
-            generate_job_claude_md(use_hypotheses=False, phenix_available=False),
-            CodexAgent.job_doc(use_hypotheses=False, phenix_available=False),
+            generate_job_claude_md(phenix_available=False),
+            CodexAgent.job_doc(phenix_available=False),
         ):
             assert "Visualize every quantitative finding" in doc
             assert "plt.show()" in doc
@@ -87,18 +87,24 @@ class TestBackendJobDocs:
         must not name the nonexistent search_skills tool or a phantom skills dir.
         The Claude path keeps search_skills (it has the .claude/skills files)."""
         for txt in (
-            CodexAgent.job_doc(use_hypotheses=True, phenix_available=True),
+            CodexAgent.job_doc(phenix_available=True),
             CodexAgent.system_prompt(),
         ):
             assert "search_skills" not in txt
             assert "skills/` directory provided to you" not in txt
-        assert "search_skills" in generate_job_claude_md(use_hypotheses=True, phenix_available=True)
+        assert "search_skills" in generate_job_claude_md(phenix_available=True)
 
-    def test_codex_doc_respects_use_hypotheses_flag(self):
-        with_h = CodexAgent.job_doc(use_hypotheses=True)
-        without_h = CodexAgent.job_doc(use_hypotheses=False)
-        assert "add_hypothesis" in with_h
-        assert "add_hypothesis" not in without_h
+    def test_docs_never_mention_removed_hypothesis_tooling(self):
+        """The hypothesis-tracking opt-in was removed: no backend doc may teach
+        the retired tools, the retired skill, or a hypothesis scoring formula."""
+        for doc in (
+            generate_job_claude_md(phenix_available=True),
+            CodexAgent.job_doc(phenix_available=True),
+        ):
+            assert "add_hypothesis" not in doc
+            assert "update_hypothesis" not in doc
+            assert "hypothesis-generation" not in doc
+            assert "Hypothesis Tracking" not in doc
 
 
 class TestAirgapSearchNote:
@@ -115,8 +121,8 @@ class TestAirgapSearchNote:
     def test_online_docs_omit_note_and_placeholder(self, monkeypatch):
         self._set_airgap(monkeypatch, False)
         for doc in (
-            generate_job_claude_md(use_hypotheses=True, phenix_available=True),
-            CodexAgent.job_doc(use_hypotheses=True, phenix_available=True),
+            generate_job_claude_md(phenix_available=True),
+            CodexAgent.job_doc(phenix_available=True),
         ):
             assert "{{AIRGAP_SEARCH_NOTE}}" not in doc
             assert "This run is air-gapped" not in doc
@@ -125,8 +131,8 @@ class TestAirgapSearchNote:
     def test_airgap_docs_add_note_to_both_backends(self, monkeypatch):
         self._set_airgap(monkeypatch, True)
         for doc in (
-            generate_job_claude_md(use_hypotheses=True, phenix_available=True),
-            CodexAgent.job_doc(use_hypotheses=True, phenix_available=True),
+            generate_job_claude_md(phenix_available=True),
+            CodexAgent.job_doc(phenix_available=True),
         ):
             assert "{{AIRGAP_SEARCH_NOTE}}" not in doc
             assert "This run is air-gapped" in doc
@@ -200,10 +206,10 @@ class TestBuildDiscoveryPrompt:
             knowledge_graph_summary="## Summary",
             iteration=1,
             max_iterations=10,
-            skills_available="- hypothesis-generation\n- result-interpretation",
+            skills_available="- prioritization\n- result-interpretation",
         )
         assert "Option F: Use Skill" in prompt
-        assert "hypothesis-generation" in prompt
+        assert "prioritization" in prompt
 
     def test_skills_option_hidden_when_not_provided(self):
         prompt = build_discovery_prompt(
@@ -237,19 +243,19 @@ class TestFormatSkillsList:
         assert format_skills_list({}) == ""
 
     def test_single_skill(self):
-        skills = {"hypothesis-generation": {"description": "Generate hypotheses"}}
+        skills = {"prioritization": {"description": "Decide what to do next"}}
         result = format_skills_list(skills)
-        assert "hypothesis-generation" in result
-        assert "Generate hypotheses" in result
+        assert "prioritization" in result
+        assert "Decide what to do next" in result
         assert "Available skills:" in result
 
     def test_multiple_skills(self):
         skills = {
-            "hypothesis-generation": {"description": "Generate hypotheses"},
+            "prioritization": {"description": "Decide what to do next"},
             "result-interpretation": {"description": "Interpret results"},
         }
         result = format_skills_list(skills)
-        assert "hypothesis-generation" in result
+        assert "prioritization" in result
         assert "result-interpretation" in result
 
     def test_missing_description(self):

@@ -24,7 +24,7 @@ The current directory is the job directory. It contains:
 
 1. **Use the context sections injected in the system prompt** — they contain structured findings, hypotheses, literature, and iteration summaries from the database
 2. **Read `final_report.md`** — it has the agent's synthesis and consensus answer
-3. Reference findings by ID (`F001`, `F002`, …) and hypotheses by ID (`H001`, `H002`, …)
+3. Reference findings by ID (`F001`, `F002`, …)
 4. Cite specific statistical evidence when discussing results
 5. Be honest about uncertainty — if the data doesn't clearly support a claim, say so
 
@@ -52,7 +52,7 @@ Always set `description` to explain what you're computing.
 
 ## What You Should NOT Do
 
-- Do not call `add_hypothesis`, `update_hypothesis`, or `update_knowledge_state` — the discovery job is already complete (or in progress independently)
+- Do not call `update_knowledge_state` — the discovery job is already complete (or in progress independently)
 - Do not call `save_iteration_summary`, `set_status`, or `set_job_title`
 - Do not write to `final_report.md`
 - Do not run speculative analyses the user hasn't asked for

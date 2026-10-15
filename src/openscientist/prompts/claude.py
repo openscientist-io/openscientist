@@ -27,10 +27,6 @@ CLAUDE_FRAGMENTS = BackendFragments(
 )
 
 
-def generate_job_claude_md(*, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+def generate_job_claude_md(*, phenix_available: bool = False) -> str:
     """The per-job ``CLAUDE.md`` content for the Claude Code agent."""
-    return build_job_doc(
-        use_hypotheses=use_hypotheses,
-        phenix_available=phenix_available,
-        frags=CLAUDE_FRAGMENTS,
-    )
+    return build_job_doc(phenix_available=phenix_available, frags=CLAUDE_FRAGMENTS)

@@ -20,10 +20,10 @@ def test_build_upload_session_id_handles_missing_user_with_anonymous_prefix():
     assert session_id == "anonymous:client-xyz"
 
 
-def test_submit_job_has_use_hypotheses_parameter():
-    """_submit_job must accept use_hypotheses so the form toggle is wired in."""
+def test_submit_job_has_no_use_hypotheses_parameter():
+    """The "Hypothesis Generation" opt-in was removed from the form."""
     sig = inspect.signature(_submit_job)
-    assert "use_hypotheses" in sig.parameters
+    assert "use_hypotheses" not in sig.parameters
 
 
 def test_submit_job_has_coinvestigate_mode_at_top_level():

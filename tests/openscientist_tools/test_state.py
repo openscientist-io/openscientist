@@ -31,7 +31,6 @@ def test_required_fields_bound_from_env(monkeypatch: pytest.MonkeyPatch) -> None
     assert state.job_dir == Path("/tmp/job")
     assert state.data_file is None
     assert state.data_files == ()
-    assert state.use_hypotheses is False
 
 
 def test_missing_required_field_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,7 +83,8 @@ def test_data_files_empty_string_yields_empty_tuple(
     assert state.data_files == ()
 
 
-def test_use_hypotheses_truthy_env_values(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stale_use_hypotheses_env_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The removed opt-in's env var must not break an old launcher that still sets it."""
     _set_env(
         monkeypatch,
         OPENSCIENTIST_JOB_ID="abc",
@@ -92,7 +92,7 @@ def test_use_hypotheses_truthy_env_values(monkeypatch: pytest.MonkeyPatch) -> No
         OPENSCIENTIST_USE_HYPOTHESES="1",
     )
     state = ToolServerState()
-    assert state.use_hypotheses is True
+    assert not hasattr(state, "use_hypotheses")
 
 
 def test_data_file_singular_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

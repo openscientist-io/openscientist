@@ -102,6 +102,11 @@ class KnowledgeState:
         """
         Add a new hypothesis.
 
+        No longer exposed as an agent tool: the per-job hypothesis-tracking
+        opt-in was removed. Kept (with ``update_hypothesis``) as an in-memory
+        helper so knowledge states persisted by jobs that ran with it still
+        load, render and round-trip through the database unchanged.
+
         Args:
             statement: Hypothesis statement
             proposed_by: Who proposed it (agent, user, skill)

@@ -390,7 +390,6 @@ class TestDiscoveryCancellationAndFailure:
             "job_id": job_id,
             "research_question": "Question?",
             "max_iterations": 3,
-            "use_hypotheses": False,
             "investigation_mode": "autonomous",
             "data_files": [],
         }
@@ -472,7 +471,6 @@ class TestDiscoveryCancellationAndFailure:
             "job_id": job_id,
             "research_question": "Question?",
             "max_iterations": 3,
-            "use_hypotheses": False,
             "investigation_mode": "autonomous",
             "data_files": [],
         }
@@ -630,22 +628,22 @@ class TestWriteSkillsToClaudeDir:
     @pytest.mark.asyncio
     async def test_writes_skill_files(self, tmp_path):
         skill = self._make_skill(
-            name="Hypothesis Generation",
+            name="Result Interpretation",
             category="analysis",
-            slug="hypothesis-generation",
-            description="How to form hypotheses",
+            slug="result-interpretation",
+            description="How to interpret results",
             content="Step 1: ...\nStep 2: ...",
         )
         await self._prepare(tmp_path, [skill])
 
         skills_dir = tmp_path / ".claude" / "skills"
         assert skills_dir.is_dir()
-        md_file = skills_dir / "analysis--hypothesis-generation.md"
+        md_file = skills_dir / "analysis--result-interpretation.md"
         assert md_file.exists()
         content = md_file.read_text(encoding="utf-8")
-        assert "# Hypothesis Generation" in content
+        assert "# Result Interpretation" in content
         assert "*Category: analysis*" in content
-        assert "How to form hypotheses" in content
+        assert "How to interpret results" in content
         assert "Step 1:" in content
 
     @pytest.mark.asyncio
@@ -1439,7 +1437,6 @@ class TestRegenerateReportAsync:
             "job_id": "j",
             "research_question": "Q?",
             "description": "ctx",
-            "use_hypotheses": False,
             "data_files": [],
             "max_iterations": 3,
             "investigation_mode": "autonomous",

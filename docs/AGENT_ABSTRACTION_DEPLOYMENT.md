@@ -43,7 +43,7 @@ The migrator only knows the Claude raw shape. If a future deployment ran a non-C
 The agent's tools now run in a standalone MCP server spawned as a child of the agent process. Concrete behaviour:
 
 - The agent process invokes `python -m openscientist_tools` via `claude-agent-sdk`'s stdio client. There is no long-running sidecar and no compose service to add.
-- Subprocess env is built inside `SDKAgentExecutor._build_subprocess_env()`. It inherits the agent container env (`PATH`, `DATABASE_URL`, `OPENSCIENTIST_SECRET_KEY`, `PHENIX_PATH`, `OPENSCIENTIST_EXECUTOR_*`) and adds per-job overlays (`OPENSCIENTIST_JOB_ID`, `OPENSCIENTIST_JOB_DIR`, `OPENSCIENTIST_USE_HYPOTHESES`, optionally `OPENSCIENTIST_DATA_FILE` and `OPENSCIENTIST_DATA_FILES`).
+- Subprocess env is built inside `SDKAgentExecutor._build_subprocess_env()`. It inherits the agent container env (`PATH`, `DATABASE_URL`, `OPENSCIENTIST_SECRET_KEY`, `PHENIX_PATH`, `OPENSCIENTIST_EXECUTOR_*`) and adds per-job overlays (`OPENSCIENTIST_JOB_ID`, `OPENSCIENTIST_JOB_DIR`, optionally `OPENSCIENTIST_DATA_FILE` and `OPENSCIENTIST_DATA_FILES`).
 - No new operator-set env vars or compose changes. The agent image already ships `openscientist_tools` because it is part of the same Python package distribution.
 - Logs from the MCP subprocess surface through the SDK's `stderr` callback into `SDKAgentExecutor._stderr_lines` and are returned in `IterationResult.error` on iteration failure.
 - The MCP subprocess inherits the agent container's docker socket access (the `group_add=[docker_gid]` set by `JobContainerRunner`), so its `execute_code` tool can spawn `openscientist-executor` containers exactly as the in-process path did.

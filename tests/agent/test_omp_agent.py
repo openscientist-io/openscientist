@@ -375,7 +375,7 @@ class TestModelCatalog:
 
 class TestMcpConfig:
     def test_writes_openscientist_tools_server(self, tmp_path: Path) -> None:
-        agent = _agent(tmp_path, use_hypotheses=True)
+        agent = _agent(tmp_path)
         agent._write_mcp_config()
         cfg = json.loads((tmp_path / ".omp" / "mcp.json").read_text())
         server = cfg["mcpServers"]["openscientist-tools"]
@@ -383,7 +383,7 @@ class TestMcpConfig:
         assert server["args"] == ["-m", "openscientist_tools"]
         assert server["cwd"] == str(tmp_path.resolve())
         assert server["env"]["OPENSCIENTIST_JOB_ID"] == tmp_path.resolve().name
-        assert server["env"]["OPENSCIENTIST_USE_HYPOTHESES"] == "1"
+        assert "OPENSCIENTIST_USE_HYPOTHESES" not in server["env"]
 
     def test_inherited_env_is_referenced_by_name_not_value(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

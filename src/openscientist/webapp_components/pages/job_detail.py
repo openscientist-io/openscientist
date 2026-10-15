@@ -389,6 +389,9 @@ _HYPOTHESIS_STATUS_LABEL_CLASSES: dict[str, str] = {
 
 
 def _render_iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) -> None:
+    """Read-only display of hypotheses recorded by jobs that ran while the
+    (now removed) hypothesis-tracking opt-in existed. New jobs record none, so
+    this renders nothing for them."""
     iter_hypotheses = [
         h
         for h in iter_ks_data.get("hypotheses", [])

@@ -101,7 +101,6 @@ async def _db_create_job(
     job_id: str,
     research_question: str,
     max_iterations: int,
-    use_hypotheses: bool = False,
     investigation_mode: str = "autonomous",
     owner_id: UUID | None = None,
     short_title: str | None = None,
@@ -117,7 +116,6 @@ async def _db_create_job(
         job_id: UUID string for the job (used as primary key)
         research_question: The full research question; drives the agent prompt
         max_iterations: Maximum iterations allowed
-        use_hypotheses: Whether hypothesis tracking tools are enabled for this job
         investigation_mode: Investigation mode ('autonomous' or 'coinvestigate')
         owner_id: UUID of the job owner (optional)
         short_title: Optional short display label (truncated to 100 chars)
@@ -137,7 +135,6 @@ async def _db_create_job(
             research_question=research_question,
             short_title=short_title[:100] if short_title else None,
             description=description,
-            use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
             status=JobStatus.PENDING.value,
             max_iterations=max_iterations,
@@ -397,7 +394,6 @@ class JobManager:
         job_id: str,
         research_question: str,
         max_iterations: int,
-        use_hypotheses: bool,
         investigation_mode: str,
         owner_id: str | None,
         short_title: str | None,
@@ -414,7 +410,6 @@ class JobManager:
                     job_id,
                     research_question,
                     max_iterations,
-                    use_hypotheses=use_hypotheses,
                     investigation_mode=investigation_mode,
                     owner_id=owner_uuid,
                     short_title=short_title,
@@ -473,7 +468,6 @@ class JobManager:
         research_question: str,
         data_files: list[Path],
         max_iterations: int = 10,
-        use_hypotheses: bool = False,
         auto_start: bool = True,
         investigation_mode: str = "autonomous",
         owner_id: str | None = None,
@@ -490,7 +484,6 @@ class JobManager:
             research_question: The full research question; drives the agent prompt
             data_files: List of data file paths (can be empty for literature-only jobs)
             max_iterations: Maximum iterations
-            use_hypotheses: Whether to enable hypothesis tracking tools
             auto_start: Whether to start job immediately
             investigation_mode: "autonomous" (default) or "coinvestigate"
             owner_id: UUID of the job owner (optional, for orphaned jobs)
@@ -523,7 +516,6 @@ class JobManager:
             job_id=job_id,
             research_question=research_question,
             max_iterations=max_iterations,
-            use_hypotheses=use_hypotheses,
             investigation_mode=investigation_mode,
             owner_id=owner_id,
             short_title=short_title,

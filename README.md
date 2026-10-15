@@ -26,7 +26,7 @@ OpenScientist is a domain-agnostic autonomous discovery agent that:
 
 ### Skills System
 
-- **Workflow Skills**: Hypothesis generation, result interpretation, prioritization, stopping criteria
+- **Workflow Skills**: Result interpretation, prioritization, stopping criteria
 - **Domain Skills**: Metabolomics, genomics/transcriptomics, structural biology, data science/statistics
 
 ### Architecture

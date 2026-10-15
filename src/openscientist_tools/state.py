@@ -31,7 +31,6 @@ class ToolServerState(BaseSettings):
     # types so the env value reaches `_split_pathsep` as a raw string and gets
     # split on `os.pathsep`.
     data_files: Annotated[tuple[Path, ...], NoDecode] = ()
-    use_hypotheses: bool = False
 
     @field_validator("data_files", mode="before")
     @classmethod

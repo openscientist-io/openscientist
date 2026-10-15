@@ -58,7 +58,6 @@ def _submit_job(
     session_id: str,
     research_question: ui.textarea,
     max_iterations: ui.number,
-    use_hypotheses: ui.switch,
     coinvestigate_mode: ui.switch,
 ) -> None:
     """Validate input and create a new discovery job."""
@@ -87,7 +86,6 @@ def _submit_job(
             research_question=question,
             data_files=data_files,
             max_iterations=int(max_iterations.value),
-            use_hypotheses=use_hypotheses.value,
             auto_start=True,
             investigation_mode=mode,
             owner_id=current_user_id,
@@ -170,12 +168,6 @@ def new_job_page() -> None:
         ).classes("w-full")
 
         ui.separator().classes("my-4")
-        use_hypotheses = ui.switch("Hypothesis Generation", value=False)
-        ui.label(
-            "Track scientific hypotheses across iterations — propose, test, and confirm/reject them."
-        ).classes("text-sm text-gray-700 mt-1")
-
-        ui.separator().classes("my-4")
         coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
         ui.label(
             "Requires your active participation. After each iteration, I will pause to receive your feedback."
@@ -192,7 +184,6 @@ def new_job_page() -> None:
                 session_id=session_id,
                 research_question=research_question,
                 max_iterations=max_iterations,
-                use_hypotheses=use_hypotheses,
                 coinvestigate_mode=coinvestigate_mode,
             ),
         ).classes("w-full mt-4")

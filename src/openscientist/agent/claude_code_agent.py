@@ -167,19 +167,17 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         return CLAUDE_FRAGMENTS
 
     @classmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
+    def discovery_system_prompt(cls, *, phenix_available: bool = False) -> str:
         # Claude gets the concise system prompt. Its rich CLAUDE.md is written
         # separately into .claude/ by prepare_job_workspace.
         return cls.system_prompt()
 
-    async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
+    async def prepare_job_workspace(self) -> None:
         # Claude's rich per-job CLAUDE.md is always written; skills follow.
-        self._write_job_claude_md(use_hypotheses=use_hypotheses)
-        await super().prepare_job_workspace(use_hypotheses=use_hypotheses)
+        self._write_job_claude_md()
+        await super().prepare_job_workspace()
 
-    def _write_job_claude_md(self, *, use_hypotheses: bool = False) -> None:
+    def _write_job_claude_md(self) -> None:
         from openscientist.prompts import generate_job_claude_md
         from openscientist.settings import get_settings
 
@@ -187,10 +185,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         claude_dir.mkdir(parents=True, exist_ok=True)
         try:
             (claude_dir / "CLAUDE.md").write_text(
-                generate_job_claude_md(
-                    use_hypotheses=use_hypotheses,
-                    phenix_available=get_settings().phenix.is_available,
-                ),
+                generate_job_claude_md(phenix_available=get_settings().phenix.is_available),
                 encoding="utf-8",
             )
         except Exception as e:

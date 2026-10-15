@@ -88,7 +88,6 @@ def _build_agent_executor(
     job_dir: Path,
     data_file: Path | None,
     *,
-    use_hypotheses: bool = False,
     data_files: list[Path] | None = None,
 ) -> AbstractAgent[Provider]:
     """Create a configured agent for discovery/report phases.
@@ -100,7 +99,6 @@ def _build_agent_executor(
     """
     agent_cls = agent_class_for_provider_id(get_settings().provider.provider_id)
     system_prompt = agent_cls.discovery_system_prompt(
-        use_hypotheses=use_hypotheses,
         phenix_available=get_settings().phenix.is_available,
     )
     logger.info("Built %s system prompt (%d chars)", agent_cls.backend.value, len(system_prompt))
@@ -108,7 +106,6 @@ def _build_agent_executor(
         job_dir=job_dir,
         data_file=data_file,
         system_prompt=system_prompt,
-        use_hypotheses=use_hypotheses,
         data_files=tuple(data_files or ()),
     )
     return get_agent(config)
@@ -601,7 +598,6 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
         "research_question": job.research_question,
         "description": getattr(job, "description", None),
         "max_iterations": job.max_iterations,
-        "use_hypotheses": bool(job.use_hypotheses),
         "investigation_mode": job.investigation_mode,
         "data_files": resolved_files,
     }
@@ -772,17 +768,15 @@ async def _build_and_prepare_executor(
     auth/routing flags; no-op for codex) and materialise the per-job workspace
     (enabled skills in the backend's on-disk layout).
     """
-    use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
     executor = _build_agent_executor(
         job_dir=job_dir,
         data_file=_resolve_primary_data_file(runtime["data_files"]),
-        use_hypotheses=use_hypotheses,
         data_files=all_data_files,
     )
     executor.apply_runtime_environment()
     await update_job_status(job_dir, "running")
-    await executor.prepare_job_workspace(use_hypotheses=use_hypotheses)
+    await executor.prepare_job_workspace()
     # Resolve the model's context window once per job, off the event loop (the
     # Ollama probe is blocking I/O). Cached on the agent for the report budget.
     await executor.warm_model_profile()

@@ -64,8 +64,6 @@ MCP_TOOL_NAMES: tuple[str, ...] = (
     "set_consensus_answer",
     "set_job_title",
     "set_status",
-    "add_hypothesis",
-    "update_hypothesis",
     "run_phenix_tool",
     "compare_structures",
     "parse_alphafold_confidence",
@@ -266,7 +264,7 @@ def build_discovery_prompt(
             "",
             "**Option E: Record Finding**",
             "- If you've confirmed a finding, record it to the knowledge graph",
-            "- Include: title, evidence (stats), supporting hypotheses, plots",
+            "- Include: title, evidence (stats), interpretation, plots",
             "- Include `citations` with PMID + exact verbatim quote from the abstract + explanation",
             "",
         ]
@@ -320,7 +318,6 @@ def format_skills_list(skills: dict[str, dict[str, Any]]) -> str:
 
 def build_job_doc(
     *,
-    use_hypotheses: bool = False,
     phenix_available: bool = False,
     frags: BackendFragments,
 ) -> str:
@@ -330,10 +327,6 @@ def build_job_doc(
     The body is authored in Claude's vocabulary; the backend-divergent
     phrases are swapped for ``frags`` so the Claude path is byte-identical
     (identity substitution) and the Codex path gets its own vocabulary.
-
-    When use_hypotheses is False, the add_hypothesis/update_hypothesis tool
-    docs and the Hypothesis Tracking Workflow section are omitted so the
-    agent is not instructed to call tools that don't exist.
     """
     parts: list[str] = []
 
@@ -385,22 +378,6 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
   - `explanation`: Brief explanation of why this quote supports the finding
   Snippets are validated against stored abstracts. Use exact text from the abstract.""")
 
-    # --- Hypothesis tools (conditional) ---
-    if use_hypotheses:
-        parts.append("""
-**add_hypothesis** - Record a hypothesis before testing
-
-- `statement`: The hypothesis (e.g., `"Carnosine levels are elevated in hypothermic samples"`)
-- Returns a hypothesis ID (e.g., `H001`) for tracking
-
-**update_hypothesis** - Record test results for a hypothesis
-
-- `hypothesis_id`: ID returned by `add_hypothesis` (e.g., `"H001"`)
-- `status`: `"supported"`, `"refuted"`, `"partially_supported"`, or `"inconclusive"`
-- `result`: Brief description of the test result
-- `p_value`: Statistical p-value as a float (use 0.0 if not applicable)
-- `effect_size`: Effect size as a float (use 0.0 if not applicable)""")
-
     # --- Remaining core tools ---
     parts.append("""
 **read_document** - Extract text from binary documents
@@ -429,22 +406,6 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 
 - `answer`: 1–3 direct sentences answering the research question
 - Call this after writing `./final_report.md`""")
-
-    # --- Hypothesis Tracking Workflow (conditional) ---
-    if use_hypotheses:
-        parts.append("""
-### Hypothesis Tracking Workflow
-
-```
-1. add_hypothesis("X causes Y under Z conditions")  →  get H001
-2. Test the hypothesis:
-   - With data:       execute_code(code="...", description="Testing H001")
-   - With literature: search_pubmed(query="...", description="Evidence for H001")
-3. update_hypothesis("H001", status="supported", result="...", p_value=0.003, effect_size=0.8)
-4. If supported → update_knowledge_state(title="...", evidence="...")
-```
-
-Always use hypothesis tracking — even for literature-only investigations.""")
 
     # --- Structural Biology Tools (only when Phenix is available) ---
     if phenix_available:
@@ -500,7 +461,6 @@ These are not optional references — they encode the project's methodology.
 
 | Skill | When to apply |
 |-------|---------------|
-| `workflow--hypothesis-generation.md` | Before formulating any hypothesis |
 | `workflow--prioritization.md` | When choosing what to investigate next |
 | `workflow--result-interpretation.md` | After every statistical test |
 | `workflow--stopping-criteria.md` | Before the final ~30 % of iterations |
@@ -510,10 +470,9 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 
 **Required workflow:**
 1. **Iteration 1:** Read ALL workflow skills and any domain skill that matches your data.
-2. **Every hypothesis:** Follow the process in `workflow--hypothesis-generation.md`.
-3. **Every result:** Apply the checklist in `workflow--result-interpretation.md`.
-4. **Choosing next step:** Use `workflow--prioritization.md` to rank options.
-5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
+2. **Every result:** Apply the checklist in `workflow--result-interpretation.md`.
+3. **Choosing next step:** Use `workflow--prioritization.md` to decide what to investigate next.
+4. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
 
 {{SKILLS_DISCOVERY_NOTE}}
 
@@ -528,41 +487,23 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 
 ### 2. Generate Hypotheses
 
-- **Follow the process in `workflow--hypothesis-generation.md`**
 - Search literature to understand the domain
-- Formulate specific, testable hypotheses
-- **Use `workflow--prioritization.md`** to rank by impact, feasibility, novelty""")
+- Formulate specific, testable hypotheses (falsifiable, testable with the data at hand, mechanistic)
+- **Use `workflow--prioritization.md`** to decide which to pursue first
 
-    if use_hypotheses:
-        parts.append("- **Use `add_hypothesis` to formally record each hypothesis before testing**")
-
-    parts.append("""
 ### 3. Test Hypotheses
 
 - Design appropriate statistical tests
 - Write clear, well-documented Python code
 - Check assumptions (normality, homoscedasticity)
-- Calculate effect sizes, not just p-values""")
+- Calculate effect sizes, not just p-values
 
-    if use_hypotheses:
-        parts.append("- **Use `update_hypothesis` to record results**")
-
-    parts.append("""
 ### 4. Interpret Results
 
 **Apply `workflow--result-interpretation.md`** after every statistical test.
-""")
 
-    if use_hypotheses:
-        parts.append("""\
-- **Positive**: Update hypothesis to `"supported"`, then record to knowledge state
-- **Negative**: Update hypothesis to `"refuted"` — also valuable, rules out possibilities""")
-    else:
-        parts.append("""\
 - **Positive**: Record confirmed findings to the knowledge state
-- **Negative**: Negative results are also valuable — they rule out possibilities""")
-
-    parts.append("""\
+- **Negative**: Negative results are also valuable — they rule out possibilities
 - Consider biological/mechanistic interpretation
 
 ### 5. End of Every Iteration

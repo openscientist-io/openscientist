@@ -38,28 +38,6 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - Use this for PDFs, Word documents, and Excel files
 - Returns clean text content suitable for analysis
 
-**add_hypothesis** - Record a hypothesis to test
-- Use this to formally track hypotheses before testing them
-- Creates a structured record that links to subsequent tests and findings
-- Returns a hypothesis ID (e.g., H001) for tracking
-- Example: `add_hypothesis(statement='Carnosine levels are elevated in hypothermic samples')`
-
-**update_hypothesis** - Update a hypothesis with test results
-- Call after testing a hypothesis to record the outcome
-- Set status to: "testing", "supported", or "rejected"
-- Include: result_summary, p_value, effect_size, conclusion
-- Example: `update_hypothesis(hypothesis_id='H001', status='supported', result_summary='Significant elevation observed', p_value='p=0.003', effect_size='Cohen d=0.8')`
-
-**Hypothesis Tracking Workflow:**
-1. `add_hypothesis("X causes Y")` → get H001
-2. Test the hypothesis:
-   - **With data**: Use `execute_code` for statistical tests
-   - **With literature**: Use `search_pubmed` to find supporting/contradicting evidence
-3. `update_hypothesis(H001, status="supported" or "rejected", ...)`
-4. If supported, record as finding with `update_knowledge_state`
-
-**Always use hypothesis tracking** - even for literature-only investigations. This creates a structured record of what you investigated and why.
-
 ### Reading Data Files
 
 **IMPORTANT:** Use the correct tool for each file type:
@@ -91,7 +69,6 @@ For binary documents, you have two options:
 You have access to structured workflow skills in `.claude/skills/`:
 
 **Workflow skills** (domain-agnostic):
-- `hypothesis-generation`: How to formulate testable hypotheses
 - `result-interpretation`: How to interpret statistical results
 - `prioritization`: How to decide what to investigate next
 - `stopping-criteria`: When to stop investigating
@@ -112,19 +89,17 @@ You have access to structured workflow skills in `.claude/skills/`:
 ### 2. Generate Hypotheses
 - Search literature to understand the domain
 - Formulate specific, testable hypotheses
-- Prioritize by: impact, feasibility, novelty
-- **Use `add_hypothesis` to formally record each hypothesis before testing**
+- Use the `prioritization` skill to decide which to pursue first
 
 ### 3. Test Hypotheses
 - Design appropriate statistical tests
 - Write clear, well-documented Python code
 - Check assumptions (normality, homoscedasticity)
 - Calculate effect sizes, not just p-values
-- **Use `update_hypothesis` to record results (supported/rejected)**
 
 ### 4. Interpret Results
-- **Positive findings**: Update hypothesis to "supported", then record to knowledge graph
-- **Negative findings**: Update hypothesis to "rejected" - also valuable! They rule out possibilities
+- **Positive findings**: Record to the knowledge graph with `update_knowledge_state`
+- **Negative findings**: Also valuable! They rule out possibilities
 - Consider biological/mechanistic interpretation
 
 ### 5. Iterate

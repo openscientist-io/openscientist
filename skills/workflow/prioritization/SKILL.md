@@ -8,7 +8,7 @@ category: workflow
 
 ## When to Use This Skill
 
-- When you have multiple hypotheses and need to choose which to test first
+- When you have several possible next steps and need to choose one
 - When you're deciding between exploring new areas vs deepening current investigation
 - When iteration budget is running low and you need to focus
 
@@ -20,25 +20,23 @@ category: workflow
 
 ### Option 1: Test a Hypothesis
 
-**Priority = Impact × Feasibility × Novelty**
+Use your scientific judgment to pick the hypothesis to test next. Favor the one that:
 
-Rate each hypothesis:
-- **Impact** (1-5): How central to research question?
-- **Feasibility** (1-5): Can we test it with current data?
-- **Novelty** (1-5): Is this a new insight?
+- **Bears most directly on the research question** - it explains the core phenotype rather than a tangential observation
+- **Can actually be tested with the data you have** - the required variables exist, or a defensible proxy can be constructed
+- **Would be informative either way** - a clear positive or a clear negative both move the investigation forward
+- **Connects to what you already know** - it resolves a contradiction, extends a confirmed finding, or follows from the literature
 
-**Test highest-scoring hypothesis first.**
+Do not reduce this to a numeric score. Weigh the considerations above, state your reasoning briefly, and move on.
 
 **Example:**
 ```
-H1: "Salvage flux is increased"
-  Impact=4, Feasibility=4, Novelty=3 → Score=48
+Observation: CMP is elevated in hypothermia (FC=1.8, p<0.01)
 
-H2: "CMP→CDP bottleneck"
-  Impact=5, Feasibility=5, Novelty=4 → Score=100 ⭐ Test this
-
-H3: "Sex differences modulate effect"
-  Impact=2, Feasibility=3, Novelty=2 → Score=12
+Candidates:
+  "Salvage flux is increased"      - plausible, testable via product/precursor ratios
+  "CMP→CDP bottleneck"              - directly explains the observation, fully testable with current data ⭐ Test this
+  "Sex differences modulate effect" - tangential to the question, small n per sex
 ```
 
 ### Option 2: Explore Data
@@ -46,12 +44,12 @@ H3: "Sex differences modulate effect"
 **When to prioritize exploration:**
 - ✅ Early iterations (< 10% of budget)
 - ✅ You're stuck and need fresh ideas
-- ✅ Current hypotheses are all low-priority
+- ✅ None of your current hypotheses look promising
 - ✅ You haven't looked at key variable types yet
 
 **When NOT to explore:**
 - ❌ Late iterations (> 80% of budget)
-- ❌ You have high-priority hypotheses ready to test
+- ❌ You have a promising hypothesis ready to test
 - ❌ You're avoiding testing a difficult hypothesis
 
 ### Option 3: Search Literature
@@ -78,7 +76,7 @@ H3: "Sex differences modulate effect"
 **When NOT to synthesize:**
 - ❌ Early iterations (too early to connect dots)
 - ❌ You only have 1-2 isolated findings
-- ❌ High-priority hypotheses remain untested
+- ❌ Promising hypotheses remain untested
 
 ## Decision Tree
 
@@ -89,8 +87,8 @@ START: What should I do next?
 │   YES → Record them now
 │   NO → Continue
 │
-├─> Do I have high-priority hypotheses (score >50)?
-│   YES → Test highest-scoring hypothesis
+├─> Do I have a promising, testable hypothesis?
+│   YES → Test it
 │   NO → Continue
 │
 ├─> Is this early in investigation (<20% iterations)?
@@ -102,7 +100,7 @@ START: What should I do next?
 │   NO → Continue
 │
 ├─> Is this late in investigation (>70% iterations)?
-│   YES → Synthesize findings, test remaining high-priority hypotheses
+│   YES → Synthesize findings, test remaining promising hypotheses
 │   NO → Continue
 │
 └─> Default: Generate new hypotheses OR explore unexplored data
@@ -141,13 +139,13 @@ START: What should I do next?
 ### Late Phase (Iterations 41-50)
 
 **Priority:**
-1. Test remaining high-priority hypotheses
+1. Test remaining promising hypotheses
 2. Record all confirmed findings
 3. Synthesize into mechanistic model
 4. Identify knowledge gaps
 
 **Example actions:**
-- Finish testing top-scoring hypotheses
+- Finish testing the most promising hypotheses
 - Ensure all findings are documented
 - Prepare for final report
 - Note what couldn't be answered
@@ -179,27 +177,27 @@ START: What should I do next?
 **Situation:** Iteration 15 of 50. Current state:
 - 2 confirmed findings recorded
 - 1 hypothesis rejected (salvage flux)
-- 3 pending hypotheses generated
+- 3 untested hypotheses
 - Unexplored: lipid data
 
 **Options:**
-1. Test H2: "CMP→CDP bottleneck" (Score=100)
-2. Test H3: "PUFA enrichment" (Score=75)
-3. Test H4: "Sex difference" (Score=20)
+1. Test "CMP→CDP bottleneck"
+2. Test "PUFA enrichment"
+3. Test "Sex difference"
 4. Explore lipid data
 5. Search literature on rejected hypothesis
 
-**Decision:** **Test H2** (highest priority hypothesis)
+**Decision:** **Test "CMP→CDP bottleneck"**
 
 **Rationale:**
-- High score (100)
-- Directly addresses finding (CMP elevation)
-- Feasible with current data
+- Directly addresses an existing finding (CMP elevation)
+- Fully testable with current data
+- A negative result would also be informative (rules out the downstream explanation)
 - Middle phase → focus on mechanistic hypotheses
 
 ## Quick Reference
 
-**Test hypothesis** → When you have high-priority (score >50) hypothesis ready
+**Test hypothesis** → When you have a promising, testable hypothesis ready
 
 **Explore data** → When early (<20%) OR stuck
 

@@ -626,7 +626,13 @@ class LocalSkillIngester(BaseSkillIngester):
             **_kwargs: Additional arguments (unused)
 
         Returns:
-            Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
+            Dict with counts:
+            {'created': N, 'updated': N, 'unchanged': N, 'removed': N, 'errors': N}
+
+        Skills previously ingested from this source whose ``SKILL.md`` no
+        longer exists on disk are deleted (counted under ``removed``), so a
+        skill retired from the repository stops being materialised into new
+        jobs instead of lingering as an orphaned database row.
         """
         if source.source_type != "local":
             raise ValueError(f"Source {source.id} is not a local source")
@@ -641,13 +647,15 @@ class LocalSkillIngester(BaseSkillIngester):
         if not base_path.exists():
             raise ValueError(f"Path does not exist: {base_path}")
 
-        stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
+        stats = {"created": 0, "updated": 0, "unchanged": 0, "removed": 0, "errors": 0}
+        seen_paths: set[str] = set()
 
         # Session is expected to be an admin session (bypasses RLS)
         # Only process SKILL.md files (skip reference docs, READMEs, etc.)
         for md_file in base_path.rglob("**/SKILL.md"):
             try:
                 relative_path = str(md_file.relative_to(Path(source.path)))
+                seen_paths.add(relative_path)
                 parsed = self.parser.parse_file(md_file)
 
                 # Check if skill exists from this source
@@ -712,6 +720,23 @@ class LocalSkillIngester(BaseSkillIngester):
             except SkillParseError as e:
                 stats["errors"] += 1
                 logger.warning("Error processing %s: %s", md_file, e)
+
+        # Drop skills whose file disappeared from this source. A file that
+        # failed to parse is still "seen", so a transient parse error never
+        # deletes a skill.
+        stale_stmt = select(Skill).where(Skill.source_id == source.id)
+        for stale in (await session.execute(stale_stmt)).scalars().all():
+            if stale.source_path in seen_paths:
+                continue
+            logger.info(
+                "Removing skill %s/%s: %s no longer exists in source %s",
+                stale.category,
+                stale.slug,
+                stale.source_path,
+                source.id,
+            )
+            await session.delete(stale)
+            stats["removed"] += 1
 
         # Update source metadata
         source.last_synced_at = datetime.now(UTC)

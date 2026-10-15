@@ -144,12 +144,10 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         return CODEX_FRAGMENTS
 
     @classmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
+    def discovery_system_prompt(cls, *, phenix_available: bool = False) -> str:
         # Codex reads a single AGENTS.md, so its discovery system prompt is the
         # full per-job doc (CodexAgent writes it to AGENTS.md from this prompt).
-        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
+        return cls.job_doc(phenix_available=phenix_available)
 
     # apply_runtime_environment, chat_system_prompt, write_chat_context, and
     # chat_model_override use the AbstractAgent defaults: codex configures its

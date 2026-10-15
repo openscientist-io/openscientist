@@ -84,11 +84,15 @@ class Job(UUIDv7Mixin, Base):
         comment="User-provided job description",
     )
 
+    # Legacy. The per-job "Hypothesis Generation" opt-in was removed from the
+    # UI, API and agent tooling; the column is retained (always false for new
+    # jobs) so rows created while the feature existed keep their value and no
+    # destructive migration is needed. Nothing reads it any more.
     use_hypotheses: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         server_default="false",
-        comment="Whether hypothesis tracking tools are enabled",
+        comment="Legacy: whether the removed hypothesis-tracking opt-in was on for this job",
     )
 
     investigation_mode: Mapped[str] = mapped_column(
