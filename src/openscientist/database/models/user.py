@@ -5,9 +5,10 @@ The User model represents authenticated users in the system.
 Users can log in via OAuth providers (GitHub, Google) and own jobs.
 """
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, UUIDv7Mixin
@@ -32,6 +33,7 @@ class User(UUIDv7Mixin, Base):
         name: User's display name
         is_active: Whether the user account is active (for admin disable)
         is_approved: Whether the user is approved to start new jobs
+        approved_at: When an administrator approved this user (None if never approved)
         oauth_accounts: OAuth provider accounts linked to this user
         sessions: Active login sessions for this user
         api_keys: API keys created by this user
@@ -66,6 +68,12 @@ class User(UUIDv7Mixin, Base):
         nullable=False,
         server_default="false",
         comment="Whether user is approved by an administrator to start jobs",
+    )
+
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When an administrator approved this user (None if pending or never approved)",
     )
 
     ntfy_enabled: Mapped[bool] = mapped_column(
