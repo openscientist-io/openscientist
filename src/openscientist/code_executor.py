@@ -196,14 +196,16 @@ def _next_plot_number(plots_dir: Path) -> int:
 
 
 def _set_timeout_alarm(timeout: int) -> None:
-    if hasattr(signal, "SIGALRM"):
+    alarm = getattr(signal, "alarm", None)
+    if hasattr(signal, "SIGALRM") and alarm is not None:
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout)
+        alarm(timeout)
 
 
 def _clear_timeout_alarm() -> None:
-    if hasattr(signal, "SIGALRM"):
-        signal.alarm(0)
+    alarm = getattr(signal, "alarm", None)
+    if hasattr(signal, "SIGALRM") and alarm is not None:
+        alarm(0)
 
 
 def _plot_metadata(

@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SIGKILL = getattr(signal, "SIGKILL", signal.SIGTERM)
+
 _MCP_SERVER_NAME = "openscientist-tools"
 
 #: Written by the tools server on tools/list.
@@ -422,17 +424,23 @@ class OmpAgent(AbstractAgent[Provider]):
         here would take down the runner and the web app with it, so the
         relationship is checked rather than trusted.
         """
+        getpgid = getattr(os, "getpgid", None)
+        killpg = getattr(os, "killpg", None)
+        if getpgid is None or killpg is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.send_signal(sig)
+            return False
         try:
-            pgid = os.getpgid(proc.pid)
+            pgid = getpgid(proc.pid)
         except (ProcessLookupError, PermissionError):
             return False
-        if pgid == os.getpgid(0):
+        if pgid == getpgid(0):
             logger.error("omp pid %s shares our process group, signalling it alone", proc.pid)
             with contextlib.suppress(ProcessLookupError):
                 proc.send_signal(sig)
             return False
         with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(pgid, sig)
+            killpg(pgid, sig)
         return True
 
     @staticmethod
@@ -443,7 +451,7 @@ class OmpAgent(AbstractAgent[Provider]):
         running: a timed-out 3 iteration run otherwise left two omp processes and
         two MCP children competing for the same job directory and database rows.
         """
-        for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
+        for sig, grace in ((signal.SIGTERM, 5.0), (_SIGKILL, 5.0)):
             if proc.returncode is not None:
                 return
             OmpAgent._signal_group(proc, sig)
@@ -465,6 +473,13 @@ class OmpAgent(AbstractAgent[Provider]):
         self._clear_mcp_handshake()
         prompt_path = self._write_turn_prompt(prompt)
         args = self._build_args(system_prompt_path, prompt_path, config_path)
+
+        if os.name == "nt":
+            executable = Path(args[0])
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                first_line = executable.read_text(encoding="utf-8").splitlines()[0]
+                if "python" in first_line.casefold():
+                    args.insert(0, sys.executable)
 
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -498,7 +513,7 @@ class OmpAgent(AbstractAgent[Provider]):
             # the tree exactly as the timeout used to. Signalled synchronously
             # because awaiting a graceful stop inside a cancelled task is not
             # dependable, so there is no reliable window for SIGTERM.
-            self._signal_group(proc, signal.SIGKILL)
+            self._signal_group(proc, _SIGKILL)
             raise
         finally:
             pump.cancel()
