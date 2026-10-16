@@ -33,6 +33,26 @@ These are non-negotiable stopping points:
 - Analysis approach is wrong
 - **Action:** Document the issue, stop investigation
 
+### 4. PRISMA Synthesis Threshold Reached (evidence synthesis loops)
+
+When running a PICO-framed evidence synthesis loop (using the `pico-framing` and
+`meta-analysis` skills), stop further literature screening once **all three** of
+the following conditions are met:
+
+- **Saturation**: The last 10 screened abstracts yielded 0 new included studies
+- **Adequate pool**: ≥5 studies have been extracted with compatible effect measures,
+  OR you have screened ≥500 abstracts (whichever comes first)
+- **Stable estimate**: Adding the last 2 studies changed the pooled estimate by
+  less than 10% relative (i.e. |new_pooled - old_pooled| / old_pooled < 0.10)
+
+**Action:** Stop screening, run `meta-analysis`, document how many abstracts were
+screened and how many included, and note that additional studies may exist but
+would be unlikely to materially change the pooled estimate.
+
+**If fewer than 5 studies are available** after exhausting your search: do not
+attempt quantitative pooling. Report narratively, note the evidence scarcity, and
+assign GRADE certainty of LOW or VERY_LOW.
+
 ## Soft Stops (Consider Stopping)
 
 These indicate you MIGHT be done:
