@@ -23,6 +23,8 @@ _OPENSCIENTIST_TOOL_NAMES = frozenset(
         "run_phenix_tool",
         "compare_structures",
         "parse_alphafold_confidence",
+        "search_biomodels",
+        "fetch_biomodel",
     }
 )
 

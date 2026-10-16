@@ -185,8 +185,12 @@ The agent interacts with the scientific environment through MCP (Model Context P
 | `save_iteration_summary` | Save summary of what was done |
 | `run_phenix_tool`* | Run Phenix structural biology tools |
 | `compare_structures`* | Compare protein structures |
+| `search_biomodels` | Search the BioModels repository of curated SBML models |
+| `fetch_biomodel` | Download a BioModels entry into the job for simulation in `execute_code` (libRoadRunner, COPASI/basico, Antimony are installed in the executor) |
 
 *Phenix tools require optional Phenix installation.
+
+Systems-biology simulation support is being built in phases; see issue #305 for the plan (bundle export and external compute backends follow the in-sandbox tools above).
 
 ### Provenance and Reproducibility
 

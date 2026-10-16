@@ -60,6 +60,17 @@ class TestValidateImports:
         with pytest.raises(ForbiddenImportError):
             validate_imports("import os", ["pandas"])
 
+    def test_simulation_packages_are_whitelisted(self):
+        """The simulators installed in the executor image must pass the
+        whitelist, otherwise they are advertised but unusable."""
+        from openscientist.code_executor import ALLOWED_IMPORTS
+
+        validate_imports(
+            "import roadrunner\nimport antimony\nimport libsbml\n"
+            "from basico import load_model\nimport libsedml\nimport libcombine",
+            ALLOWED_IMPORTS,
+        )
+
 
 # ─── execute_code ─────────────────────────────────────────────────────
 

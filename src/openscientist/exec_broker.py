@@ -99,6 +99,10 @@ def create_exec_broker_app(
             return JSONResponse({"error": "data_files must be a list"}, status_code=400)
 
         cs = get_settings().container
+        # Enforce the per-call ceiling here, not in the tool: the tool runs in
+        # the agent container and its request is untrusted.
+        if timeout is not None:
+            timeout = max(1, min(timeout, cs.executor_max_timeout))
         job_root = _job_container_root(cs, job_id)
         try:
             output_dir = _confined_container_path(output_dir_raw, cs, job_root)

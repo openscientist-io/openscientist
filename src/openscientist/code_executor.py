@@ -26,6 +26,7 @@ from openscientist.exceptions import CodeExecutionTimeoutError, ForbiddenImportE
 from openscientist.file_loader import (
     HDF5_EXTENSIONS,
     IMAGE_EXTENSIONS,
+    MODEL_EXTENSIONS,
     SEQUENCE_EXTENSIONS,
     STRUCTURE_EXTENSIONS,
 )
@@ -36,7 +37,11 @@ from openscientist.file_loader import (
 # the two "what kind of file is this" implementations can't drift apart again
 # the way they did for .h5ad.
 NON_TABULAR_EXTENSIONS = (
-    HDF5_EXTENSIONS | STRUCTURE_EXTENSIONS | SEQUENCE_EXTENSIONS | IMAGE_EXTENSIONS
+    HDF5_EXTENSIONS
+    | STRUCTURE_EXTENSIONS
+    | SEQUENCE_EXTENSIONS
+    | IMAGE_EXTENSIONS
+    | MODEL_EXTENSIONS
 )
 
 # Allowed imports for sandboxed Python execution.
@@ -69,6 +74,14 @@ ALLOWED_IMPORTS = [
     "scanpy",
     "anndata",
     "h5py",
+    # Systems-biology simulation (SBML/Antimony models)
+    "roadrunner",  # libRoadRunner: SBML simulation (CVODE)
+    "antimony",  # Antimony <-> SBML conversion
+    "libsbml",  # SBML parsing/validation
+    "basico",  # COPASI Python wrapper (scans, parameter estimation)
+    "COPASI",  # COPASI SWIG bindings used by basico
+    "libsedml",  # SED-ML simulation experiment descriptions
+    "libcombine",  # COMBINE (.omex) archives
 ]
 
 

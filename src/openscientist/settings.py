@@ -516,6 +516,13 @@ class ContainerSettings(BaseSettings):
     executor_memory: str = Field(default="2g", alias="OPENSCIENTIST_EXECUTOR_MEMORY")
     executor_cpu: float = Field(default=0.5, alias="OPENSCIENTIST_EXECUTOR_CPU")
     executor_timeout: int = Field(default=120, alias="OPENSCIENTIST_EXECUTOR_TIMEOUT")
+    executor_max_timeout: int = Field(
+        default=600,
+        alias="OPENSCIENTIST_EXECUTOR_MAX_TIMEOUT",
+        description="Upper bound (seconds) on the per-call timeout an agent may request via "
+        "execute_code(timeout=...). The broker clamps requests above it. Simulations and "
+        "parameter scans are the usual reason to raise it.",
+    )
 
     # Agent container resource limits
     agent_memory: str = Field(default="8g", alias="OPENSCIENTIST_AGENT_MEMORY")

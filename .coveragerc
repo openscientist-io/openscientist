@@ -1,5 +1,7 @@
 [run]
-source = src/openscientist
+source =
+    src/openscientist
+    src/openscientist_tools
 omit =
     */tests/*
     */__pycache__/*
@@ -19,4 +21,6 @@ exclude_lines =
     @abstractmethod
 
 [paths]
-source = src/openscientist
+source =
+    src/openscientist
+    src/openscientist_tools

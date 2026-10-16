@@ -812,6 +812,11 @@ class TestContainerSettings:
         assert settings.executor_memory == "2g"
         assert settings.executor_cpu == 0.5
         assert settings.executor_timeout == 120
+        assert settings.executor_max_timeout == 600
+
+    def test_executor_max_timeout_override(self):
+        settings = ContainerSettings(OPENSCIENTIST_EXECUTOR_MAX_TIMEOUT=1800)
+        assert settings.executor_max_timeout == 1800
 
     def test_custom_values(self):
         """Custom container settings are applied."""

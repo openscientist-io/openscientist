@@ -51,3 +51,13 @@ plotly>=5.0.0
 
 # Differential expression analysis
 pydeseq2>=0.4.0
+
+# Systems-biology simulation (SBML/Antimony models). Slim stack: libroadrunner
+# directly rather than tellurium, which would pull in Jupyter.
+libroadrunner>=2.8.0
+antimony>=2.14.0
+python-libsbml>=5.20.0
+python-copasi>=4.45
+copasi-basico>=0.80
+python-libsedml>=2.0.32
+python-libcombine>=0.2.19

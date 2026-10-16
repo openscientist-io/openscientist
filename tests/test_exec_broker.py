@@ -40,7 +40,9 @@ _EXPECTED_KWARGS = {
 def broker_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the broker's confinement at a fixed /app <-> /host/proj mapping."""
     settings = SimpleNamespace(
-        container=SimpleNamespace(host_project_dir=_HOST_PROJECT, container_app_dir="/app")
+        container=SimpleNamespace(
+            host_project_dir=_HOST_PROJECT, container_app_dir="/app", executor_max_timeout=600
+        )
     )
     monkeypatch.setattr(exec_broker, "get_settings", lambda: settings)
 
@@ -85,6 +87,23 @@ class TestExecBrokerServer:
         assert kwargs["job_id"] == "job-1"
         # host path resolved back to the web container's own mount root
         assert kwargs["output_dir"] == Path("/app/jobs/job-1/provenance")
+
+    @pytest.mark.parametrize(
+        ("requested", "expected"),
+        [(30, 30), (600, 600), (3600, 600), (0, None), (-5, 1)],
+    )
+    def test_timeout_is_clamped_to_configured_maximum(
+        self, requested: int, expected: int | None
+    ) -> None:
+        """The agent-side tool is untrusted, so the ceiling lives here. A zero
+        timeout means "unset" (the manager default); a negative one is floored."""
+        manager = _manager({"success": True, "output": "", "plots": [], "execution_time": 0.0})
+        token = make_exec_placeholder(_MASTER, "job-1")
+        resp = _client(manager).post(
+            "/execute", json=_body(timeout=requested), headers={EXEC_TOKEN_HEADER: token}
+        )
+        assert resp.status_code == 200
+        assert manager.execute_code.call_args.kwargs["timeout"] == expected
 
     def test_rejects_token_for_a_different_job(self) -> None:
         manager = _manager({})

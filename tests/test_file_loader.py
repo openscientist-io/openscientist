@@ -74,6 +74,32 @@ class TestGetFileInfo:
 # ─── load_tabular_file ────────────────────────────────────────────────
 
 
+class TestModelFiles:
+    """SBML/Antimony/OMEX uploads are classified as models, not guessed as CSV."""
+
+    @pytest.mark.parametrize("name", ["model.xml", "model.sbml", "model.ant", "exp.omex"])
+    def test_model_extensions_classified(self, tmp_path, name):
+        from openscientist.file_loader import get_file_info
+
+        path = tmp_path / name
+        path.write_text('<?xml version="1.0"?><sbml level="3" version="2"/>')
+        assert get_file_info(path)["file_type"] == "model"
+
+    def test_load_data_file_returns_none_for_model(self, tmp_path):
+        from openscientist.file_loader import load_data_file
+
+        path = tmp_path / "model.xml"
+        path.write_text('<?xml version="1.0"?><sbml level="3" version="2"/>')
+        assert load_data_file(path) is None
+
+    def test_executor_load_data_skips_model(self, tmp_path):
+        from openscientist.code_executor import load_data
+
+        path = tmp_path / "model.xml"
+        path.write_text('<?xml version="1.0"?><sbml level="3" version="2"/>')
+        assert load_data(str(path)) is None
+
+
 class TestLoadTabularFile:
     """Tests for tabular file loading."""
 
