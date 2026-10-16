@@ -109,10 +109,27 @@ The remote server must have the repo cloned and a `.env` file configured (see `.
 
 ## Code Quality
 
-All PRs must pass:
+Use the same local quality tiers as CI:
+
+```bash
+make quality-fast
+make quality-contract
+make quality-integration
+```
+
+- `quality-fast` checks the lockfile, whitespace, compilation, lint, formatting,
+  and repository-wide types without Docker.
+- `quality-contract` runs backend-neutral API and serialization contract tests
+  without Docker.
+- `quality-integration` checks that Docker is reachable before running the full
+  non-network test and coverage suite. Missing Docker exits with code 2 and a
+  concise `BLOCKED` message instead of a Testcontainers connection traceback.
+
+The underlying checks remain available individually:
 
 ```bash
 uv run ruff check src/ tests/   # lint
+uv run ruff format --check src/ tests/  # format
 uv run mypy src/openscientist/ tests/  # types
 uv run pytest                   # tests (60% coverage minimum)
 ```

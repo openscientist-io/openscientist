@@ -5,9 +5,18 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
+    name: Quality fast
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -19,16 +28,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      # The lock file pins the exact source hash. A required transitive package
+      # is sdist-only, so uv's blanket --no-build mode cannot install this graph.
+      - run: uv sync --locked  # NOSONAR
 
-      - name: Lint
-        run: uv run ruff check src/ tests/
+      - name: Run fast quality tier
+        run: .venv/bin/python -m openscientist.quality fast
 
-      - name: Format check
-        run: uv run ruff format --check src/ tests/
-
-  typecheck:
+  contract:
+    name: Quality contract
     runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -40,14 +51,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      # The lock file pins the exact source hash. A required transitive package
+      # is sdist-only, so uv's blanket --no-build mode cannot install this graph.
+      - run: uv sync --locked  # NOSONAR
 
-      - name: Type check
-        run: uv run mypy src/openscientist/ tests/
+      - name: Run contract quality tier
+        run: .venv/bin/python -m openscientist.quality contract
 
   test:
+    name: Quality integration
     runs-on: ubuntu-latest
-    needs: [lint, typecheck]
+    needs: [lint, contract]
+    timeout-minutes: 45
 
     permissions:
       contents: read
@@ -83,17 +98,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      # The lock file pins the exact source hash. A required transitive package
+      # is sdist-only, so uv's blanket --no-build mode cannot install this graph.
+      - run: uv sync --locked  # NOSONAR
 
-      - name: Unit & Integration Tests
+      - name: Run integration quality tier
         # Live third-party APIs are deselected: NCBI rate limits by IP and the
         # shared runner egress makes those tests fail unrelated to the change.
         # The environment comes from the preceding step, so the interpreter is
         # called directly and this step touches no dependencies.
-        run: .venv/bin/python -m pytest -m "not network" --cov=src/openscientist --cov-report=term-missing --cov-report=xml
+        run: .venv/bin/python -m openscientist.quality integration
 
       - name: Publish coverage report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: coverage-xml
           path: coverage.xml
@@ -117,6 +134,15 @@ jobs:
           files: ./coverage.xml
           disable_search: true
           fail_ci_if_error: false
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: error
+          retention-days: 14
 
   sonarcloud:
     needs: test
