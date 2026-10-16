@@ -10,6 +10,7 @@ Models are organized by domain:
 """
 
 # Core authentication models
+from .a2a import A2ASettings, A2ATask
 from .administrator import Administrator
 from .analysis_log import AnalysisLog
 from .api_key import APIKey
@@ -49,6 +50,8 @@ from .skill_source import SkillSource
 from .user import User
 
 __all__ = [
+    "A2ASettings",
+    "A2ATask",
     "APIKey",
     "Administrator",
     "AnalysisLog",

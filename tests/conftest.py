@@ -27,6 +27,8 @@ from openscientist.database.models import (
     User,
 )
 
+pytest_plugins = ["tests.a2a_fixtures"]
+
 
 # Clear any cached settings after environment setup
 # This must be done after openscientist imports to access the cache_clear function

@@ -8,6 +8,7 @@ page headers, and other common interface elements.
 import html
 import logging
 import re
+import shlex
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1036,6 +1037,7 @@ def _build_navigation_items(
         [
             ("Skills", "school", "/skills", active_page == "skills"),
             ("API Keys", "vpn_key", "/api-keys", active_page == "api-keys"),
+            ("A2A", "hub", "/a2a-settings", active_page == "a2a"),
             ("Docs", "description", "/docs", active_page == "docs"),
         ]
     )
@@ -1165,11 +1167,74 @@ def render_navigator(
 
     with ui.header().classes("items-center justify-between"):
         _render_navigation_brand()
+        render_a2a_status()
         hamburger = ui.button(icon="menu", on_click=lambda: drawer.set_value(True)).props(
             "flat color=white"
         )
         hamburger.style("display: none").classes("mobile-menu-btn")
         _render_desktop_navigation(nav_items, extra_buttons, active_style, inactive_style)
+
+
+def render_a2a_quickstart(app_url: str) -> None:
+    """Render copyable Go client commands for this deployment."""
+    with ui.card().classes("w-full gap-3 border border-cyan-200 bg-cyan-50"):
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("terminal", color="cyan-8")
+            ui.label("Try it with the Go client").classes("text-h6")
+        ui.label("Run these commands in your terminal. Go must be installed.")
+        ui.label("1. Install the client").classes("font-semibold")
+        ui.code(
+            "go install github.com/a2aproject/a2a-go/v2/cmd/a2a@v2.5.0\n"
+            'export PATH="$(go env GOPATH)/bin:$PATH"',
+            language="bash",
+        ).classes("w-full")
+        ui.label("2. Add your OpenScientist API key").classes("font-semibold")
+        ui.markdown(
+            "[Create a key](/api-keys), run the command below, then paste the full "
+            "`name:secret` value and press Enter. Input is hidden. Use an OpenScientist "
+            "key, not your model provider's key."
+        )
+        ui.code("read -r -s OPENSCIENTIST_API_KEY", language="bash").classes("w-full")
+        ui.label("3. Launch a job").classes("font-semibold")
+        ui.code(
+            f"OPENSCIENTIST_URL={shlex.quote(app_url.rstrip('/'))}\n"
+            'a2a send "$OPENSCIENTIST_URL" "analyze pseudomonas genomes" \\\n'
+            '  --auth "Bearer $OPENSCIENTIST_API_KEY" --immediate --output json',
+            language="bash",
+        ).classes("w-full")
+        ui.markdown(
+            "Replace the example prompt with your task. `--immediate` returns a task ID "
+            "while the job runs. The job appears in your [job list](/jobs) and uses this "
+            "server's configured agent and normal budget."
+        )
+        with ui.expansion("Check the result", icon="refresh").classes("w-full"):
+            ui.label("Replace <task-id> with the ID returned by send.")
+            ui.code(
+                'a2a get task "$OPENSCIENTIST_URL" "<task-id>" \\\n'
+                '  --auth "Bearer $OPENSCIENTIST_API_KEY" --output json',
+                language="bash",
+            ).classes("w-full")
+
+
+def render_a2a_status() -> None:
+    """Show confirmed A2A admission status in the shared navigation header."""
+    from openscientist.api.a2a import service_status
+    from openscientist.webapp_components.utils import setup_timer_cleanup
+
+    button = ui.button(
+        "Checking A2A…", icon="hub", on_click=lambda: ui.navigate.to("/a2a-settings")
+    )
+    button.props("flat color=white dense")
+
+    async def refresh() -> None:
+        try:
+            data = await service_status()
+            button.set_text("A2A running" if data["enabled"] else "A2A off")
+        except Exception:
+            button.set_text("A2A unavailable")
+
+    timers = setup_timer_cleanup()
+    timers.append(ui.timer(5, refresh, immediate=True))
 
 
 def render_pending_approval_notice() -> None:
