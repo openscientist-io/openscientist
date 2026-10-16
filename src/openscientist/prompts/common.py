@@ -9,14 +9,52 @@ Claude and Codex variants share one body. See `prompts.claude` /
 """
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any
 
+from claude_agent_sdk.types import AgentDefinition
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database.models import Skill
+
+_EXPERT_DELEGATION_PREAMBLE = """\
+## Expert Delegation
+
+You have access to specialist expert subagents. **You MUST actively delegate to them** — they exist to help you produce better, faster results. Use them early and often throughout your investigation.
+
+**When to delegate (do this by default):**
+- Literature searches and evidence gathering → delegate to a research/literature expert
+- Statistical methodology questions → delegate to a statistics/methodology expert
+- Synthesizing findings from multiple sources → delegate to a synthesis expert
+- Any task where an expert's description matches what you need
+
+**When to do it yourself (the exception, not the rule):**
+- Recording findings to the knowledge state (only you can call update_knowledge_state)
+- Setting status and saving iteration summaries
+- Making high-level investigation decisions
+
+**In every iteration, aim to delegate at least one task to an expert.** This produces deeper, more thorough results than doing everything yourself.
+
+Available experts (slug · when to use):
+"""
+
+_EXPERT_DELEGATION_EPILOGUE = """\
+
+Trust expert outputs the way you would trust a colleague's report. Incorporate their findings into your knowledge state and use them to guide your next steps."""
+
+
+def _render_expert_delegation_section(
+    experts: Mapping[str, AgentDefinition] | None,
+) -> str:
+    """Build the Expert Delegation section.  Empty string when no experts."""
+    if not experts:
+        return ""
+    lines = [f"- `{slug}` · {defn.description}" for slug, defn in experts.items()]
+    roster = "\n".join(lines)
+    return _EXPERT_DELEGATION_PREAMBLE + "\n" + roster + _EXPERT_DELEGATION_EPILOGUE
 
 
 @dataclass(frozen=True)
@@ -113,7 +151,10 @@ def apply_mcp_tool_prefix(doc: str, frags: BackendFragments) -> str:
     return namespace_tool_mentions(doc, frags.mcp_tool_prefix)
 
 
-def build_system_prompt(frags: BackendFragments) -> str:
+def build_system_prompt(
+    frags: BackendFragments,
+    experts: Mapping[str, AgentDefinition] | None = None,
+) -> str:
     """Backend-agnostic system prompt body, with backend fragments inserted."""
     body = f"""You are an autonomous scientific discovery agent. Your goal is to discover mechanistic insights from scientific data through iterative hypothesis testing.
 
@@ -149,6 +190,8 @@ Domain-specific analysis skills are in {frags.skills_location}. Read ALL workflo
 - Negative results are valuable - they rule out hypotheses
 - Search literature proactively to inform hypothesis generation
 - Don't repeat failed hypotheses
+
+{_render_expert_delegation_section(experts)}
 
 Think step by step. Be rigorous. Be creative."""
     return apply_mcp_tool_prefix(body, frags)
@@ -323,6 +366,7 @@ def build_job_doc(
     use_hypotheses: bool = False,
     phenix_available: bool = False,
     frags: BackendFragments,
+    experts: Mapping[str, AgentDefinition] | None = None,
 ) -> str:
     """Backend-agnostic per-job instructions doc (the `CLAUDE.md` / `AGENTS.md`
     content), with backend fragments substituted at the end.
@@ -562,7 +606,8 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 - **Positive**: Record confirmed findings to the knowledge state
 - **Negative**: Negative results are also valuable — they rule out possibilities""")
 
-    parts.append("""\
+    parts.append(
+        """\
 - Consider biological/mechanistic interpretation
 
 ### 5. End of Every Iteration
@@ -624,9 +669,14 @@ Write the report to `./final_report.md` (relative path — do NOT use absolute p
 
 Then call `set_consensus_answer` with a 1–3 sentence direct answer.
 
+"""
+        + _render_expert_delegation_section(experts)
+        + """
+
 ---
 
-**Remember:** You are autonomous. Make bold scientific decisions. Pursue interesting leads. Be creative but rigorous.""")
+**Remember:** You are autonomous. Make bold scientific decisions. Pursue interesting leads. Be creative but rigorous."""
+    )
 
     doc = "\n".join(parts)
     return substitute_fragments(doc, frags)

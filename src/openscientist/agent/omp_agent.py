@@ -17,6 +17,7 @@ import os
 import shutil
 import signal
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -36,6 +37,8 @@ from openscientist.settings import get_settings
 from openscientist.transcript import OMP, TranscriptEntry
 
 if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
+
     from openscientist.prompts.common import BackendFragments
     from openscientist.settings import Settings
 
@@ -90,9 +93,14 @@ class OmpAgent(AbstractAgent[Provider]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
     ) -> str:
         # omp takes one system prompt, so (like codex) it gets the full job doc.
+        # It registers no subagents, so the expert roster is dropped.
         return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
 
     async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:

@@ -12,8 +12,10 @@ prompts are fully substituted (no leftover sentinels, no foreign vocabulary).
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
 
 import pytest
+from claude_agent_sdk.types import AgentDefinition
 
 from openscientist.agent.base import AbstractAgent, AgentBackend, IterationResult, TurnOutcome
 
@@ -210,7 +212,11 @@ def test_concrete_subclass_without_backend_is_rejected() -> None:
 
             @classmethod
             def discovery_system_prompt(
-                cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+                cls,
+                *,
+                use_hypotheses: bool = False,
+                phenix_available: bool = False,
+                experts: Mapping[str, AgentDefinition] | None = None,
             ) -> str:
                 return ""
 

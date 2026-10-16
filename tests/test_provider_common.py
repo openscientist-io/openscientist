@@ -119,7 +119,7 @@ def test_resolve_model_name_precedence():
     )
 
 
-def test_send_anthropic_message_uses_resolved_model_and_extracts_text():
+def test_send_anthropic_message_uses_resolved_model_and_extracts_text() -> None:
     calls: list[dict[str, object]] = []
 
     class FakeMessages:
@@ -144,7 +144,7 @@ def test_send_anthropic_message_uses_resolved_model_and_extracts_text():
     assert calls[0]["messages"] == [{"role": "user", "content": "ping"}]
 
 
-def test_send_anthropic_message_with_tools_returns_normalized_payload():
+def test_send_anthropic_message_with_tools_returns_normalized_payload() -> None:
     calls: list[dict[str, object]] = []
 
     class FakeToolUseBlock:

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from claude_agent_sdk.types import AgentDefinition
 
 from openscientist.agent.base import (
     AbstractAgent,
@@ -49,7 +51,11 @@ class _StubAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        experts: Mapping[str, AgentDefinition] | None = None,
     ) -> str:
         return "stub discovery prompt"
 

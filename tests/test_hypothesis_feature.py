@@ -949,8 +949,14 @@ class TestEndToEndHypothesesFlow:
         """_build_agent_executor(use_hypotheses=True) puts it on the AgentConfig."""
         from openscientist.orchestrator.discovery import _build_agent_executor
 
-        with patch("openscientist.orchestrator.discovery.get_agent") as mock_get_agent:
-            _build_agent_executor(
+        with (
+            patch("openscientist.orchestrator.discovery.get_agent") as mock_get_agent,
+            patch(
+                "openscientist.orchestrator.discovery.load_enabled_experts",
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            await _build_agent_executor(
                 job_dir=tmp_path,
                 data_file=None,
                 use_hypotheses=True,
@@ -961,8 +967,14 @@ class TestEndToEndHypothesesFlow:
     async def test_build_agent_executor_false_passes_false(self, tmp_path: Path) -> None:
         from openscientist.orchestrator.discovery import _build_agent_executor
 
-        with patch("openscientist.orchestrator.discovery.get_agent") as mock_get_agent:
-            _build_agent_executor(
+        with (
+            patch("openscientist.orchestrator.discovery.get_agent") as mock_get_agent,
+            patch(
+                "openscientist.orchestrator.discovery.load_enabled_experts",
+                new=AsyncMock(return_value={}),
+            ),
+        ):
+            await _build_agent_executor(
                 job_dir=tmp_path,
                 data_file=None,
                 use_hypotheses=False,
@@ -1037,6 +1049,67 @@ class TestGenerateJobClaudeMd:
         content = generate_job_claude_md()
         assert "add_hypothesis" not in content
         assert "update_hypothesis" not in content
+
+    def test_experts_none_omits_delegation_section(self) -> None:
+        """No experts means no delegation section."""
+        from openscientist.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(experts=None)
+        assert "Expert Delegation" not in content
+
+    def test_empty_experts_dict_omits_delegation_section(self) -> None:
+        from openscientist.prompts import generate_job_claude_md
+
+        content = generate_job_claude_md(experts={})
+        assert "Expert Delegation" not in content
+
+    def test_experts_dict_renders_each_slug_and_description(self) -> None:
+        """Supplied slugs and descriptions appear in the rendered MD."""
+        from claude_agent_sdk.types import AgentDefinition
+
+        from openscientist.prompts import generate_job_claude_md
+
+        experts = {
+            "alpha-slug": AgentDefinition(
+                description="does alpha things",
+                prompt="you are alpha",
+            ),
+            "bravo-slug": AgentDefinition(
+                description="does bravo things",
+                prompt="you are bravo",
+            ),
+        }
+        content = generate_job_claude_md(experts=experts)
+        assert "Expert Delegation" in content
+        assert "alpha-slug" in content
+        assert "does alpha things" in content
+        assert "bravo-slug" in content
+        assert "does bravo things" in content
+
+    def test_unregistered_slug_not_in_rendered_job_claude_md(self) -> None:
+        """Unsupplied slugs do not leak into JOB_CLAUDE.md."""
+        from claude_agent_sdk.types import AgentDefinition
+
+        from openscientist.prompts import generate_job_claude_md
+
+        experts = {
+            "alpha-slug": AgentDefinition(
+                description="does alpha things",
+                prompt="you are alpha",
+            ),
+        }
+        content = generate_job_claude_md(experts=experts)
+        for stale in (
+            "research-lead",
+            "research-subagent",
+            "citations-agent",
+            "data-scientist",
+            "python-pro",
+            "scientific-literature-researcher",
+            "data-researcher",
+            "research-analyst",
+        ):
+            assert stale not in content, f"unregistered slug {stale!r} leaked into JOB_CLAUDE.md"
 
     def test_with_hypotheses_includes_hypothesis_approach_steps(self) -> None:
         from openscientist.prompts import generate_job_claude_md

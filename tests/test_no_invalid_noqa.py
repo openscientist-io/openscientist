@@ -3,7 +3,7 @@
 from pathlib import Path
 
 
-def test_no_invalid_env_ok_noqa_directives():
+def test_no_invalid_env_ok_noqa_directives() -> None:
     project_root = Path(__file__).resolve().parent.parent
     offenders: list[str] = []
 
