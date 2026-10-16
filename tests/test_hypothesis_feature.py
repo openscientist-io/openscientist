@@ -565,6 +565,14 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Provider") == "llama.cpp (self-hosted)"
         assert self._badge_value(badges, "Model") == "meta-llama/Llama-3.1-8B-Instruct"
 
+    def test_bedrock_openai_job_shows_codex_and_bedrock_provider(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        badges = _stats_badges(self._make_job(llm_provider="bedrock-openai"), lit_count=0)
+        assert self._badge_value(badges, "Agent") == "Codex"
+        assert self._badge_value(badges, "Provider") == "AWS Bedrock OpenAI"
+        assert self._get_badge(badges, "Model") is None
+
     def test_claude_job_shows_agent_and_model(self) -> None:
         from openscientist.webapp_components.pages.job_detail import _stats_badges
 

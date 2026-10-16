@@ -56,6 +56,7 @@ def test_registry_maps_known_ids() -> None:
         "ollama",
         "vllm",
         "llamacpp",
+        "bedrock-openai",
     }
 
 
