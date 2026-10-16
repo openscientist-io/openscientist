@@ -154,6 +154,8 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/openscientist"]
+# Keep in sync with .coveragerc, which takes precedence.
+concurrency = ["greenlet", "thread"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
