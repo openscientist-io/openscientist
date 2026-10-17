@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.container_manager import get_container_manager
@@ -260,6 +260,82 @@ async def _db_list_jobs(
 
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+
+async def _db_get_next_queued_job(session: AsyncSession | None = None) -> JobModel | None:
+    """Pick the next queued job fairly: least-recently-served owner first,
+    that owner's oldest queued job as the tiebreak (FIFO within an owner,
+    rotation across owners).
+
+    A dedicated query rather than reusing ``_db_list_jobs`` — that function's
+    newest-first ordering is its own documented contract (``list_jobs()``),
+    relied on elsewhere; this scheduler pick is a different, unrelated
+    question ("who goes next") from "list jobs for display."
+
+    "Last served" is approximated as the most recent ``updated_at`` among an
+    owner's jobs that have left the queue (i.e. started at least once) —
+    jobs are marked ``running`` before launch (see ``_run_job_in_container``),
+    so ``updated_at`` is stamped at start. This is the same proxy
+    ``JobInfo.started_at`` already relies on (``job/types.py``), so it needs
+    no new column. An owner with no such jobs (never served, including
+    orphaned/``NULL``-owner jobs) sorts first via ``NULLS FIRST``.
+
+    Known limitation: ``NULL = NULL`` is never true in SQL, so the owner
+    join can never match one orphaned (``owner_id IS NULL``) job's "last
+    served" row against another orphaned job — every orphaned job always
+    looks never-served, even if a different orphaned job already ran.
+    Orphaned jobs just fall back to plain FIFO-by-``created_at`` among
+    themselves as a result, never getting real owner-rotation. Acceptable:
+    orphaned ("legacy", per the Job model) jobs have no real owner for the
+    per-owner fairness policy to apply to in the first place.
+
+    Known limitation: a job cancelled while still queued/pending never ran,
+    but still counts as "served" here, because there is no reliable,
+    schema-free signal that distinguishes "cancelled before ever starting"
+    from "cancelled after running." ``current_iteration`` looked promising
+    but isn't: it's seeded to 1 at job *creation* time, before the job is
+    even queued (``KnowledgeState.__init__`` -> ``orchestrator/setup.py``'s
+    ``create_job()`` -> ``save_to_database_sync``, synchronously, at
+    submission), not after the first real iteration — so it can't tell
+    "never queued-to-run" apart from "ran once." Closing this gap for real
+    would need a genuine ``started_at``-style column, which is out of scope
+    for this fix (the issue's own review explicitly called for none).
+
+    Accepts an optional ``session`` (same idiom as
+    ``KnowledgeState.save_to_database``) so tests can run the real query
+    inside the shared per-test transaction; production always calls this
+    with no argument, opening its own session exactly like ``_db_list_jobs``.
+    """
+    if session is not None:
+        return await _select_next_queued_job(session)
+    async with AsyncSessionLocal(thread_safe=True) as session:
+        return await _select_next_queued_job(session)
+
+
+async def _select_next_queued_job(session: AsyncSession) -> JobModel | None:
+    """The actual fairness query, factored out so both the self-opening and
+    test-injected-session paths in ``_db_get_next_queued_job`` share it."""
+    last_served = (
+        select(
+            JobModel.owner_id.label("owner_id"),
+            func.max(JobModel.updated_at).label("last_served"),
+        )
+        .where(JobModel.status.not_in([JobStatus.QUEUED.value, JobStatus.PENDING.value]))
+        .group_by(JobModel.owner_id)
+        .subquery()
+    )
+    stmt = (
+        select(JobModel)
+        # NULL = NULL is never true, so this never matches one orphaned job
+        # against another's "last served" row — see the known-limitation
+        # note on _db_get_next_queued_job above.
+        .outerjoin(last_served, last_served.c.owner_id == JobModel.owner_id)
+        .where(JobModel.status == JobStatus.QUEUED.value)
+        .order_by(last_served.c.last_served.asc().nulls_first(), JobModel.created_at.asc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 async def _db_delete_job(job_id: str, user_id: UUID | None = None) -> None:
@@ -714,11 +790,19 @@ class JobManager:
             if self._get_active_job_count() >= self.max_concurrent:
                 return
 
-            queued_jobs = self._list_operational_jobs(status=JobStatus.QUEUED, limit=1)
-            if not queued_jobs:
+            try:
+                next_job = _run_async(_db_get_next_queued_job())
+            except Exception as e:
+                # Matches _list_operational_jobs's own swallow-and-log: a
+                # transient DB error here must not propagate out of
+                # cancel_job() (which calls this unguarded) and turn an
+                # already-committed cancellation into an apparent failure.
+                logger.warning("Failed to pick next queued job: %s", e)
+                return
+            if next_job is None:
                 return
 
-            job_id = queued_jobs[0].job_id
+            job_id = str(next_job.id)
             logger.info("Starting queued job %s", job_id)
             thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
             self._running_jobs[job_id] = thread

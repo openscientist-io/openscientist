@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.job_manager import JobInfo, JobManager, JobStatus, JobStatusUpdateResult
+from openscientist.database.models import Job, User
+from openscientist.job_manager import (
+    JobInfo,
+    JobManager,
+    JobStatus,
+    JobStatusUpdateResult,
+    _db_get_next_queued_job,
+)
 
 
 class TestJobStatus:
@@ -526,9 +534,9 @@ class TestJobManagerCoinvestigate:
 
         with (
             patch(
-                "openscientist.job_manager._db_list_jobs",
+                "openscientist.job_manager._db_get_next_queued_job",
                 new_callable=AsyncMock,
-                return_value=[queued_db_job],
+                return_value=queued_db_job,
             ),
             patch("openscientist.job_manager.threading.Thread", return_value=fake_thread),
         ):
@@ -536,6 +544,36 @@ class TestJobManagerCoinvestigate:
 
         assert manager._running_jobs[job_id] is fake_thread
         fake_thread.start.assert_called_once()
+
+    def test_start_next_queued_job_noop_when_none_queued(self, tmp_path):
+        """No queued job anywhere -> nothing started, no crash."""
+        manager = _new_manager(tmp_path)
+
+        with patch(
+            "openscientist.job_manager._db_get_next_queued_job",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            manager._start_next_queued_job()
+
+        assert manager._running_jobs == {}
+
+    def test_start_next_queued_job_swallows_db_errors(self, tmp_path):
+        """A transient DB error picking the next job must not propagate —
+        cancel_job() calls this unguarded, so a raised exception here would
+        turn an already-committed cancellation into an apparent failure for
+        the caller. Matches the swallow-and-log _list_operational_jobs had
+        before this function replaced it for queue-picking."""
+        manager = _new_manager(tmp_path)
+
+        with patch(
+            "openscientist.job_manager._db_get_next_queued_job",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("transient DB error"),
+        ):
+            manager._start_next_queued_job()  # must not raise
+
+        assert manager._running_jobs == {}
 
     def test_coinvestigate_count(self, tmp_path):
         manager = _new_manager(tmp_path)
@@ -872,3 +910,136 @@ class TestEffectiveModel:
             "openscientist.job_manager.get_provider", side_effect=ValueError("misconfigured")
         ):
             assert _effective_model(self._settings()) is None
+
+
+class TestDbGetNextQueuedJob:
+    """Real-database tests for the fair queue-picking query (issue #268).
+
+    This is a nontrivial join/subquery, so it's tested against a real
+    Postgres (via db_session, same transaction-per-test pattern as the rest
+    of the suite) rather than mocked — mocking the thing under test wouldn't
+    prove the SQL is actually correct.
+    """
+
+    @pytest.mark.asyncio
+    async def test_never_served_owner_beats_previously_served_owner(
+        self, db_session: AsyncSession, test_user: User, test_user2: User
+    ):
+        """An owner with no non-queued job yet (never served) is picked
+        over an owner who has one, even if that owner's queued job is
+        older — recency of service outranks queue age across owners."""
+        now = datetime.now(UTC)
+
+        # test_user: already served recently, has a queued job too.
+        served_job = Job(
+            owner_id=test_user.id,
+            research_question="Already running",
+            status="running",
+            updated_at=now - timedelta(minutes=5),
+        )
+        test_user_queued = Job(
+            owner_id=test_user.id,
+            research_question="test_user's queued job (older)",
+            status="queued",
+            created_at=now - timedelta(hours=2),
+        )
+        # test_user2: never served, queued job created more recently.
+        test_user2_queued = Job(
+            owner_id=test_user2.id,
+            research_question="test_user2's queued job (newer)",
+            status="queued",
+            created_at=now - timedelta(minutes=1),
+        )
+        db_session.add_all([served_job, test_user_queued, test_user2_queued])
+        await db_session.commit()
+
+        next_job = await _db_get_next_queued_job(session=db_session)
+
+        assert next_job is not None
+        assert next_job.id == test_user2_queued.id
+
+    @pytest.mark.asyncio
+    async def test_fifo_within_one_owners_own_backlog(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Within a single owner's own queued jobs, the oldest one wins."""
+        now = datetime.now(UTC)
+
+        older = Job(
+            owner_id=test_user.id,
+            research_question="Queued first",
+            status="queued",
+            created_at=now - timedelta(hours=1),
+        )
+        newer = Job(
+            owner_id=test_user.id,
+            research_question="Queued second",
+            status="queued",
+            created_at=now,
+        )
+        db_session.add_all([newer, older])  # insert order shouldn't matter
+        await db_session.commit()
+
+        next_job = await _db_get_next_queued_job(session=db_session)
+
+        assert next_job is not None
+        assert next_job.id == older.id
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_nothing_queued(self, db_session: AsyncSession):
+        assert await _db_get_next_queued_job(session=db_session) is None
+
+    @pytest.mark.asyncio
+    async def test_opens_its_own_session_when_none_given(self, db_session: AsyncSession):
+        """Production always calls this with no argument (_start_next_queued_job
+        never passes a session), so the self-opening branch — not just the
+        test-injected-session one every other test here exercises — needs
+        its own coverage. db_session is requested only to trigger the test
+        database redirect so the real AsyncSessionLocal() connects to the
+        same test container; its own (rolled-back) transaction is unused."""
+        _ = db_session
+        assert await _db_get_next_queued_job() is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_job_counts_as_served_known_limitation(
+        self, db_session: AsyncSession, test_user: User, test_user2: User
+    ):
+        """Documents a known, accepted limitation rather than silently
+        relying on untested behavior: a job cancelled while still
+        queued/pending still counts as "served" (via its updated_at), even
+        though it never actually ran. There's no reliable schema-free signal
+        to tell "cancelled before running" apart from "cancelled after
+        running" — current_iteration looked promising but isn't one, since
+        it's seeded to 1 at job *creation*, before the job is even queued
+        (see _db_get_next_queued_job's docstring). Closing this gap for real
+        would need a new started_at-style column, out of scope here."""
+        now = datetime.now(UTC)
+
+        cancelled_before_running = Job(
+            owner_id=test_user.id,
+            research_question="Cancelled before it ever ran",
+            status="cancelled",
+            updated_at=now - timedelta(minutes=1),
+        )
+        test_user_replacement = Job(
+            owner_id=test_user.id,
+            research_question="test_user's next job",
+            status="queued",
+            created_at=now - timedelta(hours=1),  # older than test_user2's
+        )
+        test_user2_queued = Job(
+            owner_id=test_user2.id,
+            research_question="test_user2's queued job (genuinely never served)",
+            status="queued",
+            created_at=now,
+        )
+        db_session.add_all([cancelled_before_running, test_user_replacement, test_user2_queued])
+        await db_session.commit()
+
+        next_job = await _db_get_next_queued_job(session=db_session)
+
+        # test_user2 goes first even though test_user's job is older in the
+        # queue — the cancellation (never-run or not) still marks test_user
+        # as "served" under this known limitation.
+        assert next_job is not None
+        assert next_job.id == test_user2_queued.id
