@@ -170,7 +170,7 @@ When you're in the final 20% of your iteration budget:
 
 **STOP doing:**
 - ❌ Broad exploration
-- ❌ Low-priority hypotheses (score <30)
+- ❌ Low-priority hypotheses
 - ❌ Tangential questions
 - ❌ Over-analyzing confirmed findings
 

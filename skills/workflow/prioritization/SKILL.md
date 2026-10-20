@@ -20,26 +20,7 @@ category: workflow
 
 ### Option 1: Test a Hypothesis
 
-**Priority = Impact × Feasibility × Novelty**
-
-Rate each hypothesis:
-- **Impact** (1-5): How central to research question?
-- **Feasibility** (1-5): Can we test it with current data?
-- **Novelty** (1-5): Is this a new insight?
-
-**Test highest-scoring hypothesis first.**
-
-**Example:**
-```
-H1: "Salvage flux is increased"
-  Impact=4, Feasibility=4, Novelty=3 → Score=48
-
-H2: "CMP→CDP bottleneck"
-  Impact=5, Feasibility=5, Novelty=4 → Score=100 ⭐ Test this
-
-H3: "Sex differences modulate effect"
-  Impact=2, Feasibility=3, Novelty=2 → Score=12
-```
+Pick the hypothesis that bears most directly on the research question, can be tested with the data at hand, and would be informative whether the result is positive or negative. Test it first.
 
 ### Option 2: Explore Data
 
@@ -89,7 +70,7 @@ START: What should I do next?
 │   YES → Record them now
 │   NO → Continue
 │
-├─> Do I have high-priority hypotheses (score >50)?
+├─> Do I have a promising, testable hypothesis?
 │   YES → Test highest-scoring hypothesis
 │   NO → Continue
 │
@@ -183,9 +164,9 @@ START: What should I do next?
 - Unexplored: lipid data
 
 **Options:**
-1. Test H2: "CMP→CDP bottleneck" (Score=100)
-2. Test H3: "PUFA enrichment" (Score=75)
-3. Test H4: "Sex difference" (Score=20)
+1. Test H2: "CMP→CDP bottleneck"
+2. Test H3: "PUFA enrichment"
+3. Test H4: "Sex difference"
 4. Explore lipid data
 5. Search literature on rejected hypothesis
 
@@ -199,7 +180,7 @@ START: What should I do next?
 
 ## Quick Reference
 
-**Test hypothesis** → When you have high-priority (score >50) hypothesis ready
+**Test hypothesis** → When you have a promising hypothesis ready
 
 **Explore data** → When early (<20%) OR stuck
 

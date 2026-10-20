@@ -512,7 +512,7 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 1. **Iteration 1:** Read ALL workflow skills and any domain skill that matches your data.
 2. **Every hypothesis:** Follow the process in `workflow--hypothesis-generation.md`.
 3. **Every result:** Apply the checklist in `workflow--result-interpretation.md`.
-4. **Choosing next step:** Use `workflow--prioritization.md` to rank options.
+4. **Choosing next step:** Use `workflow--prioritization.md` to decide what to investigate next.
 5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
 
 {{SKILLS_DISCOVERY_NOTE}}
@@ -531,7 +531,7 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 - **Follow the process in `workflow--hypothesis-generation.md`**
 - Search literature to understand the domain
 - Formulate specific, testable hypotheses
-- **Use `workflow--prioritization.md`** to rank by impact, feasibility, novelty""")
+- **Use `workflow--prioritization.md`** to decide what to investigate next""")
 
     if use_hypotheses:
         parts.append("- **Use `add_hypothesis` to formally record each hypothesis before testing**")

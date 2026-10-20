@@ -51,31 +51,7 @@ Good hypotheses have this structure:
 
 ### 3. Prioritize Hypotheses
 
-Score each hypothesis on:
-
-**Impact** (1-5): How central to the research question?
-- 5 = Directly explains the core phenotype
-- 3 = Fills in a mechanistic detail
-- 1 = Minor tangential observation
-
-**Feasibility** (1-5): Can we test it with current data?
-- 5 = Have all required variables
-- 3 = Can construct proxy measure
-- 1 = Missing critical data
-
-**Novelty** (1-5): Is this a new insight?
-- 5 = No one has asked this before
-- 3 = Refinement of known mechanism
-- 1 = Well-studied question
-
-**Coherence** (1-5): Fits with existing findings?
-- 5 = Explains contradictions or connects findings
-- 3 = Extends current model
-- 1 = Orthogonal to other findings
-
-**Total Priority Score = Impact × 0.4 + Feasibility × 0.3 + Novelty × 0.2 + Coherence × 0.1**
-
-Test highest-scoring hypotheses first.
+Decide which hypothesis to test first by weighing how central it is to the research question, whether it can be tested with the current data, whether it would be a new insight, and how well it fits with existing findings. Test the most promising hypothesis first.
 
 ### 4. Design the Test
 
@@ -101,9 +77,9 @@ Finds: CMP is product of nucleotide salvage pathway
 - H3: "CMP degradation is reduced" (clearance issue)
 
 **Step 3: Prioritize**
-- H1: Impact=4, Feasibility=4, Novelty=3, Coherence=4 → Score=3.8
-- H2: Impact=5, Feasibility=5, Novelty=4, Coherence=4 → Score=4.6 ⭐
-- H3: Impact=3, Feasibility=2, Novelty=2, Coherence=3 → Score=2.6
+- H2 is the most direct explanation of the observation and fully testable with current data ⭐
+- H1 is plausible and testable via product/precursor ratios
+- H3 is tangential to the question
 
 **Step 4: Test H2 first**
 Calculate CDP-Choline Synthesis Index = CMP / CDP-Choline
@@ -126,7 +102,7 @@ Compare across groups
 ## When to Stop
 
 You have enough hypotheses when:
-- You have 2-3 high-priority (score >4.0) hypotheses ready to test
+- You have 2-3 promising hypotheses ready to test
 - You've covered the main alternative explanations
 - Further brainstorming is giving diminishing returns
 
