@@ -1,0 +1,19 @@
+# Gitleaks configuration for OpenScientist.
+# Allowlist paths with documented dev/test fixtures so CI focuses on real leaks.
+
+title = "OpenScientist gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known dev defaults, tests, and placeholder templates"
+paths = [
+  '''(?i)\.env\.example$''',
+  '''(?i)CONTRIBUTING\.md$''',
+  '''(?i)docker-compose\.yml$''',
+  '''(?i)docker/postgres/init\.sql$''',
+  '''(?i)\.github/workflows/ci\.yml$''',
+  '''(?i)src/openscientist/database/migrations/''',
+  '''(?i)^tests/''',
+]
