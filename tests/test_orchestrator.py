@@ -1,7 +1,7 @@
 """Tests for orchestrator helper functions.
 
 Only tests pure/helper functions that don't spawn subprocesses or require
-the full agent loop. The run_discovery integration is too heavyweight for
+the full agent loop. The run_discovery_async integration is too heavyweight for
 unit testing.
 """
 
