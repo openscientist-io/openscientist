@@ -4,11 +4,7 @@ from types import SimpleNamespace
 
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
 from openscientist.agent.codex_agent import CodexAgent
-from openscientist.prompts import (
-    build_discovery_prompt,
-    format_skills_list,
-    generate_job_claude_md,
-)
+from openscientist.prompts import generate_job_claude_md
 
 
 class TestSystemPrompt:
@@ -157,102 +153,3 @@ class TestRenderChatContext:
         assert "`.claude/skills/`" not in ctx
         # The guidance itself is preserved.
         assert "execute_code" in ctx
-
-
-class TestBuildDiscoveryPrompt:
-    """Tests for discovery prompt construction."""
-
-    def test_first_iteration_shows_first_iteration_guidance(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=1,
-            max_iterations=20,
-        )
-        assert "first iteration" in prompt.lower()
-        assert "Iteration 1/20" in prompt
-
-    def test_early_iteration_shows_exploration_phase(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=3,
-            max_iterations=20,
-        )
-        assert "early exploration phase" in prompt.lower()
-
-    def test_middle_iteration_shows_deep_investigation(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=8,
-            max_iterations=20,
-        )
-        assert "deep investigation phase" in prompt.lower()
-
-    def test_late_iteration_shows_approaching_limit(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=18,
-            max_iterations=20,
-        )
-        assert "approaching the iteration limit" in prompt.lower()
-
-    def test_skills_option_shown_when_provided(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=1,
-            max_iterations=10,
-            skills_available="- hypothesis-generation\n- result-interpretation",
-        )
-        assert "Option F: Use Skill" in prompt
-        assert "hypothesis-generation" in prompt
-
-    def test_skills_option_hidden_when_not_provided(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=1,
-            max_iterations=10,
-        )
-        assert "Option F" not in prompt
-
-    def test_knowledge_graph_summary_included(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## KG: Found 5 findings",
-            iteration=5,
-            max_iterations=20,
-        )
-        assert "KG: Found 5 findings" in prompt
-
-    def test_save_iteration_summary_reminder_at_end(self):
-        prompt = build_discovery_prompt(
-            knowledge_graph_summary="## Summary",
-            iteration=1,
-            max_iterations=10,
-        )
-        assert "save_iteration_summary" in prompt
-
-
-class TestFormatSkillsList:
-    """Tests for skills list formatting."""
-
-    def test_empty_skills(self):
-        assert format_skills_list({}) == ""
-
-    def test_single_skill(self):
-        skills = {"hypothesis-generation": {"description": "Generate hypotheses"}}
-        result = format_skills_list(skills)
-        assert "hypothesis-generation" in result
-        assert "Generate hypotheses" in result
-        assert "Available skills:" in result
-
-    def test_multiple_skills(self):
-        skills = {
-            "hypothesis-generation": {"description": "Generate hypotheses"},
-            "result-interpretation": {"description": "Interpret results"},
-        }
-        result = format_skills_list(skills)
-        assert "hypothesis-generation" in result
-        assert "result-interpretation" in result
-
-    def test_missing_description(self):
-        skills = {"my-skill": {}}
-        result = format_skills_list(skills)
-        assert "No description" in result
