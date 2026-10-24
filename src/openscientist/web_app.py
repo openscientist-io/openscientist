@@ -566,11 +566,6 @@ def create_app(jobs_dir: Path | None = None) -> FastAPI:
     return host_app
 
 
-def init_app(jobs_dir: Path = Path("jobs")) -> None:
-    """Backward-compatible initialization wrapper."""
-    create_app(jobs_dir=jobs_dir)
-
-
 def main(
     host: str = "0.0.0.0",
     port: int = 8080,

@@ -210,12 +210,7 @@ docker-compose exec openscientist python -c "from openscientist.cost_tracker imp
 
 ### Scaling
 
-For multiple concurrent jobs, increase `max_concurrent` in `JobManager`:
-
-```python
-# In web_app.py init_app()
-job_manager = JobManager(jobs_dir=jobs_dir, max_concurrent=3)
-```
+For multiple concurrent jobs, raise `OPENSCIENTIST_MAX_CONCURRENT_JOBS` in `.env` (default 1).
 
 ### Monitoring and Alerting
 
