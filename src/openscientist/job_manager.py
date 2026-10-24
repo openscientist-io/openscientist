@@ -231,16 +231,6 @@ async def _db_update_job_status(
     return result
 
 
-async def _db_get_job_statuses(job_ids: list[str]) -> dict[str, str]:
-    """Batch-fetch job statuses by ID."""
-    async with AsyncSessionLocal(thread_safe=True) as session:
-        stmt = select(JobModel.id, JobModel.status).where(
-            JobModel.id.in_([UUID(jid) for jid in job_ids])
-        )
-        result = await session.execute(stmt)
-        return {str(row.id): row.status for row in result}
-
-
 async def _db_list_jobs(
     status: JobStatus | None = None,
     limit: int | None = None,
@@ -576,7 +566,7 @@ class JobManager:
             if job_id in self._running_jobs:
                 raise ValueError(f"Job {job_id} is already running")
 
-            # Check concurrent limit (awaiting_feedback jobs don't count)
+            # Check concurrent limit
             if self._get_active_job_count() >= self.max_concurrent:
                 # Queue the job
                 self._update_job_status(job_id, JobStatus.QUEUED)
@@ -890,45 +880,8 @@ class JobManager:
         return deleted
 
     def _get_active_job_count(self) -> int:
-        """
-        Get count of actively running jobs (excluding awaiting_feedback).
-
-        Jobs in AWAITING_FEEDBACK status don't count against the concurrent limit
-        so scientists can take unlimited time without blocking the queue.
-        """
-        if not self._running_jobs:
-            return 0
-        job_ids = list(self._running_jobs.keys())
-        statuses = _run_async(_db_get_job_statuses(job_ids))
-        return sum(1 for s in statuses.values() if s != JobStatus.AWAITING_FEEDBACK.value)
-
-    def get_coinvestigate_count(self) -> int:
-        """
-        Get count of jobs in coinvestigate mode (running or awaiting feedback).
-
-        Used to limit concurrent coinvestigations to prevent resource exhaustion.
-        """
-        count = 0
-        for job_info in self._list_operational_jobs():
-            if job_info.investigation_mode == "coinvestigate" and job_info.status in [
-                JobStatus.RUNNING,
-                JobStatus.AWAITING_FEEDBACK,
-                JobStatus.QUEUED,
-            ]:
-                count += 1
-        return count
-
-    def can_start_coinvestigate(self, max_coinvestigate: int = 15) -> bool:
-        """
-        Check if a new coinvestigate job can be started.
-
-        Args:
-            max_coinvestigate: Maximum concurrent coinvestigate jobs (default 15)
-
-        Returns:
-            True if under the limit, False otherwise
-        """
-        return self.get_coinvestigate_count() < max_coinvestigate
+        """Count tracked jobs, including those paused for feedback, which keep their container."""
+        return len(self._running_jobs)
 
     def get_job_summary(self) -> dict[str, Any]:
         """

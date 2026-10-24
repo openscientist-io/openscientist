@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from openscientist.database.models import Job
 from openscientist.job_manager import JobInfo, JobManager, JobStatus, JobStatusUpdateResult
 
 
@@ -506,8 +509,8 @@ class TestJobManagerKSProgress:
         assert job.findings_count == 2
 
 
-class TestJobManagerCoinvestigate:
-    """Tests for co-investigate mode helpers."""
+class TestJobManagerQueue:
+    """Tests for starting queued jobs."""
 
     @pytest.fixture(autouse=True)
     def _mock_ks_progress(self):
@@ -536,68 +539,6 @@ class TestJobManagerCoinvestigate:
 
         assert manager._running_jobs[job_id] is fake_thread
         fake_thread.start.assert_called_once()
-
-    def test_coinvestigate_count(self, tmp_path):
-        manager = _new_manager(tmp_path)
-
-        c1 = str(uuid4())
-        c2 = str(uuid4())
-        a1 = str(uuid4())
-
-        _write_config(tmp_path, c1, investigation_mode="coinvestigate")
-        _write_config(tmp_path, c2, investigation_mode="coinvestigate")
-        _write_config(tmp_path, a1, investigation_mode="autonomous")
-
-        db_jobs = [
-            _make_db_job(
-                "completed",
-                "2026-02-01T00:00:00",
-                job_id=c1,
-                investigation_mode="coinvestigate",
-            ),
-            _make_db_job(
-                "awaiting_feedback",
-                "2026-02-01T00:00:00",
-                job_id=c2,
-                investigation_mode="coinvestigate",
-            ),
-            _make_db_job(
-                "running",
-                "2026-02-01T00:00:00",
-                job_id=a1,
-                investigation_mode="autonomous",
-            ),
-        ]
-
-        with patch(
-            "openscientist.job_manager._db_list_jobs", new_callable=AsyncMock, return_value=db_jobs
-        ):
-            assert manager.get_coinvestigate_count() == 1
-
-    def test_can_start_coinvestigate_under_limit(self, tmp_path):
-        manager = _new_manager(tmp_path)
-        with patch(
-            "openscientist.job_manager._db_list_jobs", new_callable=AsyncMock, return_value=[]
-        ):
-            assert manager.can_start_coinvestigate(max_coinvestigate=15) is True
-
-    def test_can_start_coinvestigate_at_limit(self, tmp_path):
-        manager = _new_manager(tmp_path)
-        job_id = str(uuid4())
-        _write_config(tmp_path, job_id, investigation_mode="coinvestigate")
-        db_jobs = [
-            _make_db_job(
-                "running",
-                "2026-02-01T00:00:00",
-                job_id=job_id,
-                investigation_mode="coinvestigate",
-            )
-        ]
-
-        with patch(
-            "openscientist.job_manager._db_list_jobs", new_callable=AsyncMock, return_value=db_jobs
-        ):
-            assert manager.can_start_coinvestigate(max_coinvestigate=1) is False
 
 
 class TestJobManagerCancellationConcurrency:
@@ -630,12 +571,52 @@ class TestJobManagerCancellationConcurrency:
         job_id = str(uuid4())
         manager._running_jobs[job_id] = MagicMock()
 
+        assert manager._get_active_job_count() == 1
+
+
+class TestJobManagerConcurrencyLimit:
+    """Slot accounting against max_concurrent, on real database rows."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_ks_progress(self):
         with patch(
-            "openscientist.job_manager._db_get_job_statuses",
-            new_callable=AsyncMock,
-            return_value={job_id: JobStatus.CANCELLED.value},
+            "openscientist.job_manager._load_progress_from_knowledge_state",
+            return_value=(0, 0),
         ):
-            assert manager._get_active_job_count() == 1
+            yield
+
+    async def test_job_awaiting_feedback_holds_its_slot(
+        self, tmp_path: Path, test_engine: AsyncEngine
+    ) -> None:
+        """A paused coinvestigate job keeps its container, so a new job must queue."""
+        session_factory = async_sessionmaker(test_engine, expire_on_commit=False)
+        paused = Job(
+            research_question="Paused?",
+            status="awaiting_feedback",
+            investigation_mode="coinvestigate",
+        )
+        new = Job(research_question="New?", status="pending")
+        async with session_factory() as session:
+            session.add_all([paused, new])
+            await session.commit()
+
+        try:
+            manager = _new_manager(tmp_path)
+            manager.max_concurrent = 1
+            manager._running_jobs[str(paused.id)] = MagicMock()
+
+            with patch.object(manager, "_run_job"):
+                manager.start_job(str(new.id))
+
+            assert str(new.id) not in manager._running_jobs
+            async with session_factory() as session:
+                stored = await session.get(Job, new.id)
+                assert stored is not None
+                assert stored.status == "queued"
+        finally:
+            async with session_factory() as session:
+                await session.execute(delete(Job).where(Job.id.in_([paused.id, new.id])))
+                await session.commit()
 
 
 class TestJobManagerCleanup:
