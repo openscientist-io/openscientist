@@ -84,8 +84,8 @@ RUN chmod +x /usr/local/bin/codex
 # The checksum is the release asset digest, not just the tag: a git tag is
 # mutable and can be repointed at different bytes without this file changing,
 # and this binary runs with the job's database credentials in its environment.
-ARG OMP_VERSION=v17.1.5
-ARG OMP_SHA256=35019bfa4d1acae0040ef1f3d91c29c6e7401acfcdbcfeba6ff506a6b103c987
+ARG OMP_VERSION=v18.12.6
+ARG OMP_SHA256=85d9daf3a05fc76e8cd425ae1904eb576af8d21cc85fcf4690742626e07ccfa4
 ARG OMP_RELEASE_BASE=https://github.com/can1357/oh-my-pi/releases/download
 RUN curl -fsSL "${OMP_RELEASE_BASE}/${OMP_VERSION}/omp-linux-x64" -o /tmp/omp \
     && echo "${OMP_SHA256}  /tmp/omp" | sha256sum -c - \

@@ -11,8 +11,6 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 
-from openscientist.agent.omp_agent import MCP_HANDSHAKE_MARKER
-
 
 async def test_ping_listed_and_returns_state_bound_job_id(
     tmp_path: Path,
@@ -48,17 +46,3 @@ def test_missing_required_env_var_fails(
     )
     assert proc.returncode != 0
     assert "job_dir" in proc.stderr.lower()
-
-
-async def test_the_handshake_marker_tracks_whether_the_client_asked_for_tools(
-    tmp_path: Path,
-    server_env: Callable[..., dict[str, str]],
-    server_params: Callable[[dict[str, str]], StdioServerParameters],
-) -> None:
-    marker = tmp_path / ".omp" / MCP_HANDSHAKE_MARKER
-    async with stdio_client(server_params(server_env(tmp_path))) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            assert not marker.exists()
-            await session.list_tools()
-            assert marker.exists()

@@ -43,8 +43,9 @@ logger = logging.getLogger(__name__)
 
 _MCP_SERVER_NAME = "openscientist-tools"
 
-#: Written by the tools server on tools/list.
-MCP_HANDSHAKE_MARKER = "mcp_handshake"
+#: What omp prints when ``OMP_MCP_REQUIRE_READY`` makes it refuse the prompt
+#: because an MCP server did not connect within ``OMP_MCP_TIMEOUT_MS``.
+_MCP_NOT_READY = "MCP servers not ready"
 
 # Wall-clock bound on one turn; a stuck turn is cut and the loop advances.
 _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_OMP_TURN_TIMEOUT", "900"))
@@ -271,6 +272,10 @@ class OmpAgent(AbstractAgent[Provider]):
         from the Claude Code ones the container env publishes, and letting the
         ambient environment win is how a provider ends up talking to the vendor
         directly with the real credential.
+
+        ``OMP_MCP_REQUIRE_READY`` is forced on after routing. Without it omp sends
+        the prompt anyway when the tools server misses its startup wait, and the
+        turn runs on built-ins alone.
         """
         provider_settings = get_settings().provider
         env = dict(os.environ)
@@ -289,6 +294,7 @@ class OmpAgent(AbstractAgent[Provider]):
 
         # Provider routing, applied last so it beats any ambient value.
         env.update(self._provider.harness_env(proxy=env.get(LLM_PROXY_URL_ENV)))
+        env["OMP_MCP_REQUIRE_READY"] = "1"
         return env
 
     #: omp built-in tools the discovery loop may use. ``--tools`` is an enable
@@ -377,17 +383,9 @@ class OmpAgent(AbstractAgent[Provider]):
         ]
         return "".join(parts)
 
-    def _mcp_handshake_marker(self) -> Path:
-        return self._omp_dir() / MCP_HANDSHAKE_MARKER
-
-    def _mcp_handshake_seen(self) -> bool:
-        return self._mcp_handshake_marker().exists()
-
-    def _clear_mcp_handshake(self) -> None:
-        self._mcp_handshake_marker().unlink(missing_ok=True)
-
-    def _missing_mcp_tools(self, result: IterationResult) -> bool:
-        return result.outcome is TurnOutcome.COMPLETED and not self._mcp_handshake_seen()
+    @staticmethod
+    def _missing_mcp_tools(result: IterationResult) -> bool:
+        return result.outcome is TurnOutcome.FAILED and _MCP_NOT_READY in result.error
 
     @staticmethod
     def _count_tool_calls(messages: list[dict[str, Any]]) -> int:
@@ -462,7 +460,6 @@ class OmpAgent(AbstractAgent[Provider]):
         system_prompt_path = self._write_system_prompt()
         self._write_mcp_config()
         config_path = self._write_omp_config()
-        self._clear_mcp_handshake()
         prompt_path = self._write_turn_prompt(prompt)
         args = self._build_args(system_prompt_path, prompt_path, config_path)
 
@@ -607,11 +604,11 @@ class OmpAgent(AbstractAgent[Provider]):
             # process tree and keep the output that already arrived.
             result = await self._run_omp(prompt)
 
-            # omp sometimes requests the model before asking for the tool list,
-            # silently leaving the agent on built-ins. Fatal, not FAILED: a failed
-            # report turn still completes the job when a report file exists.
+            # With OMP_MCP_REQUIRE_READY omp refuses the prompt when the tools
+            # server is not ready. Fatal, not FAILED: a failed report turn still
+            # completes the job when a report file exists.
             if self._missing_mcp_tools(result):
-                logger.warning("tools server was never asked for its tools, retrying the turn")
+                logger.warning("tools server was not ready, retrying the turn")
                 result = await self._run_omp(prompt)
                 if self._missing_mcp_tools(result):
                     raise McpToolsUnavailableError(
