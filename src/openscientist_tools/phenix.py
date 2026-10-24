@@ -1,9 +1,9 @@
 """Standalone Phenix structural biology tools (`run_phenix_tool`,
 `compare_structures`, `parse_alphafold_confidence`).
 
-All three register only when `check_phenix_available()` is true, mirroring
-the in-process gate. The function bodies are defined unconditionally so
-tests can import and call them regardless of the env state.
+All three register only when `_phenix_installed()` is true. The function
+bodies are defined unconditionally so tests can import and call them
+regardless of the env state.
 """
 
 from __future__ import annotations
@@ -288,12 +288,7 @@ def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str | None = None) 
 
 
 def _phenix_installed() -> bool:
-    """Direct PHENIX_PATH env-var probe.
-
-    Avoids `openscientist.phenix_setup.check_phenix_available`, which
-    routes through `get_settings()` and crashes at module import when
-    `DATABASE_URL` is not set yet.
-    """
+    """Probe PHENIX_PATH directly, since `get_settings()` fails at import without `DATABASE_URL`."""
     phenix_path = os.environ.get("PHENIX_PATH")
     if not phenix_path:
         return False

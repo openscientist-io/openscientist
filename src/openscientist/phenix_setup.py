@@ -103,21 +103,3 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
     # phenix.superpose_pdbs). Strip it from the env we pass to Phenix.
     phenix_env.pop("JOB_ID", None)
     return phenix_env
-
-
-def check_phenix_available() -> bool:
-    """
-    Check if Phenix is properly configured and available.
-
-    Uses centralized settings when available, with a fallback path for
-    situations where settings cannot be loaded.
-
-    Returns:
-        bool: True if Phenix is available, False otherwise
-    """
-    try:
-        from openscientist.settings import get_settings
-
-        return get_settings().phenix.is_available
-    except Exception:
-        return setup_phenix_env() is not None

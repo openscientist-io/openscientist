@@ -7,7 +7,6 @@ import pytest
 
 from openscientist.phenix_setup import (
     PhenixConfigError,
-    check_phenix_available,
     setup_phenix_env,
     validate_phenix_path,
 )
@@ -178,39 +177,3 @@ class TestSetupPhenixEnv:
         assert env is not None
         assert env["PATH"] == "/opt/phenix/bin"
         assert not env["PATH"].endswith(":")
-
-
-class TestCheckPhenixAvailable:
-    """Tests for Phenix availability check."""
-
-    def test_available_when_phenix_configured(self, monkeypatch, tmp_path):
-        """check_phenix_available returns True when a 2.x install is present."""
-        phenix_dir = tmp_path / "phenix"
-        phenix_dir.mkdir()
-        (phenix_dir / "bin").mkdir()
-        (phenix_dir / "bin" / "phenix.about").write_text("#!/bin/sh\n")
-
-        clear_settings_cache()
-        monkeypatch.chdir(tmp_path)  # Avoid picking up .env
-        monkeypatch.setenv("PHENIX_PATH", str(phenix_dir))
-
-        assert check_phenix_available() is True
-        clear_settings_cache()
-
-    def test_unavailable_when_phenix_not_configured(self, monkeypatch, tmp_path):
-        clear_settings_cache()
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("PHENIX_PATH", raising=False)
-
-        assert check_phenix_available() is False
-        clear_settings_cache()
-
-    @patch("openscientist.phenix_setup.setup_phenix_env")
-    def test_fallback_to_setup_phenix_env(self, mock_setup):
-        """Falls back to setup_phenix_env when settings can't be loaded."""
-        with patch("openscientist.settings.get_settings", side_effect=Exception("Settings error")):
-            mock_setup.return_value = {"PATH": "/usr/bin"}
-            assert check_phenix_available() is True
-
-            mock_setup.return_value = None
-            assert check_phenix_available() is False
