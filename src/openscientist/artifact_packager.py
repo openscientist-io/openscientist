@@ -7,7 +7,7 @@ into downloadable archives in various formats (ZIP, Markdown, JSON).
 
 import logging
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -124,9 +124,18 @@ def _write_artifacts_zip(
     return written
 
 
-def create_artifacts_zip_file(job_dir: Path, archive_path: Path, job_id: str) -> int:
-    """Create an artifacts ZIP archive on disk and return number of files written."""
-    excluded_paths: set[Path] = set()
+def create_artifacts_zip_file(
+    job_dir: Path,
+    archive_path: Path,
+    job_id: str,
+    excluded_top_level_dirs: Iterable[str] = (),
+) -> int:
+    """Create an artifacts ZIP archive on disk and return number of files written.
+
+    ``excluded_top_level_dirs`` names directories directly under ``job_dir``
+    to leave out, such as ``data`` for a viewer who may not see uploads.
+    """
+    excluded_paths: set[Path] = {(job_dir / name).resolve() for name in excluded_top_level_dirs}
     archive_path_resolved = archive_path.resolve()
     if archive_path_resolved.is_relative_to(job_dir.resolve()):
         excluded_paths.add(archive_path_resolved)

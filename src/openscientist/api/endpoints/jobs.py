@@ -38,6 +38,7 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job_manager import JobManager
+from openscientist.share_service import withheld_artifact_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,8 @@ async def get_job_by_id(
     """
     Get a job by ID, verifying the user has access.
 
-    Uses RLS to ensure users can only access their own jobs or shared jobs.
+    Uses RLS to ensure users can only access their own jobs, jobs shared with
+    them, or jobs their owner has made public.
     """
     # Set RLS context
     await set_current_user(session, user.id)
@@ -698,6 +700,8 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+
     # Build ZIP archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
@@ -712,6 +716,7 @@ async def download_artifacts(
             job_dir=job_dir,
             archive_path=archive_path,
             job_id=str(job.id),
+            excluded_top_level_dirs=excluded_dirs,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
