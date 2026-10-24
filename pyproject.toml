@@ -44,7 +44,6 @@ dependencies = [
     "h5py>=3.10.0",
 
     # API clients
-    "anthropic>=0.78.0",
     "requests>=2.31.0",
 
     # MCP server. Capped below 2, which renamed FastMCP to MCPServer and so

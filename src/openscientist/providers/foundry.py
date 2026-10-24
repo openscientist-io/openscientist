@@ -13,10 +13,6 @@ from typing import Any
 from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import (
-    send_anthropic_message,
-    send_anthropic_message_with_tools,
-)
 from ._env_cleanup import (
     VERTEX_PROVIDER_ENV_VARS,
     clear_empty_env_vars,
@@ -391,69 +387,3 @@ class FoundryProvider(ClaudeCompatible):
                     "Check Azure credentials. See server logs for details."
                 ),
             )
-
-    async def send_message(
-        self,
-        messages: list[dict[str, str]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> str:
-        """
-        Send message using Anthropic SDK via Azure Foundry.
-
-        Azure Foundry uses the same Anthropic SDK with a different base URL.
-        """
-        import anthropic
-
-        settings = get_settings()
-        base_url = self._resolve_base_url()
-
-        client = anthropic.Anthropic(
-            base_url=base_url,
-            api_key=self._resolve_api_key(),
-        )
-        return send_anthropic_message(
-            client=client,
-            messages=messages,
-            system=system,
-            model=model,
-            configured_model=settings.provider.anthropic_default_sonnet_model,
-            provider_default_model="claude-sonnet-4-5",
-            max_tokens=max_tokens,
-        )
-
-    async def send_message_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> dict[str, Any]:
-        """
-        Send message with tool definitions using Anthropic SDK via Azure Foundry.
-
-        Returns full response including stop_reason and content blocks.
-        """
-        import anthropic
-        from anthropic.types import ToolUseBlock
-
-        settings = get_settings()
-        base_url = self._resolve_base_url()
-
-        client = anthropic.Anthropic(
-            base_url=base_url,
-            api_key=self._resolve_api_key(),
-        )
-        return send_anthropic_message_with_tools(
-            client=client,
-            messages=messages,
-            tools=tools,
-            system=system,
-            model=model,
-            configured_model=settings.provider.anthropic_default_sonnet_model,
-            provider_default_model="claude-sonnet-4-5",
-            max_tokens=max_tokens,
-            tool_use_block_type=ToolUseBlock,
-        )

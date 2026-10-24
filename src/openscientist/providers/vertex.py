@@ -7,7 +7,6 @@ Uses Vertex AI for model access and GCP Billing API for cost tracking.
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from openscientist.exceptions import ProviderError
 from openscientist.providers.base import (
@@ -19,10 +18,6 @@ from openscientist.providers.base import (
 )
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import (
-    send_anthropic_message,
-    send_anthropic_message_with_tools,
-)
 from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
@@ -245,79 +240,4 @@ class VertexProvider(ClaudeCompatible):
             last_updated=now,
             data_lag_note=data_lag_note,
             metadata={"project_id": project_id},
-        )
-
-    async def send_message(
-        self,
-        messages: list[dict[str, str]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> str:
-        """
-        Send message using Vertex AI via Anthropic SDK.
-
-        This bypasses the Claude Code CLI and its local pre-flight content
-        filter, which can produce false positives on legitimate scientific content.
-        """
-        import anthropic
-
-        settings = get_settings()
-
-        project_id = settings.provider.anthropic_vertex_project_id
-        region = settings.provider.cloud_ml_region
-        if not project_id or not region:
-            raise ValueError("Vertex AI project_id and region are required")
-
-        client = anthropic.AnthropicVertex(
-            project_id=project_id,
-            region=region,
-        )
-        return send_anthropic_message(
-            client=client,
-            messages=messages,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="claude-sonnet-4-5@20250929",
-            max_tokens=max_tokens,
-        )
-
-    async def send_message_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> dict[str, Any]:
-        """
-        Send message with tool definitions using Vertex AI via Anthropic SDK.
-
-        Returns full response including stop_reason and content blocks.
-        """
-        import anthropic
-        from anthropic.types import ToolUseBlock
-
-        settings = get_settings()
-
-        project_id = settings.provider.anthropic_vertex_project_id
-        region = settings.provider.cloud_ml_region
-        if not project_id or not region:
-            raise ValueError("Vertex AI project_id and region are required")
-
-        client = anthropic.AnthropicVertex(
-            project_id=project_id,
-            region=region,
-        )
-        return send_anthropic_message_with_tools(
-            client=client,
-            messages=messages,
-            tools=tools,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="claude-sonnet-4-5@20250929",
-            max_tokens=max_tokens,
-            tool_use_block_type=ToolUseBlock,
         )

@@ -7,7 +7,6 @@ Uses CBORG API for model access and cost tracking.
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import requests
 
@@ -15,11 +14,7 @@ from openscientist.exceptions import ProviderError
 from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import (
-    anthropic_container_env,
-    send_anthropic_message,
-    send_anthropic_message_with_tools,
-)
+from ._anthropic_common import anthropic_container_env
 from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
@@ -213,67 +208,4 @@ class CborgProvider(ClaudeCompatible):
             last_updated=datetime.now(UTC),
             data_lag_note=data_lag_note,
             key_expires=key_expires,
-        )
-
-    async def send_message(
-        self,
-        messages: list[dict[str, str]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> str:
-        """
-        Send message using CBORG via Anthropic SDK with custom base_url.
-
-        This bypasses the Claude Code CLI and its local pre-flight content
-        filter, which can produce false positives on legitimate scientific content.
-        """
-        import anthropic
-
-        settings = get_settings()
-        client = anthropic.Anthropic(
-            api_key=settings.provider.anthropic_auth_token,
-            base_url=settings.provider.anthropic_base_url,
-        )
-        return send_anthropic_message(
-            client=client,
-            messages=messages,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="claude-sonnet-4-20250514",
-            max_tokens=max_tokens,
-        )
-
-    async def send_message_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> dict[str, Any]:
-        """
-        Send message with tool definitions using CBORG via Anthropic SDK.
-
-        Returns full response including stop_reason and content blocks.
-        """
-        import anthropic
-        from anthropic.types import ToolUseBlock
-
-        settings = get_settings()
-        client = anthropic.Anthropic(
-            api_key=settings.provider.anthropic_auth_token,
-            base_url=settings.provider.anthropic_base_url,
-        )
-        return send_anthropic_message_with_tools(
-            client=client,
-            messages=messages,
-            tools=tools,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="claude-sonnet-4-20250514",
-            max_tokens=max_tokens,
-            tool_use_block_type=ToolUseBlock,
         )

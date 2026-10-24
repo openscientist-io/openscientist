@@ -7,7 +7,6 @@ Uses AWS Bedrock for model access. Cost tracking via AWS Cost Explorer.
 import logging
 import os
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from openscientist.providers.base import (
     AirgapEgress,
@@ -19,10 +18,6 @@ from openscientist.providers.base import (
 )
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import (
-    send_anthropic_message,
-    send_anthropic_message_with_tools,
-)
 from ._env_cleanup import (
     VERTEX_PROVIDER_ENV_VARS,
     clear_empty_env_vars,
@@ -281,65 +276,4 @@ class BedrockProvider(ClaudeCompatible):
             last_updated=now,
             data_lag_note=data_lag_note,
             metadata={"region": settings.provider.aws_region},
-        )
-
-    async def send_message(
-        self,
-        messages: list[dict[str, str]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> str:
-        """
-        Send message using AWS Bedrock via Anthropic SDK.
-
-        This bypasses the Claude Code CLI and its local pre-flight content
-        filter, which can produce false positives on legitimate scientific content.
-        """
-        import anthropic
-
-        settings = get_settings()
-        client = anthropic.AnthropicBedrock(
-            aws_region=settings.provider.aws_region or "us-east-1",
-        )
-        return send_anthropic_message(
-            client=client,
-            messages=messages,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            max_tokens=max_tokens,
-        )
-
-    async def send_message_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> dict[str, Any]:
-        """
-        Send message with tool definitions using AWS Bedrock via Anthropic SDK.
-
-        Returns full response including stop_reason and content blocks.
-        """
-        import anthropic
-        from anthropic.types import ToolUseBlock
-
-        settings = get_settings()
-        client = anthropic.AnthropicBedrock(
-            aws_region=settings.provider.aws_region or "us-east-1",
-        )
-        return send_anthropic_message_with_tools(
-            client=client,
-            messages=messages,
-            tools=tools,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-            max_tokens=max_tokens,
-            tool_use_block_type=ToolUseBlock,
         )

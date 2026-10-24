@@ -6,15 +6,10 @@ For users who want to use their own Anthropic API key.
 
 import logging
 import os
-from typing import Any
 
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import (
-    anthropic_container_env,
-    send_anthropic_message,
-    send_anthropic_message_with_tools,
-)
+from ._anthropic_common import anthropic_container_env
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_env_vars, clear_provider_mode_flags
 from .base import ClaudeCompatible, CostInfo, LlmUpstream
 
@@ -157,74 +152,4 @@ class AnthropicProvider(ClaudeCompatible):
             recent_spend_usd=None,
             recent_period_hours=lookback_hours,
             data_lag_note="Cost tracking not available for direct Anthropic API",
-        )
-
-    async def send_message(
-        self,
-        messages: list[dict[str, str]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> str:
-        """
-        Send message using Anthropic SDK directly.
-
-        This bypasses the Claude Code CLI and its local pre-flight content
-        filter, which can produce false positives on legitimate scientific content.
-        """
-        import anthropic
-
-        settings = get_settings()
-        api_key = settings.provider.anthropic_api_key
-        if not api_key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is required for direct SDK calls. "
-                "OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN) only work via the CLI path."
-            )
-        client = anthropic.Anthropic(api_key=api_key)
-        return send_anthropic_message(
-            client=client,
-            messages=messages,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="claude-sonnet-4-20250514",
-            max_tokens=max_tokens,
-        )
-
-    async def send_message_with_tools(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        system: str | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-    ) -> dict[str, Any]:
-        """
-        Send message with tool definitions using Anthropic SDK.
-
-        Returns full response including stop_reason and content blocks.
-        Uses prompt caching for the system prompt to reduce costs and latency.
-        """
-        import anthropic
-        from anthropic.types import ToolUseBlock
-
-        settings = get_settings()
-        api_key = settings.provider.anthropic_api_key
-        if not api_key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is required for direct SDK calls. "
-                "OAuth tokens (CLAUDE_CODE_OAUTH_TOKEN) only work via the CLI path."
-            )
-        client = anthropic.Anthropic(api_key=api_key)
-        return send_anthropic_message_with_tools(
-            client=client,
-            messages=messages,
-            tools=tools,
-            system=system,
-            model=model,
-            configured_model=settings.provider.model,
-            provider_default_model="claude-sonnet-4-20250514",
-            max_tokens=max_tokens,
-            tool_use_block_type=ToolUseBlock,
         )
