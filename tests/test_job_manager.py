@@ -48,33 +48,6 @@ class TestJobInfo:
         assert d["status"] == "completed"
         assert d["job_id"] == "j1"
 
-    def test_from_dict(self):
-        d = {
-            "job_id": "j1",
-            "research_question": "Q?",
-            "status": "running",
-            "created_at": "2026-01-01T00:00:00",
-            "max_iterations": 10,
-            "iterations_completed": 3,
-            "findings_count": 1,
-        }
-        info = JobInfo.from_dict(d)
-        assert info.status == JobStatus.RUNNING
-        assert info.iterations_completed == 3
-
-    def test_from_dict_roundtrip(self):
-        original = JobInfo(
-            job_id="j1",
-            research_question="Q?",
-            status=JobStatus.FAILED,
-            created_at="2026-01-01T00:00:00",
-            error="Something broke",
-        )
-        restored = JobInfo.from_dict(original.to_dict())
-        assert restored.job_id == original.job_id
-        assert restored.status == original.status
-        assert restored.error == original.error
-
     def test_from_db_model_maps_llm_metadata(self):
         job = _make_db_job(
             "completed",

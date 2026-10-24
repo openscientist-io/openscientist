@@ -67,12 +67,6 @@ class JobInfo:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> JobInfo:
-        data = data.copy()
-        data["status"] = JobStatus(data["status"])
-        return cls(**data)
-
-    @classmethod
     def from_db_model(
         cls,
         job: Any,

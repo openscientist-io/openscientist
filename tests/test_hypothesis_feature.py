@@ -167,17 +167,6 @@ class TestJobInfoUseHypotheses:
         info = JobInfo.from_db_model(fake_job)
         assert info.use_hypotheses is False
 
-    def test_to_dict_and_from_dict_roundtrip_preserves_use_hypotheses(self) -> None:
-        info = JobInfo(
-            job_id="j1",
-            research_question="Q?",
-            status=JobStatus.RUNNING,
-            created_at="2026-01-01T00:00:00",
-            use_hypotheses=True,
-        )
-        restored = JobInfo.from_dict(info.to_dict())
-        assert restored.use_hypotheses is True
-
 
 # ---------------------------------------------------------------------------
 # 5. agent/claude_code_agent.py — ClaudeCodeAgent wiring
