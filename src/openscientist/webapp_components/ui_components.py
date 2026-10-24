@@ -1635,6 +1635,28 @@ async def _share_with_user(
     return True, f"Shared with {email}"
 
 
+async def _load_job_is_public(job_id: str) -> bool:
+    """Return whether a job is currently readable by any signed-in user."""
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, UUID(job_id))
+    return bool(job_obj and job_obj.is_public)
+
+
+async def _set_job_public_from_ui(
+    job_id: str, is_public: bool, current_user_id: str
+) -> tuple[bool, str]:
+    """Change a job's public visibility after checking ownership."""
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, UUID(job_id))
+        if not job_obj or str(job_obj.owner_id) != current_user_id:
+            return False, "Only the job owner can change its visibility"
+        job_obj.is_public = is_public
+        await session.commit()
+    if is_public:
+        return True, "Any signed-in user with the link can now view this job"
+    return True, "This job is private again"
+
+
 def _render_selected_share_user(
     selected_user_container: ui.element,
     email: str,
@@ -1663,8 +1685,11 @@ class _ShareDialogController:
         selected_user_container: ui.element,
         share_action_row: ui.element,
         permission_select: ui.select,
+        public_switch: ui.switch,
     ) -> None:
         self.job_id = job_id
+        self.public_switch = public_switch
+        self._syncing_public_switch = False
         self.shares_container = shares_container
         self.search_input = search_input
         self.search_results = search_results
@@ -1692,8 +1717,40 @@ class _ShareDialogController:
         _render_selected_share_user(self.selected_user_container, email, name, self.clear_selection)
         self.share_action_row.classes(remove="hidden")
 
+    async def refresh_public_switch(self) -> None:
+        """Show the job's stored visibility without triggering a change."""
+        try:
+            is_public = await _load_job_is_public(self.job_id)
+        except Exception as exc:
+            logger.error("Failed to load job visibility: %s", exc, exc_info=True)
+            return
+        self._syncing_public_switch = True
+        try:
+            self.public_switch.value = is_public
+        finally:
+            self._syncing_public_switch = False
+
+    async def on_public_change(self, event: Any) -> None:
+        """Persist a visibility change made with the switch."""
+        if self._syncing_public_switch:
+            return
+        try:
+            current_user_id = get_current_user_id()
+            if not current_user_id:
+                ui.notify("You must be signed in to change visibility", type="negative")
+                return
+            success, message = await _set_job_public_from_ui(
+                self.job_id, bool(event.value), current_user_id
+            )
+            ui.notify(message, type="positive" if success else "negative")
+        except Exception as exc:
+            logger.error("Failed to change job visibility: %s", exc, exc_info=True)
+            ui.notify("Error changing visibility", type="negative")
+        await self.refresh_public_switch()
+
     async def refresh_shares(self) -> None:
-        """Reload current shares list from database."""
+        """Reload current shares list and visibility from database."""
+        await self.refresh_public_switch()
         try:
             shares = await _load_job_shares(self.job_id)
             _render_share_rows(self.shares_container, shares, self.revoke_share)
@@ -1771,7 +1828,15 @@ def render_share_dialog(job_id: str) -> ui.dialog:
             ui.label("Share Job").classes("text-h6")
             render_job_id_badge(job_id)
 
-        shares_container = ui.column().classes("w-full mb-4")
+        with ui.column().classes("w-full gap-0 mb-2"):
+            public_switch = ui.switch("Anyone signed in can view this job")
+            ui.label(
+                "Viewers need the link; the job is not listed on their Jobs page. "
+                "They see the report, findings and artifacts, but not your uploaded "
+                "input files, chat or costs."
+            ).classes("text-xs text-gray-600")
+        ui.separator()
+        shares_container = ui.column().classes("w-full mb-4 mt-2")
         ui.separator()
         ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
         search_input = ui.input("Search by email or name", placeholder="user@example.com").classes(
@@ -1795,7 +1860,9 @@ def render_share_dialog(job_id: str) -> ui.dialog:
             selected_user_container=selected_user_container,
             share_action_row=share_action_row,
             permission_select=permission_select,
+            public_switch=public_switch,
         )
+        public_switch.on_value_change(controller.on_public_change)
         with share_action_row:
             ui.button("Share", icon="person_add", on_click=controller.do_share).props(
                 "color=primary"
