@@ -28,6 +28,7 @@ from openscientist.job_manager import _db_get_job, _db_get_share_permission
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
+from openscientist.webapp_components.artifact_routes import plot_url, report_html_url
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
@@ -296,8 +297,9 @@ def _render_iteration_plots(iter_provenance_dir: Path, iter_num: int) -> None:
                 ui.label(plot_title).classes("text-sm font-bold")
                 if description:
                     ui.label(description).classes("text-xs text-blue-700 italic")
-                plot_url = f"/{plot_file}"
-                ui.image(plot_url).classes("w-full")
+                # The provenance directory is jobs_dir/<job_id>/provenance.
+                job_id = iter_provenance_dir.parent.name
+                ui.image(plot_url(job_id, plot_file.name)).classes("w-full")
                 ui.button(
                     "Download",
                     on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
@@ -1239,50 +1241,9 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
                 ui.tooltip("Admin: re-run the report step using existing findings")
 
 
-def _render_report_html_iframe(job_dir: Path) -> None:
+def _render_report_html_iframe(job_id: str) -> None:
     """Render HTML report in an iframe to avoid CSS leakage."""
-    from nicegui import app
-
-    html_path = job_dir / "final_report.html"
-    if not html_path.exists():
-        return
-
-    # Re-render with base64 images for browser display
-    try:
-        from openscientist.report.renderer import render_report_html
-
-        md_path = job_dir / "final_report.md"
-        html_content = render_report_html(md_path, job_dir, embed_images=True)
-    except Exception:
-        logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
-        html_content = html_path.read_text(encoding="utf-8")
-
-    # Open external links in a new tab; leave #fragment links (TOC) alone
-    html_content = html_content.replace(
-        "</body>",
-        """<script>
-document.addEventListener('click', function(e) {
-  var a = e.target.closest('a');
-  if (!a) return;
-  var href = a.getAttribute('href') || '';
-  if (href.startsWith('#')) return;
-  e.preventDefault();
-  window.open(href, '_blank', 'noopener,noreferrer');
-});
-</script></body>""",
-        1,
-    )
-
-    # Serve as a static route and embed in iframe
-    route_path = f"/report-html/{job_dir.name}"
-
-    @app.get(route_path)
-    async def _serve_report_html():  # type: ignore[no-untyped-def]
-        from starlette.responses import HTMLResponse
-
-        return HTMLResponse(html_content)
-
-    ui.element("iframe").props(f'src="{route_path}" frameborder="0"').style(
+    ui.element("iframe").props(f'src="{report_html_url(job_id)}" frameborder="0"').style(
         "width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px;"
     )
 
@@ -1322,7 +1283,7 @@ def _render_report_tab(context: _JobDetailContext) -> None:
         _render_report_actions(context, report_path, pdf_path)
         # Prefer HTML report (with embedded figures) over raw markdown
         if html_path.exists():
-            _render_report_html_iframe(context.job_dir)
+            _render_report_html_iframe(context.job_id)
         else:
             _render_report_markdown(report_path)
         return

@@ -471,17 +471,16 @@ def _initialize_job_manager_runtime(jobs_dir: Path) -> None:
     )
 
 
-def _register_nicegui_static_files(jobs_dir: Path) -> None:
-    """Register static files on the mounted NiceGUI app.
+def _register_nicegui_static_files() -> None:
+    """Register the public assets on the mounted NiceGUI app.
 
-    This preserves existing routing behavior where the `/jobs` UI page
-    wins for the exact path, while `/jobs/*` serves generated artifacts.
+    Job files are never mounted. ``artifact_routes`` serves them after an
+    access check.
     """
-    for mount, directory in (("/jobs", jobs_dir), ("/assets", ASSETS_DIR)):
-        try:
-            app.add_static_files(mount, str(directory))
-        except (RuntimeError, ValueError) as e:
-            logger.debug("Static files already registered for %s: %s", mount, e)
+    try:
+        app.add_static_files("/assets", str(ASSETS_DIR))
+    except (RuntimeError, ValueError) as e:
+        logger.debug("Static files already registered for /assets: %s", e)
 
 
 def _jobs_dir_from_env(default: Path = Path("jobs")) -> Path:
@@ -547,7 +546,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
 
     # Import page modules so @ui.page decorators are registered.
     importlib.import_module("openscientist.webapp_components.pages")
-    _register_nicegui_static_files(jobs_dir)
+    _register_nicegui_static_files()
     _register_pwa_metadata()
     register_badge_head_html()
     _inject_thinking_status_styles()

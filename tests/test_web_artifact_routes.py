@@ -4,6 +4,7 @@ import io
 import tempfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -104,5 +105,107 @@ async def test_web_download_forbidden_for_non_owner(
         base_url="http://test",
     ) as client:
         response = await client.get(f"/web/jobs/{job.id}/artifacts.zip")
+
+    assert response.status_code == 404
+
+
+async def _private_job(db_session: AsyncSession, owner: User, jobs_dir: Path) -> tuple[Job, Path]:
+    job = Job(
+        owner_id=owner.id,
+        research_question="Job file route job",
+        description="job file route test",
+        status="completed",
+    )
+    db_session.add(job)
+    await db_session.commit()
+    await db_session.refresh(job)
+    await enable_rls(db_session)
+    job_dir = jobs_dir / str(job.id)
+    (job_dir / "provenance").mkdir(parents=True)
+    (job_dir / "data").mkdir()
+    return job, job_dir
+
+
+async def _get(db_session: AsyncSession, user: User, jobs_dir: Path, path: str):
+    manager = SimpleNamespace(jobs_dir=jobs_dir)
+    with patch("openscientist.web_app.get_job_manager", return_value=manager):
+        async with AsyncClient(
+            transport=ASGITransport(app=_build_app(db_session, user.id)),
+            base_url="http://test",
+        ) as client:
+            return await client.get(path)
+
+
+@pytest.mark.asyncio
+async def test_plot_is_served_to_the_owner(db_session: AsyncSession, test_user: User, tmp_path):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "provenance" / "volcano.png").write_bytes(b"\x89PNG plot")
+
+    response = await _get(db_session, test_user, tmp_path, f"/web/jobs/{job.id}/plots/volcano.png")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == b"\x89PNG plot"
+
+
+@pytest.mark.asyncio
+async def test_plot_is_not_found_for_a_user_without_access(
+    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "provenance" / "volcano.png").write_bytes(b"\x89PNG plot")
+
+    response = await _get(db_session, test_user2, tmp_path, f"/web/jobs/{job.id}/plots/volcano.png")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name",
+    [
+        "notes.csv",  # not a plot
+        "linked.png",  # symlink out of provenance/
+        "..%2Fdata%2Fcohort.png",  # encoded traversal
+        "missing.png",
+    ],
+)
+async def test_plot_route_serves_only_png_files_directly_in_provenance(
+    db_session: AsyncSession, test_user: User, tmp_path, name: str
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "provenance" / "notes.csv").write_text("a,b\n")
+    (job_dir / "data" / "cohort.png").write_bytes(b"uploaded input")
+    (job_dir / "provenance" / "linked.png").symlink_to(job_dir / "data" / "cohort.png")
+
+    response = await _get(db_session, test_user, tmp_path, f"/web/jobs/{job.id}/plots/{name}")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_report_html_is_rendered_for_the_owner(
+    db_session: AsyncSession, test_user: User, tmp_path
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "final_report.md").write_text("# Findings\n\nAstrocyte markers drop.\n")
+    (job_dir / "final_report.html").write_text("<html><body>stale</body></html>")
+
+    response = await _get(db_session, test_user, tmp_path, f"/web/jobs/{job.id}/report.html")
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Astrocyte markers drop." in response.text
+
+
+@pytest.mark.asyncio
+async def test_report_html_is_not_found_for_a_user_without_access(
+    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "final_report.md").write_text("# Findings\n\nAstrocyte markers drop.\n")
+    (job_dir / "final_report.html").write_text("<html><body>secret</body></html>")
+
+    response = await _get(db_session, test_user2, tmp_path, f"/web/jobs/{job.id}/report.html")
 
     assert response.status_code == 404
