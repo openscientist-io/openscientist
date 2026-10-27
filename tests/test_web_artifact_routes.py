@@ -1,6 +1,7 @@
 """Tests for the session-authenticated artifact download route."""
 
 import io
+import re
 import tempfile
 import zipfile
 from pathlib import Path
@@ -17,6 +18,7 @@ from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.webapp_components.artifact_routes import router
+from openscientist.webapp_components.pages import job_detail
 from tests.helpers import enable_rls
 
 
@@ -209,3 +211,73 @@ async def test_report_html_is_not_found_for_a_user_without_access(
     response = await _get(db_session, test_user2, tmp_path, f"/web/jobs/{job.id}/report.html")
 
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_report_falls_back_to_the_stored_html_when_it_cannot_be_rendered(
+    db_session: AsyncSession, test_user: User, tmp_path
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "final_report.html").write_text("<html><body>stored report</body></html>")
+
+    response = await _get(db_session, test_user, tmp_path, f"/web/jobs/{job.id}/report.html")
+
+    assert response.status_code == 200, response.text
+    assert "stored report" in response.text
+
+
+@pytest.mark.asyncio
+async def test_report_is_not_found_before_it_is_generated(
+    db_session: AsyncSession, test_user: User, tmp_path
+):
+    job, _job_dir = await _private_job(db_session, test_user, tmp_path)
+
+    response = await _get(db_session, test_user, tmp_path, f"/web/jobs/{job.id}/report.html")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_job_without_a_directory_is_not_found(
+    db_session: AsyncSession, test_user: User, tmp_path
+):
+    job, _job_dir = await _private_job(db_session, test_user, tmp_path / "elsewhere")
+
+    response = await _get(db_session, test_user, tmp_path, f"/web/jobs/{job.id}/report.html")
+
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_job_page_plot_image_loads_from_the_plot_route(
+    db_session: AsyncSession, test_user: User, tmp_path
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "provenance" / "volcano.png").write_bytes(b"\x89PNG plot")
+    (job_dir / "provenance" / "volcano.json").write_text('{"iteration": 1}')
+
+    with patch.object(job_detail, "ui") as mock_ui:
+        job_detail._render_iteration_plots(job_dir / "provenance", 1)
+    src = mock_ui.image.call_args.args[0]
+
+    response = await _get(db_session, test_user, tmp_path, src)
+    assert response.status_code == 200, src
+    assert response.content == b"\x89PNG plot"
+
+
+@pytest.mark.asyncio
+async def test_job_page_report_frame_loads_from_the_report_route(
+    db_session: AsyncSession, test_user: User, tmp_path
+):
+    job, job_dir = await _private_job(db_session, test_user, tmp_path)
+    (job_dir / "final_report.md").write_text("# Findings\n\nAstrocyte markers drop.\n")
+    (job_dir / "final_report.html").write_text("<html><body>stored report</body></html>")
+
+    with patch.object(job_detail, "ui") as mock_ui:
+        job_detail._render_report_html_iframe(str(job.id))
+    props = mock_ui.element.return_value.props.call_args.args[0]
+    src = re.search(r'src="([^"]+)"', props).group(1)  # type: ignore[union-attr]
+
+    response = await _get(db_session, test_user, tmp_path, src)
+    assert response.status_code == 200, src
+    assert "Astrocyte markers drop." in response.text
