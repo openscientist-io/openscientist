@@ -23,7 +23,8 @@ def _build_app(db_session: AsyncSession, acting_user_id) -> FastAPI:
     app = FastAPI()
 
     async def override_get_session():
-        await set_current_user(db_session, acting_user_id)
+        # Mirrors get_session, which sets the app role and leaves the user to the route.
+        await set_current_user(db_session, None)
         yield db_session
 
     async def override_get_current_user_id():

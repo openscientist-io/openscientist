@@ -103,6 +103,8 @@ async def get_current_user_from_session(
     Raises:
         HTTPException: If the session references a missing user.
     """
+    # users_select_own admits only the row of the user set as RLS context.
+    await set_current_user(session, user_id)
     stmt = select(User).where(User.id == user_id)
     result = await session.execute(stmt)
     user = result.scalar_one_or_none()
