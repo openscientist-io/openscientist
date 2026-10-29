@@ -1058,12 +1058,17 @@ def _drawer_click_handler(drawer: ui.element, callback: Callable[[], None]) -> C
     return handler
 
 
+def navigate_to_route(route: str) -> None:
+    """Open an in-app route in place and an external (http/https) URL in a new tab."""
+    ui.navigate.to(route, new_tab=route.startswith("http"))
+
+
 def _drawer_route_handler(drawer: ui.element, route: str) -> Callable[[], None]:
     """Create navigation handler for drawer route buttons."""
 
     def handler() -> None:
         cast(Any, drawer).set_value(False)
-        ui.navigate.to(route, new_tab=route.startswith("http"))
+        navigate_to_route(route)
 
     return handler
 
@@ -1134,7 +1139,7 @@ def _render_desktop_navigation(
             style = active_style if is_active else inactive_style
             ui.button(
                 label,
-                on_click=lambda r=route: ui.navigate.to(r, new_tab=r.startswith("http")),
+                on_click=lambda r=route: navigate_to_route(r),
                 icon=icon,
             ).props(style)
         ui.button(

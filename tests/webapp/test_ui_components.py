@@ -17,11 +17,13 @@ from openscientist.webapp_components.ui_components import (
     OPENSCIENTIST_RELEASE_URL,
     STATUS_COLORS,
     STATUS_ICONS,
+    _build_navigation_items,
     _get_job_id_badge_html,
     _get_pubmed_badge_html,
     _inject_thinking_status_styles,
     get_project_resource_links,
     get_status_badge_props,
+    navigate_to_route,
     register_badge_head_html,
     render_job_id_badge,
     render_job_id_slot,
@@ -61,6 +63,26 @@ class TestProjectResourceLinks:
             ("Paper", OPENSCIENTIST_PAPER_URL),
             ("Latest Release", OPENSCIENTIST_RELEASE_URL),
         ]
+
+
+class TestNavigation:
+    """Tests for the top navigation entries and route handling."""
+
+    def test_docs_entry_points_at_docs_site(self):
+        """The Docs nav item targets the external documentation site."""
+        items = _build_navigation_items(
+            active_page=None, show_new_job=False, can_start_jobs=False, show_admin=False
+        )
+        assert ("Docs", "description", OPENSCIENTIST_DOCS_URL, False) in items
+
+    def test_external_route_opens_in_new_tab(self):
+        """External URLs open in a new tab; in-app routes navigate in place."""
+        with patch("openscientist.webapp_components.ui_components.ui.navigate.to") as to:
+            navigate_to_route(OPENSCIENTIST_DOCS_URL)
+            to.assert_called_once_with(OPENSCIENTIST_DOCS_URL, new_tab=True)
+        with patch("openscientist.webapp_components.ui_components.ui.navigate.to") as to:
+            navigate_to_route("/skills")
+            to.assert_called_once_with("/skills", new_tab=False)
 
 
 class TestGetStatusBadgeProps:
