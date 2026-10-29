@@ -12,6 +12,10 @@ from openscientist.webapp_components.ui_components import (
 
 DOCS_PAGE_CONTENT_MARKDOWN = dedent(
     """
+    The full documentation (installation, deployment, air-gapped mode, REST API, architecture)
+    lives at [docs.openscientist.io](https://docs.openscientist.io). This page is a short
+    in-app guide.
+
     ## What is OpenScientist?
 
     OpenScientist is an autonomous AI scientist that analyzes scientific data to discover mechanistic

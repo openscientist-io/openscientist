@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 
 OPENSCIENTIST_GITHUB_URL = "https://github.com/openscientist-io/openscientist"
+OPENSCIENTIST_DOCS_URL = "https://docs.openscientist.io"
 OPENSCIENTIST_RELEASE_URL = "https://github.com/openscientist-io/openscientist/releases/latest"
 OPENSCIENTIST_PAPER_URL: str | None = (
     "https://www.medrxiv.org/content/10.64898/2026.03.15.26348338v1"
@@ -39,7 +40,10 @@ OPENSCIENTIST_PAPER_URL: str | None = (
 
 def get_project_resource_links() -> list[tuple[str, str]]:
     """Return the verified project links we expose in the UI."""
-    links: list[tuple[str, str]] = [("GitHub", OPENSCIENTIST_GITHUB_URL)]
+    links: list[tuple[str, str]] = [
+        ("GitHub", OPENSCIENTIST_GITHUB_URL),
+        ("Docs", OPENSCIENTIST_DOCS_URL),
+    ]
     if OPENSCIENTIST_PAPER_URL:
         links.append(("Paper", OPENSCIENTIST_PAPER_URL))
     links.append(("Latest Release", OPENSCIENTIST_RELEASE_URL))
@@ -1036,7 +1040,7 @@ def _build_navigation_items(
         [
             ("Skills", "school", "/skills", active_page == "skills"),
             ("API Keys", "vpn_key", "/api-keys", active_page == "api-keys"),
-            ("Docs", "description", "/docs", active_page == "docs"),
+            ("Docs", "description", OPENSCIENTIST_DOCS_URL, active_page == "docs"),
         ]
     )
     if show_admin:
@@ -1059,7 +1063,7 @@ def _drawer_route_handler(drawer: ui.element, route: str) -> Callable[[], None]:
 
     def handler() -> None:
         cast(Any, drawer).set_value(False)
-        ui.navigate.to(route)
+        ui.navigate.to(route, new_tab=route.startswith("http"))
 
     return handler
 
@@ -1130,7 +1134,7 @@ def _render_desktop_navigation(
             style = active_style if is_active else inactive_style
             ui.button(
                 label,
-                on_click=lambda r=route: ui.navigate.to(r),
+                on_click=lambda r=route: ui.navigate.to(r, new_tab=r.startswith("http")),
                 icon=icon,
             ).props(style)
         ui.button(

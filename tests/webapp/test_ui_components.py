@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 from openscientist.job_manager import JobManager, JobStatus
 from openscientist.webapp_components.ui_components import (
+    OPENSCIENTIST_DOCS_URL,
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
     OPENSCIENTIST_RELEASE_URL,
@@ -51,11 +52,12 @@ class TestStatusConstants:
 class TestProjectResourceLinks:
     """Tests for shared public resource links."""
 
-    def test_links_expose_repo_paper_and_release(self):
+    def test_links_expose_repo_docs_paper_and_release(self):
         """Resource strip should expose only links reachable without auth."""
         assert OPENSCIENTIST_PAPER_URL is not None
         assert get_project_resource_links() == [
             ("GitHub", OPENSCIENTIST_GITHUB_URL),
+            ("Docs", OPENSCIENTIST_DOCS_URL),
             ("Paper", OPENSCIENTIST_PAPER_URL),
             ("Latest Release", OPENSCIENTIST_RELEASE_URL),
         ]
