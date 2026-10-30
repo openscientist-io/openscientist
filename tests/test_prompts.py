@@ -2,8 +2,11 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
 from openscientist.agent.codex_agent import CodexAgent
+from openscientist.agent.omp_agent import OmpAgent
 from openscientist.prompts import generate_job_claude_md
 
 
@@ -78,17 +81,25 @@ class TestBackendJobDocs:
             assert "plt.show()" in doc
             assert "do not call `plt.savefig()`" in doc
 
-    def test_codex_doc_has_no_phantom_skills_refs(self):
+    def test_codex_doc_has_no_phantom_skills_dir(self):
         """Codex gets skills via its own ## Skills injection, so the codex prompt
-        must not name the nonexistent search_skills tool or a phantom skills dir.
-        The Claude path keeps search_skills (it has the .claude/skills files)."""
+        must not point at a skills directory it does not have."""
         for txt in (
             CodexAgent.job_doc(use_hypotheses=True, phenix_available=True),
             CodexAgent.system_prompt(),
         ):
-            assert "search_skills" not in txt
             assert "skills/` directory provided to you" not in txt
-        assert "search_skills" in generate_job_claude_md(use_hypotheses=True, phenix_available=True)
+
+    @pytest.mark.parametrize("agent", [ClaudeCodeAgent, CodexAgent, OmpAgent])
+    def test_no_backend_names_the_unregistered_search_skills_tool(self, agent):
+        """No MCP server registers a search_skills tool, so no prompt may send an
+        agent to it."""
+        for txt in (
+            agent.job_doc(use_hypotheses=True, phenix_available=True),
+            agent.job_doc(use_hypotheses=False, phenix_available=False),
+            agent.system_prompt(),
+        ):
+            assert "search_skills" not in txt
 
     def test_codex_doc_respects_use_hypotheses_flag(self):
         with_h = CodexAgent.job_doc(use_hypotheses=True)

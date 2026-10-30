@@ -1009,7 +1009,6 @@ class TestGenerateJobClaudeMd:
         assert "set_job_title" in content
         assert "set_consensus_answer" in content
         assert "read_document" in content
-        assert "search_skills" in content
 
     def test_with_hypotheses_still_contains_core_tools(self) -> None:
         from openscientist.prompts import generate_job_claude_md
