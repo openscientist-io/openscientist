@@ -47,7 +47,6 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 - Structure comparison and superposition
 - Validation metrics (clash score, backbone geometry)
 - AlphaFold confidence analysis
-- **See `docs/PHENIX_SETUP.md` for installation instructions**
 
 ## Quick Start
 
@@ -58,7 +57,7 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 - `uv` package manager
 - One of the following for model access:
   - **CBORG**: API token from [CBORG](https://cborg.lbl.gov)
-  - **Vertex AI**: GCP project with Vertex AI enabled (see `docs/VERTEX_SETUP.md`)
+  - **Vertex AI**: GCP project with Vertex AI enabled
   - **AWS Bedrock**: AWS account with Bedrock access (see below)
   - **Azure AI Foundry**: Azure subscription with Foundry resource (see below)
 
@@ -155,7 +154,6 @@ GCP_BILLING_ACCOUNT_ID=XXXXXX-YYYYYY-ZZZZZZ
 ```
 
 **Cost Tracking**: Via GCP BigQuery billing export (1-6 hour lag)
-**Setup Guide**: See `docs/VERTEX_SETUP.md` for detailed instructions
 
 #### Option 3: AWS Bedrock
 
@@ -252,8 +250,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and deplo
 ## Documentation
 
 - [Design Document](docs/DESIGN.md)
-- [Vertex AI Setup](docs/VERTEX_SETUP.md)
-- [Phenix Setup](docs/PHENIX_SETUP.md)
 
 ## Author
 
