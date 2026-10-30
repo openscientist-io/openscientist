@@ -12,11 +12,23 @@ from openscientist.settings import (
     ContainerSettings,
     DatabaseSettings,
     FileSettings,
+    OmpSettings,
     PhenixSettings,
     ProviderSettings,
     clear_settings_cache,
     get_settings,
 )
+
+
+class TestOmpSettings:
+    """The omp harness reads its own config file, so the operator's temperature
+    has to reach it through settings rather than the provider environment."""
+
+    def test_temperature_is_unset_by_default(self):
+        assert OmpSettings(_env_file=None).temperature is None
+
+    def test_temperature_accepts_zero(self):
+        assert OmpSettings(_env_file=None, OPENSCIENTIST_OMP_TEMPERATURE="0").temperature == 0.0
 
 
 class TestProviderSettings:
