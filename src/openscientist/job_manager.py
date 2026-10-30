@@ -284,7 +284,11 @@ async def _db_get_notification_target(job_id: str) -> JobStatusUpdateResult:
 #: Statuses after which a job holds no slot.
 _ENDED_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED})
 #: Statuses that end the agent's current work, so its status label goes with it.
-_LABEL_ENDING_STATUSES = _ENDED_STATUSES | {JobStatus.AWAITING_FEEDBACK}
+#: The report phase starts new work, so the last iteration's label goes too.
+_LABEL_ENDING_STATUSES = _ENDED_STATUSES | {
+    JobStatus.AWAITING_FEEDBACK,
+    JobStatus.GENERATING_REPORT,
+}
 
 
 async def _db_next_queued_job(window: timedelta, exclude: Collection[str]) -> str | None:
@@ -359,12 +363,20 @@ class JobManager:
 
     #: A job that has not ended, so it may still fail or be cancelled.
     ACTIVE_STATUSES = frozenset(
-        {JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK}
+        {
+            JobStatus.PENDING,
+            JobStatus.QUEUED,
+            JobStatus.RUNNING,
+            JobStatus.AWAITING_FEEDBACK,
+            JobStatus.GENERATING_REPORT,
+        }
     )
     #: A job waiting for its worker thread.
     WAITING_STATUSES = frozenset({JobStatus.PENDING, JobStatus.QUEUED})
     #: A job whose container has started.
-    STARTED_STATUSES = frozenset({JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK})
+    STARTED_STATUSES = frozenset(
+        {JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK, JobStatus.GENERATING_REPORT}
+    )
 
     def __init__(
         self,
@@ -414,7 +426,7 @@ class JobManager:
 
     def _recover_job(self, job_info: JobInfo) -> None:
         job_id = job_info.job_id
-        lost_container = self.STARTED_STATUSES | {JobStatus.GENERATING_REPORT}
+        lost_container = self.STARTED_STATUSES
         if job_info.status == JobStatus.PENDING:
             self._update_job_status(
                 job_id, JobStatus.QUEUED, allowed_from={JobStatus.PENDING}, notify=False, retry=True
@@ -961,7 +973,7 @@ class JobManager:
         if job_model is None:
             raise ValueError(f"Job {job_id} not found")
 
-        if job_model.status == JobStatus.RUNNING.value:
+        if job_model.status in (JobStatus.RUNNING.value, JobStatus.GENERATING_REPORT.value):
             raise ValueError(f"Cannot delete running job {job_id}")
 
         try:

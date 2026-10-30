@@ -27,7 +27,14 @@ from openscientist.job_manager import (
     JobStatusUpdateResult,
     _db_update_job_status,
 )
-from openscientist.orchestrator.discovery import _persist_final_status, _ReportOutcome
+from openscientist.orchestrator.discovery import (
+    _begin_report_phase,
+    _DiscoveryCancelledError,
+    _persist_final_status,
+    _ReportOutcome,
+    regenerate_report_async,
+    run_discovery_async,
+)
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components import ui_components
 from openscientist.webapp_components.pages import job_detail
@@ -443,6 +450,7 @@ def _job_info(status: JobStatus) -> JobInfo:
     [
         (JobStatus.RUNNING, True),
         (JobStatus.AWAITING_FEEDBACK, True),
+        (JobStatus.GENERATING_REPORT, True),
         (JobStatus.COMPLETED, False),
     ],
 )
@@ -467,6 +475,7 @@ async def test_the_delete_dialog_warns_only_when_the_job_is_active(
     ("status", "cancels_first"),
     [
         (JobStatus.RUNNING, True),
+        (JobStatus.GENERATING_REPORT, True),
         (JobStatus.COMPLETED, False),
     ],
 )
@@ -672,7 +681,7 @@ async def test_a_regenerated_report_shows_no_label_from_the_original_run(
 ) -> None:
     """A regeneration runs a completed job again, which must not bring back the
     label the original run ended with."""
-    job = await make_job(JobStatus.RUNNING)
+    job = await make_job(JobStatus.GENERATING_REPORT)
     await _set_label(test_engine, job, "Writing the final report")
     await _persist_final_status(tmp_path / str(job), _ReportOutcome(success=True, error=""))
     result = await _db_update_job_status(
@@ -695,3 +704,193 @@ async def test_startup_recovery_clears_the_labels_of_the_jobs_it_cancels(
     for job in (running, paused):
         assert await _status(test_engine, job) == "cancelled"
         assert await _label(test_engine, job) == (None, None)
+
+
+# ─── the report runs as generating_report (plans/next-prs.md, N12) ────────
+
+
+async def test_a_report_phase_moves_the_job_to_generating_report(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """The page then says a report is being written, and the label of the last
+    iteration goes."""
+    job = await make_job(JobStatus.RUNNING)
+    await _set_label(test_engine, job, "Writing iteration summary")
+    await _begin_report_phase(tmp_path / str(job))
+    assert await _status(test_engine, job) == "generating_report"
+    assert await _label(test_engine, job) == (None, None)
+
+
+async def test_a_report_phase_does_not_start_for_a_job_that_stopped_running(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    job = await make_job(JobStatus.CANCELLED)
+    with pytest.raises(_DiscoveryCancelledError):
+        await _begin_report_phase(tmp_path / str(job))
+    assert await _status(test_engine, job) == "cancelled"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "ending"),
+    [
+        (_ReportOutcome(success=True, error=""), "completed"),
+        (_ReportOutcome(success=False, error="no report"), "failed"),
+    ],
+)
+async def test_a_finished_report_ends_the_job(
+    make_job: MakeJob,
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    outcome: _ReportOutcome,
+    ending: str,
+) -> None:
+    job = await make_job(JobStatus.GENERATING_REPORT)
+    await _persist_final_status(tmp_path / str(job), outcome)
+    assert await _status(test_engine, job) == ending
+
+
+async def test_a_report_job_can_be_cancelled(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
+) -> None:
+    manager = _manager(tmp_path)
+    job = await make_job(JobStatus.GENERATING_REPORT)
+    manager._running_jobs[str(job)] = MagicMock()
+    with patch.object(manager, "_start_next_queued_job"):
+        await manager.cancel_job(str(job))
+    assert await _status(test_engine, job) == "cancelled"
+
+
+async def test_a_report_job_whose_container_crashed_is_failed(
+    make_job: MakeJob, test_engine: AsyncEngine
+) -> None:
+    """The worker's crash and timeout writes reach a job writing its report."""
+    job = await make_job(JobStatus.GENERATING_REPORT)
+    result = await _db_update_job_status(
+        str(job),
+        JobStatus.FAILED,
+        allowed_from=JobManager.STARTED_STATUSES,
+        error_message="Job timed out",
+    )
+    assert result.applied
+    assert await _ending(test_engine, job) == ("failed", "Job timed out")
+
+
+async def test_a_job_writing_its_report_cannot_be_deleted(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    job = await make_job(JobStatus.GENERATING_REPORT)
+    with pytest.raises(ValueError, match="Cannot delete"):
+        await _manager(tmp_path).delete_job(str(job))
+    assert await _status(test_engine, job) == "generating_report"
+
+
+def _report_runtime(job_id: UUID) -> dict[str, object]:
+    return {
+        "job_id": str(job_id),
+        "research_question": "Question?",
+        "max_iterations": 2,
+        "use_hypotheses": False,
+        "investigation_mode": "autonomous",
+        "data_files": [],
+    }
+
+
+def _report_executor() -> MagicMock:
+    from openscientist.agent.base import TokenUsage
+
+    executor = MagicMock()
+    executor.total_tokens = TokenUsage()
+    executor.shutdown = AsyncMock()
+    executor.prepare_job_workspace = AsyncMock()
+    executor.warm_model_profile = AsyncMock()
+    return executor
+
+
+def _report_phase(error: Exception | None) -> Callable[..., Awaitable[_ReportOutcome]]:
+    """The report phase's own status write, then a written report or ``error``."""
+
+    async def phase(*, job_dir: Path, **_: object) -> _ReportOutcome:
+        await _begin_report_phase(job_dir)
+        if error is not None:
+            raise error
+        return _ReportOutcome(success=True, error="")
+
+    return phase
+
+
+@contextlib.contextmanager
+def _report_run(job: UUID, error: Exception | None) -> Iterator[None]:
+    with (
+        patch(
+            "openscientist.orchestrator.discovery._load_runtime_context",
+            new_callable=AsyncMock,
+            return_value=_report_runtime(job),
+        ),
+        patch(
+            "openscientist.orchestrator.discovery._build_agent_executor",
+            return_value=_report_executor(),
+        ),
+        patch(
+            "openscientist.orchestrator.discovery._run_primary_discovery_loop",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "openscientist.orchestrator.discovery._run_report_generation_phase",
+            side_effect=_report_phase(error),
+        ),
+        patch("openscientist.orchestrator.discovery._finalize_executor", new_callable=AsyncMock),
+    ):
+        yield
+
+
+@pytest.mark.parametrize("run", [run_discovery_async, regenerate_report_async])
+async def test_a_report_that_crashes_fails_the_job(
+    make_job: MakeJob,
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    run: Callable[[Path], Awaitable[dict[str, object]]],
+) -> None:
+    """A crash while the report is written ends the job, rather than leaving it
+    in generating_report until the next restart."""
+    job = await make_job(JobStatus.RUNNING)
+    with _report_run(job, RuntimeError("report exploded")):
+        result = await run(tmp_path / str(job))
+    assert result["status"] == "failed"
+    assert await _ending(test_engine, job) == ("failed", "report exploded")
+
+
+@pytest.mark.parametrize("run", [run_discovery_async, regenerate_report_async])
+async def test_a_written_report_completes_the_job(
+    make_job: MakeJob,
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    run: Callable[[Path], Awaitable[dict[str, object]]],
+) -> None:
+    job = await make_job(JobStatus.RUNNING)
+    with _report_run(job, None):
+        result = await run(tmp_path / str(job))
+    assert result["status"] == "completed"
+    assert await _status(test_engine, job) == "completed"
+
+
+async def test_a_regeneration_cancelled_before_its_report_reports_cancelled(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    job = await make_job(JobStatus.RUNNING)
+
+    async def cancelled_then_phase(*, job_dir: Path, **_: object) -> _ReportOutcome:
+        await _db_update_job_status(
+            str(job), JobStatus.CANCELLED, allowed_from=JobManager.ACTIVE_STATUSES
+        )
+        return await _report_phase(None)(job_dir=job_dir)
+
+    with (
+        _report_run(job, None),
+        patch(
+            "openscientist.orchestrator.discovery._run_report_generation_phase",
+            side_effect=cancelled_then_phase,
+        ),
+    ):
+        result = await regenerate_report_async(tmp_path / str(job))
+    assert result["status"] == "cancelled"
+    assert await _status(test_engine, job) == "cancelled"

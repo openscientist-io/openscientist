@@ -543,6 +543,12 @@ async def _set_consensus_answer(
     logger.warning("Consensus answer not recorded after %d attempts", _MAX_CONSENSUS_ATTEMPTS)
 
 
+async def _begin_report_phase(job_dir: Path) -> None:
+    """Move the job to generating_report, unless it stopped running meanwhile."""
+    if not await update_job_status(job_dir, "generating_report", allowed_from=("running",)):
+        raise _DiscoveryCancelledError(f"Job {job_dir.name} is no longer running")
+
+
 async def _run_report_generation_phase(
     executor: AbstractAgent[Provider],
     job_dir: Path,
@@ -550,7 +556,8 @@ async def _run_report_generation_phase(
     description: str | None = None,
 ) -> _ReportOutcome:
     """Run the report and consensus turns (each with bounded retries) and output
-    artifact handling."""
+    artifact handling, with the job in generating_report."""
+    await _begin_report_phase(job_dir)
     ks = await KnowledgeState.load_from_database(job_dir.name)
     report_result, report_success = await _run_report_turn(
         executor, job_dir, research_question, ks, description
@@ -578,13 +585,13 @@ async def _persist_final_status(
     """Persist final job status based on report generation outcome."""
     final_status = "completed" if report_outcome.success else "failed"
     if final_status == "completed":
-        await update_job_status(job_dir, "completed", allowed_from=("running",))
+        await update_job_status(job_dir, "completed", allowed_from=("generating_report",))
     else:
         await update_job_status(
             job_dir,
             "failed",
             error_message=f"Report generation failed: {report_outcome.error}",
-            allowed_from=("running",),
+            allowed_from=("generating_report",),
         )
     return final_status
 
@@ -928,11 +935,23 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
             "iterations": ks.data["iteration"],
             "findings": len(ks.data["findings"]),
         }
+    except _DiscoveryCancelledError:
+        logger.info("Report regeneration cancelled for job %s", job_id)
+        ks = await KnowledgeState.load_from_database(job_id)
+        return {
+            "job_id": job_id,
+            "status": "cancelled",
+            "iterations": ks.data["iteration"],
+            "findings": len(ks.data["findings"]),
+        }
     except Exception as e:
         logger.error("Report regeneration failed [%s]: %s", get_version_string(), e, exc_info=True)
         try:
             await update_job_status(
-                job_dir, "failed", error_message=str(e), allowed_from=("running",)
+                job_dir,
+                "failed",
+                error_message=str(e),
+                allowed_from=("running", "generating_report"),
             )
         except Exception as status_error:
             logger.warning("Failed to persist failure status for job %s: %s", job_id, status_error)
@@ -1024,7 +1043,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
                 job_dir,
                 "failed",
                 error_message=str(e),
-                allowed_from=("running", "awaiting_feedback"),
+                allowed_from=("running", "awaiting_feedback", "generating_report"),
             )
         except Exception as status_error:
             logger.warning("Failed to persist failure status for job %s: %s", job_id, status_error)
