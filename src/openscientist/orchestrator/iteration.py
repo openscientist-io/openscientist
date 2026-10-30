@@ -94,13 +94,7 @@ def build_initial_prompt(
             "executor.",
             tool_prefix,
         )
-        data_context = (
-            f"Data summary:\n"
-            f"- Files: {data_files}\n"
-            f"- Columns: {ks.data['data_summary'].get('columns', [])}\n"
-            f"- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}\n"
-            f"{access_note}"
-        )
+        data_context = f"Data summary:\n- Files: {data_files}\n{access_note}"
     else:
         data_context = (
             "No data files provided. You may use literature search and computational methods."
