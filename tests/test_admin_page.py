@@ -14,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.webapp_components.pages.admin import (
+    _build_admin_user_rows,
     _filter_users_for_admin_table,
     admin_page,
     delete_user,
     set_user_approval_status,
+    set_user_priority_status,
 )
 from tests.helpers import fake_admin_session
 
@@ -481,6 +483,70 @@ async def test_set_user_approval_status_handles_missing_user(
 
     assert success is False
     assert message == "User not found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_priority", [True, False])
+async def test_set_user_priority_status_sets_and_clears_the_flag(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, is_priority: bool
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    user = User(email=f"priority-{uuid4().hex}@example.com", name="P", is_priority=not is_priority)
+    db_session.add(user)
+    await db_session.commit()
+
+    success, _ = await set_user_priority_status(user.id, is_priority=is_priority)
+
+    assert success is True
+    await db_session.refresh(user)
+    assert user.is_priority is is_priority
+
+
+@pytest.mark.asyncio
+async def test_set_user_priority_status_reports_no_change(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    user = User(email=f"priority-{uuid4().hex}@example.com", name="P", is_priority=True)
+    db_session.add(user)
+    await db_session.commit()
+
+    success, _ = await set_user_priority_status(user.id, is_priority=True)
+
+    assert success is False
+    await db_session.refresh(user)
+    assert user.is_priority is True
+
+
+@pytest.mark.asyncio
+async def test_set_user_priority_status_handles_missing_user(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    success, message = await set_user_priority_status(uuid4(), is_priority=True)
+    assert success is False
+    assert message == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_the_users_table_shows_who_is_a_priority_user(db_session: AsyncSession):
+    priority = User(email=f"p-{uuid4().hex}@example.com", name="P", is_priority=True)
+    regular = User(email=f"r-{uuid4().hex}@example.com", name="R")
+    db_session.add_all([priority, regular])
+    await db_session.commit()
+
+    rows = await _build_admin_user_rows(db_session, [priority, regular])
+
+    assert [row["is_priority"] for row in rows] == [True, False]
 
 
 def test_filter_users_for_admin_table_hides_current_user():

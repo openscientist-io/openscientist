@@ -90,6 +90,27 @@ async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bo
     return True, "User approval removed successfully"
 
 
+async def set_user_priority_status(user_id: UUID, is_priority: bool) -> tuple[bool, str]:
+    """Mark a user's queued jobs as starting ahead of other users' jobs, or not.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    async with get_admin_session() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not user:
+            return False, "User not found"
+        if bool(user.is_priority) == is_priority:
+            state = "already" if is_priority else "not"
+            return False, f"User is {state} a priority user"
+        user.is_priority = is_priority
+        await session.commit()
+
+    if is_priority:
+        return True, "User is now a priority user"
+    return True, "User is no longer a priority user"
+
+
 @ui.page("/admin")
 @require_auth
 @require_admin
@@ -364,6 +385,12 @@ def _admin_users_columns() -> list[dict[str, str]]:
             "field": "approval_status",
             "align": "center",
         },
+        {
+            "name": "priority_status",
+            "label": "Priority",
+            "field": "priority_status",
+            "align": "center",
+        },
         {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
     ]
 
@@ -388,6 +415,8 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
             "job_count": job_counts.get(user.id, 0),
             "approval_status": "Approved" if user.is_approved else "Pending",
             "is_approved": bool(user.is_approved),
+            "priority_status": "Priority" if user.is_priority else "Normal",
+            "is_priority": bool(user.is_priority),
         }
         for user in users
     ]
@@ -428,6 +457,27 @@ async def _handle_approval_update(
         ui.notify(error_message, color="negative")
 
 
+async def _handle_priority_update(
+    e: Any, is_priority: bool, reload_users: Callable[[], Awaitable[None]]
+) -> None:
+    user_id = e.args.get("id")
+    if not user_id:
+        ui.notify("Invalid user selection", color="negative")
+        return
+    try:
+        success, message = await set_user_priority_status(UUID(user_id), is_priority=is_priority)
+    except ValueError:
+        ui.notify("Invalid user selection", color="negative")
+        return
+    except Exception as ex:
+        logger.error("Error setting priority of user %s: %s", user_id, ex, exc_info=True)
+        ui.notify("Failed to change the user's priority. Check server logs.", color="negative")
+        return
+    ui.notify(message, color="positive" if success else "info")
+    if success:
+        await reload_users()
+
+
 def _render_admin_users_table(
     users_container: ui.column,
     rows: list[dict[str, object]],
@@ -444,6 +494,17 @@ def _render_admin_users_table(
                 <q-badge
                     :color="props.row.is_approved ? 'positive' : 'warning'"
                     :label="props.row.approval_status"
+                />
+            </q-td>
+            """,
+        )
+        users_table.add_slot(
+            "body-cell-priority_status",
+            """
+            <q-td :props="props">
+                <q-badge
+                    :color="props.row.is_priority ? 'purple' : 'grey'"
+                    :label="props.row.priority_status"
                 />
             </q-td>
             """,
@@ -470,6 +531,22 @@ def _render_admin_users_table(
                         @click="$parent.$emit('unapprove-user', props.row)"
                     />
                     <q-btn
+                        v-if="!props.row.is_priority"
+                        size="sm"
+                        color="purple"
+                        icon="bolt"
+                        label="Make priority"
+                        @click="$parent.$emit('prioritise-user', props.row)"
+                    />
+                    <q-btn
+                        v-else
+                        size="sm"
+                        color="grey"
+                        icon="bolt"
+                        label="Remove priority"
+                        @click="$parent.$emit('deprioritise-user', props.row)"
+                    />
+                    <q-btn
                         size="sm"
                         color="negative"
                         icon="delete"
@@ -487,6 +564,12 @@ def _render_admin_users_table(
         async def unapprove_user(e: Any) -> None:
             await _handle_approval_update(e, is_approved=False, reload_users=reload_users)
 
+        async def prioritise_user(e: Any) -> None:
+            await _handle_priority_update(e, is_priority=True, reload_users=reload_users)
+
+        async def deprioritise_user(e: Any) -> None:
+            await _handle_priority_update(e, is_priority=False, reload_users=reload_users)
+
         async def handle_delete_user(e: Any) -> None:
             user_id = e.args.get("id")
             user_name = e.args.get("name", "this user")
@@ -501,6 +584,8 @@ def _render_admin_users_table(
 
         users_table.on("approve-user", approve_user)
         users_table.on("unapprove-user", unapprove_user)
+        users_table.on("prioritise-user", prioritise_user)
+        users_table.on("deprioritise-user", deprioritise_user)
         users_table.on("delete-user", handle_delete_user)
 
 
