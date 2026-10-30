@@ -330,11 +330,6 @@ class KnowledgeState:
         self.data["agent_status"] = status
         self.data["agent_status_updated_at"] = datetime.now(UTC).isoformat()
 
-    def clear_agent_status(self) -> None:
-        """Clear the agent status (e.g., when job completes)."""
-        self.data["agent_status"] = None
-        self.data["agent_status_updated_at"] = None
-
     def add_feedback(self, text: str, after_iteration: int) -> None:
         """
         Add scientist feedback to history.

@@ -231,6 +231,9 @@ async def _db_update_job_status(
         values["ended_at"] = None
     elif status in _ENDED_STATUSES:
         values["ended_at"] = func.now()
+    if status in _LABEL_ENDING_STATUSES:
+        values["agent_status"] = None
+        values["agent_status_updated_at"] = None
     stmt = (
         update(JobModel)
         .where(
@@ -280,6 +283,8 @@ async def _db_get_notification_target(job_id: str) -> JobStatusUpdateResult:
 
 #: Statuses after which a job holds no slot.
 _ENDED_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED})
+#: Statuses that end the agent's current work, so its status label goes with it.
+_LABEL_ENDING_STATUSES = _ENDED_STATUSES | {JobStatus.AWAITING_FEEDBACK}
 
 
 async def _db_next_queued_job(window: timedelta, exclude: Collection[str]) -> str | None:

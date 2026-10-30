@@ -28,6 +28,8 @@ FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
 
 #: Statuses after which a job holds no slot, so the scheduler stops counting it.
 _ENDED_STATUSES = frozenset({"completed", "failed", "cancelled"})
+#: Statuses that end the agent's current work, so its status label goes with it.
+_LABEL_ENDING_STATUSES = _ENDED_STATUSES | {"awaiting_feedback"}
 
 # Budgeting the report prompt against the model's context window. We reserve
 # tokens for the system prompt, tool definitions, the model's own output, and
@@ -425,6 +427,9 @@ async def _persist_job_status(
         values["error_message"] = error_message
     if status in _ENDED_STATUSES:
         values["ended_at"] = func.now()
+    if status in _LABEL_ENDING_STATUSES:
+        values["agent_status"] = None
+        values["agent_status_updated_at"] = None
     stmt = (
         update(JobModel)
         .where(JobModel.id == job_uuid, JobModel.status.in_(list(allowed_from)))

@@ -28,6 +28,7 @@ from openscientist.job_manager import (
     _db_update_job_status,
 )
 from openscientist.orchestrator.discovery import _persist_final_status, _ReportOutcome
+from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components import ui_components
 from openscientist.webapp_components.pages import job_detail
 
@@ -571,3 +572,126 @@ async def test_a_cancel_completes_when_the_owner_cannot_be_notified(
             await session.execute(delete(Job).where(Job.id == job.id))
             await session.execute(delete(User).where(User.id == owner.id))
             await session.commit()
+
+
+# ─── the agent's status label (plans/next-prs.md, N3 state table) ─────────
+
+
+async def _label(test_engine: AsyncEngine, job_id: UUID) -> tuple[str | None, object]:
+    async with test_engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(Job.agent_status, Job.agent_status_updated_at).where(Job.id == job_id)
+            )
+        ).one()
+    return row.agent_status, row.agent_status_updated_at
+
+
+async def _set_label(test_engine: AsyncEngine, job_id: UUID, label: str) -> None:
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE jobs SET agent_status = :label, agent_status_updated_at = now() "
+                "WHERE id = :id"
+            ),
+            {"label": label, "id": job_id},
+        )
+
+
+@pytest.mark.parametrize(
+    ("start", "target"),
+    [
+        (JobStatus.RUNNING, JobStatus.FAILED),
+        (JobStatus.RUNNING, JobStatus.CANCELLED),
+        (JobStatus.AWAITING_FEEDBACK, JobStatus.CANCELLED),
+    ],
+)
+async def test_the_web_ending_a_job_clears_its_label(
+    make_job: MakeJob, test_engine: AsyncEngine, start: JobStatus, target: JobStatus
+) -> None:
+    """A crash, a timeout or a cancel ends the job, and the label of the work it
+    was doing ends with it."""
+    job = await make_job(start)
+    await _set_label(test_engine, job, "Running PCA")
+    result = await _db_update_job_status(str(job), target, allowed_from=JobManager.ACTIVE_STATUSES)
+    assert result.applied
+    assert await _label(test_engine, job) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("start", "target"),
+    [
+        ("running", "completed"),
+        ("running", "failed"),
+        ("awaiting_feedback", "failed"),
+        ("running", "awaiting_feedback"),
+    ],
+)
+async def test_the_container_ending_or_pausing_a_job_clears_its_label(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, start: str, target: str
+) -> None:
+    job = await make_job(JobStatus(start))
+    await _set_label(test_engine, job, "Searching PubMed")
+    assert await update_job_status(tmp_path / str(job), target, allowed_from=(start,))
+    assert await _label(test_engine, job) == (None, None)
+
+
+async def test_a_refused_status_write_keeps_the_label(
+    make_job: MakeJob, test_engine: AsyncEngine
+) -> None:
+    """The label goes only with a status change that applies."""
+    job = await make_job(JobStatus.RUNNING)
+    await _set_label(test_engine, job, "Running PCA")
+    result = await _db_update_job_status(
+        str(job), JobStatus.FAILED, allowed_from=JobManager.WAITING_STATUSES
+    )
+    assert not result.applied
+    assert (await _label(test_engine, job))[0] == "Running PCA"
+
+
+async def test_a_resumed_job_shows_no_label_from_before_its_pause(
+    owned_job: OwnJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """The job page shows the label while a job runs, so a resumed job must not
+    show what the agent was doing before the pause."""
+    job_id, owner_id = await owned_job(JobStatus.RUNNING)
+    await _set_label(test_engine, job_id, "Writing iteration summary")
+    job_dir = tmp_path / str(job_id)
+    job_dir.mkdir()
+    assert await update_job_status(job_dir, "awaiting_feedback", allowed_from=("running",))
+    with patch.object(job_detail, "ui"):
+        await job_detail._submit_feedback_and_continue(
+            job_dir, str(job_id), str(owner_id), 1, "try the other assay"
+        )
+    assert await _status(test_engine, job_id) == "running"
+    assert await _label(test_engine, job_id) == (None, None)
+
+
+async def test_a_regenerated_report_shows_no_label_from_the_original_run(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """A regeneration runs a completed job again, which must not bring back the
+    label the original run ended with."""
+    job = await make_job(JobStatus.RUNNING)
+    await _set_label(test_engine, job, "Writing the final report")
+    await _persist_final_status(tmp_path / str(job), _ReportOutcome(success=True, error=""))
+    result = await _db_update_job_status(
+        str(job), JobStatus.RUNNING, allowed_from={JobStatus.COMPLETED}
+    )
+    assert result.applied
+    assert await _label(test_engine, job) == (None, None)
+
+
+async def test_startup_recovery_clears_the_labels_of_the_jobs_it_cancels(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
+) -> None:
+    running = await make_job(JobStatus.RUNNING)
+    paused = await make_job(JobStatus.AWAITING_FEEDBACK)
+    for job in (running, paused):
+        await _set_label(test_engine, job, "Running PCA")
+    manager = _manager(tmp_path, max_concurrent=5)
+    with patch.object(manager, "_run_job"):
+        await asyncio.to_thread(manager.recover_after_restart)
+    for job in (running, paused):
+        assert await _status(test_engine, job) == "cancelled"
+        assert await _label(test_engine, job) == (None, None)
