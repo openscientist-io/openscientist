@@ -29,11 +29,11 @@ from openscientist.job_chat import _chat_turn_files, run_chat_turn_async
 from openscientist.job_container.db_login import AGENT_LOGIN_LABEL
 from openscientist.job_container.runner import _STOP_GRACE_SECONDS, JobContainerRunner
 from openscientist.orchestrator.discovery import (
-    _CostLedger,
-    _ReportOutcome,
     regenerate_report_async,
     run_discovery_async,
 )
+from openscientist.orchestrator.provenance import _CostLedger
+from openscientist.orchestrator.report import _ReportOutcome
 from openscientist.providers.base import Provider
 from tests.db_outage import Forwarder
 from tests.helpers import StubClaudeProvider

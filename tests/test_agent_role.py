@@ -282,11 +282,11 @@ async def test_container_code_runs_as_the_job_login(
 ) -> None:
     """The container's own reads and writes, run through the job login, so a
     grant the code needs and the migration lacks fails here."""
-    from openscientist.orchestrator.discovery import (
+    from openscientist.orchestrator.iteration import update_job_status
+    from openscientist.orchestrator.provenance import (
         _persist_job_cost_record,
         _sync_version_metadata,
     )
-    from openscientist.orchestrator.iteration import update_job_status
 
     await _fill_knowledge(jobs.own, "Own")
     ks = await KnowledgeState.load_from_database(str(jobs.own))
@@ -302,7 +302,7 @@ async def test_container_code_runs_as_the_job_login(
     await update_job_status(tmp_path / str(jobs.own), "running", allowed_from=("pending",))
     await _persist_job_cost_record(str(jobs.own), TokenUsage(input_tokens=5), "vllm", "m")
     with patch(
-        "openscientist.orchestrator.discovery.get_version_metadata",
+        "openscientist.orchestrator.provenance.get_version_metadata",
         return_value={"agent_harness": "omp"},
     ):
         await _sync_version_metadata(str(jobs.own))

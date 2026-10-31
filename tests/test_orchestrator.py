@@ -1390,15 +1390,15 @@ class TestReportGenerationPhase:
     @pytest.mark.asyncio
     async def test_report_turn_succeeds_first_attempt(self, tmp_path: Path):
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         calls: list[tuple[str, bool]] = []
         with (
-            patch.object(discovery, "build_report_prompt", return_value="FULL"),
-            patch.object(discovery, "_ensure_report_written", return_value=True),
+            patch.object(report, "build_report_prompt", return_value="FULL"),
+            patch.object(report, "_ensure_report_written", return_value=True),
         ):
-            _, ok = await discovery._run_report_turn(
+            _, ok = await report._run_report_turn(
                 self._executor(calls),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
@@ -1411,16 +1411,16 @@ class TestReportGenerationPhase:
     @pytest.mark.asyncio
     async def test_report_turn_retries_until_written(self, tmp_path: Path):
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         calls: list[tuple[str, bool]] = []
         with (
-            patch.object(discovery, "build_report_prompt", return_value="FULL"),
-            patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
-            patch.object(discovery, "_ensure_report_written", side_effect=[False, True]),
+            patch.object(report, "build_report_prompt", return_value="FULL"),
+            patch.object(report, "build_report_retry_prompt", return_value="RETRY"),
+            patch.object(report, "_ensure_report_written", side_effect=[False, True]),
         ):
-            _, ok = await discovery._run_report_turn(
+            _, ok = await report._run_report_turn(
                 self._executor(calls),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
@@ -1434,16 +1434,16 @@ class TestReportGenerationPhase:
     @pytest.mark.asyncio
     async def test_report_turn_gives_up_after_max(self, tmp_path: Path):
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         calls: list[tuple[str, bool]] = []
         with (
-            patch.object(discovery, "build_report_prompt", return_value="FULL"),
-            patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
-            patch.object(discovery, "_ensure_report_written", return_value=False),
+            patch.object(report, "build_report_prompt", return_value="FULL"),
+            patch.object(report, "build_report_retry_prompt", return_value="RETRY"),
+            patch.object(report, "_ensure_report_written", return_value=False),
         ):
-            _, ok = await discovery._run_report_turn(
+            _, ok = await report._run_report_turn(
                 self._executor(calls),  # type: ignore[arg-type]
                 tmp_path,
                 "Q?",
@@ -1451,13 +1451,13 @@ class TestReportGenerationPhase:
                 None,
             )
         assert ok is False
-        assert len(calls) == discovery._MAX_REPORT_ATTEMPTS
+        assert len(calls) == report._MAX_REPORT_ATTEMPTS
 
     @pytest.mark.asyncio
     async def test_consensus_retries_until_recorded(self, tmp_path: Path):
         from openscientist.agent.base import IterationResult
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         calls: list[str] = []
@@ -1470,8 +1470,8 @@ class TestReportGenerationPhase:
                 outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
             )
 
-        with patch.object(discovery.KnowledgeState, "load_from_database", return_value=ks):
-            await discovery._set_consensus_answer(
+        with patch.object(KnowledgeState, "load_from_database", return_value=ks):
+            await report._set_consensus_answer(
                 SimpleNamespace(
                     run_iteration=fake_run,
                     file_write_tool="Write",
@@ -1492,7 +1492,7 @@ class TestReportGenerationPhase:
         # mistaken for this turn's output).
         from openscientist.agent.base import IterationResult
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         ks.data["consensus_answer"] = "STALE from a prior run"
@@ -1504,8 +1504,8 @@ class TestReportGenerationPhase:
                 outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
             )
 
-        with patch.object(discovery.KnowledgeState, "load_from_database", return_value=ks):
-            await discovery._set_consensus_answer(
+        with patch.object(KnowledgeState, "load_from_database", return_value=ks):
+            await report._set_consensus_answer(
                 SimpleNamespace(
                     run_iteration=fake_run,
                     file_write_tool="Write",
@@ -1515,13 +1515,13 @@ class TestReportGenerationPhase:
                 "Q?",
             )
         # Re-asked the full budget; the stale value was never accepted as fresh.
-        assert len(calls) == discovery._MAX_CONSENSUS_ATTEMPTS
+        assert len(calls) == report._MAX_CONSENSUS_ATTEMPTS
 
     @pytest.mark.asyncio
     async def test_consensus_accepts_a_freshly_changed_answer_over_baseline(self, tmp_path: Path):
         from openscientist.agent.base import IterationResult
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         ks.data["consensus_answer"] = "OLD"
@@ -1535,8 +1535,8 @@ class TestReportGenerationPhase:
                 outcome=TurnOutcome.COMPLETED, output="", tool_calls=0, transcript=[]
             )
 
-        with patch.object(discovery.KnowledgeState, "load_from_database", return_value=ks):
-            await discovery._set_consensus_answer(
+        with patch.object(KnowledgeState, "load_from_database", return_value=ks):
+            await report._set_consensus_answer(
                 SimpleNamespace(
                     run_iteration=fake_run,
                     file_write_tool="Write",
@@ -1552,7 +1552,7 @@ class TestReportGenerationPhase:
     async def test_phase_happy_path(self, tmp_path: Path):
         from openscientist.agent.base import IterationResult
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         ks.data["consensus_answer"] = "A"
@@ -1563,14 +1563,14 @@ class TestReportGenerationPhase:
             )
 
         with (
-            patch.object(discovery.KnowledgeState, "load_from_database", return_value=ks),
-            patch.object(discovery, "build_report_prompt", return_value="R"),
-            patch.object(discovery, "_save_report_transcript"),
-            patch.object(discovery, "_ensure_report_written", return_value=True),
-            patch.object(discovery, "_try_generate_report_pdf", new=AsyncMock()) as pdf,
-            patch.object(discovery, "_begin_report_phase", new=AsyncMock()),
+            patch.object(KnowledgeState, "load_from_database", return_value=ks),
+            patch.object(report, "build_report_prompt", return_value="R"),
+            patch.object(report, "_save_report_transcript"),
+            patch.object(report, "_ensure_report_written", return_value=True),
+            patch.object(report, "_try_generate_report_pdf", new=AsyncMock()) as pdf,
+            patch.object(report, "_begin_report_phase", new=AsyncMock()),
         ):
-            outcome = await discovery._run_report_generation_phase(
+            outcome = await report._run_report_generation_phase(
                 SimpleNamespace(
                     run_iteration=fake_run,
                     file_write_tool="Write",
@@ -1587,7 +1587,7 @@ class TestReportGenerationPhase:
     async def test_phase_fails_when_report_never_written(self, tmp_path: Path):
         from openscientist.agent.base import IterationResult
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator import discovery
+        from openscientist.orchestrator import report
 
         ks = KnowledgeState("j", "Q?", 3)
         calls: list[str] = []
@@ -1599,14 +1599,14 @@ class TestReportGenerationPhase:
             )
 
         with (
-            patch.object(discovery.KnowledgeState, "load_from_database", return_value=ks),
-            patch.object(discovery, "build_report_prompt", return_value="R"),
-            patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
-            patch.object(discovery, "_save_report_transcript"),
-            patch.object(discovery, "_ensure_report_written", return_value=False),
-            patch.object(discovery, "_begin_report_phase", new=AsyncMock()),
+            patch.object(KnowledgeState, "load_from_database", return_value=ks),
+            patch.object(report, "build_report_prompt", return_value="R"),
+            patch.object(report, "build_report_retry_prompt", return_value="RETRY"),
+            patch.object(report, "_save_report_transcript"),
+            patch.object(report, "_ensure_report_written", return_value=False),
+            patch.object(report, "_begin_report_phase", new=AsyncMock()),
         ):
-            outcome = await discovery._run_report_generation_phase(
+            outcome = await report._run_report_generation_phase(
                 SimpleNamespace(
                     run_iteration=fake_run,
                     file_write_tool="Write",
@@ -1618,7 +1618,7 @@ class TestReportGenerationPhase:
             )
         assert outcome.success is False
         # Report attempted _MAX times, so the consensus turn is never reached.
-        assert len(calls) == discovery._MAX_REPORT_ATTEMPTS
+        assert len(calls) == report._MAX_REPORT_ATTEMPTS
 
 
 class TestEnsureReportWritten:
@@ -1634,12 +1634,12 @@ class TestEnsureReportWritten:
         )
 
     def test_missing_file_is_not_written(self, tmp_path: Path):
-        from openscientist.orchestrator.discovery import _ensure_report_written
+        from openscientist.orchestrator.report import _ensure_report_written
 
         assert _ensure_report_written(tmp_path / "final_report.md", self._result()) is False
 
     def test_existing_file_no_baseline_is_written(self, tmp_path: Path):
-        from openscientist.orchestrator.discovery import _ensure_report_written
+        from openscientist.orchestrator.report import _ensure_report_written
 
         report = tmp_path / "final_report.md"
         report.write_text("content")
@@ -1647,7 +1647,7 @@ class TestEnsureReportWritten:
         assert _ensure_report_written(report, self._result()) is True
 
     def test_stale_file_unchanged_since_baseline_is_not_written(self, tmp_path: Path):
-        from openscientist.orchestrator.discovery import _ensure_report_written
+        from openscientist.orchestrator.report import _ensure_report_written
 
         report = tmp_path / "final_report.md"
         report.write_text("stale report from a previous run")
@@ -1656,7 +1656,7 @@ class TestEnsureReportWritten:
         assert _ensure_report_written(report, self._result(), baseline_mtime_ns=baseline) is False
 
     def test_freshly_rewritten_file_is_written(self, tmp_path: Path):
-        from openscientist.orchestrator.discovery import _ensure_report_written
+        from openscientist.orchestrator.report import _ensure_report_written
 
         report = tmp_path / "final_report.md"
         report.write_text("stale")
@@ -1664,7 +1664,7 @@ class TestEnsureReportWritten:
         assert _ensure_report_written(report, self._result(), baseline_mtime_ns=baseline) is True
 
     def test_nested_fresh_report_is_moved_into_place(self, tmp_path: Path):
-        from openscientist.orchestrator.discovery import _ensure_report_written
+        from openscientist.orchestrator.report import _ensure_report_written
 
         report = tmp_path / "final_report.md"
         nested = tmp_path / "sub" / "final_report.md"
@@ -1727,7 +1727,7 @@ class TestRunReportTurnIntegration:
     @pytest.mark.asyncio
     async def test_succeeds_when_model_writes_on_first_attempt(self, tmp_path: Path):
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator.discovery import _run_report_turn
+        from openscientist.orchestrator.report import _run_report_turn
 
         ex = self._executor(tmp_path, {1})
         _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
@@ -1738,7 +1738,7 @@ class TestRunReportTurnIntegration:
     @pytest.mark.asyncio
     async def test_recovers_when_model_writes_on_retry(self, tmp_path: Path):
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator.discovery import _run_report_turn
+        from openscientist.orchestrator.report import _run_report_turn
 
         ex = self._executor(tmp_path, {2})  # writes only on the second attempt
         _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
@@ -1748,7 +1748,7 @@ class TestRunReportTurnIntegration:
     @pytest.mark.asyncio
     async def test_fails_when_file_never_written(self, tmp_path: Path):
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator.discovery import _MAX_REPORT_ATTEMPTS, _run_report_turn
+        from openscientist.orchestrator.report import _MAX_REPORT_ATTEMPTS, _run_report_turn
 
         ex = self._executor(tmp_path, set())  # never writes
         _, ok = await _run_report_turn(ex, tmp_path, "Q?", KnowledgeState("j", "Q?", 3), None)  # type: ignore[arg-type]
@@ -1759,7 +1759,7 @@ class TestRunReportTurnIntegration:
     async def test_stale_report_is_not_accepted(self, tmp_path: Path):
         # A leftover report from a prior run must not pass as this turn's output.
         from openscientist.knowledge_state import KnowledgeState
-        from openscientist.orchestrator.discovery import _run_report_turn
+        from openscientist.orchestrator.report import _run_report_turn
 
         (tmp_path / "final_report.md").write_text("stale prior report", encoding="utf-8")
         ex = self._executor(tmp_path, set())  # model never writes a fresh one
