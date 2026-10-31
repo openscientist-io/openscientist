@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,8 +29,6 @@ class Session(UUIDv7Mixin, Base):
     Attributes:
         user_id: Foreign key to the user who owns this session
         expires_at: Timestamp when the session expires (UTC)
-        ip_address: IP address where session was created
-        user_agent: Browser user agent string
         user: Related User object
     """
 
@@ -49,18 +47,6 @@ class Session(UUIDv7Mixin, Base):
         nullable=False,
         index=True,
         comment="Timestamp when session expires (UTC)",
-    )
-
-    ip_address: Mapped[str | None] = mapped_column(
-        String(45),  # IPv6 max length
-        nullable=True,
-        comment="IP address where session was created",
-    )
-
-    user_agent: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Browser user agent string",
     )
 
     # Relationships

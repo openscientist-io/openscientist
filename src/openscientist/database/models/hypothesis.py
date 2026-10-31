@@ -17,7 +17,6 @@ from ..base import Base, UUIDv7Mixin
 
 if TYPE_CHECKING:
     from .finding import Finding
-    from .hypothesis_spawn import HypothesisSpawn
     from .job import Job
 
 
@@ -26,8 +25,8 @@ class Hypothesis(UUIDv7Mixin, Base):
     Analysis hypothesis.
 
     Represents a testable explanation for crystallographic observations.
-    Hypotheses are generated, tested, refined, and spawn new hypotheses
-    through the iterative analysis workflow.
+    Hypotheses are generated, tested and refined through the iterative
+    analysis workflow.
 
     Attributes:
         job_id: Foreign key to the job this hypothesis belongs to
@@ -42,8 +41,6 @@ class Hypothesis(UUIDv7Mixin, Base):
         job: Related Job object
         findings: Findings that support this hypothesis (M2M)
         literature: Literature references (M2M)
-        parent_spawns: When this hypothesis spawned from a parent
-        child_spawns: Hypotheses spawned from this one
     """
 
     __tablename__ = "hypotheses"
@@ -116,17 +113,6 @@ class Hypothesis(UUIDv7Mixin, Base):
     # Note: Hypotheses access literature indirectly through their findings
     # If direct hypothesis-literature relationships are needed in the future,
     # create a hypothesis_literature junction table
-
-    parent_spawns: Mapped[list["HypothesisSpawn"]] = relationship(
-        foreign_keys="HypothesisSpawn.child_id",
-        back_populates="child",
-    )
-
-    child_spawns: Mapped[list["HypothesisSpawn"]] = relationship(
-        foreign_keys="HypothesisSpawn.parent_id",
-        back_populates="parent",
-        cascade="all, delete-orphan",
-    )
 
     def __repr__(self) -> str:
         return (

@@ -359,8 +359,6 @@ async def test_load_job_context_with_knowledge_state():
     ks.data["literature"] = [
         {
             "title": "Crystal Structures of Proteins",
-            "relevance_score": 0.92,
-            "key_findings": ["Finding 1", "Finding 2"],
         },
     ]
     ks.data["iteration_summaries"] = [

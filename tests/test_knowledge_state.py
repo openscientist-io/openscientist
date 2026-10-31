@@ -13,7 +13,6 @@ def ks() -> KnowledgeState:
         job_id="test_job",
         research_question="What drives metabolite X?",
         max_iterations=20,
-        use_skills=True,
     )
 
 
@@ -28,7 +27,6 @@ class TestKnowledgeStateInit:
         assert cfg["job_id"] == "test_job"
         assert cfg["research_question"] == "What drives metabolite X?"
         assert cfg["max_iterations"] == 20
-        assert cfg["use_skills"] is True
 
     def test_empty_collections(self, ks):
         assert ks.data["hypotheses"] == []

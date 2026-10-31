@@ -43,7 +43,6 @@ class Job(UUIDv7Mixin, Base):
         current_iteration: Current iteration number (0-based)
         pdb_code: PDB code if analyzing existing structure
         space_group: Crystal space group
-        resume_iteration: Iteration to resume from (NULL for new jobs)
         llm_provider: LLM provider being used (vertex/bedrock/cborg)
         llm_config: LLM configuration (model, temperature, etc.)
         error_message: Error message if job failed
@@ -130,12 +129,6 @@ class Job(UUIDv7Mixin, Base):
         String(50),
         nullable=True,
         comment="Crystal space group",
-    )
-
-    resume_iteration: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-        comment="Iteration to resume from (NULL for new jobs)",
     )
 
     llm_provider: Mapped[str] = mapped_column(

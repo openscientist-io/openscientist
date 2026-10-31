@@ -99,7 +99,6 @@ services:
       # Database URLs use the 'postgres' service hostname — must override any .env value
       DATABASE_URL: postgresql+asyncpg://openscientist_web:${POSTGRES_WEB_PASSWORD:?set POSTGRES_WEB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
       ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
-      PORT: ${PORT:-8080}
 
       # Phenix: PHENIX_HOST_PATH points to a Linux x86_64 Phenix directory on the
       # host.  It is mounted read-only at /opt/phenix; PHENIX_PATH is the

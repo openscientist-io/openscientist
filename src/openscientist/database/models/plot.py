@@ -31,8 +31,6 @@ class Plot(UUIDv7Mixin, Base):
         title: Plot title
         description: Description of what the plot shows
         file_path: Relative path to plot image file
-        plot_type: Type of plot (histogram/scatter/heatmap/etc)
-        code_used: Python code that generated the plot
         job: Related Job object
     """
 
@@ -68,18 +66,6 @@ class Plot(UUIDv7Mixin, Base):
         String(500),
         nullable=False,
         comment="Relative path to plot image file",
-    )
-
-    plot_type: Mapped[str | None] = mapped_column(
-        String(50),
-        nullable=True,
-        comment="Type of plot (histogram/scatter/heatmap/etc)",
-    )
-
-    code_used: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Python code that generated the plot",
     )
 
     # Relationships

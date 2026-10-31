@@ -43,8 +43,6 @@ async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session
     session = Session(
         user_id=webapp_user.id,
         expires_at=datetime.now(UTC) + timedelta(hours=24),
-        ip_address="127.0.0.1",
-        user_agent="pytest-test-agent",
     )
     db_session.add(session)
     await db_session.commit()

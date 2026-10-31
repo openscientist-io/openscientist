@@ -725,7 +725,6 @@ class Settings(BaseSettings):
     secret_key: str = Field(alias="OPENSCIENTIST_SECRET_KEY")
 
     # Server settings
-    port: int = Field(default=8080, alias="PORT")
     max_concurrent_jobs: int = Field(default=1, alias="OPENSCIENTIST_MAX_CONCURRENT_JOBS")
     # Hours of slot use the queue weighs each owner's queued jobs by
     scheduler_window_hours: float = Field(
