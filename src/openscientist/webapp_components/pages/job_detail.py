@@ -29,22 +29,30 @@ from openscientist.job_manager import _db_get_job, _db_get_share_permission
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
-from openscientist.webapp_components.error_handler import get_user_friendly_error
-from openscientist.webapp_components.ui_components import (
-    STATUS_COLORS,
-    render_delete_dialog,
-    render_error_card,
-    render_job_action_buttons,
-    render_justified_text,
-    render_navigator,
-    render_notifications_dialog,
+from openscientist.webapp_components.components.badges import (
     render_pmid_badge,
-    render_share_dialog,
-    render_stat_badges,
     render_text_with_pmid_links,
-    render_thinking_status,
     transform_pmid_references,
 )
+from openscientist.webapp_components.components.banners import (
+    render_error_card,
+    render_justified_text,
+)
+from openscientist.webapp_components.components.common import (
+    STATUS_COLORS,
+    render_stat_badges,
+    render_thinking_status,
+)
+from openscientist.webapp_components.components.dialogs import (
+    render_delete_dialog,
+    render_share_dialog,
+)
+from openscientist.webapp_components.components.job_table import render_job_action_buttons
+from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.components.notifications import (
+    render_notifications_dialog,
+)
+from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.utils import (
     ClientGuard,
     guard_client,

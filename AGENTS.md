@@ -123,14 +123,14 @@ async with user_simulation(root=some_page) as browser:
 
 ## UI Component Reuse
 
-**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from `src/openscientist/webapp_components/ui_components.py`.
+**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from the `src/openscientist/webapp_components/components/` package (`badges`, `banners`, `common`, `dialogs`, `job_table`, `navigation`, `notifications`).
 
 ### Error Banners
 
 Use these instead of creating inline error displays:
 
 ```python
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.banners import (
     render_config_error_banner,  # Provider config errors
     render_alert_banner,         # Generic error/warning/info
 )
@@ -154,7 +154,7 @@ Use `render_status_cell_slot()` for job status display in tables and `STATUS_COL
 ### Adding New Components
 
 When you need a new UI pattern used in multiple places:
-1. Add a reusable function to `ui_components.py`
+1. Add a reusable function to the fitting module under `src/openscientist/webapp_components/components/`
 2. Document it in this section
 3. Update existing inline code to use the component
 

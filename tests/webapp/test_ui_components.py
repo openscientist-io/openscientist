@@ -10,23 +10,27 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import UUID, uuid4
 
 from openscientist.job_manager import JobManager, JobStatus
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.badges import (
+    _get_job_id_badge_html,
+    _get_pubmed_badge_html,
+    register_badge_head_html,
+    render_job_id_badge,
+    render_pmid_badge,
+    render_text_with_pmid_links,
+    transform_pmid_references,
+)
+from openscientist.webapp_components.components.common import (
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
     OPENSCIENTIST_RELEASE_URL,
     STATUS_COLORS,
-    _get_job_id_badge_html,
-    _get_pubmed_badge_html,
     _inject_thinking_status_styles,
     get_project_resource_links,
-    register_badge_head_html,
-    render_job_id_badge,
-    render_job_id_slot,
-    render_pmid_badge,
-    render_status_cell_slot,
-    render_text_with_pmid_links,
     render_thinking_status,
-    transform_pmid_references,
+)
+from openscientist.webapp_components.components.job_table import (
+    render_job_id_slot,
+    render_status_cell_slot,
 )
 
 
@@ -119,10 +123,10 @@ class TestRenderStatusCellSlot:
 class TestRenderErrorCard:
     """Tests for render_error_card function (basic structure testing)."""
 
-    @patch("openscientist.webapp_components.ui_components.ui")
+    @patch("openscientist.webapp_components.components.banners.ui")
     def test_render_error_card_called(self, mock_ui):
         """Test that render_error_card can be called without errors."""
-        from openscientist.webapp_components.ui_components import render_error_card
+        from openscientist.webapp_components.components.banners import render_error_card
 
         # Mock UI components
         mock_ui.card.return_value.__enter__ = Mock()
@@ -324,15 +328,17 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
     never from per-render code, no matter how many badges get rendered."""
 
     def test_register_badge_head_html_registers_both_style_blocks(self):
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+        with patch(
+            "openscientist.webapp_components.components.badges.ui.add_head_html"
+        ) as mock_add:
             register_badge_head_html()
 
         assert mock_add.call_count == 2
 
     def test_rendering_many_badges_never_touches_add_head_html(self):
         with (
-            patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add,
-            patch("openscientist.webapp_components.ui_components.ui.html"),
+            patch("openscientist.webapp_components.components.badges.ui.add_head_html") as mock_add,
+            patch("openscientist.webapp_components.components.badges.ui.html"),
         ):
             for i in range(50):
                 render_pmid_badge(str(12000000 + i))
@@ -342,7 +348,9 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
         mock_add.assert_not_called()
 
     def test_inject_thinking_status_styles_adds_head_html(self):
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+        with patch(
+            "openscientist.webapp_components.components.common.ui.add_head_html"
+        ) as mock_add:
             _inject_thinking_status_styles()
 
         mock_add.assert_called_once()
@@ -351,7 +359,9 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
         """render_thinking_status is refreshed on a 2-second poll timer for any
         actively-watched running job -- this is the call site that produced
         the original leak, so it must never call add_head_html itself."""
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
+        with patch(
+            "openscientist.webapp_components.components.common.ui.add_head_html"
+        ) as mock_add:
             for _ in range(50):
                 render_thinking_status("Searching PubMed...")
 
@@ -395,12 +405,16 @@ class TestRenderDeleteDialog:
         )
 
     async def test_showing_the_dialog_uses_the_job_s_current_state(self):
-        from openscientist.webapp_components.ui_components import render_delete_dialog
+        from openscientist.webapp_components.components.dialogs import render_delete_dialog
 
         job_id = "12345678-1234-1234-1234-123456789012"
         mock_ui = self._mock_ui()
         manager = self._running_manager(job_id)
-        with patch("openscientist.webapp_components.ui_components.ui", mock_ui):
+        with (
+            patch("openscientist.webapp_components.components.dialogs.ui", mock_ui),
+            patch("openscientist.webapp_components.components.badges.ui", mock_ui),
+            patch("openscientist.webapp_components.components.common.ui", mock_ui),
+        ):
             dialog = render_delete_dialog(job_id, manager)
             show_calls = [c for c in dialog.on.call_args_list if c.args and c.args[0] == "show"]
             assert show_calls, "the dialog must reload its content when shown"
@@ -413,7 +427,7 @@ class TestRenderDeleteDialog:
         manager.get_job.assert_awaited_once_with(job_id)
 
     async def test_confirm_cancels_the_active_job_before_deleting_it(self):
-        from openscientist.webapp_components import ui_components as uc
+        from openscientist.webapp_components.components import dialogs
 
         job_id = str(uuid4())
         owner = str(uuid4())
@@ -429,14 +443,18 @@ class TestRenderDeleteDialog:
             yield session
 
         with (
-            patch.object(uc, "ui", mock_ui),
-            patch.object(uc, "get_current_user_id", return_value=owner),
-            patch.object(uc, "get_admin_session", _admin_session),
+            patch.object(dialogs, "ui", mock_ui),
+            patch.object(dialogs, "get_current_user_id", return_value=owner),
+            patch.object(dialogs, "get_admin_session", _admin_session),
             patch.object(
-                uc, "render_dialog_actions", side_effect=lambda **kwargs: actions.update(kwargs)
+                dialogs,
+                "render_dialog_actions",
+                side_effect=lambda **kwargs: actions.update(kwargs),
             ),
         ):
-            uc.render_delete_dialog(job_id, manager, on_deleted=lambda: deleted.update(value=True))
+            dialogs.render_delete_dialog(
+                job_id, manager, on_deleted=lambda: deleted.update(value=True)
+            )
             await actions["on_confirm"]()  # type: ignore[arg-type]
 
         manager.cancel_job.assert_awaited_once_with(job_id)

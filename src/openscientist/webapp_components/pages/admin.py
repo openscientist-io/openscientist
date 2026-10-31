@@ -15,20 +15,20 @@ from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_j
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
 from openscientist.database.models import Job, ReviewToken, User
 from openscientist.database.session import get_admin_session
-from openscientist.webapp_components.pages.billing import render_billing_panel
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.badges import render_job_id_badge
+from openscientist.webapp_components.components.banners import render_alert_banner
+from openscientist.webapp_components.components.common import (
     format_uptime,
     make_action_button_slot,
-    render_alert_banner,
     render_container_status_badge,
     render_dialog_actions,
     render_empty_state,
-    render_job_id_badge,
-    render_job_id_slot,
-    render_navigator,
     render_stat_badges,
     render_user_search,
 )
+from openscientist.webapp_components.components.job_table import render_job_id_slot
+from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.utils import guard_client, setup_timer_cleanup
 
 if TYPE_CHECKING:

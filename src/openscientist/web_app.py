@@ -38,10 +38,8 @@ from openscientist.listener import ListenerBindError
 from openscientist.security import register_scanner_block_middleware
 from openscientist.settings import get_settings
 from openscientist.version import get_version_string
-from openscientist.webapp_components.ui_components import (
-    _inject_thinking_status_styles,
-    register_badge_head_html,
-)
+from openscientist.webapp_components.components.badges import register_badge_head_html
+from openscientist.webapp_components.components.common import _inject_thinking_status_styles
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"

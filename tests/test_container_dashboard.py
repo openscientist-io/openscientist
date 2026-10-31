@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openscientist.webapp_components.ui_components import format_uptime
+from openscientist.webapp_components.components.common import format_uptime
 from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
