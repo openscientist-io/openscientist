@@ -1,9 +1,4 @@
-"""
-API key model for REST API authentication.
-
-API keys allow programmatic access to the OpenScientist REST API.
-Users can create multiple API keys with descriptive names.
-"""
+"""API key model for REST API authentication."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -20,23 +15,10 @@ if TYPE_CHECKING:
 
 
 class APIKey(UUIDv7Mixin, Base):
-    """
-    API key for REST API authentication.
+    """API key for REST API authentication.
 
-    API keys use the format "name:secret" where:
-    - name: User-chosen descriptive name (stored plaintext)
-    - secret: Cryptographically random token (stored hashed)
-
-    The full "name:secret" key is only shown once at creation time.
-
-    Attributes:
-        user_id: Foreign key to the user who owns this API key
-        name: User-chosen descriptive name for the key
-        key_hash: Hashed secret portion of the API key
-        last_used_at: Timestamp when key was last used (UTC)
-        is_active: Whether the key is active (for revocation)
-        usage_count: Number of times this API key has been used
-        user: Related User object
+    The key is "name:secret". The name is stored in plaintext, the secret is
+    hashed, and the full key is shown only once at creation.
     """
 
     __tablename__ = "api_keys"

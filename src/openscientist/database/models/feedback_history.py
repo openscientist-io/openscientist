@@ -1,9 +1,4 @@
-"""
-Feedback history model for user feedback.
-
-Records user feedback provided during analysis to guide the LLM
-and improve results.
-"""
+"""Feedback history model for user feedback."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,20 +14,7 @@ if TYPE_CHECKING:
 
 
 class FeedbackHistory(UUIDv7Mixin, Base):
-    """
-    User feedback entry.
-
-    Records feedback provided by users during analysis. Feedback is
-    incorporated into the LLM context to guide future iterations.
-
-    Attributes:
-        job_id: Foreign key to the job this feedback belongs to
-        iteration: Iteration number when feedback was provided
-        feedback_type: Type of feedback (correction/suggestion/question/approval)
-        feedback_text: User's feedback text
-        applied: Whether feedback has been incorporated
-        job: Related Job object
-    """
+    """User feedback entry."""
 
     __tablename__ = "feedback_history"
 

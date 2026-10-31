@@ -1,9 +1,4 @@
-"""
-Finding model for analysis discoveries.
-
-Findings represent discrete analytical observations or results
-from code execution, analysis, or data inspection.
-"""
+"""Finding model for analysis discoveries."""
 
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -22,24 +17,7 @@ if TYPE_CHECKING:
 
 
 class Finding(UUIDv7Mixin, Base):
-    """
-    Analysis finding.
-
-    Represents a discrete analytical observation or result. Findings
-    are generated through code execution, data inspection, or analysis
-    and are linked to hypotheses they support or refute.
-
-    Attributes:
-        job_id: Foreign key to the job this finding belongs to
-        iteration: Iteration number when finding was generated
-        text: Finding description
-        finding_type: Type of finding (observation/measurement/analysis/error)
-        source: Source of finding (code_execution/literature/reasoning)
-        data: Structured data associated with finding
-        job: Related Job object (via hypothesis)
-        hypotheses: Hypotheses this finding relates to (M2M)
-        literature: Literature references (M2M)
-    """
+    """Analysis finding."""
 
     __tablename__ = "findings"
 

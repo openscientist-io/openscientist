@@ -1,9 +1,4 @@
-"""
-Cryptographic utilities for encrypting sensitive database fields.
-
-Uses Fernet symmetric encryption from the cryptography library.
-The encryption key should be stored securely in environment variables.
-"""
+"""Cryptographic utilities for encrypting sensitive database fields."""
 
 import base64
 import hashlib
@@ -23,28 +18,17 @@ class EncryptionError(Exception):
 
 @lru_cache(maxsize=1)
 def _get_fernet() -> Fernet | None:
-    """
-    Get or create Fernet instance from settings.
-
-    The key can be either:
-    - A 32-byte URL-safe base64-encoded key (Fernet format)
-    - Any string that will be hashed to derive a key
-
-    Returns:
-        Fernet instance or None if no key is configured
-    """
+    """Get or create a Fernet instance from settings."""
     key = get_settings().auth.token_encryption_key
     if not key:
         return None
 
-    # Try to use the key directly as a Fernet key
     try:
         return Fernet(key.encode() if isinstance(key, str) else key)
     except (ValueError, TypeError):
         pass
 
     # Fall back to deriving a key from the string
-    # Use SHA-256 to get 32 bytes, then base64 encode for Fernet
     key_bytes = hashlib.sha256(key.encode()).digest()
     fernet_key = base64.urlsafe_b64encode(key_bytes)
     return Fernet(fernet_key)
@@ -56,18 +40,6 @@ def encryption_available() -> bool:
 
 
 def encrypt(plaintext: str) -> str:
-    """
-    Encrypt a plaintext string.
-
-    Args:
-        plaintext: The string to encrypt
-
-    Returns:
-        Base64-encoded encrypted string
-
-    Raises:
-        EncryptionError: If encryption key is not configured
-    """
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
@@ -79,18 +51,6 @@ def encrypt(plaintext: str) -> str:
 
 
 def decrypt(ciphertext: str) -> str:
-    """
-    Decrypt an encrypted string.
-
-    Args:
-        ciphertext: Base64-encoded encrypted string
-
-    Returns:
-        Decrypted plaintext string
-
-    Raises:
-        EncryptionError: If decryption fails or key is not configured
-    """
     fernet = _get_fernet()
     if fernet is None:
         raise EncryptionError(
@@ -105,10 +65,5 @@ def decrypt(ciphertext: str) -> str:
 
 
 def generate_key() -> str:
-    """
-    Generate a new Fernet encryption key.
-
-    Returns:
-        URL-safe base64-encoded 32-byte Fernet key
-    """
+    """Generate a new Fernet encryption key."""
     return Fernet.generate_key().decode()

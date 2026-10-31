@@ -1,9 +1,4 @@
-"""
-Cost record model for LLM usage tracking.
-
-Tracks LLM API costs per job and per operation for billing transparency
-and budget enforcement.
-"""
+"""Cost record model for LLM usage tracking."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,28 +14,7 @@ if TYPE_CHECKING:
 
 
 class CostRecord(UUIDv7Mixin, Base):
-    """
-    LLM cost tracking record.
-
-    Records costs for each LLM API call during job execution.
-    Used for billing transparency and budget enforcement.
-
-    Attributes:
-        job_id: Foreign key to the job this cost belongs to
-        iteration: Iteration number when cost was incurred (NULL for chat)
-        operation_type: Type of operation (analysis/code_gen/chat/etc)
-        provider: LLM provider (vertex/bedrock/cborg)
-        model: Model name/ID used
-        input_tokens: Uncached prompt tokens
-        output_tokens: Generated tokens
-        cache_read_tokens: Prompt tokens served from cache (billed at a
-            fraction of input; the largest bucket in agentic runs)
-        cache_write_tokens: Prompt tokens written to cache
-        reasoning_tokens: Reasoning tokens, where the provider reports them
-            separately rather than inside output
-        cost_usd: Cost in USD
-        job: Related Job object
-    """
+    """LLM cost tracking record."""
 
     __tablename__ = "cost_records"
 

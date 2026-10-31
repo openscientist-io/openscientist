@@ -1,9 +1,4 @@
-"""
-Iteration summary model for per-iteration results.
-
-Stores a summary of each analysis iteration including key findings,
-decisions, and progress toward the goal.
-"""
+"""Iteration summary model for per-iteration results."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,18 +14,7 @@ if TYPE_CHECKING:
 
 
 class IterationSummary(UUIDv7Mixin, Base):
-    """
-    Iteration summary.
-
-    Summarizes the results and decisions from a complete analysis iteration.
-    Used for displaying progress and for the LLM to understand prior work.
-
-    Attributes:
-        job_id: Foreign key to the job this summary belongs to
-        iteration: Iteration number being summarized
-        summary_text: Natural language summary of iteration
-        job: Related Job object
-    """
+    """Iteration summary."""
 
     __tablename__ = "iteration_summaries"
     __table_args__ = (

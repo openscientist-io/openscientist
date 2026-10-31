@@ -1,9 +1,4 @@
-"""
-Plot model for generated visualizations.
-
-Tracks metadata for plots generated during analysis. Plot image files
-remain on filesystem; only metadata stored in database.
-"""
+"""Plot model for generated visualizations."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,20 +14,7 @@ if TYPE_CHECKING:
 
 
 class Plot(UUIDv7Mixin, Base):
-    """
-    Generated plot/visualization.
-
-    Tracks metadata for plots generated during analysis. The actual
-    plot image is stored on the filesystem, referenced by file_path.
-
-    Attributes:
-        job_id: Foreign key to the job this plot belongs to
-        iteration: Iteration number when plot was generated
-        title: Plot title
-        description: Description of what the plot shows
-        file_path: Relative path to plot image file
-        job: Related Job object
-    """
+    """Generated plot/visualization."""
 
     __tablename__ = "plots"
 

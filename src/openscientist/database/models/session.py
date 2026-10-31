@@ -1,9 +1,4 @@
-"""
-Session model for user login sessions.
-
-Tracks active user sessions created after successful OAuth login.
-Sessions expire after a configurable period of inactivity.
-"""
+"""Session model for user login sessions."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -20,17 +15,7 @@ if TYPE_CHECKING:
 
 
 class Session(UUIDv7Mixin, Base):
-    """
-    User login session.
-
-    Created after successful OAuth login. The session ID is stored in a
-    secure HTTP-only cookie. Sessions expire after inactivity.
-
-    Attributes:
-        user_id: Foreign key to the user who owns this session
-        expires_at: Timestamp when the session expires (UTC)
-        user: Related User object
-    """
+    """User login session."""
 
     __tablename__ = "sessions"
 
@@ -56,6 +41,4 @@ class Session(UUIDv7Mixin, Base):
         return f"<Session(id={self.id}, user_id={self.user_id}, expires_at={self.expires_at})>"
 
     def is_expired(self) -> bool:
-        """Check if the session has expired."""
-
         return datetime.now(UTC) > self.expires_at

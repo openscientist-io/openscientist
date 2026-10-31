@@ -1,19 +1,7 @@
-"""
-Database engine configuration for OpenScientist.
+"""Database engine configuration for OpenScientist.
 
 An asyncpg connection belongs to the event loop that opened it, so each loop
 gets its own pooled engines, one per database login, created on first use.
-When the loop shuts down (``asyncio.run``, ``asyncio.Runner``, uvicorn and
-pytest-asyncio all shut down its async generators before closing it), its
-engines are disposed and its pooled connections closed.
-
-Engine Types:
-    - get_engine(): the login of ``DATABASE_URL``, subject to RLS
-    - get_admin_engine(): the login of ``ADMIN_DATABASE_URL``, which bypasses RLS
-
-ADMIN_DATABASE_URL must connect with a PostgreSQL role that has elevated
-privileges (table owner or role with BYPASSRLS). The admin engine refuses to
-start without it.
 """
 
 import asyncio
@@ -27,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from openscientist.database.retry import guard_connect
 from openscientist.settings import get_settings
 
-# Load environment variables from .env file
 load_dotenv()
 
 
@@ -94,38 +81,18 @@ def _engine_for(database_url: str) -> AsyncEngine:
 
 
 def get_engine() -> AsyncEngine:
-    """
-    The running loop's engine for standard operations.
+    """The running loop's engine for standard operations.
 
     It connects with ``DATABASE_URL``, whose login works under RLS policies.
-
-    Returns:
-        AsyncEngine: The SQLAlchemy async engine instance.
-
-    Raises:
-        RuntimeError: No event loop runs in this thread.
     """
     return _engine_for(get_settings().database.effective_database_url)
 
 
 def get_admin_engine() -> AsyncEngine:
-    """
-    The running loop's engine for privileged operations.
+    """The running loop's engine for privileged operations.
 
     It connects with ``ADMIN_DATABASE_URL``, whose role bypasses RLS policies
-    (table owner or BYPASSRLS grant).
-
-    Use this engine only for:
-    - Background schedulers (no user context available)
-    - Admin-authenticated endpoints (verified by @require_admin)
-    - Migrations and schema changes
-    - Test fixtures that need to create data across tenants
-
-    Returns:
-        AsyncEngine: The admin SQLAlchemy async engine instance.
-
-    Raises:
-        ValueError: ``ADMIN_DATABASE_URL`` is not configured.
-        RuntimeError: No event loop runs in this thread.
+    (table owner or BYPASSRLS grant). Use it only for background schedulers,
+    admin endpoints, migrations and test fixtures.
     """
     return _engine_for(get_settings().database.required_admin_database_url())

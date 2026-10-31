@@ -1,9 +1,4 @@
-"""
-Literature model for scientific references.
-
-Tracks literature references (papers, documentation) retrieved
-during analysis to support hypotheses and findings.
-"""
+"""Literature model for scientific references."""
 
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -21,26 +16,7 @@ if TYPE_CHECKING:
 
 
 class Literature(UUIDv7Mixin, Base):
-    """
-    Literature reference.
-
-    Represents a scientific paper, documentation, or other reference
-    retrieved during analysis. Literature is linked to hypotheses and
-    findings it supports.
-
-    Attributes:
-        job_id: Foreign key to the job this reference belongs to
-        iteration: Iteration number when reference was retrieved
-        title: Title of the paper/document
-        authors: Author list
-        year: Publication year
-        url: URL to the resource
-        abstract: Abstract or summary
-        extra_metadata: Additional structured metadata
-        job: Related Job object
-        hypotheses: Hypotheses this reference supports (M2M)
-        findings: Findings this reference supports (M2M)
-    """
+    """Literature reference."""
 
     __tablename__ = "literature"
 
@@ -97,9 +73,8 @@ class Literature(UUIDv7Mixin, Base):
     # Relationships
     job: Mapped["Job"] = relationship()
 
-    # Note: Hypotheses were incorrectly linked via finding_literature.
-    # If direct hypothesis-literature relationships are needed in the future,
-    # create a hypothesis_literature junction table.
+    # Literature links to hypotheses only through findings. A direct link would
+    # need a hypothesis_literature junction table.
 
     findings: Mapped[list["Finding"]] = relationship(
         secondary="finding_literature",
