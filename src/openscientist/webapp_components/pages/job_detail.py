@@ -23,7 +23,7 @@ from openscientist.agent.factory import agent_class_for_provider_id
 from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx, thread_safe_user_session
-from openscientist.job.types import JobInfo, JobStatus
+from openscientist.job.types import JobInfo, JobStatus, completed_iterations
 from openscientist.job_chat import get_chat_history, send_chat_message
 from openscientist.job_manager import _db_get_job, _db_get_share_permission
 from openscientist.knowledge_state import KnowledgeState
@@ -66,11 +66,7 @@ def _derive_progress_from_ks(
         return default_iterations, 0
     findings_count = len(ks_data.get("findings", []))
     ks_iteration = int(ks_data.get("iteration", 1))
-    if status in ("running", "awaiting_feedback"):
-        iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-    else:
-        iterations_completed = ks_iteration
-    return iterations_completed, findings_count
+    return completed_iterations(status, ks_iteration), findings_count
 
 
 async def _load_knowledge_state(
