@@ -165,3 +165,59 @@ def test_build_images_stops_at_the_failing_build(checkout: Path, failing_call: i
 def test_commit_reports_the_short_head_sha(checkout: Path, monkeypatch):
     monkeypatch.chdir(REPO_ROOT)
     assert re.fullmatch(r"[0-9a-f]{7,40}", stack._commit())
+
+
+def _start_with(checkout: Path, monkeypatch, airgapped: str, count: int, accept: bool):
+    """Run stack.start with the mirror count and the offer answer controlled.
+
+    Returns the executed commands and the prompts the mirror offer showed.
+    """
+    (checkout / ".env").write_text(
+        f"OPENSCIENTIST_PROVIDER=vllm\nOPENSCIENTIST_AIRGAPPED={airgapped}\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    prompts: list[str] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        calls.append((argv, env))
+        return 0
+
+    def confirm(prompt: str) -> bool:
+        prompts.append(prompt)
+        return accept
+
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "pubmed_mirror_count", lambda root: count)
+    monkeypatch.setattr(stack, "_confirm", confirm)
+    assert stack.start(checkout, run) == 0
+    return calls, prompts
+
+
+def _loaded(calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]]) -> bool:
+    return any("openscientist.pubmed_mirror" in " ".join(argv) for argv, _ in calls)
+
+
+def test_mirror_offered_when_airgapped_and_empty(checkout: Path, monkeypatch):
+    calls, prompts = _start_with(checkout, monkeypatch, airgapped="true", count=0, accept=False)
+    # The offer is made but declined, so the load command never runs.
+    assert prompts and prompts[0].startswith("Load the PubMed mirror")
+    assert not _loaded(calls)
+
+
+def test_mirror_loaded_when_the_offer_is_accepted(checkout: Path, monkeypatch):
+    calls, prompts = _start_with(checkout, monkeypatch, airgapped="true", count=0, accept=True)
+    assert prompts
+    assert _loaded(calls)
+
+
+def test_mirror_not_offered_when_airgapped_is_off(checkout: Path, monkeypatch):
+    calls, prompts = _start_with(checkout, monkeypatch, airgapped="false", count=0, accept=True)
+    assert prompts == []
+    assert not _loaded(calls)
+
+
+def test_mirror_not_offered_when_not_empty(checkout: Path, monkeypatch):
+    calls, prompts = _start_with(checkout, monkeypatch, airgapped="true", count=7, accept=True)
+    assert prompts == []
+    assert not _loaded(calls)

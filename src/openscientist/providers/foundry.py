@@ -5,7 +5,16 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream, SetupQuestion
+from openscientist.providers.base import (
+    AirgapEgress,
+    AirgapPosture,
+    ClaudeCompatible,
+    CostInfo,
+    LiveCheckResult,
+    LlmUpstream,
+    SetupQuestion,
+    _completion_live_check,
+)
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_empty_env_vars
@@ -103,6 +112,50 @@ class FoundryProvider(ClaudeCompatible):
         )
 
     @classmethod
+    def live_check_billed(cls) -> bool:
+        # Foundry has no free listing; the check is a one-token completion.
+        return True
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not (p.anthropic_foundry_base_url or p.anthropic_foundry_resource):
+            return LiveCheckResult(ok=True, detail="No Foundry endpoint to check with; skipped.")
+        if p.anthropic_foundry_api_key:
+            token = p.anthropic_foundry_api_key
+        else:
+            # No API key, so mint a short-lived Entra ID token via the default chain.
+            try:
+                from azure.identity import DefaultAzureCredential
+            except ImportError:
+                return LiveCheckResult(
+                    ok=False,
+                    detail="No Foundry API key and azure-identity is not installed.",
+                )
+            try:
+                token = (
+                    DefaultAzureCredential()
+                    .get_token("https://cognitiveservices.azure.com/.default")
+                    .token
+                )
+            except Exception as exc:  # noqa: BLE001 - surface any credential error
+                return LiveCheckResult(ok=False, detail=f"Foundry Entra ID token failed: {exc}")
+        resource = p.anthropic_foundry_resource
+        if p.anthropic_foundry_base_url:
+            base_url = p.anthropic_foundry_base_url
+        elif resource:
+            base_url = cls._build_base_url_from_resource(resource)
+        else:
+            return LiveCheckResult(ok=True, detail="No Foundry endpoint to check with; skipped.")
+        url = f"{base_url.rstrip('/')}/v1/messages"
+        body = {
+            "model": p.model or "claude-sonnet-4-5",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        headers = {"x-api-key": token}
+        return _completion_live_check(url, headers, body, cls.display_name)
+
+    @classmethod
     def container_env(
         cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
     ) -> dict[str, str]:
@@ -135,6 +188,15 @@ class FoundryProvider(ClaudeCompatible):
             "ANTHROPIC_FOUNDRY_BASE_URL": proxy_base_url,
             "ANTHROPIC_FOUNDRY_API_KEY": placeholder,
         }
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.anthropic_foundry_base_url or provider.anthropic_foundry_resource:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
+        )
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at Foundry.

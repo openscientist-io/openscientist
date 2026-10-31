@@ -8,8 +8,7 @@ from openscientist.cli.steps import STEPS
 from tests.cli.conftest import REPO_ROOT
 
 #: Every variable the settings read that no step asks and no default covers,
-#: with the reason. The PR 3 steps (login, air-gapped, Phenix) move their
-#: variables out of this set when they land.
+#: with the reason.
 NOT_ASKED = {
     "GITHUB_TOKEN": "optional skill-sync token, edited in .env",
     "OPENSCIENTIST_MODEL_CONTEXT_TOKENS": "advanced context-window override, probed at job launch",
@@ -28,15 +27,7 @@ NOT_ASKED = {
     "AZURE_TENANT_ID": "optional Azure Cost Management credentials, edited in .env",
     "AZURE_CLIENT_ID": "optional Azure Cost Management credentials, edited in .env",
     "AZURE_CLIENT_SECRET": "optional Azure Cost Management credentials, edited in .env",
-    "GOOGLE_CLIENT_ID": "login method, asked by the PR 3 login step",
-    "GOOGLE_CLIENT_SECRET": "login method, asked by the PR 3 login step",
-    "GITHUB_CLIENT_ID": "login method, asked by the PR 3 login step",
-    "GITHUB_CLIENT_SECRET": "login method, asked by the PR 3 login step",
-    "ORCID_CLIENT_ID": "login method, asked by the PR 3 login step",
-    "ORCID_CLIENT_SECRET": "login method, asked by the PR 3 login step",
-    "BOOTSTRAP_ADMIN_EMAILS": "login method, asked by the PR 3 login step",
-    "PHENIX_PATH": "Phenix, asked by the PR 3 Phenix step",
-    "PHENIX_HOST_PATH": "Phenix, asked by the PR 3 Phenix step",
+    "PHENIX_PATH": "container path, derived from PHENIX_HOST_PATH by compose, never asked",
     "OPENSCIENTIST_AGENT_NETWORK": "container plumbing, edited in .env",
     "OPENSCIENTIST_AGENT_PLATFORM": "container plumbing, edited in .env",
     "OPENSCIENTIST_HOST_PROJECT_DIR": "host project path, edited in .env",

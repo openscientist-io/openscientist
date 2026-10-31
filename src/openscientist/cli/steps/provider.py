@@ -1,5 +1,6 @@
 """The model provider choice and the chosen provider's own questions."""
 
+from openscientist.cli import livecheck
 from openscientist.cli.step import Question, Step
 from openscientist.providers import provider_class, provider_ids
 
@@ -42,6 +43,12 @@ class ProviderStep(Step):
         if provider_id not in provider_ids():
             return [f"Unknown provider {provider_id!r}. Valid options: {', '.join(provider_ids())}"]
         return provider_class(provider_id).setup_answers_errors(provider_id, values)
+
+    def after_validate(self, answers: dict[str, str]) -> str:
+        provider_id = answers.get("OPENSCIENTIST_PROVIDER", "")
+        if not provider_id or provider_id not in provider_ids():
+            return "pass"
+        return livecheck.run_live_check(provider_id, answers)
 
     def declared_envs(self) -> frozenset[str]:
         envs = {"OPENSCIENTIST_PROVIDER"}

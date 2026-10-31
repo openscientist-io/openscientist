@@ -10,6 +10,7 @@ from openscientist.providers.base import (
     AirgapPosture,
     ClaudeCompatible,
     CostInfo,
+    LiveCheckResult,
     SetupQuestion,
     env_from_pairs,
 )
@@ -71,6 +72,52 @@ class VertexProvider(ClaudeCompatible):
         )
 
     @classmethod
+    def live_check_billed(cls) -> bool:
+        # Vertex has no free listing; the check is a one-token completion.
+        return True
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.anthropic_vertex_project_id or not p.cloud_ml_region:
+            return LiveCheckResult(
+                ok=True, detail="No Vertex project or region to check with; skipped."
+            )
+        model = p.model or cls.default_claude_model
+        url = (
+            "https://aiplatform.googleapis.com/v1/projects/"
+            f"{p.anthropic_vertex_project_id}/locations/{p.cloud_ml_region}"
+            f"/publishers/anthropic/models/{model}:rawPredict"
+        )
+        body = {
+            "anthropic_version": "vertex-2023-10-16",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+        try:
+            from google.auth import default
+            from google.auth.transport.requests import AuthorizedSession
+        except ImportError:
+            return LiveCheckResult(
+                ok=False, detail="google-auth is not installed; cannot check Vertex."
+            )
+        try:
+            credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        except Exception as exc:  # noqa: BLE001 - surface any credential error
+            return LiveCheckResult(ok=False, detail=f"Vertex credentials failed: {exc}")
+        import requests
+
+        try:
+            with AuthorizedSession(credentials) as session:
+                resp = session.post(url, json=body, timeout=30)
+        except requests.RequestException as exc:
+            return LiveCheckResult(ok=False, detail=f"Could not reach Vertex: {exc}")
+        if not 200 <= resp.status_code < 300:
+            return LiveCheckResult(
+                ok=False, detail=f"Vertex check returned HTTP {resp.status_code}."
+            )
+        return LiveCheckResult(ok=True, detail="Reached Vertex with a one-token completion.")
+
+    @classmethod
     def container_env(
         cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
     ) -> dict[str, str]:
@@ -115,8 +162,9 @@ class VertexProvider(ClaudeCompatible):
             ]
         )
 
-    def airgap_egress(self) -> AirgapPosture:
-        region = get_settings().provider.cloud_ml_region
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        region = provider.cloud_ml_region
         return AirgapPosture(
             AirgapEgress.DIRECT,
             direct_endpoints=(

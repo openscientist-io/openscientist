@@ -9,7 +9,7 @@ import logging
 
 import requests
 
-from openscientist.providers.base import SelfHostedOpenAiWire
+from openscientist.providers.base import LiveCheckResult, SelfHostedOpenAiWire
 from openscientist.settings import ProviderSettings
 
 logger = logging.getLogger(__name__)
@@ -67,3 +67,13 @@ class LlamaCppProvider(SelfHostedOpenAiWire):
     def _probe_context_tokens(base_url: str, model_id: str, api_key: str | None) -> int | None:
         # /props is server-global, so model_id is unused (unlike vLLM's per-card probe).
         return _probe_llamacpp_context_tokens(base_url, api_key)
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        window = _probe_llamacpp_context_tokens(p.llamacpp_base_url, p.llamacpp_api_key)
+        if window:
+            return LiveCheckResult(ok=True, detail=f"Reached llama.cpp (context window {window}).")
+        return LiveCheckResult(
+            ok=False,
+            detail=f"Could not reach the llama.cpp server at {p.llamacpp_base_url}.",
+        )

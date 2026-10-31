@@ -162,6 +162,18 @@ class SetupQuestion:
     help: str | None = None
 
 
+@dataclass(frozen=True)
+class LiveCheckResult:
+    """The setup wizard's live check outcome.
+
+    ``detail`` is the human-readable result shown to the installer and must
+    never contain a secret.
+    """
+
+    ok: bool
+    detail: str = ""
+
+
 @contextmanager
 def _answers_env(values: Mapping[str, str]):
     """Hold the wizard's answers in the process environment for the duration of a check."""
@@ -179,6 +191,41 @@ def _answers_env(values: Mapping[str, str]):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old_value
+
+
+def _listing_live_check(url: str, headers: dict[str, str], what: str) -> LiveCheckResult:
+    """One free model-listing call: reachability plus a sane response body."""
+    import requests
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        return LiveCheckResult(ok=False, detail=f"Could not reach {what}: {exc}")
+    if not 200 <= resp.status_code < 300:
+        return LiveCheckResult(ok=False, detail=f"{what} listing returned HTTP {resp.status_code}.")
+    try:
+        payload = resp.json()
+    except ValueError:
+        return LiveCheckResult(ok=False, detail=f"{what} listing returned a non-JSON body.")
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, list):
+        return LiveCheckResult(ok=True, detail=f"Reached {what} ({len(data)} models).")
+    return LiveCheckResult(ok=True, detail=f"Reached {what}.")
+
+
+def _completion_live_check(
+    url: str, headers: dict[str, str], body: dict[str, object], what: str
+) -> LiveCheckResult:
+    """One minimal billed completion (max_tokens 1) as the live check."""
+    import requests
+
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=30)
+    except requests.RequestException as exc:
+        return LiveCheckResult(ok=False, detail=f"Could not reach {what}: {exc}")
+    if not 200 <= resp.status_code < 300:
+        return LiveCheckResult(ok=False, detail=f"{what} check returned HTTP {resp.status_code}.")
+    return LiveCheckResult(ok=True, detail=f"Reached {what} with a one-token completion.")
 
 
 class Provider(abc.ABC):
@@ -270,6 +317,41 @@ class Provider(abc.ABC):
                 return errors
         finally:
             settings_logger.setLevel(previous_level)
+
+    @classmethod
+    def live_check_billed(cls) -> bool:
+        """Whether the live check makes a billed request (a minimal completion)."""
+        return False
+
+    @classmethod
+    def live_check(cls, provider_id: str, answers: Mapping[str, str]) -> LiveCheckResult:
+        """One real bounded-timeout call against the configured provider.
+
+        Holds the wizard's answers in the process environment only for the
+        duration of the call, then runs the provider-specific check.
+        """
+        values = dict(answers)
+        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        settings_logger = logging.getLogger("openscientist.settings")
+        previous_level = settings_logger.level
+        settings_logger.setLevel(logging.ERROR)
+        try:
+            with _answers_env(values):
+                try:
+                    p = ProviderSettings(_env_file=None)
+                except ValidationError as exc:
+                    return LiveCheckResult(
+                        ok=False,
+                        detail="; ".join(str(error["msg"]) for error in exc.errors()),
+                    )
+                return cls._live_check(p)
+        finally:
+            settings_logger.setLevel(previous_level)
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        """Provider-specific live check against a settings snapshot. Base: none."""
+        return LiveCheckResult(ok=True, detail="No live check for this provider.")
 
     def _validate_optional_config(self) -> list[str]:
         """Warning messages for optional misconfiguration."""
@@ -386,11 +468,20 @@ class Provider(abc.ABC):
     def airgap_egress(self) -> AirgapPosture:
         """Air-gapped egress posture for the active config, read by the firewall
         and proxy-start. Pure, no network."""
-        if self.proxy_env_overrides(proxy_base_url="", placeholder=""):
-            return AirgapPosture(AirgapEgress.PROXY)
+        return type(self).airgap_posture(get_settings().provider)
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        """Air-gapped egress posture for a settings snapshot, without the full app.
+
+        The setup wizard evaluates it from the provider's own settings before the
+        database and other app settings exist, so it must not build the full
+        settings. Pure, no network. The default is a provider that cannot be
+        air-gapped; providers that proxy (or egress directly) override it.
+        """
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,
-            reason=f"{self.display_name} cannot be air-gapped.",
+            reason=f"{cls.display_name} cannot be air-gapped.",
         )
 
     def proxied_container_env(
@@ -649,6 +740,11 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
             # Never ship the real key into the container.
             env[self.api_key_env] = placeholder
         return env
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        # Self-hosted servers always route through the proxy.
+        return AirgapPosture(AirgapEgress.PROXY)
 
     def _endpoint(self) -> tuple[str, str | None]:
         """Base URL and key to reach the server, the proxy and placeholder when

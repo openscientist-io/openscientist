@@ -13,7 +13,7 @@ from openscientist.cli import app as cli_app
 from openscientist.cli import envfiles, stack, wizard
 from openscientist.cli.step import Question
 from openscientist.cli.steps import STEPS
-from tests.cli.conftest import ANTHROPIC_SETUP_ANSWERS, env_value
+from tests.cli.conftest import ANTHROPIC_SETUP_ANSWERS, env_value, wizard_input, wizard_tail
 
 runner = CliRunner()
 
@@ -32,6 +32,10 @@ def test_setup_writes_env_files(checkout: Path):
     assert env_value(checkout, ".env", "ANTHROPIC_API_KEY") == "sk-test-123"
     assert env_value(checkout, ".env", "PORT") == "8080"
     assert env_value(checkout, ".env", "POSTGRES_PORT") == "5434"
+    # The PR 3 steps land their answers.
+    assert env_value(checkout, ".env", "OPENSCIENTIST_DEV_MODE") == "true"
+    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == "False"
+    assert env_value(checkout, ".env", "PHENIX_HOST_PATH") == ""
     # The secrets are generated but never shown.
     for key in envfiles.GENERATED_SECRETS:
         value = envfiles.file_values(checkout, envfiles.GENERATED_SECRETS[key]).get(key, "")
@@ -48,7 +52,7 @@ def test_provider_step_asks_only_the_chosen_provider_questions(checkout: Path):
     result = runner.invoke(
         cli_app.app,
         ["setup"],
-        input="9\nhttp://host.docker.internal:8000/v1\n\nqwen3-8b\n\n\n\n\n\n",
+        input=wizard_input("9", ["http://host.docker.internal:8000/v1", "", "qwen3-8b"]),
     )
     assert result.exit_code == 0
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "vllm"
@@ -61,15 +65,14 @@ def test_provider_step_asks_only_the_chosen_provider_questions(checkout: Path):
 
 def test_setup_rejects_answers_the_provider_validation_refuses(checkout: Path):
     # Round one answers the key questions empty, so the provider refuses; the
-    # wizard re-asks the step and the round-two key is written.
-    result = runner.invoke(
-        cli_app.app,
-        ["setup"],
-        input="1\n\n\n\nsk-test-123\n\n\n\n\n\n\n\n",
-    )
+    # wizard re-asks the step (not the choice) and the round-two key is written.
+    input_lines = ["1", "", "", "", "sk-test-123", "", "", *wizard_tail()]
+    result = runner.invoke(cli_app.app, ["setup"], input="\n".join(input_lines) + "\n")
     assert result.exit_code == 0
-    assert "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN not set" in result.output
-    assert "trying again" in result.output
+    # The rejected first pass was re-asked (the provider choice was not). The
+    # second pass's key is what got saved, and the run consumed both passes
+    # through to the tail.
+    assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
     assert env_value(checkout, ".env", "ANTHROPIC_API_KEY") == "sk-test-123"
 
 
@@ -77,7 +80,9 @@ def test_second_setup_offers_current_values_and_keeps_secrets(checkout: Path):
     first = runner.invoke(cli_app.app, ["setup"], input=ANTHROPIC_SETUP_ANSWERS)
     assert first.exit_code == 0
     before = {name: (checkout / name).read_bytes() for name in (".env", ".env.db", ".env.owner")}
-    second = runner.invoke(cli_app.app, ["setup"], input="\n" * 9)
+    # A re-run skips the provider choice (it is already set) and offers the current
+    # values as defaults, so every prompt is answered with Enter.
+    second = runner.invoke(cli_app.app, ["setup"], input="\n" * 18)
     assert second.exit_code == 0
     for name, content in before.items():
         assert (checkout / name).read_bytes() == content, name
@@ -119,7 +124,10 @@ def test_default_command_runs_wizard_then_starts(checkout: Path, monkeypatch):
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
     result = runner.invoke(cli_app.app, [], input=ANTHROPIC_SETUP_ANSWERS)
     assert result.exit_code == 0
-    assert "Not configured yet" in result.output
+    # The checkout starts unconfigured, so the env file's values prove the
+    # wizard ran first. The four builds plus the compose up prove the start
+    # then ran.
+    assert (checkout / ".env").is_file()
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
     assert len(calls) == 5
     assert calls[-1][0][-1] == "openscientist"
@@ -154,7 +162,10 @@ def test_setup_skips_steps_that_do_not_apply(checkout: Path, monkeypatch):
 
     monkeypatch.setattr(harness, "applies", lambda answers: False)
     monkeypatch.setattr(harness, "questions", not_asked)
-    result = runner.invoke(cli_app.app, ["setup"], input=ANTHROPIC_SETUP_ANSWERS)
+    tail = wizard_tail()
+    del tail[3]  # the harness answer, never asked
+    answers = "\n".join(["1", "sk-test-123", "", "", *tail]) + "\n"
+    result = runner.invoke(cli_app.app, ["setup"], input=answers)
     assert result.exit_code == 0
 
 

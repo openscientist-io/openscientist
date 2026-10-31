@@ -7,7 +7,16 @@ from datetime import UTC, datetime, timedelta
 import requests
 
 from openscientist.exceptions import ProviderError
-from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream, SetupQuestion
+from openscientist.providers.base import (
+    AirgapEgress,
+    AirgapPosture,
+    ClaudeCompatible,
+    CostInfo,
+    LiveCheckResult,
+    LlmUpstream,
+    SetupQuestion,
+    _listing_live_check,
+)
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._anthropic_common import anthropic_container_env
@@ -53,6 +62,16 @@ class CborgProvider(ClaudeCompatible):
             *super().setup_questions(),
         )
 
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.anthropic_base_url or not p.anthropic_auth_token:
+            return LiveCheckResult(
+                ok=True, detail="No CBORG endpoint or token to check with; skipped."
+            )
+        base = p.anthropic_base_url.rstrip("/")
+        headers = {"authorization": f"Bearer {p.anthropic_auth_token}"}
+        return _listing_live_check(f"{base}/v1/models", headers, cls.display_name)
+
     def claude_sdk_env(self) -> dict[str, str]:
         """Auth env vars the claude-agent-sdk CLI must see."""
         settings = get_settings()
@@ -81,6 +100,15 @@ class CborgProvider(ClaudeCompatible):
         if s.anthropic_base_url and s.anthropic_auth_token:
             return {"ANTHROPIC_BASE_URL": proxy_base_url, "ANTHROPIC_AUTH_TOKEN": placeholder}
         return {}
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.anthropic_base_url and provider.anthropic_auth_token:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
+        )
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at the CBORG gateway.

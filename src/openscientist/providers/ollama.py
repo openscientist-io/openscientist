@@ -14,7 +14,10 @@ import requests
 from openscientist.models import ModelProfile, probed_model_profile
 from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
+    AirgapEgress,
+    AirgapPosture,
     CostInfo,
+    LiveCheckResult,
     LlmUpstream,
     OmpModelCatalog,
     OpenAiWireCompatible,
@@ -84,6 +87,17 @@ class OllamaProvider(OpenAiWireCompatible):
         )
 
     @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        model = p.model or _DEFAULT_MODEL
+        window = _probe_ollama_context_tokens(p.ollama_base_url, model)
+        if window:
+            return LiveCheckResult(ok=True, detail=f"Reached Ollama (context window {window}).")
+        return LiveCheckResult(
+            ok=False,
+            detail=f"Could not reach Ollama at {p.ollama_base_url} or find model {model!r}.",
+        )
+
+    @classmethod
     def container_env(
         cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
     ) -> dict[str, str]:
@@ -121,6 +135,11 @@ class OllamaProvider(OpenAiWireCompatible):
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         # omp sends the placeholder so the proxy authenticates the container.
         return {"OPENAI_API_KEY": placeholder, LLM_PROXY_URL_ENV: proxy_base_url}
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        # Keyless and local, so it always routes through the proxy.
+        return AirgapPosture(AirgapEgress.PROXY)
 
     def effective_model_name(self) -> str | None:
         # Ollama holds several models and picks one per request, so a default
