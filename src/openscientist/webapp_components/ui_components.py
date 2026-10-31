@@ -1,9 +1,4 @@
-"""
-Reusable UI components for OpenScientist web interface.
-
-Provides UI rendering functions for error displays, status badges,
-page headers, and other common interface elements.
-"""
+"""Reusable UI components for the OpenScientist web interface."""
 
 import html
 import logging
@@ -59,19 +54,10 @@ def render_project_resource_links() -> None:
 
 
 def format_relative_time(dt: datetime | None) -> str:
-    """
-    Format datetime as relative time (e.g., '2 hours ago').
-
-    Args:
-        dt: Datetime to format, or None
-
-    Returns:
-        Human-readable relative time string, or '-' if dt is None
-    """
+    """Format datetime as relative time (e.g., '2 hours ago')."""
     if dt is None:
         return "-"
 
-    # Ensure dt is timezone-aware (assume UTC if naive)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
 
@@ -101,15 +87,7 @@ def format_relative_time(dt: datetime | None) -> str:
 
 
 def render_skill_name_slot() -> str:
-    """
-    Generate Quasar table slot template for skill name column with clickable link.
-
-    Returns slot template string that renders skill names as clickable links
-    navigating to the skill detail page.
-
-    Returns:
-        Quasar slot template string
-    """
+    """Quasar slot template rendering skill names as links to the detail page."""
     return r"""
         <q-td :props="props">
             <span
@@ -126,10 +104,8 @@ def render_skill_name_slot() -> str:
     """
 
 
-# Type alias for async callbacks
 AsyncCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
-# Status color mappings
 STATUS_COLORS = {
     JobStatus.PENDING: "gray",
     JobStatus.QUEUED: "blue",
@@ -141,7 +117,6 @@ STATUS_COLORS = {
     JobStatus.AWAITING_FEEDBACK: "orange",
 }
 
-# Category color mappings for skills
 CATEGORY_COLORS: dict[str, str] = {
     "analysis": "blue",
     "methodology": "purple",
@@ -158,40 +133,16 @@ CATEGORY_COLORS: dict[str, str] = {
 
 
 def get_category_color(category: str) -> str:
-    """
-    Get the color for a skill category.
-
-    Args:
-        category: The category name (case-insensitive)
-
-    Returns:
-        Color string for use with Quasar/Tailwind (e.g., "blue", "purple")
-    """
+    """Quasar/Tailwind color for a skill category, case-insensitive."""
     return CATEGORY_COLORS.get(category.lower(), "gray")
 
 
 def _get_pubmed_badge_html(pmid: str) -> str:
-    """
-    Generate HTML for a PubMed badge with logo and PMID.
-
-    Creates an inline badge element with:
-    - PubMed logo (inline SVG)
-    - PMID number
-    - Tooltip explaining the link
-    - Opens in new tab (via CSS class, handled by injected script)
-
-    Args:
-        pmid: The PubMed ID number
-
-    Returns:
-        HTML string for the badge element
-    """
+    """HTML for a PubMed badge with logo, PMID and a new-tab link."""
     url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
     tooltip = f"Visit PubMed page for PMID {pmid}"
 
-    # PubMed-style icon: stylized "P" in a rounded square
-    # Using a simple, clean design that's recognizable at small sizes
-    # Note: Explicit width/height/style attributes ensure proper sizing even if CSS not loaded
+    # Inline width/height/style keep the icon sized even if CSS fails to load
     pubmed_icon = (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" '
         'width="14" height="14" class="pubmed-icon" '
@@ -213,13 +164,11 @@ def _get_pubmed_badge_html(pmid: str) -> str:
 
 
 def _inject_pubmed_badge_styles() -> None:
-    """Register CSS and JS for PubMed badges into the app-wide page head.
+    """Register CSS and JS for PubMed badges in the app-wide page head.
 
-    Must be called exactly once, at app bootstrap (see
-    ``register_badge_head_html`` / ``web_app._configure_host_app``), not from
-    per-render code: ``add_head_html(shared=True)`` appends unconditionally to
-    a process-global string (``Client.shared_head_html``), so repeated calls
-    accumulate the same block forever instead of being deduplicated.
+    Call exactly once at app bootstrap (see ``register_badge_head_html``).
+    ``add_head_html(shared=True)`` appends to a process-global string, so
+    repeated calls accumulate the block instead of deduplicating.
     """
     ui.add_head_html(
         """
@@ -268,10 +217,9 @@ def _inject_pubmed_badge_styles() -> None:
 
 
 def _inject_job_id_badge_styles() -> None:
-    """Register CSS and JS for job ID badges into the app-wide page head.
+    """Register CSS and JS for job ID badges in the app-wide page head.
 
-    Must be called exactly once, at app bootstrap -- see
-    ``_inject_pubmed_badge_styles`` above for why.
+    Call exactly once at app bootstrap (same reason as ``_inject_pubmed_badge_styles``).
     """
     ui.add_head_html(
         """
@@ -323,32 +271,20 @@ def _inject_job_id_badge_styles() -> None:
 
 
 def register_badge_head_html() -> None:
-    """Register PubMed/job-id badge CSS and JS globally, for every page.
+    """Register PubMed/job-ID badge CSS and JS globally for every page.
 
-    Call exactly once, at app bootstrap (alongside ``_register_pwa_metadata``
-    in ``web_app._configure_host_app``) -- see ``_inject_pubmed_badge_styles``
-    for why this can't be called from per-render code.
+    Call exactly once at app bootstrap (see ``_inject_pubmed_badge_styles``).
     """
     _inject_pubmed_badge_styles()
     _inject_job_id_badge_styles()
 
 
 def _get_job_id_badge_html(job_id: str, truncate: bool = True) -> str:
-    """
-    Generate HTML for a job ID badge.
-
-    Args:
-        job_id: The job UUID
-        truncate: If True, show only last 8 characters of UUID
-
-    Returns:
-        HTML string for the badge element
-    """
+    """HTML for a job ID badge. ``truncate`` shows only the last 8 characters."""
     display_id = job_id[-8:] if truncate and len(job_id) > 8 else job_id
     tooltip = f"View job {job_id}"
 
-    # Simple work/document icon
-    # Note: Explicit width/height/style attributes ensure proper sizing even if CSS not loaded
+    # Inline width/height/style keep the icon sized even if CSS fails to load
     job_icon = (
         '<svg class="job-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
         'width="14" height="14" '
@@ -367,33 +303,13 @@ def _get_job_id_badge_html(job_id: str, truncate: bool = True) -> str:
 
 
 def render_job_id_badge(job_id: str, truncate: bool = True) -> None:
-    """
-    Render a job ID as a clickable badge.
-
-    Creates an inline badge element with work icon, truncated job ID,
-    tooltip, and click handler that navigates to the job detail page.
-
-    Args:
-        job_id: The job UUID
-        truncate: If True, show only last 8 characters of UUID (default True)
-    """
+    """Render a job ID as a badge linking to the job detail page."""
     badge_html = _get_job_id_badge_html(job_id, truncate)
     ui.html(badge_html)
 
 
 def render_job_id_slot(field_name: str = "job_id") -> str:
-    """
-    Generate Quasar table slot template for job ID column with clickable badges.
-
-    Returns slot template string that renders job IDs as clickable badges
-    linking to the job detail page.
-
-    Args:
-        field_name: The row field containing the job ID (default: "job_id")
-
-    Returns:
-        Quasar slot template string
-    """
+    """Quasar slot template for a job ID column with clickable badges."""
     return f"""
         <q-td :props="props">
             <span
@@ -413,17 +329,9 @@ def render_job_id_slot(field_name: str = "job_id") -> str:
 
 
 def render_pmid_badge(pmid: str) -> None:
-    """
-    Render a single PMID as a clickable PubMed badge.
+    """Render a standalone PMID as a clickable PubMed badge.
 
-    Creates an inline badge element with PubMed logo, PMID number,
-    tooltip, and link that opens in a new tab.
-
-    Use this for standalone PMID display (e.g., in literature lists).
-    For PMIDs embedded in text, use render_text_with_pmid_links() instead.
-
-    Args:
-        pmid: The PubMed ID number (just the numeric part)
+    For PMIDs embedded in text, use ``render_text_with_pmid_links``.
     """
     badge_html = _get_pubmed_badge_html(pmid)
     ui.html(badge_html)
@@ -433,53 +341,35 @@ def render_text_with_pmid_links(
     text: str,
     text_classes: str = "text-sm text-gray-700",
 ) -> None:
-    """
-    Render text with PMID references converted to clickable badges.
+    """Render text with PMID references converted to clickable PubMed badges.
 
-    Parses text for PMID patterns and renders them as clickable PubMed badges
-    with logo, tooltip, and link to PubMed. Supports both single PMIDs and
-    comma-separated lists.
-
-    Patterns matched:
-    - "PMID: 12345678"
-    - "PMID 12345678"
-    - "PMID: 12345678, 87654321, 11111111"
-
-    Args:
-        text: The text containing PMID references
-        text_classes: CSS classes for the text container
+    Supports ``PMID:`` and ``PMID`` prefixes with single or comma-separated PMIDs.
     """
     if not text:
         return
 
-    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers.
-    # Each number must be 5-8 digits to avoid matching years (e.g. 2025) as PMIDs.
+    # 5-8 digits avoids matching years (e.g. 2025) as PMIDs
     pattern = re.compile(r"(PMID[:\s]+)(\d{5,8}(?:\s*,\s*\d{5,8})*)", re.IGNORECASE)
 
-    # Build HTML with text segments and badges
     result_parts = []
     last_end = 0
 
     for match in pattern.finditer(text):
-        # Add text before this match (escaped)
         if match.start() > last_end:
             result_parts.append(html.escape(text[last_end : match.start()]))
 
-        # Extract PMIDs (skip the prefix like "PMID: " since badges are self-explanatory)
+        # group(2) holds the PMIDs. The prefix is dropped since badges are self-explanatory
         pmid_list = match.group(2)
 
-        # Split and create badges for each PMID
         pmids = [p.strip() for p in pmid_list.split(",")]
         pmid_badges = [_get_pubmed_badge_html(pmid) for pmid in pmids]
         result_parts.append(" ".join(pmid_badges))
 
         last_end = match.end()
 
-    # Add remaining text after last match (escaped)
     if last_end < len(text):
         result_parts.append(html.escape(text[last_end:]))
 
-    # If no PMIDs found, render as justified paragraph
     if not result_parts:
         ui.html(
             f'<p class="{text_classes}" style="text-align:justify;hyphens:auto;'
@@ -487,7 +377,6 @@ def render_text_with_pmid_links(
         )
         return
 
-    # Render as HTML to support inline badges with justified text
     html_content = "".join(result_parts)
     ui.html(
         f'<p class="{text_classes}" style="text-align:justify;hyphens:auto;'
@@ -496,31 +385,16 @@ def render_text_with_pmid_links(
 
 
 def transform_pmid_references(text: str) -> str:
-    """
-    Transform PMID references in text to clickable badge HTML.
+    """Transform PMID references in text to clickable badge HTML.
 
-    Useful for post-processing markdown content before rendering.
-    Does NOT HTML-escape the surrounding text (assumes it will be
-    rendered as markdown/HTML).
-
-    Patterns matched:
-    - "PMID: 12345678"
-    - "PMID 12345678"
-    - "PMID: 12345678, 87654321"
-    - Markdown links like [PMID: 12345678](url)
-
-    Args:
-        text: The text containing PMID references
-
-    Returns:
-        Text with PMID references replaced by badge HTML
+    Surrounding text is not HTML-escaped. Only call on content rendered as
+    markdown/HTML.
     """
     if not text:
         return text
 
-    # Pattern matches "PMID" followed by optional colon/space, then comma-separated numbers.
-    # Each number must be 5-8 digits to avoid matching years (e.g. 2025) as PMIDs.
-    # But NOT when inside a markdown link [text](url)
+    # 5-8 digits avoids matching years (e.g. 2025) as PMIDs.
+    # The lookbehind skips matches inside markdown links [text](url)
     pattern = re.compile(r"(?<!\[)(PMID[:\s]+)(\d{5,8}(?:\s*,\s*\d{5,8})*)", re.IGNORECASE)
 
     def replace_pmid(match: re.Match[str]) -> str:
@@ -536,16 +410,7 @@ def render_justified_text(
     text: str,
     text_classes: str = "text-sm text-gray-700",
 ) -> None:
-    """
-    Render text as a justified paragraph for better readability.
-
-    Uses text-align: justify with automatic hyphenation for clean
-    paragraph formatting in large text blocks.
-
-    Args:
-        text: The text to render
-        text_classes: CSS classes for styling (color, size, etc.)
-    """
+    """Render text as a justified paragraph with automatic hyphenation."""
     if not text:
         return
 
@@ -556,30 +421,18 @@ def render_justified_text(
 
 
 def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Path) -> None:
-    """
-    Render a user-friendly error card with tiered disclosure.
+    """Render a user-friendly error card with tiered disclosure.
 
-    Creates a visually prominent error display with:
-    - User-friendly title and message at the top
-    - Actionable steps in bullet list
-    - Collapsible sections for additional context and technical details
-
-    Args:
-        error_info: Dict from get_user_friendly_error() with keys:
-                   category, title, message, extracted_error, steps, raw, contact_admin
-        job_info: JobInfo object for the failed job
-        job_dir: Path to job directory (for potential log access)
+    ``error_info`` is the dict from ``get_user_friendly_error()`` (category, title,
+    message, extracted_error, steps, raw, contact_admin).
     """
     with ui.card().classes("w-full bg-red-50 border-2 border-red-300 mb-4 p-6"):
-        # Header with icon and title
         with ui.row().classes("items-center gap-2 mb-3"):
             ui.icon("error", size="lg").classes("text-red-600")
             ui.label(error_info["title"]).classes("text-h6 font-bold text-red-800")
 
-        # User-friendly message
         ui.label(error_info["message"]).classes("text-red-700 mb-4")
 
-        # Actionable steps
         if error_info.get("steps"):
             ui.label("How to resolve:").classes("font-bold text-red-800 mb-2")
             with ui.column().classes("gap-2 mb-4 pl-2"):
@@ -588,13 +441,11 @@ def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Pa
                         ui.label("•").classes("text-red-600 font-bold")
                         ui.label(step).classes("text-sm text-red-700")
 
-        # Contact admin button if needed
         if error_info.get("contact_admin"):
             ui.label("This error requires administrator assistance.").classes(
                 "text-sm text-red-600 italic mt-2 mb-3 px-2 py-2 bg-red-100 rounded"
             )
 
-        # Collapsible: What happened
         with (
             ui.expansion("What happened?", icon="info").classes(
                 "w-full mt-3 border border-red-200 rounded"
@@ -611,7 +462,6 @@ def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Pa
             if job_info.failed_at:
                 ui.label(f"Failed At: {job_info.failed_at[:19]}").classes("text-sm text-gray-700")
 
-            # Extracted error message
             if error_info.get("extracted_error"):
                 ui.label("Error Message:").classes("text-sm font-bold mt-3 text-gray-800")
                 with ui.element("div").classes("w-full overflow-hidden"):
@@ -619,7 +469,6 @@ def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Pa
                         "text-sm bg-white p-3 rounded border border-red-200 text-gray-700"
                     ).style("word-break: break-word; overflow-wrap: break-word;")
 
-        # Collapsible: Technical details
         with (
             ui.expansion("Technical Details", icon="code").classes(
                 "w-full mt-2 border border-red-200 rounded overflow-hidden"
@@ -644,13 +493,11 @@ def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Pa
                 ):
                     ui.tooltip("Copy to clipboard")
 
-            # Wrap code block in container to prevent overflow
             with ui.element("div").classes("w-full overflow-x-auto"):
                 ui.code(error_info["raw"], language="text").classes(
                     "text-xs max-h-[300px] overflow-y-auto p-2 bg-gray-50 rounded"
                 ).style("word-break: break-word; white-space: pre-wrap; max-width: 100%;")
 
-            # Link to logs if available
             log_file = job_dir / "orchestrator.log"
             if log_file.exists():
                 ui.label("Check the orchestrator.log file for complete details.").classes(
@@ -663,19 +510,8 @@ def render_config_error_banner(
     config_errors: list[str],
     show_back_button: bool = False,
 ) -> None:
-    """
-    Render a configuration error banner with consistent styling.
-
-    This is a reusable component for displaying provider configuration errors
-    across the application. Use this instead of creating custom error displays.
-
-    Args:
-        provider_name: Name of the misconfigured provider (e.g., "anthropic")
-        config_errors: List of specific error messages
-        show_back_button: Whether to show a "Back to Jobs" button
-    """
-    # Use a wrapper div with padding to ensure proper spacing on mobile
-    # This avoids the w-full + margin overflow issue
+    """Render a configuration error banner for a misconfigured provider."""
+    # Wrapper div with padding avoids the w-full + margin overflow on mobile
     with (
         ui.element("div").classes("w-full px-4 mt-4 box-border"),
         ui.card().classes("w-full bg-red-50 border-l-4 border-red-500"),
@@ -715,20 +551,7 @@ def render_alert_banner(
     details: list[str] | None = None,
     expansion_title: str = "Details",
 ) -> None:
-    """
-    Render a generic alert banner with consistent styling.
-
-    This is a reusable component for displaying alerts (errors, warnings, info)
-    across the application.
-
-    Args:
-        title: Alert title
-        message: Main alert message
-        severity: One of "error", "warning", "info" (affects colors)
-        details: Optional list of detail messages shown in expansion
-        expansion_title: Title for the expandable details section
-    """
-    # Color mappings
+    """Render a generic alert banner for error, warning or info severity."""
     colors = {
         "error": {
             "bg": "bg-red-50",
@@ -758,7 +581,7 @@ def render_alert_banner(
     c = colors.get(severity, colors["error"])
     icon_name = {"error": "error", "warning": "warning", "info": "info"}.get(severity, "error")
 
-    # Use a wrapper div with padding to ensure proper spacing on mobile
+    # Wrapper div with padding avoids the w-full + margin overflow on mobile
     with (
         ui.element("div").classes("w-full px-4 mt-4 box-border"),
         ui.card().classes(f"w-full {c['bg']} border-l-4 {c['border']}"),
@@ -778,18 +601,7 @@ def render_alert_banner(
 
 
 def render_status_cell_slot() -> str:
-    """
-    Generate Quasar table slot template for status column with enhanced failed job display.
-
-    Returns slot template string with:
-    - Colored badges based on status
-    - Icons for each status type
-    - Red background with white text for failed jobs
-    - Tooltip showing error preview on hover for failed jobs
-
-    Returns:
-        Quasar slot template string
-    """
+    """Quasar slot template for a status column with failed-job error tooltip."""
     return r"""
         <q-td :props="props">
             <div class="row items-center gap-2">
@@ -882,20 +694,9 @@ def render_status_cell_slot() -> str:
 
 
 def render_actions_slot_with_delete() -> str:
-    """
-    Generate Quasar table slot template for actions column with share and delete.
+    """Quasar slot template for the actions column with share and delete buttons.
 
-    Returns slot template string with:
-    - Share icon button (conditionally shown via v-if="props.row.can_share") - uses share icon
-    - Delete icon button (conditionally shown via v-if="props.row.can_delete") - uses delete icon
-    - All buttons use round style for a compact, badge-like appearance
-    - Tooltips for clarity
-
-    Note: View functionality is handled by clicking the job ID badge.
-    Note: Notifications are configured on the job detail page.
-
-    Returns:
-        Quasar slot template string
+    View is handled by the job ID badge and notifications on the job detail page.
     """
     return r"""
         <q-td :props="props">
@@ -937,16 +738,9 @@ def render_job_action_buttons(
     on_delete: Callable[[], None] | None = None,
     on_notifications: Callable[[], None] | None = None,
 ) -> None:
-    """
-    Render job action buttons (share, delete, notifications) in the same style as table actions.
+    """Render job action buttons (share, delete, notifications) in table-action style.
 
-    Uses round, flat, dense icon buttons with tooltips - same visual style as
-    the table action column buttons from render_actions_slot_with_delete().
-
-    Args:
-        on_share: Callback for share button click. If None, share button is hidden.
-        on_delete: Callback for delete button click. If None, delete button is hidden.
-        on_notifications: Callback for notifications button click. If None, button is hidden.
+    Each button is hidden when its callback is None.
     """
     with ui.row().classes("gap-1 items-center"):
         if on_notifications:
@@ -1107,13 +901,7 @@ def render_navigator(
     show_new_job: bool = True,
     extra_buttons: list[tuple[str, str, Callable[[], None], str]] | None = None,
 ) -> None:
-    """
-    Render the standard navigation header for all authenticated pages.
-
-    Provides consistent navigation across the application with links to
-    New Job, Billing, Docs, and Admin pages. The OpenScientist logo/title acts
-    as a home button linking to the jobs list.
-    """
+    """Render the standard navigation header for all authenticated pages."""
     _inject_navigation_responsive_css()
 
     show_admin = app.storage.user.get("is_admin", False)
@@ -1154,24 +942,7 @@ def render_stat_badges(
     stats: list[tuple[str, str | int, str]],
     icon_map: dict[str, str] | None = None,
 ) -> None:
-    """
-    Render a compact row of stat badges - mobile-friendly inline display.
-
-    Creates a responsive row of badges with icons, labels, and values.
-    Wraps gracefully on mobile screens.
-
-    Args:
-        stats: List of (label, value, color) tuples where color is a Quasar color name
-               (e.g., "blue", "green", "red") or empty string for default gray
-        icon_map: Optional mapping of label to Material icon name
-
-    Example:
-        render_stat_badges([
-            ("Total", 42, ""),
-            ("Running", 3, "blue"),
-            ("Completed", 39, "green"),
-        ])
-    """
+    """Render a compact row of stat badges that wraps on narrow screens."""
     default_icons = {
         "Total": "list",
         "Total Jobs": "list",
@@ -1203,25 +974,12 @@ def render_stat_badges(
 
 
 def render_empty_state(message: str) -> None:
-    """
-    Render a styled empty state message.
-
-    Args:
-        message: The message to display
-    """
+    """Render a styled empty state message."""
     ui.label(message).classes("text-gray-500 text-center p-8")
 
 
 def render_permission_badge_slot() -> str:
-    """
-    Generate Quasar table slot template for permission level column.
-
-    Returns slot template string that renders permission level as a colored badge
-    (orange for 'edit', blue for 'view').
-
-    Returns:
-        Quasar slot template string
-    """
+    """Quasar slot template rendering the permission level as a colored badge."""
     return r"""
         <q-td :props="props">
             <q-badge :color="props.row.permission === 'edit' ? 'orange' : 'blue'">
@@ -1238,19 +996,7 @@ def render_not_found_state(
     back_url: str | None = None,
     icon: str = "search_off",
 ) -> None:
-    """
-    Render a styled 404/not found state.
-
-    Creates a centered column with an icon, title, message, and optional back button.
-
-    Args:
-        title: The main heading (e.g., "Skill not found")
-        message: Detailed message explaining what wasn't found
-        back_label: Text for the back button
-        back_url: URL to navigate to when back button is clicked.
-                  If None, no back button is shown.
-        icon: Material icon name to display (default: "search_off")
-    """
+    """Render a styled 404/not found state with an optional back button."""
     with ui.column().classes("w-full items-center py-16"):
         ui.icon(icon, size="xl").classes("text-gray-300 mb-4")
         ui.label(title).classes("text-h5 font-bold text-gray-600 mb-2")
@@ -1270,19 +1016,7 @@ def render_error_state(
     back_url: str | None = None,
     icon: str = "error",
 ) -> None:
-    """
-    Render a styled error state.
-
-    Creates a centered column with an error icon, title, message, and optional back button.
-
-    Args:
-        title: The main heading (e.g., "Failed to load skill")
-        message: Detailed error message
-        back_label: Text for the back button
-        back_url: URL to navigate to when back button is clicked.
-                  If None, no back button is shown.
-        icon: Material icon name to display (default: "error")
-    """
+    """Render a styled error state with an optional back button."""
     with ui.column().classes("w-full items-center py-16"):
         ui.icon(icon, size="xl").classes("text-red-300 mb-4")
         ui.label(title).classes("text-h5 font-bold text-red-600 mb-2")
@@ -1296,15 +1030,7 @@ def render_error_state(
 
 
 def render_loading_spinner(message: str = "Loading...") -> ui.element:
-    """
-    Render a centered loading spinner with message.
-
-    Args:
-        message: Text to display next to spinner
-
-    Returns:
-        The row container element (can be used to show/hide)
-    """
+    """Render a centered loading spinner with message. Returns the row container."""
     with ui.row().classes("w-full justify-center py-16") as container:
         ui.spinner(size="lg")
         ui.label(message).classes("ml-4 text-gray-500")
@@ -1318,19 +1044,7 @@ def render_dialog_actions(
     cancel_label: str = "Cancel",
     confirm_props: str = "color=primary",
 ) -> None:
-    """
-    Render standard dialog action buttons (Cancel/Confirm).
-
-    Creates a right-aligned row with Cancel and Confirm buttons.
-    Use this in dialogs to ensure consistent footer styling.
-
-    Args:
-        on_confirm: Callback when confirm button is clicked (can be async)
-        on_cancel: Callback when cancel button is clicked
-        confirm_label: Text for the confirm button
-        cancel_label: Text for the cancel button
-        confirm_props: Quasar props for the confirm button
-    """
+    """Render standard dialog action buttons (Cancel/Confirm)."""
     with ui.row().classes("w-full justify-end gap-2 mt-4"):
         ui.button(cancel_label, on_click=on_cancel).props("flat")
         ui.button(confirm_label, on_click=on_confirm).props(confirm_props)
@@ -1342,29 +1056,7 @@ def make_action_button_slot(
     icon: str | None = None,
     color: str = "primary",
 ) -> str:
-    """
-    Generate a Quasar table slot template for an action button.
-
-    Creates an HTML template string for use with NiceGUI's table.add_slot().
-    The button emits an event with the row data when clicked.
-
-    Args:
-        label: Button label text
-        event_name: Event name emitted when button is clicked
-        icon: Optional Material icon name (e.g., "person_add")
-        color: Quasar color for the button
-
-    Returns:
-        Quasar slot template string
-
-    Example:
-        table.add_slot("body-cell-actions", make_action_button_slot(
-            label="Assign",
-            event_name="assign",
-            icon="person_add",
-        ))
-        table.on("assign", handle_assign)
-    """
+    """Quasar slot template for an action button that emits ``event_name`` with the row."""
     icon_attr = f'icon="{icon}"' if icon else ""
     return f"""
 <q-td :props="props">
@@ -1385,22 +1077,7 @@ async def render_user_search(
     action_label: str = "Select",
     action_icon: str = "check",
 ) -> tuple[ui.input, ui.column]:
-    """
-    Render a user search input with results list.
-
-    Creates a search input that queries users by email/name and displays
-    results with action buttons. Used for share dialogs and admin assignment.
-
-    Args:
-        on_select: Async callback when a user is selected, receives user dict
-                   with keys: id, name, email
-        placeholder: Placeholder text for the search input
-        action_label: Label for the select button
-        action_icon: Icon for the select button
-
-    Returns:
-        Tuple of (search_input, results_container) for external reference
-    """
+    """Render a user search input with results list."""
     search_input = ui.input(
         label=placeholder,
         placeholder="Type to search...",
@@ -1903,11 +1580,7 @@ async def _render_notifications_content(
 
 
 def render_notifications_dialog(job_id: str, user_id: str | None = None) -> ui.dialog:
-    """
-    Create and return a notifications dialog for a job.
-
-    Shows the user's ntfy.sh subscription info and allows toggling notifications.
-    """
+    """Create and return a notifications dialog for a job."""
     with ui.dialog() as dialog, ui.card().classes("w-[500px]"):
         with ui.row().classes("items-center gap-2 mb-4"):
             ui.label("Push Notifications").classes("text-h6")
@@ -1940,23 +1613,9 @@ def render_delete_dialog(
     job_manager: "JobManager",
     on_deleted: Callable[[], None | Awaitable[None]] | None = None,
 ) -> ui.dialog:
-    """
-    Create and return a delete confirmation dialog for a job.
+    """Create and return a delete confirmation dialog for a job.
 
-    This is a reusable component for deleting jobs with confirmation.
-    If the job is running or queued, it will be cancelled first before deletion.
-
-    Args:
-        job_id: The job ID to delete
-        job_manager: The job manager instance
-        on_deleted: Optional callback to run after successful deletion
-
-    Returns:
-        The dialog element (call .open() to show it)
-
-    Example:
-        delete_dialog = render_delete_dialog(job_id, job_manager, on_deleted=refresh_table)
-        ui.button("Delete", on_click=delete_dialog.open)
+    Active (running or queued) jobs are cancelled before deletion.
     """
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         content_container = ui.column().classes("w-full")
@@ -1996,7 +1655,6 @@ def render_delete_dialog(
                     ui.notify("Only the job owner can delete this job", type="negative")
                     return
 
-                # Check if job needs to be cancelled first
                 job_info = await job_manager.get_job(job_id)
                 if job_info and job_info.status in job_manager.ACTIVE_STATUSES:
                     await job_manager.cancel_job(job_id)
@@ -2023,21 +1681,16 @@ def render_delete_dialog(
             confirm_props="color=negative",
         )
 
-        # Load the content each time the dialog opens, to show the current job status
+        # Reload on every open so the dialog shows the current job status
         dialog.on("show", render_dialog_content)
 
     return dialog
 
 
 def _inject_thinking_status_styles() -> None:
-    """Register CSS for the thinking status indicator into the app-wide page head.
+    """Register thinking-status CSS into the app-wide page head.
 
-    Must be called exactly once, at app bootstrap -- see
-    ``_inject_pubmed_badge_styles`` for why (``add_head_html(shared=True)``
-    appends unconditionally to a process-global string with no dedup, so
-    calling this from ``render_thinking_status`` -- which fires on every
-    2-second poll refresh for an actively-watched running job -- leaked
-    the same style block without bound).
+    Call exactly once at app bootstrap (same reason as ``_inject_pubmed_badge_styles``).
     """
     ui.add_head_html(
         """
@@ -2060,17 +1713,12 @@ def _inject_thinking_status_styles() -> None:
 
 _ASSETS_DIR = Path(__file__).parent.parent / "assets"
 
-# Animated OpenScientist logo SVG — loaded from assets/thinking.svg at import time.
-# Rendered inline (via ui.html) so SMIL animations work; <img> tags disable them.
+# Rendered inline (via ui.html) so SMIL animations work. <img> tags disable them.
 OPENSCIENTIST_THINKING_SVG = (_ASSETS_DIR / "thinking.svg").read_text(encoding="utf-8")
 
 
 def render_container_status_badge(status: str) -> None:
-    """Render a Docker container status as a colored Quasar badge.
-
-    Args:
-        status: Docker container status string (running, exited, created, etc.)
-    """
+    """Render a Docker container status as a colored Quasar badge."""
     color_map = {
         "running": "green",
         "exited": "grey",
@@ -2085,16 +1733,7 @@ def render_container_status_badge(status: str) -> None:
 
 
 def format_uptime(seconds: float) -> str:
-    """Format seconds as a human-readable uptime string.
-
-    Examples:
-        >>> format_uptime(30)
-        '30s'
-        >>> format_uptime(90)
-        '1m 30s'
-        >>> format_uptime(8100)
-        '2h 15m'
-    """
+    """Format seconds as a human-readable uptime string (e.g., '2h 15m')."""
     if seconds < 0:
         return "0s"
     seconds = int(seconds)
@@ -2110,34 +1749,13 @@ def format_uptime(seconds: float) -> str:
 
 
 def render_thinking_status(status_text: str = "Thinking...") -> ui.element:
-    """
-    Render an animated OpenScientist thinking/status indicator.
-
-    Creates a visually distinctive status display with:
-    - Animated OpenScientist logo with orbiting circles
-    - Status text describing what the model is doing
-    - Cyan-themed styling consistent with OpenScientist branding
-
-    Args:
-        status_text: Text to display (e.g., "Analyzing literature...",
-                    "Searching PubMed...", "Generating report...")
-
-    Returns:
-        The container element (can be used to show/hide with .classes())
-
-    Example:
-        status = render_thinking_status("Searching databases...")
-        status.classes(remove="hidden")  # Show
-        status.classes(add="hidden")  # Hide
-    """
+    """Render an animated OpenScientist thinking/status indicator."""
     with ui.row().classes(
         "items-center gap-3 py-3 px-4 bg-cyan-50 rounded-lg border border-cyan-200"
     ) as container:
-        # Animated OpenScientist logo (compact size)
         ui.html(OPENSCIENTIST_THINKING_SVG, sanitize=False).classes("w-6 h-6").style(
             "width:24px;height:24px;min-width:24px;min-height:24px;flex-shrink:0;"
         )
-        # Status text
         ui.label(status_text).classes("text-cyan-700 italic thinking-label")
 
     return container

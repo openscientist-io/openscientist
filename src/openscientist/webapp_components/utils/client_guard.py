@@ -1,8 +1,4 @@
-"""Utilities for protecting NiceGUI operations from disconnected clients.
-
-NiceGUI clients can be deleted during async operations (e.g., during auto-reload
-or when users navigate away). This module provides guards to safely handle these
-cases and prevent "Client has been deleted" warnings.
+"""Guards against NiceGUI operations on clients that get deleted mid-operation.
 
 See: https://github.com/zauberzeug/nicegui/issues/3028
 """
@@ -24,11 +20,7 @@ if TYPE_CHECKING:
 
 
 def is_client_connected() -> bool:
-    """Check if the current NiceGUI client is still connected.
-
-    Uses NiceGUI's internal `_deleted` flag which is the authoritative source.
-    Returns False if the client is deleted or if we can't access the client.
-    """
+    """Check if the current NiceGUI client is still connected."""
     try:
         client = ui.context.client
         return not getattr(client, "_deleted", True)
@@ -37,20 +29,7 @@ def is_client_connected() -> bool:
 
 
 def guard_client[F: Callable[..., Any]](func: F) -> F:
-    """Decorator that skips execution if the client has been deleted.
-
-    Use on timer callbacks, event handlers, and async functions that modify UI.
-
-    Example:
-        @guard_client
-        def my_timer_callback():
-            ui.label("Updated!")  # Safe - won't crash if client deleted
-
-        @guard_client
-        async def my_async_handler():
-            result = await slow_operation()
-            ui.label(result)  # Still need ClientGuard for re-checks after await
-    """
+    """Decorator that skips execution if the client has been deleted."""
 
     @wraps(func)
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -63,7 +42,6 @@ def guard_client[F: Callable[..., Any]](func: F) -> F:
         if not is_client_connected():
             return None
         result = func(*args, **kwargs)
-        # Handle the awaitable
         if asyncio.iscoroutine(result):
             return await result
         return result
@@ -74,26 +52,7 @@ def guard_client[F: Callable[..., Any]](func: F) -> F:
 
 
 class ClientGuard:
-    """Reusable guard for async functions needing multiple check points.
-
-    For async functions, the client can disconnect between await points.
-    Use this class to re-check connection status after each await.
-
-    Example:
-        async def my_async_handler():
-            guard = ClientGuard()
-            if not guard.is_connected:
-                return
-
-            result = await long_operation()
-
-            # Re-check after await - client may have disconnected
-            if not guard.is_connected:
-                return
-
-            ui.label(result)  # Safe to modify UI
-            guard.run_javascript("console.log('done')")  # Safe JS execution
-    """
+    """Re-check `is_connected` after each await. The client may disconnect in between."""
 
     _client: Client | None
 
@@ -120,13 +79,7 @@ class ClientGuard:
 
 
 def safe_run_javascript(code: str) -> None:
-    """Execute JavaScript safely, checking client existence first.
-
-    Standalone function for simple cases where you don't need a full ClientGuard.
-
-    Example:
-        safe_run_javascript("document.querySelector('.chat').scrollTop = 999")
-    """
+    """Execute JavaScript safely, checking client existence first."""
     if is_client_connected():
         try:
             ui.run_javascript(code)
@@ -135,20 +88,7 @@ def safe_run_javascript(code: str) -> None:
 
 
 def setup_timer_cleanup() -> list[ui.timer]:
-    """Set up automatic timer cleanup on client disconnect.
-
-    Returns a list to track active timers. Add timers to this list
-    and they'll be deactivated when the client disconnects.
-
-    Example:
-        _active_timers = setup_timer_cleanup()
-
-        # Create timers and track them
-        my_timer = ui.timer(5.0, my_callback)
-        _active_timers.append(my_timer)
-
-        # Timers will be automatically cleaned up when client disconnects
-    """
+    """Deactivate the returned timers when the client disconnects."""
     active_timers: list[ui.timer] = []
 
     def cleanup() -> None:
