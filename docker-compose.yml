@@ -21,12 +21,15 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+    # Over TCP, because the image's init server listens only on the socket and
+    # then restarts, which would let db-bootstrap connect into the gap. The
+    # start period covers a slow first boot, which only the TCP check waits for.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openscientist} -d ${POSTGRES_DB:-openscientist}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-openscientist} -d ${POSTGRES_DB:-openscientist}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 120s
 
   # As the superuser, creates or updates the database logins and hands the schema
   # to openscientist_owner. Runs on every `up`, before the migrations.
