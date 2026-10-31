@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, User
 from openscientist.job_manager import JobManager, JobStatus, _db_update_job_status
-from openscientist.orchestrator.discovery import _persist_final_status, _ReportOutcome
+from openscientist.orchestrator.discovery import (
+    _begin_report_phase,
+    _persist_final_status,
+    _ReportOutcome,
+)
 
 _NOW = datetime.now(UTC)
 
@@ -188,6 +192,8 @@ async def test_the_status_writers_record_when_a_job_holds_a_slot(
     started, ended = await _times(test_engine, job)
     assert started is not None
     assert ended is None
+    await _begin_report_phase(tmp_path / str(job))
+    assert (await _times(test_engine, job)) == (started, None)
     await _persist_final_status(tmp_path / str(job), _ReportOutcome(success=True, error=""))
     started_after, ended = await _times(test_engine, job)
     assert started_after == started

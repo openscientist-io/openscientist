@@ -314,12 +314,6 @@ class TestAgentStatus:
         assert ks.data["agent_status"] == "Analyzing data distribution"
         assert ks.data["agent_status_updated_at"] is not None
 
-    def test_clear_agent_status(self, ks):
-        ks.set_agent_status("Working...")
-        ks.clear_agent_status()
-        assert ks.data["agent_status"] is None
-        assert ks.data["agent_status_updated_at"] is None
-
 
 class TestSanitizeForJson:
     """Tests for _sanitize_for_json helper."""

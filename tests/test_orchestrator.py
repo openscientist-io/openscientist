@@ -36,6 +36,8 @@ class TestGetVersionMetadata:
             "OPENSCIENTIST_BUILD_TIME": "2026-02-01T00:00:00",
         },
     )
+    # Any earlier caller in the same worker caches the real commit.
+    @patch("openscientist.version._commit", None)
     def test_from_env_vars(self):
         info = get_version_metadata()
         assert info["openscientist_commit"] == "abc123def456"
@@ -1566,6 +1568,7 @@ class TestReportGenerationPhase:
             patch.object(discovery, "_save_report_transcript"),
             patch.object(discovery, "_ensure_report_written", return_value=True),
             patch.object(discovery, "_try_generate_report_pdf", new=AsyncMock()) as pdf,
+            patch.object(discovery, "_begin_report_phase", new=AsyncMock()),
         ):
             outcome = await discovery._run_report_generation_phase(
                 SimpleNamespace(
@@ -1601,6 +1604,7 @@ class TestReportGenerationPhase:
             patch.object(discovery, "build_report_retry_prompt", return_value="RETRY"),
             patch.object(discovery, "_save_report_transcript"),
             patch.object(discovery, "_ensure_report_written", return_value=False),
+            patch.object(discovery, "_begin_report_phase", new=AsyncMock()),
         ):
             outcome = await discovery._run_report_generation_phase(
                 SimpleNamespace(

@@ -355,17 +355,23 @@ async def test_the_job_login_records_when_its_job_ends(
     jobs: _Jobs, test_engine: AsyncEngine, container_database: object, tmp_path: Path
 ) -> None:
     """The scheduler weighs owners by slot-hours, so the container's final write
-    must also record the end of the run."""
+    must also record the end of the run, and the job login may clear the label."""
     from openscientist.orchestrator.iteration import update_job_status
 
     async with test_engine.begin() as conn:
         await conn.execute(
-            text("UPDATE jobs SET status = 'running', started_at = now() WHERE id = :id"),
+            text(
+                "UPDATE jobs SET status = 'running', started_at = now(), "
+                "agent_status = 'Working', agent_status_updated_at = now() WHERE id = :id"
+            ),
             {"id": jobs.own},
         )
     assert await update_job_status(tmp_path / str(jobs.own), "completed", allowed_from=("running",))
     async with test_engine.connect() as conn:
-        ended = await conn.scalar(
-            text("SELECT ended_at FROM jobs WHERE id = :id"), {"id": jobs.own}
-        )
-    assert ended is not None
+        row = (
+            await conn.execute(
+                text("SELECT ended_at, agent_status FROM jobs WHERE id = :id"), {"id": jobs.own}
+            )
+        ).one()
+    assert row.ended_at is not None
+    assert row.agent_status is None
