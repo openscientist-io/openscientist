@@ -37,7 +37,7 @@ from openscientist.orchestrator.discovery import (
 )
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components import ui_components
-from openscientist.webapp_components.pages import job_detail
+from openscientist.webapp_components.pages.job_detail import feedback
 
 
 class MakeJob(Protocol):
@@ -414,8 +414,8 @@ async def test_submitting_feedback_resumes_a_paused_job(
     job_id, owner_id = await owned_job(JobStatus.AWAITING_FEEDBACK)
     job_dir = tmp_path / str(job_id)
     job_dir.mkdir()
-    with patch.object(job_detail, "ui") as mock_ui:
-        await job_detail._submit_feedback_and_continue(
+    with patch.object(feedback, "ui") as mock_ui:
+        await feedback._submit_feedback_and_continue(
             job_dir, str(job_id), str(owner_id), 1, "check the PDB route"
         )
     assert await _status(test_engine, job_id) == "running"
@@ -430,8 +430,8 @@ async def test_feedback_for_a_job_that_ended_while_paused_keeps_its_ending(
     job_id, owner_id = await owned_job(JobStatus.CANCELLED)
     job_dir = tmp_path / str(job_id)
     job_dir.mkdir()
-    with patch.object(job_detail, "ui") as mock_ui:
-        await job_detail._submit_feedback_and_continue(job_dir, str(job_id), str(owner_id), 1, "")
+    with patch.object(feedback, "ui") as mock_ui:
+        await feedback._submit_feedback_and_continue(job_dir, str(job_id), str(owner_id), 1, "")
     assert await _status(test_engine, job_id) == "cancelled"
     mock_ui.notify.assert_called_once_with(
         "This job is no longer waiting for feedback.", type="warning"
@@ -668,8 +668,8 @@ async def test_a_resumed_job_shows_no_label_from_before_its_pause(
     job_dir = tmp_path / str(job_id)
     job_dir.mkdir()
     assert await update_job_status(job_dir, "awaiting_feedback", allowed_from=("running",))
-    with patch.object(job_detail, "ui"):
-        await job_detail._submit_feedback_and_continue(
+    with patch.object(feedback, "ui"):
+        await feedback._submit_feedback_and_continue(
             job_dir, str(job_id), str(owner_id), 1, "try the other assay"
         )
     assert await _status(test_engine, job_id) == "running"
