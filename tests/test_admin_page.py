@@ -4,7 +4,11 @@ Tests for admin page functionality.
 Tests orphaned job management, user assignment, and job claiming.
 """
 
+from collections.abc import Callable
 from datetime import UTC
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -16,6 +20,7 @@ from openscientist.database.rls import set_current_user
 from openscientist.webapp_components.pages.admin import (
     _build_admin_user_rows,
     _filter_users_for_admin_table,
+    _render_admin_users_table,
     admin_page,
     delete_user,
     set_user_approval_status,
@@ -547,6 +552,71 @@ async def test_the_users_table_shows_who_is_a_priority_user(db_session: AsyncSes
     rows = await _build_admin_user_rows(db_session, [priority, regular])
 
     assert [row["is_priority"] for row in rows] == [True, False]
+
+
+def _table_events(mock_ui: MagicMock, reload_users: AsyncMock) -> dict[str, Callable[..., Any]]:
+    """Render the users table and return its event handlers by event name."""
+    _render_admin_users_table(MagicMock(), [], reload_users)
+    table = mock_ui.table.return_value.classes.return_value
+    return {call.args[0]: call.args[1] for call in table.on.call_args_list}
+
+
+@pytest.mark.asyncio
+async def test_the_priority_buttons_change_a_users_priority(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    user = User(email=f"buttons-{uuid4().hex}@example.com", name="B")
+    db_session.add(user)
+    await db_session.commit()
+    reload_users = AsyncMock()
+    with patch("openscientist.webapp_components.pages.admin.ui") as mock_ui:
+        events = _table_events(mock_ui, reload_users)
+        await events["prioritise-user"](SimpleNamespace(args={"id": str(user.id)}))
+        await db_session.refresh(user)
+        assert user.is_priority is True
+        await events["deprioritise-user"](SimpleNamespace(args={"id": str(user.id)}))
+        await db_session.refresh(user)
+        assert user.is_priority is False
+    assert reload_users.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("args", [{}, {"id": "not-a-uuid"}])
+async def test_a_priority_click_without_a_valid_user_changes_nothing(args: dict[str, str]):
+    reload_users = AsyncMock()
+    with (
+        patch("openscientist.webapp_components.pages.admin.ui") as mock_ui,
+        patch(
+            "openscientist.webapp_components.pages.admin.get_admin_session",
+            side_effect=AssertionError("no user, so no database write"),
+        ),
+    ):
+        events = _table_events(mock_ui, reload_users)
+        await events["prioritise-user"](SimpleNamespace(args=args))
+    mock_ui.notify.assert_called_once_with("Invalid user selection", color="negative")
+    reload_users.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_priority_change_tells_the_admin():
+    reload_users = AsyncMock()
+    with (
+        patch("openscientist.webapp_components.pages.admin.ui") as mock_ui,
+        patch(
+            "openscientist.webapp_components.pages.admin.set_user_priority_status",
+            side_effect=RuntimeError("database down"),
+        ),
+    ):
+        events = _table_events(mock_ui, reload_users)
+        await events["prioritise-user"](SimpleNamespace(args={"id": str(uuid4())}))
+    mock_ui.notify.assert_called_once_with(
+        "Failed to change the user's priority. Check server logs.", color="negative"
+    )
+    reload_users.assert_not_awaited()
 
 
 def test_filter_users_for_admin_table_hides_current_user():
