@@ -41,10 +41,8 @@ src/openscientist/
 # Install dependencies
 uv sync
 
-# Set up environment variables (see .env.example, .env.db.example, .env.owner.example)
-export DATABASE_URL="postgresql+asyncpg://openscientist_web:..."
-export OPENSCIENTIST_SECRET_KEY="$(openssl rand -hex 32)"
-export ANTHROPIC_API_KEY="..."  # or other provider credentials
+# Create the env files, generating the database passwords and the master secret
+uv run openscientist setup
 
 # Create the database logins, then migrate as openscientist_owner (OWNER_DATABASE_URL)
 docker compose run --rm db-bootstrap

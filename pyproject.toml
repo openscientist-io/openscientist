@@ -145,6 +145,10 @@ target-version = "py312"
 select = ["B", "E", "F", "I", "N", "W"]
 ignore = ["E501"]  # Line too long (handled by formatter)
 
+[tool.ruff.lint.flake8-bugbear]
+# Typer's documented way to declare options in a command's signature.
+extend-immutable-calls = ["typer.Option"]
+
 [tool.ruff.lint.per-file-ignores]
 "src/openscientist/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
 

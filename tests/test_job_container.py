@@ -29,7 +29,7 @@ from openscientist.job_container.secrets import (
 )
 from openscientist.providers.base import AirgapEgress, AirgapPosture
 from openscientist.settings import Settings
-from tests.helpers import assert_names_a_make_target
+from tests.helpers import assert_names_a_build_command
 
 
 class _FakeProvider:
@@ -180,7 +180,7 @@ class TestContainerDatabaseLogin:
         with a, b, c, d, pytest.raises(MissingImageError) as raised:
             self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
         assert "openscientist-agent:latest" in str(raised.value)
-        assert_names_a_make_target(str(raised.value))
+        assert_names_a_build_command(str(raised.value))
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
     def test_cleanup_gives_back_the_login_of_the_removed_container(self, agent_login) -> None:

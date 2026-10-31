@@ -44,7 +44,7 @@ class ProviderStep(Step):
             return [f"Unknown provider {provider_id!r}. Valid options: {', '.join(provider_ids())}"]
         return provider_class(provider_id).setup_answers_errors(provider_id, values)
 
-    def after_validate(self, answers: dict[str, str]) -> str:
+    def after_validate(self, answers: dict[str, str]) -> str | livecheck.LiveCheckOutcome:
         provider_id = answers.get("OPENSCIENTIST_PROVIDER", "")
         if not provider_id or provider_id not in provider_ids():
             return "pass"

@@ -15,9 +15,26 @@ console = Console()
 
 
 @app.command()
-def setup() -> None:
+def setup(
+    answers: Path | None = typer.Option(
+        None,
+        "--answers",
+        help="TOML answers file: one table per step, then the step's question keys.",
+    ),
+    write_answers: Path | None = typer.Option(
+        None,
+        "--write-answers",
+        help="Write the run's answers to this TOML file, never the secrets.",
+    ),
+) -> None:
     """Run the setup wizard, keeping the generated secrets."""
-    wizard.run_setup(Path.cwd())
+    if answers is not None:
+        exit_code = wizard.run_setup_from_answers(Path.cwd(), answers, write_answers)
+        if exit_code:
+            raise typer.Exit(exit_code)
+        console.print("Wrote .env, .env.db and .env.owner. Run `uv run openscientist` to start.")
+        return
+    wizard.run_setup(Path.cwd(), write_answers)
     console.print("Wrote .env, .env.db and .env.owner. Run `uv run openscientist` to start.")
 
 

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.helpers import assert_names_a_make_target
+from tests.helpers import assert_names_a_build_command
 
 
 class TestContainerManagerUnit:
@@ -136,7 +136,7 @@ class TestContainerManagerUnit:
 
         assert result["success"] is False
         assert manager.image in result["error"]
-        assert_names_a_make_target(result["error"])
+        assert_names_a_build_command(result["error"])
 
     def test_cleanup_job_containers(self):
         """Test cleanup of containers by job ID."""
@@ -679,7 +679,7 @@ class TestContainerManagerIntegration:
 
         manager = ContainerManager()
         if not manager.check_image_available():
-            pytest.skip("Executor image not built. Run 'make build' first.")
+            pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
 
     def test_execute_simple_code(self):
         """Test executing simple Python code."""

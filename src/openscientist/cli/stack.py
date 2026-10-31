@@ -33,7 +33,8 @@ def run_command(argv: tuple[str, ...], env: Mapping[str, str] | None = None) -> 
 
 
 def build_images(run: CommandRunner, root: Path) -> int:
-    """The four image builds with the Makefile's tags and platform; 0 on success."""
+    """The four image builds, the tags from .env with their :latest fallbacks and the
+    default platform on every build; 0 on success."""
     values = envfiles.file_values(root, "env")
     base_image = values.get("OPENSCIENTIST_BASE_IMAGE") or "openscientist-base:latest"
     executor_image = values.get("OPENSCIENTIST_EXECUTOR_IMAGE") or "openscientist-executor:latest"
@@ -54,7 +55,7 @@ def build_images(run: CommandRunner, root: Path) -> int:
             "--build-arg",
             f"BUILD_TIME={datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
         ),
-        None,
+        platform_env,
     )
     if code:
         return _failed("the web image", code)

@@ -9,7 +9,7 @@ import pytest
 
 from openscientist import web_app
 from openscientist.settings import get_settings
-from tests.helpers import assert_names_a_make_target
+from tests.helpers import assert_names_a_build_command
 
 
 def _docker(monkeypatch: pytest.MonkeyPatch, *, reachable: bool, images: set[str]) -> None:
@@ -33,7 +33,7 @@ async def test_a_missing_image_is_named_with_how_to_build_it(
     [message] = _errors(caplog)
     assert container.agent_image in message
     assert container.executor_image not in message
-    assert_names_a_make_target(message)
+    assert_names_a_build_command(message)
 
 
 async def test_present_images_log_no_error(
