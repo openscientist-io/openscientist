@@ -552,6 +552,12 @@ class ContainerSettings(BaseSettings):
     )
 
 
+def phenix_installation_ok(phenix_path: str) -> bool:
+    """Return True when the path holds a Phenix 2.x install (bin/ dir, regular bin/phenix.about file)."""
+    bin_dir = os.path.join(phenix_path, "bin")
+    return os.path.isdir(bin_dir) and os.path.isfile(os.path.join(bin_dir, "phenix.about"))
+
+
 class PhenixSettings(BaseSettings):
     """Phenix structural biology tools configuration."""
 
@@ -618,10 +624,7 @@ class PhenixSettings(BaseSettings):
         """
         if not self.phenix_path:
             return False
-        if not os.path.isdir(self.phenix_path):
-            return False
-        about = os.path.join(self.phenix_path, "bin", "phenix.about")
-        return os.path.exists(about)
+        return phenix_installation_ok(self.phenix_path)
 
 
 class BerkeleyLabSettings(BaseSettings):
