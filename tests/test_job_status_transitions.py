@@ -21,12 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from openscientist import web_app
 from openscientist.database.models import Job, User
+from openscientist.job.repository import set_job_status
 from openscientist.job_manager import (
     JobInfo,
     JobManager,
     JobStatus,
     JobStatusUpdateResult,
-    _db_update_job_status,
 )
 from openscientist.orchestrator.discovery import (
     _begin_report_phase,
@@ -276,7 +276,7 @@ async def test_starting_a_job_that_stopped_waiting_fails_loudly(
     job = await make_job(JobStatus.PENDING)
     manager._running_jobs["busy-job"] = MagicMock()
     with patch(
-        "openscientist.job_manager._db_update_job_status",
+        "openscientist.job_manager.set_job_status",
         new_callable=AsyncMock,
         return_value=JobStatusUpdateResult(),
     ):
@@ -312,7 +312,7 @@ async def test_the_webs_late_failure_does_not_overwrite_a_completed_job(
 ) -> None:
     """The container finished just before the web's timeout or crash check."""
     job = await make_job(JobStatus.COMPLETED)
-    result = await _db_update_job_status(
+    result = await set_job_status(
         str(job),
         JobStatus.FAILED,
         allowed_from=JobManager.STARTED_STATUSES,
@@ -628,7 +628,7 @@ async def test_the_web_ending_a_job_clears_its_label(
     was doing ends with it."""
     job = await make_job(start)
     await _set_label(test_engine, job, "Running PCA")
-    result = await _db_update_job_status(str(job), target, allowed_from=JobManager.ACTIVE_STATUSES)
+    result = await set_job_status(str(job), target, allowed_from=JobManager.ACTIVE_STATUSES)
     assert result.applied
     assert await _label(test_engine, job) == (None, None)
 
@@ -658,9 +658,7 @@ async def test_a_running_to_running_write_keeps_its_slot_start(
     container write that also moves it running to running must keep it."""
     job = await make_job(JobStatus.QUEUED)
     assert await _started_at(test_engine, job) is None
-    result = await _db_update_job_status(
-        str(job), JobStatus.RUNNING, allowed_from=(JobStatus.QUEUED,)
-    )
+    result = await set_job_status(str(job), JobStatus.RUNNING, allowed_from=(JobStatus.QUEUED,))
     assert result.applied
     started = await _started_at(test_engine, job)
     assert started is not None
@@ -674,7 +672,7 @@ async def test_a_refused_status_write_keeps_the_label(
     """The label goes only with a status change that applies."""
     job = await make_job(JobStatus.RUNNING)
     await _set_label(test_engine, job, "Running PCA")
-    result = await _db_update_job_status(
+    result = await set_job_status(
         str(job), JobStatus.FAILED, allowed_from=JobManager.WAITING_STATUSES
     )
     assert not result.applied
@@ -707,9 +705,7 @@ async def test_a_regenerated_report_shows_no_label_from_the_original_run(
     job = await make_job(JobStatus.GENERATING_REPORT)
     await _set_label(test_engine, job, "Writing the final report")
     await _persist_final_status(tmp_path / str(job), _ReportOutcome(success=True, error=""))
-    result = await _db_update_job_status(
-        str(job), JobStatus.RUNNING, allowed_from={JobStatus.COMPLETED}
-    )
+    result = await set_job_status(str(job), JobStatus.RUNNING, allowed_from={JobStatus.COMPLETED})
     assert result.applied
     assert await _label(test_engine, job) == (None, None)
 
@@ -788,7 +784,7 @@ async def test_a_report_job_whose_container_crashed_is_failed(
 ) -> None:
     """The worker's crash and timeout writes reach a job writing its report."""
     job = await make_job(JobStatus.GENERATING_REPORT)
-    result = await _db_update_job_status(
+    result = await set_job_status(
         str(job),
         JobStatus.FAILED,
         allowed_from=JobManager.STARTED_STATUSES,
@@ -902,9 +898,7 @@ async def test_a_regeneration_cancelled_before_its_report_reports_cancelled(
     job = await make_job(JobStatus.RUNNING)
 
     async def cancelled_then_phase(*, job_dir: Path, **_: object) -> _ReportOutcome:
-        await _db_update_job_status(
-            str(job), JobStatus.CANCELLED, allowed_from=JobManager.ACTIVE_STATUSES
-        )
+        await set_job_status(str(job), JobStatus.CANCELLED, allowed_from=JobManager.ACTIVE_STATUSES)
         return await _report_phase(None)(job_dir=job_dir)
 
     with (

@@ -23,9 +23,9 @@ from openscientist.agent.factory import agent_class_for_provider_id
 from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx, thread_safe_user_session
+from openscientist.job.repository import get_job, get_share_permission
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.job_chat import get_chat_history, send_chat_message
-from openscientist.job_manager import _db_get_job, _db_get_share_permission
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
@@ -768,7 +768,7 @@ def _render_job_not_found() -> None:
 
 async def _load_db_job_for_user(job_id: str, user_id: str) -> Any:
     try:
-        return await _db_get_job(job_id, user_id=UUID(user_id))
+        return await get_job(job_id, user_id=UUID(user_id))
     except ValueError:
         return None
     except Exception:
@@ -785,7 +785,7 @@ async def _resolve_job_permissions(job_id: str, user_id: str, db_job: Any) -> tu
     is_owner = db_job.owner_id == UUID(user_id)
     if is_owner:
         return True, True
-    share_permission = await _db_get_share_permission(job_id, UUID(user_id))
+    share_permission = await get_share_permission(job_id, UUID(user_id))
     return False, share_permission == "edit"
 
 
@@ -1081,7 +1081,7 @@ async def _check_and_refresh(
     render_timeline: Any,
     stats_timer_holder: dict[str, Any],
 ) -> None:
-    db_job = await _db_get_job(context.job_id)
+    db_job = await get_job(context.job_id)
     if db_job is None:
         _handle_missing_job_during_poll(stats_timer_holder)
         return

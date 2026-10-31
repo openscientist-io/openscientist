@@ -337,12 +337,12 @@ class TestLoadRuntimeContextHypotheses:
 
 
 # ---------------------------------------------------------------------------
-# 8. job_manager._db_create_job — DB write path (via mocked session)
+# 8. repository.create_job_row — DB write path (via mocked session)
 # ---------------------------------------------------------------------------
 
 
 class TestDbCreateJobHypotheses:
-    """_db_create_job must build a JobModel with the correct use_hypotheses flag."""
+    """create_job_row must build a JobModel with the correct use_hypotheses flag."""
 
     def _make_session_mock(self) -> tuple[Any, list]:
         """Return (mock_session_cm, captured_jobs_list) for inspecting JobModel instances."""
@@ -360,13 +360,13 @@ class TestDbCreateJobHypotheses:
         return mock_cm, captured
 
     async def test_creates_job_with_use_hypotheses_true(self) -> None:
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Research with hypotheses",
                 max_iterations=3,
@@ -377,13 +377,13 @@ class TestDbCreateJobHypotheses:
         assert captured[0].use_hypotheses is True
 
     async def test_creates_job_with_use_hypotheses_false(self) -> None:
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Research without hypotheses",
                 max_iterations=3,
@@ -395,13 +395,13 @@ class TestDbCreateJobHypotheses:
 
     async def test_creates_job_with_default_use_hypotheses_false(self) -> None:
         """Default must be False so existing callers are not surprised."""
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Default hypotheses test",
                 max_iterations=3,
@@ -411,13 +411,13 @@ class TestDbCreateJobHypotheses:
         assert captured[0].use_hypotheses is False
 
     async def test_creates_job_with_llm_metadata(self) -> None:
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Research with model metadata",
                 max_iterations=3,
@@ -854,10 +854,10 @@ class TestNewJobPageStructure:
 class TestEndToEndHypothesesFlow:
     """Test the full create → persist → read flow for use_hypotheses."""
 
-    async def test_create_db_job_record_passes_use_hypotheses_to_db_create_job(
+    async def test_create_db_job_record_passes_use_hypotheses_to_create_job_row(
         self, tmp_path: Path
     ) -> None:
-        """_create_db_job_record(use_hypotheses=True) calls _db_create_job with use_hypotheses=True."""
+        """_create_db_job_record(use_hypotheses=True) calls create_job_row with use_hypotheses=True."""
         from openscientist.job_manager import JobManager
 
         job_id = str(uuid4())
@@ -867,7 +867,7 @@ class TestEndToEndHypothesesFlow:
         jm = JobManager(jobs_dir=jobs_dir)
 
         with patch(
-            "openscientist.job_manager._db_create_job", new_callable=AsyncMock
+            "openscientist.job_manager.create_job_row", new_callable=AsyncMock
         ) as mock_db_create:
             await jm._create_db_job_record(
                 job_id=job_id,

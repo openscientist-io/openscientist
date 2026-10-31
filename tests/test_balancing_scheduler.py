@@ -17,7 +17,8 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, User
-from openscientist.job_manager import JobManager, JobStatus, _db_update_job_status
+from openscientist.job.repository import set_job_status
+from openscientist.job_manager import JobManager, JobStatus
 from openscientist.orchestrator.discovery import (
     _begin_report_phase,
     _persist_final_status,
@@ -207,7 +208,7 @@ async def test_priority_owners_are_balanced_among_themselves(
 def test_a_failed_pick_starts_no_job(tmp_path: Path) -> None:
     manager = JobManager(jobs_dir=tmp_path)
     with patch(
-        "openscientist.job_manager._db_next_queued_job", side_effect=RuntimeError("database down")
+        "openscientist.job_manager.next_queued_job", side_effect=RuntimeError("database down")
     ):
         started = manager._start_next_queued_job()
     assert started is False
@@ -226,9 +227,7 @@ async def test_the_status_writers_record_when_a_job_holds_a_slot(
     owners: _Owners, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     job = await _job(test_engine, owners.alice, JobStatus.QUEUED, ended=_NOW - timedelta(days=1))
-    await _db_update_job_status(
-        str(job), JobStatus.RUNNING, allowed_from=JobManager.WAITING_STATUSES
-    )
+    await set_job_status(str(job), JobStatus.RUNNING, allowed_from=JobManager.WAITING_STATUSES)
     started, ended = await _times(test_engine, job)
     assert started is not None
     assert ended is None
@@ -242,7 +241,5 @@ async def test_the_status_writers_record_when_a_job_holds_a_slot(
 
 async def test_a_cancel_records_the_end_of_a_job(owners: _Owners, test_engine: AsyncEngine) -> None:
     job = await _job(test_engine, owners.alice, JobStatus.RUNNING, started=_NOW)
-    await _db_update_job_status(
-        str(job), JobStatus.CANCELLED, allowed_from=JobManager.ACTIVE_STATUSES
-    )
+    await set_job_status(str(job), JobStatus.CANCELLED, allowed_from=JobManager.ACTIVE_STATUSES)
     assert (await _times(test_engine, job))[1] is not None

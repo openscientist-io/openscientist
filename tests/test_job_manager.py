@@ -114,7 +114,7 @@ def _make_db_job(
     return SimpleNamespace(**defaults)
 
 
-def _db_get_job_side_effect(models: list[SimpleNamespace]):
+def get_job_side_effect(models: list[SimpleNamespace]):
     """Build side-effect that returns models by UUID id."""
     by_id = {m.id: m for m in models}
 
@@ -130,7 +130,7 @@ def _db_get_job_side_effect(models: list[SimpleNamespace]):
 
 def _new_manager(tmp_path: Path) -> JobManager:
     """Construct a manager without real DB access during init."""
-    with patch("openscientist.job_manager._db_list_jobs", new_callable=AsyncMock, return_value=[]):
+    with patch("openscientist.job_manager.list_jobs", new_callable=AsyncMock, return_value=[]):
         return JobManager(jobs_dir=tmp_path)
 
 
@@ -171,16 +171,14 @@ class TestJobManagerListAndGet:
     async def test_get_existing_job(self, manager):
         db_job = _make_db_job("completed", "2026-02-01T00:00:00")
         with patch(
-            "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
+            "openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job
         ):
             job = await manager.get_job(str(db_job.id))
         assert job is not None
         assert job.status == JobStatus.COMPLETED
 
     async def test_get_nonexistent_returns_none(self, manager):
-        with patch(
-            "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=None
-        ):
+        with patch("openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=None):
             assert await manager.get_job(str(uuid4())) is None
 
 
@@ -201,16 +199,14 @@ class TestJobManagerRegenerateReport:
         return _new_manager(tmp_path)
 
     async def test_missing_job_raises(self, manager):
-        with patch(
-            "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=None
-        ):
+        with patch("openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=None):
             with pytest.raises(ValueError, match="not found"):
                 await manager.regenerate_report(str(uuid4()))
 
     async def test_non_completed_raises(self, manager):
         db_job = _make_db_job("running", "2026-02-01T00:00:00")
         with patch(
-            "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
+            "openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job
         ):
             with pytest.raises(ValueError, match="not completed"):
                 await manager.regenerate_report(str(db_job.id))
@@ -219,7 +215,7 @@ class TestJobManagerRegenerateReport:
         db_job = _make_db_job("completed", "2026-02-01T00:00:00")
         manager._running_jobs[str(db_job.id)] = MagicMock()
         with patch(
-            "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
+            "openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job
         ):
             with pytest.raises(ValueError, match="already running"):
                 await manager.regenerate_report(str(db_job.id))
@@ -233,7 +229,7 @@ class TestJobManagerRegenerateReport:
 
         with (
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
                 return_value=db_job,
             ),
@@ -272,11 +268,11 @@ class TestJobManagerDelete:
 
         with (
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
-                side_effect=_db_get_job_side_effect([db_job]),
+                side_effect=get_job_side_effect([db_job]),
             ),
-            patch("openscientist.job_manager._db_delete_job", new_callable=AsyncMock),
+            patch("openscientist.job_manager.delete_job", new_callable=AsyncMock),
         ):
             await manager.delete_job(job_id)
 
@@ -286,7 +282,7 @@ class TestJobManagerDelete:
         manager = _new_manager(tmp_path)
         with (
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
@@ -301,9 +297,9 @@ class TestJobManagerDelete:
 
         with (
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
-                side_effect=_db_get_job_side_effect([db_job]),
+                side_effect=get_job_side_effect([db_job]),
             ),
             pytest.raises(ValueError, match="Cannot delete running"),
         ):
@@ -317,12 +313,12 @@ class TestJobManagerDelete:
 
         with (
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
-                side_effect=_db_get_job_side_effect([db_job]),
+                side_effect=get_job_side_effect([db_job]),
             ),
             patch(
-                "openscientist.job_manager._db_delete_job",
+                "openscientist.job_manager.delete_job",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("database unavailable"),
             ),
@@ -376,12 +372,12 @@ class TestContainerStatusNotifications:
             patch.object(manager, "_load_job_info", side_effect=polls),
             patch.object(manager, "_start_next_queued_job"),
             patch(
-                "openscientist.job_manager._db_update_job_status",
+                "openscientist.job_manager.set_job_status",
                 new_callable=AsyncMock,
                 return_value=target,
             ),
             patch(
-                "openscientist.job_manager._db_get_notification_target",
+                "openscientist.job_manager.get_notification_target",
                 new_callable=AsyncMock,
                 return_value=target,
             ),
@@ -431,9 +427,7 @@ class TestJobManagerKSProgress:
         db_job = _make_db_job("running", "2026-02-01T00:00:00", job_id=job_id)
 
         with (
-            patch(
-                "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
-            ),
+            patch("openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job),
             patch(
                 "openscientist.job_manager.thread_safe_admin_session", return_value=nullcontext()
             ),
@@ -460,11 +454,9 @@ class TestJobManagerCancellationConcurrency:
         db_job = _make_db_job("running", "2026-02-01T00:00:00", job_id=job_id)
 
         with (
+            patch("openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job),
             patch(
-                "openscientist.job_manager._db_get_job", new_callable=AsyncMock, return_value=db_job
-            ),
-            patch(
-                "openscientist.job_manager._db_update_job_status",
+                "openscientist.job_manager.set_job_status",
                 new_callable=AsyncMock,
                 return_value=JobStatusUpdateResult(applied=True),
             ),
@@ -556,16 +548,16 @@ class TestJobManagerCleanup:
 
         with (
             patch(
-                "openscientist.job_manager._db_list_jobs",
+                "openscientist.job_manager.list_jobs",
                 new_callable=AsyncMock,
                 return_value=[old_job, new_job],
             ),
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
-                side_effect=_db_get_job_side_effect([old_job, new_job]),
+                side_effect=get_job_side_effect([old_job, new_job]),
             ),
-            patch("openscientist.job_manager._db_delete_job", new_callable=AsyncMock),
+            patch("openscientist.job_manager.delete_job", new_callable=AsyncMock),
         ):
             deleted = manager.cleanup_old_jobs(days=7, keep_completed=True)
 
@@ -583,16 +575,16 @@ class TestJobManagerCleanup:
 
         with (
             patch(
-                "openscientist.job_manager._db_list_jobs",
+                "openscientist.job_manager.list_jobs",
                 new_callable=AsyncMock,
                 return_value=[old_completed],
             ),
             patch(
-                "openscientist.job_manager._db_get_job",
+                "openscientist.job_manager.get_job",
                 new_callable=AsyncMock,
-                side_effect=_db_get_job_side_effect([old_completed]),
+                side_effect=get_job_side_effect([old_completed]),
             ),
-            patch("openscientist.job_manager._db_delete_job", new_callable=AsyncMock),
+            patch("openscientist.job_manager.delete_job", new_callable=AsyncMock),
         ):
             deleted = manager.cleanup_old_jobs(days=7, keep_completed=True)
 
@@ -632,10 +624,8 @@ class TestJobManagerCreationSafety:
         with (
             patch.object(manager, "get_job", new_callable=AsyncMock, return_value=None),
             patch("openscientist.job_manager.get_provider", return_value=fake_provider),
-            patch("openscientist.job_manager._db_create_job", new_callable=AsyncMock),
-            patch(
-                "openscientist.job_manager._db_delete_job", new_callable=AsyncMock
-            ) as mock_db_delete,
+            patch("openscientist.job_manager.create_job_row", new_callable=AsyncMock),
+            patch("openscientist.job_manager.delete_job", new_callable=AsyncMock) as mock_db_delete,
             patch("openscientist.job_manager.create_job", side_effect=RuntimeError("disk full")),
             pytest.raises(ValueError, match="Failed to initialize job files"),
         ):
@@ -758,7 +748,7 @@ class TestJobManagerSummary:
 
         with (
             patch(
-                "openscientist.job_manager._db_list_jobs",
+                "openscientist.job_manager.list_jobs",
                 new_callable=AsyncMock,
                 return_value=db_jobs,
             ),

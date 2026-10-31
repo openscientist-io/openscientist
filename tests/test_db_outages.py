@@ -296,7 +296,7 @@ async def test_cancelling_a_job_that_ends_first_answers_400(
     app.include_router(api_router)
     try:
         with patch(
-            "openscientist.job_manager._db_update_job_status",
+            "openscientist.job_manager.set_job_status",
             new_callable=AsyncMock,
             return_value=JobStatusUpdateResult(applied=False),
         ):
@@ -521,7 +521,7 @@ def test_a_pick_error_other_than_an_outage_is_not_scheduled_to_retry(tmp_path: P
 
     manager = JobManager(jobs_dir=tmp_path)
     with patch.object(
-        job_manager_module, "_db_next_queued_job", side_effect=RuntimeError("pick blew up")
+        job_manager_module, "next_queued_job", side_effect=RuntimeError("pick blew up")
     ):
         assert not manager._start_next_queued_job()
     assert manager._repick is None
