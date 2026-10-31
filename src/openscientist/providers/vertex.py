@@ -1,8 +1,4 @@
-"""
-Google Cloud Vertex AI provider implementation.
-
-Uses Vertex AI for model access and GCP Billing API for cost tracking.
-"""
+"""Google Cloud Vertex AI provider (cost tracking via the GCP Billing API)."""
 
 import logging
 import os
@@ -119,7 +115,6 @@ class VertexProvider(ClaudeCompatible):
         )
 
     def _validate_optional_config(self) -> list[str]:
-        """Check optional Vertex AI configuration."""
         warnings = []
         settings = get_settings()
 
@@ -142,18 +137,10 @@ class VertexProvider(ClaudeCompatible):
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get Vertex AI cost information from Cloud Billing API.
+        """Get Vertex AI cost information from the Cloud Billing API.
 
-        Args:
-            lookback_hours: Time window for recent spend calculation
-
-        Returns:
-            CostInfo with Vertex AI spend data
-
-        Note:
-            Requires BigQuery billing export to be enabled in GCP Console.
-            Data has 1-6 hour lag due to GCP billing pipeline.
+        Requires the BigQuery billing export enabled in GCP Console. Data has a
+        1-6 hour lag in the GCP billing pipeline.
         """
         try:
             from google.cloud import bigquery
@@ -165,7 +152,6 @@ class VertexProvider(ClaudeCompatible):
             )
             raise
 
-        # Load credentials
         settings = get_settings()
         creds_env = settings.provider.google_application_credentials
         if not creds_env:
@@ -178,20 +164,15 @@ class VertexProvider(ClaudeCompatible):
         if not billing_account:
             raise ProviderError("GCP_BILLING_ACCOUNT_ID not set")
 
-        # Initialize BigQuery client
         bq_client = bigquery.Client(credentials=credentials, project=project_id)
 
-        # Calculate time windows
         now = datetime.now(UTC)
         recent_start = now - timedelta(hours=lookback_hours)
 
-        # BigQuery billing export table name
-        # Format: billing_export.gcp_billing_export_v1_{billing_account_with_underscores}
         billing_table = (
             f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
         )
 
-        # Query for total spend (all time for Vertex AI in this project only)
         total_query = f"""
         SELECT SUM(cost) as total_cost
         FROM `{billing_table}`
@@ -199,7 +180,6 @@ class VertexProvider(ClaudeCompatible):
           AND project.id = '{project_id}'
         """
 
-        # Query for recent spend (filter by project AND time window)
         recent_query = f"""
         SELECT SUM(cost) as recent_cost
         FROM `{billing_table}`
@@ -209,22 +189,20 @@ class VertexProvider(ClaudeCompatible):
         """
 
         try:
-            # Execute queries
             total_result = list(bq_client.query(total_query).result())
             total_spend = float(total_result[0].total_cost or 0)
 
             recent_result = list(bq_client.query(recent_query).result())
             recent_spend = float(recent_result[0].recent_cost or 0)
 
-            # Estimate data lag (GCP billing typically has 1-6 hour delay)
-            # Assume ~3 hour average lag
+            # ~3 hour average of the 1-6 hour billing delay
             lag_time = now - timedelta(hours=3)
             data_lag_note = f"Data current as of ~{lag_time.strftime('%I:%M %p %Z')}"
 
         except Exception as e:
             logger.warning("Could not fetch Vertex AI billing data: %s", e)
             logger.warning("Ensure BigQuery billing export is enabled in GCP Console.")
-            # Return None if billing data unavailable (permissions, export not enabled, etc.)
+            # Return None if billing data is unavailable (permissions, export missing)
             total_spend = None
             recent_spend = None
             data_lag_note = "Billing data unavailable (ensure BigQuery export is enabled)"

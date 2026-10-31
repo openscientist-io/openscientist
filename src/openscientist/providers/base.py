@@ -1,11 +1,4 @@
-"""Provider base hierarchy (two-axis Provider x Agent model).
-
-A `Provider` is a model-hosting service (Anthropic, Vertex, Bedrock,
-OpenAI, ...). It owns cross-family concerns: configuration validation
-and cost/budget tracking. The `ClaudeCompatible` and `CodexCompatible`
-subclasses add the wire-format-specific methods that let a provider be
-driven by the Claude Code agent or the Codex agent respectively.
-"""
+"""Provider base hierarchy (two-axis Provider x Agent model)."""
 
 from __future__ import annotations
 
@@ -101,24 +94,14 @@ class CostInfo:
 
     provider_name: str
 
-    # Total project spending (all time)
     # None = unknown/unavailable (e.g., permissions error)
     total_spend_usd: float | None
-
-    # Recent spending (configurable time window)
-    # None = unknown/unavailable (e.g., permissions error)
     recent_spend_usd: float | None
-    recent_period_hours: int  # e.g., 24 for "last 24h"
-
-    # Budget tracking (optional - provider-specific)
+    recent_period_hours: int
     budget_limit_usd: float | None = None
     budget_remaining_usd: float | None = None
-
-    # Data freshness
     last_updated: datetime = field(default_factory=lambda: datetime.now(UTC))
     data_lag_note: str | None = None  # e.g., "Data current as of 6:35 AM ET"
-
-    # Provider-specific extras
     key_expires: str | None = None  # CBORG only
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -179,9 +162,8 @@ class Provider(abc.ABC):
     def id(self) -> str:
         """Stable identifier used by the factory selector."""
 
-    #: Human-facing provider name for the UI and logs. Concrete providers set
-    #: it as a class attribute, so it is readable without instantiating (which
-    #: would validate credentials). Enforced in ``__init_subclass__``.
+    #: Human-facing name, readable without instantiating (which would validate
+    #: credentials). Enforced in ``__init_subclass__``.
     display_name: ClassVar[str]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -200,12 +182,11 @@ class Provider(abc.ABC):
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
-        """Config errors for a settings snapshot, without instantiating. Base: none."""
+        """Config errors for a settings snapshot, without instantiating."""
         return []
 
     def _validate_optional_config(self) -> list[str]:
-        """Return warning messages for optional misconfiguration (empty by
-        default)."""
+        """Warning messages for optional misconfiguration."""
         return []
 
     @abc.abstractmethod
@@ -283,8 +264,7 @@ class Provider(abc.ABC):
         return None
 
     def model_profile(self) -> ModelProfile:
-        """The active model's profile (mainly its context window). Self-hosted
-        providers override to probe the live deployment."""
+        """The active model's profile (mainly its context window)."""
         return default_model_profile(
             self.effective_model_name(), get_settings().provider.model_context_tokens
         )
@@ -300,10 +280,9 @@ class Provider(abc.ABC):
         """
         pinned = get_settings().provider.model_context_tokens
         if pinned is not None:
-            # Pass the pin on rather than skip it. It is set in this process's
-            # environment, but the container resolves the window again on its own
-            # side, so returning nothing here left it probing (the very thing
-            # pinning exists to avoid) and silently taking the 8192 fallback.
+            # Pass the pin on rather than skip it. The container resolves the
+            # window on its own side, so skipping it left the container probing
+            # and silently taking the 8192 fallback.
             return {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": str(pinned)}
         window = self.probe_context_window()
         if not window:
@@ -320,7 +299,7 @@ class Provider(abc.ABC):
 
     def airgap_egress(self) -> AirgapPosture:
         """Air-gapped egress posture for the active config, read by the firewall
-        and proxy-start. Pure, no network. Defaults to PROXY, providers override."""
+        and proxy-start. Pure, no network."""
         if self.proxy_env_overrides(proxy_base_url="", placeholder=""):
             return AirgapPosture(AirgapEgress.PROXY)
         return AirgapPosture(
@@ -358,20 +337,17 @@ class Provider(abc.ABC):
         """Env a provider-agnostic harness (omp) needs to reach this provider.
 
         ``proxy`` is the in-container LLM proxy URL when active, in which case
-        the returned env MUST route the harness at it. Abstract on purpose: this
-        used to default to ``{}``, which meant an unwired provider silently sent
-        the harness to the vendor with the real credential, bypassing the
-        key-replacement proxy. A provider nobody has wired must fail loudly, so
-        every concrete provider answers for itself. Returning ``{}`` is still a
-        valid answer for a provider that signs its own requests and is reached
-        directly, but it now has to be stated rather than inherited.
+        the returned env MUST route the harness at it. A provider nobody has
+        wired must fail loudly, so every concrete provider answers for itself.
+        Returning ``{}`` is valid for a provider that signs its own requests
+        and is reached directly.
         """
 
     def omp_model_catalog(self, *, context_window: int) -> OmpModelCatalog | None:
         """``models.yml`` declaring this provider's model to the omp harness, or
         None when omp's built-in catalog already knows it. Self-hosted providers
-        override: omp cannot resolve ``--model`` for a server it has never heard
-        of. The codex analog is ``codex_config_overrides``.
+        override because omp cannot resolve ``--model`` for a server it has
+        never heard of. The codex analog is ``codex_config_overrides``.
 
         ``context_window`` is passed in rather than resolved here because
         resolving it can probe the live server, and the caller already holds the
@@ -382,13 +358,13 @@ class Provider(abc.ABC):
     @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
         """Error message if ``model`` does not match this provider's naming
-        convention, else None. Base enforces no pattern."""
+        convention, else None."""
         return None
 
     @staticmethod
     def model_format_error(model: str | None, pattern: str, description: str) -> str | None:
-        """Shared helper: None if ``model`` is unset or matches ``pattern``,
-        else a uniform mismatch message naming ``description``."""
+        """None if ``model`` is unset or matches ``pattern``, else a uniform
+        mismatch message naming ``description``."""
         if not model or re.match(pattern, model):
             return None
         return (
@@ -521,7 +497,8 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
         return env
 
     def _endpoint(self) -> tuple[str, str | None]:
-        """Base URL and key to reach the server: the proxy and placeholder when proxied, else the real values."""
+        """Base URL and key to reach the server, the proxy and placeholder when
+        proxied, else the real values."""
         proxy = os.environ.get(LLM_PROXY_URL_ENV)
         if proxy:
             return proxy, os.environ.get("OPENAI_API_KEY")
@@ -538,8 +515,8 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
         return self._probe_context_tokens(self._base_url(), model, self._api_key())
 
     def model_profile(self) -> ModelProfile:
-        # Probe the live window, not the trained maximum. Normally the launcher
-        # resolves it app-side (override below), so this proxied probe is a fallback.
+        # Probe the live window, not the trained maximum. The launcher normally
+        # resolves it app-side, so this proxied probe is a fallback.
         base_url, key = self._endpoint()
         return probed_model_profile(
             model_id=self.effective_model_name(),

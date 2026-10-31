@@ -12,21 +12,19 @@ logger = logging.getLogger(__name__)
 _LITELLM_PRICING_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 )
-_CACHE_TTL_SECONDS = 86_400  # 24 hours
+_CACHE_TTL_SECONDS = 86_400
 
-# About 70% of litellm's priced entries carry no cache-specific rate, so these
-# ratios are the common path rather than a rare fallback. All three are Anthropic's
-# published ratios (checked across Opus, Sonnet and Haiku), and 0.1 is also the
-# modal read/input ratio among the litellm entries that do carry one. A cache write
-# costs more the longer it lives, which is why the two write tiers differ.
+# Anthropic's published cache ratios (checked across Opus, Sonnet and Haiku).
+# 0.1 is also the modal read/input ratio among litellm entries that carry one.
+# A cache write costs more the longer it lives, which is why the two write tiers
+# differ.
 _CACHE_READ_RATE_RATIO = 0.1
 _CACHE_WRITE_RATE_RATIO = 1.25
 _CACHE_WRITE_1H_RATE_RATIO = 2.0
 
-# Rate keys in priority order. litellm publishes the cache-read rate under a second
-# name for the DeepSeek family, which carries no `cache_read_input_token_cost`, so
-# looking only at the first name sends those entries to the ratio above even though
-# an exact rate is present.
+# Rate keys in priority order. litellm publishes the DeepSeek family's cache-read
+# rate under the second name only, so reading just the first would fall back to
+# the ratio even though an exact rate is present.
 _CACHE_READ_KEYS = ("cache_read_input_token_cost", "input_cost_per_token_cache_hit")
 _CACHE_WRITE_KEYS = ("cache_creation_input_token_cost",)
 _CACHE_WRITE_1H_KEYS = ("cache_creation_input_token_cost_above_1hr",)
@@ -54,19 +52,9 @@ def _get_litellm_pricing() -> dict[str, Any]:
 
 
 def normalize_model_name(model: str) -> str:
-    """
-    Strip provider-specific prefixes/suffixes to get a litellm-compatible key.
-
-    Examples:
-      us.anthropic.claude-sonnet-4-5-20250929-v1:0  ->  claude-sonnet-4-5
-      claude-sonnet-4-5@20250929                    ->  claude-sonnet-4-5
-      claude-sonnet-4-6                             ->  claude-sonnet-4-6 (unchanged)
-    """
-    # Bedrock: remove leading region prefix like "us.anthropic." or "eu.anthropic."
+    """Strip provider-specific prefixes and suffixes to get a litellm-compatible key."""
     model = re.sub(r"^(?:us|eu|ap)\.anthropic\.", "", model)
-    # Bedrock: remove trailing version suffix like "-20250929-v1:0"
     model = re.sub(r"-\d{8}.*$", "", model)
-    # Vertex AI: remove revision suffix like "@20250929"
     model = re.sub(r"@\d{8}$", "", model)
     return model
 
@@ -95,30 +83,20 @@ def estimate_cost_usd(
     cache_write_1h_tokens: int = 0,
     reasoning_tokens: int = 0,
 ) -> float:
-    """
-    Estimate cost in USD using the litellm pricing database.
+    """Estimate cost in USD using the litellm pricing database.
 
-    Prices every billed bucket, not just input and output. Cached reads dominate
-    agentic runs -- each turn resends the conversation -- so omitting them
-    understates cost badly, and the caller cannot tell because the total is still
-    a plausible number. Reasoning tokens are billed as output where a provider
-    reports them separately.
+    Prices every billed bucket. Cached reads dominate agentic runs, so omitting
+    them understates cost while the total stays plausible. Reasoning tokens are
+    billed as output where a provider reports them separately.
 
-    Cache rates come from the first key the entry publishes them under. Where it
-    publishes none, which is the common case, the rate is derived from the input rate
-    by the ratios above. Charging the full input rate for a cached read overstates it
-    roughly tenfold.
+    Cache rates come from the first key the entry publishes them under, else the
+    input rate times the ratios above. Charging the full input rate for a cached
+    read overstates it roughly tenfold. ``cache_write_tokens`` is the short-lived
+    tier and ``cache_write_1h_tokens`` the one-hour tier at twice the input rate.
 
-    Cache writes are split by how long the entry lives because the rates differ:
-    ``cache_write_tokens`` is the short-lived tier, ``cache_write_1h_tokens`` the
-    one-hour tier at twice the input rate.
-
-    The buckets are keyword-only. They are easy to transpose (``TokenUsage`` declares
-    cache_write before cache_read, this takes read first) and each is priced
-    differently, so a positional call would misprice silently.
-
-    Tries exact key first, then the normalised model name. Returns 0.0 and warns
-    if no pricing entry is found, so a silent zero is at least visible in logs.
+    The buckets are keyword-only. They are easy to transpose and each is priced
+    differently, so a positional call would misprice silently. A missing entry
+    returns 0.0 with a warning, so the zero stays visible in logs.
     """
     pricing = _get_litellm_pricing()
     entry = pricing.get(model) or pricing.get(normalize_model_name(model))

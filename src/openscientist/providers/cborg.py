@@ -1,8 +1,4 @@
-"""
-CBORG provider implementation.
-
-Uses CBORG API for model access and cost tracking.
-"""
+"""CBORG provider (model access and cost tracking via the CBORG API)."""
 
 import logging
 import os
@@ -21,13 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class CborgProvider(ClaudeCompatible):
-    """
-    CBORG API provider (current implementation).
+    """CBORG API provider.
 
-    KNOWN ISSUES:
-    - Newer versions of Claude CLI may send headers that CBORG doesn't recognize,
-      causing HTTP 400 errors. If you encounter authentication or request errors,
-      check your Claude CLI version and consider using an older version if needed.
+    Newer Claude CLI versions send headers CBORG rejects with HTTP 400, so on
+    auth or request errors check the CLI version.
     """
 
     @property
@@ -88,15 +81,11 @@ class CborgProvider(ClaudeCompatible):
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at the CBORG gateway.
 
-        omp never reads ``ANTHROPIC_AUTH_TOKEN``, the name Claude Code uses for a
-        gateway bearer and the one both our container env and proxy override
-        publish, so untranslated it reaches the gateway with no credential at all.
-
-        Mapped to ``ANTHROPIC_API_KEY`` rather than ``ANTHROPIC_OAUTH_TOKEN``
-        because omp's OAuth path also attaches Anthropic's OAuth beta header,
-        which a gateway has no reason to accept. Proxied, the proxy takes either
-        header and substitutes the real bearer upstream, so this only decides the
-        unproxied header form.
+        omp never reads ``ANTHROPIC_AUTH_TOKEN``, the name the container env and
+        proxy override publish, so copy it to ``ANTHROPIC_API_KEY``. Avoid
+        ``ANTHROPIC_OAUTH_TOKEN``, because omp's OAuth path also attaches
+        Anthropic's OAuth beta header, which a gateway has no reason to accept,
+        and proxied the proxy takes either header anyway.
         """
         s = get_settings().provider
         base = proxy or s.anthropic_base_url
@@ -115,7 +104,6 @@ class CborgProvider(ClaudeCompatible):
         return get_settings().provider.model or "claude-sonnet-5-5"
 
     def _validate_optional_config(self) -> list[str]:
-        """Check optional CBORG configuration."""
         warnings = []
         settings = get_settings()
 
@@ -126,27 +114,17 @@ class CborgProvider(ClaudeCompatible):
 
     def setup_environment(self) -> None:
         """CBORG environment should be configured via .env and docker-compose.yml."""
-        # Unset conflicting provider routing vars
         clear_provider_mode_flags(logger)
         clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
         logger.info("CBORG provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get CBORG cost information.
-
-        Args:
-            lookback_hours: Time window for recent spend calculation
-
-        Returns:
-            CostInfo with CBORG spend data
-        """
+        """Get CBORG cost information."""
         settings = get_settings()
         token = settings.provider.anthropic_auth_token
         if not token:
             raise ValueError("ANTHROPIC_AUTH_TOKEN not set")
 
-        # Get total spend and budget from /key/info
         try:
             info_response = requests.get(
                 "https://api.cborg.lbl.gov/key/info",
@@ -164,7 +142,6 @@ class CborgProvider(ClaudeCompatible):
             logger.error("Failed to fetch CBORG /key/info: %s", e)
             raise ProviderError(f"Failed to fetch CBORG /key/info: {e}") from e
 
-        # Get recent spend from /user/daily/activity
         data_lag_note: str | None = None
         try:
             end_time = datetime.now(UTC)
@@ -183,7 +160,6 @@ class CborgProvider(ClaudeCompatible):
             )
             activity_response.raise_for_status()
 
-            # Sum up costs from activity records
             activity_data = activity_response.json().get("data", [])
             recent_spend = sum(record.get("spend", 0) for record in activity_data)
 
@@ -193,7 +169,6 @@ class CborgProvider(ClaudeCompatible):
             recent_spend = None
             data_lag_note = "Recent activity data unavailable"
 
-        # Calculate budget remaining
         budget_remaining = None
         if max_budget is not None:
             budget_remaining = max_budget - total_spend

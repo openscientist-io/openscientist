@@ -1,9 +1,4 @@
-"""
-Centralized settings module for OpenScientist.
-
-Validates all environment variables at startup using Pydantic v2 BaseSettings.
-Provides clear error messages when configuration is invalid.
-"""
+"""Centralized settings module for OpenScientist."""
 
 import hashlib
 import hmac
@@ -43,7 +38,6 @@ class ProviderSettings(BaseSettings):
         extra="ignore",
     )
 
-    # Provider selection
     provider_id: str = Field(
         default="",
         alias="OPENSCIENTIST_PROVIDER",
@@ -78,15 +72,13 @@ class ProviderSettings(BaseSettings):
     # GitHub token for skill syncing
     github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
 
-    # Anthropic direct API
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
 
-    # CBORG (Berkeley Lab) / OAuth tokens
+    # CBORG (Berkeley Lab)
     anthropic_auth_token: str | None = Field(default=None, alias="ANTHROPIC_AUTH_TOKEN")
     claude_code_oauth_token: str | None = Field(default=None, alias="CLAUDE_CODE_OAUTH_TOKEN")
     anthropic_base_url: str | None = Field(default=None, alias="ANTHROPIC_BASE_URL")
 
-    # OpenAI (Codex agent backend)
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
 
     # Azure OpenAI Service as a Codex backend. OPENSCIENTIST_MODEL names the
@@ -95,31 +87,22 @@ class ProviderSettings(BaseSettings):
     azure_openai_resource: str | None = Field(default=None, alias="AZURE_OPENAI_RESOURCE")
     azure_openai_api_version: str | None = Field(default=None, alias="AZURE_OPENAI_API_VERSION")
     # How many times codex reconnects through Azure's intermittent streaming
-    # disconnects before failing the turn (openai/codex#9936). Raise it for
-    # lower-capacity Azure deployments that disconnect more often.
+    # disconnects before failing the turn
+    # (https://github.com/openai/codex/issues/9936). Raise it for lower-capacity
+    # Azure deployments that disconnect more often.
     azure_openai_stream_max_retries: int = Field(
         default=10, alias="AZURE_OPENAI_STREAM_MAX_RETRIES"
     )
 
-    # Ollama (omp-driven, open-weight models served locally through Ollama's
-    # OpenAI-compatible endpoint). Local and keyless.
+    # Ollama. Local and keyless.
     ollama_base_url: str = Field(default="http://localhost:11434/v1", alias="OLLAMA_BASE_URL")
 
-    # vLLM (omp-driven, open-weight models served by a self-hosted vLLM server
-    # on its OpenAI-compatible wire). The served model is named by
-    # OPENSCIENTIST_MODEL. Auth is optional: only a server launched with
-    # --api-key needs VLLM_API_KEY.
     vllm_base_url: str = Field(default="http://localhost:8000/v1", alias="VLLM_BASE_URL")
     vllm_api_key: str | None = Field(default=None, alias="VLLM_API_KEY")
 
-    # llama.cpp (omp-driven, open-weight models served by a self-hosted
-    # llama-server on its OpenAI-compatible wire). The served model is named by
-    # OPENSCIENTIST_MODEL. Auth is optional: only a server launched with
-    # --api-key needs LLAMACPP_API_KEY.
     llamacpp_base_url: str = Field(default="http://localhost:8080/v1", alias="LLAMACPP_BASE_URL")
     llamacpp_api_key: str | None = Field(default=None, alias="LLAMACPP_API_KEY")
 
-    # Model settings
     model: str | None = Field(default=None, alias="OPENSCIENTIST_MODEL")
     model_context_tokens: int | None = Field(
         default=None,
@@ -151,21 +134,19 @@ class ProviderSettings(BaseSettings):
         default=None, alias="ANTHROPIC_DEFAULT_OPUS_MODEL"
     )
 
-    # AWS Bedrock
     aws_region: str | None = Field(default=None, alias="AWS_REGION")
     aws_access_key_id: str | None = Field(default=None, alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: str | None = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
     aws_profile: str | None = Field(default=None, alias="AWS_PROFILE")
     aws_bearer_token_bedrock: str | None = Field(default=None, alias="AWS_BEARER_TOKEN_BEDROCK")
 
-    # Google Vertex AI
     anthropic_vertex_project_id: str | None = Field(
         default=None, alias="ANTHROPIC_VERTEX_PROJECT_ID"
     )
     google_application_credentials: str | None = Field(
         default=None, alias="GOOGLE_APPLICATION_CREDENTIALS"
     )
-    # Host path for GCP credentials (for agent container mounts when running in Docker)
+    # Host path for GCP credentials, mounted into agent containers
     gcp_credentials_host_path: str | None = Field(default=None, alias="GCP_CREDENTIALS_HOST_PATH")
     # Host path to the codex CLI auth file. The runner copies it into the
     # per-job CODEX_HOME so the Codex backend can authenticate via ChatGPT
@@ -183,14 +164,13 @@ class ProviderSettings(BaseSettings):
         default=None, alias="VERTEX_REGION_CLAUDE_4_5_HAIKU"
     )
 
-    # Azure AI Foundry
     anthropic_foundry_resource: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_RESOURCE")
     anthropic_foundry_base_url: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_BASE_URL")
     anthropic_foundry_api_key: str | None = Field(default=None, alias="ANTHROPIC_FOUNDRY_API_KEY")
-    # Azure Cost Management (optional, enables billing data for foundry provider)
+    # Azure Cost Management (enables billing data for the foundry provider)
     azure_subscription_id: str | None = Field(default=None, alias="AZURE_SUBSCRIPTION_ID")
     azure_resource_group: str | None = Field(default=None, alias="AZURE_RESOURCE_GROUP")
-    # Azure AD service principal (for Cost Management API)
+    # Azure AD service principal (for the Cost Management API)
     azure_tenant_id: str | None = Field(default=None, alias="AZURE_TENANT_ID")
     azure_client_id: str | None = Field(default=None, alias="AZURE_CLIENT_ID")
     azure_client_secret: str | None = Field(default=None, alias="AZURE_CLIENT_SECRET")
@@ -211,10 +191,10 @@ class ProviderSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_provider_requirements(self) -> "ProviderSettings":
-        """Delegate config validation to the active provider: warn on missing
-        credentials (warn-only so settings always construct) and raise on a
-        model-name/provider mismatch. ``provider_class`` is imported lazily to
-        avoid a settings -> providers import cycle.
+        """Delegate config validation to the active provider. Missing
+        credentials warn (warn-only so settings always construct) and a
+        model-name/provider mismatch raises. ``provider_class`` is imported
+        lazily to avoid a settings -> providers import cycle.
         """
         from openscientist.providers import provider_class
 
@@ -260,12 +240,12 @@ class ProviderSettings(BaseSettings):
         self,
         gcp_credentials_container_path: str | None = None,
     ) -> dict[str, str]:
-        """Environment variables for the agent container: backend-agnostic keys
+        """Environment variables for the agent container. Backend-agnostic keys
         plus the active provider's own env (auth + routing flags).
 
         The provider builds its own contribution via ``Provider.container_env``,
-        resolved by class (no instantiation, so this stays usable with partial
-        config). ``provider_class`` is imported lazily to avoid a settings ->
+        resolved by class. No instantiation, so this stays usable with partial
+        config. ``provider_class`` is imported lazily to avoid a settings ->
         providers import cycle.
         """
         from openscientist.providers import provider_class
@@ -302,18 +282,16 @@ class DatabaseSettings(BaseSettings):
     # Agent containers load these settings without it.
     admin_database_url: str | None = Field(default=None, alias="ADMIN_DATABASE_URL")
 
-    # Debug settings
     sql_echo: bool = Field(default=False, alias="SQL_ECHO")
 
     # Seconds each connect waits for an unreachable database. The job runner
-    # sets it for agent containers, and the web fails fast.
+    # sets it for agent containers, while the web fails fast.
     connect_retry_seconds: float = Field(
         default=0, ge=0, alias="OPENSCIENTIST_DB_CONNECT_RETRY_SECONDS"
     )
 
     @property
     def effective_database_url(self) -> str:
-        """Get the database URL."""
         return self.database_url
 
     def required_admin_database_url(self) -> str:
@@ -366,7 +344,6 @@ class AuthSettings(BaseSettings):
         extra="ignore",
     )
 
-    # General auth settings
     app_url: str = Field(default="http://localhost:8080", alias="APP_URL")
     session_duration_days: int = Field(default=30, alias="SESSION_DURATION_DAYS")
 
@@ -374,15 +351,12 @@ class AuthSettings(BaseSettings):
     storage_secret: str = Field(default="")
     token_encryption_key: str | None = Field(default=None)
 
-    # Google OAuth
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
     google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
 
-    # GitHub OAuth
     github_client_id: str | None = Field(default=None, alias="GITHUB_CLIENT_ID")
     github_client_secret: str | None = Field(default=None, alias="GITHUB_CLIENT_SECRET")
 
-    # ORCID OAuth
     orcid_client_id: str | None = Field(default=None, alias="ORCID_CLIENT_ID")
     orcid_client_secret: str | None = Field(default=None, alias="ORCID_CLIENT_SECRET")
 
@@ -466,7 +440,7 @@ class BudgetSettings(BaseSettings):
     max_job_cost_usd: float = Field(default=10.0, alias="MAX_JOB_COST_USD")
     app_max_budget_usd: float = Field(default=1000.0, alias="APP_MAX_BUDGET_USD")
 
-    # Provider-agnostic budget limits (used by check_budget_limits)
+    # Provider-agnostic budget limits
     max_project_spend_total_usd: float = Field(
         default=float("inf"), alias="MAX_PROJECT_SPEND_TOTAL_USD"
     )
@@ -536,7 +510,6 @@ class ContainerSettings(BaseSettings):
     executor_cpu: float = Field(default=0.5, alias="OPENSCIENTIST_EXECUTOR_CPU")
     executor_timeout: int = Field(default=120, alias="OPENSCIENTIST_EXECUTOR_TIMEOUT")
 
-    # Agent container resource limits
     agent_memory: str = Field(default="8g", alias="OPENSCIENTIST_AGENT_MEMORY")
     agent_cpu: float = Field(default=2.0, alias="OPENSCIENTIST_AGENT_CPU")
     agent_network: str | None = Field(
@@ -558,10 +531,9 @@ class ContainerSettings(BaseSettings):
         "more than the 4-hour default to finish all iterations.",
     )
 
-    # Host path mapping for sibling container volume mounts (executor containers)
-    # When the main container runs inside Docker and spawns sibling containers,
-    # paths need to be translated from container paths to host paths.
-    # Example: /app inside container maps to /home/user/openscientist on host
+    # Host path mapping for sibling container volume mounts. When the main
+    # container runs inside Docker and spawns siblings, paths are translated
+    # from container paths to host paths.
     container_app_dir: str = Field(default="/app", alias="OPENSCIENTIST_CONTAINER_APP_DIR")
     host_project_dir: str | None = Field(
         default=None,
@@ -603,14 +575,12 @@ class PhenixSettings(BaseSettings):
         if value is None or value == "":
             return None
 
-        # Must be an absolute path
         if not value.startswith("/"):
             raise ValueError(
                 f"{env_name} must be an absolute path (starting with '/'), got: '{value}'\n"
                 f"  Example: {env_name}={example}"
             )
 
-        # Must not contain path traversal
         if ".." in value:
             raise ValueError(f"{env_name} must not contain path traversal (..): '{value}'")
 
@@ -619,12 +589,9 @@ class PhenixSettings(BaseSettings):
     @field_validator("phenix_path")
     @classmethod
     def validate_phenix_path(cls, v: str | None) -> str | None:
-        """
-        Validate PHENIX_PATH format if set.
+        """Validate PHENIX_PATH format if set.
 
-        Only validates format (absolute path, no traversal). Existence is
-        checked by `is_available` property to match the original behavior
-        of phenix_setup.py where invalid paths return None rather than raise.
+        Format only. Existence is checked by the ``is_available`` property.
         """
         return cls._validate_absolute_path(
             v,
@@ -644,12 +611,10 @@ class PhenixSettings(BaseSettings):
 
     @property
     def is_available(self) -> bool:
-        """
-        Check if Phenix is configured and available.
+        """Check if Phenix is configured and available.
 
-        This checks for actual existence on the filesystem, complementing
-        the format validation done by the validator. Expects the Phenix
-        2.x install layout (`bin/phenix.about`).
+        Checks actual existence on the filesystem, complementing the format
+        validation. Expects the Phenix 2.x install layout (``bin/phenix.about``).
         """
         if not self.phenix_path:
             return False
@@ -721,10 +686,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Master secret — all auth secrets are derived from this via HMAC-SHA256
+    # Master secret. All auth secrets derive from this via HMAC-SHA256.
     secret_key: str = Field(alias="OPENSCIENTIST_SECRET_KEY")
 
-    # Server settings
     port: int = Field(default=8080, alias="PORT")
     max_concurrent_jobs: int = Field(default=1, alias="OPENSCIENTIST_MAX_CONCURRENT_JOBS")
     # Hours of slot use the queue weighs each owner's queued jobs by
@@ -737,7 +701,6 @@ class Settings(BaseSettings):
         description="Base URL for OpenScientist (used in notifications and share links)",
     )
 
-    # Nested settings
     dev: DevSettings = Field(default_factory=DevSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
@@ -763,18 +726,7 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """
-    Validate and return settings singleton.
-
-    This function validates all environment variables at first call
-    and caches the result. Subsequent calls return the cached instance.
-
-    Returns:
-        Settings: Validated settings object
-
-    Raises:
-        ValidationError: If any environment variables are invalid
-    """
+    """Validate settings from the environment and return the cached singleton."""
     return Settings()
 
 
