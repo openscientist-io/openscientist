@@ -54,10 +54,9 @@ from openscientist.version import get_version_string
 
 logger = logging.getLogger(__name__)
 
-# Provenance is a single small update, so anything slower than this is a
-# database in trouble, and the run should carry on without the stamp. The
-# statement bound lives in the database. The deadline covers the rest of the
-# attempt, which the database cannot see.
+# Provenance is a single small update, so anything slower is a database in
+# trouble, and the run should carry on without the stamp. The statement bound
+# lives in the database. The deadline covers what the database cannot see.
 _STAMP_TIMEOUT_MS = 10_000
 _STAMP_DEADLINE_SECONDS = 30.0
 
@@ -160,13 +159,11 @@ def _check_turn_outcome(result: IterationResult, iteration: int) -> None:
 async def _sync_version_metadata(job_id: str) -> None:
     """Record runtime version provenance on the job, best effort.
 
-    Provenance is not a result, so anything that will not take it costs the run
-    its version strings and nothing more. Two bounds apply to the write, because
-    neither covers the other: ``statement_timeout`` stops a slow statement
-    inside the database, and the surrounding deadline covers what the database
-    cannot see (name resolution, connecting, acquiring a connection, cleanup).
-    Metadata collection runs off the loop in a worker thread, whose subprocesses
-    carry their own limits, and a failure there is still caught here.
+    Two bounds apply to the write because neither covers the other.
+    ``statement_timeout`` stops a slow statement inside the database, and the
+    surrounding deadline covers what the database cannot see (name resolution,
+    connecting, acquiring a connection, cleanup). Metadata collection runs in
+    a worker thread, and a failure there is still caught here.
     """
     try:
         async with asyncio.timeout(_STAMP_DEADLINE_SECONDS):
@@ -348,19 +345,13 @@ def _ensure_report_written(
 ) -> bool:
     """Return True only if the report was actually (re)written this turn.
 
-    A weak model sometimes ends the turn claiming "report written" without ever
-    calling its file-writing tool. Existence alone is therefore not proof: when
-    a stale report from a previous run is already on disk (most importantly
-    during report regeneration, but also any re-run), the file "exists" yet was
-    never touched, and the turn would be wrongly accepted while the old content
-    is served.
-
-    ``baseline_mtime_ns`` is the report's modification time captured *before*
-    the turn started (None if it did not exist then). The file counts as
-    written only if it now exists and is strictly newer than that baseline.
-    If the agent wrote the file to a subdirectory within the job dir, move it
-    to the expected path. Returns False when no fresh report can be found, so
-    the caller re-asks, then marks the job as failed.
+    A weak model can end the turn claiming "report written" without calling its
+    file-writing tool, so existence alone is not proof. ``baseline_mtime_ns``
+    is the mtime captured before the turn (None if it did not exist), and the
+    file counts as written only if it now exists and is strictly newer. If the
+    agent wrote the file to a subdirectory, move it to the expected path.
+    Returns False when no fresh report can be found, so the caller re-asks,
+    then marks the job as failed.
     """
 
     def _is_fresh(path: Path) -> bool:
@@ -374,8 +365,7 @@ def _ensure_report_written(
     if report_path.exists() and _is_fresh(report_path):
         return True
 
-    # Check if the agent nested the file within the job directory. A nested file
-    # is one the agent just produced, so it is fresh by construction.
+    # A nested report the agent just produced is fresh by construction.
     job_dir = report_path.parent
     for found in job_dir.rglob("final_report.md"):
         if found != report_path and _is_fresh(found):
@@ -394,9 +384,8 @@ def _ensure_report_written(
 
 
 async def _try_generate_report_pdf(report_path: Path) -> None:
-    """Generate HTML and PDF from markdown report.
+    """Generate HTML and PDF from the markdown report.
 
-    Pipeline: markdown (with figure tags) → HTML → PDF (via WeasyPrint).
     Falls back to fpdf2 if WeasyPrint is unavailable or fails.
     """
     job_dir = report_path.parent
@@ -412,21 +401,18 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
         html_path.write_text(html_content, encoding="utf-8")
         logger.info("HTML report written: %s", html_path)
 
-        # Render PDF from HTML
         await render_report_pdf(html_path, pdf_path, job_dir)
         return
 
     except Exception as exc:
         logger.warning("WeasyPrint PDF generation failed, falling back to fpdf2: %s", exc)
 
-    # Fallback: strip figure tags and use fpdf2
     try:
         from openscientist.pdf_generator import markdown_to_pdf
         from openscientist.report.processor import strip_figure_tags
 
         raw_md = report_path.read_text(encoding="utf-8")
         stripped = strip_figure_tags(raw_md)
-        # Write stripped version to a temp path for fpdf2
         stripped_path = job_dir / "_final_report_stripped.md"
         stripped_path.write_text(stripped, encoding="utf-8")
         try:
@@ -437,10 +423,9 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
         logger.warning("fpdf2 fallback also failed: %s", fallback_exc)
 
 
-# A weak model sometimes ends a turn without actually producing the deliverable
-# (e.g. it describes the report instead of writing the file). Re-ask in the same
-# session a bounded number of times. The model still authors it, and the job
-# fails honestly if the attempts are exhausted.
+# A weak model sometimes ends a turn without producing the deliverable (it
+# describes the report instead of writing the file). Re-ask in the same session
+# a bounded number of times, and fail the job honestly if the attempts are exhausted.
 _MAX_REPORT_ATTEMPTS = 3
 _MAX_CONSENSUS_ATTEMPTS = 3
 
@@ -454,18 +439,13 @@ async def _run_report_turn(
 ) -> tuple[IterationResult, bool]:
     """Run the report turn, re-asking until the model creates final_report.md.
 
-    The report turn continues the agent's existing session rather than resetting
-    it: a weak model that was reliably calling tools mid-investigation tends to
-    drop into chat mode (printing the tool call as text) when handed a large
-    "write this" prompt as the first message of a fresh session. Keeping the
-    session preserves that tool-using momentum. (A regeneration run, which has
-    no prior session, simply starts one here.) Returns the last turn result and
-    whether the report file now exists.
+    The turn continues the agent's existing session, because a weak model drops
+    into chat mode when handed a large "write this" prompt as its first message.
+    A regeneration run, which has no prior session, starts one here.
     """
     report_path = job_dir / "final_report.md"
-    # Snapshot the existing report's mtime (if any) so a stale file from a
-    # prior run cannot be mistaken for this turn's output: the model must
-    # produce a file strictly newer than this. None means no report yet.
+    # Snapshot the existing report's mtime (None if it does not exist) so a
+    # stale file from a prior run cannot be mistaken for this turn's output.
     baseline_mtime_ns = report_path.stat().st_mtime_ns if report_path.exists() else None
     file_write_tool = executor.file_write_tool
     context_window_tokens = executor.model_profile.context_window_tokens
@@ -510,13 +490,10 @@ async def _set_consensus_answer(
 ) -> None:
     """Run the consensus turn, re-asking until the model records a fresh answer.
 
-    The model writes the consensus itself. This only re-prompts. A freshness
-    guard mirrors the report file's: snapshot the prior ``consensus_answer``
-    (None on a fresh run, the previous run's answer on regeneration) and accept
-    only a value the model wrote *this* turn, so a regenerated report cannot
-    ship the stale consensus. If the attempts are exhausted the report still
-    stands and the job completes with the prior consensus (logged), rather than
-    fabricating one.
+    A freshness guard mirrors the report file's. Only a value written this
+    turn is accepted, so a regenerated report cannot ship the stale consensus.
+    If the attempts are exhausted the job completes with the prior consensus
+    (logged), rather than fabricating one.
     """
     baseline = (await KnowledgeState.load_from_database(job_dir.name)).data.get("consensus_answer")
     tool_prefix = executor.prompt_fragments().mcp_tool_prefix
@@ -566,8 +543,8 @@ async def _run_report_generation_phase(
     report_path = job_dir / "final_report.md"
 
     if report_success:
-        # Dedicated consensus turn (separate from the report so a weaker model
-        # commits fully to one deliverable at a time). The model writes it.
+        # A dedicated consensus turn, separate from the report so a weaker
+        # model commits fully to one deliverable at a time.
         await _set_consensus_answer(executor, job_dir, research_question)
 
         try:
@@ -680,8 +657,8 @@ def get_version_metadata() -> dict[str, str]:
     except OSError:
         pass
 
-    # The resolved harness driving the job, never the literal "auto". A failure
-    # here also aborts agent build, so best-effort: leave the keys unrecorded.
+    # The resolved harness driving the job, never the literal "auto". A
+    # failure here also aborts agent build, so the keys stay unrecorded.
     try:
         harness = agent_class_for_provider_id(get_settings().provider.provider_id).backend
     except Exception:
@@ -876,12 +853,9 @@ async def _build_and_prepare_executor(
 ) -> AbstractAgent[Provider]:
     """Build the agent executor and run backend setup, marking the job running.
 
-    Shared by the full discovery run and the report-only regeneration path:
-    both need a configured executor whose runtime env is applied and whose
-    per-job workspace is materialised before any turn runs. Backend-specific
-    setup is the agent's own concern: apply any runtime env (Claude
-    auth/routing flags; no-op for codex) and materialise the per-job workspace
-    (enabled skills in the backend's on-disk layout).
+    Shared by the full discovery run and the report-only regeneration path.
+    The backend applies its runtime env and materialises the per-job workspace
+    before any turn runs.
     """
     use_hypotheses = runtime["use_hypotheses"]
     all_data_files = [Path(p) for p in runtime["data_files"]]
@@ -905,11 +879,10 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     """Re-run only the report-generation phase for an already-finished job.
 
     Backs the admin "Regenerate report" action. The discovery iterations are
-    NOT re-run: every finding already lives in the persisted ``KnowledgeState``
-    and the report turn starts a fresh agent session, so this needs only the
-    configured executor and the runtime context. It overwrites
-    ``final_report.md`` (and its PDF) and persists the final job status, exactly
-    like the report tail of ``run_discovery_async``.
+    not re-run, because every finding already lives in the persisted
+    ``KnowledgeState`` and the report turn starts a fresh agent session. It
+    overwrites ``final_report.md`` and its PDF and persists the final job
+    status.
     """
     job_dir = Path(job_dir)
     runtime = await _load_runtime_context(job_dir)
@@ -974,18 +947,9 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
 
 
 async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
-    """
-    Run autonomous discovery using the configured agent executor.
+    """Run autonomous discovery using the configured agent executor.
 
-    This is an async entry point that JobManager (or the container entrypoint)
-    calls.  The agent is chosen by agent.factory.get_agent() based
-    on the configured provider.
-
-    Args:
-        job_dir: Path to job directory
-
-    Returns:
-        Dict: {job_id, status, iterations, findings}
+    Called by JobManager or the container entrypoint.
     """
     job_dir = Path(job_dir)
     runtime = await _load_runtime_context(job_dir)

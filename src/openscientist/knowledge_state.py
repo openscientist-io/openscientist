@@ -1,7 +1,5 @@
 """
 Knowledge state management for OpenScientist.
-
-Stores agent's state including hypotheses, findings, literature, and analysis history.
 """
 
 import math
@@ -21,11 +19,9 @@ from openscientist.database.models.job import Job as JobModel
 from openscientist.database.models.literature import Literature
 from openscientist.database.session import SessionOpener, async_session_local
 
-# Bound the literature abstracts dumped into the report-generation prompt.
-# Dumping every abstract has overflowed the model's context window, dropping the
-# tool definitions so the file-write call is never emitted. The caller passes a
-# budget from the model's context window and abstracts fill it until exhausted,
-# the rest omitted with a note. This default applies only when no budget is given.
+# Bound for the literature abstracts in the report prompt. Dumping every
+# abstract overflows the model's context window and drops the tool definitions
+# before the file-write call is emitted. Applies only when no budget is given.
 _DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS = 8000
 
 
@@ -41,18 +37,7 @@ def _sanitize_for_json(obj: Any) -> Any:
 
 
 class KnowledgeState:
-    """
-    Database-backed knowledge state for storing agent state.
-
-    Structure:
-        - config: Job configuration
-        - data_summary: Overview of uploaded data
-        - iteration: Current iteration number
-        - hypotheses: List of proposed and tested hypotheses
-        - findings: Confirmed discoveries
-        - literature: Retrieved papers from PubMed
-        - analysis_log: History of all executed analyses
-    """
+    """Database-backed knowledge state for storing agent state."""
 
     def __init__(
         self,
@@ -61,15 +46,7 @@ class KnowledgeState:
         max_iterations: int,
         use_skills: bool = True,
     ):
-        """
-        Initialize a new knowledge graph.
-
-        Args:
-            job_id: Unique job identifier
-            research_question: User's research question
-            max_iterations: Maximum number of iterations
-            use_skills: Whether skills are enabled for this job
-        """
+        """Initialize a new knowledge graph."""
         self.data: dict[str, Any] = {
             "config": {
                 "job_id": job_id,
@@ -96,16 +73,7 @@ class KnowledgeState:
         self.data["data_summary"] = summary
 
     def add_hypothesis(self, statement: str, proposed_by: str = "agent") -> str:
-        """
-        Add a new hypothesis.
-
-        Args:
-            statement: Hypothesis statement
-            proposed_by: Who proposed it (agent, user, skill)
-
-        Returns:
-            hypothesis_id: Unique ID for this hypothesis
-        """
+        """Add a new hypothesis."""
         hypothesis_id = f"H{len(self.data['hypotheses']) + 1:03d}"
 
         hypothesis = {
@@ -140,20 +108,9 @@ class KnowledgeState:
         plots: list[str] | None = None,
         citations: list[dict[str, str]] | None = None,
     ) -> str:
-        """
-        Add a confirmed finding.
+        """Add a confirmed finding.
 
-        Args:
-            title: Finding title
-            evidence: Statistical evidence (p-values, effect sizes, etc.)
-            supporting_hypotheses: List of hypothesis IDs
-            literature_support: List of literature IDs
-            plots: List of plot file paths
-            citations: List of citation dicts with keys pmid, snippet, explanation.
-                Each citation is validated against stored abstracts.
-
-        Returns:
-            finding_id: Unique ID for this finding
+        Citations are validated against stored abstracts.
         """
         finding_id = f"F{len(self.data['findings']) + 1:03d}"
 
@@ -177,19 +134,8 @@ class KnowledgeState:
     def validate_citation(self, citation: dict[str, str]) -> dict[str, str]:
         """Validate a citation snippet against the stored abstract.
 
-        Looks up the PMID in the literature list and checks whether the
-        snippet appears in the abstract.  Sets ``validation_status`` to one of:
-
-        - ``verified`` — exact substring match
-        - ``verified_normalized`` — match after lowercasing + whitespace collapse
-        - ``mismatch`` — snippet not found in abstract
-        - ``unchecked`` — PMID not in literature list
-
-        Args:
-            citation: Dict with at least ``pmid`` and ``snippet``.
-
-        Returns:
-            A new citation dict with ``validation_status`` added.
+        Sets ``validation_status`` to ``verified``, ``verified_normalized``,
+        ``mismatch`` or ``unchecked`` (PMID not in the literature list).
         """
         import re
 
@@ -197,7 +143,6 @@ class KnowledgeState:
         pmid = result.get("pmid", "")
         snippet = result.get("snippet", "")
 
-        # Find the paper by PMID
         abstract = None
         for lit in self.data["literature"]:
             if str(lit.get("pmid")) == str(pmid):
@@ -211,7 +156,7 @@ class KnowledgeState:
         elif snippet in abstract:
             result["validation_status"] = "verified"
         else:
-            # Normalize: lowercase + collapse whitespace + strip punctuation
+
             def norm(s: str) -> str:  # noqa: E731
                 s = re.sub(r"\s+", " ", s.lower().strip())
                 return s.strip(".,;:!?\"'()[]{}")
@@ -231,19 +176,7 @@ class KnowledgeState:
         relevance_to: list[str] | None = None,
         search_query: str | None = None,
     ) -> str:
-        """
-        Add literature reference.
-
-        Args:
-            pmid: PubMed ID
-            title: Paper title
-            abstract: Paper abstract
-            relevance_to: List of finding/hypothesis IDs this relates to
-            search_query: Query that retrieved this paper
-
-        Returns:
-            literature_id: Unique ID for this reference
-        """
+        """Add a literature reference."""
         literature_id = f"L{len(self.data['literature']) + 1:03d}"
 
         literature = {
@@ -266,15 +199,7 @@ class KnowledgeState:
         output: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Log an analysis action.
-
-        Args:
-            action: Type of action (execute_code, search_pubmed, use_skill)
-            code: Python code executed (if applicable)
-            output: Output from execution
-            **kwargs: Additional metadata
-        """
+        """Log an analysis action."""
         log_entry = {
             "iteration": self.data["iteration"],
             "action": action,
@@ -290,15 +215,10 @@ class KnowledgeState:
         self.data["analysis_log"].append(log_entry)
 
     def add_iteration_summary(self, iteration: int, summary: str, strapline: str = "") -> None:
-        """
-        Store agent-generated summary for an iteration.
+        """Store agent-generated summary for an iteration.
 
-        Args:
-            iteration: Iteration number
-            summary: Plain-language summary of what was accomplished
-            strapline: Short, punchy title for this iteration (5-10 words)
+        The strapline is a short title of 5-10 words.
         """
-        # Check if this iteration already has a summary
         for existing in self.data["iteration_summaries"]:
             if existing["iteration"] == iteration:
                 existing["summary"] = summary
@@ -306,7 +226,6 @@ class KnowledgeState:
                 existing["updated_at"] = datetime.now(UTC).isoformat()
                 return
 
-        # Add new summary
         self.data["iteration_summaries"].append(
             {
                 "iteration": iteration,
@@ -317,29 +236,18 @@ class KnowledgeState:
         )
 
     def set_agent_status(self, status: str) -> None:
-        """
-        Set the current agent status message.
+        """Set the current agent status message, shown in the UI.
 
-        This is displayed in the UI to show what the agent is currently doing.
-        The agent should call this with a brief, human-readable description
-        of its current activity (e.g., "Searching for caffeine-ADHD studies").
-
-        Args:
-            status: Brief status message (recommended: under 80 chars)
+        Keep it under 80 characters.
         """
         self.data["agent_status"] = status
         self.data["agent_status_updated_at"] = datetime.now(UTC).isoformat()
 
     def add_feedback(self, text: str, after_iteration: int) -> None:
-        """
-        Add scientist feedback to history.
+        """Add scientist feedback to history.
 
-        Feedback is given after an iteration completes and will be injected
+        Feedback is given after an iteration completes and is injected
         into the next iteration (N+1).
-
-        Args:
-            text: Feedback text from scientist
-            after_iteration: The iteration that just completed
         """
         self.data["feedback_history"].append(
             {
@@ -350,33 +258,20 @@ class KnowledgeState:
         )
 
     def get_feedback_for_iteration(self, iteration: int) -> str | None:
-        """
-        Get feedback that should be injected into this iteration.
+        """Get feedback that should be injected into this iteration.
 
         Looks for feedback given after the previous iteration (N-1).
-
-        Args:
-            iteration: Current iteration number
-
-        Returns:
-            Feedback text or None
         """
         feedback_list = self.data.get("feedback_history", [])
         previous_iteration = iteration - 1
 
-        # Find feedback given after the previous iteration
         matching = [f for f in feedback_list if f.get("after_iteration") == previous_iteration]
         if matching:
             return str(matching[-1]["text"])  # Use most recent if multiple
         return None
 
     def get_summary(self) -> str:
-        """
-        Get a text summary of current state for prompts.
-
-        Returns:
-            Formatted summary of KS state
-        """
+        """Get a text summary of current state for prompts."""
         summary_parts = [
             f"# Knowledge Graph Summary (Iteration {self.data['iteration']})",
             "",
@@ -402,14 +297,12 @@ class KnowledgeState:
             )
             summary_parts.append("")
 
-        # Active hypotheses
         pending = [h for h in self.data["hypotheses"] if h["status"] == "pending"]
         if pending:
             summary_parts.append("## Pending Hypotheses")
             summary_parts.extend(f"- {hyp['id']}: {hyp['statement']}" for hyp in pending[-3:])
             summary_parts.append("")
 
-        # Rejected hypotheses (learn from failures)
         rejected = [h for h in self.data["hypotheses"] if h["status"] == "rejected"]
         if rejected:
             summary_parts.append("## Rejected Hypotheses (avoid repeating)")
@@ -424,15 +317,9 @@ class KnowledgeState:
     def get_report_outline(self, *, abstract_budget_chars: int | None = None) -> str:
         """Get an outline of accumulated knowledge for the report prompt.
 
-        Includes finding titles, hypothesis outcomes, iteration straplines,
-        and literature entries with abstracts for citation grounding.
-
-        Args:
-            abstract_budget_chars: Total character budget for uncited-paper
-                abstracts. Abstracts are included in full until the budget is
-                reached, then omitted with a note. The caller derives this from
-                the model's context window so the prompt cannot overflow it.
-                Defaults to a conservative bound when unset.
+        ``abstract_budget_chars`` bounds the uncited-paper abstracts included
+        for citation grounding. The caller derives it from the model's context
+        window so the prompt cannot overflow it.
         """
         budget = (
             abstract_budget_chars
@@ -447,7 +334,6 @@ class KnowledgeState:
             "",
         ]
 
-        # Progress counts
         all_hyps = self.data["hypotheses"]
         supported = [h for h in all_hyps if h["status"] == "supported"]
         rejected = [h for h in all_hyps if h["status"] == "rejected"]
@@ -468,7 +354,6 @@ class KnowledgeState:
                 parts.append(f"- Iteration {entry['iteration']}: {strapline}")
             parts.append("")
 
-        # Findings — titles with citations when available
         if self.data["findings"]:
             parts.append("## Findings")
             for finding in self.data["findings"]:
@@ -485,15 +370,13 @@ class KnowledgeState:
                         parts.append(f"    → {explanation}")
             parts.append("")
 
-        # Hypotheses — one-line status
         if all_hyps:
             parts.append("## Hypotheses")
             parts.extend(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}" for hyp in all_hyps)
             parts.append("")
 
-        # Literature — titles with abstracts for citation grounding.
-        # Papers already cited by findings get title+PMID only (the snippet
-        # is the grounding); uncited papers include full abstracts as fallback.
+        # Cited papers get title+PMID only, since the citation snippet is the
+        # grounding. Uncited papers include full abstracts as fallback.
         cited_pmids: set[str] = set()
         for finding in self.data["findings"]:
             for c in finding.get("citations", []):
@@ -507,10 +390,7 @@ class KnowledgeState:
             for lit in self.data["literature"]:
                 pmid_str = f" (PMID: {lit['pmid']})" if lit.get("pmid") else ""
                 parts.append(f"- **{lit['title']}**{pmid_str}")
-                # Abstracts are a citation-grounding fallback for papers not
-                # already cited by a finding (cited papers carry their snippet).
-                # Include each in full until the budget is reached, then omit the
-                # rest, so a large literature list cannot overflow the context.
+                # Full abstracts until the budget is reached, so a large list cannot overflow the context.
                 if str(lit.get("pmid", "")) not in cited_pmids:
                     abstract = lit.get("abstract", "")
                     if not abstract:
@@ -527,7 +407,6 @@ class KnowledgeState:
                 )
             parts.append("")
 
-        # Consensus answer if exists
         if self.data.get("consensus_answer"):
             parts.append("## Current Consensus Answer")
             parts.append(self.data["consensus_answer"])
@@ -781,17 +660,11 @@ class KnowledgeState:
             )
 
     async def save_to_database(self, job_id: str, session: AsyncSession | None = None) -> None:
-        """
-        Save knowledge state to database tables.
+        """Save knowledge state to database tables.
 
-        This persists hypotheses, findings, literature, analysis_log, iteration_summaries,
-        and feedback_history to their respective tables.
-
-        Args:
-            job_id: Job ID (UUID string)
-            session: The caller's session, whose role decides which rows the
-                save may reach. Without one, the process's own login is used,
-                which in the agent container is the container's job login.
+        The caller's session decides which rows the save may reach. Without one,
+        the process's own login is used, which in the agent container is the
+        container's job login.
         """
         if session is None:
             async with async_session_local() as own_session:
@@ -806,15 +679,9 @@ class KnowledgeState:
     async def load_from_database(
         cls, job_id: str, session: AsyncSession | None = None
     ) -> "KnowledgeState":
-        """
-        Load knowledge state from database tables.
+        """Load knowledge state from database tables.
 
-        Args:
-            job_id: Job ID (UUID string)
-            session: The caller's session, as for :meth:`save_to_database`.
-
-        Returns:
-            KnowledgeState instance populated from database
+        The caller's session behaves as in :meth:`save_to_database`.
         """
         if session is None:
             async with async_session_local() as own_session:
