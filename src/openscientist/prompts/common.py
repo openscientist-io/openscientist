@@ -34,14 +34,6 @@ class BackendFragments:
     builtin_read_tool_short: str
     """Shorter form of the same, as it appears in the warning line."""
 
-    search_skills_doc: str
-    """The ``**search_skills**`` tool-doc block. Present for Claude, empty for
-    codex (which has no such tool, codex surfaces skills natively)."""
-
-    skills_discovery_note: str
-    """The 'discover additional skills' note. Present for Claude, empty for
-    codex."""
-
     mcp_tool_prefix: str
     """Prepended to every ``openscientist-tools`` tool name the prompts mention,
     so the prompts name tools exactly as the backend exposes them. Empty for
@@ -162,9 +154,8 @@ def build_job_doc(
     """Backend-agnostic per-job instructions doc (the `CLAUDE.md` / `AGENTS.md`
     content), with backend fragments substituted at the end.
 
-    The body is authored in Claude's vocabulary; the backend-divergent
-    phrases are swapped for ``frags`` so the Claude path is byte-identical
-    (identity substitution) and the Codex path gets its own vocabulary.
+    The body is authored in Claude's vocabulary, and the backend-divergent
+    phrases are swapped for ``frags``, so each backend gets its own vocabulary.
 
     When use_hypotheses is False, the add_hypothesis/update_hypothesis tool
     docs and the Hypothesis Tracking Workflow section are omitted so the
@@ -208,7 +199,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - Returns: titles, full abstracts, PMIDs
 - Full abstracts are returned so you can extract exact quotes for citations
 {{AIRGAP_SEARCH_NOTE}}
-{{SEARCH_SKILLS_DOC}}**update_knowledge_state** - Record a confirmed finding
+**update_knowledge_state** - Record a confirmed finding
 
 - `title`: Concise finding title
 - `evidence`: Statistical evidence (p-values, effect sizes, confidence intervals)
@@ -350,8 +341,6 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 4. **Choosing next step:** Use `workflow--prioritization.md` to decide what to investigate next.
 5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
 
-{{SKILLS_DISCOVERY_NOTE}}
-
 ## Your Approach
 
 ### 1. First Iteration Setup
@@ -489,17 +478,12 @@ def _airgap_search_note() -> str:
 def substitute_fragments(doc: str, frags: BackendFragments) -> str:
     """Swap the backend-divergent phrases in a Claude-authored doc.
 
-    For the Claude fragments these are identity substitutions, so a
-    Claude-authored body is unchanged. For codex they drop the ``search_skills``
-    tool, the ``.claude/skills/`` path, and the ``Read`` tool name. Skill-
-    discovery sentinels are filled first so the codex case drops the
-    ``.claude/skills/`` reference inside the ``search_skills`` block entirely.
+    Fills the air-gap note, then swaps the ``.claude/skills/`` path and the
+    ``Read`` tool name for the backend's own, and prefixes the MCP tool names.
     Shared by the discovery job doc and the chat context so they cannot
     diverge.
     """
     doc = doc.replace("{{AIRGAP_SEARCH_NOTE}}", _airgap_search_note())
-    doc = doc.replace("{{SEARCH_SKILLS_DOC}}", frags.search_skills_doc)
-    doc = doc.replace("{{SKILLS_DISCOVERY_NOTE}}", frags.skills_discovery_note)
     doc = doc.replace("`.claude/skills/`", frags.skills_location)
     doc = doc.replace("Claude's built-in `Read` tool", frags.builtin_read_tool)
     doc = doc.replace("Claude's `Read` tool", frags.builtin_read_tool_short)

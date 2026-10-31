@@ -1,8 +1,7 @@
 """Claude Code agent prompt variants.
 
-The fragments are identity substitutions over the shared bodies, so the
-Claude system prompt and ``CLAUDE.md`` are byte-identical to the
-pre-split versions.
+The shared bodies are written in Claude's vocabulary, so these fragments
+substitute each phrase with itself.
 """
 
 from openscientist.prompts.common import BackendFragments, build_job_doc
@@ -11,17 +10,6 @@ CLAUDE_FRAGMENTS = BackendFragments(
     skills_location="`.claude/skills/`",
     builtin_read_tool="Claude's built-in `Read` tool",
     builtin_read_tool_short="Claude's `Read` tool",
-    search_skills_doc=(
-        "**search_skills** - Search for domain-specific analysis skills\n"
-        "\n"
-        "- `query`: Description of the type of analysis needed\n"
-        "- `add_to_job=False`: Set True to persist the top result to this job's skill set\n"
-        "- Additional skills beyond those in `.claude/skills/` may exist in the database\n"
-        "\n"
-    ),
-    skills_discovery_note=(
-        "Use `search_skills` to discover additional skills in the database beyond those pre-loaded."
-    ),
     # Claude exposes the MCP tools under their bare names.
     mcp_tool_prefix="",
 )
