@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from openscientist.agent.base import AbstractAgent, AgentConfig
+from openscientist.agent.base import AbstractAgent, AgentBackend, AgentConfig
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
 from openscientist.agent.omp_agent import OmpAgent
 from openscientist.providers import provider_class
@@ -39,6 +39,15 @@ def _codex_agent_class() -> type[AbstractAgent[Any]]:
     from openscientist.agent.codex_agent import CodexAgent
 
     return CodexAgent
+
+
+def agent_class_for_backend(backend: AgentBackend) -> type[AbstractAgent[Any]]:
+    """The agent class that implements ``backend``."""
+    if backend is AgentBackend.CLAUDE_CODE:
+        return ClaudeCodeAgent
+    if backend is AgentBackend.OMP:
+        return OmpAgent
+    return _codex_agent_class()
 
 
 def _resolve_harness() -> str:

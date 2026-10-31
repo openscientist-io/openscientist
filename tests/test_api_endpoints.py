@@ -523,6 +523,8 @@ class TestJobEndpoints:
         from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
+        test_job_db.version_info = {"openscientist_commit": "abc123def456", "agent_harness": "omp"}
+        await db_session.commit()
 
         app = FastAPI()
 
@@ -550,6 +552,10 @@ class TestJobEndpoints:
         data = response.json()
         assert data["research_question"] == "Test API Job"
         assert data["investigation_mode"] == test_job_db.investigation_mode
+        assert data["version_info"] == {
+            "openscientist_commit": "abc123def456",
+            "agent_harness": "omp",
+        }
 
     @pytest.mark.asyncio
     async def test_get_job_status(
