@@ -85,3 +85,13 @@ async def test_a_user_session_cannot_approve_itself(users: _Users) -> None:
             await session.execute(
                 update(User).where(User.id == users.alice).values(is_approved=True)
             )
+
+
+@pytest.mark.asyncio
+async def test_a_user_session_cannot_make_itself_a_priority_user(users: _Users) -> None:
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        async with get_session_ctx() as session:
+            await set_current_user(session, users.alice)
+            await session.execute(
+                update(User).where(User.id == users.alice).values(is_priority=True)
+            )

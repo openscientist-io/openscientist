@@ -164,6 +164,46 @@ async def test_equal_hours_fall_back_to_the_oldest_queued_job(
     assert await _picked(tmp_path) == {str(older)}
 
 
+async def _make_priority(test_engine: AsyncEngine, *owners: UUID) -> None:
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE users SET is_priority = true WHERE id = ANY(:ids)"), {"ids": list(owners)}
+        )
+
+
+async def test_a_priority_owner_goes_first_despite_more_hours(
+    owners: _Owners, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    await _job(
+        test_engine,
+        owners.alice,
+        JobStatus.COMPLETED,
+        started=_NOW - timedelta(hours=5),
+        ended=_NOW - timedelta(hours=1),
+    )
+    await _make_priority(test_engine, owners.alice)
+    await _job(test_engine, owners.bob, JobStatus.QUEUED, created=_NOW - timedelta(hours=2))
+    alices = await _job(test_engine, owners.alice, JobStatus.QUEUED)
+    assert await _picked(tmp_path) == {str(alices)}
+
+
+async def test_priority_owners_are_balanced_among_themselves(
+    owners: _Owners, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """One priority owner cannot crowd out another."""
+    await _job(
+        test_engine,
+        owners.alice,
+        JobStatus.COMPLETED,
+        started=_NOW - timedelta(hours=5),
+        ended=_NOW - timedelta(hours=1),
+    )
+    await _make_priority(test_engine, owners.alice, owners.bob)
+    await _job(test_engine, owners.alice, JobStatus.QUEUED, created=_NOW - timedelta(hours=2))
+    bobs = await _job(test_engine, owners.bob, JobStatus.QUEUED)
+    assert await _picked(tmp_path) == {str(bobs)}
+
+
 def test_a_failed_pick_starts_no_job(tmp_path: Path) -> None:
     manager = JobManager(jobs_dir=tmp_path)
     with patch(

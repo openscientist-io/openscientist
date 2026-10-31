@@ -4,7 +4,11 @@ Tests for admin page functionality.
 Tests orphaned job management, user assignment, and job claiming.
 """
 
+from collections.abc import Callable
 from datetime import UTC
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -14,10 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.webapp_components.pages.admin import (
+    _build_admin_user_rows,
     _filter_users_for_admin_table,
+    _render_admin_users_table,
     admin_page,
     delete_user,
     set_user_approval_status,
+    set_user_priority_status,
 )
 from tests.helpers import fake_admin_session
 
@@ -481,6 +488,135 @@ async def test_set_user_approval_status_handles_missing_user(
 
     assert success is False
     assert message == "User not found"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_priority", [True, False])
+async def test_set_user_priority_status_sets_and_clears_the_flag(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, is_priority: bool
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    user = User(email=f"priority-{uuid4().hex}@example.com", name="P", is_priority=not is_priority)
+    db_session.add(user)
+    await db_session.commit()
+
+    success, _ = await set_user_priority_status(user.id, is_priority=is_priority)
+
+    assert success is True
+    await db_session.refresh(user)
+    assert user.is_priority is is_priority
+
+
+@pytest.mark.asyncio
+async def test_set_user_priority_status_reports_no_change(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    user = User(email=f"priority-{uuid4().hex}@example.com", name="P", is_priority=True)
+    db_session.add(user)
+    await db_session.commit()
+
+    success, _ = await set_user_priority_status(user.id, is_priority=True)
+
+    assert success is False
+    await db_session.refresh(user)
+    assert user.is_priority is True
+
+
+@pytest.mark.asyncio
+async def test_set_user_priority_status_handles_missing_user(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    success, message = await set_user_priority_status(uuid4(), is_priority=True)
+    assert success is False
+    assert message == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_the_users_table_shows_who_is_a_priority_user(db_session: AsyncSession):
+    priority = User(email=f"p-{uuid4().hex}@example.com", name="P", is_priority=True)
+    regular = User(email=f"r-{uuid4().hex}@example.com", name="R")
+    db_session.add_all([priority, regular])
+    await db_session.commit()
+
+    rows = await _build_admin_user_rows(db_session, [priority, regular])
+
+    assert [row["is_priority"] for row in rows] == [True, False]
+
+
+def _table_events(mock_ui: MagicMock, reload_users: AsyncMock) -> dict[str, Callable[..., Any]]:
+    """Render the users table and return its event handlers by event name."""
+    _render_admin_users_table(MagicMock(), [], reload_users)
+    table = mock_ui.table.return_value.classes.return_value
+    return {call.args[0]: call.args[1] for call in table.on.call_args_list}
+
+
+@pytest.mark.asyncio
+async def test_the_priority_buttons_change_a_users_priority(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    user = User(email=f"buttons-{uuid4().hex}@example.com", name="B")
+    db_session.add(user)
+    await db_session.commit()
+    reload_users = AsyncMock()
+    with patch("openscientist.webapp_components.pages.admin.ui") as mock_ui:
+        events = _table_events(mock_ui, reload_users)
+        await events["prioritise-user"](SimpleNamespace(args={"id": str(user.id)}))
+        await db_session.refresh(user)
+        assert user.is_priority is True
+        await events["deprioritise-user"](SimpleNamespace(args={"id": str(user.id)}))
+        await db_session.refresh(user)
+        assert user.is_priority is False
+    assert reload_users.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("args", [{}, {"id": "not-a-uuid"}])
+async def test_a_priority_click_without_a_valid_user_changes_nothing(args: dict[str, str]):
+    reload_users = AsyncMock()
+    with (
+        patch("openscientist.webapp_components.pages.admin.ui") as mock_ui,
+        patch(
+            "openscientist.webapp_components.pages.admin.get_admin_session",
+            side_effect=AssertionError("no user, so no database write"),
+        ),
+    ):
+        events = _table_events(mock_ui, reload_users)
+        await events["prioritise-user"](SimpleNamespace(args=args))
+    mock_ui.notify.assert_called_once_with("Invalid user selection", color="negative")
+    reload_users.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_priority_change_tells_the_admin():
+    reload_users = AsyncMock()
+    with (
+        patch("openscientist.webapp_components.pages.admin.ui") as mock_ui,
+        patch(
+            "openscientist.webapp_components.pages.admin.set_user_priority_status",
+            side_effect=RuntimeError("database down"),
+        ),
+    ):
+        events = _table_events(mock_ui, reload_users)
+        await events["prioritise-user"](SimpleNamespace(args={"id": str(uuid4())}))
+    mock_ui.notify.assert_called_once_with(
+        "Failed to change the user's priority. Check server logs.", color="negative"
+    )
+    reload_users.assert_not_awaited()
 
 
 def test_filter_users_for_admin_table_hides_current_user():

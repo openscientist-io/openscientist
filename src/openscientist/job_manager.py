@@ -292,9 +292,10 @@ _LABEL_ENDING_STATUSES = _ENDED_STATUSES | {
 
 
 async def _db_next_queued_job(window: timedelta, exclude: Collection[str]) -> str | None:
-    """The queued job to start next: its owner's jobs held a slot for the fewest
-    seconds in ``window``, running ones up to now, and among equals the oldest
-    job goes first. Jobs in ``exclude`` already have a thread (thread-safe)."""
+    """The queued job to start next: a priority owner's job goes ahead of every
+    other, then the owner whose jobs held a slot for the fewest seconds in
+    ``window``, running ones up to now, and among equals the oldest job goes
+    first. Jobs in ``exclude`` already have a thread (thread-safe)."""
     stmt = text(
         """
         WITH since AS (SELECT now() - CAST(:window AS interval) AS t),
@@ -307,9 +308,10 @@ async def _db_next_queued_job(window: timedelta, exclude: Collection[str]) -> st
             GROUP BY owner_id
         )
         SELECT j.id FROM jobs j
+        LEFT JOIN users o ON o.id = j.owner_id
         LEFT JOIN usage u ON u.owner_id = j.owner_id
         WHERE j.status = 'queued' AND NOT (j.id::text = ANY(CAST(:exclude AS text[])))
-        ORDER BY coalesce(u.seconds, 0), j.created_at
+        ORDER BY coalesce(o.is_priority, false) DESC, coalesce(u.seconds, 0), j.created_at
         LIMIT 1
         """
     )

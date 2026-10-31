@@ -32,6 +32,7 @@ class User(UUIDv7Mixin, Base):
         name: User's display name
         is_active: Whether the user account is active (for admin disable)
         is_approved: Whether the user is approved to start new jobs
+        is_priority: Whether the user's queued jobs start ahead of other users' jobs
         oauth_accounts: OAuth provider accounts linked to this user
         sessions: Active login sessions for this user
         api_keys: API keys created by this user
@@ -66,6 +67,13 @@ class User(UUIDv7Mixin, Base):
         nullable=False,
         server_default="false",
         comment="Whether user is approved by an administrator to start jobs",
+    )
+
+    is_priority: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="Whether this user's queued jobs start ahead of other users' jobs",
     )
 
     ntfy_enabled: Mapped[bool] = mapped_column(
