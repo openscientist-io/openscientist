@@ -1,12 +1,6 @@
-"""
-API key authentication for REST API.
+"""API key authentication for the REST API (Bearer ``name:secret`` tokens).
 
-Implements Bearer token authentication using API keys in the format:
-    name:secret
-
-The name is stored plaintext in the database, the secret is stored as a
-SHA-256 hash. The full "name:secret" key is only shown once
-at creation time.
+The name is stored in plaintext, the secret as a SHA-256 hash, and the full key is shown once.
 """
 
 import hashlib
@@ -26,53 +20,28 @@ from openscientist.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
 
-# Use HTTPBearer for extracting Bearer tokens from Authorization header
 security = HTTPBearer()
 AUTH_CREDENTIALS_DEP = Depends(security)
 
 
 def hash_secret(secret: str) -> str:
-    """
-    Hash an API key secret using SHA-256.
+    """Hash an API key secret with SHA-256.
 
-    Note: We use SHA-256 instead of bcrypt for API keys because:
-    1. API keys are high-entropy tokens (not user passwords)
-    2. SHA-256 is faster for API request validation
-    3. The secret component is cryptographically random
-
-    Args:
-        secret: The secret portion of the API key
-
-    Returns:
-        Hexadecimal hash of the secret
+    A fast hash is safe because the secret is a high-entropy random token, not a user password.
     """
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
 def verify_secret(secret: str, key_hash: str) -> bool:
-    """
-    Verify a secret against its stored hash.
-
-    Args:
-        secret: The secret to verify
-        key_hash: The stored hash
-
-    Returns:
-        True if the secret matches, False otherwise
-    """
+    """Verify a secret against its stored hash with a constant-time compare."""
     candidate_hash = hash_secret(secret)
     return hmac.compare_digest(candidate_hash, key_hash)
 
 
 def generate_api_key_secret(length: int = 32) -> str:
-    """
-    Generate a cryptographically secure random API key secret.
+    """Generate a cryptographically random API key secret, hex-encoded.
 
-    Args:
-        length: Number of random bytes (will be hex-encoded, so final length is 2x)
-
-    Returns:
-        Hex-encoded random string
+    ``length`` is the number of random bytes, so the hex string is twice as long.
     """
     return secrets.token_hex(length)
 
@@ -80,22 +49,7 @@ def generate_api_key_secret(length: int = 32) -> str:
 async def get_current_user_from_api_key(
     credentials: HTTPAuthorizationCredentials = AUTH_CREDENTIALS_DEP,
 ) -> User:
-    """
-    Dependency to extract and validate API key from Authorization header.
-
-    Expected format:
-        Authorization: Bearer <name>:<secret>
-
-    Args:
-        credentials: HTTP bearer credentials injected by FastAPI.
-
-    Returns:
-        Authenticated and active user row.
-
-    Raises:
-        HTTPException: If authentication fails (401 Unauthorized)
-    """
-    # Parse API key in format "name:secret"
+    """Validate the ``name:secret`` Bearer token and return the active user."""
     api_key_full = credentials.credentials
     if ":" not in api_key_full:
         logger.warning("Invalid API key format (missing colon)")
@@ -110,7 +64,7 @@ async def get_current_user_from_api_key(
     secret_hash = hash_secret(secret)
 
     async with get_admin_session() as session:
-        # Resolve API key by secret hash so lookup is deterministic even when names collide.
+        # Resolve by secret hash so the lookup stays deterministic when names collide.
         key_stmt = select(APIKey).where(
             APIKey.key_hash == secret_hash,
             APIKey.is_active.is_(True),
@@ -144,7 +98,6 @@ async def get_current_user_from_api_key(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Update last_used_at timestamp and increment usage count
         try:
             update_stmt = (
                 update(APIKey)
@@ -157,12 +110,10 @@ async def get_current_user_from_api_key(
             await session.execute(update_stmt)
             await session.commit()
         except Exception as e:
-            # Non-critical, log and continue — but rollback so the session
-            # is usable for the subsequent user lookup.
+            # Not critical. Roll back so the session stays usable for the user lookup.
             await session.rollback()
             logger.warning("Failed to update API key usage stats: %s", e)
 
-        # Load user
         user_stmt = select(User).where(User.id == api_key.user_id, User.is_active.is_(True))
         user_result = await session.execute(user_stmt)
         user = user_result.scalar_one_or_none()
@@ -183,17 +134,7 @@ async def get_api_key_by_id(
     user: User,
     session: AsyncSession,
 ) -> APIKey | None:
-    """
-    Get an API key by ID, verifying it belongs to the user.
-
-    Args:
-        key_id: API key ID
-        user: Current authenticated user
-        session: Database session
-
-    Returns:
-        APIKey object if found and owned by user, None otherwise
-    """
+    """Get an API key by ID, scoped to the calling user."""
     stmt = select(APIKey).where(
         APIKey.id == key_id,
         APIKey.user_id == user.id,

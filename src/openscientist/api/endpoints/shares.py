@@ -1,11 +1,4 @@
-"""
-Job sharing endpoints.
-
-Provides REST API endpoints for managing job shares, including:
-- Creating and revoking shares
-- Listing shares for a job
-- Searching for users by email/name
-"""
+"""Job sharing endpoints."""
 
 import logging
 
@@ -32,16 +25,7 @@ SESSION_DEP = Depends(get_session)
 
 
 def _share_to_response(share: JobShare, target_user: User) -> "ShareResponse":
-    """
-    Convert persisted sharing rows into API response shape.
-
-    Args:
-        share: Job share row.
-        target_user: User row referenced by ``share.shared_with_user_id``.
-
-    Returns:
-        Serialized share response.
-    """
+    """Convert a share row and target user into a ShareResponse."""
     return ShareResponse(
         id=str(share.id),
         job_id=str(share.job_id),
@@ -52,7 +36,6 @@ def _share_to_response(share: JobShare, target_user: User) -> "ShareResponse":
     )
 
 
-# Pydantic models for request/response
 class ShareCreate(BaseModel):
     """Request body for creating a job share."""
 
@@ -117,21 +100,7 @@ async def create_share(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> ShareResponse:
-    """
-    Share a job with another user.
-
-    The authenticated user must be the owner of the job.
-    Users can only share jobs they own.
-
-    Args:
-        share_data: Job ID, target email, and permission payload.
-        user: Authenticated API-key user.
-        session: Request-scoped database session.
-
-    Returns:
-        Persisted share metadata for the target user.
-    """
-    # Set RLS context
+    """Share a job with another user. Only the job owner may do so."""
     await set_current_user(session, user.id)
 
     share, target_user = await create_or_update_share(
@@ -156,20 +125,7 @@ async def list_job_shares(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> ShareListResponse:
-    """
-    List all shares for a specific job.
-
-    Only the job owner can see the list of shares.
-
-    Args:
-        job_id: Target job UUID string.
-        user: Authenticated API-key user.
-        session: Request-scoped database session.
-
-    Returns:
-        All shares configured for the job.
-    """
-    # Set RLS context
+    """List the shares of a job. Only the job owner may do so."""
     await set_current_user(session, user.id)
 
     shares = await list_shares_for_owned_job(
@@ -195,17 +151,7 @@ async def revoke_share(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
-    """
-    Revoke a job share.
-
-    Only the job owner can revoke shares.
-
-    Args:
-        share_id: Share UUID string.
-        user: Authenticated API-key user.
-        session: Request-scoped database session.
-    """
-    # Set RLS context
+    """Revoke a job share. Only the job owner may do so."""
     await set_current_user(session, user.id)
 
     await revoke_share_for_owned_job(
@@ -236,20 +182,7 @@ async def search_users(
     ),
     _user: User = CURRENT_USER_DEP,
 ) -> UserSearchResponse:
-    """
-    Search for users by email or name.
-
-    Returns users whose email or name contains the search query.
-    Used for finding users to share jobs with.
-
-    Args:
-        q: Case-insensitive search query.
-        limit: Maximum number of users to return.
-        _user: Authenticated API-key user (auth gate only).
-
-    Returns:
-        Matching users plus total count.
-    """
+    """Search active users by email or name, for finding share targets."""
     users = await search_active_users(
         q,
         limit,
