@@ -1675,23 +1675,23 @@ class TestEnsureReportWritten:
         assert report.exists() and report.read_text() == "agent nested it here"
 
 
-class TestReportAbstractBudget:
-    """The literature budget must scale with the model's context window."""
+class TestReportOutlineBudget:
+    """The outline's budget must scale with the model's context window."""
 
     def test_budget_scales_with_context_and_has_a_floor(self):
         from openscientist.orchestrator.iteration import (
             _REPORT_PROMPT_CHARS_PER_TOKEN,
-            _REPORT_PROMPT_MIN_ABSTRACT_CHARS,
+            _REPORT_PROMPT_MIN_OUTLINE_CHARS,
             _REPORT_PROMPT_RESERVE_TOKENS,
-            _report_abstract_budget_chars,
+            _report_outline_budget_chars,
         )
 
-        big = _report_abstract_budget_chars(131072)
-        small = _report_abstract_budget_chars(16384)
+        big = _report_outline_budget_chars(131072)
+        small = _report_outline_budget_chars(16384)
         assert big > small
         assert big == int((131072 - _REPORT_PROMPT_RESERVE_TOKENS) * _REPORT_PROMPT_CHARS_PER_TOKEN)
         # A context smaller than the reserve clamps to the floor, never negative.
-        assert _report_abstract_budget_chars(1000) == _REPORT_PROMPT_MIN_ABSTRACT_CHARS
+        assert _report_outline_budget_chars(1000) == _REPORT_PROMPT_MIN_OUTLINE_CHARS
 
 
 class TestRunReportTurnIntegration:
