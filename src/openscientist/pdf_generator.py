@@ -127,8 +127,9 @@ class ReportPDF(FPDF):
             0, 6, f"{bullet} {text}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, markdown=True
         )
 
-    def add_footer(self) -> None:
-        """Add OpenScientist attribution footer."""
+    def add_footer(self, run_environment: str | None = None) -> None:
+        """Add the OpenScientist attribution footer and, below it, the run's
+        recorded environment."""
         self.ln(10)
         self.line(10, self.get_y(), 200, self.get_y())
         self.ln(3)
@@ -142,6 +143,8 @@ class ReportPDF(FPDF):
             new_y=YPos.NEXT,
             align="C",
         )
+        if run_environment:
+            self.multi_cell(0, 5, run_environment, align="C")
 
     def add_table(self, rows: list[list[str]]) -> None:
         """Add a table from parsed markdown rows."""
@@ -178,7 +181,10 @@ class ReportPDF(FPDF):
 
 
 def markdown_to_pdf(
-    markdown_path: Path, pdf_path: Path | None = None, add_footer: bool = True
+    markdown_path: Path,
+    pdf_path: Path | None = None,
+    add_footer: bool = True,
+    run_environment: str | None = None,
 ) -> Path:
     """
     Convert Markdown report to PDF with professional styling.
@@ -187,6 +193,7 @@ def markdown_to_pdf(
         markdown_path: Path to input Markdown file
         pdf_path: Path for output PDF (default: same name with .pdf extension)
         add_footer: Whether to add OpenScientist attribution footer
+        run_environment: The run's recorded environment, shown in the footer
 
     Returns:
         Path to generated PDF file
@@ -220,7 +227,7 @@ def markdown_to_pdf(
 
         _flush_table(pdf, state)
         if add_footer:
-            pdf.add_footer()
+            pdf.add_footer(run_environment)
         pdf.output(str(pdf_path))
 
         logger.info("PDF generated successfully: %s", pdf_path)

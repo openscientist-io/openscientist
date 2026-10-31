@@ -1,5 +1,6 @@
 """Tests for openscientist.artifact_packager module."""
 
+import json
 import stat
 import zipfile
 
@@ -8,6 +9,8 @@ import pytest
 from openscientist.artifact_packager import (
     EXCLUDED_FILES_MANIFEST,
     MAX_ARTIFACT_FILE_SIZE_BYTES,
+    PROVENANCE_FILE,
+    artifact_file,
     create_artifacts_zip_file,
 )
 
@@ -217,3 +220,33 @@ class TestManifestNameCollision:
             manifest = zf.read(EXCLUDED_FILES_MANIFEST).decode()
             assert "huge.bin" in manifest
             assert "not the real manifest" not in manifest
+
+
+class TestRunProvenance:
+    """The archive carries the environment the run recorded, from the database."""
+
+    _RECORDED = {"openscientist_commit": "abc123def456", "agent_harness": "omp"}
+
+    def test_the_zip_carries_the_recorded_environment(self, tmp_path):
+        (tmp_path / "report.md").write_text("# Report")
+        archive_path = tmp_path / "artifacts.zip"
+        create_artifacts_zip_file(tmp_path, archive_path, "j1", version_info=self._RECORDED)
+        with zipfile.ZipFile(archive_path) as zf:
+            assert json.loads(zf.read(PROVENANCE_FILE)) == self._RECORDED
+
+    def test_a_run_that_recorded_nothing_adds_no_provenance(self, tmp_path):
+        (tmp_path / "report.md").write_text("# Report")
+        with _open_zip(tmp_path) as zf:
+            assert PROVENANCE_FILE not in zf.namelist()
+
+    def test_a_provenance_file_the_agent_wrote_is_not_shipped(self, tmp_path):
+        """The job directory is agent-writable, so only the database's record counts."""
+        (tmp_path / PROVENANCE_FILE).write_text('{"openscientist_commit": "forged"}')
+        archive_path = tmp_path / "artifacts.zip"
+        create_artifacts_zip_file(tmp_path, archive_path, "j1", version_info=self._RECORDED)
+        with zipfile.ZipFile(archive_path) as zf:
+            assert zf.namelist().count(PROVENANCE_FILE) == 1
+            assert json.loads(zf.read(PROVENANCE_FILE)) == self._RECORDED
+        with _open_zip(tmp_path) as zf:
+            assert PROVENANCE_FILE not in zf.namelist()
+        assert artifact_file(tmp_path, PROVENANCE_FILE) is None

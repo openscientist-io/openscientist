@@ -113,18 +113,24 @@ class TestDownloadPdfReport:
         loop_thread = threading.get_ident()
         render_threads: list[int] = []
 
-        def fake_markdown_to_pdf(source, target) -> None:
+        footers: list[str | None] = []
+
+        def fake_markdown_to_pdf(source, target, run_environment=None) -> None:
             render_threads.append(threading.get_ident())
+            footers.append(run_environment)
             target.write_bytes(b"PDF-CONTENT")
 
         with (
             patch.object(job_detail, "ui") as mock_ui,
             patch.object(job_detail, "markdown_to_pdf", side_effect=fake_markdown_to_pdf),
         ):
-            await job_detail._download_pdf_report(report_path, pdf_path, "job-9")
+            await job_detail._download_pdf_report(
+                report_path, pdf_path, "job-9", "Run environment: OpenScientist abc123"
+            )
 
         mock_ui.download.assert_called_once_with(b"PDF-CONTENT", filename="job-9_report.pdf")
         assert not (tmp_path / "_final_report_stripped.md").exists()
+        assert footers == ["Run environment: OpenScientist abc123"]
         # Rendering a long report takes seconds of CPU, so it must not run on the loop thread.
         assert render_threads and render_threads[0] != loop_thread
 

@@ -159,3 +159,22 @@ def test_a_figure_among_the_jobs_artifacts_still_embeds(tmp_path: Path) -> None:
     job_dir = _job_dir(tmp_path, "fa.png")
     html = _render(job_dir, "{{figure:fa.png|caption=A}}\n\n![B](provenance/fa.png)\n", embed=True)
     assert html.count(f"data:image/png;base64,{base64.b64encode(_PNG_1x1).decode()}") == 2
+
+
+def test_the_footer_names_the_run_environment(tmp_path: Path) -> None:
+    md_path = tmp_path / "final_report.md"
+    md_path.write_text("# Report", encoding="utf-8")
+    html = render_report_html(
+        md_path, tmp_path, run_environment="Run environment: OpenScientist abc123def456"
+    )
+    footer = html[html.index("<footer") :]
+    assert "Run environment: OpenScientist abc123def456" in footer
+
+
+def test_the_run_environment_is_escaped(tmp_path: Path) -> None:
+    """The agent's database login can write the recorded environment."""
+    md_path = tmp_path / "final_report.md"
+    md_path.write_text("# Report", encoding="utf-8")
+    html = render_report_html(md_path, tmp_path, run_environment="<script>alert(1)</script>")
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html

@@ -284,6 +284,7 @@ async def test_container_code_runs_as_the_job_login(
     grant the code needs and the migration lacks fails here."""
     from openscientist.orchestrator.discovery import (
         _persist_job_cost_record,
+        _recorded_run_environment,
         _sync_version_metadata,
     )
     from openscientist.orchestrator.iteration import update_job_status
@@ -306,6 +307,7 @@ async def test_container_code_runs_as_the_job_login(
         return_value={"agent_harness": "omp"},
     ):
         await _sync_version_metadata(str(jobs.own))
+    assert await _recorded_run_environment(tmp_path / str(jobs.own)) == "Run environment: Oh My Pi"
 
     os.environ.setdefault("OPENSCIENTIST_JOB_ID", str(jobs.own))
     os.environ.setdefault("OPENSCIENTIST_JOB_DIR", str(tmp_path))

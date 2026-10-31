@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from openscientist.database.models import Job
 from openscientist.job.types import JobInfo, JobStatus
+from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.pages import job_detail
 
 _RECORDED = {
@@ -23,7 +24,7 @@ _RECORDED = {
 
 
 def test_the_run_environment_names_the_build_the_harness_and_the_container() -> None:
-    text = job_detail._run_environment_text(_RECORDED)
+    text = run_environment_text(_RECORDED)
     assert text is not None
     for part in (
         "abc123def456",
@@ -36,16 +37,20 @@ def test_the_run_environment_names_the_build_the_harness_and_the_container() -> 
 
 
 def test_a_codex_run_names_its_harness() -> None:
-    text = job_detail._run_environment_text(
-        {"agent_harness": "codex", "agent_harness_version": "0.163.0"}
-    )
+    text = run_environment_text({"agent_harness": "codex", "agent_harness_version": "0.163.0"})
     assert text is not None
     assert "Codex 0.163.0" in text
 
 
 def test_a_run_with_no_recorded_environment_shows_none() -> None:
-    assert job_detail._run_environment_text(None) is None
-    assert job_detail._run_environment_text({}) is None
+    assert run_environment_text(None) is None
+    assert run_environment_text({}) is None
+    assert run_environment_text({"agent_harness_version": "2.1.3"}) is None
+
+
+def test_an_unknown_harness_is_named_by_its_recorded_id() -> None:
+    """A run recorded by a build with a harness this build no longer knows."""
+    assert run_environment_text({"agent_harness": "aider"}) == "Run environment: aider"
 
 
 def test_job_info_carries_the_recorded_environment() -> None:

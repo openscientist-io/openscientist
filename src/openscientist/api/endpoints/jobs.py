@@ -720,6 +720,7 @@ async def download_artifacts(
             job_dir=job_dir,
             archive_path=archive_path,
             job_id=str(job.id),
+            version_info=job.version_info,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)

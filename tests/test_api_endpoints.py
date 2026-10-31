@@ -5,6 +5,7 @@ Tests actual HTTP requests to API endpoints with mocked authentication.
 """
 
 import io
+import json
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -1551,6 +1552,8 @@ class TestJobEndpoints:
         job_dir.mkdir(parents=True)
         (job_dir / "plot.png").write_bytes(b"fake png data")
         (job_dir / "data.csv").write_text("a,b,c\n1,2,3\n")
+        test_job_db.version_info = {"openscientist_commit": "abc123def456"}
+        await db_session.commit()
 
         app = _build_authenticated_app(db_session, test_user_db)
 
@@ -1569,6 +1572,10 @@ class TestJobEndpoints:
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
         assert response.headers.get("accept-ranges") == "bytes"
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            assert json.loads(zf.read("provenance.json")) == {
+                "openscientist_commit": "abc123def456"
+            }
 
     @pytest.mark.asyncio
     async def test_get_job_artifacts_excludes_internal_runtime_files(
