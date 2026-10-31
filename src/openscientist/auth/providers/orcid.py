@@ -1,8 +1,4 @@
-"""
-ORCID OAuth provider implementation.
-
-Handles ORCID OAuth/OIDC flow and user profile extraction.
-"""
+"""ORCID OAuth provider implementation."""
 
 import logging
 from typing import Any
@@ -25,26 +21,7 @@ class OrcidProvider:
 
     @staticmethod
     async def get_user_info(token: dict[str, Any]) -> dict[str, Any]:
-        """
-        Extract user profile from ORCID token response.
-
-        ORCID's token response includes the ORCID iD and name directly.
-        Email is resolved via OIDC claims, the public email API, or a
-        fallback to ``{orcid}@orcid.invalid``.
-
-        Args:
-            token: OAuth token response containing access_token, orcid, name
-
-        Returns:
-            Dictionary with user profile:
-            - provider_user_id: ORCID iD (e.g. "0000-0002-1234-5678")
-            - email: Email address
-            - name: Display name
-            - email_verified: Whether the email was verified
-
-        Raises:
-            ValueError: If no access_token in token response
-        """
+        """Fetch the user profile from an ORCID token response."""
         access_token = token.get("access_token")
         if not access_token:
             raise ValueError("No access_token in token response")
@@ -52,28 +29,23 @@ class OrcidProvider:
         orcid_id: str = token.get("orcid", "")
         name: str = token.get("name") or ""
 
-        # If name is empty, try OIDC userinfo
         userinfo = token.get("userinfo") or {}
         if not name:
             given = userinfo.get("given_name", "")
             family = userinfo.get("family_name", "")
             name = f"{given} {family}".strip()
 
-        # Fall back to ORCID iD string if name is still empty
         if not name:
             name = orcid_id or "Unknown"
 
-        # Resolve email with ordered fallback
         email: str | None = None
         email_verified = False
 
-        # 1. Check OIDC userinfo claims
         oidc_email = userinfo.get("email")
         if oidc_email:
             email = str(oidc_email)
             email_verified = True
 
-        # 2. Try ORCID public email API
         if not email and orcid_id:
             try:
                 async with httpx.AsyncClient() as client:
@@ -96,7 +68,6 @@ class OrcidProvider:
                     exc_info=True,
                 )
 
-        # 3. Fall back to synthetic address
         if not email:
             email = f"{orcid_id}@orcid.invalid" if orcid_id else "unknown@orcid.invalid"
             email_verified = False

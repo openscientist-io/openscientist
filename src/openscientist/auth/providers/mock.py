@@ -1,10 +1,6 @@
-"""
-Mock OAuth provider for development and testing.
+"""Mock OAuth provider for development and testing.
 
-This provider simulates OAuth flow without requiring external OAuth configuration.
-Only enabled when OPENSCIENTIST_DEV_MODE=true.
-
-SECURITY WARNING: Never enable this in production!
+Only enabled in development mode. Never enable in production.
 """
 
 import logging
@@ -18,22 +14,9 @@ class MockProvider:
 
     @staticmethod
     async def get_user_info(user_data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Extract user profile from mock OAuth data.
+        """Extract the user profile from mock OAuth data.
 
-        Args:
-            user_data: Mock user data from the login form
-
-        Returns:
-            Dictionary with user profile:
-            - provider_user_id: Mock user ID
-            - email: User's email
-            - name: Display name
-            - username: Username
-
-        Note:
-            This is a simplified version that accepts user data directly
-            instead of fetching from an external API.
+        Accepts user data directly instead of fetching from an external API.
         """
         email = user_data.get("email", "dev@example.com")
         name = user_data.get("name", "Dev User")

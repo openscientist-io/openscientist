@@ -1,9 +1,4 @@
-"""
-Authentication and authorization for OpenScientist.
-
-Provides OAuth-based authentication with GitHub and Google providers,
-session management, and user context for RLS.
-"""
+"""Authentication and authorization for OpenScientist."""
 
 from openscientist.auth.middleware import (
     can_current_user_start_jobs,

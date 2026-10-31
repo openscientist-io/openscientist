@@ -1,9 +1,4 @@
-"""
-Authentication middleware for OpenScientist.
-
-Provides authentication decorators and user context management.
-Supports cookie-backed session authentication.
-"""
+"""Authentication middleware for OpenScientist."""
 
 import asyncio
 import inspect
@@ -25,8 +20,7 @@ from openscientist.database.session import get_admin_session
 
 logger = logging.getLogger(__name__)
 
-#: How much of a page's ``response_timeout`` is kept for sending the outage
-#: page after a build that the database held up.
+#: Fraction of a page's ``response_timeout`` kept for sending the outage page
 _OUTAGE_PAGE_SECONDS = 0.5
 
 #: Builds cancelled at their deadline, held until their database driver
@@ -35,18 +29,7 @@ _abandoned_builds: set[asyncio.Task[Any]] = set()
 
 
 async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
-    """
-    Get user from session token.
-
-    Eagerly loads the administrator relationship to avoid extra queries.
-
-    Args:
-        db: Database session
-        session_token: Session token from cookie or storage
-
-    Returns:
-        User object if session is valid, None otherwise
-    """
+    """Get the user for a session token."""
     stmt = (
         select(User)
         .join(Session)
@@ -61,15 +44,9 @@ async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
 
 
 async def validate_session(session_token: str) -> dict[str, Any] | None:
-    """
-    Validate a session token and return user info.
+    """Validate a session token and return user info.
 
-    Args:
-        session_token: Session token to validate
-
-    Returns:
-        Dictionary with user_id, email, name, admin/approval flags if valid, None otherwise.
-        A database error is raised, so it never reads as a missing session.
+    Database errors propagate, so a failure never reads as a missing session.
     """
     async with get_admin_session() as db:
         user = await get_current_user(db, session_token)
@@ -87,15 +64,8 @@ async def validate_session(session_token: str) -> dict[str, Any] | None:
 
 
 def _get_session_token() -> str | None:
-    """
-    Get session token from cookie or app storage.
-
-    Checks cookies first, then falls back to NiceGUI user storage.
-
-    Returns:
-        Session token if found, None otherwise
-    """
-    # Try to get from cookie (set by OAuth flow)
+    """Get the session token from cookie or app storage."""
+    # The cookie is set by the OAuth flow
     try:
         if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
             session_token = ui.context.client.request.cookies.get("session_token")
@@ -145,33 +115,22 @@ def _show_database_unavailable() -> None:
 
 
 def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator to require authentication for a page.
+    """Require authentication for an async page.
 
-    Checks for valid session token (from cookie or storage), validates it against
-    the database, and redirects to login if not authenticated. A database that
-    accepts connects but never answers raises nothing within the page's
-    ``response_timeout``, after which NiceGUI serves its own error page, so the
-    session check and the page run as a task with a deadline just inside it.
-    When the deadline expires the task is cancelled and the outage page shows
-    at once, without waiting for the driver to release the hung connection.
+    A database that accepts connects but never answers raises nothing within
+    the page's ``response_timeout``, after which NiceGUI serves its own error
+    page, so the session check and the page run as a task with a deadline
+    just inside it. When the deadline expires the task is cancelled and the
+    outage page shows, without waiting for the driver to release the hung
+    connection.
 
-    Args:
-        func: Async page function to protect. A sync page would run its session
-            check on the event loop and block every other request, so it is refused.
-
-    Returns:
-        Wrapped function that checks authentication
-
-    Raises:
-        TypeError: ``func`` is not a coroutine function.
+    Sync pages are refused. Their session check would block the event loop.
     """
     if not inspect.iscoroutinefunction(func):
         raise TypeError(f"require_auth needs an async page, and {func.__qualname__} is sync")
 
     @wraps(func)
     async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-        # Get session token
         session_token = _get_session_token()
         if not session_token:
             logger.debug("No session token, redirecting to login")
@@ -219,7 +178,9 @@ async def _build_signed_in(
 ) -> Any:
     """Build ``func``'s page into ``slot`` for the visitor holding
     ``session_token``, or the login redirect or outage page in its place.
-    NiceGUI keeps a slot stack per task, so this task enters the page's slot."""
+
+    NiceGUI keeps a slot stack per task, so this task enters the page's slot.
+    """
     with slot:
         try:
             user_info = await validate_session(session_token)
@@ -239,33 +200,19 @@ async def _build_signed_in(
 
 
 def get_current_user_id() -> str | None:
-    """
-    Get the current authenticated user's ID.
-
-    Returns:
-        User ID if authenticated, None otherwise
-    """
+    """Get the current authenticated user's ID."""
     return app.storage.user.get("user_id")
 
 
 def is_current_user_admin() -> bool:
-    """
-    Check if the current authenticated user is an administrator.
-
-    Returns:
-        True if user is an admin, False otherwise
-    """
+    """Check if the current authenticated user is an administrator."""
     return bool(app.storage.user.get("is_admin", False))
 
 
 def can_current_user_start_jobs() -> bool:
-    """
-    Check if the current user can start jobs.
+    """Check if the current user can start jobs.
 
     Administrators are allowed even if their explicit approval flag is false.
-
-    Returns:
-        True if user can start jobs, False otherwise
     """
     if "can_start_jobs" in app.storage.user:
         return bool(app.storage.user.get("can_start_jobs"))
@@ -275,17 +222,9 @@ def can_current_user_start_jobs() -> bool:
 
 
 def require_admin(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator to require admin privileges for a page.
+    """Decorator to require admin privileges for a page.
 
-    Must be used AFTER @require_auth to ensure user is authenticated first.
-    Redirects non-admin users to the homepage with a notification.
-
-    Args:
-        func: Page function to protect
-
-    Returns:
-        Wrapped function that checks admin status
+    Use after ``@require_auth`` so the user is authenticated first.
     """
 
     @wraps(func)

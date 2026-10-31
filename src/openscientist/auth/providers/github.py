@@ -1,8 +1,4 @@
-"""
-GitHub OAuth provider implementation.
-
-Handles GitHub OAuth flow and user profile extraction.
-"""
+"""GitHub OAuth provider implementation."""
 
 import logging
 from typing import Any
@@ -94,23 +90,7 @@ class GitHubProvider:
 
     @staticmethod
     async def get_user_info(token: dict[str, Any]) -> dict[str, Any]:
-        """
-        Fetch user profile from GitHub API.
-
-        Args:
-            token: OAuth token response containing access_token
-
-        Returns:
-            Dictionary with user profile:
-            - provider_user_id: GitHub user ID
-            - email: Primary email address
-            - name: Display name
-            - username: GitHub username
-            - email_verified: Whether provider verified the selected email
-
-        Raises:
-            httpx.HTTPError: If API request fails
-        """
+        """Fetch the user profile from the GitHub API."""
         access_token = token.get("access_token")
         if not access_token:
             raise ValueError("No access_token in token response")
@@ -121,7 +101,6 @@ class GitHubProvider:
         }
 
         async with httpx.AsyncClient() as client:
-            # Get user profile
             user_resp = await client.get("https://api.github.com/user", headers=headers)
             user_resp.raise_for_status()
             user_data = user_resp.json()
