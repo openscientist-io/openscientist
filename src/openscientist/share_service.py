@@ -1,8 +1,6 @@
-"""
-Shared business logic for job sharing.
+"""Shared business logic for job sharing.
 
-Both API-key routes and web-session routes delegate to this module so share
-authorization and persistence stay consistent.
+Both API-key and web-session routes delegate here so share authorization stays consistent.
 """
 
 from __future__ import annotations
@@ -29,21 +27,7 @@ async def get_owned_job(
     *,
     not_owned_detail: str,
 ) -> Job:
-    """
-    Load a job and enforce that the caller is the owner.
-
-    Args:
-        session: Request-scoped database session.
-        owner_id: Authenticated user ID that must own the job.
-        job_id: Job UUID as a string.
-        not_owned_detail: Error message used when ownership check fails.
-
-    Returns:
-        The owned job record.
-
-    Raises:
-        HTTPException: If the job is missing/inaccessible, or owned by another user.
-    """
+    """Load a job, raising 404 when missing and 403 when not owned by the caller."""
     job_uuid = parse_uuid(job_id, "job_id")
     result = await session.execute(select(Job).where(Job.id == job_uuid))
     job = result.scalar_one_or_none()
@@ -68,19 +52,7 @@ async def find_user_by_email(
     *,
     admin_session_factory: AdminSessionFactory = get_admin_session,
 ) -> User:
-    """
-    Resolve an active user record by email via an admin-scoped session.
-
-    Args:
-        email: Target user email address.
-        admin_session_factory: Factory for creating an admin-bypass DB session.
-
-    Returns:
-        The matched user.
-
-    Raises:
-        HTTPException: If no user exists for the given email.
-    """
+    """Resolve an active user by email through an admin-scoped session, bypassing RLS."""
     async with admin_session_factory() as admin_session:
         result = await admin_session.execute(
             select(User).where(
@@ -109,25 +81,7 @@ async def create_or_update_share(
     not_owned_detail: str,
     admin_session_factory: AdminSessionFactory = get_admin_session,
 ) -> tuple[JobShare, User]:
-    """
-    Create a job share or update permission when a share already exists.
-
-    Args:
-        session: Request-scoped database session.
-        owner_id: Authenticated owner creating/updating the share.
-        job_id: Job UUID as a string.
-        shared_with_email: Target user's email.
-        permission_level: Permission to grant (`view` or `edit`).
-        not_owned_detail: Error message used when owner check fails.
-        admin_session_factory: Factory for creating an admin-bypass DB session.
-
-    Returns:
-        Tuple containing the persisted share row and the target user row.
-
-    Raises:
-        HTTPException: If the job isn't owned, target user doesn't exist, or
-            caller attempts to share with themselves.
-    """
+    """Create a job share, or update the permission if the share already exists."""
     job = await get_owned_job(
         session,
         owner_id,
@@ -177,18 +131,7 @@ async def list_shares_for_owned_job(
     job_id: str,
     not_owned_detail: str,
 ) -> list[tuple[JobShare, User]]:
-    """
-    List all shares for a job after verifying ownership.
-
-    Args:
-        session: Request-scoped database session.
-        owner_id: Authenticated owner requesting shares.
-        job_id: Job UUID as a string.
-        not_owned_detail: Error message used when owner check fails.
-
-    Returns:
-        Share and target-user tuples ordered by target email.
-    """
+    """List the shares of a job after verifying ownership."""
     job = await get_owned_job(
         session,
         owner_id,
@@ -212,18 +155,7 @@ async def revoke_share_for_owned_job(
     share_id: str,
     not_owned_detail: str,
 ) -> None:
-    """
-    Delete a share when the caller owns the associated job.
-
-    Args:
-        session: Request-scoped database session.
-        owner_id: Authenticated owner requesting revocation.
-        share_id: Share UUID as a string.
-        not_owned_detail: Error message used when owner check fails.
-
-    Raises:
-        HTTPException: If the share is missing or the caller does not own the job.
-    """
+    """Delete a share, after verifying the caller owns its job."""
     share_uuid = parse_uuid(share_id, "share_id")
     share_result = await session.execute(select(JobShare).where(JobShare.id == share_uuid))
     share = share_result.scalar_one_or_none()
@@ -252,17 +184,7 @@ async def search_active_users(
     *,
     admin_session_factory: AdminSessionFactory = get_admin_session,
 ) -> list[User]:
-    """
-    Search active users by email or display name.
-
-    Args:
-        query: Case-insensitive search string.
-        limit: Maximum number of users to return.
-        admin_session_factory: Factory for creating an admin-bypass DB session.
-
-    Returns:
-        Matching active users ordered by email.
-    """
+    """Search active users by email or display name through an admin-scoped session."""
     search_pattern = f"%{query}%"
     async with admin_session_factory() as admin_session:
         result = await admin_session.execute(
