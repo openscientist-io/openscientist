@@ -1,4 +1,4 @@
-"""llama.cpp provider: a self-hosted ``llama-server`` on the OpenAI wire, driven by omp.
+"""llama.cpp provider. A self-hosted ``llama-server`` on the OpenAI wire, driven by omp.
 
 Not a Codex backend, since Codex's tool calls fail against non-gptoss open models.
 """
@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 def _probe_llamacpp_context_tokens(base_url: str, api_key: str | None) -> int | None:
     """Read the launched window from ``/props`` ``default_generation_settings.n_ctx``.
 
-    Not ``/v1/models`` ``n_ctx_train`` (the trained maximum, which over-budgets a
-    server launched smaller). ``/props`` sits at the root, not under ``/v1``.
+    The trained maximum from ``/v1/models`` ``n_ctx_train`` over-budgets a server
+    launched smaller, so the probe reads the launched value. ``/props`` sits at
+    the server root.
     """
     root = base_url.rstrip("/").removesuffix("/v1").rstrip("/")
     headers = {"authorization": f"Bearer {api_key}"} if api_key else {}

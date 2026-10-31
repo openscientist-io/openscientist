@@ -1,20 +1,8 @@
 """vLLM provider (self-hosted open-weight models on an OpenAI-compatible wire).
 
-Routes an agent at a self-hosted vLLM server (default
-``http://localhost:8000/v1``). A vLLM server serves exactly the model it was
-launched with, so ``OPENSCIENTIST_MODEL`` must name it.
-Auth is optional: a server started with ``--api-key`` needs ``VLLM_API_KEY``,
-otherwise the provider is keyless like Ollama.
-
-Driven by omp, not by Codex. It speaks the OpenAI wire, but Codex's MCP tool
-calls come back "unsupported call" against non-gptoss models, which degrades a
-run to writing files instead of recording artifacts, so no Codex contract is
-implemented here.
-
-Because the server runs outside the app, the base URL must be reachable
-from wherever the agent runs. In-process on the dev box ``localhost`` works
-directly. From inside the agent container, point ``VLLM_BASE_URL`` at the
-host (for example ``http://host.docker.internal:8000/v1``).
+Driven by omp, not by Codex. Codex's tool calls fail against non-gptoss open
+models. From inside the agent container, point ``VLLM_BASE_URL`` at the host
+(for example ``http://host.docker.internal:8000/v1``).
 """
 
 from __future__ import annotations
@@ -35,7 +23,7 @@ def _probe_vllm_context_tokens(base_url: str, model_id: str, api_key: str | None
     vLLM fixes the window at launch (``--max-model-len``) and reports it as
     ``max_model_len`` on every model card. A server started with ``--api-key``
     rejects an unauthenticated probe, so the credential is required whenever one
-    is in play. Returns None on any failure so the caller can fall back.
+    is in play.
     """
     headers = {"authorization": f"Bearer {api_key}"} if api_key else {}
     try:
