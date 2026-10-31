@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from docker import errors
+from openscientist.database.models import Job, User
 from openscientist.webapp_components.ui_components import format_uptime
 from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
 )
-
-# ---------------------------------------------------------------------------
-# format_uptime
-# ---------------------------------------------------------------------------
+from tests.helpers import fake_admin_session
 
 
 class TestFormatUptime:
@@ -44,11 +46,6 @@ class TestFormatUptime:
 
     def test_just_over_a_minute(self):
         assert format_uptime(61) == "1m 1s"
-
-
-# ---------------------------------------------------------------------------
-# _parse_container_stats
-# ---------------------------------------------------------------------------
 
 
 class TestParseContainerStats:
@@ -121,142 +118,130 @@ class TestParseContainerStats:
         assert cpu == pytest.approx(80.0)
 
 
-# ---------------------------------------------------------------------------
-# collect_dashboard_data — Docker unavailable
-# ---------------------------------------------------------------------------
+def _fake_docker_container(
+    short_id: str,
+    name: str,
+    labels: dict,
+    status: str = "running",
+) -> SimpleNamespace:
+    """Stand in for a docker SDK container object (the daemon side of the boundary)."""
+    return SimpleNamespace(
+        short_id=short_id,
+        name=name,
+        labels=labels,
+        status=status,
+        attrs={"Created": "2026-01-15T10:00:00Z"},
+    )
 
 
 class TestCollectDashboardDockerDown:
     @pytest.mark.asyncio
     async def test_returns_unavailable_when_docker_down(self):
-        with patch(
-            "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
-            return_value=None,
-        ):
+        """With the Docker daemon unreachable the dashboard reports unavailability and no groups."""
+        down_client = MagicMock()
+        down_client.ping.side_effect = errors.DockerException("Cannot connect to the Docker daemon")
+
+        with patch("docker.from_env", return_value=down_client):
             data = await collect_dashboard_data()
 
         assert data.docker_available is False
         assert data.error_message is not None
-
-
-# ---------------------------------------------------------------------------
-# collect_dashboard_data — grouping & orphans
-# ---------------------------------------------------------------------------
-
-
-def _make_mock_container(
-    short_id: str,
-    name: str,
-    labels: dict,
-    status: str = "running",
-) -> MagicMock:
-    c = MagicMock()
-    c.short_id = short_id
-    c.name = name
-    c.labels = labels
-    c.status = status
-    c.attrs = {"Created": "2026-01-15T10:00:00Z"}
-    return c
+        assert "Docker" in data.error_message
+        assert data.job_groups == []
 
 
 class TestCollectDashboardGrouping:
     @pytest.mark.asyncio
-    async def test_groups_containers_by_job(self):
-        job_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    async def test_groups_containers_by_job(
+        self, db_session: AsyncSession, test_job: Job, test_user: User
+    ):
+        """Containers with the same job label are grouped with the job's real database metadata."""
+        job_id = str(test_job.id)
 
-        mock_settings = MagicMock()
-
-        agent = _make_mock_container(
+        agent = _fake_docker_container(
             "abc123",
             "openscientist-agent-abc",
             {"openscientist.type": "agent", "openscientist.job_id": job_id},
         )
-        executor = _make_mock_container(
+        executor = _fake_docker_container(
             "def456",
             "openscientist-exec-def",
             {"openscientist.type": "executor", "openscientist.job_id": job_id},
         )
 
-        mock_client = MagicMock()
+        client = MagicMock()
+        client.containers.list.return_value = [agent, executor]
 
-        job_map = {
-            job_id: {
-                "title": "Test job",
-                "status": "running",
-                "owner_email": "test@example.com",
-                "current_iteration": 2,
-                "max_iterations": 5,
-            },
-        }
-
+        # _get_active_jobs_map imports get_admin_session at call time, so patch
+        # the source module
         with (
             patch(
-                "openscientist.settings.get_settings",
-                return_value=mock_settings,
+                "openscientist.database.session.get_admin_session",
+                fake_admin_session(db_session),
             ),
             patch(
                 "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
-                return_value=mock_client,
-            ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._list_openscientist_containers",
-                return_value=[agent, executor],
-            ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
-                return_value=job_map,
-            ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._get_container_stats",
-                return_value={},
+                return_value=client,
             ),
         ):
             data = await collect_dashboard_data(include_stats=False)
 
+        client.containers.list.assert_called_once_with(
+            all=True, filters={"label": ["openscientist.type"]}
+        )
+        assert data.docker_available is True
         assert len(data.job_groups) == 1
         group = data.job_groups[0]
         assert group.job_id == job_id
+        assert group.title == test_job.research_question
+        assert group.status == test_job.status
+        assert group.owner_email == test_user.email
+        assert group.current_iteration == test_job.current_iteration
+        assert group.max_iterations == test_job.max_iterations
         assert group.agent_container is not None
         assert group.agent_container.name == "openscientist-agent-abc"
         assert len(group.executor_containers) == 1
+        assert group.executor_containers[0].name == "openscientist-exec-def"
         assert data.orphan_containers == []
 
     @pytest.mark.asyncio
-    async def test_orphan_containers_detected(self):
-        """Container with a job_id not in the database should be flagged as orphan."""
-        orphan_job_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    async def test_orphan_containers_detected(self, db_session: AsyncSession, test_job: Job):
+        """A container whose job_id is not in the database is flagged as orphan, while a
+        container of the real job is still grouped."""
+        orphan_job_id = str(uuid4())
 
-        mock_settings = MagicMock()
-
-        container = _make_mock_container(
+        orphan = _fake_docker_container(
             "xyz789",
             "openscientist-agent-xyz",
             {"openscientist.type": "agent", "openscientist.job_id": orphan_job_id},
             status="exited",
         )
+        grouped = _fake_docker_container(
+            "abc123",
+            "openscientist-agent-abc",
+            {"openscientist.type": "agent", "openscientist.job_id": str(test_job.id)},
+        )
 
-        mock_client = MagicMock()
+        client = MagicMock()
+        client.containers.list.return_value = [orphan, grouped]
 
         with (
             patch(
-                "openscientist.settings.get_settings",
-                return_value=mock_settings,
+                "openscientist.database.session.get_admin_session",
+                fake_admin_session(db_session),
             ),
             patch(
                 "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
-                return_value=mock_client,
-            ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._list_openscientist_containers",
-                return_value=[container],
-            ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._get_active_jobs_map",
-                return_value={},  # empty — job doesn't exist in DB
+                return_value=client,
             ),
         ):
             data = await collect_dashboard_data(include_stats=False)
 
-        assert len(data.job_groups) == 0
         assert len(data.orphan_containers) == 1
-        assert data.orphan_containers[0].name == "openscientist-agent-xyz"
+        orphan_info = data.orphan_containers[0]
+        assert orphan_info.name == "openscientist-agent-xyz"
+        assert orphan_info.job_id == orphan_job_id
+        assert orphan_info.container_type == "agent"
+        # the real job's container groups, proving the job map came from the database
+        assert len(data.job_groups) == 1
+        assert data.job_groups[0].job_id == str(test_job.id)

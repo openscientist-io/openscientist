@@ -5,7 +5,8 @@ Tests all skills endpoints: list, get by id, get by slug, match, categories,
 and source management.
 """
 
-from unittest.mock import AsyncMock, patch
+from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -617,40 +618,102 @@ class TestSkillSourcesEndpoints:
         self,
         db_session: AsyncSession,
         test_admin_user: User,
-        test_skill_source: SkillSource,
+        tmp_path: Path,
     ):
-        """Test triggering a sync for a source (requires admin)."""
+        """A sync of a local git repository source runs the real ingester and
+        persists the skills it finds."""
+        import subprocess
+
+        from sqlalchemy import select
+
         from openscientist.api.endpoints.skills import sync_skill_source_endpoint
         from openscientist.database.rls import set_current_user
-        from openscientist.skill_scheduler import SyncResult
+        from tests.helpers import fake_admin_session
+
+        # Local git repository with a skills/ subdirectory holding two skills
+        repo = tmp_path / "skills-repo"
+        (repo / "skills" / "metabolomics").mkdir(parents=True)
+        (repo / "skills" / "metabolomics" / "SKILL.md").write_text(
+            "---\n"
+            "name: Metabolomics Analysis\n"
+            "category: metabolomics\n"
+            "description: Statistical analysis of metabolomics data\n"
+            "tags:\n"
+            "  - statistics\n"
+            "---\n\n"
+            "# Metabolomics Analysis\n\n"
+            "Body content for metabolomics.\n"
+        )
+        (repo / "skills" / "statistics").mkdir()
+        (repo / "skills" / "statistics" / "SKILL.md").write_text(
+            "---\n"
+            "name: Statistics Toolkit\n"
+            "category: statistics\n"
+            "description: General statistical helpers\n"
+            "---\n\n"
+            "# Statistics Toolkit\n\n"
+            "Body content for statistics.\n"
+        )
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "commit",
+                "-qm",
+                "initial skills",
+            ],
+            cwd=repo,
+            check=True,
+        )
+
+        source = SkillSource(
+            name="Local Git Skills",
+            source_type="local",
+            path=str(repo),
+            skills_path="skills",
+            is_enabled=True,
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
 
         await set_current_user(db_session, test_admin_user.id)
 
-        # Mock the scheduler
-        mock_result = SyncResult(
-            source_id=str(test_skill_source.id),
-            source_name=test_skill_source.name,
-            success=True,
-            created=5,
-            updated=2,
-            unchanged=10,
-            errors=0,
-        )
-
-        with patch("openscientist.skill_scheduler.get_scheduler") as mock_get_scheduler:
-            mock_scheduler = AsyncMock()
-            mock_scheduler.sync_source_by_id.return_value = mock_result
-            mock_get_scheduler.return_value = mock_scheduler
-
+        # The scheduler reads the source through the admin session seam,
+        # so point it at the test session for the real sync to write to.
+        with patch(
+            "openscientist.skill_scheduler.get_admin_session",
+            fake_admin_session(db_session),
+        ):
             response = await sync_skill_source_endpoint(
-                source_id=str(test_skill_source.id),
+                source_id=str(source.id),
                 user=test_admin_user,
                 session=db_session,
             )
 
         assert response.success is True
-        assert response.created == 5
-        assert response.updated == 2
+        assert response.created == 2
+        assert response.updated == 0
+        assert response.unchanged == 0
+        assert response.errors == 0
+
+        stmt = select(Skill).where(Skill.source_id == source.id)
+        rows = (await db_session.execute(stmt)).scalars().all()
+        assert {s.name for s in rows} == {"Metabolomics Analysis", "Statistics Toolkit"}
+        assert {s.source_path for s in rows} == {
+            "skills/metabolomics/SKILL.md",
+            "skills/statistics/SKILL.md",
+        }
+        assert {s.slug for s in rows} == {"metabolomics", "statistics"}
+        assert all("Body content for" in s.content for s in rows)
+        # the sync persisted its result on the source row
+        assert source.last_synced_at is not None
+        assert source.sync_error is None
 
     @pytest.mark.asyncio
     async def test_list_skill_sources_non_admin_returns_empty(

@@ -1,5 +1,8 @@
 """Tests for openscientist.ntfy module."""
 
+import contextlib
+from collections.abc import Iterator
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -15,6 +18,30 @@ from openscientist.ntfy import (
     notify_job_status_change,
     send_notification,
 )
+
+
+@contextlib.contextmanager
+def recorded_ntfy() -> Iterator[list[httpx.Request]]:
+    """Route ntfy HTTP traffic through a recording mock transport.
+
+    The real send_notification code runs, and the httpx client never
+    reaches the network. Every request it would have sent is recorded for
+    inspection.
+    """
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    real_async_client = httpx.AsyncClient
+
+    def factory(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_async_client(*args, **kwargs)
+
+    with patch("httpx.AsyncClient", side_effect=factory):
+        yield requests
 
 
 class TestGenerateTopicForUser:
@@ -116,16 +143,18 @@ class TestNotifyJobStarted:
     """Tests for notify_job_started()."""
 
     @pytest.mark.asyncio
-    async def test_delegates_to_send_notification(self):
-        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send:
-            mock_send.return_value = True
+    async def test_sends_started_notification(self):
+        """The started notification posts the routed title and message body to the user's topic."""
+        with recorded_ntfy() as requests:
             result = await notify_job_started("topic1", "job-123", "My Job", "https://app.test")
 
         assert result is True
-        mock_send.assert_called_once()
-        call_kwargs = mock_send.call_args
-        assert call_kwargs.kwargs["title"] == "Job Started"
-        assert "My Job" in call_kwargs.kwargs["message"]
+        request = requests[0]
+        assert request.url == "https://ntfy.sh/topic1"
+        assert request.headers["Title"] == "Job Started"
+        assert "My Job" in request.content.decode()
+        assert request.headers["Click"] == "https://app.test/job/job-123"
+        assert request.headers["Tags"] == "rocket"
 
 
 class TestNotifyJobFailed:
@@ -133,15 +162,16 @@ class TestNotifyJobFailed:
 
     @pytest.mark.asyncio
     async def test_truncates_long_error(self):
-        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send:
-            mock_send.return_value = True
-            long_error = "E" * 200
-            await notify_job_failed("topic1", "job-1", "Job", long_error, "https://app.test")
+        """Errors longer than 100 chars are truncated before being sent."""
+        with recorded_ntfy() as requests:
+            await notify_job_failed("topic1", "job-1", "Job", "E" * 200, "https://app.test")
 
-        msg = mock_send.call_args.kwargs["message"]
-        assert "..." in msg
+        request = requests[0]
+        assert request.headers["Title"] == "Job Failed"
+        message = request.content.decode()
+        assert "..." in message
         # The error in the message should be truncated to 100 chars + "..."
-        assert "E" * 101 not in msg
+        assert "E" * 101 not in message
 
 
 class TestNotifyJobCancelled:
@@ -149,24 +179,25 @@ class TestNotifyJobCancelled:
 
     @pytest.mark.asyncio
     async def test_with_reason(self):
-        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send:
-            mock_send.return_value = True
+        """The cancellation reason is included in the sent message."""
+        with recorded_ntfy() as requests:
             await notify_job_cancelled(
                 "topic1", "job-1", "Job", "user requested", "https://app.test"
             )
 
-        msg = mock_send.call_args.kwargs["message"]
-        assert "user requested" in msg
+        assert requests[0].headers["Title"] == "Job Cancelled"
+        message = requests[0].content.decode()
+        assert "user requested" in message
 
     @pytest.mark.asyncio
     async def test_without_reason(self):
-        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send:
-            mock_send.return_value = True
+        """Without a reason the message says the job was cancelled and omits a reason line."""
+        with recorded_ntfy() as requests:
             await notify_job_cancelled("topic1", "job-1", "Job", None, "https://app.test")
 
-        msg = mock_send.call_args.kwargs["message"]
-        assert "was cancelled" in msg
-        assert "Reason" not in msg
+        message = requests[0].content.decode()
+        assert "was cancelled" in message
+        assert "Reason" not in message
 
 
 class TestNotifyJobStatusChange:
@@ -176,101 +207,71 @@ class TestNotifyJobStatusChange:
     async def test_disabled_returns_false(self):
         with patch(
             "openscientist.ntfy.get_user_ntfy_settings",
-            new_callable=AsyncMock,
             return_value=(False, None),
         ):
-            result = await notify_job_status_change(
-                user_id=uuid4(),
-                job_id="j1",
-                job_title="Test",
-                new_status="running",
-            )
+            with recorded_ntfy() as requests:
+                result = await notify_job_status_change(
+                    user_id=uuid4(),
+                    job_id="j1",
+                    job_title="Test",
+                    new_status="running",
+                )
         assert result is False
+        assert not requests
 
     @pytest.mark.asyncio
-    async def test_routes_running_to_started(self):
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
+    @pytest.mark.parametrize(
+        ("new_status", "expected_title", "message_fragment", "extra_kwargs"),
+        [
+            ("running", "Job Started", "has started running", {}),
+            ("completed", "Job Completed", "has completed successfully", {}),
+            ("failed", "Job Failed", "has failed: boom", {"error_message": "boom"}),
+            (
+                "cancelled",
+                "Job Cancelled",
+                "was cancelled",
+                {"cancellation_reason": "user requested"},
+            ),
+            (
+                "awaiting_feedback",
+                "Feedback Requested",
+                "awaiting your feedback",
+                {"iteration": 3},
+            ),
+        ],
+    )
+    async def test_routes_status_to_expected_notification(
+        self, new_status, expected_title, message_fragment, extra_kwargs
+    ):
+        """Each job status is routed to the matching notification with the right title and message."""
+        mock_settings = SimpleNamespace(base_url="https://app.test")
         with (
             patch("openscientist.ntfy.get_settings", return_value=mock_settings),
-            patch(
-                "openscientist.ntfy.notify_job_started",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as mock_started,
+            recorded_ntfy() as requests,
         ):
             result = await notify_job_status_change(
                 user_id=uuid4(),
                 job_id="j1",
                 job_title="Test",
-                new_status="running",
+                new_status=new_status,
                 ntfy_topic="topic1",
+                **extra_kwargs,
             )
 
         assert result is True
-        mock_started.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_routes_completed(self):
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
-        with (
-            patch("openscientist.ntfy.get_settings", return_value=mock_settings),
-            patch(
-                "openscientist.ntfy.notify_job_completed",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as mock_completed,
-        ):
-            result = await notify_job_status_change(
-                user_id=uuid4(),
-                job_id="j1",
-                job_title="Test",
-                new_status="completed",
-                ntfy_topic="topic1",
-            )
-
-        assert result is True
-        mock_completed.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_routes_failed(self):
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
-        with (
-            patch("openscientist.ntfy.get_settings", return_value=mock_settings),
-            patch(
-                "openscientist.ntfy.notify_job_failed",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as mock_failed,
-        ):
-            await notify_job_status_change(
-                user_id=uuid4(),
-                job_id="j1",
-                job_title="Test",
-                new_status="failed",
-                error_message="boom",
-                ntfy_topic="topic1",
-            )
-
-        mock_failed.assert_called_once()
+        assert len(requests) == 1
+        request = requests[0]
+        assert request.url == "https://ntfy.sh/topic1"
+        assert request.headers["Title"] == expected_title
+        assert message_fragment in request.content.decode()
 
     @pytest.mark.asyncio
     async def test_truncates_long_title(self):
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
+        """Titles longer than 50 chars are truncated to 50 chars plus an ellipsis before routing."""
+        mock_settings = SimpleNamespace(base_url="https://app.test")
         with (
             patch("openscientist.ntfy.get_settings", return_value=mock_settings),
-            patch(
-                "openscientist.ntfy.notify_job_started",
-                new_callable=AsyncMock,
-                return_value=True,
-            ) as mock_started,
+            recorded_ntfy() as requests,
         ):
             long_title = "A" * 100
             await notify_job_status_change(
@@ -281,18 +282,19 @@ class TestNotifyJobStatusChange:
                 ntfy_topic="topic1",
             )
 
-        # The title passed to notify_job_started should be truncated
-        call_args = mock_started.call_args
-        passed_title = call_args[0][2]  # positional arg: title
-        assert len(passed_title) <= 53  # 50 + "..."
-        assert passed_title.endswith("...")
+        # The title in the message body should be truncated to 50 chars + "..."
+        message = requests[0].content.decode()
+        assert "A" * 50 + "..." in message
+        # The full 100-char title must not be sent
+        assert "A" * 51 not in message
 
     @pytest.mark.asyncio
     async def test_unknown_status_returns_false(self):
-        mock_settings = MagicMock()
-        mock_settings.base_url = "https://app.test"
-
-        with patch("openscientist.ntfy.get_settings", return_value=mock_settings):
+        mock_settings = SimpleNamespace(base_url="https://app.test")
+        with (
+            patch("openscientist.ntfy.get_settings", return_value=mock_settings),
+            recorded_ntfy() as requests,
+        ):
             result = await notify_job_status_change(
                 user_id=uuid4(),
                 job_id="j1",
@@ -302,3 +304,4 @@ class TestNotifyJobStatusChange:
             )
 
         assert result is False
+        assert not requests

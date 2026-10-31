@@ -1,8 +1,10 @@
 """Tests for code_executor module."""
 
+import json
 import shutil
+import urllib.request
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -20,8 +22,6 @@ from openscientist.code_executor import (
 )
 
 cargo_available = pytest.mark.skipif(shutil.which("cargo") is None, reason="cargo not installed")
-
-# ─── validate_imports ─────────────────────────────────────────────────
 
 
 class TestValidateImports:
@@ -59,9 +59,6 @@ class TestValidateImports:
     def test_os_forbidden_when_not_listed(self):
         with pytest.raises(ForbiddenImportError):
             validate_imports("import os", ["pandas"])
-
-
-# ─── execute_code ─────────────────────────────────────────────────────
 
 
 class TestExecuteCode:
@@ -190,9 +187,6 @@ plt.show()
         assert plt.savefig is original_savefig
 
 
-# ─── load_data ────────────────────────────────────────────────────────
-
-
 class TestLoadData:
     """Tests for executor data loading helper."""
 
@@ -235,9 +229,6 @@ class TestLoadData:
         data_path = tmp_path / "data.bin"
         data_path.write_bytes(bytes(range(256)))
         assert load_data(str(data_path)) is None
-
-
-# ─── execute_rust_code ────────────────────────────────────────────────
 
 
 class TestExecuteRustCode:
@@ -295,9 +286,6 @@ class TestExecuteRustCode:
         assert result["plots"] == []
 
 
-# ─── execute_sparql_code ──────────────────────────────────────────────
-
-
 class TestExecuteSparqlCode:
     """Tests for SPARQL query execution against remote endpoints."""
 
@@ -316,14 +304,25 @@ class TestExecuteSparqlCode:
 
     def test_sets_descriptive_user_agent(self, plots_dir):
         """A descriptive User-Agent is required by Wikidata's policy (generic
-        library defaults get throttled/blocked). The wrapper must carry ours."""
+        library defaults get throttled/blocked), so the request sent to the endpoint
+        must carry our constant."""
         sparql_json = {"head": {"vars": []}, "results": {"bindings": []}}
         query = "# ENDPOINT: https://example.org/sparql\nSELECT ?s WHERE { }"
-        with patch("SPARQLWrapper.SPARQLWrapper") as mock_cls:
-            mock_cls.return_value.query.return_value.convert.return_value = sparql_json
-            execute_sparql_code(query, plots_dir)
-        assert mock_cls.call_args.kwargs.get("agent") == SPARQL_USER_AGENT
+        sent_requests: list[urllib.request.Request] = []
+
+        def fake_urlopen(request: urllib.request.Request, data=None, timeout=None):
+            sent_requests.append(request)
+            response = MagicMock()
+            response.read.return_value = json.dumps(sparql_json).encode()
+            response.info.return_value = {"Content-Type": "application/sparql-json"}
+            return response
+
+        with patch("SPARQLWrapper.Wrapper.urlopener", fake_urlopen):
+            result = execute_sparql_code(query, plots_dir)
+
+        assert result["success"] is True
         assert "OpenScientist" in SPARQL_USER_AGENT
+        assert sent_requests[0].get_header("User-agent") == SPARQL_USER_AGENT
 
     def test_endpoint_parsed_case_insensitive(self, plots_dir):
         """# endpoint: (lowercase) should also be accepted."""
@@ -385,9 +384,6 @@ class TestExecuteSparqlCode:
             mock_instance.query.return_value.convert.return_value = sparql_json
             result = execute_sparql_code(query, plots_dir)
         assert result["execution_time"] >= 0.0
-
-
-# ─── format_execution_result ──────────────────────────────────────────
 
 
 class TestFormatExecutionResult:
