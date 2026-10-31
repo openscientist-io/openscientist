@@ -84,7 +84,14 @@ dependencies = [
 
     # Progress bars for the PubMed mirror ingest CLI
     "tqdm>=4.67.0",
+
+    # CLI (setup wizard, start, stop)
+    "typer>=0.21.1,<0.22",
+    "rich>=14.3.2,<15",
 ]
+
+[project.scripts]
+openscientist = "openscientist.cli.app:main"
 
 [project.optional-dependencies]
 # Scientific stack for the executor container, installed from the lock by

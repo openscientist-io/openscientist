@@ -16,6 +16,7 @@ from openscientist.providers.base import (
     CodexCompatible,
     CostInfo,
     LlmUpstream,
+    SetupQuestion,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -67,6 +68,20 @@ class OpenAIDirectProvider(CodexCompatible):
             "CODEX_AUTH_HOST_PATH, or log in with the codex CLI ('codex login') "
             "so ~/.codex/auth.json exists."
         ]
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("OPENAI_API_KEY", kind="secret"),
+            SetupQuestion(
+                "CODEX_AUTH_HOST_PATH",
+                kind="path",
+                help="or the codex auth.json from `codex login`",
+            ),
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL", help="model id, or leave empty for the codex account default"
+            ),
+        )
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # OpenAI exposes no simple per-key spend endpoint, so report unavailable.

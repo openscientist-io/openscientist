@@ -7,7 +7,7 @@ from openscientist.settings import ProviderSettings, get_settings
 
 from ._anthropic_common import anthropic_container_env
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS
-from .base import ClaudeCompatible, CostInfo, LlmUpstream
+from .base import ClaudeCompatible, CostInfo, LlmUpstream, SetupQuestion
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,22 @@ class AnthropicProvider(ClaudeCompatible):
                 "or run 'claude login' for OAuth."
             ]
         return []
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion(
+                "ANTHROPIC_API_KEY",
+                kind="secret",
+                help="API key from https://console.anthropic.com",
+            ),
+            SetupQuestion(
+                "CLAUDE_CODE_OAUTH_TOKEN",
+                kind="secret",
+                help="or the OAuth token from `claude setup-token`",
+            ),
+            *super().setup_questions(),
+        )
 
     def claude_sdk_env(self) -> dict[str, str]:
         """Auth env vars the claude-agent-sdk CLI must see."""

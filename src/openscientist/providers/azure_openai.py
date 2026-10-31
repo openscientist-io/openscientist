@@ -13,6 +13,7 @@ from openscientist.providers.base import (
     CodexCompatible,
     CostInfo,
     LlmUpstream,
+    SetupQuestion,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -59,6 +60,17 @@ class AzureOpenAIProvider(CodexCompatible):
                 "Azure routes on as the request-body model)."
             )
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("AZURE_OPENAI_API_KEY", kind="secret"),
+            SetupQuestion(
+                "AZURE_OPENAI_RESOURCE",
+                help="the <resource> in https://<resource>.openai.azure.com",
+            ),
+            SetupQuestion("OPENSCIENTIST_MODEL", help="the Azure deployment name"),
+        )
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # Azure OpenAI spend is tracked through Azure Cost Management, which the
