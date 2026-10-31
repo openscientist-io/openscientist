@@ -1,9 +1,7 @@
 """Prompt templates for the OpenScientist orchestrator.
 
-The shared, backend-agnostic prompt bodies live in `common`, parameterised
-over backend fragments. Each agent owns its fragments and builds its own
-system prompt, job doc, and chat context via the `AbstractAgent` contract.
-The per-job doc generators and concrete fragments live in `claude` / `codex`.
+The shared bodies live in ``common``, parameterised over backend fragments,
+and each agent owns its fragments.
 """
 
 from openscientist.prompts.claude import generate_job_claude_md

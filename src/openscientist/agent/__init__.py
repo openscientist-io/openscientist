@@ -1,8 +1,6 @@
-"""
-Agent package for OpenScientist.
+"""Agent package for OpenScientist.
 
-Provides the ClaudeCodeAgent implementation (backed by claude-agent-sdk).
-Use get_agent() from agent.factory to get the agent for the configured
+Use ``get_agent()`` from ``agent.factory`` to get the agent for the configured
 provider.
 """
 

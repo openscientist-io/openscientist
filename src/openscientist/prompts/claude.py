@@ -1,7 +1,7 @@
 """Claude Code agent prompt variants.
 
-The shared bodies are written in Claude's vocabulary, so these fragments
-substitute each phrase with itself.
+The shared bodies are written in Claude's vocabulary, so each fragment
+substitutes its own phrasing.
 """
 
 from openscientist.prompts.common import BackendFragments, build_job_doc
