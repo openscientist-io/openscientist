@@ -41,6 +41,7 @@ def render_report_html(
     job_dir: Path,
     *,
     embed_images: bool = False,
+    run_environment: str | None = None,
 ) -> str:
     """Convert markdown report to styled HTML with embedded figures.
 
@@ -49,6 +50,7 @@ def render_report_html(
         job_dir: Root job directory (parent of provenance/).
         embed_images: If False, use file:// paths (for WeasyPrint PDF).
             If True, use base64 data URIs (for web UI display).
+        run_environment: The run's recorded environment, shown in the footer.
 
     Returns:
         Complete HTML document as a string.
@@ -85,4 +87,5 @@ def render_report_html(
     return template.render(
         body=body_html,
         css=css,
+        run_environment=run_environment,
     )

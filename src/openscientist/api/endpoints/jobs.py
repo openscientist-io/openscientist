@@ -141,6 +141,13 @@ class JobDetailResponse(JobResponse):
     investigation_mode: str | None = Field(None, description="Investigation mode")
     result_summary: str | None = Field(None, description="Final result summary")
     error_message: str | None = Field(None, description="Error message if failed")
+    version_info: dict[str, str] | None = Field(
+        None,
+        description=(
+            "Environment the run recorded: OpenScientist commit and build time, agent "
+            "harness and its version, container id. Stamped once per run."
+        ),
+    )
 
 
 class _JobResponseFields(TypedDict):
@@ -222,6 +229,7 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
         investigation_mode=job.investigation_mode,
         result_summary=job.result_summary,
         error_message=job.error_message,
+        version_info=job.version_info,
     )
 
 
@@ -712,6 +720,7 @@ async def download_artifacts(
             job_dir=job_dir,
             archive_path=archive_path,
             job_id=str(job.id),
+            version_info=job.version_info,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
