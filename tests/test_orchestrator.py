@@ -1199,12 +1199,16 @@ class TestBuildInitialPrompt:
         from openscientist.orchestrator.iteration import build_initial_prompt
 
         ks = KnowledgeState("j1", "Why X?", 10)
-        ks.set_data_summary({"columns": ["a", "b"], "n_samples": 100, "files": ["data.csv"]})
+        ks.set_data_summary({"files": ["data.csv"], "file_type": "csv", "file_size_mb": 1.5})
 
         prompt = build_initial_prompt("Why X?", 10, ["data.csv"], ks, tool_prefix="")
         assert "Why X?" in prompt
         assert "data.csv" in prompt
         assert "iteration 1 of 10" in prompt
+        # Setup never records columns or sample counts, so the prompt must not
+        # claim them.
+        assert "Columns:" not in prompt
+        assert "Samples:" not in prompt
 
     def test_no_data_files(self):
         from openscientist.knowledge_state import KnowledgeState

@@ -278,6 +278,15 @@ class TestGetSummary:
         assert "Rejected Hypotheses" in summary
         assert "Bad idea" in summary
 
+    def test_data_section_states_only_what_setup_records(self, ks):
+        """Setup records file names, type and size, never sample or feature
+        counts, so the summary must not claim them as unknown."""
+        ks.set_data_summary({"files": ["data.csv"], "file_type": "csv", "file_size_mb": 1.5})
+        summary = ks.get_summary()
+        assert "data.csv" in summary
+        assert "Samples:" not in summary
+        assert "Features:" not in summary
+
 
 class TestVersionInfo:
     """The version stamp is written to the job by the discovery run, not by the

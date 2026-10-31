@@ -390,8 +390,6 @@ class KnowledgeState:
             "",
             "## Data",
             f"- Files: {self.data['data_summary'].get('files', [])}",
-            f"- Samples: {self.data['data_summary'].get('n_samples', 'Unknown')}",
-            f"- Features: {self.data['data_summary'].get('n_features', 'Unknown')}",
             "",
             "## Progress",
             f"- Hypotheses tested: {len([h for h in self.data['hypotheses'] if h['status'] != 'pending'])}",
