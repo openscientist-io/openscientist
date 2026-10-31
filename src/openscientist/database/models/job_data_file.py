@@ -1,9 +1,4 @@
-"""
-Job data file model for uploaded scientific data.
-
-Tracks uploaded data files (CSV, MTZ, CIF, PDB, etc.) with metadata.
-Binary file contents remain on filesystem; only metadata stored in DB.
-"""
+"""Job data file model for uploaded scientific data."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,21 +14,7 @@ if TYPE_CHECKING:
 
 
 class JobDataFile(UUIDv7Mixin, Base):
-    """
-    Uploaded data file for a job.
-
-    Tracks metadata for uploaded job data files. The actual
-    binary content is stored on the filesystem, referenced by file_path.
-
-    Attributes:
-        job_id: Foreign key to the job this file belongs to
-        filename: Original filename as uploaded by user
-        file_path: Relative path to file on filesystem
-        file_type: Type of file (mtz/cif/pdb/other)
-        file_size: File size in bytes
-        mime_type: MIME type of the file
-        job: Related Job object
-    """
+    """Uploaded data file for a job."""
 
     __tablename__ = "job_data_files"
 

@@ -54,13 +54,7 @@ class KnowledgeState:
         - analysis_log: History of all executed analyses
     """
 
-    def __init__(
-        self,
-        job_id: str,
-        research_question: str,
-        max_iterations: int,
-        use_skills: bool = True,
-    ):
+    def __init__(self, job_id: str, research_question: str, max_iterations: int):
         """
         Initialize a new knowledge graph.
 
@@ -68,14 +62,12 @@ class KnowledgeState:
             job_id: Unique job identifier
             research_question: User's research question
             max_iterations: Maximum number of iterations
-            use_skills: Whether skills are enabled for this job
         """
         self.data: dict[str, Any] = {
             "config": {
                 "job_id": job_id,
                 "research_question": research_question,
                 "max_iterations": max_iterations,
-                "use_skills": use_skills,
                 "started_at": datetime.now(UTC).isoformat(),
             },
             "data_summary": {},
@@ -673,18 +665,14 @@ class KnowledgeState:
                         title=literature_data["title"],
                         abstract=literature_data.get("abstract"),
                         authors=literature_data.get("authors"),
-                        journal=literature_data.get("journal"),
                         year=literature_data.get("year"),
-                        doi=literature_data.get("doi"),
                         extra_metadata=self._literature_extra_metadata(literature_data),
                     )
                 )
                 continue
             existing.abstract = literature_data.get("abstract")
             existing.authors = literature_data.get("authors")
-            existing.journal = literature_data.get("journal")
             existing.year = literature_data.get("year")
-            existing.doi = literature_data.get("doi")
             existing.extra_metadata = self._literature_extra_metadata(literature_data)
 
     async def _upsert_analysis_log(self, session: AsyncSession, job_uuid: UUID) -> None:
@@ -854,7 +842,6 @@ class KnowledgeState:
                 "job_id": job_id,
                 "research_question": job.research_question,
                 "max_iterations": job.max_iterations,
-                "use_skills": True,
                 "started_at": job.created_at.isoformat(),
             },
             "data_summary": job.data_summary or {},

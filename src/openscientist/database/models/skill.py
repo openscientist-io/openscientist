@@ -1,9 +1,4 @@
-"""
-Skill model for domain-specific analysis capabilities.
-
-Skills are markdown documents with YAML frontmatter that provide specialized
-knowledge and workflows for scientific analysis tasks.
-"""
+"""Skill model for domain-specific analysis capabilities."""
 
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -20,29 +15,7 @@ if TYPE_CHECKING:
 
 
 class Skill(UUIDv7Mixin, Base):
-    """
-    Domain-specific skill for scientific analysis.
-
-    Skills provide specialized knowledge and workflows that can be
-    auto-matched to jobs based on research questions. They are stored
-    as markdown with YAML frontmatter and support full-text search.
-
-    Attributes:
-        name: Human-readable skill name
-        slug: URL-friendly identifier (unique within category)
-        category: Skill category (e.g., metabolomics, genomics)
-        description: Brief description of what the skill does
-        content: Full markdown content of the skill
-        tags: Array of tags for filtering and search
-        search_vector: PostgreSQL tsvector for full-text search
-        source_id: Skill source this skill was synced from
-        source_path: Path within source where skill was found
-        content_hash: SHA256 hash of content for change detection
-        commit_sha: Git commit SHA when skill was synced
-        is_enabled: Whether this skill is available for use
-        version: Version number for tracking updates
-        source: Related SkillSource object
-    """
+    """Domain-specific skill for scientific analysis."""
 
     __tablename__ = "skills"
 

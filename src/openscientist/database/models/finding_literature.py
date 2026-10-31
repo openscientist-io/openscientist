@@ -1,16 +1,10 @@
-"""
-Finding-Literature relationship table.
-
-Many-to-many association between findings and literature references.
-A finding can be supported by multiple literature references.
-"""
+"""Finding-Literature relationship table."""
 
 from sqlalchemy import Column, ForeignKey, Table
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 from ..base import Base
 
-# Many-to-many association table between findings and literature
 finding_literature = Table(
     "finding_literature",
     Base.metadata,

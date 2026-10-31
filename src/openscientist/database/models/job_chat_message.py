@@ -1,9 +1,4 @@
-"""
-Job chat message model for in-page LLM chat.
-
-Tracks chat messages between users and the LLM within a job's context.
-The LLM has access to job data and knowledge state.
-"""
+"""Job chat message model for in-page LLM chat."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -19,18 +14,7 @@ if TYPE_CHECKING:
 
 
 class JobChatMessage(UUIDv7Mixin, Base):
-    """
-    Chat message within a job.
-
-    Enables users to chat with the LLM about analysis within the job context.
-    The LLM has access to all job data, hypotheses, findings, and results.
-
-    Attributes:
-        job_id: Foreign key to the job this message belongs to
-        role: Message role ('user' or 'assistant')
-        content: Message text content
-        job: Related Job object
-    """
+    """Chat message within a job."""
 
     __tablename__ = "job_chat_messages"
 

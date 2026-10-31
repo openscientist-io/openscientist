@@ -4,10 +4,8 @@ Revision ID: rename_title_to_rq
 Revises: add_review_tokens
 Create Date: 2026-04-27 12:00:00.000000+00:00
 
-The column has always stored the full research question that drives the
-agent prompt, not a short display title. The actual short label lives in
-jobs.short_title. Renaming the column to match its real semantics so
-``Job.title`` no longer mis-suggests a short label everywhere it is read.
+The column stores the full research question that drives the agent prompt.
+The short display label lives in jobs.short_title.
 """
 
 from collections.abc import Sequence
