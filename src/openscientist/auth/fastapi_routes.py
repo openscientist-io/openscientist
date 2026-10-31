@@ -263,6 +263,8 @@ async def oauth_login(provider: str, request: Request) -> RedirectResponse:
         # Redirect to OAuth provider
         return await client.authorize_redirect(request, redirect_uri)  # type: ignore[no-any-return]
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("OAuth login error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="OAuth login failed") from e
@@ -325,6 +327,8 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
         logger.info("User %s logged in via %s", user.email, provider)
         return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("OAuth callback error: %s", e, exc_info=True)
         return RedirectResponse(url="/login?error=oauth_failed")
