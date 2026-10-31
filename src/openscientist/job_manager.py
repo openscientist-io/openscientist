@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.async_tasks import run_sync, thread_loop
@@ -33,6 +33,7 @@ from openscientist.database.retry import (
 from openscientist.database.session import thread_safe_admin_session, thread_safe_user_session
 from openscientist.exceptions import ProviderError
 from openscientist.job.agent_error import take_agent_error
+from openscientist.job.status import status_update_statement
 from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import notify_job_status_change
@@ -194,29 +195,15 @@ async def _db_update_job_status(
 ) -> JobStatusUpdateResult:
     """Move the job to ``status`` if it is in one of ``allowed_from`` (thread-safe)."""
     result = JobStatusUpdateResult()
-    values: dict[str, object] = {"status": status.value}
-    if error_message:
-        values["error_message"] = error_message
-    if cancellation_reason:
-        values["cancellation_reason"] = cancellation_reason
     # Only the worker moves a job to running, so this is when it takes a slot.
-    if status == JobStatus.RUNNING:
-        values["started_at"] = func.now()
-        values["ended_at"] = None
-    elif status in _ENDED_STATUSES:
-        values["ended_at"] = func.now()
-    if status in _LABEL_ENDING_STATUSES:
-        values["agent_status"] = None
-        values["agent_status_updated_at"] = None
-    stmt = (
-        update(JobModel)
-        .where(
-            JobModel.id == UUID(job_id),
-            JobModel.status.in_([allowed.value for allowed in allowed_from]),
-        )
-        .values(**values)
-        .returning(JobModel)
-    )
+    stmt = status_update_statement(
+        UUID(job_id),
+        status,
+        allowed_from=allowed_from,
+        error_message=error_message,
+        cancellation_reason=cancellation_reason,
+        takes_slot=status == JobStatus.RUNNING,
+    ).returning(JobModel)
 
     async with _job_session(user_id) as session:
         job = (await session.execute(stmt)).scalar_one_or_none()
@@ -253,16 +240,6 @@ async def _db_get_notification_target(job_id: str) -> JobStatusUpdateResult:
         if job:
             await _fill_notification_target(session, job, result)
     return result
-
-
-#: Statuses after which a job holds no slot.
-_ENDED_STATUSES = frozenset({JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED})
-#: Statuses that end the agent's current work, so its status label goes with it.
-#: The report phase starts new work, so the last iteration's label goes too.
-_LABEL_ENDING_STATUSES = _ENDED_STATUSES | {
-    JobStatus.AWAITING_FEEDBACK,
-    JobStatus.GENERATING_REPORT,
-}
 
 
 async def _db_next_queued_job(window: timedelta, exclude: Collection[str]) -> str | None:
