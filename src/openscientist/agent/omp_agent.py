@@ -26,6 +26,7 @@ from openscientist.agent.base import (
     IterationResult,
     TokenUsage,
     TurnOutcome,
+    _resolve_bin,
 )
 from openscientist.exceptions import McpToolsUnavailableError
 from openscientist.providers.base import LLM_PROXY_URL_ENV, Provider
@@ -46,14 +47,6 @@ _MCP_NOT_READY = "MCP servers not ready"
 
 # Wall-clock bound on one turn; a stuck turn is cut and the loop advances.
 _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_OMP_TURN_TIMEOUT", "900"))
-
-
-def _resolve_omp_bin() -> str:
-    """``OPENSCIENTIST_OMP_BIN``, else ``omp`` on ``PATH`` (literal fallback)."""
-    override = os.environ.get("OPENSCIENTIST_OMP_BIN")
-    if override:
-        return override
-    return shutil.which("omp") or "omp"
 
 
 def _as_int(value: object) -> int:
@@ -85,13 +78,6 @@ class OmpAgent(AbstractAgent[Provider]):
         from openscientist.prompts.omp import OMP_FRAGMENTS
 
         return OMP_FRAGMENTS
-
-    @classmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
-        # omp takes one system prompt, so (like codex) it gets the full job doc.
-        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
 
     async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
         await super().prepare_job_workspace(use_hypotheses=use_hypotheses)
@@ -136,10 +122,6 @@ class OmpAgent(AbstractAgent[Provider]):
 
     def _omp_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
-
-    def _job_dir(self) -> Path:
-        # Absolute: omp resolves a relative --cwd against its own launch cwd.
-        return self._config.job_dir.resolve()
 
     def _omp_dir(self) -> Path:
         return self._job_dir() / ".omp"
@@ -263,9 +245,7 @@ class OmpAgent(AbstractAgent[Provider]):
         turn runs on built-ins alone.
         """
         provider_settings = get_settings().provider
-        env = dict(os.environ)
-        env.update(provider_settings.get_container_env_vars())
-        env.update(self._job_env_overlay(self._job_dir()))
+        env = super()._subprocess_env(self._job_dir(), provider_settings.get_container_env_vars())
 
         # Declare a self-hosted model to omp. Its built-in catalog knows hosted
         # APIs only, so without this omp cannot resolve --model and fails with
@@ -303,7 +283,7 @@ class OmpAgent(AbstractAgent[Provider]):
     ) -> list[str]:
         job_dir = self._job_dir()
         args = [
-            _resolve_omp_bin(),
+            _resolve_bin("OPENSCIENTIST_OMP_BIN", "omp"),
             "-p",
             "--mode=json",
             "--no-title",
@@ -547,9 +527,7 @@ class OmpAgent(AbstractAgent[Provider]):
         if timed_out:
             # Surfacing the partial transcript here would change what a timed-out
             # turn persists, so it is left out.
-            return IterationResult(
-                outcome=TurnOutcome.TIMED_OUT, output="", tool_calls=0, transcript=[], error=""
-            )
+            return self.timed_out_result()
 
         tool_calls = self._count_tool_calls(messages)
 
@@ -561,9 +539,7 @@ class OmpAgent(AbstractAgent[Provider]):
         if not final_output and not tool_calls and (proc.returncode != 0 or stream_error):
             error = stream_error or stderr_text.strip() or f"omp exited with code {proc.returncode}"
             logger.error("omp turn produced no work (exit %s): %s", proc.returncode, error)
-            return IterationResult(
-                outcome=TurnOutcome.FAILED, output="", tool_calls=0, transcript=[], error=error
-            )
+            return self.failed_result(error)
 
         transcript: list[TranscriptEntry] = OMP.deserialize(messages)
         return IterationResult(
@@ -600,9 +576,7 @@ class OmpAgent(AbstractAgent[Provider]):
             raise
         except Exception as e:
             logger.error("omp run failed: %s", e, exc_info=True)
-            return IterationResult(
-                outcome=TurnOutcome.FAILED, output="", tool_calls=0, transcript=[], error=str(e)
-            )
+            return self.failed_result(e)
 
     async def shutdown(self) -> None:
         logger.debug("OmpAgent shut down")

@@ -142,14 +142,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
         return CODEX_FRAGMENTS
 
-    @classmethod
-    def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-    ) -> str:
-        # Codex reads a single AGENTS.md, so its discovery system prompt is the full
-        # per-job doc.
-        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
-
     # The other backend hooks use the AbstractAgent defaults.
 
     RUN_HOME: ClassVar[str | None] = ".codex"
@@ -171,11 +163,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         dest.chmod(0o644)
         logger.info("Provisioned codex auth into %s", dest)
 
-    def _job_dir(self) -> Path:
-        # Absolute, because codex resolves a relative CODEX_HOME/cwd against its own cwd,
-        # which would double a relative job dir such as "jobs/<id>".
-        return self._config.job_dir.resolve()
-
     def _codex_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
 
@@ -184,9 +171,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         env table. Codex passes no process environment to MCP server children,
         only this table, so the whole parent environment is forwarded and the
         per-job ``OPENSCIENTIST_*`` values are overlaid."""
-        env = dict(os.environ)
-        env.update(self._job_env_overlay(self._job_dir()))
-        return env
+        return super()._subprocess_env(self._job_dir())
 
     def _write_codex_config(self) -> None:
         """Write the per-job ``$CODEX_HOME/config.toml`` selecting the
@@ -344,20 +329,14 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 self._run_turn(thread, prompt), timeout=_TURN_TIMEOUT_SECONDS
             )
         except TimeoutError:
-            # Runaway turn (e.g. the model looping on an unsupported tool call). Report it
-            # as TIMED_OUT. The work done before the cut is already persisted via the
-            # MCP tools, and the orchestrator decides whether to advance or fail.
+            # Runaway turn (e.g. the model looping on an unsupported tool call).
             logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
             await self._close_codex()
-            return IterationResult(
-                outcome=TurnOutcome.TIMED_OUT, output="", tool_calls=0, transcript=[], error=""
-            )
+            return self.timed_out_result()
         except Exception as e:
             logger.error("Codex run failed: %s", e, exc_info=True)
             await self._close_codex()
-            return IterationResult(
-                outcome=TurnOutcome.FAILED, output="", tool_calls=0, transcript=[], error=str(e)
-            )
+            return self.failed_result(e)
 
         tool_calls = sum(
             1
