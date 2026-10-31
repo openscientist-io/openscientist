@@ -14,12 +14,7 @@ from openscientist.providers.base import (
 )
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._env_cleanup import (
-    VERTEX_PROVIDER_ENV_VARS,
-    clear_empty_env_vars,
-    clear_env_vars,
-    clear_provider_mode_flags,
-)
+from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_empty_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +27,18 @@ class BedrockProvider(ClaudeCompatible):
         return "bedrock"
 
     display_name = "AWS Bedrock"
+
+    mode_flag = "CLAUDE_CODE_USE_BEDROCK"
+    default_claude_model = "us.anthropic.claude-sonnet-5-5"
+
+    # Bearer mode routes through the proxy, so any SigV4 credential is stripped.
+    proxied_env_condition_key = "ANTHROPIC_BEDROCK_BASE_URL"
+    proxied_env_strip_keys = (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_PROFILE",
+        "AWS_SESSION_TOKEN",
+    )
 
     @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
@@ -80,10 +87,6 @@ class BedrockProvider(ClaudeCompatible):
         """Bedrock routing/auth env for the claude-agent-sdk CLI (its container env)."""
         return type(self).container_env(get_settings().provider)
 
-    def claude_model_name(self) -> str:
-        """Model name for ClaudeAgentOptions.model."""
-        return get_settings().provider.model or "us.anthropic.claude-sonnet-5-5"
-
     def llm_upstream(self) -> LlmUpstream | None:
         p = get_settings().provider
         if p.aws_bearer_token_bedrock and p.aws_region:
@@ -100,29 +103,6 @@ class BedrockProvider(ClaudeCompatible):
                 "AWS_BEARER_TOKEN_BEDROCK": placeholder,
             }
         return {}
-
-    def proxied_container_env(
-        self,
-        *,
-        proxy_base_url: str,
-        placeholder: str,
-        gcp_credentials_container_path: str | None = None,
-    ) -> dict[str, str]:
-        # Strip any SigV4 credential. Bearer mode routes through the proxy.
-        env = super().proxied_container_env(
-            proxy_base_url=proxy_base_url,
-            placeholder=placeholder,
-            gcp_credentials_container_path=gcp_credentials_container_path,
-        )
-        if env.get("ANTHROPIC_BEDROCK_BASE_URL") == proxy_base_url:
-            for key in (
-                "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY",
-                "AWS_PROFILE",
-                "AWS_SESSION_TOKEN",
-            ):
-                env.pop(key, None)
-        return env
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at Bedrock.
@@ -168,14 +148,14 @@ class BedrockProvider(ClaudeCompatible):
 
         return warnings
 
-    def setup_environment(self) -> None:
+    def _set_own_flag(self) -> None:
         os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # env-ok
 
-        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_BEDROCK")
-        clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        return VERTEX_PROVIDER_ENV_VARS + ("ANTHROPIC_API_KEY",)
 
-        # Unset direct API key to avoid conflicts
-        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
+    def setup_environment(self) -> None:
+        super().setup_environment()
 
         # Clear empty vars that interfere with Bedrock auth. docker-compose
         # passes VAR=${VAR} through when the var is unset.

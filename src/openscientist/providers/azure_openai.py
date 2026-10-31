@@ -63,12 +63,10 @@ class AzureOpenAIProvider(CodexCompatible):
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # Azure OpenAI spend is tracked through Azure Cost Management, which the
         # foundry provider already wires up. Report unavailable here.
-        return CostInfo(
-            provider_name=self.display_name,
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            recent_period_hours=lookback_hours,
-            data_lag_note="Azure OpenAI per-key cost tracking is not available.",
+        return CostInfo.unavailable(
+            self.display_name,
+            "Azure OpenAI per-key cost tracking is not available.",
+            lookback_hours,
         )
 
     def _base_url(self) -> str:
