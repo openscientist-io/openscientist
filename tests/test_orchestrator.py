@@ -36,6 +36,8 @@ class TestGetVersionMetadata:
             "OPENSCIENTIST_BUILD_TIME": "2026-02-01T00:00:00",
         },
     )
+    # Any earlier caller in the same worker caches the real commit.
+    @patch("openscientist.version._commit", None)
     def test_from_env_vars(self):
         info = get_version_metadata()
         assert info["openscientist_commit"] == "abc123def456"
