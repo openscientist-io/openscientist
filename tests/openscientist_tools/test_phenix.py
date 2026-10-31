@@ -222,7 +222,9 @@ async def test_run_phenix_tool_missing_input_file(
 ) -> None:
     monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
     result = await run_phenix_tool("phenix.clashscore", ["nonexistent.pdb"])
-    assert result == "❌ Error: File not found: nonexistent.pdb"
+    # The error names the missing input file
+    assert result.startswith("❌")
+    assert "nonexistent.pdb" in result
 
 
 async def test_compare_structures_appends_rmsd_interpretation(

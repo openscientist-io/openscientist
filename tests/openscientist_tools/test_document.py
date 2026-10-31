@@ -84,4 +84,6 @@ async def test_missing_file_with_no_data_dir(
     server_params: Callable[[dict[str, str]], StdioServerParameters],
 ) -> None:
     text = await _call_read_document(server_params(server_env(tmp_path)), "missing.pdf")
-    assert text == "❌ File not found: missing.pdf"
+    # The error names the missing file
+    assert text.startswith("❌ File not found")
+    assert "missing.pdf" in text

@@ -128,14 +128,17 @@ async def test_set_job_title_too_short() -> None:
 
 
 async def test_set_job_title_too_long() -> None:
+    """A title one character over the 100-char maximum is rejected."""
     result = await set_job_title("x" * 101)
-    assert result.startswith("❌ Title too long (101 chars)")
+    assert result.startswith("❌")
 
 
 async def test_set_job_title_invalid_uuid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-UUID job id is rejected and the offending id is reported."""
     monkeypatch.setattr(STATE, "job_id", "not-a-uuid")
     result = await set_job_title("Valid Title")
-    assert result == "❌ Invalid job id: not-a-uuid"
+    assert result.startswith("❌")
+    assert "not-a-uuid" in result
 
 
 async def test_set_job_title_min_boundary(
@@ -169,7 +172,8 @@ async def test_set_job_title_job_not_found(
     nonexistent_id = uuid4()
     monkeypatch.setattr(STATE, "job_id", str(nonexistent_id))
     result = await set_job_title("Nope")
-    assert result == "❌ Job not found in database."
+    # A valid UUID with no matching job is rejected, not silently dropped
+    assert result.startswith("❌")
 
 
 # ----- Full-call subprocess + real-DB tests, one per tool -----

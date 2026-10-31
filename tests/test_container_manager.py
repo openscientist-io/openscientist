@@ -456,62 +456,60 @@ class TestBuildVolumesHostTranslation:
         return cast(dict[str, dict[str, str]], call_kwargs[1]["volumes"])
 
     def test_build_volumes_translates_output_dir(self, tmp_path: Path) -> None:
-        """When host_project_dir is set, output_dir is translated."""
+        """When host_project_dir is set, the output_dir volume source is the real
+        to_host_path translation of the container path."""
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup_execute_code()
-        mock_settings.container.host_project_dir = "/host/project"
+        # Real directories standing in for the container app dir and the host
+        # project dir, so the real to_host_path performs the mapping.
+        app_dir = tmp_path / "app"
+        host_dir = tmp_path / "host_project"
+        app_dir.mkdir()
+        mock_settings.container.container_app_dir = str(app_dir)
+        mock_settings.container.host_project_dir = str(host_dir)
 
         with (
             patch("openscientist.container_manager.get_settings", return_value=mock_settings),
             patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
         ):
-            # Use an output_dir under /app to trigger translation
-            output_dir = tmp_path / "provenance"
-            output_dir.mkdir()
+            # An output_dir under the container app dir triggers translation
+            output_dir = app_dir / "jobs" / "123" / "provenance"
+            output_dir.mkdir(parents=True)
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="test-translate",
+                output_dir=str(output_dir),
+            )
 
-            # Patch to_host_path to simulate translation
-            with patch("openscientist.container_manager.to_host_path") as mock_thp:
-                mock_thp.return_value = Path("/host/project/jobs/123/provenance")
-                mgr.execute_code(
-                    code='print("hi")',
-                    job_id="test-translate",
-                    output_dir=str(output_dir),
-                )
-                mock_thp.assert_called()
-
-            assert "/host/project/jobs/123/provenance" in self._get_run_volumes(mock_client)
+        volumes = self._get_run_volumes(mock_client)
+        host_output_dir = str(host_dir / "jobs" / "123" / "provenance")
+        assert host_output_dir in volumes
+        # The mount still points at the container output path
+        assert volumes[host_output_dir] == {"bind": "/output", "mode": "rw"}
 
     def test_build_volumes_translates_data_file_paths(self, tmp_path: Path) -> None:
-        """When host_project_dir is set, data file paths are translated."""
+        """When host_project_dir is set, the data directory volume source is the real
+        to_host_path translation of the container path."""
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup_execute_code()
-        mock_settings.container.host_project_dir = "/host/project"
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
+        # Real directories standing in for the container app dir and the host
+        # project dir, so the real to_host_path performs the mapping.
+        app_dir = tmp_path / "app"
+        host_dir = tmp_path / "host_project"
+        data_dir = app_dir / "data"
+        data_dir.mkdir(parents=True)
         data_file = data_dir / "file.csv"
         data_file.write_text("a,b\n1,2\n")
-
-        host_data_dir = tmp_path / "host_data"
-        host_data_dir.mkdir()
-        (host_data_dir / "file.csv").write_text("a,b\n1,2\n")
-
-        def mock_to_host_path(path, cs):
-            try:
-                rel = path.relative_to(data_dir)
-                return host_data_dir / rel
-            except ValueError:
-                pass
-            return path
+        mock_settings.container.container_app_dir = str(app_dir)
+        mock_settings.container.host_project_dir = str(host_dir)
 
         with (
             patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.container_manager.to_host_path", side_effect=mock_to_host_path),
             patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
         ):
-            output_dir = tmp_path / "out"
+            output_dir = app_dir / "out"
             output_dir.mkdir()
             mgr.execute_code(
                 code='print("hi")',
@@ -520,7 +518,10 @@ class TestBuildVolumesHostTranslation:
                 data_files=[{"path": str(data_file), "name": "file.csv"}],
             )
 
-        assert str(host_data_dir) in self._get_run_volumes(mock_client)
+        volumes = self._get_run_volumes(mock_client)
+        assert str(host_dir / "data") in volumes
+        # The mount still points at the container data path
+        assert volumes[str(host_dir / "data")] == {"bind": "/data", "mode": "ro"}
 
     def test_build_volumes_no_translation_without_host_dir(self, tmp_path: Path) -> None:
         """When host_project_dir is not set, paths pass through unchanged."""

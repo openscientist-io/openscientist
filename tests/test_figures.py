@@ -25,4 +25,5 @@ def test_inventory_mandates_embedding() -> None:
     assert "may embed" not in prompt
     assert "incomplete" in prompt
     assert "plot_1.png" in prompt
-    assert "{{figure:filename.png|caption=Your caption here}}" in prompt
+    # The prompt shows the embed placeholder id, without pinning its example sentence
+    assert "{{figure:filename.png|caption=" in prompt

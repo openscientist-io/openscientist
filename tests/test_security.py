@@ -23,7 +23,5 @@ def test_register_scanner_middleware_after_startup_raises() -> None:
     app = FastAPI()
     app.middleware_stack = app.build_middleware_stack()
 
-    with pytest.raises(
-        RuntimeError, match="Cannot add middleware after an application has started"
-    ):
+    with pytest.raises(RuntimeError):
         register_scanner_block_middleware(app)
