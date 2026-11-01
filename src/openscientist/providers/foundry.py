@@ -118,7 +118,11 @@ class FoundryProvider(ClaudeCompatible):
 
     @classmethod
     def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
-        if not (p.anthropic_foundry_base_url or p.anthropic_foundry_resource):
+        if p.anthropic_foundry_base_url:
+            base_url = p.anthropic_foundry_base_url
+        elif p.anthropic_foundry_resource:
+            base_url = cls._build_base_url_from_resource(p.anthropic_foundry_resource)
+        else:
             return LiveCheckResult(ok=True, detail="No Foundry endpoint to check with; skipped.")
         if p.anthropic_foundry_api_key:
             token = p.anthropic_foundry_api_key
@@ -139,13 +143,6 @@ class FoundryProvider(ClaudeCompatible):
                 )
             except Exception as exc:  # noqa: BLE001 - surface any credential error
                 return LiveCheckResult(ok=False, detail=f"Foundry Entra ID token failed: {exc}")
-        resource = p.anthropic_foundry_resource
-        if p.anthropic_foundry_base_url:
-            base_url = p.anthropic_foundry_base_url
-        elif resource:
-            base_url = cls._build_base_url_from_resource(resource)
-        else:
-            return LiveCheckResult(ok=True, detail="No Foundry endpoint to check with; skipped.")
         url = f"{base_url.rstrip('/')}/v1/messages"
         body = {
             "model": p.model or "claude-sonnet-4-5",

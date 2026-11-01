@@ -5,6 +5,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
+from openscientist.cli.steps.phenix import PhenixStep
 from tests.cli.conftest import env_value
 
 runner = CliRunner()
@@ -67,3 +68,15 @@ def test_phenix_accepts_a_real_install_tree(checkout: Path):
     result = runner.invoke(cli_app.app, ["setup"], input="\n".join(lines) + "\n")
     assert result.exit_code == 0
     assert env_value(checkout, ".env", "PHENIX_HOST_PATH") == str(valid)
+
+
+def test_validate_rejects_a_relative_path():
+    errors = PhenixStep().validate({"PHENIX_HOST_PATH": "phenix-2.0-5936"})
+    assert len(errors) == 1
+    assert "PHENIX_HOST_PATH" in errors[0]
+
+
+def test_validate_rejects_path_traversal():
+    errors = PhenixStep().validate({"PHENIX_HOST_PATH": "/opt/phenix/../../etc"})
+    assert len(errors) == 1
+    assert "PHENIX_HOST_PATH" in errors[0]

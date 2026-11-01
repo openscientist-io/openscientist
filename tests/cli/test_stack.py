@@ -221,3 +221,87 @@ def test_mirror_not_offered_when_not_empty(checkout: Path, monkeypatch):
     calls, prompts = _start_with(checkout, monkeypatch, airgapped="true", count=7, accept=True)
     assert prompts == []
     assert not _loaded(calls)
+
+
+def test_mirror_count_reads_the_psql_row_count(checkout: Path, monkeypatch):
+    seen: list[tuple[str, ...]] = []
+
+    class _Proc:
+        returncode = 0
+        stdout = "7\n"
+
+    def fake_run(argv, *args, **kwargs):
+        seen.append(argv)
+        return _Proc()
+
+    monkeypatch.setattr(stack.subprocess, "run", fake_run)
+    monkeypatch.setattr(stack.envfiles, "file_values", lambda root, file: {})
+    assert stack.pubmed_mirror_count(checkout) == 7
+    # Without a .env the default user and database are used for the psql login.
+    assert seen[0][7:] == (
+        "psql",
+        "-U",
+        "openscientist",
+        "-d",
+        "openscientist",
+        "-tAc",
+        "SELECT count(*) FROM pubmed_articles;",
+    )
+
+
+def test_mirror_count_is_none_when_the_row_count_is_unreadable(checkout: Path, monkeypatch):
+    (checkout / ".env").write_text(
+        "POSTGRES_USER=custuser\nPOSTGRES_DB=customdb\n", encoding="utf-8"
+    )
+    seen: list[tuple[str, ...]] = []
+
+    class _FailedProc:
+        returncode = 1
+        stdout = "psql: connection refused"
+
+    class _EmptyProc:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(argv, *args, **kwargs):
+        seen.append(argv)
+        return _FailedProc()
+
+    monkeypatch.setattr(stack.subprocess, "run", fake_run)
+    assert stack.pubmed_mirror_count(checkout) is None
+    assert seen[0][7:12] == ("psql", "-U", "custuser", "-d", "customdb")
+    # A failed psql prints nothing, and neither does a successful one that
+    # prints no rows; both read as "cannot be read".
+    monkeypatch.setattr(stack.subprocess, "run", lambda argv, *args, **kwargs: _EmptyProc())
+    assert stack.pubmed_mirror_count(checkout) is None
+
+
+def test_mirror_load_failure_is_not_fatal(checkout: Path, monkeypatch):
+    (checkout / ".env").write_text(
+        "OPENSCIENTIST_PROVIDER=vllm\nOPENSCIENTIST_AIRGAPPED=true\n", encoding="utf-8"
+    )
+    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        calls.append((argv, env))
+        return 9 if "openscientist.pubmed_mirror" in " ".join(argv) else 0
+
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "pubmed_mirror_count", lambda root: 0)
+    monkeypatch.setattr(stack, "_confirm", lambda prompt: True)
+    assert stack.start(checkout, run) == 0
+    assert _loaded(calls)
+
+
+def test_confirm_reads_the_yes_no_answer(monkeypatch):
+    import click
+
+    def fixed_prompt(value: str):
+        def prompt(*args, **kwargs):
+            return value
+
+        return prompt
+
+    for answer, expected in (("y", True), ("yes", True), ("n", False), ("", False)):
+        monkeypatch.setattr(click, "prompt", fixed_prompt(answer))
+        assert stack._confirm("Load the PubMed mirror now? (y/N) ") is expected

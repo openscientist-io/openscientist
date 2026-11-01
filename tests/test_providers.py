@@ -549,3 +549,21 @@ def test_base_provider_does_not_resolve_context_window_app_side() -> None:
         return_value=SimpleNamespace(provider=SimpleNamespace(model_context_tokens=None)),
     ):
         assert stub.prelaunch_model_context_env() == {}
+
+
+# ─── live_check dispatch ─────────────────────────────────────────────────────
+
+
+def test_live_check_reports_settings_validation_errors() -> None:
+    """A settings-level error (the model format) fails the check without reaching the network."""
+    result = AnthropicProvider.live_check(
+        "anthropic", {"ANTHROPIC_API_KEY": "sk-test", "OPENSCIENTIST_MODEL": "gpt-4o"}
+    )
+    assert not result.ok
+    assert "OPENSCIENTIST_MODEL" in result.detail
+
+
+def test_live_check_without_a_provider_override_reports_no_check() -> None:
+    """A provider that leaves the base _live_check in place reports no check."""
+    result = StubProvider.live_check("stub", {})
+    assert result.ok

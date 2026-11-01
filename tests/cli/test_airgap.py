@@ -5,6 +5,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
+from openscientist.cli.steps.airgap import AirgapStep, provider_airgap_posture
+from openscientist.providers.base import AirgapEgress
 from tests.cli.conftest import env_value
 
 runner = CliRunner()
@@ -52,3 +54,16 @@ def test_airgap_not_offered_for_an_unsupported_posture(checkout: Path):
     assert result.exit_code == 0
     assert "OPENSCIENTIST_AIRGAPPED" not in result.output
     assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == ""
+
+
+def test_incomplete_configuration_reports_unsupported_posture():
+    """A settings-level error (the model format) keeps the posture UNSUPPORTED."""
+    posture = provider_airgap_posture(
+        "anthropic", {"ANTHROPIC_API_KEY": "sk-test", "OPENSCIENTIST_MODEL": "gpt-4o"}
+    )
+    assert posture.mode is AirgapEgress.UNSUPPORTED
+
+
+def test_applies_requires_a_known_provider():
+    assert AirgapStep().applies({}) is False
+    assert AirgapStep().applies({"OPENSCIENTIST_PROVIDER": "bogus"}) is False
