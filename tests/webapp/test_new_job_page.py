@@ -2,13 +2,14 @@
 
 import inspect
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from openscientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
 from openscientist.webapp_components.utils.session import clear_uploaded_files, get_uploaded_files
-from tests.admin_row import set_admin_settings_row
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 
 def _upload_event(name: str, size_bytes: int) -> SimpleNamespace:
@@ -126,3 +127,46 @@ async def test_an_upload_under_the_rows_size_limit_is_recorded(
         assert mock_ui.notify.call_args.kwargs["type"] == "positive"
     finally:
         clear_uploaded_files(session_id)
+
+
+async def test_the_page_shows_the_rows_file_size_limit(
+    test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signed-in page shows the limit the admin settings row holds."""
+    from openscientist import web_app
+    from openscientist.auth import middleware
+    from openscientist.webapp_components.pages import new_job
+
+    await set_admin_settings_row(test_engine, max_file_size_mb=250)
+    try:
+        storage: dict[str, object] = {}
+        ui = MagicMock()
+        ui.context.client.request.cookies = {"session_token": "page-token"}
+        ui.context.client.page.path = "/new"
+        ui.context.client.page.response_timeout = 30.0
+        monkeypatch.setattr(
+            middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage))
+        )
+        monkeypatch.setattr(middleware, "ui", ui)
+
+        async def _valid(_token: str) -> dict[str, object]:
+            return {
+                "user_id": "user-123",
+                "email": "visitor@example.com",
+                "name": "Visitor",
+                "can_start_jobs": True,
+            }
+
+        monkeypatch.setattr(middleware, "validate_session", _valid)
+        mock_ui = MagicMock()
+        with (
+            patch.object(new_job, "ui", mock_ui),
+            patch.object(new_job, "render_navigator", MagicMock()),
+            patch.object(new_job, "check_provider_config", lambda: (True, "Anthropic", None)),
+            patch.object(web_app, "get_job_manager", MagicMock()),
+        ):
+            await new_job.new_job_page()
+
+        mock_ui.label.assert_any_call("Maximum file size: 250 MB per file")
+    finally:
+        await reset_admin_settings_row(test_engine)
