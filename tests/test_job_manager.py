@@ -11,12 +11,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from openscientist.database.models import Job
 from openscientist.job_manager import JobInfo, JobManager, JobStatus, JobStatusUpdateResult
 from openscientist.settings import ProviderSettings
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine):
+    """The row the slot checks, the worker timeout, and the queue pick read."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 class TestJobStatus:
@@ -367,10 +379,6 @@ class TestContainerStatusNotifications:
         with (
             patch("openscientist.job_container.JobContainerRunner", return_value=runner),
             patch("openscientist.job_manager.time.sleep"),
-            patch(
-                "openscientist.settings.get_settings",
-                return_value=SimpleNamespace(container=SimpleNamespace(agent_timeout=3600)),
-            ),
             patch.object(manager, "_load_job_info", side_effect=polls),
             patch.object(manager, "_start_next_queued_job"),
             patch(
@@ -510,7 +518,7 @@ class TestJobManagerConcurrencyLimit:
 
         try:
             manager = _new_manager(tmp_path)
-            manager.max_concurrent = 1
+            await set_admin_settings_row(test_engine, max_concurrent_jobs=1)
             manager._running_jobs[str(paused.id)] = MagicMock()
 
             with patch.object(manager, "_run_job"):

@@ -4,17 +4,20 @@ Tests for OAuth authentication functionality.
 Tests user creation, OAuth account linking, session management, and authentication.
 """
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.auth.routes import create_or_update_user, create_session
 from openscientist.database.models import Administrator, OAuthAccount, User
 from openscientist.database.models import Session as DBSession
 from openscientist.settings import clear_settings_cache
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +26,16 @@ def _clear_cached_settings_between_tests():
     clear_settings_cache()
     yield
     clear_settings_cache()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+    """The row create_session reads its session length from."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio

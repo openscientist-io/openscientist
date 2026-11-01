@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from openscientist.admin_settings import seed_admin_settings
 from openscientist.settings import clear_settings_cache
+from tests.admin_row import reset_admin_settings_row
 
 
 @pytest.fixture
@@ -56,7 +57,7 @@ async def test_seeding_writes_null_budgets_and_mib(
         assert row["executor_memory_mib"] == 512
         assert row["airgapped"] is True
     finally:
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio
@@ -75,7 +76,7 @@ async def test_a_second_start_leaves_an_edited_row_alone(
         assert row["max_job_cost_usd"] == 42.5
         assert row["airgapped"] is False
     finally:
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio
@@ -93,7 +94,7 @@ async def test_a_malformed_memory_string_fails_naming_the_variable(
             await seed_admin_settings()
         assert 0 == await _row_count(test_engine)
     finally:
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)
 
 
 async def _row_count(test_engine: AsyncEngine) -> int:

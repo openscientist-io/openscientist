@@ -21,6 +21,7 @@ from uuid import UUID
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.admin_settings import current_admin_settings, current_admin_settings_sync
 from openscientist.async_tasks import run_sync, thread_loop
 from openscientist.container_manager import get_container_manager
 from openscientist.database.models import User
@@ -380,27 +381,21 @@ class JobManager:
         {JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK, JobStatus.GENERATING_REPORT}
     )
 
-    def __init__(
-        self,
-        jobs_dir: Path = Path("jobs"),
-        max_concurrent: int = 1,
-        scheduler_window: timedelta = timedelta(hours=24),
-    ):
+    def __init__(self, jobs_dir: Path = Path("jobs")):
         """
         Initialize job manager. Building one changes no job: only the web's
         startup calls :meth:`recover_after_restart`.
 
+        The concurrency cap and the scheduler window are not copied here.
+        Each slot check and queue pick reads the admin settings row, so an
+        admin edit applies at the next check.
+
         Args:
             jobs_dir: Base directory for jobs
-            max_concurrent: Maximum concurrent jobs
-            scheduler_window: How far back each owner's slot use counts when
-                choosing the next queued job
         """
         self.jobs_dir = Path(jobs_dir)
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        self.max_concurrent = max_concurrent
-        self.scheduler_window = scheduler_window
         self._running_jobs: dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
         # A pick that lost the database tries again on its own, since nothing
@@ -408,11 +403,7 @@ class JobManager:
         self._repick: threading.Timer | None = None
         self._repick_delays: Iterator[float] | None = None
 
-        logger.info(
-            "JobManager initialized: %s, max_concurrent=%d",
-            self.jobs_dir,
-            max_concurrent,
-        )
+        logger.info("JobManager initialized: %s", self.jobs_dir)
 
     def recover_after_restart(self) -> None:
         """End the jobs whose container the previous web process lost, and start
@@ -665,7 +656,7 @@ class JobManager:
                 )
 
             # Check concurrent limit
-            if self._get_active_job_count() >= self.max_concurrent:
+            if self._get_active_job_count() >= current_admin_settings_sync().max_concurrent_jobs:
                 if not self._update_job_status(
                     job_id, JobStatus.QUEUED, allowed_from=self.WAITING_STATUSES, retry=False
                 ):
@@ -701,7 +692,7 @@ class JobManager:
                 raise ValueError(f"Job {job_id} is not completed (status: {job_info.status.value})")
             if job_id in self._running_jobs:
                 raise ValueError(f"Job {job_id} is already running")
-            if self._get_active_job_count() >= self.max_concurrent:
+            if self._get_active_job_count() >= (await current_admin_settings()).max_concurrent_jobs:
                 raise ValueError("Cannot regenerate report: maximum concurrent jobs reached")
 
             logger.info("Regenerating report for job %s", job_id)
@@ -749,9 +740,7 @@ class JobManager:
 
             # Poll the database until the container's agent writes a terminal status.
             # Also check if the container has exited unexpectedly (crash before DB write).
-            from openscientist.settings import get_settings
-
-            timeout_seconds = get_settings().container.agent_timeout
+            timeout_seconds = current_admin_settings_sync().agent_timeout_seconds
             timeout_hours = timeout_seconds / 3600
             elapsed = 0
             last_status = JobStatus.RUNNING
@@ -834,12 +823,22 @@ class JobManager:
             Whether a job was started.
         """
         with self._lock:
-            if self._get_active_job_count() >= self.max_concurrent:
+            try:
+                admin = current_admin_settings_sync()
+            except Exception as e:
+                if is_connection_error(e):
+                    self._schedule_repick(e)
+                else:
+                    logger.exception("Failed to read the admin settings for the next pick")
+                return False
+            if self._get_active_job_count() >= admin.max_concurrent_jobs:
                 return False
 
             try:
                 job_id = run_sync(
-                    _db_next_queued_job(self.scheduler_window, set(self._running_jobs))
+                    _db_next_queued_job(
+                        timedelta(hours=admin.scheduler_window_hours), set(self._running_jobs)
+                    )
                 )
             except Exception as e:
                 if is_connection_error(e):
@@ -1072,7 +1071,7 @@ class JobManager:
         try:
             provider = get_provider()
             cost_info = await asyncio.to_thread(provider.get_cost_info, lookback_hours=24)
-            budget_check = provider.evaluate_budget(cost_info)
+            budget_check = await asyncio.to_thread(provider.evaluate_budget, cost_info)
         except (ValueError, ProviderError) as e:
             logger.warning("Could not fetch cost info: %s", e)
             cost_info = None

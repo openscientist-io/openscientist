@@ -12,7 +12,6 @@ import os
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import timedelta
 from pathlib import Path
 
 import uvicorn
@@ -311,12 +310,7 @@ def _register_apple_touch_icon_redirect(host_app: FastAPI) -> None:
 
 
 def _new_job_manager(jobs_dir: Path) -> JobManager:
-    settings = get_settings()
-    return JobManager(
-        jobs_dir=jobs_dir,
-        max_concurrent=settings.max_concurrent_jobs,
-        scheduler_window=timedelta(hours=settings.scheduler_window_hours),
-    )
+    return JobManager(jobs_dir=jobs_dir)
 
 
 def get_job_manager() -> JobManager:

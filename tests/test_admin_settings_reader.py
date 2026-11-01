@@ -19,6 +19,7 @@ from openscientist.admin_settings import (
     current_admin_settings_sync,
 )
 from openscientist.settings import clear_settings_cache
+from tests.admin_row import reset_admin_settings_row
 
 _UPDATED_AT = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
@@ -120,7 +121,7 @@ async def test_the_reader_returns_the_row(
     finally:
         async with test_engine.begin() as conn:
             await conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": user})
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio
@@ -136,7 +137,7 @@ async def test_the_floor_forces_airgapped_and_locks_it(
         assert values.airgap_locked is True
     finally:
         clear_settings_cache()
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio
@@ -149,7 +150,7 @@ async def test_the_row_wins_without_the_floor(
         assert values.airgapped is True
         assert values.airgap_locked is False
     finally:
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio
@@ -157,8 +158,11 @@ async def test_a_missing_row_raises(
     web_login: None, no_floor: None, test_engine: AsyncEngine
 ) -> None:
     await _clear_row(test_engine)
-    with pytest.raises(AdminSettingsMissingError):
-        await current_admin_settings()
+    try:
+        with pytest.raises(AdminSettingsMissingError):
+            await current_admin_settings()
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest.mark.asyncio
@@ -172,4 +176,4 @@ async def test_the_sync_form_runs_from_a_worker_thread(
         assert values.max_project_spend_total_usd is None
         assert values.airgap_locked is False
     finally:
-        await _clear_row(test_engine)
+        await reset_admin_settings_row(test_engine)

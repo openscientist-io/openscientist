@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.admin_row import reset_admin_settings_row
 from tests.db_logins import ADMIN_PASSWORD, WEB_PASSWORD, login_url
 
 _ROLE_PASSWORD = "admin-settings-role-test-password"
@@ -91,7 +92,7 @@ async def test_the_agent_role_touches_neither_table(
 
 @pytest.mark.asyncio
 async def test_the_admin_login_writes_the_row_and_the_history(
-    test_database_url: str, _apply_migrations_once: None
+    test_database_url: str, test_engine: AsyncEngine, _apply_migrations_once: None
 ) -> None:
     conn = await _connect(login_url(test_database_url, "openscientist_admin", ADMIN_PASSWORD))
     try:
@@ -108,3 +109,4 @@ async def test_the_admin_login_writes_the_row_and_the_history(
         await conn.execute("DELETE FROM admin_settings")
     finally:
         await conn.close()
+        await reset_admin_settings_row(test_engine)

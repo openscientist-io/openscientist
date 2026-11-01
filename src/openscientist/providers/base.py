@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, NotRequired, TypedDict
 
+from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import ProviderError
 from openscientist.models import ModelProfile, default_model_profile, probed_model_profile
 from openscientist.settings import ProviderSettings, get_settings
@@ -237,25 +238,26 @@ class Provider(abc.ABC):
                 f"Reason: {cost_info.data_lag_note or 'Unknown'}"
             )
         else:
-            settings = get_settings()
-            max_total = settings.budget.max_project_spend_total_usd
-            if cost_info.total_spend_usd >= max_total:
+            admin = current_admin_settings_sync()
+            max_total = admin.max_project_spend_total_usd
+            if max_total is not None and cost_info.total_spend_usd >= max_total:
                 errors.append(
                     f"Total spend ${cost_info.total_spend_usd:.2f} exceeds limit ${max_total:.2f}"
                 )
 
-            max_recent = settings.budget.max_project_spend_24h_usd
-            if cost_info.recent_spend_usd >= max_recent:
+            max_recent = admin.max_project_spend_24h_usd
+            if max_recent is not None and cost_info.recent_spend_usd >= max_recent:
                 errors.append(
                     f"Last {cost_info.recent_period_hours}h spend "
                     f"${cost_info.recent_spend_usd:.2f} "
                     f"exceeds limit ${max_recent:.2f}"
                 )
 
-            warn_recent = settings.budget.warn_project_spend_24h_usd
+            warn_recent = admin.warn_project_spend_24h_usd
             if (
-                cost_info.recent_spend_usd >= warn_recent
-                and cost_info.recent_spend_usd < max_recent
+                warn_recent is not None
+                and cost_info.recent_spend_usd >= warn_recent
+                and (max_recent is None or cost_info.recent_spend_usd < max_recent)
             ):
                 warnings.append(
                     f"Last {cost_info.recent_period_hours}h spend "

@@ -126,7 +126,8 @@ async def _render_provider_cost_section() -> None:
             provider = get_provider()
             # Provider cost APIs are blocking HTTP calls, with a timeout of 10 s each.
             cost_info = await asyncio.to_thread(provider.get_cost_info, lookback_hours=24)
-            budget_check = provider.evaluate_budget(cost_info)
+            # The limits come from the admin settings row, so the read must run off the loop.
+            budget_check = await asyncio.to_thread(provider.evaluate_budget, cost_info)
 
             with ui.row().classes("w-full gap-8 mb-4"):
                 # Total spend

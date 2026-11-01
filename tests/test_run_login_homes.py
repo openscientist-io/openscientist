@@ -38,8 +38,19 @@ from openscientist.job_container.run_home import (
 )
 from openscientist.job_container.runner import AGENT_APP_DIR, JobContainerRunner
 from openscientist.providers.base import AirgapEgress, AirgapPosture
+from tests.admin_row import default_admin_settings_values
 
 _MARKER = "operator-login-marker"
+
+
+@pytest.fixture(autouse=True)
+def _admin_settings_row():
+    """The launch reads the row at use, and these tests have no database for it."""
+    with patch(
+        "openscientist.job_container.runner.current_admin_settings_sync",
+        return_value=default_admin_settings_values(),
+    ):
+        yield
 
 
 class _Provider:

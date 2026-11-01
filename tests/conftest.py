@@ -28,6 +28,7 @@ from openscientist.database.models import (
     SkillSource,
     User,
 )
+from tests.admin_row import reset_admin_settings_row
 from tests.db_logins import (
     ADMIN_PASSWORD,
     BOOTSTRAP_ENV,
@@ -158,6 +159,17 @@ def _apply_migrations_once(
         raise RuntimeError(f"bootstrap.sql failed with exit code {exit_code}:\n{output}")
 
     _apply_alembic_migrations(login_url(test_database_url, "openscientist_owner", OWNER_PASSWORD))
+
+    # A running deployment seeds the admin settings row at startup, so the
+    # session starts the same way and holds the default row between tests.
+    async def _seed_admin_row() -> None:
+        engine = create_async_engine(test_database_url, echo=False)
+        try:
+            await reset_admin_settings_row(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_seed_admin_row())
 
 
 def _apply_alembic_migrations(owner_database_url: str) -> None:

@@ -302,7 +302,8 @@ async def _persist_uploaded_files(
         try:
             target_path = _build_unique_upload_path(temp_dir, upload.filename or "")
             content = await upload.read()
-            validate_uploaded_file(target_path, content)
+            # The size limit comes from the database, which must stay off the loop.
+            await asyncio.to_thread(validate_uploaded_file, target_path, content)
             target_path.write_bytes(content)
             persisted_files.append(target_path)
         finally:

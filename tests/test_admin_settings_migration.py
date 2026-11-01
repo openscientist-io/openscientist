@@ -95,6 +95,7 @@ def _table_columns(connection: Connection, table: str) -> set[str] | None:
 
 
 def _insert_row(connection: Connection, **overrides: object) -> None:
+    connection.execute(text("DELETE FROM admin_settings"))
     connection.execute(text(_INSERT), {**_VALID_ROW, **overrides})
 
 
@@ -186,6 +187,7 @@ async def test_the_checks_reject_their_out_of_bounds_value(
     def run(connection: Connection) -> None:
         transaction = connection.begin()
         try:
+            connection.execute(text("DELETE FROM admin_settings"))
             _violates(connection, _INSERT, {**_VALID_ROW, column: value})
         finally:
             transaction.rollback()

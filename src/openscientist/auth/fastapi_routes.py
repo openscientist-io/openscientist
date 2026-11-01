@@ -18,6 +18,7 @@ from fastapi.responses import RedirectResponse
 from nicegui import app
 from sqlalchemy import select
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.auth.oauth import get_oauth_client
 from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider, OrcidProvider
 from openscientist.auth.routes import create_or_update_user, create_session
@@ -36,13 +37,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["authentication"], include_in_schema=False)
 
 
-def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
+async def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
     """Set the session cookie on a response."""
     settings = get_settings()
+    admin = await current_admin_settings()
     response.set_cookie(
         key="session_token",
         value=session_id,
-        max_age=settings.auth.session_duration_days * 24 * 60 * 60,
+        max_age=admin.session_duration_days * 24 * 60 * 60,
         httponly=True,
         secure=settings.auth.app_url.startswith("https"),
         samesite="lax",
@@ -99,7 +101,7 @@ async def mock_oauth_login() -> RedirectResponse:
 
     # Create redirect response with session cookie
     response = RedirectResponse(url="/", status_code=303)
-    _set_session_cookie(response, str(session.id))
+    await _set_session_cookie(response, str(session.id))
 
     logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
     return response
@@ -169,7 +171,7 @@ async def mock_admin_oauth_login() -> RedirectResponse:
 
     # Create redirect response with session cookie
     response = RedirectResponse(url="/", status_code=303)
-    _set_session_cookie(response, session_token)
+    await _set_session_cookie(response, session_token)
 
     logger.info("Admin user %s logged in via mock auth (DEV MODE)", user_email)
     return response
@@ -220,7 +222,7 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
 
         # Create redirect response with session cookie
         response = RedirectResponse(url="/", status_code=303)
-        _set_session_cookie(response, str(session.id))
+        await _set_session_cookie(response, str(session.id))
 
         logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
         return response
@@ -322,7 +324,7 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
 
         # Create redirect response with session cookie
         response = RedirectResponse(url="/")
-        _set_session_cookie(response, str(session.id))
+        await _set_session_cookie(response, str(session.id))
 
         logger.info("User %s logged in via %s", user.email, provider)
         return response
@@ -449,7 +451,7 @@ async def redeem_review_token(token: str) -> RedirectResponse:
             session = await create_session(db, str(user.id))
             response = RedirectResponse(url="/", status_code=303)
             response.headers["Referrer-Policy"] = "no-referrer"
-            _set_session_cookie(response, str(session.id))
+            await _set_session_cookie(response, str(session.id))
             logger.info(
                 "Reviewer re-login via token (token_id=%s, user_id=%s)",
                 review_token.id,
@@ -475,7 +477,7 @@ async def redeem_review_token(token: str) -> RedirectResponse:
 
         response = RedirectResponse(url="/", status_code=303)
         response.headers["Referrer-Policy"] = "no-referrer"
-        _set_session_cookie(response, str(session.id))
+        await _set_session_cookie(response, str(session.id))
 
         logger.info(
             "Reviewer created via token (token_id=%s, user_id=%s, email=%s)",
