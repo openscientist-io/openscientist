@@ -21,7 +21,11 @@ from uuid import UUID
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.admin_settings import current_admin_settings, current_admin_settings_sync
+from openscientist.admin_settings import (
+    AdminSettingsMissingError,
+    current_admin_settings,
+    current_admin_settings_sync,
+)
 from openscientist.async_tasks import run_sync, thread_loop
 from openscientist.container_manager import get_container_manager
 from openscientist.database.models import User
@@ -826,7 +830,8 @@ class JobManager:
             try:
                 admin = current_admin_settings_sync()
             except Exception as e:
-                if is_connection_error(e):
+                # Startup recovery can pick before the web has seeded the row.
+                if is_connection_error(e) or isinstance(e, AdminSettingsMissingError):
                     self._schedule_repick(e)
                 else:
                     logger.exception("Failed to read the admin settings for the next pick")
@@ -865,9 +870,7 @@ class JobManager:
             self._repick_delays = backoff(cap=BACKGROUND_BACKOFF_CAP_SECONDS)
         delay = next(self._repick_delays)
         logger.error(
-            "Database unreachable while picking the next queued job, picking again in %.0f s: %s",
-            delay,
-            error,
+            "Could not pick the next queued job, picking again in %.0f s: %s", delay, error
         )
         self._repick = threading.Timer(delay, self._repick_now)
         self._repick.daemon = True

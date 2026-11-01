@@ -529,6 +529,28 @@ async def test_a_pick_that_meets_an_outage_starts_the_job_after_it(
             _stop_manager_background(manager)
 
 
+async def test_a_pick_before_the_row_is_seeded_starts_the_job_once_it_is(
+    test_engine: AsyncEngine, job_in: dict[JobStatus, UUID], tmp_path: Path
+) -> None:
+    """Startup recovery can pick before the web seeds the admin settings row,
+    so a pick that finds no row picks again until the row is there."""
+    manager = JobManager(jobs_dir=tmp_path)
+    queued = str(job_in[JobStatus.QUEUED])
+    with patch.object(manager, "_run_job"):
+        try:
+            async with test_engine.begin() as conn:
+                await conn.execute(text("DELETE FROM admin_settings"))
+            assert not await asyncio.to_thread(manager._start_next_queued_job)
+            await set_admin_settings_row(test_engine, max_concurrent_jobs=5)
+            for _ in range(100):
+                if queued in manager._running_jobs:
+                    break
+                await asyncio.sleep(0.2)
+            assert queued in manager._running_jobs
+        finally:
+            _stop_manager_background(manager)
+
+
 def test_a_pick_error_other_than_an_outage_is_not_scheduled_to_retry(tmp_path: Path) -> None:
     """A pick that fails for a reason the retry cannot fix is logged and
     stopped there: no background repick is scheduled for it."""
