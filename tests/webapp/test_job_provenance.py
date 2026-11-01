@@ -48,6 +48,19 @@ def test_a_run_with_no_recorded_environment_shows_none() -> None:
     assert job_detail._run_environment_text({}) is None
 
 
+def test_a_recorded_environment_the_page_does_not_name_shows_none() -> None:
+    assert job_detail._run_environment_text({"unrelated_key": "value"}) is None
+
+
+def test_a_run_that_recorded_an_unknown_harness_shows_the_recorded_id() -> None:
+    text = job_detail._run_environment_text(
+        {"agent_harness": "totally_unknown_harness", "agent_harness_version": "9.9.9"}
+    )
+    assert text is not None
+    assert "totally_unknown_harness" in text
+    assert "9.9.9" in text
+
+
 def test_job_info_carries_the_recorded_environment() -> None:
     now = datetime.now(UTC)
     job = Job(research_question="Q?", status="completed", max_iterations=3, version_info=_RECORDED)
