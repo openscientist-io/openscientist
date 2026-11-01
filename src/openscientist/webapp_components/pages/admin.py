@@ -17,6 +17,7 @@ from openscientist.database.models import Job, ReviewToken, User
 from openscientist.database.session import get_admin_session
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.billing import render_billing_panel
+from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
     format_uptime,
@@ -130,6 +131,7 @@ async def admin_page() -> None:
             review_tokens_tab = ui.tab("Review Tokens", icon="rate_review")
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
+            settings_tab = ui.tab("Settings", icon="tune")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
             # Orphaned Jobs Panel (deferred — not the default tab)
@@ -151,6 +153,10 @@ async def admin_page() -> None:
             # Billing Panel (deferred)
             with ui.tab_panel(billing_tab):
                 ui.timer(0.1, render_billing_panel, once=True)
+
+            # Settings Panel (deferred)
+            with ui.tab_panel(settings_tab):
+                ui.timer(0.1, render_settings_panel, once=True)
 
 
 async def render_orphaned_jobs_panel() -> None:
