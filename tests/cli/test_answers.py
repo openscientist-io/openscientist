@@ -119,6 +119,44 @@ def test_a_vllm_file_sets_up_a_fresh_checkout(checkout: Path):
     assert env_value(checkout, ".env", "PORT") == "8080"
 
 
+def test_a_provider_the_airgap_step_cannot_serve_sets_up_without_it(checkout: Path):
+    tables = _vllm_tables()
+    tables["provider"] = {
+        "id": "openai",
+        "codex_auth_host_path": str(checkout / "codex"),
+        "openscientist_model": "gpt-5.2-codex",
+    }
+    path = checkout / "answers.toml"
+    result = runner.invoke(
+        cli_app.app,
+        [
+            "setup",
+            "--answers",
+            str(_write(checkout, tables)),
+            "--write-answers",
+            str(path),
+        ],
+        input="",
+    )
+    assert result.exit_code == 0, result.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "openai"
+    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == ""
+    written = tomllib.loads(path.read_text(encoding="utf-8"))
+    assert "airgap" not in written
+    assert written["provider"]["id"] == "openai"
+
+
+def test_a_missing_optional_secret_keeps_the_current_value_and_succeeds(checkout: Path):
+    tables = _vllm_tables()
+    del tables["provider"]["vllm_api_key"]
+    result = runner.invoke(
+        cli_app.app, ["setup", "--answers", str(_write(checkout, tables))], input=""
+    )
+    assert result.exit_code == 0, result.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "vllm"
+    assert env_value(checkout, ".env", "VLLM_API_KEY") == ""
+
+
 def test_a_missing_answers_file_fails_and_writes_nothing(checkout: Path):
     result = runner.invoke(cli_app.app, ["setup", "--answers", str(checkout / "absent.toml")])
     assert result.exit_code != 0
@@ -136,6 +174,22 @@ def test_invalid_toml_fails_and_writes_nothing(checkout: Path):
 def test_a_table_entry_that_is_not_a_table_fails_and_writes_nothing(checkout: Path):
     path = checkout / "answers.toml"
     path.write_text("[provider]\nid = 'vllm'\n[address] = 3\n", encoding="utf-8")
+    result = runner.invoke(cli_app.app, ["setup", "--answers", str(path)])
+    assert result.exit_code != 0
+    _no_env_files(checkout)
+
+
+def test_a_top_level_value_that_is_not_a_table_fails_and_writes_nothing(checkout: Path):
+    path = checkout / "answers.toml"
+    path.write_text('provider = "vllm"\n', encoding="utf-8")
+    result = runner.invoke(cli_app.app, ["setup", "--answers", str(path)])
+    assert result.exit_code != 0
+    _no_env_files(checkout)
+
+
+def test_an_answer_that_is_not_a_scalar_fails_and_writes_nothing(checkout: Path):
+    path = checkout / "answers.toml"
+    path.write_text("[address]\nport = [8080]\n", encoding="utf-8")
     result = runner.invoke(cli_app.app, ["setup", "--answers", str(path)])
     assert result.exit_code != 0
     _no_env_files(checkout)
@@ -247,6 +301,23 @@ def test_the_skip_key_skips_the_billed_live_check(checkout: Path, monkeypatch):
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "foundry"
 
 
+def test_the_skip_key_as_a_truthy_string_skips_the_billed_live_check(checkout: Path, monkeypatch):
+    calls: list[str] = []
+
+    def fake(provider_id: str, answers: dict[str, str]) -> LiveCheckResult:
+        calls.append(provider_id)
+        return LiveCheckResult(ok=True, detail="ok")
+
+    monkeypatch.setattr(livecheck, "perform_live_check", fake)
+    tables = _foundry_tables()
+    tables["provider"]["skip_live_check"] = "true"
+    result = runner.invoke(
+        cli_app.app, ["setup", "--answers", str(_write(checkout, tables))], input=""
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == []
+
+
 def test_the_billed_live_check_runs_without_the_skip_key(checkout: Path, monkeypatch):
     calls: list[str] = []
 
@@ -310,3 +381,23 @@ def test_write_answers_records_the_skip_a_billed_check_got(checkout: Path, monke
     assert result.exit_code == 0
     tables = tomllib.loads(path.read_text(encoding="utf-8"))
     assert tables["provider"]["skip_live_check"] is False
+
+
+# --- The file's own format ----------------------------------------------------
+
+
+def test_write_answers_drops_an_empty_step(tmp_path: Path):
+    path = tmp_path / "answers.toml"
+    answers_io.write_answers(path, {"provider": {"id": "vllm"}, "login": {}})
+    assert "[login]" not in path.read_text(encoding="utf-8")
+    assert answers_io.read_answers(path) == {"provider": {"id": "vllm"}}
+
+
+def test_write_answers_round_trips_values_with_special_characters(tmp_path: Path):
+    value = 'a"b\\c\nd\re\tf\x01g\x7fh'
+    path = tmp_path / "answers.toml"
+    answers_io.write_answers(path, {"provider": {"id": value}})
+    text = path.read_text(encoding="utf-8")
+    for char in ("\r", "\t", "\x01", "\x7f"):
+        assert char not in text, repr(char)
+    assert answers_io.read_answers(path) == {"provider": {"id": value}}

@@ -139,11 +139,6 @@ def _run_steps_from_answers(
                             f"Invalid answer: {question.key} must be a number, got {value!r}."
                         )
                         continue
-                    if not isinstance(value, (int, str)):
-                        errors.append(
-                            f"Invalid answer: {question.key} must be a number, got {type(value).__name__}."
-                        )
-                        continue
                     answers[question.env] = str(value)
                 elif isinstance(value, str):
                     answers[question.env] = value
