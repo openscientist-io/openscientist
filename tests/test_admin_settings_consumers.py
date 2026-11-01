@@ -27,7 +27,7 @@ from openscientist.file_loader import validate_uploaded_file
 from openscientist.job_container.db_login import AgentLogin
 from openscientist.job_container.runner import JobContainerRunner
 from openscientist.job_manager import JobManager, JobStatus
-from openscientist.providers.base import CostInfo, Provider
+from openscientist.providers.base import CostInfo
 from openscientist.settings import clear_settings_cache
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
@@ -87,27 +87,6 @@ def _executor_settings() -> SimpleNamespace:
         ),
         airgap=SimpleNamespace(enabled=False),
     )
-
-
-class _StubProvider(Provider):
-    def __init__(self, cost_info: CostInfo) -> None:
-        self._cost_info = cost_info
-
-    @property
-    def id(self) -> str:
-        return "stub"
-
-    display_name = "Stub"
-
-    def validate_required_config(self) -> list[str]:
-        return []
-
-    def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        _ = lookback_hours
-        return self._cost_info
-
-    def harness_env(self, *, proxy: str | None) -> dict[str, str]:
-        return {}
 
 
 def _decode_exec_timeout(run_kwargs: dict[str, object]) -> int:
@@ -356,39 +335,41 @@ async def test_a_budget_check_honours_the_rows_limits(
     test_engine: AsyncEngine, admin_row: None
 ) -> None:
     """A NULL limit means no limit, and a lowered cap refuses the next check."""
+    from openscientist.budget import check_budget, warning_limit_reached
+
     cost = CostInfo(
         provider_name="stub",
         total_spend_usd=600.0,
         recent_spend_usd=95.0,
         recent_period_hours=24,
     )
-    provider = _StubProvider(cost)
+    provider = SimpleNamespace(id="stub", get_cost_info=lambda lookback_hours=24: cost)
 
-    await set_admin_settings_row(
-        test_engine,
-        max_project_spend_total_usd=500.0,
-        max_project_spend_24h_usd=100.0,
-        warn_project_spend_24h_usd=90.0,
-    )
-    result = await asyncio.to_thread(provider.evaluate_budget, cost)
-    assert result["can_proceed"] is False
-    assert any("Total spend" in e for e in result["errors"])
+    with patch("openscientist.budget.get_provider", return_value=provider):
+        await set_admin_settings_row(
+            test_engine,
+            max_project_spend_total_usd=500.0,
+            max_project_spend_24h_usd=100.0,
+            warn_project_spend_24h_usd=90.0,
+        )
+        verdict = await check_budget(provider_id="stub")
+        assert verdict.ok is False
+        assert verdict.limit == "project_total"
 
-    await set_admin_settings_row(
-        test_engine, max_project_spend_total_usd=None, warn_project_spend_24h_usd=90.0
-    )
-    result = await asyncio.to_thread(provider.evaluate_budget, cost)
-    assert result["can_proceed"] is True
-    assert any("approaching" in w for w in result["warnings"])
+        # The 24 h figure is under its hard limit but at the warning.
+        await set_admin_settings_row(test_engine, max_project_spend_total_usd=None)
+        verdict = await check_budget(provider_id="stub")
+        assert verdict.ok is True
+        assert warning_limit_reached(95.0, 90.0, 100.0) is True
 
-    await set_admin_settings_row(test_engine, max_project_spend_24h_usd=90.0)
-    result = await asyncio.to_thread(provider.evaluate_budget, cost)
-    assert result["can_proceed"] is False
-    assert any("Last 24h" in e for e in result["errors"])
+        await set_admin_settings_row(test_engine, max_project_spend_24h_usd=90.0)
+        verdict = await check_budget(provider_id="stub")
+        assert verdict.ok is False
+        assert verdict.limit == "project_24h"
 
-    await set_admin_settings_row(
-        test_engine, max_project_spend_total_usd=None, max_project_spend_24h_usd=None
-    )
-    result = await asyncio.to_thread(provider.evaluate_budget, cost)
-    assert result["can_proceed"] is True
-    assert result["errors"] == []
+        await set_admin_settings_row(
+            test_engine, max_project_spend_total_usd=None, max_project_spend_24h_usd=None
+        )
+        verdict = await check_budget(provider_id="stub")
+        assert verdict.ok is True
+        assert verdict.limit is None

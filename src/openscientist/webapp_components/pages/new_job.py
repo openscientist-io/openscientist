@@ -10,6 +10,7 @@ from nicegui import ui
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
+from openscientist.exceptions import BudgetExceededError
 from openscientist.providers import check_provider_config
 from openscientist.webapp_components.ui_components import (
     render_config_error_banner,
@@ -96,6 +97,9 @@ async def _submit_job(
         ui.notify(f"Job {job_id} created and started!", type="positive")
         clear_uploaded_files(session_id)
         ui.navigate.to(f"/job/{job_id}")
+    except BudgetExceededError as exc:
+        logger.warning("Job creation refused by a budget limit: %s", exc)
+        ui.notify(str(exc), type="negative")
     except Exception as exc:
         logger.error("Error creating job: %s", exc, exc_info=True)
         _notify_creation_error(exc)

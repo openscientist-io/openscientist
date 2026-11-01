@@ -195,6 +195,20 @@ async def notify_job_cancelled(
     )
 
 
+async def notify_job_budget_hold(
+    topic: str, job_id: str, title: str, reason: str, base_url: str
+) -> bool:
+    """Send notification when a queued job is held by a budget limit."""
+    return await send_notification(
+        topic=topic,
+        title="Job Waiting on Budget",
+        message=f"Your job '{title}' is waiting to start: {reason}",
+        priority="default",
+        tags=["hourglass"],
+        click_url=f"{base_url}/job/{job_id}",
+    )
+
+
 async def notify_job_awaiting_feedback(
     topic: str, job_id: str, title: str, iteration: int, base_url: str
 ) -> bool:

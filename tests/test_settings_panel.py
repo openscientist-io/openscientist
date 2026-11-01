@@ -164,6 +164,47 @@ async def test_an_unchanged_save_writes_no_history(
 
 
 @pytest.mark.asyncio
+async def test_a_save_that_changes_a_value_picks_the_queue(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A changed limit may release a held queue, so the save picks once."""
+    user = User(email="admin@example.com", name="Admin")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    await _write_row(db_session)
+    _admin(monkeypatch, db_session, user)
+    _floor(monkeypatch, False)
+
+    manager = SimpleNamespace(_start_next_queued_job=MagicMock(return_value=False))
+    with patch("openscientist.web_app.get_job_manager", return_value=manager):
+        success, _ = await settings_panel.save_admin_settings(_values(agent_cpu=4.0))
+
+    assert success is True
+    manager._start_next_queued_job.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_a_save_with_no_changes_does_not_pick_the_queue(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = User(email="admin@example.com", name="Admin")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    await _write_row(db_session)
+    _admin(monkeypatch, db_session, user)
+    _floor(monkeypatch, False)
+
+    manager = SimpleNamespace(_start_next_queued_job=MagicMock(return_value=False))
+    with patch("openscientist.web_app.get_job_manager", return_value=manager):
+        success, _ = await settings_panel.save_admin_settings(_values())
+
+    assert success is True
+    manager._start_next_queued_job.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_an_out_of_bounds_value_is_refused_and_writes_nothing(
     db_session: AsyncSession,
     test_engine: AsyncEngine,

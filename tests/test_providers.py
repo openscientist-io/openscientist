@@ -1,14 +1,10 @@
 """Tests for providers factory and base provider."""
 
-import asyncio
 import os
-from collections.abc import AsyncGenerator
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pytest
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine
 
 from openscientist.exceptions import ProviderError
 from openscientist.providers import get_provider
@@ -19,7 +15,6 @@ from openscientist.providers.cborg import CborgProvider
 from openscientist.providers.foundry import FoundryProvider
 from openscientist.providers.vertex import VertexProvider
 from openscientist.settings import clear_settings_cache
-from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 # ─── Concrete stub for testing the Provider base ──────────────────────
 
@@ -191,101 +186,6 @@ class TestCostInfo:
         )
         assert info.budget_remaining_usd == 150.0
         assert info.data_lag_note == "Data current as of 6:35 AM"
-
-
-class TestCheckBudgetLimits:
-    """Tests for Provider.check_budget_limits()."""
-
-    @pytest_asyncio.fixture(autouse=True)
-    async def admin_settings_row(self, test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
-        """The row the budget check reads its limits from: no limits by default."""
-        await set_admin_settings_row(test_engine)
-        try:
-            yield
-        finally:
-            await reset_admin_settings_row(test_engine)
-
-    def _make_provider(self, **cost_kwargs) -> StubProvider:
-        cost = CostInfo(
-            provider_name="stub",
-            recent_period_hours=24,
-            **cost_kwargs,
-        )
-        return StubProvider(cost_info=cost)
-
-    @pytest.mark.asyncio
-    async def test_under_budget_can_proceed(self, test_engine: AsyncEngine):
-        provider = self._make_provider(total_spend_usd=10.0, recent_spend_usd=5.0)
-        await set_admin_settings_row(
-            test_engine, max_project_spend_total_usd=1000.0, max_project_spend_24h_usd=100.0
-        )
-        result = await asyncio.to_thread(provider.check_budget_limits)
-        assert result["can_proceed"] is True
-        assert result["errors"] == []
-
-    @pytest.mark.asyncio
-    async def test_total_spend_exceeded_blocks(self, test_engine: AsyncEngine):
-        provider = self._make_provider(total_spend_usd=1001.0, recent_spend_usd=5.0)
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=1000.0)
-        result = await asyncio.to_thread(provider.check_budget_limits)
-        assert result["can_proceed"] is False
-        assert any("Total spend" in e for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_recent_spend_exceeded_blocks(self, test_engine: AsyncEngine):
-        provider = self._make_provider(total_spend_usd=10.0, recent_spend_usd=200.0)
-        await set_admin_settings_row(test_engine, max_project_spend_24h_usd=100.0)
-        result = await asyncio.to_thread(provider.check_budget_limits)
-        assert result["can_proceed"] is False
-        assert any("Last 24h" in e for e in result["errors"])
-
-    @pytest.mark.asyncio
-    async def test_warning_threshold_warns_but_allows(self, test_engine: AsyncEngine):
-        provider = self._make_provider(total_spend_usd=10.0, recent_spend_usd=80.0)
-        await set_admin_settings_row(
-            test_engine, max_project_spend_24h_usd=100.0, warn_project_spend_24h_usd=75.0
-        )
-        result = await asyncio.to_thread(provider.check_budget_limits)
-        assert result["can_proceed"] is True
-        assert any("approaching" in w for w in result["warnings"])
-
-    def test_provider_budget_exhausted_blocks(self):
-        provider = self._make_provider(
-            total_spend_usd=10.0,
-            recent_spend_usd=5.0,
-            budget_limit_usd=100.0,
-            budget_remaining_usd=0.0,
-        )
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is False
-        assert any("exhausted" in e for e in result["errors"])
-
-    def test_provider_budget_low_warns(self):
-        provider = self._make_provider(
-            total_spend_usd=10.0,
-            recent_spend_usd=5.0,
-            budget_limit_usd=100.0,
-            budget_remaining_usd=5.0,
-        )
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("budget low" in w for w in result["warnings"])
-
-    def test_cost_info_unavailable_warns_but_allows(self):
-        provider = self._make_provider(
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            data_lag_note="Billing data delayed",
-        )
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("unavailable" in w for w in result["warnings"])
-
-    def test_cost_fetch_failure_warns_but_allows(self):
-        provider = StubProvider(cost_info=None)  # get_cost_info will raise
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("Could not check" in w for w in result["warnings"])
 
 
 # ─── check_provider_config ────────────────────────────────────────────

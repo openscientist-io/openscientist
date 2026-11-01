@@ -516,9 +516,18 @@ async def _start_background_tasks(engine: AsyncEngine) -> None:
     # JobManager's startup cleanup of stale containers.
     from openscientist.async_tasks import create_background_task
     from openscientist.job_container.db_login import run_agent_login_reaper
+    from openscientist.job_manager import run_budget_queue_recheck
 
     create_background_task(
         run_agent_login_reaper(_state.jobs_dir), name="agent-login-reaper", logger=logger
+    )
+
+    # The queue is picked on a slot freeing alone, so a project limit holding a
+    # job back would otherwise wait for a slot free that may never come.
+    create_background_task(
+        run_budget_queue_recheck(get_job_manager()),
+        name="budget-queue-recheck",
+        logger=logger,
     )
 
 

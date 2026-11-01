@@ -461,12 +461,8 @@ class BudgetSettings(BaseSettings):
         extra="ignore",
     )
 
-    max_project_spend_warn: float = Field(default=100.0, alias="MAX_PROJECT_SPEND_WARN")
-    max_project_spend_hard: float = Field(default=500.0, alias="MAX_PROJECT_SPEND_HARD")
+    # Seed the admin settings row on first start; the Settings tab counts from then on.
     max_job_cost_usd: float = Field(default=10.0, alias="MAX_JOB_COST_USD")
-    app_max_budget_usd: float = Field(default=1000.0, alias="APP_MAX_BUDGET_USD")
-
-    # Provider-agnostic budget limits (used by check_budget_limits)
     max_project_spend_total_usd: float = Field(
         default=float("inf"), alias="MAX_PROJECT_SPEND_TOTAL_USD"
     )
@@ -478,10 +474,7 @@ class BudgetSettings(BaseSettings):
     )
 
     @field_validator(
-        "max_project_spend_warn",
-        "max_project_spend_hard",
         "max_job_cost_usd",
-        "app_max_budget_usd",
     )
     @classmethod
     def validate_positive(cls, v: float, info: ValidationInfo) -> float:

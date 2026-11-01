@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import UTC, datetime
@@ -122,6 +123,15 @@ async def save_admin_settings(values: dict[str, object]) -> tuple[bool, str]:
             await session.rollback()
             logger.error("Admin settings save rejected by the database: %s", exc, exc_info=True)
             return False, f"{_rejected_setting(exc)} is outside its allowed range."
+
+    # A changed limit may release a held queue, so a save picks once at once,
+    # off this request's loop.
+    from openscientist.web_app import get_job_manager
+
+    try:
+        await asyncio.to_thread(get_job_manager()._start_next_queued_job)
+    except Exception as e:
+        logger.warning("Could not re-pick the queue after saving settings: %s", e)
 
     return True, "Settings saved."
 

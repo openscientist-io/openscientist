@@ -192,6 +192,12 @@ class Job(UUIDv7Mixin, Base):
         comment="Reason why the job was cancelled",
     )
 
+    queue_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Why a queued job waits on a budget limit; cleared when it starts or is cancelled",
+    )
+
     result_summary: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

@@ -110,6 +110,9 @@ class JobResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration number")
     pdb_code: str | None = Field(None, description="PDB code")
     space_group: str | None = Field(None, description="Space group")
+    queue_reason: str | None = Field(
+        None, description="Why a queued job waits on a budget limit, if it is held"
+    )
 
 
 class JobListResponse(BaseModel):
@@ -127,6 +130,9 @@ class JobStatusResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration")
     max_iterations: int = Field(..., description="Maximum iterations")
     error_message: str | None = Field(None, description="Error message if failed")
+    queue_reason: str | None = Field(
+        None, description="Why a queued job waits on a budget limit, if it is held"
+    )
 
 
 class JobDetailResponse(JobResponse):
@@ -156,6 +162,7 @@ class _JobResponseFields(TypedDict):
     current_iteration: int
     pdb_code: str | None
     space_group: str | None
+    queue_reason: str | None
 
 
 async def get_job_by_id(
@@ -202,6 +209,7 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "current_iteration": job.current_iteration,
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
+        "queue_reason": job.queue_reason,
     }
 
 
@@ -506,6 +514,7 @@ async def get_job_status(
         current_iteration=job.current_iteration,
         max_iterations=job.max_iterations,
         error_message=job.error_message,
+        queue_reason=job.queue_reason,
     )
 
 

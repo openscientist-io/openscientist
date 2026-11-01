@@ -861,6 +861,7 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -951,6 +952,7 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -1046,6 +1048,7 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session

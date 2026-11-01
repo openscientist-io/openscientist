@@ -27,6 +27,7 @@ from openscientist.admin_settings import (
     current_admin_settings_sync,
 )
 from openscientist.async_tasks import run_sync, thread_loop
+from openscientist.budget import check_budget
 from openscientist.container_manager import get_container_manager
 from openscientist.database.models import User
 from openscientist.database.models.job import Job as JobModel
@@ -38,14 +39,18 @@ from openscientist.database.retry import (
     retry_sync,
 )
 from openscientist.database.session import thread_safe_admin_session, thread_safe_user_session
-from openscientist.exceptions import ProviderError
+from openscientist.exceptions import BudgetExceededError, ProviderError
 from openscientist.job.agent_error import take_agent_error
 from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
 from openscientist.knowledge_state import KnowledgeState
-from openscientist.ntfy import notify_job_status_change
+from openscientist.ntfy import (
+    ensure_user_has_topic,
+    notify_job_budget_hold,
+    notify_job_status_change,
+)
 from openscientist.orchestrator import create_job
 from openscientist.providers import get_provider
-from openscientist.settings import ProviderSettings
+from openscientist.settings import ProviderSettings, get_settings
 from openscientist.version import get_version_string
 
 logger = logging.getLogger(__name__)
@@ -356,6 +361,34 @@ async def _db_delete_job(job_id: str, user_id: UUID | None = None) -> None:
             await session.commit()
 
 
+async def _db_set_queue_reason(job_id: str, reason: str | None) -> str | None:
+    """Write ``reason`` as the reason a queued job waits on, None clearing it.
+
+    Returns the previous reason, so the caller tells the first hold apart
+    from a re-check of a job already waiting."""
+    async with _job_session(None) as session:
+        job = await session.get(JobModel, UUID(job_id))
+        if job is None:
+            return None
+        previous = job.queue_reason
+        await session.execute(
+            update(JobModel).where(JobModel.id == job.id).values(queue_reason=reason)
+        )
+        await session.commit()
+    return previous
+
+
+async def _db_any_queued_job_held() -> bool:
+    """Whether some queued job waits on a budget limit."""
+    stmt = (
+        select(JobModel.id)
+        .where(JobModel.status == JobStatus.QUEUED.value, JobModel.queue_reason.is_not(None))
+        .limit(1)
+    )
+    async with _job_session(None) as session:
+        return (await session.scalar(stmt)) is not None
+
+
 class JobManager:
     """
     Manages OpenScientist discovery jobs.
@@ -450,22 +483,6 @@ class JobManager:
             JobContainerRunner().cleanup(job_id)
         except Exception as e:
             logger.warning("Failed to cleanup container for stale job %s: %s", job_id, e)
-
-    def _check_budget_before_creation(self) -> None:
-        try:
-            provider = get_provider()
-            budget_check = provider.check_budget_limits()
-        except ProviderError as e:
-            # Keep job creation available if provider cost endpoint is temporarily unavailable.
-            logger.warning("Budget check unavailable: %s", e)
-            budget_check = {"can_proceed": True}
-
-        if budget_check.get("can_proceed", True):
-            return
-
-        errors = budget_check.get("errors", [])
-        error_msg = "; ".join(errors) if errors else "Budget limit exceeded"
-        raise ValueError(f"Cannot create job: {error_msg}")
 
     async def _create_db_job_record(
         self,
@@ -582,16 +599,16 @@ class JobManager:
         """
         if await self.get_job(job_id) is not None:
             raise ValueError(f"Job {job_id} already exists")
-        # The provider's cost endpoint is a blocking HTTP call.
-        await asyncio.to_thread(self._check_budget_before_creation)
 
         # Capture provider & model from current settings
-        from openscientist.settings import get_settings
-
         settings = get_settings()
         llm_provider = settings.provider.provider_id.lower()
         model = _effective_model(settings.provider)
         llm_config = {"model": model} if model else None
+
+        verdict = await check_budget(provider_id=llm_provider, model=model, include_unpriced=True)
+        if not verdict.ok:
+            raise BudgetExceededError(verdict.message or "A budget limit is reached")
 
         # Create job in database
         logger.info("Creating job %s in database", job_id)
@@ -698,6 +715,15 @@ class JobManager:
                 raise ValueError(f"Job {job_id} is already running")
             if self._get_active_job_count() >= (await current_admin_settings()).max_concurrent_jobs:
                 raise ValueError("Cannot regenerate report: maximum concurrent jobs reached")
+
+            verdict = await check_budget(
+                job_id=UUID(job_id),
+                provider_id=job_info.llm_provider or "",
+                model=job_info.llm_model or _effective_model(get_settings().provider),
+                include_unpriced=True,
+            )
+            if not verdict.ok:
+                raise BudgetExceededError(verdict.message or "A budget limit is reached")
 
             logger.info("Regenerating report for job %s", job_id)
             thread = threading.Thread(
@@ -823,6 +849,10 @@ class JobManager:
     def _start_next_queued_job(self) -> bool:
         """Start the queued job the balancing order picks, if a slot is free.
 
+        A project limit keeps the job queued with the reason it waits on, and
+        an unpriced model ends it failed before the container starts, after
+        which the pick goes on to the next queued job.
+
         Returns:
             Whether a job was started.
         """
@@ -836,30 +866,72 @@ class JobManager:
                 else:
                     logger.exception("Failed to read the admin settings for the next pick")
                 return False
-            if self._get_active_job_count() >= admin.max_concurrent_jobs:
-                return False
 
-            try:
-                job_id = run_sync(
-                    _db_next_queued_job(
-                        timedelta(hours=admin.scheduler_window_hours), set(self._running_jobs)
+            while True:
+                if self._get_active_job_count() >= admin.max_concurrent_jobs:
+                    return False
+
+                try:
+                    job_id = run_sync(
+                        _db_next_queued_job(
+                            timedelta(hours=admin.scheduler_window_hours),
+                            set(self._running_jobs),
+                        )
                     )
-                )
-            except Exception as e:
-                if is_connection_error(e):
-                    self._schedule_repick(e)
-                else:
-                    logger.exception("Failed to pick the next queued job")
-                return False
-            self._repick_delays = None
-            if job_id is None:
-                return False
+                    if job_id is None:
+                        self._repick_delays = None
+                        return False
+                    job = run_sync(_db_get_job(job_id))
+                    if job is None:
+                        # Deleted between the pick and this read; the next
+                        # pick takes the next queued job.
+                        self._repick_delays = None
+                        return False
+                    verdict = run_sync(
+                        check_budget(
+                            job_id=UUID(job_id),
+                            provider_id=job.llm_provider,
+                            model=(job.llm_config or {}).get("model")
+                            or _effective_model(get_settings().provider),
+                            include_unpriced=True,
+                        )
+                    )
+                except Exception as e:
+                    if is_connection_error(e):
+                        self._schedule_repick(e)
+                    else:
+                        logger.exception("Failed to pick the next queued job")
+                    return False
+                self._repick_delays = None
 
-            logger.info("Starting queued job %s", job_id)
-            thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
-            self._running_jobs[job_id] = thread
-            thread.start()
-            return True
+                if verdict.limit in ("project_total", "project_24h"):
+                    reason = verdict.message or "A project budget limit is reached"
+                    first_hold = run_sync(_db_set_queue_reason(job_id, reason)) is None
+                    logger.info("Job %s held by a budget limit: %s", job_id, reason)
+                    if first_hold:
+                        run_sync(_notify_budget_hold(job_id, reason))
+                    return False
+
+                if verdict.limit == "unpriced_model":
+                    logger.info("Job %s not starting: %s", job_id, verdict.message)
+                    self._update_job_status(
+                        job_id,
+                        JobStatus.FAILED,
+                        allowed_from={JobStatus.QUEUED},
+                        error_message=verdict.message or "No price is known for the job's model",
+                        retry=True,
+                    )
+                    # The failure frees the queue for the rest.
+                    continue
+
+                if run_sync(_db_set_queue_reason(job_id, None)) is not None:
+                    logger.info("Job %s no longer held by a budget limit", job_id)
+
+                logger.info("Starting queued job %s", job_id)
+                thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
+                self._running_jobs[job_id] = thread
+                thread.start()
+                return True
 
     def _schedule_repick(self, error: Exception) -> None:
         """Pick again after the next backoff delay, unless a retry is already pending.
@@ -904,6 +976,7 @@ class JobManager:
         )
         if not target.applied:
             raise ValueError(f"Job {job_id} has already ended")
+        await _db_set_queue_reason(job_id, None)
         await _status_notification(
             job_id, JobStatus.CANCELLED, target, cancellation_reason=cancellation_reason
         )
@@ -1074,17 +1147,14 @@ class JobManager:
         try:
             provider = get_provider()
             cost_info = await asyncio.to_thread(provider.get_cost_info, lookback_hours=24)
-            budget_check = await asyncio.to_thread(provider.evaluate_budget, cost_info)
         except (ValueError, ProviderError) as e:
             logger.warning("Could not fetch cost info: %s", e)
             cost_info = None
-            budget_check = None
 
         return {
             "total_jobs": len(jobs),
             "status_counts": status_counts,
             "cost_info": cost_info,
-            "budget_check": budget_check,
         }
 
     def _list_operational_jobs(
@@ -1235,6 +1305,54 @@ async def _status_notification(
         )
     except Exception as e:
         logger.warning("Failed to send ntfy notification: %s", e)
+
+
+async def _notify_budget_hold(job_id: str, reason: str) -> None:
+    """Tell the job's owner once that their queued job waits on a budget limit."""
+    try:
+        target = await _db_get_notification_target(job_id)
+    except Exception as e:
+        logger.warning("Failed to load notification target for %s: %s", job_id, e)
+        return
+    if not target or not target.ntfy_enabled or not target.owner_id:
+        return
+    topic = target.ntfy_topic
+    if not topic:
+        topic = await ensure_user_has_topic(UUID(target.owner_id))
+    if not topic:
+        return
+    try:
+        await notify_job_budget_hold(
+            topic=topic,
+            job_id=job_id,
+            title=target.job_title or "",
+            reason=reason,
+            base_url=get_settings().base_url,
+        )
+    except Exception as e:
+        logger.warning("Failed to send ntfy notification: %s", e)
+
+
+#: How often the queue is re-picked while a project limit holds jobs back.
+BUDGET_QUEUE_RECHECK_INTERVAL_SECONDS = 60.0
+
+
+async def run_budget_queue_recheck(
+    manager: JobManager, interval: float = BUDGET_QUEUE_RECHECK_INTERVAL_SECONDS
+) -> None:
+    """Pick again every ``interval`` seconds while some queued job waits on a
+    budget limit.
+
+    The queue is picked on a slot freeing alone, so without this a job held by
+    a 24-hour limit would wait for a slot free that may never come, past the
+    window rolling on."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            if await _db_any_queued_job_held():
+                await asyncio.to_thread(manager._start_next_queued_job)
+        except Exception as e:
+            logger.warning("Budget queue re-check failed: %s", e)
 
 
 def main() -> None:
