@@ -5,6 +5,8 @@ import re
 import stat
 from pathlib import Path
 
+import pytest
+
 from openscientist.cli import envfiles
 
 
@@ -112,3 +114,32 @@ def test_set_value_appends_missing_key():
 def test_parse_values_drops_comments_and_trailing_comments():
     lines = ["# KEY=0", "KEY=hello # note", "EMPTY=", "OTHER=  spaced  ", "NOVALUE"]
     assert envfiles.parse_values(lines) == {"KEY": "hello", "OTHER": "spaced"}
+
+
+def test_write_file_removes_the_temp_file_when_the_replace_fails(checkout: Path, monkeypatch):
+    def fail(*args: object, **kwargs: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(os, "replace", fail)
+    before = set(checkout.iterdir())
+    with pytest.raises(OSError):
+        envfiles.write_file(checkout / ".env", ["A=1"])
+    assert not (checkout / ".env").exists()
+    assert set(checkout.iterdir()) == before
+
+
+def test_write_file_still_raises_when_the_cleanup_unlink_fails(checkout: Path, monkeypatch):
+    def fail(*args: object, **kwargs: object) -> None:
+        raise PermissionError("replace failed")
+
+    def unlink_fail(*args: object, **kwargs: object) -> None:
+        raise OSError("unlink failed")
+
+    monkeypatch.setattr(os, "replace", fail)
+    monkeypatch.setattr(os, "unlink", unlink_fail)
+    with pytest.raises(PermissionError):
+        envfiles.write_file(checkout / ".env", ["A=1"])
+
+
+def test_example_value_is_empty_when_the_example_file_is_missing(tmp_path: Path):
+    assert envfiles._example_value(tmp_path, "env", "POSTGRES_PASSWORD") == ""

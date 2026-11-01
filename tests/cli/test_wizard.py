@@ -2,12 +2,17 @@
 
 import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
+import typer
 from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
-from openscientist.cli import envfiles, stack
+from openscientist.cli import envfiles, stack, wizard
+from openscientist.cli.step import Question
+from openscientist.cli.steps import STEPS
 from tests.cli.conftest import ANTHROPIC_SETUP_ANSWERS, env_value
 
 runner = CliRunner()
@@ -118,3 +123,78 @@ def test_default_command_runs_wizard_then_starts(checkout: Path, monkeypatch):
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
     assert len(calls) == 5
     assert calls[-1][0][-1] == "openscientist"
+
+
+def test_stop_command_propagates_the_compose_exit_code(checkout: Path, monkeypatch):
+    monkeypatch.setattr(stack, "run_command", lambda argv, env: 4)
+    assert runner.invoke(cli_app.app, ["stop"]).exit_code == 4
+    monkeypatch.setattr(stack, "run_command", lambda argv, env: 0)
+    assert runner.invoke(cli_app.app, ["stop"]).exit_code == 0
+
+
+def test_default_command_propagates_the_start_failure(checkout: Path, monkeypatch):
+    assert runner.invoke(cli_app.app, ["setup"], input=ANTHROPIC_SETUP_ANSWERS).exit_code == 0
+    monkeypatch.setattr(stack, "run_command", lambda argv, env: 5)
+    assert runner.invoke(cli_app.app, []).exit_code == 5
+
+
+def test_module_entry_point_prints_the_help():
+    result = subprocess.run(
+        [sys.executable, "-m", "openscientist.cli", "--help"], capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert "setup" in result.stdout
+
+
+def test_setup_skips_steps_that_do_not_apply(checkout: Path, monkeypatch):
+    harness = next(step for step in STEPS if step.key == "harness")
+
+    def not_asked(answers: dict[str, str]) -> list[Question]:
+        raise AssertionError("the harness step was asked although it does not apply")
+
+    monkeypatch.setattr(harness, "applies", lambda answers: False)
+    monkeypatch.setattr(harness, "questions", not_asked)
+    result = runner.invoke(cli_app.app, ["setup"], input=ANTHROPIC_SETUP_ANSWERS)
+    assert result.exit_code == 0
+
+
+def test_ask_without_a_default_reads_a_plain_answer():
+    question = Question(key="x.port", env="SOME_PORT", file="env", kind="port")
+    captured: dict[str, str] = {}
+    cli = typer.Typer()
+
+    @cli.command()
+    def ask_port() -> None:
+        captured["value"] = wizard.ask(question, None)
+
+    result = runner.invoke(cli, input="42\n")
+    assert result.exit_code == 0
+    assert captured["value"] == "42"
+
+
+def test_ask_reprompts_a_required_question_until_it_has_a_value(monkeypatch):
+    import click
+
+    question = Question(
+        key="x.required", env="SOME_REQUIRED", file="env", kind="text", required=True
+    )
+    captured: dict[str, str] = {}
+    cli = typer.Typer()
+    answers = iter(("", "value"))
+    prompts: list[str] = []
+
+    def prompt(text, **kwargs):
+        answer = next(answers)
+        prompts.append(answer)
+        return answer
+
+    @cli.command()
+    def ask_required() -> None:
+        captured["value"] = wizard.ask(question, None)
+
+    monkeypatch.setattr(click, "prompt", prompt)
+    result = runner.invoke(cli)
+    assert result.exit_code == 0
+    # The empty answer was refused and the question asked again.
+    assert prompts == ["", "value"]
+    assert captured["value"] == "value"

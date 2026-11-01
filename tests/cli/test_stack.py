@@ -1,11 +1,15 @@
 """The start and stop command sequences through an injected command runner."""
 
 import http.server
+import re
 import threading
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
 from openscientist.cli import stack
+from tests.cli.conftest import REPO_ROOT
 
 
 def _recorded(run):
@@ -138,3 +142,26 @@ def test_wait_for_health_polls_until_the_server_answers(checkout: Path):
         server.shutdown()
         server.server_close()
     assert not stack.wait_for_health("http://127.0.0.1:1", timeout=1, interval=0.1)
+
+
+def test_run_command_returns_the_exit_code_and_merges_the_env(checkout: Path):
+    assert stack.run_command(("true",)) == 0
+    assert stack.run_command(("false",)) == 1
+    assert stack.run_command(("sh", "-c", 'test "$FOO" = bar'), {"FOO": "bar"}) == 0
+
+
+@pytest.mark.parametrize("failing_call", [1, 2, 4])
+def test_build_images_stops_at_the_failing_build(checkout: Path, failing_call: int):
+    calls: list[tuple[str, ...]] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        calls.append(argv)
+        return 3 if len(calls) == failing_call else 0
+
+    assert stack.build_images(run, checkout) == 3
+    assert len(calls) == failing_call
+
+
+def test_commit_reports_the_short_head_sha(checkout: Path, monkeypatch):
+    monkeypatch.chdir(REPO_ROOT)
+    assert re.fullmatch(r"[0-9a-f]{7,40}", stack._commit())
