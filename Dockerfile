@@ -1,5 +1,6 @@
 # Dockerfile for OpenScientist
-# Builds on openscientist-base which includes Python, Node.js, uv, and Claude CLI
+# Builds on openscientist-base, which carries Python, uv, the locked
+# dependencies and the WeasyPrint libraries
 
 FROM openscientist-base:latest
 
@@ -20,19 +21,6 @@ RUN if [ "$INSTALL_PHENIX" = "true" ]; then \
 
 # Set working directory
 WORKDIR /app
-
-# WeasyPrint system libraries (libpango/cairo/gdk-pixbuf/glib). Needed so any
-# web-side PDF rendering matches the agent's WeasyPrint output rather than
-# falling back to fpdf2. Mirrors the agent image.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
-    libffi8 \
-    shared-mime-info \
-    fonts-liberation \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy project files — deps already installed in base
 COPY pyproject.toml README.md alembic.ini uv.lock ./

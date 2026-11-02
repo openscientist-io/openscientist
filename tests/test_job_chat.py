@@ -13,15 +13,16 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, IterationResult, TurnOutcome
-from openscientist.database.models import Job, JobChatMessage, User
+from openscientist.database.models import CostRecord, Job, JobChatMessage, User
 from openscientist.database.rls import set_current_user
+from openscientist.exceptions import BudgetExceededError
 from openscientist.job_chat import (
     _build_chat_request,
     _chat_turn_files,
@@ -32,6 +33,7 @@ from openscientist.job_chat import (
     send_chat_message,
 )
 from openscientist.providers.base import Provider
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import StubClaudeProvider as _ChatProvider
 from tests.helpers import enable_rls
 
@@ -359,8 +361,6 @@ async def test_load_job_context_with_knowledge_state():
     ks.data["literature"] = [
         {
             "title": "Crystal Structures of Proteins",
-            "relevance_score": 0.92,
-            "key_findings": ["Finding 1", "Finding 2"],
         },
     ]
     ks.data["iteration_summaries"] = [
@@ -746,3 +746,63 @@ async def test_overlapping_chat_turns_each_get_their_own_reply(temp_jobs_dir: Pa
 
     assert replies == ["answer to question A", "answer to question B"]
     assert [p.name for p in job_dir.iterdir() if p.name.startswith(".chat")] == []
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_refused_at_the_job_cap(
+    test_engine: AsyncEngine, temp_jobs_dir: Path
+) -> None:
+    """A job at its cost cap is refused before the container starts, and no
+    chat row is written."""
+    async with async_sessionmaker(test_engine, expire_on_commit=False)() as session:
+        owner = User(email=f"chat-budget-{uuid4().hex[:12]}@example.com", name="Owner")
+        session.add(owner)
+        await session.commit()
+        await session.refresh(owner)
+        job = Job(
+            owner_id=owner.id,
+            research_question="Chat budget",
+            llm_provider="bedrock",
+            llm_config={"model": "claude-sonnet-4-6"},
+            status="running",
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        session.add(
+            CostRecord(
+                job_id=job.id,
+                operation_type="chat",
+                provider="bedrock",
+                model="claude-sonnet-4-6",
+                input_tokens=1,
+                output_tokens=1,
+                cost_usd=100.0,
+            )
+        )
+        await session.commit()
+        job_id = job.id
+
+    job_dir = temp_jobs_dir / str(job_id)
+    job_dir.mkdir()
+    with (
+        patch(
+            "openscientist.job_chat._send_message_via_container", new_callable=AsyncMock
+        ) as container,
+        pytest.raises(BudgetExceededError, match=r"Job cost limit of \$100\.00"),
+    ):
+        await set_admin_settings_row(test_engine, max_job_cost_usd=100.0)
+        try:
+            async with async_sessionmaker(test_engine, expire_on_commit=False)() as call_session:
+                await send_chat_message(call_session, job_id, "hi", job_dir)
+        finally:
+            await reset_admin_settings_row(test_engine)
+
+    container.assert_not_awaited()
+    async with async_sessionmaker(test_engine, expire_on_commit=False)() as session:
+        count = await session.scalar(select(func.count()).where(JobChatMessage.job_id == job_id))
+        assert count == 0
+        await session.execute(delete(CostRecord).where(CostRecord.job_id == job_id))
+        await session.execute(delete(Job).where(Job.id == job_id))
+        await session.execute(delete(User).where(User.email == owner.email))
+        await session.commit()

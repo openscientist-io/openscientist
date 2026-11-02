@@ -39,6 +39,7 @@ from openscientist.orchestrator.discovery import (
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components import ui_components
 from openscientist.webapp_components.pages import job_detail
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 
 class MakeJob(Protocol):
@@ -51,6 +52,16 @@ def _no_knowledge_state_progress():
         "openscientist.job_manager._load_progress_from_knowledge_state", return_value=(0, 0)
     ):
         yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine):
+    """The ``_manager`` helper edits the slot cap row, which the suite holds at
+    the defaults between tests."""
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest_asyncio.fixture
@@ -133,8 +144,10 @@ def runner() -> Iterator[MagicMock]:
         yield fake
 
 
-def _manager(tmp_path: Path, max_concurrent: int = 1) -> JobManager:
-    return JobManager(jobs_dir=tmp_path, max_concurrent=max_concurrent)
+async def _manager(tmp_path: Path, test_engine: AsyncEngine, max_concurrent: int = 1) -> JobManager:
+    """A manager whose slot cap the row carries, at ``max_concurrent``."""
+    await set_admin_settings_row(test_engine, max_concurrent_jobs=max_concurrent)
+    return JobManager(jobs_dir=tmp_path)
 
 
 async def test_building_a_job_manager_changes_no_job(
@@ -142,7 +155,7 @@ async def test_building_a_job_manager_changes_no_job(
 ) -> None:
     """A CLI command or a dev reload builds one while the web's jobs run."""
     running = await make_job(JobStatus.RUNNING)
-    _manager(tmp_path)
+    await _manager(tmp_path, test_engine)
     assert await _status(test_engine, running) == "running"
     runner.cleanup.assert_not_called()
 
@@ -150,7 +163,7 @@ async def test_building_a_job_manager_changes_no_job(
 async def test_a_job_cancelled_before_its_worker_begins_is_not_launched(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.QUEUED)
     await manager.cancel_job(str(job))
     with patch.object(manager, "_start_next_queued_job"):
@@ -165,7 +178,7 @@ async def test_a_launch_crash_fails_the_job_and_starts_the_next_one(
     """A crash while launching the container fails the job with that error, frees
     its slot, and starts the next queued job."""
     monkeypatch.setattr("openscientist.version._commit", None)
-    manager = _manager(tmp_path, max_concurrent=2)
+    manager = await _manager(tmp_path, test_engine, max_concurrent=2)
     crasher = await make_job(JobStatus.QUEUED)
     next_up = await make_job(JobStatus.QUEUED)
     runner.launch.side_effect = RuntimeError("docker launch failed")
@@ -179,10 +192,10 @@ async def test_a_launch_crash_fails_the_job_and_starts_the_next_one(
 
 
 async def test_cancelling_a_started_queued_job_keeps_its_slot_and_stops_it(
-    make_job: MakeJob, tmp_path: Path, runner: MagicMock
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
     """The job's thread is live, so it keeps counting against max_concurrent."""
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.QUEUED)
     manager._running_jobs[str(job)] = MagicMock()
     with patch.object(manager, "_start_next_queued_job"):
@@ -192,9 +205,9 @@ async def test_cancelling_a_started_queued_job_keeps_its_slot_and_stops_it(
 
 
 async def test_a_started_queued_job_is_not_picked_again(
-    make_job: MakeJob, tmp_path: Path, runner: MagicMock
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
-    manager = _manager(tmp_path, max_concurrent=2)
+    manager = await _manager(tmp_path, test_engine, max_concurrent=2)
     job = await make_job(JobStatus.QUEUED)
     own_thread = MagicMock()
     manager._running_jobs[str(job)] = own_thread
@@ -204,9 +217,9 @@ async def test_a_started_queued_job_is_not_picked_again(
 
 
 async def test_the_oldest_queued_job_starts_first(
-    make_job: MakeJob, tmp_path: Path, runner: MagicMock
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     older = await make_job(JobStatus.QUEUED)
     newer = await make_job(JobStatus.QUEUED)
     with patch.object(manager, "_run_job"):
@@ -219,7 +232,7 @@ async def test_a_queued_job_waits_while_a_slot_is_taken(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     """A full manager leaves queued jobs queued instead of overrunning its limit."""
-    manager = _manager(tmp_path, max_concurrent=1)
+    manager = await _manager(tmp_path, test_engine, max_concurrent=1)
     job = await make_job(JobStatus.QUEUED)
     manager._running_jobs["busy-job"] = MagicMock()
     assert manager._start_next_queued_job() is False
@@ -230,7 +243,7 @@ async def test_a_queued_job_waits_while_a_slot_is_taken(
 async def test_a_job_waiting_for_feedback_can_be_cancelled(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.AWAITING_FEEDBACK)
     manager._running_jobs[str(job)] = MagicMock()
     with patch.object(manager, "_start_next_queued_job"):
@@ -248,7 +261,7 @@ async def test_cancelling_a_finished_job_fails_loudly(
     finished: JobStatus,
 ) -> None:
     """An ended job refuses a late cancel and keeps its recorded ending."""
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(finished)
     with pytest.raises(ValueError, match="already ended"):
         await manager.cancel_job(str(job))
@@ -260,7 +273,7 @@ async def test_cancelling_a_finished_job_fails_loudly(
 async def test_start_job_refuses_a_finished_job(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, finished: JobStatus
 ) -> None:
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(finished)
     with pytest.raises(ValueError, match="cannot be started"):
         await asyncio.to_thread(manager.start_job, str(job))
@@ -272,7 +285,7 @@ async def test_starting_a_job_that_stopped_waiting_fails_loudly(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     """A job cancelled right before the queue write is not started, and the error says so."""
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.PENDING)
     manager._running_jobs["busy-job"] = MagicMock()
     with patch(
@@ -323,11 +336,11 @@ async def test_the_webs_late_failure_does_not_overwrite_a_completed_job(
 
 
 async def test_a_status_write_that_cannot_reach_the_database_raises(
-    make_job: MakeJob, tmp_path: Path
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     """A database failure reaches the caller, and the owner is not told about a
     move that never happened."""
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.RUNNING)
     with (
         patch("openscientist.job_manager.run_sync", side_effect=RuntimeError("database down")),
@@ -352,7 +365,7 @@ async def test_startup_recovery_keeps_waiting_jobs_and_ends_started_ones(
     running = await make_job(JobStatus.RUNNING)
     paused = await make_job(JobStatus.AWAITING_FEEDBACK)
     completed = await make_job(JobStatus.COMPLETED)
-    manager = _manager(tmp_path, max_concurrent=5)
+    manager = await _manager(tmp_path, test_engine, max_concurrent=5)
     with patch.object(manager, "_run_job"):
         await asyncio.to_thread(manager.recover_after_restart)
     assert await _status(test_engine, running) == "cancelled"
@@ -378,7 +391,7 @@ async def test_a_lost_jobs_cleanup_failure_does_not_stop_recovery(
             raise RuntimeError("docker daemon is down")
 
     runner.cleanup.side_effect = _cleanup
-    manager = _manager(tmp_path, max_concurrent=5)
+    manager = await _manager(tmp_path, test_engine, max_concurrent=5)
     with patch.object(manager, "_run_job"):
         await asyncio.to_thread(manager.recover_after_restart)
     assert await _status(test_engine, broken) == "cancelled"
@@ -529,16 +542,21 @@ async def test_a_job_id_already_in_use_is_refused_and_the_job_kept(
 ) -> None:
     job = await make_job(JobStatus.COMPLETED)
     with pytest.raises(ValueError, match="already exists"):
-        await _manager(tmp_path).create_job(str(job), "Another question?", data_files=[])
+        await (await _manager(tmp_path, test_engine)).create_job(
+            str(job), "Another question?", data_files=[]
+        )
     assert await _status(test_engine, job) == "completed"
 
 
 async def test_listing_jobs_by_status_returns_only_that_status(
-    make_job: MakeJob, tmp_path: Path, runner: MagicMock
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
     queued = await make_job(JobStatus.QUEUED)
     running = await make_job(JobStatus.RUNNING)
-    listed = {job.job_id for job in await _manager(tmp_path).list_jobs(status=JobStatus.QUEUED)}
+    listed = {
+        job.job_id
+        for job in await (await _manager(tmp_path, test_engine)).list_jobs(status=JobStatus.QUEUED)
+    }
     assert str(queued) in listed
     assert str(running) not in listed
 
@@ -546,7 +564,7 @@ async def test_listing_jobs_by_status_returns_only_that_status(
 async def test_a_cancel_completes_when_the_container_cannot_be_stopped(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.RUNNING)
     manager._running_jobs[str(job)] = MagicMock()
     runner.stop.side_effect = RuntimeError("docker is unreachable")
@@ -579,7 +597,7 @@ async def test_a_cancel_completes_when_the_owner_cannot_be_notified(
             ) as notify,
             patch.object(JobManager, "_start_next_queued_job"),
         ):
-            await _manager(tmp_path).cancel_job(str(job.id))
+            await (await _manager(tmp_path, test_engine)).cancel_job(str(job.id))
         notify.assert_called_once()
         assert await _status(test_engine, job.id) == "cancelled"
     finally:
@@ -721,7 +739,7 @@ async def test_startup_recovery_clears_the_labels_of_the_jobs_it_cancels(
     paused = await make_job(JobStatus.AWAITING_FEEDBACK)
     for job in (running, paused):
         await _set_label(test_engine, job, "Running PCA")
-    manager = _manager(tmp_path, max_concurrent=5)
+    manager = await _manager(tmp_path, test_engine, max_concurrent=5)
     with patch.object(manager, "_run_job"):
         await asyncio.to_thread(manager.recover_after_restart)
     for job in (running, paused):
@@ -775,7 +793,7 @@ async def test_a_finished_report_ends_the_job(
 async def test_a_report_job_can_be_cancelled(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:
-    manager = _manager(tmp_path)
+    manager = await _manager(tmp_path, test_engine)
     job = await make_job(JobStatus.GENERATING_REPORT)
     manager._running_jobs[str(job)] = MagicMock()
     with patch.object(manager, "_start_next_queued_job"):
@@ -803,7 +821,7 @@ async def test_a_job_writing_its_report_cannot_be_deleted(
 ) -> None:
     job = await make_job(JobStatus.GENERATING_REPORT)
     with pytest.raises(ValueError, match="Cannot delete"):
-        await _manager(tmp_path).delete_job(str(job))
+        await (await _manager(tmp_path, test_engine)).delete_job(str(job))
     assert await _status(test_engine, job) == "generating_report"
 
 

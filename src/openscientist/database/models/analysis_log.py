@@ -1,9 +1,4 @@
-"""
-Analysis log model for tracking analysis steps.
-
-Records each step in the analysis workflow for transparency,
-debugging, and reproducibility.
-"""
+"""Analysis log model for tracking analysis steps."""
 
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -20,25 +15,7 @@ if TYPE_CHECKING:
 
 
 class AnalysisLog(UUIDv7Mixin, Base):
-    """
-    Analysis log entry.
-
-    Records each step in the analysis workflow including decisions,
-    actions taken, code executed, and results.
-
-    Attributes:
-        job_id: Foreign key to the job this log entry belongs to
-        iteration: Iteration number when entry was created
-        step_number: Sequential step number within iteration
-        action_type: Type of action (reasoning/code_execution/literature_search/etc)
-        description: Human-readable description of the action
-        input_data: Input data for this step
-        output_data: Output/result data from this step
-        duration_seconds: Time taken for this step
-        success: Whether the step completed successfully
-        error_message: Error message if step failed
-        job: Related Job object
-    """
+    """Analysis log entry."""
 
     __tablename__ = "analysis_log"
 
