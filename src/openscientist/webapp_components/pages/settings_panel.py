@@ -17,7 +17,8 @@ from openscientist.auth import get_current_user_id, is_current_user_admin
 from openscientist.database.models import AdminSettingChange, AdminSettings, User
 from openscientist.database.session import get_admin_session
 from openscientist.settings import get_settings
-from openscientist.webapp_components.ui_components import render_alert_banner, render_empty_state
+from openscientist.webapp_components.components.banners import render_alert_banner
+from openscientist.webapp_components.components.common import render_empty_state
 
 logger = logging.getLogger(__name__)
 

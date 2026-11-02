@@ -10,14 +10,14 @@ from openscientist.auth import get_current_user_id, require_auth
 from openscientist.database.models import Skill, SkillSource
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.common import (
     format_relative_time,
     get_category_color,
     render_error_state,
     render_loading_spinner,
-    render_navigator,
     render_not_found_state,
 )
+from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)

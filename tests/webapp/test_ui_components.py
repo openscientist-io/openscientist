@@ -9,23 +9,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 from openscientist.job_manager import JobManager, JobStatus
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.badges import (
+    _get_job_id_badge_html,
+    _get_pubmed_badge_html,
+    register_badge_head_html,
+    render_job_id_badge,
+    render_pmid_badge,
+    render_text_with_pmid_links,
+    transform_pmid_references,
+)
+from openscientist.webapp_components.components.common import (
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
     OPENSCIENTIST_RELEASE_URL,
     STATUS_COLORS,
-    _get_job_id_badge_html,
-    _get_pubmed_badge_html,
     _inject_thinking_status_styles,
     get_project_resource_links,
-    register_badge_head_html,
-    render_job_id_badge,
-    render_job_id_slot,
-    render_pmid_badge,
-    render_status_cell_slot,
-    render_text_with_pmid_links,
     render_thinking_status,
-    transform_pmid_references,
+)
+from openscientist.webapp_components.components.job_table import (
+    render_job_id_slot,
+    render_status_cell_slot,
 )
 
 
@@ -124,7 +128,7 @@ class TestRenderErrorCard:
         from nicegui import ui
 
         from openscientist.job.types import JobInfo
-        from openscientist.webapp_components.ui_components import render_error_card
+        from openscientist.webapp_components.components.banners import render_error_card
 
         error_info = {
             "category": "configuration",
@@ -418,12 +422,16 @@ class TestRenderDeleteDialog:
         )
 
     async def test_showing_the_dialog_uses_the_job_s_current_state(self):
-        from openscientist.webapp_components.ui_components import render_delete_dialog
+        from openscientist.webapp_components.components.dialogs import render_delete_dialog
 
         job_id = "12345678-1234-1234-1234-123456789012"
         mock_ui = self._mock_ui()
         manager = self._running_manager(job_id)
-        with patch("openscientist.webapp_components.ui_components.ui", mock_ui):
+        with (
+            patch("openscientist.webapp_components.components.dialogs.ui", mock_ui),
+            patch("openscientist.webapp_components.components.badges.ui", mock_ui),
+            patch("openscientist.webapp_components.components.common.ui", mock_ui),
+        ):
             dialog = render_delete_dialog(job_id, manager)
             show_calls = [c for c in dialog.on.call_args_list if c.args and c.args[0] == "show"]
             assert show_calls, "the dialog must reload its content when shown"
@@ -436,7 +444,7 @@ class TestRenderDeleteDialog:
         manager.get_job.assert_awaited_once_with(job_id)
 
     async def test_confirm_cancels_the_active_job_before_deleting_it(self):
-        from openscientist.webapp_components import ui_components as uc
+        from openscientist.webapp_components.components import dialogs
 
         job_id = str(uuid4())
         owner = str(uuid4())
@@ -452,14 +460,18 @@ class TestRenderDeleteDialog:
             yield session
 
         with (
-            patch.object(uc, "ui", mock_ui),
-            patch.object(uc, "get_current_user_id", return_value=owner),
-            patch.object(uc, "get_admin_session", _admin_session),
+            patch.object(dialogs, "ui", mock_ui),
+            patch.object(dialogs, "get_current_user_id", return_value=owner),
+            patch.object(dialogs, "get_admin_session", _admin_session),
             patch.object(
-                uc, "render_dialog_actions", side_effect=lambda **kwargs: actions.update(kwargs)
+                dialogs,
+                "render_dialog_actions",
+                side_effect=lambda **kwargs: actions.update(kwargs),
             ),
         ):
-            uc.render_delete_dialog(job_id, manager, on_deleted=lambda: deleted.update(value=True))
+            dialogs.render_delete_dialog(
+                job_id, manager, on_deleted=lambda: deleted.update(value=True)
+            )
             await actions["on_confirm"]()  # type: ignore[arg-type]
 
         manager.cancel_job.assert_awaited_once_with(job_id)

@@ -12,11 +12,11 @@ from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
 from openscientist.exceptions import BudgetExceededError
 from openscientist.providers import check_provider_config
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
-    render_navigator,
     render_pending_approval_notice,
 )
+from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,

@@ -39,7 +39,7 @@ from openscientist.orchestrator.report import (
     _persist_final_status,
     _ReportOutcome,
 )
-from openscientist.webapp_components import ui_components
+from openscientist.webapp_components.components import badges, common, dialogs
 from openscientist.webapp_components.pages import job_detail
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
@@ -482,9 +482,11 @@ async def test_the_delete_dialog_warns_only_when_the_job_is_active(
     manager = JobManager(jobs_dir=tmp_path)
     with (
         patch.object(manager, "get_job", new_callable=AsyncMock, return_value=_job_info(status)),
-        patch.object(ui_components, "ui") as mock_ui,
+        patch.object(dialogs, "ui") as mock_ui,
+        patch.object(badges, "ui", mock_ui),
+        patch.object(common, "ui", mock_ui),
     ):
-        dialog = cast(MagicMock, ui_components.render_delete_dialog(str(uuid4()), manager))
+        dialog = cast(MagicMock, dialogs.render_delete_dialog(str(uuid4()), manager))
         show = [call for call in dialog.on.call_args_list if call.args and call.args[0] == "show"]
         await show[0].args[1]()
     labels = [call.args[0] for call in mock_ui.label.call_args_list if call.args]
@@ -522,12 +524,12 @@ async def test_deleting_a_job_cancels_it_only_while_it_is_active(
         yield SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(owner_id=owner)))
 
     with (
-        patch.object(ui_components, "render_dialog_actions", _capture_actions),
-        patch.object(ui_components, "get_current_user_id", return_value=str(owner)),
-        patch.object(ui_components, "get_admin_session", _admin_session),
-        patch.object(ui_components, "ui") as mock_ui,
+        patch.object(dialogs, "render_dialog_actions", _capture_actions),
+        patch.object(dialogs, "get_current_user_id", return_value=str(owner)),
+        patch.object(dialogs, "get_admin_session", _admin_session),
+        patch.object(dialogs, "ui") as mock_ui,
     ):
-        ui_components.render_delete_dialog(job_id, manager)
+        dialogs.render_delete_dialog(job_id, manager)
         await captured[0]()
     if cancels_first:
         manager.cancel_job.assert_awaited_once_with(job_id)

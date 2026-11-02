@@ -16,7 +16,7 @@ import markdown as md  # type: ignore[import-untyped]
 
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
-from openscientist.webapp_components.ui_components import transform_pmid_references
+from openscientist.webapp_components.components.badges import transform_pmid_references
 
 logger = logging.getLogger(__name__)
 
