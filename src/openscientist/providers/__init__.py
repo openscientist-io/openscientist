@@ -1,11 +1,4 @@
-"""
-Provider abstraction for model access (Anthropic, CBORG, Vertex AI, Bedrock, Azure Foundry).
-
-Providers handle:
-- Environment configuration for Claude CLI
-- Cost tracking and budget enforcement
-- Provider-specific authentication and setup
-"""
+"""Provider abstraction for model access."""
 
 import importlib
 from typing import cast
@@ -13,10 +6,9 @@ from typing import cast
 from openscientist.providers.base import CostInfo, Provider
 from openscientist.settings import get_settings
 
-# The single provider registry: id -> (module, class name). Dotted paths keep
-# provider SDK dependencies optional (imported on demand) and avoid importing
-# the agent layer here. The agent factory derives from this, so there is no
-# second registry to keep in sync.
+# The single provider registry. Dotted paths keep provider SDK dependencies
+# optional, and the agent factory derives from it so no second registry
+# needs syncing.
 _PROVIDER_CLASS_PATHS: dict[str, tuple[str, str]] = {
     "anthropic": ("openscientist.providers.anthropic", "AnthropicProvider"),
     "cborg": ("openscientist.providers.cborg", "CborgProvider"),
@@ -40,9 +32,7 @@ def provider_class(provider_name: str) -> type[Provider]:
     """Resolve a provider id to its class without instantiating it.
 
     Instantiation validates auth (``Provider.__init__``), which a caller that
-    only needs to inspect the class (e.g. to derive the agent backend for a
-    past job) may not have configured. The class is imported on demand so
-    provider SDK dependencies stay optional.
+    only needs to inspect the class may not have configured.
     """
     try:
         module_path, class_name = _PROVIDER_CLASS_PATHS[provider_name.lower()]
@@ -55,39 +45,21 @@ def provider_class(provider_name: str) -> type[Provider]:
 
 
 def get_provider() -> Provider:
-    """
-    Get the configured provider based on environment.
+    """Get the configured provider from ``OPENSCIENTIST_PROVIDER``.
 
-    Returns:
-        Provider instance. Anthropic/CBORG/Vertex/Bedrock/Foundry are
-        ClaudeCompatible, OpenAI/Azure-OpenAI are CodexCompatible, and Ollama,
-        vLLM and llama.cpp are self-hosted OpenAiWireCompatible (omp only, not
-        Codex backends).
-
-    Raises:
-        ValueError: If provider is unknown or misconfigured
-
-    Environment:
-        OPENSCIENTIST_PROVIDER: Provider name ("anthropic", "cborg", "vertex",
-                               "bedrock", "foundry", "openai", "azure-openai",
-                               "ollama", "vllm", "llamacpp"). Required: an unset
-                               value raises at startup.
+    Anthropic/CBORG/Vertex/Bedrock/Foundry are ClaudeCompatible,
+    OpenAI/Azure-OpenAI are CodexCompatible, and Ollama, vLLM and llama.cpp are
+    self-hosted OpenAiWireCompatible (omp only, not Codex backends). An unset
+    provider raises at startup.
     """
     return provider_class(get_settings().provider.provider_id)()
 
 
 def check_provider_config() -> tuple[bool, str, list[str]]:
-    """
-    Check if the provider is properly configured without raising exceptions.
+    """Check if the provider is properly configured without raising.
 
-    Returns:
-        Tuple of (is_configured, provider_name, error_messages)
-        - is_configured: True if provider can be instantiated
-        - provider_name: Name of the configured provider
-        - error_messages: List of configuration error messages (empty if configured)
-
-    Environment:
-        SIMULATE_PROVIDER_ERROR: Set to "true" for E2E testing of error UI
+    ``SIMULATE_PROVIDER_ERROR=true`` simulates a misconfiguration for E2E tests
+    of the error UI.
     """
     settings = get_settings()
 
@@ -115,7 +87,6 @@ def check_provider_config() -> tuple[bool, str, list[str]]:
         get_provider()
         return (True, provider_name, [])
     except ValueError as e:
-        # Extract error messages from the exception
         error_str = str(e)
         errors = [line.strip() for line in error_str.split("\n") if line.strip()]
         return (False, provider_name, errors)

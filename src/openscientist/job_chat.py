@@ -109,14 +109,8 @@ def _append_literature(parts: list[str], literature: list[Any]) -> None:
         if not isinstance(lit, dict):
             continue
         title = lit.get("title", "Unknown")
-        relevance = lit.get("relevance_score", "unknown")
-        parts.append(f"\n## Paper {i} (Relevance: {relevance})")
+        parts.append(f"\n## Paper {i}")
         parts.append(f"Title: {title}")
-
-        key_findings = lit.get("key_findings", [])
-        if key_findings:
-            parts.append("Key findings:")
-            parts.extend(f"- {kf}" for kf in key_findings)
     parts.append("")
 
 
@@ -225,8 +219,28 @@ async def send_chat_message(
         LLM's response text
 
     Raises:
+        BudgetExceededError: A budget limit refuses the turn, before the
+            container starts
+        ValueError: If the job does not exist
         Exception: If executor call fails
     """
+    from openscientist.budget import check_budget
+    from openscientist.exceptions import BudgetExceededError
+    from openscientist.job_manager import _effective_model
+    from openscientist.settings import get_settings
+
+    job = await session.get(Job, job_id)
+    if job is None:
+        raise ValueError(f"Job {job_id} not found")
+    verdict = await check_budget(
+        job_id=job_id,
+        provider_id=job.llm_provider,
+        model=(job.llm_config or {}).get("model") or _effective_model(get_settings().provider),
+        include_unpriced=True,
+    )
+    if not verdict.ok:
+        raise BudgetExceededError(verdict.message or "A budget limit is reached")
+
     # Use executor (context is read on-demand by the agent from job_dir files)
     assistant_message = await _send_message_via_container(session, job_id, message, job_dir)
 

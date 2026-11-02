@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import MissingImageError
 from openscientist.job_container import to_host_path
 from openscientist.settings import get_settings
@@ -60,6 +61,10 @@ class ContainerManager:
         """
         Initialize container manager.
 
+        The memory, CPU, and timeout limits are read from the admin settings
+        row at each execution when not given here, so an admin edit applies at
+        the next execution.
+
         Args:
             image: Docker image for executor containers
             memory_limit: Memory limit (e.g., "2g")
@@ -68,9 +73,9 @@ class ContainerManager:
         """
         settings = get_settings()
         self.image = image or settings.container.executor_image
-        self.memory_limit = memory_limit or settings.container.executor_memory
-        self.cpu_limit = cpu_limit if cpu_limit is not None else settings.container.executor_cpu
-        self.timeout = timeout if timeout is not None else settings.container.executor_timeout
+        self.memory_limit = memory_limit
+        self.cpu_limit = cpu_limit
+        self.timeout = timeout
         self._client: "_docker_module.DockerClient | None" = None
 
     @property
@@ -243,7 +248,14 @@ class ContainerManager:
         """
         import docker.errors
 
+        admin = current_admin_settings_sync()
         timeout = timeout if timeout is not None else self.timeout
+        if timeout is None:
+            timeout = admin.executor_timeout_seconds
+        memory_limit = (
+            self.memory_limit if self.memory_limit is not None else f"{admin.executor_memory_mib}m"
+        )
+        cpu_limit = self.cpu_limit if self.cpu_limit is not None else admin.executor_cpu
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -297,8 +309,8 @@ class ContainerManager:
             "Spawning executor container: %s (image=%s, mem=%s, cpu=%.2f)",
             container_name,
             self.image,
-            self.memory_limit,
-            self.cpu_limit,
+            memory_limit,
+            cpu_limit,
         )
 
         from openscientist.job_container import resolve_docker_network
@@ -306,7 +318,7 @@ class ContainerManager:
         # Air-gapped executors run untrusted code and need no network, so use
         # Docker's no-networking "none" network. Otherwise attach the resolved
         # compose network, unchanged.
-        if get_settings().airgap.enabled:
+        if admin.airgapped:
             network = "none"
         else:
             network = resolve_docker_network(self.client, get_settings().container.agent_network)
@@ -321,8 +333,8 @@ class ContainerManager:
                 detach=False,
                 network=network,
                 # Resource limits
-                mem_limit=self.memory_limit,
-                nano_cpus=int(self.cpu_limit * 1e9),
+                mem_limit=memory_limit,
+                nano_cpus=int(cpu_limit * 1e9),
                 # Security settings
                 read_only=False,  # Need write access for plots
                 security_opt=["no-new-privileges:true"],

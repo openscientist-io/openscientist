@@ -85,5 +85,20 @@ class TestFoundryClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="foundry-custom")
-        with patch("openscientist.providers.foundry.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.foundry.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert FoundryProvider().claude_model_name() == "foundry-custom"
+
+
+def test_airgap_posture_is_unsupported_without_credentials() -> None:
+    """Without an endpoint the provider cannot be routed through the proxy."""
+    from types import SimpleNamespace
+
+    from openscientist.providers.base import AirgapEgress
+
+    posture = FoundryProvider.airgap_posture(
+        SimpleNamespace(anthropic_foundry_base_url=None, anthropic_foundry_resource=None)  # type: ignore[arg-type]
+    )
+    assert posture.mode is AirgapEgress.UNSUPPORTED

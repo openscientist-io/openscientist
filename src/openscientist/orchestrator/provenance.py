@@ -68,9 +68,9 @@ def _harness_binary(harness: AgentBackend) -> str:
         from codex_cli_bin import bundled_codex_path  # type: ignore[import-untyped]
 
         return str(bundled_codex_path())
-    from openscientist.agent.omp_agent import _resolve_omp_bin
+    from openscientist.agent.base import _resolve_bin
 
-    return _resolve_omp_bin()
+    return _resolve_bin("OPENSCIENTIST_OMP_BIN", "omp")
 
 
 def _harness_cli_version(command: str) -> str | None:

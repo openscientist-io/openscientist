@@ -1,10 +1,4 @@
-"""
-Review token model for anonymous reviewer access.
-
-ReviewTokens allow admins to generate magic-link URLs that create anonymous
-user accounts on first click. Reviewers (e.g., Nature journal reviewers) can
-access the system without providing their name or email via OAuth.
-"""
+"""Review token model for anonymous reviewer access."""
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -21,22 +15,10 @@ if TYPE_CHECKING:
 
 
 class ReviewToken(UUIDv7Mixin, Base):
-    """
-    Magic-link token for anonymous reviewer access.
+    """Magic-link token for anonymous reviewer access.
 
-    Admins create tokens with a label (used as the reviewer's display name).
-    When a reviewer clicks the magic link, an anonymous user account is created
-    and a session is established. The same token can be redeemed multiple times
-    to re-login the same anonymous user.
-
-    Attributes:
-        token_hash: SHA-256 hash of the plaintext token (unique)
-        label: Admin-chosen label, used as the reviewer's display name
-        created_by_id: Admin user who created this token
-        expires_at: When the token expires (null = no expiry)
-        redeemed_at: When the token was first redeemed (null = not yet)
-        redeemed_by_id: Anonymous user created on first redemption
-        is_active: Whether the token is active (admin can revoke)
+    The label becomes the reviewer's display name. The same token can be
+    redeemed multiple times to re-login the same anonymous user.
     """
 
     __tablename__ = "review_tokens"
@@ -100,19 +82,16 @@ class ReviewToken(UUIDv7Mixin, Base):
 
     @property
     def is_expired(self) -> bool:
-        """Check if the token has expired."""
         if self.expires_at is None:
             return False
         return datetime.now(UTC) >= self.expires_at
 
     @property
     def is_redeemed(self) -> bool:
-        """Check if the token has been redeemed."""
         return self.redeemed_at is not None
 
     @property
     def status(self) -> str:
-        """Get the token's current status."""
         if not self.is_active:
             return "revoked"
         if self.is_expired:

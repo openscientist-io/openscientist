@@ -287,6 +287,7 @@ async def test_container_code_runs_as_the_job_login(
         _persist_job_cost_record,
         _sync_version_metadata,
     )
+    from openscientist.orchestrator.report import _recorded_run_environment
 
     await _fill_knowledge(jobs.own, "Own")
     ks = await KnowledgeState.load_from_database(str(jobs.own))
@@ -306,6 +307,7 @@ async def test_container_code_runs_as_the_job_login(
         return_value={"agent_harness": "omp"},
     ):
         await _sync_version_metadata(str(jobs.own))
+    assert await _recorded_run_environment(tmp_path / str(jobs.own)) == "Run environment: Oh My Pi"
 
     os.environ.setdefault("OPENSCIENTIST_JOB_ID", str(jobs.own))
     os.environ.setdefault("OPENSCIENTIST_JOB_DIR", str(tmp_path))
@@ -375,3 +377,43 @@ async def test_the_job_login_records_when_its_job_ends(
         ).one()
     assert row.ended_at is not None
     assert row.agent_status is None
+
+
+@pytest.mark.asyncio
+async def test_the_job_login_records_why_its_job_stopped(
+    jobs: _Jobs, test_engine: AsyncEngine, container_database: object, tmp_path: Path
+) -> None:
+    """The container's final completed write may carry the budget note, and the
+    login may write it for its own job only."""
+    from openscientist.orchestrator.iteration import update_job_status
+
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE jobs SET status = 'running' WHERE id = :id"), {"id": jobs.own}
+        )
+        await conn.execute(
+            text("UPDATE jobs SET status = 'running' WHERE id = :id"), {"id": jobs.other}
+        )
+    note = "Job cost limit of $5.00 reached: the job has spent $5.00."
+    assert await update_job_status(
+        tmp_path / str(jobs.own), "completed", stop_note=note, allowed_from=("running",)
+    )
+    # The other job's row is invisible to the login, so the write applies nowhere.
+    assert not await update_job_status(
+        tmp_path / str(jobs.other), "completed", stop_note=note, allowed_from=("running",)
+    )
+    async with test_engine.connect() as conn:
+        own = (
+            await conn.execute(
+                text("SELECT status, stop_note FROM jobs WHERE id = :id"), {"id": jobs.own}
+            )
+        ).one()
+        other = (
+            await conn.execute(
+                text("SELECT status, stop_note FROM jobs WHERE id = :id"), {"id": jobs.other}
+            )
+        ).one()
+    assert own.status == "completed"
+    assert own.stop_note == note
+    assert other.status == "running"
+    assert other.stop_note is None

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID
+
+from sqlalchemy import select
 
 from openscientist.agent.base import AbstractAgent, IterationResult
+from openscientist.database.models.job import Job as JobModel
+from openscientist.database.session import async_session_local
 from openscientist.exceptions import OpenScientistError
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
@@ -16,7 +22,9 @@ from openscientist.orchestrator.iteration import (
     build_report_retry_prompt,
     update_job_status,
 )
+from openscientist.orchestrator.provenance import _STAMP_DEADLINE_SECONDS
 from openscientist.providers.base import Provider
+from openscientist.run_environment import run_environment_text
 from openscientist.transcript import TranscriptEntry
 
 logger = logging.getLogger(__name__)
@@ -85,6 +93,23 @@ def _ensure_report_written(
     return False
 
 
+async def _recorded_run_environment(job_dir: Path) -> str | None:
+    """The environment the run recorded, as the report footer names it, or None
+    when it recorded nothing or the record cannot be read."""
+    try:
+        async with asyncio.timeout(_STAMP_DEADLINE_SECONDS):
+            async with async_session_local() as session:
+                version_info = (
+                    await session.execute(
+                        select(JobModel.version_info).where(JobModel.id == UUID(job_dir.name))
+                    )
+                ).scalar_one_or_none()
+    except Exception as e:
+        logger.warning("Could not read version provenance for job %s: %s", job_dir.name, e)
+        return None
+    return run_environment_text(version_info)
+
+
 async def _try_generate_report_pdf(report_path: Path) -> None:
     """Generate HTML and PDF from the markdown report.
 
@@ -93,13 +118,14 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
     job_dir = report_path.parent
     html_path = job_dir / "final_report.html"
     pdf_path = job_dir / "final_report.pdf"
+    run_environment = await _recorded_run_environment(job_dir)
 
     try:
         from openscientist.report.pdf import render_report_pdf
         from openscientist.report.renderer import render_report_html
 
         # Render HTML with file:// image paths (for WeasyPrint)
-        html_content = render_report_html(report_path, job_dir)
+        html_content = render_report_html(report_path, job_dir, run_environment=run_environment)
         html_path.write_text(html_content, encoding="utf-8")
         logger.info("HTML report written: %s", html_path)
 
@@ -118,7 +144,9 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
         stripped_path = job_dir / "_final_report_stripped.md"
         stripped_path.write_text(stripped, encoding="utf-8")
         try:
-            markdown_to_pdf(stripped_path, pdf_path, add_footer=True)
+            markdown_to_pdf(
+                stripped_path, pdf_path, add_footer=True, run_environment=run_environment
+            )
         finally:
             stripped_path.unlink(missing_ok=True)
     except Exception as fallback_exc:
@@ -262,11 +290,14 @@ async def _run_report_generation_phase(
 async def _persist_final_status(
     job_dir: Path,
     report_outcome: _ReportOutcome,
+    stop_note: str | None = None,
 ) -> str:
     """Persist final job status based on report generation outcome."""
     final_status = "completed" if report_outcome.success else "failed"
     if final_status == "completed":
-        await update_job_status(job_dir, "completed", allowed_from=("generating_report",))
+        await update_job_status(
+            job_dir, "completed", stop_note=stop_note, allowed_from=("generating_report",)
+        )
     else:
         await update_job_status(
             job_dir,

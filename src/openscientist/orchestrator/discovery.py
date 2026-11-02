@@ -24,6 +24,7 @@ from openscientist.agent.factory import agent_class_for_provider_id, get_agent
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
+from openscientist.exec_broker_client import ask_budget
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
@@ -46,6 +47,30 @@ logger = logging.getLogger(__name__)
 
 class _DiscoveryCancelledError(RuntimeError):
     """Raised when a job is cancelled during discovery execution."""
+
+
+class _BudgetStopError(RuntimeError):
+    """Raised when the web's budget check says the job must stop iterating.
+
+    ``note`` is the message the job ends with, naming the limit or why the
+    budget could not be checked.
+    """
+
+    def __init__(self, note: str) -> None:
+        super().__init__(note)
+        self.note = note
+
+
+async def _check_budget_before_iteration(job_id: str) -> None:
+    """Ask the web whether the job may run its next iteration.
+
+    Raises:
+        _BudgetStopError: A limit was reached, or the check could not be
+            answered in time, carrying the note the job ends with.
+    """
+    verdict = await ask_budget(job_id=job_id)
+    if not verdict.ok:
+        raise _BudgetStopError(verdict.message or "The budget could not be checked")
 
 
 def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
@@ -191,6 +216,7 @@ async def _run_primary_discovery_loop(
     )
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
+    await _check_budget_before_iteration(job_id)
     ledger.begin("discovery", 1)
     result = await executor.run_iteration(initial_prompt, reset_session=True)
     _check_turn_outcome(result, 1)
@@ -226,6 +252,7 @@ async def _run_primary_discovery_loop(
 
     for iteration in range(2, max_iterations + 1):
         await _assert_job_not_cancelled(job_id)
+        await _check_budget_before_iteration(job_id)
         ks = await KnowledgeState.load_from_database(job_id)
         if pending_feedback is None:
             pending_feedback = ks.get_feedback_for_iteration(iteration)
@@ -452,14 +479,22 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     log_file = job_dir / "claude_iterations.log"
 
     try:
-        await _run_primary_discovery_loop(
-            executor=executor,
-            job_dir=job_dir,
-            runtime=runtime,
-            provenance_dir=provenance_dir,
-            log_file=log_file,
-            ledger=ledger,
-        )
+        # A budget limit (or a check the web could not answer in time) stops the
+        # iterations but not the report, so the note is captured and the report
+        # phase still runs.
+        stop_note: str | None = None
+        try:
+            await _run_primary_discovery_loop(
+                executor=executor,
+                job_dir=job_dir,
+                runtime=runtime,
+                provenance_dir=provenance_dir,
+                log_file=log_file,
+                ledger=ledger,
+            )
+        except _BudgetStopError as stopped:
+            stop_note = stopped.note
+            logger.info("Discovery stopped at a budget limit for job %s: %s", job_id, stopped.note)
         ledger.begin("report", None)
         report_outcome = await _run_report_generation_phase(
             executor=executor,
@@ -468,7 +503,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             description=runtime.get("description"),
         )
         await ledger.record()
-        final_status = await _persist_final_status(job_dir, report_outcome)
+        final_status = await _persist_final_status(job_dir, report_outcome, stop_note=stop_note)
         ks = await KnowledgeState.load_from_database(job_id)
         return {
             "job_id": job_id,
