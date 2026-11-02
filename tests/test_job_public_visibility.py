@@ -8,10 +8,13 @@ owner and share recipients keep everything. Only the owner may change the flag.
 from __future__ import annotations
 
 import base64
+import contextlib
 import io
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -22,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openscientist.artifact_packager import artifact_file, create_artifacts_zip_file
 from openscientist.database.models import Job, JobShare, User
 from openscientist.database.rls import set_current_user
+from openscientist.job.types import JobInfo, JobStatus
 from openscientist.share_service import (
     PUBLIC_VIEWER_EXCLUDED_DIRS,
     set_job_public,
@@ -29,6 +33,7 @@ from openscientist.share_service import (
     withheld_artifact_dirs,
 )
 from openscientist.webapp_components.components import dialogs as dialog_module
+from openscientist.webapp_components.pages.job_detail import _owner_name, timeline
 from tests.helpers import enable_rls, fake_admin_session
 
 
@@ -388,3 +393,228 @@ async def test_dialog_switch_toggles_visibility_against_the_database(
         assert (
             await db_session.execute(select(Job.is_public).where(Job.id == job.id))
         ).scalar_one() is True
+
+
+def _switch_controller(job_id: str) -> dialog_module._ShareDialogController:
+    """A share-dialog controller wired to a mocked switch and empty containers."""
+    return dialog_module._ShareDialogController(
+        job_id=job_id,
+        shares_container=MagicMock(),
+        public_switch=MagicMock(),
+        search_input=MagicMock(),
+        search_results=MagicMock(),
+        selected_user_container=MagicMock(),
+        share_action_row=MagicMock(),
+        permission_select=MagicMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_switch_loads_the_stored_flag_for_owner_and_hides_it_from_viewers(
+    db_session: AsyncSession, test_user: User, test_user2: User
+):
+    public_job = await _job(db_session, test_user, is_public=True)
+    private_job = await _job(db_session, test_user, is_public=False)
+
+    with patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)):
+        # The owner sees the switch and it mirrors each job's stored flag.
+        for job, stored in ((public_job, True), (private_job, False)):
+            controller = _switch_controller(str(job.id))
+            with patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)):
+                await controller.refresh_public_switch()
+            assert controller.public_switch.visible is True
+            assert controller.public_switch.value is stored
+
+        # A non-owner never sees the switch, public or private.
+        controller = _switch_controller(str(public_job.id))
+        with patch.object(dialog_module, "get_current_user_id", return_value=str(test_user2.id)):
+            await controller.refresh_public_switch()
+        assert controller.public_switch.visible is False
+
+
+@pytest.mark.asyncio
+async def test_switch_change_persists_and_refreshes(db_session: AsyncSession, test_user: User):
+    job = await _job(db_session, test_user, is_public=False)
+    controller = _switch_controller(str(job.id))
+    with (
+        patch.object(dialog_module, "ui") as mock_ui,
+        patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
+        patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
+    ):
+        await controller.on_public_change(SimpleNamespace(value=True))
+    # The owner's toggle reached the database and a confirmation was shown.
+    assert (
+        await db_session.execute(select(Job.is_public).where(Job.id == job.id))
+    ).scalar_one() is True
+    mock_ui.notify.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_switch_change_is_ignored_while_syncing(db_session: AsyncSession, test_user: User):
+    job = await _job(db_session, test_user, is_public=False)
+    controller = _switch_controller(str(job.id))
+    controller._syncing_public_switch = True
+    with (
+        patch.object(dialog_module, "ui") as mock_ui,
+        patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
+        patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
+    ):
+        await controller.on_public_change(SimpleNamespace(value=True))
+    # The syncing guard bails before writing or notifying.
+    assert (
+        await db_session.execute(select(Job.is_public).where(Job.id == job.id))
+    ).scalar_one() is False
+    mock_ui.notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_switch_change_requires_sign_in(db_session: AsyncSession, test_user: User):
+    job = await _job(db_session, test_user, is_public=False)
+    controller = _switch_controller(str(job.id))
+    with (
+        patch.object(dialog_module, "ui") as mock_ui,
+        patch.object(dialog_module, "get_current_user_id", return_value=None),
+        patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
+    ):
+        await controller.on_public_change(SimpleNamespace(value=True))
+    # No signed-in user means no write, and the switch is not refreshed.
+    assert (
+        await db_session.execute(select(Job.is_public).where(Job.id == job.id))
+    ).scalar_one() is False
+    mock_ui.notify.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_switch_load_failure_leaves_the_switch_untouched(
+    db_session: AsyncSession, test_user: User
+):
+    job = await _job(db_session, test_user, is_public=True)
+    controller = _switch_controller(str(job.id))
+
+    @contextlib.asynccontextmanager
+    async def _broken():
+        raise RuntimeError("database unavailable")
+        yield  # never reached
+
+    with (
+        patch.object(dialog_module, "get_admin_session", _broken),
+        patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
+    ):
+        await controller.refresh_public_switch()  # must not raise
+    # The failed load never assigned the switch a real visibility value.
+    assert not isinstance(controller.public_switch.visible, bool)
+
+
+@pytest.mark.asyncio
+async def test_switch_change_failure_notifies_an_error(db_session: AsyncSession, test_user: User):
+    job = await _job(db_session, test_user, is_public=False)
+    controller = _switch_controller(str(job.id))
+    with (
+        patch.object(dialog_module, "ui") as mock_ui,
+        patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
+        patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
+        patch.object(
+            dialog_module,
+            "_set_job_public_from_ui",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+    ):
+        await controller.on_public_change(SimpleNamespace(value=True))
+    # The failed write left the flag untouched and surfaced an error.
+    assert (
+        await db_session.execute(select(Job.is_public).where(Job.id == job.id))
+    ).scalar_one() is False
+    mock_ui.notify.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_refresh_shares_reloads_visibility(db_session: AsyncSession, test_user: User):
+    job = await _job(db_session, test_user, is_public=True)
+    controller = _switch_controller(str(job.id))
+    with (
+        patch.object(dialog_module, "ui"),
+        patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
+        patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
+    ):
+        await controller.refresh_shares()
+    # refresh_shares reloaded the switch from the database.
+    assert controller.public_switch.visible is True
+    assert controller.public_switch.value is True
+
+
+@pytest.mark.asyncio
+async def test_load_public_state_reports_a_missing_job(db_session: AsyncSession):
+    missing = str(UUID(int=0))  # a job id that exists in no row
+    with patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)):
+        is_public, owner_id = await dialog_module._load_job_public_state(missing)
+    assert is_public is False
+    assert owner_id is None
+
+
+@pytest.mark.asyncio
+async def test_set_public_to_private_returns_the_private_message(
+    db_session: AsyncSession, test_user: User
+):
+    job = await _job(db_session, test_user, is_public=True)
+    with patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)):
+        success, _message = await dialog_module._set_job_public_from_ui(
+            str(job.id), False, str(test_user.id)
+        )
+    assert success is True
+    assert (
+        await db_session.execute(select(Job.is_public).where(Job.id == job.id))
+    ).scalar_one() is False
+
+
+@pytest.mark.asyncio
+async def test_owner_name_lookup_reads_the_owner_name(
+    db_session: AsyncSession, test_user: User, test_user2: User
+):
+    job = await _job(db_session, test_user, is_public=True)
+    with patch("openscientist.database.session.get_admin_session", fake_admin_session(db_session)):
+        name = await _owner_name(str(job.id), is_owner=False)
+    # A viewer is told the owner's display name, never their email.
+    assert name == test_user.name
+    assert name != test_user.email
+    with patch("openscientist.database.session.get_admin_session", fake_admin_session(db_session)):
+        assert await _owner_name(str(job.id), is_owner=True) is None
+
+
+def test_stats_badges_mark_a_public_job() -> None:
+    public = JobInfo(
+        job_id="job-1",
+        research_question="Q",
+        status=JobStatus.COMPLETED,
+        created_at="2026-01-01T00:00:00",
+        is_public=True,
+    )
+    private = JobInfo(
+        job_id="job-2",
+        research_question="Q",
+        status=JobStatus.COMPLETED,
+        created_at="2026-01-01T00:00:00",
+        is_public=False,
+    )
+    assert ("Public", "anyone signed in", "teal") in timeline._stats_badges(public, 0)
+    assert not any(label == "Public" for label, _, _ in timeline._stats_badges(private, 0))
+
+
+def test_stats_content_shows_the_owner_label_to_viewers() -> None:
+    job = JobInfo(
+        job_id="job-1",
+        research_question="Q",
+        status=JobStatus.COMPLETED,
+        created_at="2026-01-01T00:00:00",
+        is_public=True,
+    )
+    owner = "Dr. Ada Lovelace"
+    context = SimpleNamespace(job_info=job, ks_data=None, owner_name=owner)
+    with (
+        patch.object(timeline, "ui") as mock_ui,
+        patch.object(timeline, "is_client_connected", return_value=True),
+        patch.object(timeline, "render_stat_badges"),
+    ):
+        timeline._render_job_stats_content(context)  # type: ignore[arg-type]
+    # The viewer is told who owns the job.
+    labels = [c.args[0] for c in mock_ui.label.call_args_list if c.args]
+    assert any(owner in label for label in labels)
