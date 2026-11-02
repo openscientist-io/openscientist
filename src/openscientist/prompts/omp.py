@@ -2,12 +2,8 @@
 
 Like the Codex fragments: omp surfaces skills natively (from ``.omp/skills/``),
 so these drop the ``.claude/`` paths and use omp's built-in ``read``/``write``
-tools.
-
-``OmpAgent`` runs omp with ``tools.xdev`` disabled, so the MCP tools are
-top-level callable tools rather than ``xd://`` devices. omp namespaces them as
-``mcp__<server>_<tool>``, which is what ``mcp_tool_prefix`` below renames the
-shared prompt's mentions to.
+tools. The MCP tools are namespaced as ``mcp__<server>_<tool>``, which
+``mcp_tool_prefix`` renames the shared prompt's mentions to.
 """
 
 from openscientist.prompts.common import BackendFragments

@@ -1,13 +1,17 @@
 """Tests for openscientist.job_container module."""
 
+import asyncio
 import hashlib
 import hmac
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from docker import errors as docker_errors
 from openscientist.exceptions import MissingImageError
@@ -28,8 +32,28 @@ from openscientist.job_container.secrets import (
     revoke_run_credentials,
 )
 from openscientist.providers.base import AirgapEgress, AirgapPosture
-from openscientist.settings import Settings
+from openscientist.settings import Settings, clear_settings_cache
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import assert_names_a_make_target
+
+
+@pytest.fixture(autouse=True)
+def _no_airgap_floor(monkeypatch: pytest.MonkeyPatch):
+    """The environment without the airgap floor, so the row alone decides."""
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+    """The row each launch reads the limits, lifetime, and airgap flag from."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 class _FakeProvider:
@@ -786,6 +810,7 @@ class TestJobSecretInjection:
             provider_env={},
             database_url="postgresql://agent",
             exec_token="job-1.exec",
+            airgapped=False,
         )
         expected = hmac.new(b"master-key", b"job_secret:job-1", hashlib.sha256).hexdigest()
         assert env["OPENSCIENTIST_SECRET_KEY"] == expected
@@ -801,6 +826,7 @@ class TestJobSecretInjection:
             provider_env={},
             database_url="postgresql://agent",
             exec_token="job-a.exec",
+            airgapped=False,
         )
         env_b = JobContainerRunner._build_container_environment(
             cast(Settings, settings),
@@ -809,6 +835,7 @@ class TestJobSecretInjection:
             provider_env={},
             database_url="postgresql://agent",
             exec_token="job-b.exec",
+            airgapped=False,
         )
         secret_a = env_a["OPENSCIENTIST_SECRET_KEY"]
         secret_b = env_b["OPENSCIENTIST_SECRET_KEY"]
@@ -835,7 +862,7 @@ class TestAirgapFirewallLaunch:
     """The job container runs behind the nftables egress firewall when air-gapped."""
 
     @staticmethod
-    def _settings(*, airgap: bool, provider_id: str = "ollama") -> SimpleNamespace:
+    def _settings(*, provider_id: str = "ollama") -> SimpleNamespace:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {}
         provider.codex_auth_host_path = None
@@ -849,11 +876,8 @@ class TestAirgapFirewallLaunch:
                 host_project_dir=None,
                 container_app_dir="/app",
                 agent_network=None,
-                agent_memory="8g",
-                agent_cpu=2.0,
                 agent_platform=None,
                 agent_image="openscientist-agent:latest",
-                agent_timeout=14400,
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -861,19 +885,27 @@ class TestAirgapFirewallLaunch:
             ),
             phenix=SimpleNamespace(phenix_host_path=None),
             secret_key="secret",
-            airgap=SimpleNamespace(enabled=airgap),
         )
 
-    def _launch(
-        self, settings: SimpleNamespace, posture: AirgapPosture | None = None
+    async def _launch(
+        self,
+        test_engine: AsyncEngine,
+        airgapped: bool,
+        posture: AirgapPosture | None = None,
+        provider_id: str = "ollama",
     ) -> dict[str, object]:
+        """Launch with the row's airgap flag, and return the container run kwargs."""
+        await set_admin_settings_row(test_engine, airgapped=airgapped)
         mock_client = MagicMock()
         mock_container = MagicMock()
         mock_container.short_id = "abc123"
         mock_client.containers.run.return_value = mock_container
         with (
             patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch(
+                "openscientist.job_container.runner.get_settings",
+                return_value=self._settings(provider_id=provider_id),
+            ),
             patch(
                 "openscientist.job_container.runner.get_provider",
                 return_value=_FakeProvider(posture),
@@ -890,11 +922,12 @@ class TestAirgapFirewallLaunch:
             patch.object(Path, "exists", return_value=True),
         ):
             runner = JobContainerRunner()
-            runner.launch("job-123", Path("/app/jobs/job-123"))
+            await asyncio.to_thread(runner.launch, "job-123", Path("/app/jobs/job-123"))
         return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
 
-    def test_airgap_launch_applies_firewall(self) -> None:
-        run_kwargs = self._launch(self._settings(airgap=True))
+    @pytest.mark.asyncio
+    async def test_airgap_launch_applies_firewall(self, test_engine: AsyncEngine) -> None:
+        run_kwargs = await self._launch(test_engine, airgapped=True)
         assert run_kwargs["cap_add"] == ["NET_ADMIN"]
         assert run_kwargs["user"] == "root"
         assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
@@ -907,27 +940,32 @@ class TestAirgapFirewallLaunch:
         assert "openscientist:8081" in entries
         assert "host.docker.internal:11434" not in entries
 
-    def test_airgap_launch_passes_no_command(self) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_launch_passes_no_command(self, test_engine: AsyncEngine) -> None:
         """The firewall entrypoint execs its arguments and falls back to the agent
         entrypoint only when it gets none, so a command here would silently replace
         the agent with whatever was passed."""
-        run_kwargs = self._launch(self._settings(airgap=True))
+        run_kwargs = await self._launch(test_engine, airgapped=True)
         assert "command" not in run_kwargs or run_kwargs["command"] is None
 
-    def test_non_airgap_launch_has_no_firewall(self) -> None:
-        run_kwargs = self._launch(self._settings(airgap=False))
+    @pytest.mark.asyncio
+    async def test_non_airgap_launch_has_no_firewall(self, test_engine: AsyncEngine) -> None:
+        run_kwargs = await self._launch(test_engine, airgapped=False)
         assert run_kwargs["cap_add"] is None
         assert run_kwargs["user"] is None
         assert run_kwargs["entrypoint"] is None
         environment = cast(dict[str, str], run_kwargs["environment"])
         assert "OPENSCIENTIST_FIREWALL_ALLOW" not in environment
 
-    def test_airgap_launch_supports_bedrock(self) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:
         posture = AirgapPosture(
             AirgapEgress.DIRECT,
             direct_endpoints=(("bedrock-runtime.us-east-1.amazonaws.com", 443),),
         )
-        run_kwargs = self._launch(self._settings(airgap=True, provider_id="bedrock"), posture)
+        run_kwargs = await self._launch(
+            test_engine, airgapped=True, provider_id="bedrock", posture=posture
+        )
         environment = cast(dict[str, str], run_kwargs["environment"])
         entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
         assert "bedrock-runtime.us-east-1.amazonaws.com:443" in entries
