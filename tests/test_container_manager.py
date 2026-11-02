@@ -18,7 +18,7 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
-from tests.helpers import assert_names_a_make_target
+from tests.helpers import assert_names_a_build_command
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -151,7 +151,7 @@ class TestContainerManagerUnit:
 
         assert result["success"] is False
         assert manager.image in result["error"]
-        assert_names_a_make_target(result["error"])
+        assert_names_a_build_command(result["error"])
 
     def test_cleanup_job_containers(self):
         """Test cleanup of containers by job ID."""
@@ -695,7 +695,7 @@ class TestContainerManagerIntegration:
 
         manager = ContainerManager()
         if not manager.check_image_available():
-            pytest.skip("Executor image not built. Run 'make build' first.")
+            pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
 
     def test_execute_simple_code(self):
         """Test executing simple Python code."""

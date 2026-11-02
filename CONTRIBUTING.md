@@ -13,10 +13,8 @@
 Create the env files with database configuration:
 
 ```bash
-# Copy the example environment files, then fill in every password
-cp .env.example .env
-cp .env.db.example .env.db        # superuser, read only by postgres and db-bootstrap
-cp .env.owner.example .env.owner  # schema owner, read only by db-bootstrap and migrate
+# Create the env files, generating the database passwords and the master secret
+uv run openscientist setup
 
 # Start the database, create its logins and migrate as the owner
 docker compose -f docker-compose.yml up -d postgres
@@ -52,34 +50,25 @@ uv run ruff format src/ tests/
 ## Docker
 
 ```bash
-# Build images
-make build
+# Start the stack (builds the images first)
+uv run openscientist
 
-# Start services
-make start
+# Stop the stack
+uv run openscientist stop
 
 # View logs
-make logs
-
-# Restart / stop
-make restart
-make stop
+docker compose -f docker-compose.yml logs -f
 ```
 
 The app runs at <http://localhost:8080>.
 
 ## Docker (Production / Deploy)
 
+Deploying means running the CLI on the server. Clone the repository there, and the first run creates the env files and starts the stack.
+
 ```bash
-# Build and start
-make rebuild
-
-# Deploy to remote server (pulls latest code, rebuilds, restarts)
-make deploy                          # default host
-make deploy DEPLOY_HOST=myserver     # custom host
+uv run openscientist
 ```
-
-The remote server must have the repo cloned and a `.env` file configured (see `.env.example`).
 
 ## Code Quality
 

@@ -10,6 +10,7 @@ from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
 from pydantic_settings import BaseSettings
 
+from openscientist.cli.livecheck import LiveCheckOutcome
 from openscientist.settings import (
     AgentSettings,
     AirgapSettings,
@@ -128,9 +129,9 @@ class Step(abc.ABC):
         """Errors in this step's answers; empty when they are accepted."""
         return []
 
-    def after_validate(self, answers: dict[str, str]) -> str:
+    def after_validate(self, answers: dict[str, str]) -> str | LiveCheckOutcome:
         """Run after ``validate`` passes. 'pass' to continue, 're-ask' to re-ask
-        this step's questions (the live provider check)."""
+        this step's questions, or the live check's outcome when it ran one."""
         return "pass"
 
     def declared_envs(self) -> frozenset[str]:

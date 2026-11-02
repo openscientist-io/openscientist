@@ -144,7 +144,8 @@ def test_billed_check_offers_skip(monkeypatch):
     prompts = iter(["n"])  # decline the billed check
     monkeypatch.setattr(click, "prompt", lambda *args, **kwargs: next(prompts))
     outcome = livecheck.run_live_check("vertex", {"OPENSCIENTIST_PROVIDER": "vertex"})
-    assert outcome == "pass"
+    assert outcome.verdict == "pass"
+    assert outcome.billed_check_skipped
     assert calls == []  # declined, so no billed request was made
 
 
@@ -161,7 +162,8 @@ def test_billed_check_runs_when_accepted(monkeypatch):
     prompts = iter(["y"])  # accept the billed check
     monkeypatch.setattr(click, "prompt", lambda *args, **kwargs: next(prompts))
     outcome = livecheck.run_live_check("foundry", {"OPENSCIENTIST_PROVIDER": "foundry"})
-    assert outcome == "pass"
+    assert outcome.verdict == "pass"
+    assert not outcome.billed_check_skipped
     assert calls == ["foundry"]
 
 

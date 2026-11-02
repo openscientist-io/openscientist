@@ -66,8 +66,8 @@ class McpToolsUnavailableError(OpenScientistError):
 
 # ── Containers ────────────────────────────────────────────────────────
 
-#: The Makefile target that builds every image the web runs.
-BUILD_IMAGES_COMMAND = "make build"
+#: The command that builds every image the web runs.
+BUILD_IMAGES_COMMAND = "uv run openscientist"
 
 
 class MissingImageError(OpenScientistError):

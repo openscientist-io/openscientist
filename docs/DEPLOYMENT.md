@@ -11,19 +11,17 @@ This guide explains how to deploy OpenScientist using Docker.
 
 ### 1. Set up environment variables
 
-Create a `.env` file in the project root:
+The setup wizard creates the `.env` files, generating the database passwords and the master secret.
 
 ```bash
-cp .env.example .env
-# Edit .env with your provider credentials
+uv run openscientist setup
 ```
 
-### 2. Build and run with Docker Compose
+### 2. Build and run
 
 ```bash
-# Build and start
-make build
-make start
+# Build the images and start the stack
+uv run openscientist
 ```
 
 ### 3. Access the web interface

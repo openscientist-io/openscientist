@@ -37,6 +37,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
     )
     assert calls[0][1] == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"}
     assert argvs[1][:5] == ("docker", "compose", "-f", "docker-compose.yml", "build")
+    assert calls[1][1] == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"}
     assert argvs[1].count("--build-arg") == 2
     assert any(arg.startswith("OPENSCIENTIST_COMMIT=") for arg in argvs[1])
     assert any(arg.startswith("BUILD_TIME=") for arg in argvs[1])
@@ -68,6 +69,48 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         "--remove-orphans",
         "openscientist",
     )
+
+
+def test_image_tags_come_from_the_env_file(checkout: Path):
+    (checkout / ".env").write_text(
+        "OPENSCIENTIST_BASE_IMAGE=openscientist-base:staging\n"
+        "OPENSCIENTIST_EXECUTOR_IMAGE=openscientist-executor:staging\n"
+        "OPENSCIENTIST_AGENT_IMAGE=openscientist-agent:staging\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        calls.append((argv, env))
+        return 0
+
+    assert stack.build_images(run, checkout) == 0
+    tags = [argv[argv.index("-t") + 1] for argv, _ in calls if "-t" in argv]
+    assert tags == [
+        "openscientist-base:staging",
+        "openscientist-executor:staging",
+        "openscientist-agent:staging",
+    ]
+
+
+def test_image_tags_fall_back_to_latest_when_unset_or_empty(checkout: Path):
+    (checkout / ".env").write_text(
+        "OPENSCIENTIST_BASE_IMAGE=\nOPENSCIENTIST_EXECUTOR_IMAGE=\nOPENSCIENTIST_AGENT_IMAGE=\n",
+        encoding="utf-8",
+    )
+    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        calls.append((argv, env))
+        return 0
+
+    assert stack.build_images(run, checkout) == 0
+    tags = [argv[argv.index("-t") + 1] for argv, _ in calls if "-t" in argv]
+    assert tags == [
+        "openscientist-base:latest",
+        "openscientist-executor:latest",
+        "openscientist-agent:latest",
+    ]
 
 
 def test_start_stops_at_the_first_failing_build(checkout: Path, monkeypatch):

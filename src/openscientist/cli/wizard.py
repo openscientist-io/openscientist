@@ -1,22 +1,65 @@
-"""The interactive setup flow: the steps, the prompts, the file writes."""
+"""The setup flow: the steps, the prompts, the answers file, the file writes."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import click
 from rich.console import Console
 
+from openscientist.cli import answers as answers_io
 from openscientist.cli import envfiles
-from openscientist.cli.step import Question
+from openscientist.cli.livecheck import LiveCheckOutcome, live_check_result
+from openscientist.cli.step import Question, Step
 from openscientist.cli.steps import STEPS
+from openscientist.cli.steps.provider import ProviderStep
+from openscientist.providers import provider_class, provider_ids
 
 console = Console()
 
 
-def run_setup(root: Path) -> None:
+def run_setup(root: Path, write_answers: Path | None = None) -> None:
     """Ask the steps, write the env files and generate the missing secrets."""
-    answers, env_file = run_steps(root)
+    answers, env_file, outcome = run_steps(root)
+    _write_env_files(root, answers, env_file)
+    if write_answers is not None:
+        answers_io.write_answers(write_answers, run_tables(answers, outcome))
+
+
+def run_setup_from_answers(
+    root: Path, answers_file: Path, write_answers: Path | None = None
+) -> int:
+    """The wizard from an answers file: the same steps, validation and live check,
+    without prompting.
+
+    Returns 0 and writes the env files only when every answer is present and
+    valid. Otherwise returns 1, naming every missing or invalid answer and
+    writing nothing.
+    """
+    try:
+        tables = answers_io.read_answers(answers_file)
+    except answers_io.AnswersError as err:
+        console.print(f"[red]{err}[/red]")
+        return 1
+    answers, env_file, errors = _run_steps_from_answers(root, tables)
+    outcome: LiveCheckOutcome | None = None
+    if not errors:
+        provider_id = answers.get("OPENSCIENTIST_PROVIDER", "")
+        if provider_id and provider_id in provider_ids():
+            errors, outcome = _live_check_from_answers(tables.get("provider"), provider_id, answers)
+    if errors:
+        for error in errors:
+            console.print(f"[red]{error}[/red]")
+        return 1
+    _write_env_files(root, answers, env_file)
+    if write_answers is not None:
+        answers_io.write_answers(write_answers, run_tables(answers, outcome))
+    return 0
+
+
+def _write_env_files(root: Path, answers: dict[str, str], env_file: dict[str, str]) -> None:
+    """The answers into the env files the steps put them in, the missing secrets generated."""
     by_file: dict[str, dict[str, str]] = {}
     for env, value in answers.items():
         if value and env in env_file:
@@ -24,10 +67,14 @@ def run_setup(root: Path) -> None:
     envfiles.write_env_files(root, by_file)
 
 
-def run_steps(root: Path) -> tuple[dict[str, str], dict[str, str]]:
-    """Drive the applicable steps, returning the answers and each answer's env file."""
+def run_steps(
+    root: Path,
+) -> tuple[dict[str, str], dict[str, str], LiveCheckOutcome | None]:
+    """Drive the applicable steps, returning the answers, each answer's env file
+    and the live check's outcome when the provider ran one."""
     answers = envfiles.current_values(root)
     env_file: dict[str, str] = {}
+    outcome: LiveCheckOutcome | None = None
     for step in STEPS:
         if not step.applies(answers):
             continue
@@ -50,10 +97,118 @@ def run_steps(root: Path) -> tuple[dict[str, str], dict[str, str]]:
                     console.print(f"[red]{error}[/red]")
                 console.print("[yellow]Those answers do not validate, trying again.[/yellow]")
                 continue
-            if step.after_validate(answers) == "re-ask":
+            verdict = step.after_validate(answers)
+            if isinstance(verdict, LiveCheckOutcome):
+                outcome = verdict
+                verdict = verdict.verdict
+            if verdict == "re-ask":
                 continue
             break
-    return answers, env_file
+    return answers, env_file, outcome
+
+
+def _run_steps_from_answers(
+    root: Path, tables: Mapping[str, Mapping[str, answers_io.Scalar]]
+) -> tuple[dict[str, str], dict[str, str], list[str]]:
+    """The applicable steps against the file's tables: the answers, each answer's
+    env file and the missing or invalid answers, each named."""
+    answers = envfiles.current_values(root)
+    env_file: dict[str, str] = {}
+    errors: list[str] = []
+    for step in STEPS:
+        if not step.applies(answers):
+            continue
+        while True:
+            batch = [q for q in step.questions(answers) if q.env not in env_file]
+            if not batch:
+                break
+            for question in batch:
+                env_file[question.env] = question.file
+                key = answers_io.question_key(step.key, question.key)
+                table = tables.get(step.key)
+                if table is None or key not in table:
+                    # A secret question is optional: the run keeps the current
+                    # value, and a validation error names it when it is required.
+                    if question.kind != "secret":
+                        errors.append(f"Missing answer: {question.key}")
+                    continue
+                value = table[key]
+                if question.kind in ("int", "port"):
+                    if isinstance(value, bool):
+                        errors.append(
+                            f"Invalid answer: {question.key} must be a number, got {value!r}."
+                        )
+                        continue
+                    answers[question.env] = str(value)
+                elif isinstance(value, str):
+                    answers[question.env] = value
+                else:
+                    errors.append(
+                        f"Invalid answer: {question.key} must be a string, got {type(value).__name__}."
+                    )
+        errors.extend(step.validate(answers))
+    return answers, env_file, errors
+
+
+def _live_check_from_answers(
+    table: Mapping[str, answers_io.Scalar] | None, provider_id: str, answers: dict[str, str]
+) -> tuple[list[str], LiveCheckOutcome]:
+    """The provider's live check without prompting: the errors when it cannot pass
+    and the outcome for the answers the run wrote.
+
+    A check that would make a billed request is skipped only when the file sets
+    the provider's skip_live_check switch; every other check runs.
+    """
+    cls = provider_class(provider_id)
+    skip_value = table.get(answers_io.SKIP_LIVE_CHECK) if table else None
+    if cls.live_check_billed() and answers_io.is_true(skip_value):
+        console.print("Skipped the billed live check.")
+        return [], LiveCheckOutcome("pass", billed_check_skipped=True)
+    console.print(f"Checking {cls.display_name}...")
+    result = live_check_result(provider_id, answers)
+    if not result.ok:
+        errors = [f"The live check for {cls.display_name} failed: {result.detail}"]
+        return errors, LiveCheckOutcome("pass")
+    console.print(f"[green]{result.detail}[/green]")
+    return [], LiveCheckOutcome("pass")
+
+
+def run_tables(
+    answers: Mapping[str, str], outcome: LiveCheckOutcome | None
+) -> dict[str, dict[str, str | bool]]:
+    """The run's answers as the answers file's tables, without the secret questions.
+
+    A provider whose live check bills records whether the run skipped it, so a
+    replay bills (or does not) the same way.
+    """
+    tables: dict[str, dict[str, str | bool]] = {}
+    for step in STEPS:
+        if not step.applies(dict(answers)):
+            continue
+        table: dict[str, str | bool] = {}
+        for question in step_questions(step, answers):
+            if question.kind == "secret":
+                continue
+            value = answers.get(question.env)
+            if value is None:
+                continue
+            table[answers_io.question_key(step.key, question.key)] = value
+        if isinstance(step, ProviderStep) and outcome is not None:
+            provider_id = answers.get("OPENSCIENTIST_PROVIDER", "")
+            if provider_id in provider_ids() and provider_class(provider_id).live_check_billed():
+                table[answers_io.SKIP_LIVE_CHECK] = outcome.billed_check_skipped
+        if table:
+            tables[step.key] = table
+    return tables
+
+
+def step_questions(step: Step, answers: Mapping[str, str]) -> list[Question]:
+    """Every question the step asks against ``answers``, in the order the run asked them."""
+    seen: dict[str, Question] = {}
+    for probe in ({}, dict(answers)):
+        for question in step.questions(probe):
+            seen.setdefault(question.env, question)
+    return list(seen.values())
 
 
 def ask(question: Question, current: str | None) -> str:

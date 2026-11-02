@@ -69,13 +69,9 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 git clone <repository-url>
 cd openscientist
 
-# Create .env file (copy from example and configure)
-cp .env.example .env
-# Edit .env with your provider credentials
-
-# Build and start
-make build
-make start
+# Create and configure the env files, then build and start
+# (the first run runs the setup wizard and asks a few questions)
+uv run openscientist
 ```
 
 ### Access the UI
@@ -114,8 +110,7 @@ openscientist/
 ├── AGENTS.md              # Development guide for coding agents
 ├── jobs/                  # Job results (created at runtime)
 ├── Dockerfile             # Docker image definition
-├── docker-compose.yml     # Container orchestration
-└── Makefile               # Build and deployment commands
+└── docker-compose.yml     # Container orchestration
 ```
 
 ## Configuration

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import socket
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 import click
@@ -42,15 +43,29 @@ def host_view(
     return seen
 
 
+@dataclass(frozen=True)
+class LiveCheckOutcome:
+    """The live check's verdict, and whether the billed check was skipped."""
+
+    verdict: str
+    billed_check_skipped: bool = False
+
+
 def perform_live_check(provider_id: str, answers: dict[str, str]) -> LiveCheckResult:
     """The boundary the wizard crosses to reach the provider. Tests fake this."""
     return provider_class(provider_id).live_check(provider_id, dict(answers))
 
 
-def run_live_check(provider_id: str, answers: dict[str, str]) -> str:
+def live_check_result(provider_id: str, answers: Mapping[str, str]) -> LiveCheckResult:
+    """One live check against the answers as the host reaches them."""
+    return perform_live_check(provider_id, host_view(answers, _resolves))
+
+
+def run_live_check(provider_id: str, answers: dict[str, str]) -> LiveCheckOutcome:
     """Run the live check after the provider's own validation passes.
 
-    Returns 'pass' to proceed, or 're-ask' to re-ask the provider questions.
+    The outcome's verdict is 'pass' to proceed, or 're-ask' to re-ask the
+    provider questions.
     """
     cls = provider_class(provider_id)
     if cls.live_check_billed():
@@ -59,23 +74,22 @@ def run_live_check(provider_id: str, answers: dict[str, str]) -> str:
         )
         if not _confirm("Run the live check? (y/N) "):
             console.print("Skipped the live check.")
-            return "pass"
+            return LiveCheckOutcome("pass", billed_check_skipped=True)
     console.print(f"Checking {cls.display_name}...")
-    probe_answers = host_view(answers, _resolves)
-    result = perform_live_check(provider_id, probe_answers)
+    result = live_check_result(provider_id, answers)
     while not result.ok:
         console.print("[red]The live check failed.[/red]")
         console.print(result.detail)
         choice = _failure_choice()
         if choice == "f":
-            return "re-ask"
+            return LiveCheckOutcome("re-ask")
         if choice == "s":
             console.print("Saving the settings without a passing live check.")
-            return "pass"
+            return LiveCheckOutcome("pass")
         console.print(f"Retrying {cls.display_name}...")
-        result = perform_live_check(provider_id, probe_answers)
+        result = live_check_result(provider_id, answers)
     console.print(f"[green]{result.detail}[/green]")
-    return "pass"
+    return LiveCheckOutcome("pass")
 
 
 def _confirm(prompt: str) -> bool:
