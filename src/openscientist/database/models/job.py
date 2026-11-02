@@ -1,9 +1,4 @@
-"""
-Job model for scientific analysis jobs.
-
-The Job model represents a complete OpenScientist analysis workflow, tracking
-status, configuration, and relationships to all job artifacts.
-"""
+"""Job model for scientific analysis jobs."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -26,34 +21,7 @@ if TYPE_CHECKING:
 
 
 class Job(UUIDv7Mixin, Base):
-    """
-    Scientific analysis job.
-
-    Represents a complete OpenScientist workflow from data upload through
-    iterative analysis to final report generation.
-
-    Attributes:
-        owner_id: Foreign key to user who owns this job (NULL for orphaned)
-        research_question: Research question that drives the agent prompt
-        short_title: Optional short display label (model- or user-generated)
-        description: User-provided job description
-        investigation_mode: Investigation mode (autonomous/coinvestigate)
-        status: Current job status (pending/running/completed/failed/cancelled)
-        max_iterations: Maximum number of analysis iterations allowed
-        current_iteration: Current iteration number (0-based)
-        pdb_code: PDB code if analyzing existing structure
-        space_group: Crystal space group
-        llm_provider: LLM provider being used (vertex/bedrock/cborg)
-        llm_config: LLM configuration (model, temperature, etc.)
-        error_message: Error message if job failed
-        result_summary: Final analysis summary
-        owner: Related User object
-        shares: Job sharing permissions
-        data_files: Uploaded data files for this job
-        hypotheses: Generated hypotheses
-        chat_messages: In-page chat messages
-        cost_records: Cost tracking records
-    """
+    """Scientific analysis job."""
 
     __tablename__ = "jobs"
 
