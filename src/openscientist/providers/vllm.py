@@ -11,7 +11,7 @@ import logging
 
 import requests
 
-from openscientist.providers.base import SelfHostedOpenAiWire
+from openscientist.providers.base import LiveCheckResult, SelfHostedOpenAiWire
 from openscientist.settings import ProviderSettings
 
 logger = logging.getLogger(__name__)
@@ -74,3 +74,17 @@ class VllmProvider(SelfHostedOpenAiWire):
     @staticmethod
     def _probe_context_tokens(base_url: str, model_id: str, api_key: str | None) -> int | None:
         return _probe_vllm_context_tokens(base_url, model_id, api_key)
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.model:
+            return LiveCheckResult(
+                ok=False, detail="OPENSCIENTIST_MODEL must name the served model."
+            )
+        window = _probe_vllm_context_tokens(p.vllm_base_url, p.model, p.vllm_api_key)
+        if window:
+            return LiveCheckResult(ok=True, detail=f"Reached vLLM (context window {window}).")
+        return LiveCheckResult(
+            ok=False,
+            detail=f"Could not reach the vLLM server at {p.vllm_base_url} or find model {p.model!r}.",
+        )

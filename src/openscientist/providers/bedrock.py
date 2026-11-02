@@ -9,6 +9,7 @@ from openscientist.providers.base import (
     AirgapPosture,
     ClaudeCompatible,
     CostInfo,
+    LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
     env_from_pairs,
@@ -83,6 +84,26 @@ class BedrockProvider(ClaudeCompatible):
         )
 
     @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.aws_region:
+            return LiveCheckResult(ok=True, detail="No AWS region to check with; skipped.")
+        try:
+            import boto3  # type: ignore[import-untyped]
+            from botocore.config import Config  # type: ignore[import-untyped]
+        except ImportError:
+            return LiveCheckResult(ok=False, detail="boto3 is not installed; cannot reach Bedrock.")
+        try:
+            client = boto3.client(
+                "bedrock-runtime",
+                region_name=p.aws_region,
+                config=Config(read_timeout=10, connect_timeout=10),
+            )
+            client.list_foundation_models()
+        except Exception as exc:  # noqa: BLE001 - surface any SDK or auth error
+            return LiveCheckResult(ok=False, detail=f"Bedrock ListFoundationModels failed: {exc}")
+        return LiveCheckResult(ok=True, detail="Reached AWS Bedrock (ListFoundationModels).")
+
+    @classmethod
     def container_env(
         cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
     ) -> dict[str, str]:
@@ -144,11 +165,11 @@ class BedrockProvider(ClaudeCompatible):
             "signs itself, or run this provider under the claude_code harness."
         )
 
-    def airgap_egress(self) -> AirgapPosture:
-        p = get_settings().provider
-        if p.aws_bearer_token_bedrock:
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.aws_bearer_token_bedrock:
             return AirgapPosture(AirgapEgress.PROXY)
-        host = f"bedrock-runtime.{p.aws_region}.amazonaws.com"
+        host = f"bedrock-runtime.{provider.aws_region}.amazonaws.com"
         return AirgapPosture(AirgapEgress.DIRECT, direct_endpoints=((host, 443),))
 
     def _validate_optional_config(self) -> list[str]:

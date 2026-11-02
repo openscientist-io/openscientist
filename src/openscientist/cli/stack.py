@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+import click
 from rich.console import Console
 
 from openscientist.cli import envfiles
@@ -91,6 +92,7 @@ def start(
         )
         return 1
     console.print(f"OpenScientist is up at {base_url}")
+    _offer_pubmed_mirror(root, run, values)
     return 0
 
 
@@ -102,6 +104,81 @@ def stop(root: Path, run: CommandRunner = run_command) -> int:
     else:
         console.print("OpenScientist stopped.")
     return code
+
+
+#: The documented load command for the PubMed baseline, run as the migrate service.
+PUBMED_MIRROR_LOAD = (
+    "docker",
+    "compose",
+    "-f",
+    COMPOSE_FILE,
+    "run",
+    "--rm",
+    "migrate",
+    "python",
+    "-m",
+    "openscientist.pubmed_mirror",
+)
+
+
+def pubmed_mirror_count(root: Path) -> int | None:
+    """The row count of pubmed_articles, or None when it cannot be read."""
+    values = envfiles.file_values(root, "env")
+    user = values.get("POSTGRES_USER") or "openscientist"
+    db = values.get("POSTGRES_DB") or "openscientist"
+    out = _compose_exec_postgres(
+        root, ("psql", "-U", user, "-d", db, "-tAc", "SELECT count(*) FROM pubmed_articles;")
+    )
+    try:
+        return int(out.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return None
+
+
+def _compose_exec_postgres(root: Path, argv: tuple[str, ...]) -> str:
+    """Run a command in the postgres service; return its stdout, or empty on failure."""
+    proc = subprocess.run(
+        ("docker", "compose", "-f", COMPOSE_FILE, "exec", "-T", "postgres", *argv),
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout if proc.returncode == 0 else ""
+
+
+def _offer_pubmed_mirror(root: Path, run: CommandRunner, values: dict[str, str]) -> None:
+    """When air-gapped and the mirror is empty, offer to load the PubMed baseline."""
+    if not _airgapped_on(values):
+        return
+    if pubmed_mirror_count(root) != 0:
+        return
+    console.print("The PubMed mirror is empty. Loading it is a long download.")
+    if not _confirm("Load the PubMed mirror now? (y/N) "):
+        console.print(
+            "The stack stays running. Load it later with "
+            "`docker compose run --rm migrate python -m openscientist.pubmed_mirror`."
+        )
+        return
+    code = run(PUBMED_MIRROR_LOAD, None)
+    if code:
+        console.print(f"[red]Loading the PubMed mirror failed (exit {code}).[/red]")
+    else:
+        console.print("Loaded the PubMed mirror.")
+
+
+def _airgapped_on(values: dict[str, str]) -> bool:
+    return values.get("OPENSCIENTIST_AIRGAPPED", "").strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "y",
+        "on",
+    )
+
+
+def _confirm(prompt: str) -> bool:
+    value = click.prompt(prompt, default="n", show_default=False).strip().lower()
+    return value in ("y", "yes")
 
 
 def wait_for_health(base_url: str, timeout: float = HEALTH_TIMEOUT, interval: float = 3.0) -> bool:

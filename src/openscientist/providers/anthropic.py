@@ -7,7 +7,16 @@ from openscientist.settings import ProviderSettings, get_settings
 
 from ._anthropic_common import anthropic_container_env
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS
-from .base import ClaudeCompatible, CostInfo, LlmUpstream, SetupQuestion
+from .base import (
+    AirgapEgress,
+    AirgapPosture,
+    ClaudeCompatible,
+    CostInfo,
+    LiveCheckResult,
+    LlmUpstream,
+    SetupQuestion,
+    _listing_live_check,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +59,19 @@ class AnthropicProvider(ClaudeCompatible):
             *super().setup_questions(),
         )
 
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.anthropic_api_key and not p.claude_code_oauth_token:
+            return LiveCheckResult(
+                ok=True, detail="No Anthropic credential to check with; skipped."
+            )
+        base = (p.anthropic_base_url or "https://api.anthropic.com").rstrip("/")
+        if p.anthropic_api_key:
+            headers = {"x-api-key": p.anthropic_api_key}
+        else:
+            headers = {"authorization": f"Bearer {p.claude_code_oauth_token}"}
+        return _listing_live_check(f"{base}/v1/models", headers, cls.display_name)
+
     def claude_sdk_env(self) -> dict[str, str]:
         """Auth env vars the claude-agent-sdk CLI must see."""
         settings = get_settings()
@@ -83,6 +105,15 @@ class AnthropicProvider(ClaudeCompatible):
         if p.claude_code_oauth_token:
             return {"ANTHROPIC_BASE_URL": proxy_base_url, "CLAUDE_CODE_OAUTH_TOKEN": placeholder}
         return {}
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.anthropic_api_key or provider.claude_code_oauth_token:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
+        )
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at Anthropic.

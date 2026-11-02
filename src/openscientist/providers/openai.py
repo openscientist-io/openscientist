@@ -15,8 +15,10 @@ from openscientist.providers.base import (
     AirgapPosture,
     CodexCompatible,
     CostInfo,
+    LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    _listing_live_check,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -83,6 +85,15 @@ class OpenAIDirectProvider(CodexCompatible):
             ),
         )
 
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.openai_api_key:
+            return LiveCheckResult(
+                ok=True, detail="No OpenAI API key (ChatGPT login); skipped the live check."
+            )
+        headers = {"authorization": f"Bearer {p.openai_api_key}"}
+        return _listing_live_check(f"{_OPENAI_BASE_URL}/models", headers, cls.display_name)
+
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # OpenAI exposes no simple per-key spend endpoint, so report unavailable.
         return CostInfo.unavailable(
@@ -102,8 +113,9 @@ class OpenAIDirectProvider(CodexCompatible):
             return {"OPENAI_API_KEY": placeholder, LLM_PROXY_URL_ENV: proxy_base_url}
         return {}
 
-    def airgap_egress(self) -> AirgapPosture:
-        if get_settings().provider.openai_api_key:
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.openai_api_key:
             return AirgapPosture(AirgapEgress.PROXY)
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,

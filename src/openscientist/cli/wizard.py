@@ -45,11 +45,14 @@ def run_steps(root: Path) -> tuple[dict[str, str], dict[str, str]]:
                     answered_here.add(question.env)
                     env_file[question.env] = question.file
             errors = step.validate(answers)
-            if not errors:
-                break
-            for error in errors:
-                console.print(f"[red]{error}[/red]")
-            console.print("[yellow]Those answers do not validate, trying again.[/yellow]")
+            if errors:
+                for error in errors:
+                    console.print(f"[red]{error}[/red]")
+                console.print("[yellow]Those answers do not validate, trying again.[/yellow]")
+                continue
+            if step.after_validate(answers) == "re-ask":
+                continue
+            break
     return answers, env_file
 
 

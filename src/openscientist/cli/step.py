@@ -128,6 +128,11 @@ class Step(abc.ABC):
         """Errors in this step's answers; empty when they are accepted."""
         return []
 
+    def after_validate(self, answers: dict[str, str]) -> str:
+        """Run after ``validate`` passes. 'pass' to continue, 're-ask' to re-ask
+        this step's questions (the live provider check)."""
+        return "pass"
+
     def declared_envs(self) -> frozenset[str]:
         """Every env variable this step can ask for, for the drift test."""
         return frozenset()

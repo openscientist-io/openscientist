@@ -10,10 +10,14 @@ import os
 
 from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
+    AirgapEgress,
+    AirgapPosture,
     CodexCompatible,
     CostInfo,
+    LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    _listing_live_check,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -72,6 +76,20 @@ class AzureOpenAIProvider(CodexCompatible):
             SetupQuestion("OPENSCIENTIST_MODEL", help="the Azure deployment name"),
         )
 
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.azure_openai_resource or not p.azure_openai_api_key:
+            return LiveCheckResult(
+                ok=True, detail="No Azure OpenAI resource or key to check with; skipped."
+            )
+        api_version = p.azure_openai_api_version or "2025-04-01-preview"
+        url = (
+            f"https://{p.azure_openai_resource}.openai.azure.com/openai/deployments"
+            f"?api-version={api_version}"
+        )
+        headers = {"api-key": p.azure_openai_api_key}
+        return _listing_live_check(url, headers, cls.display_name)
+
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # Azure OpenAI spend is tracked through Azure Cost Management, which the
         # foundry provider already wires up. Report unavailable here.
@@ -99,6 +117,15 @@ class AzureOpenAIProvider(CodexCompatible):
         if s.azure_openai_api_key and s.azure_openai_resource:
             return {"AZURE_OPENAI_API_KEY": placeholder, LLM_PROXY_URL_ENV: proxy_base_url}
         return {}
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.azure_openai_api_key and provider.azure_openai_resource:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
+        )
 
     def codex_config_overrides(self) -> list[str]:
         # api-version is optional on the v1 surface, so pin it only when configured.
