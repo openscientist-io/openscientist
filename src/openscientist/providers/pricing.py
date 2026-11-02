@@ -1,11 +1,12 @@
 """LLM model pricing lookup via the litellm pricing database."""
 
 import logging
-import re
 import time
 from typing import Any
 
 import requests
+
+from openscientist.models import normalize_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +50,6 @@ def _get_litellm_pricing() -> dict[str, Any]:
         if not _cache:
             _cache = _FALLBACK_PRICING
     return _cache
-
-
-def normalize_model_name(model: str) -> str:
-    """Strip provider-specific prefixes and suffixes to get a litellm-compatible key."""
-    model = re.sub(r"^(?:us|eu|ap)\.anthropic\.", "", model)
-    model = re.sub(r"-\d{8}.*$", "", model)
-    model = re.sub(r"@\d{8}$", "", model)
-    return model
 
 
 def _published_rate(entry: dict[str, Any], keys: tuple[str, ...], derived: float) -> float:
