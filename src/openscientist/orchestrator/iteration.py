@@ -14,23 +14,18 @@ from pathlib import Path
 from typing import Literal, TypedDict
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select
 
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS, retry_async
 from openscientist.database.session import SessionOpener, async_session_local
+from openscientist.job.status import status_update_statement
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.prompts.common import namespace_tool_mentions
 
 logger = logging.getLogger(__name__)
 
 FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
-
-#: Statuses after which a job holds no slot, so the scheduler stops counting it.
-_ENDED_STATUSES = frozenset({"completed", "failed", "cancelled"})
-#: Statuses that end the agent's current work, so its status label goes with it.
-#: The report phase starts new work, so the last iteration's label goes too.
-_LABEL_ENDING_STATUSES = _ENDED_STATUSES | {"awaiting_feedback", "generating_report"}
 
 # Budgeting the report prompt against the model's context window. We reserve
 # tokens for the system prompt, tool definitions, the model's own output, and
@@ -419,22 +414,13 @@ async def _persist_job_status(
     open_session: SessionOpener,
     retry_for: float,
 ) -> bool:
-    values: dict[str, object] = {"status": status}
-    if error_message:
-        values["error_message"] = error_message
-    if stop_note:
-        values["stop_note"] = stop_note
-    if status in _ENDED_STATUSES:
-        values["ended_at"] = func.now()
-    if status in _LABEL_ENDING_STATUSES:
-        values["agent_status"] = None
-        values["agent_status_updated_at"] = None
-    stmt = (
-        update(JobModel)
-        .where(JobModel.id == job_uuid, JobModel.status.in_(list(allowed_from)))
-        .values(**values)
-        .returning(JobModel.id)
-    )
+    stmt = status_update_statement(
+        job_uuid,
+        status,
+        allowed_from=allowed_from,
+        error_message=error_message,
+        stop_note=stop_note,
+    ).returning(JobModel.id)
 
     async def write() -> bool:
         async with open_session() as session:

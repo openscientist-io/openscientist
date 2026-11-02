@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Protocol, cast
@@ -123,6 +124,11 @@ async def _ending(test_engine: AsyncEngine, job_id: UUID) -> tuple[str, str | No
             await conn.execute(select(Job.status, Job.error_message).where(Job.id == job_id))
         ).one()
     return str(row.status), row.error_message
+
+
+async def _started_at(test_engine: AsyncEngine, job_id: UUID) -> datetime | None:
+    async with test_engine.connect() as conn:
+        return (await conn.execute(select(Job.started_at).where(Job.id == job_id))).scalar_one()
 
 
 @pytest.fixture
@@ -661,6 +667,23 @@ async def test_the_container_ending_or_pausing_a_job_clears_its_label(
     await _set_label(test_engine, job, "Searching PubMed")
     assert await update_job_status(tmp_path / str(job), target, allowed_from=(start,))
     assert await _label(test_engine, job) == (None, None)
+
+
+async def test_a_running_to_running_write_keeps_its_slot_start(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """The web stamps the slot start when a job moves to running, and a
+    container write that also moves it running to running must keep it."""
+    job = await make_job(JobStatus.QUEUED)
+    assert await _started_at(test_engine, job) is None
+    result = await _db_update_job_status(
+        str(job), JobStatus.RUNNING, allowed_from=(JobStatus.QUEUED,)
+    )
+    assert result.applied
+    started = await _started_at(test_engine, job)
+    assert started is not None
+    assert await update_job_status(tmp_path / str(job), "running", allowed_from=("running",))
+    assert await _started_at(test_engine, job) == started
 
 
 async def test_a_refused_status_write_keeps_the_label(
