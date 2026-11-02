@@ -70,12 +70,10 @@ class OpenAIDirectProvider(CodexCompatible):
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # OpenAI exposes no simple per-key spend endpoint, so report unavailable.
-        return CostInfo(
-            provider_name=self.display_name,
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            recent_period_hours=lookback_hours,
-            data_lag_note="OpenAI per-key cost tracking is not available.",
+        return CostInfo.unavailable(
+            self.display_name,
+            "OpenAI per-key cost tracking is not available.",
+            lookback_hours,
         )
 
     def llm_upstream(self) -> LlmUpstream | None:

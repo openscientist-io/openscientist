@@ -243,5 +243,8 @@ class TestCborgClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="claude-custom-model")
-        with patch("openscientist.providers.cborg.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.cborg.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert CborgProvider().claude_model_name() == "claude-custom-model"

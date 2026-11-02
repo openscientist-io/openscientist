@@ -425,6 +425,13 @@ class TestProviderEnvironmentSwitching:
                 patchers.append(
                     patch("openscientist.providers.vertex.os.path.exists", return_value=True)
                 )
+            # The base reads the shared settings for the model warning.
+            if provider_cls in (AnthropicProvider, CborgProvider):
+                patchers.append(
+                    patch(
+                        "openscientist.providers.base.get_settings", return_value=settings_factory()
+                    )
+                )
 
             with ExitStack() as stack:
                 for patcher in patchers:

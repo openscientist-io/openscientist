@@ -15,6 +15,8 @@ from typing import Any, ClassVar, NotRequired, TypedDict
 from openscientist.models import ModelProfile, default_model_profile, probed_model_profile
 from openscientist.settings import ProviderSettings, get_settings
 
+from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
+
 logger = logging.getLogger(__name__)
 
 
@@ -104,6 +106,17 @@ class CostInfo:
     key_expires: str | None = None  # CBORG only
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    @classmethod
+    def unavailable(cls, provider_name: str, note: str, lookback_hours: int) -> CostInfo:
+        """A CostInfo whose spend is unknown, with ``note`` saying why."""
+        return cls(
+            provider_name=provider_name,
+            total_spend_usd=None,
+            recent_spend_usd=None,
+            recent_period_hours=lookback_hours,
+            data_lag_note=note,
+        )
+
 
 @dataclass(frozen=True)
 class LlmUpstream:
@@ -139,6 +152,12 @@ class Provider(abc.ABC):
     """A model-hosting service. Family-specific behavior lives on the
     marker subclasses below; configuration validation and cost/budget
     tracking are shared here."""
+
+    #: When ``proxy_env_overrides`` routes this provider's LLM traffic
+    #: through the proxy (this env var equals the proxy URL), the keys in
+    #: ``proxied_env_strip_keys`` are dropped from the container env.
+    proxied_env_condition_key: ClassVar[str | None] = None
+    proxied_env_strip_keys: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self) -> None:
         errors = self.validate_required_config()
@@ -252,6 +271,12 @@ class Provider(abc.ABC):
             gcp_credentials_container_path=gcp_credentials_container_path
         )
         env.update(self.proxy_env_overrides(proxy_base_url=proxy_base_url, placeholder=placeholder))
+        if (
+            self.proxied_env_condition_key
+            and env.get(self.proxied_env_condition_key) == proxy_base_url
+        ):
+            for key in self.proxied_env_strip_keys:
+                env.pop(key, None)
         return env
 
     @classmethod
@@ -310,20 +335,52 @@ class ClaudeCompatible(Provider, abc.ABC):
     """Provider that speaks the Anthropic Messages API and can be driven
     by the Claude Code agent."""
 
-    @abc.abstractmethod
+    #: CLAUDE_CODE_USE_* mode flag this provider drives the Claude CLI under,
+    #: or None for providers with no routing flag (direct API, CBORG).
+    mode_flag: ClassVar[str | None] = None
+
+    #: Model fallback when OPENSCIENTIST_MODEL is unset.
+    default_claude_model: ClassVar[str] = "claude-sonnet-5-5"
+
+    #: Description of a valid model id, for validate_model_format.
+    model_format_description: ClassVar[str] = (
+        "an Anthropic model name (expected to start with 'claude-')"
+    )
+
+    @classmethod
+    def validate_model_format(cls, model: str | None) -> str | None:
+        return cls.model_format_error(model, r"^claude-", cls.model_format_description)
+
+    def _set_own_flag(self) -> None:
+        """Set the provider's own mode flag, if it has one. Vertex keeps its
+        flag from the environment, so the default is a no-op."""
+
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        """Env vars setup_environment clears after the mode flags."""
+        return ()
+
     def setup_environment(self) -> None:
-        """Configure process environment variables for the Claude CLI
-        (auth + routing flags), clearing any conflicting flags from a
-        previously-selected provider."""
+        """Claude CLI env setup. Sets the provider's own mode flag
+        (``_set_own_flag``), clears the conflicting mode flags (keeping
+        ``mode_flag``) and the vars from ``_conflicting_env_vars``.
+        Subclasses that finish the setup (auth, logging) call this first."""
+        self._set_own_flag()
+        clear_provider_mode_flags(logger, active_flag=self.mode_flag)
+        clear_env_vars(logger, self._conflicting_env_vars())
 
     @abc.abstractmethod
     def claude_sdk_env(self) -> dict[str, str]:
         """Environment variables the claude-agent-sdk CLI must see
         (e.g., ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, AWS_REGION)."""
 
-    @abc.abstractmethod
     def claude_model_name(self) -> str:
         """Model name to pass to ClaudeAgentOptions.model."""
+        return get_settings().provider.model or self.default_claude_model
+
+    def _validate_optional_config(self) -> list[str]:
+        if not get_settings().provider.model:
+            return [f"OPENSCIENTIST_MODEL not set (will use {self.default_claude_model})"]
+        return []
 
     def effective_model_name(self) -> str | None:
         return self.claude_model_name()

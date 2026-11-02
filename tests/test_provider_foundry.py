@@ -85,5 +85,8 @@ class TestFoundryClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="foundry-custom")
-        with patch("openscientist.providers.foundry.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.foundry.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert FoundryProvider().claude_model_name() == "foundry-custom"
