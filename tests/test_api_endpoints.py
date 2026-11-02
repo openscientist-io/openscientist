@@ -742,65 +742,26 @@ class TestJobEndpoints:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_cancel_job(
+    @pytest.mark.parametrize("job_status", ["running", "pending"])
+    async def test_cancel_active_job(
         self,
         db_session: AsyncSession,
         test_user_db: User,
         test_api_key_db: tuple[APIKey, str],
+        job_status: str,
     ):
-        """Cancel a running job."""
+        """The cancel endpoint hands the job's id to the job manager and does not write the row's status itself."""
         _, full_key = test_api_key_db
 
-        # Create a running job to cancel
-        running_job = Job(
+        job = Job(
             owner_id=test_user_db.id,
-            research_question="Running Job",
-            description="Will be cancelled",
-            status="running",
+            research_question="Job to cancel",
+            description=f"Cancel while {job_status}",
+            status=job_status,
         )
-        db_session.add(running_job)
+        db_session.add(job)
         await db_session.commit()
-        await db_session.refresh(running_job)
-
-        app = _build_authenticated_app(db_session, test_user_db)
-        # Mock the job manager
-        mock_job_manager = MagicMock()
-        mock_job_manager.cancel_job = AsyncMock()
-
-        with patch(
-            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test",
-            ) as client:
-                response = await client.post(
-                    f"/api/v1/jobs/{running_job.id}/cancel",
-                    headers={"Authorization": f"Bearer {full_key}"},
-                )
-
-        assert response.status_code == 204
-        mock_job_manager.cancel_job.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cancel_pending_job(
-        self,
-        db_session: AsyncSession,
-        test_user_db: User,
-        test_api_key_db: tuple[APIKey, str],
-    ):
-        """Cancel a pending job."""
-        _, full_key = test_api_key_db
-
-        pending_job = Job(
-            owner_id=test_user_db.id,
-            research_question="Pending Job",
-            description="Will be cancelled",
-            status="pending",
-        )
-        db_session.add(pending_job)
-        await db_session.commit()
-        await db_session.refresh(pending_job)
+        await db_session.refresh(job)
 
         app = _build_authenticated_app(db_session, test_user_db)
         mock_job_manager = MagicMock()
@@ -814,52 +775,14 @@ class TestJobEndpoints:
                 base_url="http://test",
             ) as client:
                 response = await client.post(
-                    f"/api/v1/jobs/{pending_job.id}/cancel",
+                    f"/api/v1/jobs/{job.id}/cancel",
                     headers={"Authorization": f"Bearer {full_key}"},
                 )
 
         assert response.status_code == 204
-        mock_job_manager.cancel_job.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cancel_job_does_not_directly_mutate_database_status(
-        self,
-        db_session: AsyncSession,
-        test_user_db: User,
-        test_api_key_db: tuple[APIKey, str],
-    ):
-        """Cancel endpoint should delegate status update to JobManager only."""
-        _, full_key = test_api_key_db
-
-        running_job = Job(
-            owner_id=test_user_db.id,
-            research_question="Running Job",
-            description="Should remain unchanged when manager is mocked",
-            status="running",
-        )
-        db_session.add(running_job)
-        await db_session.commit()
-        await db_session.refresh(running_job)
-
-        app = _build_authenticated_app(db_session, test_user_db)
-        mock_job_manager = MagicMock()
-        mock_job_manager.cancel_job = AsyncMock()
-
-        with patch(
-            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test",
-            ) as client:
-                response = await client.post(
-                    f"/api/v1/jobs/{running_job.id}/cancel",
-                    headers={"Authorization": f"Bearer {full_key}"},
-                )
-
-        assert response.status_code == 204
-        await db_session.refresh(running_job)
-        assert running_job.status == "running"
+        mock_job_manager.cancel_job.assert_awaited_once_with(str(job.id))
+        await db_session.refresh(job)
+        assert job.status == job_status
 
     @pytest.mark.asyncio
     async def test_cannot_cancel_completed_job(
