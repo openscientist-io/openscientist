@@ -413,6 +413,22 @@ async def test_oauth_login_unknown_provider_is_refused(db_session: AsyncSession)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["login", "callback"])
+async def test_a_provider_without_oauth_config_is_refused(
+    db_session: AsyncSession, route: str
+) -> None:
+    """A known provider with no OAuth client configured is a client error, and no session starts."""
+    app = _make_app()
+    sessions_before = await _session_total(db_session)
+    response = await _request(
+        app, db_session, "GET", f"/auth/github/{route}", oauth=SimpleNamespace()
+    )
+
+    assert response.status_code == 400
+    assert await _session_total(db_session) == sessions_before
+
+
+@pytest.mark.asyncio
 async def test_oauth_login_redirects_with_app_callback_uri(db_session: AsyncSession) -> None:
     """The provider redirect carries the app's callback URI for the
     provider."""
