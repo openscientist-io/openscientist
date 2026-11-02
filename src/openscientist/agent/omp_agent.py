@@ -1,10 +1,7 @@
 """Oh My Pi (omp) agent backend.
 
-``OmpAgent`` drives omp as a subprocess (``omp -p --mode=json`` per turn, parsing
-the JSON-lines stream). Provider-agnostic. Per-job config lives in the job dir omp
-treats as its root: a ``--system-prompt`` file, the tools MCP server in
-``.omp/mcp.json``, and skills in ``.omp/skills/``. Binary from
-``OPENSCIENTIST_OMP_BIN`` or ``omp`` on ``PATH``.
+Per-job config lives in the job dir omp treats as its root, as a ``--system-prompt``
+file, the tools MCP server in ``.omp/mcp.json`` and skills in ``.omp/skills/``.
 """
 
 from __future__ import annotations
@@ -100,9 +97,8 @@ class OmpAgent(AbstractAgent[Provider]):
         await super().prepare_job_workspace(use_hypotheses=use_hypotheses)
         self._write_mcp_config()
 
-    # apply_runtime_environment/chat_*/write_chat_context use the AbstractAgent
-    # defaults: omp reads auth from the subprocess env and its model from
-    # config.model_override, and folds chat guidance into the system prompt.
+    # The other backend hooks use the AbstractAgent defaults (env auth,
+    # model_override, no chat file).
 
     # Host omp store files copied to rebuild the vault in the run's home
     # (WAL/SHM included so an un-checkpointed db stays readable).
@@ -117,10 +113,9 @@ class OmpAgent(AbstractAgent[Provider]):
 
     @classmethod
     def provision_run_home(cls, settings: Settings, home: Path) -> None:
-        """Copy the host omp credential vault into the run's home, agent-writable
-        (mounting fails on permissions for the non-root agent), which the agent
-        uses as ``PI_CODING_AGENT_DIR``. No-op unless ``omp_auth_host_path`` is
-        set (the API-key path needs no vault)."""
+        """Copy the host omp credential vault into the run's home, agent-writable (mounting
+        fails on permissions), which the agent uses as ``PI_CODING_AGENT_DIR``. No-op
+        unless ``omp_auth_host_path`` is set (the API-key path needs no vault)."""
         src = settings.provider.omp_auth_host_path
         if not src:
             return
@@ -153,12 +148,9 @@ class OmpAgent(AbstractAgent[Provider]):
         return self._omp_dir() / "session"
 
     def _session_persisted(self, session_id: str) -> bool:
-        """True if omp wrote a session store for ``session_id``.
-
-        omp names it ``<timestamp>_<id>.jsonl``, so match on the id alone: the
-        timestamp prefix is omp's to change, and a resumed turn appends to the
-        file the first turn created rather than adding a new one.
-        """
+        """True if omp wrote a session store for ``session_id``. Matches the id alone in the
+        ``<timestamp>_<id>.jsonl`` name (the timestamp prefix is omp's to change), and a
+        resumed turn appends to the file the first turn created."""
         try:
             return any(session_id in entry.name for entry in self._session_dir().iterdir())
         except OSError:
@@ -170,18 +162,14 @@ class OmpAgent(AbstractAgent[Provider]):
     def _mcp_env(self) -> dict[str, str]:
         """Env table for the tools MCP server, written into ``.omp/mcp.json``.
 
-        Inherited keys are passed as variable *names*, not values. When an omp
-        stdio ``env`` value names a set environment variable, omp substitutes
-        that variable's value just before launching the server, so the config on
-        disk never holds the secret. This matters because the job directory is a
-        downloadable artifact and the tools server legitimately needs
-        ``DATABASE_URL`` and the exec-broker token.
-
-        The per-job overlay is written literally, because those values are
-        computed rather than inherited and a name reference could not resolve
-        them. The chat path threads a per-job exec token through that overlay,
-        so this alone is not sufficient: ``.omp`` is also excluded from packaged
-        artifacts in ``artifact_packager``.
+        Inherited keys are passed as variable *names*, not values. omp substitutes
+        the variable's value just before launching the server, so the config on
+        disk never holds the secret, which matters because the job directory is a
+        downloadable artifact. The per-job overlay is written literally, because
+        those values are computed and a name reference could not resolve them.
+        The chat path threads a per-job exec token through that overlay, and
+        ``.omp`` is additionally excluded from packaged artifacts in
+        ``artifact_packager``.
         """
         env = {name: name for name in os.environ}
         env.update(self._job_env_overlay(self._job_dir()))
@@ -207,14 +195,12 @@ class OmpAgent(AbstractAgent[Provider]):
     def _write_omp_config(self) -> Path:
         """Write the per-run omp config overlay and return its path.
 
-        ``tools.xdev`` defaults on, which mounts MCP tools as ``xd://`` devices
-        driven through ``write`` instead of exposing them as callable tools.
-        Disabling it makes the openscientist tools ordinary callable tools, which
-        is the shape the shared prompts describe. omp still namespaces them as
-        ``mcp__<server>_<tool>``, so ``OMP_FRAGMENTS`` renames the mentions
-        through ``mcp_tool_prefix``. The cost is that every enabled tool's schema
-        ships on each request, which is why ``_OMP_ENABLED_TOOLS`` is a short
-        list.
+        ``tools.xdev`` defaults on, mounting MCP tools as ``xd://`` devices driven
+        through ``write``. Disabling it makes the openscientist tools ordinary
+        callable tools, which is the shape the shared prompts describe. omp still
+        namespaces them as ``mcp__<server>_<tool>``, so ``OMP_FRAGMENTS`` renames
+        the mentions through ``mcp_tool_prefix``. Every enabled tool's schema then
+        ships on each request, which is why ``_OMP_ENABLED_TOOLS`` is a short list.
         """
         omp_dir = self._omp_dir()
         omp_dir.mkdir(parents=True, exist_ok=True)
@@ -242,8 +228,8 @@ class OmpAgent(AbstractAgent[Provider]):
     def _write_omp_model_catalog(self) -> None:
         """Write the active provider's ``models.yml`` into the omp home, if any.
 
-        Feeds the run's cached window in: resolving it can probe the live server,
-        and this runs once per turn.
+        Feeds the run's cached context window in. Resolving it can probe the live
+        server, and this runs once per turn.
         """
         catalog = self._provider.omp_model_catalog(
             context_window=self.model_profile.context_window_tokens
@@ -252,8 +238,8 @@ class OmpAgent(AbstractAgent[Provider]):
             return
         home = self._omp_home()
         if not home.exists():
-            # Only when we create it: a container run's home is already
-            # agent-writable, and chmod on a root-owned dir fails for the agent.
+            # Only on creation, because the home of an existing container run is already
+            # agent-writable and chmod on a root-owned dir fails for the agent.
             home.mkdir(parents=True, exist_ok=True)
             home.chmod(0o777)
         path = home / "models.yml"
@@ -266,11 +252,11 @@ class OmpAgent(AbstractAgent[Provider]):
         runner (where os.environ is pre-injected) and in the web or chat process
         (where it is not).
 
-        Routing comes last and wins, because ``Provider.harness_env`` is the only
-        place that knows how *this* harness reaches the provider. The names differ
-        from the Claude Code ones the container env publishes, and letting the
-        ambient environment win is how a provider ends up talking to the vendor
-        directly with the real credential.
+        Routing comes last and wins. ``Provider.harness_env`` is the only place
+        that knows how *this* harness reaches the provider, the container env
+        publishes Claude Code names, and letting the ambient environment win is
+        how a provider ends up talking to the vendor directly with the real
+        credential.
 
         ``OMP_MCP_REQUIRE_READY`` is forced on after routing. Without it omp sends
         the prompt anyway when the tools server misses its startup wait, and the
@@ -297,14 +283,12 @@ class OmpAgent(AbstractAgent[Provider]):
         return env
 
     #: omp built-in tools the discovery loop may use. ``--tools`` is an enable
-    #: list over the built-ins, so everything absent here is off, notably omp's
-    #: own code execution. It does not reach the MCP tools, which omp validates
-    #: separately and always exposes. Analysis MUST go through the
-    #: ``execute_code`` MCP tool: it runs in the sandboxed executor container and
-    #: captures figures into the report, whereas omp's ``eval`` runs inside the
-    #: agent container and only renders figures inline, so its plots never reach
-    #: the job artifacts. ``write`` is required because it is this class's
-    #: ``file_write_tool``.
+    #: list, so everything absent here is off, notably omp's own code execution,
+    #: and it does not reach the MCP tools, which omp always exposes. Analysis
+    #: MUST go through the ``execute_code`` MCP tool, which runs in the sandboxed
+    #: executor and captures figures into the report. omp's ``eval`` only renders
+    #: figures inline, so its plots never reach the job artifacts. ``write`` is
+    #: required because it is this class's ``file_write_tool``.
     _OMP_ENABLED_TOOLS: ClassVar[tuple[str, ...]] = (
         "read",
         "write",
@@ -342,11 +326,9 @@ class OmpAgent(AbstractAgent[Provider]):
 
     @staticmethod
     def _usage_from_message(message: dict[str, Any]) -> TokenUsage:
-        # omp usage buckets are additive and non-overlapping, so map straight. The
-        # exception is cacheWrite, which is a total that `cttl` breaks down by cache
-        # lifetime (omp's rendering of Anthropic's `cache_creation`). The one-hour
-        # portion bills at twice the input rate against 1.25x for five minutes, so it
-        # is split off here the way omp's own cost function splits it.
+        # cacheWrite is a total that `cttl` breaks down by cache lifetime (omp's
+        # rendering of Anthropic's `cache_creation`), so the one-hour portion is
+        # split off the way omp's own cost function splits it.
         usage = message.get("usage")
         if not isinstance(usage, dict):
             return TokenUsage()
@@ -413,11 +395,10 @@ class OmpAgent(AbstractAgent[Provider]):
     def _signal_group(proc: asyncio.subprocess.Process, sig: int) -> bool:
         """Signal omp's whole process group. False when it could not be done.
 
-        Refuses to signal our own group. The safety of the group kill rests
-        entirely on ``start_new_session=True`` at spawn, which makes omp a group
-        leader. Were that ever dropped, omp would inherit our group and a SIGKILL
-        here would take down the runner and the web app with it, so the
-        relationship is checked rather than trusted.
+        Refuses to signal our own group. The safety of the group kill rests entirely
+        on ``start_new_session=True`` at spawn, which makes omp a group leader.
+        Without it a SIGKILL here would take down the runner and the web app with
+        it, so the relationship is checked rather than trusted.
         """
         try:
             pgid = os.getpgid(proc.pid)
@@ -437,8 +418,7 @@ class OmpAgent(AbstractAgent[Provider]):
         """Terminate the omp process group, then kill what has not exited.
 
         omp spawns MCP server children, so signalling the direct child leaves them
-        running: a timed-out 3 iteration run otherwise left two omp processes and
-        two MCP children competing for the same job directory and database rows.
+        running, competing for the job directory and database rows.
         """
         for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
             if proc.returncode is not None:
@@ -452,9 +432,9 @@ class OmpAgent(AbstractAgent[Provider]):
     async def _run_omp(self, prompt: str) -> IterationResult:
         """Spawn omp for one turn, parse its JSON stream, build the result.
 
-        Owns the turn timeout rather than leaving it to a ``wait_for`` around this
-        coroutine: cancelling the await would abandon the process instead of
-        stopping it, and would discard the output already received.
+        Owns the turn timeout rather than a ``wait_for`` around this coroutine,
+        because cancelling the await would abandon the process and discard the
+        output already received.
         """
         system_prompt_path = self._write_system_prompt()
         self._write_mcp_config()
@@ -477,12 +457,11 @@ class OmpAgent(AbstractAgent[Provider]):
         timed_out = False
         cancelled: asyncio.CancelledError | None = None
         try:
-            # One deadline over both awaits. Bounding only the pipe reads would
-            # leave proc.wait() unbounded, so a process that closes its pipes
-            # without exiting would hang the turn forever, which is the failure
-            # this method exists to prevent. The pump is shielded so expiry
-            # cancels the waiting, not the reader, leaving the bytes that already
-            # arrived available for the partial parse below.
+            # One deadline over both awaits, because bounding only the pipe reads would
+            # leave proc.wait() unbounded and a pipe-closed process would hang the turn
+            # forever. The pump is shielded so expiry cancels the waiting, not the
+            # reader, leaving the bytes that already arrived available for the partial
+            # parse below.
             async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
                 await asyncio.shield(pump)
                 await proc.wait()
@@ -492,10 +471,9 @@ class OmpAgent(AbstractAgent[Provider]):
             await self._kill_tree(proc)
         except asyncio.CancelledError as e:
             # Stopping a job cancels this turn, and abandoning it here would leak
-            # the tree exactly as the timeout used to. Signalled synchronously
-            # because awaiting a graceful stop inside a cancelled task is not
-            # dependable, so there is no reliable window for SIGTERM. The cancel
-            # goes on once the partial stream's usage is counted below.
+            # the tree. Signalled synchronously because awaiting a graceful stop
+            # inside a cancelled task is not dependable. The cancel goes on once
+            # the partial stream's usage is counted below.
             self._signal_group(proc, signal.SIGKILL)
             cancelled = e
         finally:
@@ -536,11 +514,10 @@ class OmpAgent(AbstractAgent[Provider]):
                         text = self._message_text(message)
                         if text:
                             final_output = text
-                        # A model-level failure is reported inside the message,
-                        # not as an "error" event, and omp still exits 0. Without
-                        # this a turn that never reached the server -- wrong port,
-                        # server down, model rejected -- parses as a clean turn
-                        # that simply had nothing to say.
+                        # A model-level failure arrives inside the message, not as an
+                        # "error" event, and omp still exits 0. Without this, a turn
+                        # that never reached the server parses as a clean turn with
+                        # nothing to say.
                         if message.get("stopReason") == "error":
                             detail = message.get("errorMessage")
                             if isinstance(detail, str) and detail:
@@ -550,19 +527,17 @@ class OmpAgent(AbstractAgent[Provider]):
                 if isinstance(msg, str):
                     stream_error = msg
 
-        # Usage is accounted before any early return: the model consumed those
-        # tokens whether the turn completed, failed, or was cut short, and the
-        # partial stream is what makes a timed-out turn's usage recoverable.
+        # Account usage before any early return. The model consumed those tokens
+        # whether the turn completed, failed, or was cut short, and the partial
+        # stream is what makes a timed-out turn's usage recoverable.
         self._token_usage += usage
         if cancelled is not None:
             raise cancelled
 
-        # omp announces the session id in its first event but only writes the
-        # session file once the turn has something to save. An id with no file
-        # behind it makes every later turn die on --resume with
-        # 'Session "<id>" not found', and since nothing clears it the same dead id
-        # is resent forever -- one empty turn then fails every turn after it.
-        # Drop it here so the next turn opens a fresh session instead.
+        # omp announces the session id in its first event but only writes the session
+        # file once the turn has something to save. An id with no file makes every
+        # later turn die on --resume, and nothing clears it, so drop it here and the
+        # next turn opens a fresh session.
         if self._session_id is not None and not self._session_persisted(self._session_id):
             logger.warning(
                 "omp did not persist session %s; the next turn starts fresh", self._session_id
@@ -570,22 +545,19 @@ class OmpAgent(AbstractAgent[Provider]):
             self._session_id = None
 
         if timed_out:
-            # Shape unchanged from before: only the usage accounting above is new,
-            # which is what the review asked for. Surfacing the partial transcript
-            # here would change what a timed-out turn persists, so it is left out.
+            # Surfacing the partial transcript here would change what a timed-out
+            # turn persists, so it is left out.
             return IterationResult(
                 outcome=TurnOutcome.TIMED_OUT, output="", tool_calls=0, transcript=[], error=""
             )
 
         tool_calls = self._count_tool_calls(messages)
 
-        # A turn that produced neither text nor a tool call did no work, so if it
-        # also reported trouble it failed -- whether omp said so by exiting
-        # nonzero or by an errored message on a zero exit. Keying off ``messages``
-        # alone missed both: omp emits a message even for a turn that never
-        # reached the model, and the empty result then reads as COMPLETED, which
-        # the orchestrator cannot tell apart from "the agent had nothing to do".
-        # Work that did land still completes, so a late nonzero exit keeps it.
+        # A turn with neither text nor tool calls did no work, so if it also
+        # reported trouble it failed. omp emits a message even when the turn never
+        # reached the model, so keying off messages alone would read the empty
+        # result as COMPLETED. Work that did land still completes, so a late
+        # nonzero exit keeps it.
         if not final_output and not tool_calls and (proc.returncode != 0 or stream_error):
             error = stream_error or stderr_text.strip() or f"omp exited with code {proc.returncode}"
             logger.error("omp turn produced no work (exit %s): %s", proc.returncode, error)
@@ -611,9 +583,9 @@ class OmpAgent(AbstractAgent[Provider]):
             # process tree and keep the output that already arrived.
             result = await self._run_omp(prompt)
 
-            # With OMP_MCP_REQUIRE_READY omp refuses the prompt when the tools
-            # server is not ready. Fatal, not FAILED: a failed report turn still
-            # completes the job when a report file exists.
+            # With OMP_MCP_REQUIRE_READY omp refuses the prompt when the tools server
+            # is not ready. Fatal, not FAILED. A failed report turn still completes
+            # the job when a report file exists.
             if self._missing_mcp_tools(result):
                 logger.warning("tools server was not ready, retrying the turn")
                 result = await self._run_omp(prompt)

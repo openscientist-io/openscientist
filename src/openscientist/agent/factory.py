@@ -1,9 +1,9 @@
 """Agent factory.
 
 ``get_agent`` instantiates the configured provider and returns its harness
-agent. ``OPENSCIENTIST_HARNESS`` selects it: ``auto`` derives from the provider
-family (Claude/Codex), ``omp`` drives any provider, and ``claude_code``/``codex``
-require a matching family.
+agent. ``OPENSCIENTIST_HARNESS`` selects it, where ``auto`` derives from the
+provider family (Claude/Codex), ``omp`` drives any provider, and
+``claude_code``/``codex`` require a matching family.
 """
 
 from __future__ import annotations
@@ -47,11 +47,7 @@ def _resolve_harness() -> str:
 
 
 def _agent_class_for(cls: type[Provider], harness: str) -> type[AbstractAgent[Any]]:
-    """Map a provider class + harness id to its agent class (the one dispatch).
-
-    ``omp`` drives any provider; ``claude_code``/``codex`` require the matching
-    family; ``auto`` derives from the family.
-    """
+    """Map a provider class + harness id to its agent class (the one dispatch)."""
     is_claude = issubclass(cls, ClaudeCompatible)
     is_codex = issubclass(cls, CodexCompatible)
 
@@ -108,10 +104,7 @@ def agent_class_for_provider_id(provider_id: str) -> type[AbstractAgent[Any]]:
 
 
 def build_agent(config: AgentConfig, provider: Provider) -> AbstractAgent[Provider]:
-    """Build the agent for an explicit provider (shared by get_agent and chat).
-
-    Reads any per-run model override from ``config.model_override``.
-    """
+    """Build the agent for an explicit provider (shared by get_agent and chat)."""
     agent_cls = agent_class_for_provider(provider)
     logger.info("Using %s with provider %s", agent_cls.__name__, provider.id)
     return agent_cls(config, provider)

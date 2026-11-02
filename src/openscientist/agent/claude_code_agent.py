@@ -1,13 +1,7 @@
-"""
-ClaudeCodeAgent — drives the claude-agent-sdk for Claude-compatible providers.
+"""ClaudeCodeAgent, driving the claude-agent-sdk for Claude-compatible providers.
 
-The claude-agent-sdk provides automatic tool-use loops, built-in tools
-(Bash, file read/write), and the full Claude Code capability set.
-
-The agent sources its model from ``provider.claude_model_name()`` and
-applies ``provider.claude_sdk_env()`` to the environment so the SDK's
-bundled CLI routes to the correct backend (Anthropic, CBORG, Vertex,
-Bedrock, Foundry).
+The SDK's bundled CLI routes to the provider's backend via
+``provider.claude_sdk_env()`` applied to the subprocess environment.
 """
 
 from __future__ import annotations
@@ -51,11 +45,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # Monkey-patch: make the SDK's message parser tolerant of unknown types
-# (e.g. rate_limit_event added in newer API versions).  Without this the
-# SDK raises MessageParseError and kills the entire agentic loop.
-# ---------------------------------------------------------------------------
+# (e.g. rate_limit_event added in newer API versions). Without this the SDK
+# raises MessageParseError and kills the entire agentic loop.
 def _install_parse_message_patch() -> None:
     """Wrap ``claude_agent_sdk._internal.message_parser.parse_message``
     so that unknown message types return a lightweight sentinel instead of
@@ -134,19 +126,12 @@ _install_parse_message_patch()
 
 
 class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
-    """
-    Agent that wraps the claude-agent-sdk ClaudeSDKClient.
+    """Agent that wraps the claude-agent-sdk ``ClaudeSDKClient``.
 
-    Tools come from the standalone ``openscientist_tools`` package, spawned
-    as a stdio subprocess MCP server that the SDK manages. The SDK handles
-    the agentic loop internally.
-
-    The client is connected lazily on first ``run_iteration`` call and
-    kept alive for conversation continuity across iterations.  Pass
-    ``reset_session=True`` to disconnect and start a fresh session.
-
-    ``AgentConfig.model_override`` lets callers route a single run to a
-    different model than the provider's default (used by in-page chat).
+    Tools come from the standalone ``openscientist_tools`` package, spawned as a
+    stdio subprocess MCP server. The client is connected lazily on the first
+    ``run_iteration`` and kept alive across iterations. ``reset_session=True``
+    starts a fresh session.
     """
 
     def __init__(self, config: AgentConfig, provider: ClaudeCompatible) -> None:
@@ -227,7 +212,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def chat_model_override(cls) -> str | None:
-        # ANTHROPIC_CHAT_MODEL escape hatch: route chat to a different model
+        # ANTHROPIC_CHAT_MODEL escape hatch, routing chat to a different model
         # than discovery (e.g. when the discovery model rejects chat prompts).
         from openscientist.settings import get_settings
 
@@ -240,7 +225,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         _tool_input: dict[str, Any],
         _context: ToolPermissionContext,
     ) -> PermissionResultAllow:
-        """Auto-approve all tool use — agent runs autonomously."""
+        """Auto-approve all tool use. The agent runs autonomously."""
         return PermissionResultAllow()
 
     def _stderr_callback(self, line: str) -> None:
@@ -317,18 +302,12 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
     def _usage_from_payload(usage: object) -> TokenUsage:
         """Normalize Anthropic SDK usage payloads (object or dict) to TokenUsage.
 
-        Anthropic's shape is already additive: ``input_tokens`` excludes cached
-        input, and ``cache_creation_input_tokens`` / ``cache_read_input_tokens``
-        are independent buckets.
-
+        Anthropic's buckets are already additive and independent.
         ``cache_creation_input_tokens`` is the sum of the per-lifetime counts in
-        ``cache_creation``, and a one-hour write bills at twice the input rate
-        against 1.25x for five minutes, so the one-hour portion is split off into
-        its own bucket. It is clamped to the total so the two stay disjoint.
-
-        ``reasoning_tokens`` is always 0 on this path because the Anthropic API
-        does not expose a separate count for extended-thinking tokens; they are
-        billed inside ``output_tokens``.
+        ``cache_creation``, and a one-hour write bills at a different rate, so the
+        one-hour portion is split off, clamped to the total so the buckets stay
+        disjoint. ``reasoning_tokens`` is always 0 because the API bills
+        extended-thinking tokens inside ``output_tokens`` with no separate count.
         """
         cache_write_total = _usage_int(usage, "cache_creation_input_tokens")
         write_1h = min(
@@ -468,13 +447,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         *,
         reset_session: bool = False,
     ) -> IterationResult:
-        """
-        Run one iteration via the SDK's bidirectional client.
-
-        The client stays connected across iterations for conversation
-        continuity.  When reset_session=True, the old client is
-        disconnected and a fresh one is created.
-        """
+        """Run one iteration via the SDK's bidirectional client."""
         await self._reset_session_if_requested(reset_session)
         self._stderr_lines.clear()
         state = _IterationState()

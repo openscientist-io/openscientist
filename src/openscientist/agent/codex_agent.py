@@ -1,22 +1,8 @@
 """Codex agent backend.
 
-``CodexAgent`` drives the Codex agent via the official ``openai-codex`` SDK.
-The SDK launches ``codex app-server`` as a persistent subprocess and speaks
-JSON-RPC to it over stdio, so a single thread spans the whole job and turns are
-run on it in sequence. The SDK exposes no programmatic MCP/config parameter for
-the provider table or the tools MCP server, so per-job configuration (the active
-``model_provider``, its ``[model_providers.<id>]`` table, and the
-``openscientist-tools`` MCP server) is written to ``$CODEX_HOME/config.toml``
-and the child reads it via the ``CODEX_HOME`` environment variable. The system
-prompt is delivered as an ``AGENTS.md`` in the working directory (codex's
-project-doc mechanism, symmetric to how ``ClaudeCodeAgent`` writes
-``CLAUDE.md``).
-
-The SDK launches the codex binary it is pinned to, installed with it as
-``openai-codex-cli-bin``, so the binary always speaks the SDK's protocol.
-
-Each turn's items are translated to transcript entries by the shared ``CODEX``
-deserializer (see ``_to_transcript``).
+The SDK exposes no programmatic configuration, so per-job provider and MCP
+settings are written to ``$CODEX_HOME/config.toml`` and the system prompt is
+delivered as ``AGENTS.md``.
 """
 
 from __future__ import annotations
@@ -74,12 +60,8 @@ _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_CODEX_TURN_TIMEOUT", "
 
 
 def _toml_str(value: str) -> str:
-    """Quote a string as a TOML basic string.
-
-    Escapes backslash and quote, plus the control characters that can appear
-    in forwarded environment values (newline, carriage return, tab) which
-    would otherwise produce invalid TOML.
-    """
+    """Quote a string as a TOML basic string, escaping the control characters that
+    can appear in forwarded environment values."""
     escaped = (
         value.replace("\\", "\\\\")
         .replace('"', '\\"')
@@ -91,12 +73,8 @@ def _toml_str(value: str) -> str:
 
 
 class _TokenBreakdown(Protocol):
-    """The nested counts read off the SDK's ``TokenUsageBreakdown``.
-
-    Structural rather than nominal so the mapper stays checkable while tests
-    substitute stubs. Typing these four is what keeps a rename or a change of
-    nesting upstream from silently mis-pricing a turn.
-    """
+    """The nested counts read off the SDK's ``TokenUsageBreakdown``, structural
+    rather than nominal so tests can substitute stubs."""
 
     @property
     def input_tokens(self) -> int: ...
@@ -155,8 +133,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     backend = AgentBackend.CODEX
     file_write_tool = "apply_patch"
     display_name = "Codex"
-    # codex discovers ``.agents/skills/<name>/SKILL.md`` under its cwd; the base
-    # class writes them there via the default SKILL.md layout.
+    # codex discovers ``.agents/skills/<name>/SKILL.md`` under its cwd.
     skills_subdir = ".agents/skills"
 
     @classmethod
@@ -169,27 +146,19 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     def discovery_system_prompt(
         cls, *, use_hypotheses: bool = False, phenix_available: bool = False
     ) -> str:
-        # Codex reads a single AGENTS.md, so its discovery system prompt is the
-        # full per-job doc (CodexAgent writes it to AGENTS.md from this prompt).
+        # Codex reads a single AGENTS.md, so its discovery system prompt is the full
+        # per-job doc.
         return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
 
-    # apply_runtime_environment, chat_system_prompt, write_chat_context, and
-    # chat_model_override use the AbstractAgent defaults: codex configures its
-    # child via config.toml (no process-env routing), folds the chat guidance
-    # into the system prompt, writes no chat file, and has no model override.
+    # The other backend hooks use the AbstractAgent defaults.
 
     RUN_HOME: ClassVar[str | None] = ".codex"
 
     @classmethod
     def provision_run_home(cls, settings: Settings, home: Path) -> None:
-        """Copy the codex CLI auth into the run's home, its CODEX_HOME, readable
-        by the non-root agent (uid 1001).
-
-        Mounting the host auth file directly fails on the uid/permission
-        boundary (the host file is mode 600 owned by another user), so it is
-        copied in agent-readable. No-op unless ``codex_auth_host_path`` is set
-        (the API-key path needs no file).
-        """
+        """Copy the codex CLI auth into the run's CODEX_HOME (host file is mode 600
+        owned by another user), readable by the non-root agent (uid 1001). No-op
+        unless ``codex_auth_host_path`` is set (the API-key path needs no file)."""
         src = settings.provider.codex_auth_host_path
         if not src:
             return
@@ -203,24 +172,18 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         logger.info("Provisioned codex auth into %s", dest)
 
     def _job_dir(self) -> Path:
-        # Absolute: codex resolves a relative CODEX_HOME/cwd against its own
-        # cwd, doubling a relative job dir (chat passes "jobs/<id>", discovery
-        # passes an absolute path).
+        # Absolute, because codex resolves a relative CODEX_HOME/cwd against its own cwd,
+        # which would double a relative job dir such as "jobs/<id>".
         return self._config.job_dir.resolve()
 
     def _codex_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
 
     def _mcp_env(self) -> dict[str, str]:
-        """Full environment for the tools MCP server, written into the codex
-        config.toml ``[mcp_servers.<name>.env]`` table.
-
-        Unlike a normal subprocess, codex does NOT pass its own process
-        environment to MCP server children. It passes only this table. So we
-        forward the whole parent environment (PATH, DATABASE_URL,
-        OPENSCIENTIST_SECRET_KEY, provider creds, executor image, ...) that the
-        tools need, then overlay the per-job ``OPENSCIENTIST_*`` values.
-        """
+        """Full environment for the tools MCP server, written into the config.toml
+        env table. Codex passes no process environment to MCP server children,
+        only this table, so the whole parent environment is forwarded and the
+        per-job ``OPENSCIENTIST_*`` values are overlaid."""
         env = dict(os.environ)
         env.update(self._job_env_overlay(self._job_dir()))
         return env
@@ -249,13 +212,9 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             (self._job_dir() / "AGENTS.md").write_text(self._config.system_prompt)
 
     def _ensure_auth(self) -> None:
-        """Make the per-job ``CODEX_HOME`` able to authenticate.
-
-        If an API key is available (provider env or ``OPENAI_API_KEY``),
-        codex uses it directly. Otherwise copy the codex CLI's stored OAuth
-        login (``~/.codex/auth.json``) into the per-job home so codex can
-        authenticate via the ChatGPT subscription.
-        """
+        """Make the per-job ``CODEX_HOME`` able to authenticate, falling back to a copy
+        of the codex CLI's stored OAuth login (``~/.codex/auth.json``) when no API key
+        is available, so codex can use the ChatGPT subscription."""
         if self._provider.codex_sdk_env() or os.environ.get("OPENAI_API_KEY"):
             return
         source = Path.home() / ".codex" / "auth.json"
@@ -291,11 +250,8 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         self._thread = None
 
     async def _ensure_thread(self, reset_session: bool) -> AsyncThread:
-        """Return a started thread, (re)building it when requested.
-
-        The app-server client persists across iterations. A reset starts a new
-        thread (a fresh conversation) on the same client.
-        """
+        """Return a started thread, (re)building it when requested. A reset starts a
+        fresh conversation, but the app-server client persists across iterations."""
         if reset_session:
             self._thread = None
         if self._codex is None:
@@ -324,13 +280,9 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     @staticmethod
     def _usage_from_breakdown(counts: _TokenBreakdown) -> TokenUsage:
-        """Normalize the SDK's token counts to ``TokenUsage``.
-
-        The counts nest: ``input_tokens`` includes ``cached_input_tokens`` and
-        ``output_tokens`` includes ``reasoning_output_tokens`` (Responses-API
-        shape). Both sub-counts are subtracted here so the buckets stay
-        non-overlapping and still sum to the breakdown's ``total_tokens``.
-        """
+        """Normalize the SDK's token counts to ``TokenUsage``, subtracting the nested
+        sub-counts (Responses-API shape) so the buckets stay non-overlapping and
+        still sum to the breakdown's ``total_tokens``."""
         return TokenUsage(
             input_tokens=counts.input_tokens - counts.cached_input_tokens,
             output_tokens=max(counts.output_tokens - counts.reasoning_output_tokens, 0),
@@ -342,12 +294,9 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         )
 
     def _count_usage(self, thread_total: _TokenBreakdown) -> None:
-        """Add what the thread spent since its last usage report.
-
-        The report's ``last`` covers only the latest model request, and a turn
-        makes one request per tool call round, so the turn's spend is the growth
-        of the thread's running ``total``. Reports repeat on rate-limit updates,
-        which adds nothing."""
+        """Add what the thread spent since its last usage report, taking the growth of
+        the running ``total`` (a report's ``last`` covers only the latest request,
+        and reports repeat on rate-limit updates, which adds nothing)."""
         total = self._usage_from_breakdown(thread_total)
         grown = _grown(self._thread_total, total)
         if grown is not None:
@@ -358,9 +307,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         self, thread: AsyncThread, prompt: str
     ) -> tuple[list[ThreadItem], str | None]:
         """Start a turn and read its notifications until it completes, counting
-        usage as it is reported, so a turn that is cut or cancelled keeps what it
-        spent. Returns the turn's items and its answer, and raises if the turn
-        failed."""
+        usage as it is reported, so a cut or cancelled turn keeps what it spent."""
         turn = await thread.turn(prompt)
         items: list[ThreadItem] = []
         completed: Turn | None = None
@@ -381,35 +328,25 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     @staticmethod
     def _to_transcript(items: list[Any]) -> list[TranscriptEntry]:
-        """Translate the turn's items into transcript entries by reusing the
-        ``CODEX`` deserializer.
-
-        The SDK hands us parsed item objects, but ``CODEX.deserialize`` consumes the
-        raw ``item.completed`` event shape, so each item is dumped back to its
-        wire dict and wrapped in an envelope. This delegates every mapping to
-        the single tested translator.
-        """
+        """Translate the turn's items into transcript entries via the ``CODEX``
+        deserializer, dumping each parsed item back to its wire dict and wrapping it
+        in an ``item.completed`` envelope, because the deserializer consumes that shape."""
         events: list[dict[str, Any]] = [
             {"type": "item.completed", "item": item.model_dump(mode="json")} for item in items
         ]
         return CODEX.deserialize(events)
 
     async def run_iteration(self, prompt: str, *, reset_session: bool = False) -> IterationResult:
-        """Run one turn on the codex thread and return its result.
-
-        The turn's items are translated to a transcript, and its token usage is
-        accumulated as codex reports it.
-        """
+        """Run one turn on the codex thread and return its result."""
         try:
             thread = await self._ensure_thread(reset_session)
             items, answer = await asyncio.wait_for(
                 self._run_turn(thread, prompt), timeout=_TURN_TIMEOUT_SECONDS
             )
         except TimeoutError:
-            # Runaway turn (e.g. the model looping on an unsupported tool call).
-            # Report it honestly as TIMED_OUT (work done before the cut is already
-            # persisted via the MCP tools); the orchestrator decides whether to
-            # advance or fail, rather than this layer claiming success.
+            # Runaway turn (e.g. the model looping on an unsupported tool call). Report it
+            # as TIMED_OUT. The work done before the cut is already persisted via the
+            # MCP tools, and the orchestrator decides whether to advance or fail.
             logger.warning("Codex turn exceeded %ds, cutting the turn", _TURN_TIMEOUT_SECONDS)
             await self._close_codex()
             return IterationResult(

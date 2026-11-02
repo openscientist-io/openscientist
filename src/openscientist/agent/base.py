@@ -1,10 +1,7 @@
-"""Generic agent base parameterised over the provider family.
+"""Generic agent base parameterised over the provider family it can drive.
 
-`AbstractAgent[P: Provider]` ties an agent runtime to the provider
-family it can drive: `ClaudeCodeAgent(AbstractAgent[ClaudeCompatible])`
-and `CodexAgent(AbstractAgent[CodexCompatible])` cannot be
-constructed with a mismatched provider, and mypy rejects the mismatch at
-check-time. Both concrete agents subclass this.
+The provider parameter is enforced by mypy at check-time, so an agent
+cannot be constructed with a mismatched provider.
 """
 
 from __future__ import annotations
@@ -46,10 +43,7 @@ logger = logging.getLogger(__name__)
 class AgentBackend(enum.Enum):
     """The coding-agent runtime (harness) that drives a job.
 
-    The single source of truth for backend identity. Each concrete
-    ``AbstractAgent`` owns one of these. The string values are stable and
-    match the historical labels persisted and derived elsewhere, so existing
-    data and any string comparisons keep working.
+    The string values are stable and persisted, so they must not change.
     """
 
     CLAUDE_CODE = "claude_code"
@@ -61,10 +55,10 @@ class AgentBackend(enum.Enum):
 class TokenUsage:
     """Normalized token usage across all iterations.
 
-    Categories are non-overlapping and additive: the six fields sum to the
-    total, so cost functions can rate each field without double-counting.
-    Backends whose SDK reports hierarchical counts (e.g. OpenAI folds
-    ``cached_input_tokens`` into ``input_tokens``) must subtract sub-categories
+    The fields are non-overlapping and additive, so cost functions can rate
+    each field without double-counting. Hierarchical SDK counts, where one
+    field folds a sub-count into another (e.g. OpenAI's
+    ``cached_input_tokens`` inside ``input_tokens``), must be subtracted
     before populating this.
     """
 
@@ -122,10 +116,9 @@ class TokenUsage:
 class TurnOutcome(enum.Enum):
     """Outcome of one agent turn, for the orchestrator to interpret.
 
-    The agent reports what happened, the loop owns the policy. ``TIMED_OUT`` is a
-    wall-clock cut (work before it is already persisted via tools), so the loop
-    may advance rather than fail. Cancellation propagates as an exception, never
-    a turn result.
+    ``TIMED_OUT`` is a wall-clock cut (work before it is already persisted via
+    tools), so the loop may advance rather than fail. Cancellation propagates
+    as an exception, never a turn result.
     """
 
     COMPLETED = "completed"
@@ -145,8 +138,7 @@ class IterationResult:
 
     @property
     def success(self) -> bool:
-        """True only for a normally completed turn. The discovery loop inspects
-        ``outcome`` directly to tell a timeout from a failure."""
+        """True only for a normally completed turn."""
         return self.outcome is TurnOutcome.COMPLETED
 
 
@@ -160,44 +152,41 @@ class AgentConfig:
     use_hypotheses: bool = False
     data_files: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServerSpec, ...] = ()
-    # Optional per-run model override. Honored by the Claude path (e.g. the
-    # ANTHROPIC_CHAT_MODEL escape hatch for in-page chat). The codex path
-    # sources its model from the provider, so this is ignored there.
+    # Per-run model override, honored by the Claude path and ignored by codex,
+    # which sources its model from the provider.
     model_override: str | None = None
-    # Per-invocation env for the tools subprocess. Threaded here, not via global
-    # os.environ, so concurrent chats cannot leak one job's exec token.
+    # Per-invocation env for the tools subprocess, threaded here instead of
+    # global os.environ so concurrent chats cannot leak one job's exec token.
     tool_server_env: Mapping[str, str] = field(default_factory=dict)
 
 
 class AbstractAgent[P: Provider](abc.ABC):
     """Agent runtime parameterised over the provider family it accepts.
 
-    Backend-divergent behavior lives in the abstract members below: a subclass
-    that omits one is not instantiable (mypy flags it), and ``backend`` is
-    enforced in ``__init_subclass__``.
+    Backend-divergent behavior lives in the abstract members below, and
+    ``backend`` is enforced in ``__init_subclass__``.
     """
 
     #: The backend identity this agent implements. Concrete subclasses MUST set
-    #: it, and abc cannot enforce a plain ClassVar, so ``__init_subclass__`` does.
+    #: it, and ``__init_subclass__`` enforces it because abc cannot.
     backend: ClassVar[AgentBackend]
 
-    #: The tool this backend uses to create or overwrite a file (``"apply_patch"``
-    #: for codex, ``"Write"`` for Claude). Named verbatim in report prompts so the
-    #: model knows which tool to call. Enforced like ``backend``.
+    #: The tool this backend uses to create or overwrite a file. Named verbatim
+    #: in report prompts so the model knows which tool to call. Enforced like
+    #: ``backend``.
     file_write_tool: ClassVar[str]
 
-    #: Human-facing harness label for the UI (``"Claude Code"``, ``"Codex"``,
-    #: ``"Oh My Pi"``). Enforced like ``backend``.
+    #: Human-facing harness label for the UI. Enforced like ``backend``.
     display_name: ClassVar[str]
 
-    #: Job-relative directory this backend materialises skills into (e.g.
-    #: ``".claude/skills"``). None disables skill materialisation.
+    #: Job-relative directory this backend materialises skills into. None
+    #: disables skill materialisation.
     skills_subdir: ClassVar[str | None] = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        # Only concrete (instantiable) subclasses must declare these. An
-        # intermediate abstract subclass may legitimately leave them unset.
+        # Only concrete subclasses must declare these. An intermediate abstract
+        # subclass may legitimately leave them unset.
         if inspect.isabstract(cls):
             return
         if not isinstance(getattr(cls, "backend", None), AgentBackend):
@@ -293,12 +282,9 @@ class AbstractAgent[P: Provider](abc.ABC):
     def discovery_system_prompt(
         cls, *, use_hypotheses: bool = False, phenix_available: bool = False
     ) -> str:
-        """The system prompt this backend uses for a discovery run.
-
-        Claude returns the concise ``system_prompt`` (its rich doc is written
-        into ``.claude/``); codex returns the full ``job_doc`` (delivered via
-        ``AGENTS.md``).
-        """
+        """The system prompt this backend uses for a discovery run. Claude returns the
+        concise ``system_prompt`` (its rich doc is written into ``.claude/``), codex
+        returns the full ``job_doc`` (delivered via ``AGENTS.md``)."""
 
     # ----- per-job side effects (run where the agent instance lives) -----
 
@@ -329,16 +315,15 @@ class AbstractAgent[P: Provider](abc.ABC):
             logger.warning("Failed to write skills to %s: %s", skills_root, e)
 
     def _write_skill(self, skills_root: Path, skill: Skill) -> None:
-        """Write one skill as ``<skills_root>/<name>/SKILL.md`` (the Agent
-        Skills layout codex and omp discover). Claude overrides for its own."""
+        """Write one skill as ``<skills_root>/<name>/SKILL.md``, the Agent Skills layout
+        codex and omp discover. Claude overrides for its own."""
         from openscientist.prompts.common import apply_mcp_tool_prefix
 
         skill_dir = skills_root / f"{skill.category}--{skill.slug}"
         skill_dir.mkdir(parents=True, exist_ok=True)
         # Skill bodies name MCP tools bare like the rest of the prompts, so a
-        # backend that namespaces them needs the same rewrite the system and turn
-        # prompts get. Otherwise a skill teaches a name that will not resolve.
-        # No-op wherever the prefix is empty, which is Claude and codex.
+        # backend that namespaces them needs the same rewrite. No-op for backends
+        # with an empty prefix, which is Claude and codex.
         body = apply_mcp_tool_prefix(render_skill_md(skill), self.prompt_fragments())
         (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
 
@@ -365,10 +350,10 @@ class AbstractAgent[P: Provider](abc.ABC):
 
     @classmethod
     def chat_system_prompt(cls, base_system_prompt: str) -> str:
-        """The in-page-chat system prompt. Default folds ``chat_doc`` in, correct
-        for backends that read everything from the system prompt (e.g. codex).
-        Claude overrides to keep the base prompt and deliver guidance via
-        ``.claude/CLAUDE.md`` (written by ``write_chat_context``)."""
+        """The in-page-chat system prompt. Default folds ``chat_doc`` in, correct for
+        backends that read everything from the system prompt (e.g. codex). Claude
+        overrides to keep the base prompt and deliver guidance via
+        ``.claude/CLAUDE.md``."""
         return f"{base_system_prompt}\n\n{cls.chat_doc()}"
 
     def write_chat_context(self) -> None:
@@ -387,7 +372,7 @@ class AbstractAgent[P: Provider](abc.ABC):
 
     @classmethod
     def provision_run_home(cls, settings: Settings, home: Path) -> None:
-        """Put what the harness needs at start, such as the operator's login,
-        into ``home``, the home of one container run, in the web process before
-        the container launches (hence a classmethod). Default no-op."""
+        """Put what the harness needs at start, such as the operator's login, into
+        ``home``, the home of one container run. Runs in the web process before the
+        container launches, hence a classmethod. Default no-op."""
         return None
