@@ -10,6 +10,7 @@ from openscientist.ntfy import (
     generate_topic_for_user,
     get_subscription_url,
     notify_job_cancelled,
+    notify_job_completed,
     notify_job_failed,
     notify_job_started,
     notify_job_status_change,
@@ -169,6 +170,32 @@ class TestNotifyJobCancelled:
         assert "Reason" not in msg
 
 
+class TestNotifyJobCompleted:
+    """A completed job's notification, with the budget note when the job stopped
+    at one."""
+
+    @pytest.mark.asyncio
+    async def test_completed_names_the_stop_note(self):
+        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = True
+            result = await notify_job_completed(
+                "topic1",
+                "job-1",
+                "Boiling water",
+                "https://app.test",
+                stop_note="Job cost limit of $5.00 reached: the job has spent $5.00.",
+            )
+        assert result is True
+        assert "Job cost limit of $5.00 reached" in mock_send.call_args.kwargs["message"]
+        assert mock_send.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_completed_without_a_note_keeps_its_plain_message(self):
+        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send:
+            await notify_job_completed("topic1", "job-1", "Boiling water", "https://app.test")
+        assert "completed successfully" in mock_send.call_args.kwargs["message"]
+
+
 class TestNotifyJobStatusChange:
     """Tests for notify_job_status_change()."""
 
@@ -234,6 +261,32 @@ class TestNotifyJobStatusChange:
 
         assert result is True
         mock_completed.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_completed_names_the_stop_note(self):
+        """The note rides the existing completed notification, no second one."""
+        mock_settings = MagicMock()
+        mock_settings.base_url = "https://app.test"
+
+        with (
+            patch("openscientist.ntfy.get_settings", return_value=mock_settings),
+            patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as mock_send,
+        ):
+            mock_send.return_value = True
+            result = await notify_job_status_change(
+                user_id=uuid4(),
+                job_id="j1",
+                job_title="Boiling water",
+                new_status="completed",
+                ntfy_topic="topic1",
+                stop_note="Project 24-hour spend limit of $5.00 reached.",
+            )
+
+        assert result is True
+        assert (
+            "Project 24-hour spend limit of $5.00 reached." in mock_send.call_args.kwargs["message"]
+        )
+        assert mock_send.call_count == 1
 
     @pytest.mark.asyncio
     async def test_routes_failed(self):

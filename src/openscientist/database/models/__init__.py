@@ -1,15 +1,7 @@
-"""
-Database models for OpenScientist.
-
-This package contains SQLAlchemy ORM models for all database tables.
-Models are organized by domain:
-- User authentication (users, oauth_accounts, sessions, api_keys)
-- Jobs (jobs, job_shares, job_data_files, job_chat_messages)
-- Knowledge state (hypotheses, findings, literature, plots, etc.)
-- Cost tracking (cost_records)
-"""
+"""Database models for OpenScientist."""
 
 # Core authentication models
+from .admin_settings import AdminSettingChange, AdminSettings
 from .administrator import Administrator
 from .analysis_log import AnalysisLog
 from .api_key import APIKey
@@ -25,7 +17,6 @@ from .finding_literature import finding_literature
 
 # Knowledge state models
 from .hypothesis import Hypothesis
-from .hypothesis_spawn import HypothesisSpawn
 from .iteration_summary import IterationSummary
 
 # Job models
@@ -50,13 +41,14 @@ from .user import User
 
 __all__ = [
     "APIKey",
+    "AdminSettings",
+    "AdminSettingChange",
     "Administrator",
     "AnalysisLog",
     "CostRecord",
     "FeedbackHistory",
     "Finding",
     "Hypothesis",
-    "HypothesisSpawn",
     "IterationSummary",
     "Job",
     "JobChatMessage",

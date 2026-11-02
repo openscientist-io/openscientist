@@ -28,6 +28,9 @@ from openscientist.database.models import (
     SkillSource,
     User,
 )
+from openscientist.exec_broker_client import BudgetCheck
+from openscientist.orchestrator import discovery
+from tests.admin_row import reset_admin_settings_row
 from tests.db_logins import (
     ADMIN_PASSWORD,
     BOOTSTRAP_ENV,
@@ -89,6 +92,16 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def discovery_budget_allows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loop's budget check allows by default. The budget tests override it."""
+
+    async def _allow(*, job_id: str) -> BudgetCheck:
+        return BudgetCheck(True, None, None)
+
+    monkeypatch.setattr(discovery, "ask_budget", _allow)
 
 
 @pytest.fixture(scope="session")
@@ -158,6 +171,17 @@ def _apply_migrations_once(
         raise RuntimeError(f"bootstrap.sql failed with exit code {exit_code}:\n{output}")
 
     _apply_alembic_migrations(login_url(test_database_url, "openscientist_owner", OWNER_PASSWORD))
+
+    # A running deployment seeds the admin settings row at startup, so the
+    # session starts the same way and holds the default row between tests.
+    async def _seed_admin_row() -> None:
+        engine = create_async_engine(test_database_url, echo=False)
+        try:
+            await reset_admin_settings_row(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_seed_admin_row())
 
 
 def _apply_alembic_migrations(owner_database_url: str) -> None:

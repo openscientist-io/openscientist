@@ -33,6 +33,7 @@ from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
 from openscientist.exceptions import OpenScientistError
+from openscientist.exec_broker_client import ask_budget
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
@@ -48,6 +49,7 @@ from openscientist.orchestrator.iteration import (
     wait_for_feedback_or_timeout,
 )
 from openscientist.providers.base import Provider
+from openscientist.run_environment import run_environment_text
 from openscientist.settings import get_settings
 from openscientist.transcript import TranscriptEntry, save_transcript
 from openscientist.version import get_version_string
@@ -66,12 +68,36 @@ class _DiscoveryCancelledError(RuntimeError):
     """Raised when a job is cancelled during discovery execution."""
 
 
+class _BudgetStopError(RuntimeError):
+    """Raised when the web's budget check says the job must stop iterating.
+
+    ``note`` is the message the job ends with, naming the limit or why the
+    budget could not be checked.
+    """
+
+    def __init__(self, note: str) -> None:
+        super().__init__(note)
+        self.note = note
+
+
 @dataclass(frozen=True)
 class _ReportOutcome:
     """Outcome of report-generation phase."""
 
     success: bool
     error: str
+
+
+async def _check_budget_before_iteration(job_id: str) -> None:
+    """Ask the web whether the job may run its next iteration.
+
+    Raises:
+        _BudgetStopError: A limit was reached, or the check could not be
+            answered in time, carrying the note the job ends with.
+    """
+    verdict = await ask_budget(job_id=job_id)
+    if not verdict.ok:
+        raise _BudgetStopError(verdict.message or "The budget could not be checked")
 
 
 def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
@@ -245,6 +271,7 @@ async def _run_primary_discovery_loop(
     )
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
+    await _check_budget_before_iteration(job_id)
     ledger.begin("discovery", 1)
     result = await executor.run_iteration(initial_prompt, reset_session=True)
     _check_turn_outcome(result, 1)
@@ -280,6 +307,7 @@ async def _run_primary_discovery_loop(
 
     for iteration in range(2, max_iterations + 1):
         await _assert_job_not_cancelled(job_id)
+        await _check_budget_before_iteration(job_id)
         ks = await KnowledgeState.load_from_database(job_id)
         if pending_feedback is None:
             pending_feedback = ks.get_feedback_for_iteration(iteration)
@@ -393,6 +421,23 @@ def _ensure_report_written(
     return False
 
 
+async def _recorded_run_environment(job_dir: Path) -> str | None:
+    """The environment the run recorded, as the report footer names it, or None
+    when it recorded nothing or the record cannot be read."""
+    try:
+        async with asyncio.timeout(_STAMP_DEADLINE_SECONDS):
+            async with async_session_local() as session:
+                version_info = (
+                    await session.execute(
+                        select(JobModel.version_info).where(JobModel.id == UUID(job_dir.name))
+                    )
+                ).scalar_one_or_none()
+    except Exception as e:
+        logger.warning("Could not read version provenance for job %s: %s", job_dir.name, e)
+        return None
+    return run_environment_text(version_info)
+
+
 async def _try_generate_report_pdf(report_path: Path) -> None:
     """Generate HTML and PDF from markdown report.
 
@@ -402,13 +447,14 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
     job_dir = report_path.parent
     html_path = job_dir / "final_report.html"
     pdf_path = job_dir / "final_report.pdf"
+    run_environment = await _recorded_run_environment(job_dir)
 
     try:
         from openscientist.report.pdf import render_report_pdf
         from openscientist.report.renderer import render_report_html
 
         # Render HTML with file:// image paths (for WeasyPrint)
-        html_content = render_report_html(report_path, job_dir)
+        html_content = render_report_html(report_path, job_dir, run_environment=run_environment)
         html_path.write_text(html_content, encoding="utf-8")
         logger.info("HTML report written: %s", html_path)
 
@@ -430,7 +476,9 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
         stripped_path = job_dir / "_final_report_stripped.md"
         stripped_path.write_text(stripped, encoding="utf-8")
         try:
-            markdown_to_pdf(stripped_path, pdf_path, add_footer=True)
+            markdown_to_pdf(
+                stripped_path, pdf_path, add_footer=True, run_environment=run_environment
+            )
         finally:
             stripped_path.unlink(missing_ok=True)
     except Exception as fallback_exc:
@@ -581,11 +629,14 @@ async def _run_report_generation_phase(
 async def _persist_final_status(
     job_dir: Path,
     report_outcome: _ReportOutcome,
+    stop_note: str | None = None,
 ) -> str:
     """Persist final job status based on report generation outcome."""
     final_status = "completed" if report_outcome.success else "failed"
     if final_status == "completed":
-        await update_job_status(job_dir, "completed", allowed_from=("generating_report",))
+        await update_job_status(
+            job_dir, "completed", stop_note=stop_note, allowed_from=("generating_report",)
+        )
     else:
         await update_job_status(
             job_dir,
@@ -639,9 +690,9 @@ def _harness_binary(harness: AgentBackend) -> str:
         from codex_cli_bin import bundled_codex_path  # type: ignore[import-untyped]
 
         return str(bundled_codex_path())
-    from openscientist.agent.omp_agent import _resolve_omp_bin
+    from openscientist.agent.base import _resolve_bin
 
-    return _resolve_omp_bin()
+    return _resolve_bin("OPENSCIENTIST_OMP_BIN", "omp")
 
 
 def _harness_cli_version(command: str) -> str | None:
@@ -1001,14 +1052,22 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     log_file = job_dir / "claude_iterations.log"
 
     try:
-        await _run_primary_discovery_loop(
-            executor=executor,
-            job_dir=job_dir,
-            runtime=runtime,
-            provenance_dir=provenance_dir,
-            log_file=log_file,
-            ledger=ledger,
-        )
+        # A budget limit (or a check the web could not answer in time) stops the
+        # iterations but not the report, so the note is captured and the report
+        # phase still runs.
+        stop_note: str | None = None
+        try:
+            await _run_primary_discovery_loop(
+                executor=executor,
+                job_dir=job_dir,
+                runtime=runtime,
+                provenance_dir=provenance_dir,
+                log_file=log_file,
+                ledger=ledger,
+            )
+        except _BudgetStopError as stopped:
+            stop_note = stopped.note
+            logger.info("Discovery stopped at a budget limit for job %s: %s", job_id, stopped.note)
         ledger.begin("report", None)
         report_outcome = await _run_report_generation_phase(
             executor=executor,
@@ -1017,7 +1076,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             description=runtime.get("description"),
         )
         await ledger.record()
-        final_status = await _persist_final_status(job_dir, report_outcome)
+        final_status = await _persist_final_status(job_dir, report_outcome, stop_note=stop_note)
         ks = await KnowledgeState.load_from_database(job_id)
         return {
             "job_id": job_id,
