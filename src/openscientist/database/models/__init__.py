@@ -1,6 +1,7 @@
 """Database models for OpenScientist."""
 
 # Core authentication models
+from .admin_settings import AdminSettingChange, AdminSettings
 from .administrator import Administrator
 from .analysis_log import AnalysisLog
 from .api_key import APIKey
@@ -40,6 +41,8 @@ from .user import User
 
 __all__ = [
     "APIKey",
+    "AdminSettings",
+    "AdminSettingChange",
     "Administrator",
     "AnalysisLog",
     "CostRecord",

@@ -17,14 +17,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
+from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.admin import (
     _build_admin_user_rows,
     _filter_users_for_admin_table,
     _render_admin_users_table,
+    _render_dashboard_job_groups,
     admin_page,
     delete_user,
     set_user_approval_status,
     set_user_priority_status,
+)
+from openscientist.webapp_components.ui_components import STATUS_COLORS
+from openscientist.webapp_components.utils.container_dashboard import (
+    DashboardData,
+    JobContainerGroup,
 )
 from tests.helpers import fake_admin_session
 
@@ -745,3 +752,27 @@ async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: p
     result = await db_session.execute(select(Job).where(Job.id == job_id))
     orphaned_job = result.scalar_one()
     assert orphaned_job.owner_id is None
+
+
+def _dashboard_badge_color(status: str) -> str:
+    group = JobContainerGroup(
+        job_id=str(uuid4()),
+        title="Q?",
+        status=status,
+        owner_email="o@example.org",
+        current_iteration=1,
+        max_iterations=3,
+    )
+    with patch("openscientist.webapp_components.pages.admin.ui") as mock_ui:
+        _render_dashboard_job_groups(DashboardData(docker_available=True, job_groups=[group]))
+    (badge,) = [c for c in mock_ui.badge.call_args_list if c.args == (status,)]
+    return str(badge.kwargs["color"])
+
+
+@pytest.mark.parametrize("status", list(JobStatus))
+def test_the_container_dashboard_colours_a_status_like_every_other_page(status: JobStatus):
+    assert _dashboard_badge_color(status.value) == STATUS_COLORS[status]
+
+
+def test_the_container_dashboard_shows_an_unknown_status_in_grey():
+    assert _dashboard_badge_color("archived") == "gray"

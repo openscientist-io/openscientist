@@ -38,8 +38,19 @@ from openscientist.job_container.run_home import (
 )
 from openscientist.job_container.runner import AGENT_APP_DIR, JobContainerRunner
 from openscientist.providers.base import AirgapEgress, AirgapPosture
+from tests.admin_row import default_admin_settings_values
 
 _MARKER = "operator-login-marker"
+
+
+@pytest.fixture(autouse=True)
+def _admin_settings_row():
+    """The launch reads the row at use, and these tests have no database for it."""
+    with patch(
+        "openscientist.job_container.runner.current_admin_settings_sync",
+        return_value=default_admin_settings_values(),
+    ):
+        yield
 
 
 class _Provider:
@@ -420,23 +431,27 @@ async def test_startup_registers_the_login_reaper_on_the_state_jobs_dir(
     monkeypatch.setattr(web_app._state, "jobs_dir", jobs_dir)
     monkeypatch.setattr(web_app, "_verify_db_connection_and_rls", _noop)
     monkeypatch.setattr(web_app, "_ensure_default_skill_sources", _noop)
+    monkeypatch.setattr("openscientist.admin_settings.seed_admin_settings", _noop)
     monkeypatch.setattr("openscientist.skill_scheduler.start_skill_scheduler", _noop)
     monkeypatch.setattr("openscientist.llm_proxy.start_llm_proxy", _noop)
     monkeypatch.setattr("openscientist.exec_broker.start_exec_broker", _noop)
 
     reaper_args: list[Path] = []
+    reaper_coros: list[Coroutine[None, None, None]] = []
 
-    def fake_reaper(jobs_dir: Path) -> Coroutine[Any, Any, None]:
+    def fake_reaper(jobs_dir: Path) -> Coroutine[None, None, None]:
         reaper_args.append(jobs_dir)
-        return _idle()
+        coro = _idle()
+        reaper_coros.append(coro)
+        return coro
 
     async def _idle() -> None:
         return None
 
-    registered: list[tuple[object, str]] = []
+    registered: list[tuple[Coroutine[None, None, None], str]] = []
 
     def create_background_task(
-        coroutine: Coroutine[Any, Any, Any], *, name: str, logger: object | None = None
+        coroutine: Coroutine[None, None, None], *, name: str, logger: object | None = None
     ) -> object:
         registered.append((coroutine, name))
         coroutine.close()
@@ -449,7 +464,10 @@ async def test_startup_registers_the_login_reaper_on_the_state_jobs_dir(
         await web_app._start_background_tasks(MagicMock())
 
     assert reaper_args == [jobs_dir]
-    assert len(registered) == 1
-    coroutine, name = registered[0]
+    # Startup registers other background tasks too; find the reaper by the
+    # coroutine it runs.
+    matches = [entry for entry in registered if entry[0] is reaper_coros[0]]
+    assert len(matches) == 1
+    coroutine, name = matches[0]
     assert name == "agent-login-reaper"
     assert inspect.iscoroutine(coroutine)

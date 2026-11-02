@@ -5,6 +5,7 @@ Tests actual HTTP requests to API endpoints with mocked authentication.
 """
 
 import io
+import json
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -491,6 +492,9 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
+        test_job_db.stop_note = "Job cost limit of $5.00 reached: the job has spent $5.00."
+        await db_session.commit()
+
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -505,6 +509,7 @@ class TestJobEndpoints:
         assert data["id"] == str(test_job_db.id)
         assert data["research_question"] == "Test API Job"
         assert data["status"] == "pending"
+        assert data["stop_note"] == "Job cost limit of $5.00 reached: the job has spent $5.00."
 
     @pytest.mark.asyncio
     async def test_get_job_detail_reads_research_metadata_from_database(
@@ -523,6 +528,8 @@ class TestJobEndpoints:
         from openscientist.database.session import get_session
 
         _, full_key = test_api_key_db
+        test_job_db.version_info = {"openscientist_commit": "abc123def456", "agent_harness": "omp"}
+        await db_session.commit()
 
         app = FastAPI()
 
@@ -550,6 +557,10 @@ class TestJobEndpoints:
         data = response.json()
         assert data["research_question"] == "Test API Job"
         assert data["investigation_mode"] == test_job_db.investigation_mode
+        assert data["version_info"] == {
+            "openscientist_commit": "abc123def456",
+            "agent_harness": "omp",
+        }
 
     @pytest.mark.asyncio
     async def test_get_job_status(
@@ -582,6 +593,9 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
+        test_job_db.stop_note = "Project spend total limit of $100.00 reached."
+        await db_session.commit()
+
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -597,6 +611,7 @@ class TestJobEndpoints:
         assert data["status"] == "pending"
         assert data["current_iteration"] == 0
         assert data["max_iterations"] == 5
+        assert data["stop_note"] == "Project spend total limit of $100.00 reached."
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_job_returns_404(
@@ -742,65 +757,26 @@ class TestJobEndpoints:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_cancel_job(
+    @pytest.mark.parametrize("job_status", ["running", "pending"])
+    async def test_cancel_active_job(
         self,
         db_session: AsyncSession,
         test_user_db: User,
         test_api_key_db: tuple[APIKey, str],
+        job_status: str,
     ):
-        """Cancel a running job."""
+        """The cancel endpoint hands the job's id to the job manager and does not write the row's status itself."""
         _, full_key = test_api_key_db
 
-        # Create a running job to cancel
-        running_job = Job(
+        job = Job(
             owner_id=test_user_db.id,
-            research_question="Running Job",
-            description="Will be cancelled",
-            status="running",
+            research_question="Job to cancel",
+            description=f"Cancel while {job_status}",
+            status=job_status,
         )
-        db_session.add(running_job)
+        db_session.add(job)
         await db_session.commit()
-        await db_session.refresh(running_job)
-
-        app = _build_authenticated_app(db_session, test_user_db)
-        # Mock the job manager
-        mock_job_manager = MagicMock()
-        mock_job_manager.cancel_job = AsyncMock()
-
-        with patch(
-            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test",
-            ) as client:
-                response = await client.post(
-                    f"/api/v1/jobs/{running_job.id}/cancel",
-                    headers={"Authorization": f"Bearer {full_key}"},
-                )
-
-        assert response.status_code == 204
-        mock_job_manager.cancel_job.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cancel_pending_job(
-        self,
-        db_session: AsyncSession,
-        test_user_db: User,
-        test_api_key_db: tuple[APIKey, str],
-    ):
-        """Cancel a pending job."""
-        _, full_key = test_api_key_db
-
-        pending_job = Job(
-            owner_id=test_user_db.id,
-            research_question="Pending Job",
-            description="Will be cancelled",
-            status="pending",
-        )
-        db_session.add(pending_job)
-        await db_session.commit()
-        await db_session.refresh(pending_job)
+        await db_session.refresh(job)
 
         app = _build_authenticated_app(db_session, test_user_db)
         mock_job_manager = MagicMock()
@@ -814,52 +790,14 @@ class TestJobEndpoints:
                 base_url="http://test",
             ) as client:
                 response = await client.post(
-                    f"/api/v1/jobs/{pending_job.id}/cancel",
+                    f"/api/v1/jobs/{job.id}/cancel",
                     headers={"Authorization": f"Bearer {full_key}"},
                 )
 
         assert response.status_code == 204
-        mock_job_manager.cancel_job.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cancel_job_does_not_directly_mutate_database_status(
-        self,
-        db_session: AsyncSession,
-        test_user_db: User,
-        test_api_key_db: tuple[APIKey, str],
-    ):
-        """Cancel endpoint should delegate status update to JobManager only."""
-        _, full_key = test_api_key_db
-
-        running_job = Job(
-            owner_id=test_user_db.id,
-            research_question="Running Job",
-            description="Should remain unchanged when manager is mocked",
-            status="running",
-        )
-        db_session.add(running_job)
-        await db_session.commit()
-        await db_session.refresh(running_job)
-
-        app = _build_authenticated_app(db_session, test_user_db)
-        mock_job_manager = MagicMock()
-        mock_job_manager.cancel_job = AsyncMock()
-
-        with patch(
-            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
-        ):
-            async with AsyncClient(
-                transport=ASGITransport(app=app),
-                base_url="http://test",
-            ) as client:
-                response = await client.post(
-                    f"/api/v1/jobs/{running_job.id}/cancel",
-                    headers={"Authorization": f"Bearer {full_key}"},
-                )
-
-        assert response.status_code == 204
-        await db_session.refresh(running_job)
-        assert running_job.status == "running"
+        mock_job_manager.cancel_job.assert_awaited_once_with(str(job.id))
+        await db_session.refresh(job)
+        assert job.status == job_status
 
     @pytest.mark.asyncio
     async def test_cannot_cancel_completed_job(
@@ -931,6 +869,8 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
+            stop_note=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -1021,6 +961,8 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
+            stop_note=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -1116,6 +1058,8 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
+            stop_note=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -1542,6 +1486,8 @@ class TestJobEndpoints:
         job_dir.mkdir(parents=True)
         (job_dir / "plot.png").write_bytes(b"fake png data")
         (job_dir / "data.csv").write_text("a,b,c\n1,2,3\n")
+        test_job_db.version_info = {"openscientist_commit": "abc123def456"}
+        await db_session.commit()
 
         app = _build_authenticated_app(db_session, test_user_db)
 
@@ -1560,6 +1506,10 @@ class TestJobEndpoints:
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
         assert response.headers.get("accept-ranges") == "bytes"
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            assert json.loads(zf.read("provenance.json")) == {
+                "openscientist_commit": "abc123def456"
+            }
 
     @pytest.mark.asyncio
     async def test_get_job_artifacts_excludes_internal_runtime_files(
