@@ -16,6 +16,7 @@ from openscientist.settings import (
     ProviderSettings,
     clear_settings_cache,
     get_settings,
+    phenix_installation_ok,
 )
 
 
@@ -716,14 +717,14 @@ class TestPhenixSettings:
         # But is_available returns False
         assert settings.is_available is False
 
-    def test_phenix_file_instead_of_directory(self):
+    def test_phenix_file_instead_of_directory(self, tmp_path):
         """PHENIX_PATH pointing to a file (not directory) results in is_available=False."""
-        with patch("os.path.isdir", return_value=False):
-            settings = PhenixSettings(PHENIX_PATH="/some/file.txt")
-            # Format is valid, so accepted
-            assert settings.phenix_path == "/some/file.txt"
-            # But is_available returns False because it's not a directory
-            assert settings.is_available is False
+        file = tmp_path / "phenix.txt"
+        file.write_text("not a directory")
+        settings = PhenixSettings(PHENIX_PATH=str(file))
+        assert settings.phenix_path == str(file)
+        # But is_available returns False because it's not a directory
+        assert settings.is_available is False
 
     def test_phenix_path_none_is_valid(self):
         """None PHENIX_PATH is valid (Phenix is optional)."""
@@ -736,19 +737,31 @@ class TestPhenixSettings:
         settings = PhenixSettings(PHENIX_HOST_PATH=None)
         assert settings.phenix_host_path is None
 
-    def test_phenix_is_available_checks_phenix_about(self):
-        """is_available is True when bin/phenix.about exists (2.x layout)."""
-        with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
-            mock_exists.side_effect = lambda _p: True
-            settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
-            assert settings.is_available is True
+    def test_phenix_is_available_checks_phenix_about(self, tmp_path):
+        """is_available is True when bin/phenix.about is a regular file (2.x layout)."""
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "phenix.about").write_text("phenix 2.x")
+        settings = PhenixSettings(PHENIX_PATH=str(tmp_path))
+        assert settings.is_available is True
 
-    def test_phenix_not_available_without_phenix_about(self):
+    def test_phenix_not_available_without_phenix_about(self, tmp_path):
         """is_available is False when bin/phenix.about is missing."""
-        with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
-            mock_exists.side_effect = lambda path: "phenix.about" not in path
-            settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
-            assert settings.is_available is False
+        (tmp_path / "bin").mkdir()
+        settings = PhenixSettings(PHENIX_PATH=str(tmp_path))
+        assert settings.is_available is False
+
+    def test_phenix_installation_ok_on_real_trees(self, tmp_path):
+        """phenix_installation_ok on real temp trees: regular file ok, dir, missing file and missing bin not."""
+        about = tmp_path / "bin" / "phenix.about"
+        about.parent.mkdir()
+        about.write_text("phenix 2.x")
+        assert phenix_installation_ok(str(tmp_path)) is True
+        (tmp_path / "dirabout" / "bin" / "phenix.about").mkdir(parents=True)
+        assert phenix_installation_ok(str(tmp_path / "dirabout")) is False
+        (tmp_path / "nofile" / "bin").mkdir(parents=True)
+        assert phenix_installation_ok(str(tmp_path / "nofile")) is False
+        (tmp_path / "nobin").mkdir()
+        assert phenix_installation_ok(str(tmp_path / "nobin")) is False
 
 
 class TestFileSettings:
