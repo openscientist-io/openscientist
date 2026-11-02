@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openscientist.job.types import JobStatus
+from openscientist.job.types import JobInfo, JobStatus
+from openscientist.webapp_components.components import common as components_common
 from openscientist.webapp_components.pages.job_detail import common, report, timeline
 
 _ENDED = (JobStatus.COMPLETED, JobStatus.FAILED)
@@ -79,3 +80,40 @@ def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) ->
         report._render_report_tab(context)  # type: ignore[arg-type]
 
     thinking.assert_not_called()
+
+
+def _rendered_labels(job: JobInfo, ks_data: dict[str, object] | None) -> list[str]:
+    """The label texts the Research Log stats block renders for ``job``."""
+    recorder = MagicMock()
+    context = SimpleNamespace(job_info=job, ks_data=ks_data, owner_name=None)
+    with (
+        patch.object(timeline, "ui", recorder),
+        patch.object(components_common, "ui", recorder),
+        patch.object(timeline, "is_client_connected", return_value=True),
+    ):
+        timeline._render_job_stats_content(context)  # type: ignore[arg-type]
+    return [c.args[0] for c in recorder.label.call_args_list if c.args]
+
+
+def test_the_stats_block_shows_the_report_generation_status_under_its_badges() -> None:
+    job = JobInfo(
+        job_id="job-1",
+        research_question="Q",
+        status=JobStatus.GENERATING_REPORT,
+        created_at="2026-01-01T00:00:00",
+    )
+    labels = _rendered_labels(job, None)
+    assert "Status: generating report" in labels
+    assert "Generating report..." in labels
+
+
+def test_a_finished_job_shows_no_live_status_line() -> None:
+    job = JobInfo(
+        job_id="job-1",
+        research_question="Q",
+        status=JobStatus.COMPLETED,
+        created_at="2026-01-01T00:00:00",
+    )
+    labels = _rendered_labels(job, {"agent_status": "leftover"})
+    assert "Status: completed" in labels
+    assert "leftover" not in labels
