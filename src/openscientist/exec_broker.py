@@ -10,6 +10,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import uvicorn
 from starlette.applications import Starlette
@@ -17,10 +18,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from openscientist.budget import check_budget
 from openscientist.container_manager import ContainerManager, get_container_manager
+from openscientist.database.models.job import Job as JobModel
+from openscientist.database.session import get_admin_session
 from openscientist.exec_broker_client import EXEC_TOKEN_HEADER
 from openscientist.job_container.secrets import broker_accepts
 from openscientist.job_container.utils import HostPathSettings, to_container_path
+from openscientist.job_manager import _effective_model
 from openscientist.listener import bind_listener
 from openscientist.settings import get_settings
 
@@ -129,7 +134,62 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
         )
         return JSONResponse(result)
 
-    return Starlette(routes=[Route("/execute", handler, methods=["POST"])])
+    async def budget_handler(request: Request) -> Response:
+        presented = request.headers.get(EXEC_TOKEN_HEADER, "")
+        try:
+            raw: Any = await request.json()
+        except Exception:
+            return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+        if not isinstance(raw, dict):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
+        body: dict[str, Any] = raw
+
+        job_id = body.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            return JSONResponse({"error": "missing job_id"}, status_code=400)
+        request_id = body.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            return JSONResponse({"error": "missing request_id"}, status_code=400)
+
+        if not presented or not broker_accepts(job_id, presented):
+            return Response("unauthorized", status_code=401)
+
+        try:
+            job_uuid = UUID(job_id)
+        except ValueError:
+            return JSONResponse({"error": "job_id must be a UUID"}, status_code=400)
+        async with get_admin_session() as session:
+            job = await session.get(JobModel, job_uuid)
+        if job is None:
+            return JSONResponse({"error": "job not found"}, status_code=404)
+
+        try:
+            verdict = await check_budget(
+                job_id=job_uuid,
+                provider_id=job.llm_provider,
+                model=(job.llm_config or {}).get("model")
+                or _effective_model(get_settings().provider),
+                include_unpriced=False,
+            )
+        except Exception:
+            # The server's own 500 for an internal error, which the run retries.
+            logger.exception("Budget check failed for job %s", job_id)
+            return Response("the budget check failed", status_code=500)
+        return JSONResponse(
+            {
+                "request_id": request_id,
+                "ok": verdict.ok,
+                "limit": verdict.limit,
+                "message": verdict.message,
+            }
+        )
+
+    return Starlette(
+        routes=[
+            Route("/execute", handler, methods=["POST"]),
+            Route("/budget", budget_handler, methods=["POST"]),
+        ]
+    )
 
 
 class _NoSignalServer(uvicorn.Server):

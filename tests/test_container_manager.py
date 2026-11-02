@@ -4,30 +4,45 @@ Tests for container_manager module.
 Contains both unit tests (mocked Docker) and integration tests (real Docker).
 """
 
+import asyncio
 import json
 import tempfile
+from collections.abc import AsyncGenerator
 from datetime import UTC
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from tests.helpers import assert_names_a_make_target
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+from tests.helpers import assert_names_a_build_command
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+    """The row each execution reads its limits and the airgap flag from."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 class TestContainerManagerUnit:
     """Unit tests with mocked Docker client."""
 
     def test_init_defaults(self):
-        """Test ContainerManager initializes with default values."""
+        """The limits are not copied at init; the row supplies them at execution."""
         from openscientist.container_manager import ContainerManager
 
         manager = ContainerManager()
         assert manager.image == "openscientist-executor:latest"
-        assert manager.memory_limit == "2g"
-        assert manager.cpu_limit == 0.5
-        assert manager.timeout == 120
+        assert manager.memory_limit is None
+        assert manager.cpu_limit is None
+        assert manager.timeout is None
 
     def test_init_custom_values(self):
         """Test ContainerManager accepts custom values."""
@@ -136,7 +151,7 @@ class TestContainerManagerUnit:
 
         assert result["success"] is False
         assert manager.image in result["error"]
-        assert_names_a_make_target(result["error"])
+        assert_names_a_build_command(result["error"])
 
     def test_cleanup_job_containers(self):
         """Test cleanup of containers by job ID."""
@@ -440,11 +455,7 @@ class TestBuildVolumesHostTranslation:
         mock_settings = MagicMock()
         mock_settings.container.container_app_dir = "/app"
         mock_settings.container.executor_image = "test:latest"
-        mock_settings.container.executor_memory = "2g"
-        mock_settings.container.executor_cpu = 0.5
-        mock_settings.container.executor_timeout = 120
         mock_settings.container.agent_network = None
-        mock_settings.airgap.enabled = False
         return mgr, mock_client, mock_settings
 
     @staticmethod
@@ -574,9 +585,6 @@ class TestExecuteCodeAirgapNetwork:
         mock_settings.container.container_app_dir = "/app"
         mock_settings.container.host_project_dir = None
         mock_settings.container.executor_image = "test:latest"
-        mock_settings.container.executor_memory = "2g"
-        mock_settings.container.executor_cpu = 0.5
-        mock_settings.container.executor_timeout = 120
         mock_settings.container.agent_network = "openscientist_default"
         return mgr, mock_client, mock_settings
 
@@ -584,11 +592,14 @@ class TestExecuteCodeAirgapNetwork:
     def _run_kwargs(mock_client: MagicMock) -> dict[str, object]:
         return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
 
-    def test_airgap_enabled_uses_no_network(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_enabled_uses_no_network(
+        self, test_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup()
-        mock_settings.airgap.enabled = True
+        await set_admin_settings_row(test_engine, airgapped=True)
 
         output_dir = tmp_path / "out"
         output_dir.mkdir()
@@ -599,7 +610,8 @@ class TestExecuteCodeAirgapNetwork:
                 return_value="openscientist_default",
             ) as mock_resolve,
         ):
-            mgr.execute_code(
+            await asyncio.to_thread(
+                mgr.execute_code,
                 code='print("hi")',
                 job_id="airgap-on",
                 output_dir=str(output_dir),
@@ -610,11 +622,14 @@ class TestExecuteCodeAirgapNetwork:
         assert "network_mode" not in kwargs
         mock_resolve.assert_not_called()
 
-    def test_airgap_disabled_uses_resolved_network(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_disabled_uses_resolved_network(
+        self, test_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup()
-        mock_settings.airgap.enabled = False
+        await set_admin_settings_row(test_engine, airgapped=False)
 
         output_dir = tmp_path / "out"
         output_dir.mkdir()
@@ -625,7 +640,8 @@ class TestExecuteCodeAirgapNetwork:
                 return_value="openscientist_default",
             ) as mock_resolve,
         ):
-            mgr.execute_code(
+            await asyncio.to_thread(
+                mgr.execute_code,
                 code='print("hi")',
                 job_id="airgap-off",
                 output_dir=str(output_dir),
@@ -679,7 +695,7 @@ class TestContainerManagerIntegration:
 
         manager = ContainerManager()
         if not manager.check_image_available():
-            pytest.skip("Executor image not built. Run 'make build' first.")
+            pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
 
     def test_execute_simple_code(self):
         """Test executing simple Python code."""

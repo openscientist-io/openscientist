@@ -171,18 +171,14 @@ async def upsert_literature(state: KnowledgeState, session: AsyncSession, job_uu
                     title=literature_data["title"],
                     abstract=literature_data.get("abstract"),
                     authors=literature_data.get("authors"),
-                    journal=literature_data.get("journal"),
                     year=literature_data.get("year"),
-                    doi=literature_data.get("doi"),
                     extra_metadata=literature_extra_metadata(literature_data),
                 )
             )
             continue
         existing.abstract = literature_data.get("abstract")
         existing.authors = literature_data.get("authors")
-        existing.journal = literature_data.get("journal")
         existing.year = literature_data.get("year")
-        existing.doi = literature_data.get("doi")
         existing.extra_metadata = literature_extra_metadata(literature_data)
 
 
@@ -346,7 +342,6 @@ def new_from_job_record(job_id: str, job: JobModel) -> KnowledgeState:
             "job_id": job_id,
             "research_question": job.research_question,
             "max_iterations": job.max_iterations,
-            "use_skills": True,
             "started_at": job.created_at.isoformat(),
         },
         "data_summary": job.data_summary or {},

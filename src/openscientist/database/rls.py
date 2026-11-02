@@ -1,9 +1,4 @@
-"""
-Row-Level Security (RLS) utilities for OpenScientist.
-
-Provides middleware and utilities for PostgreSQL Row-Level Security enforcement.
-RLS policies control access to database rows based on the current user context.
-"""
+"""Row-Level Security (RLS) utilities for OpenScientist."""
 
 from collections.abc import Collection
 from uuid import UUID
@@ -42,21 +37,10 @@ async def use_app_role(session: AsyncSession) -> None:
 
 
 async def set_current_user(session: AsyncSession, user_id: UUID | None) -> None:
-    """
-    Set the user that RLS policies see as ``app.current_user_id``.
+    """Set the user that RLS policies see as ``app.current_user_id``.
 
     The user applies to every transaction of the session, the open one included,
     and to no other session that later gets the same pooled connection.
-
-    Args:
-        session: SQLAlchemy async session
-        user_id: UUID of the current user, or None to clear
-
-    Example:
-        >>> async with get_session_ctx() as session:
-        ...     await set_current_user(session, user.id)
-        ...     # All queries in this session now respect RLS for this user
-        ...     jobs = await session.execute(select(Job))
     """
     value = None if user_id is None else str(user_id)
     session.info[_USER_KEY] = value

@@ -1,4 +1,4 @@
-"""llama.cpp provider: a self-hosted ``llama-server`` on the OpenAI wire, driven by omp.
+"""llama.cpp provider. A self-hosted ``llama-server`` on the OpenAI wire, driven by omp.
 
 Not a Codex backend, since Codex's tool calls fail against non-gptoss open models.
 """
@@ -9,7 +9,7 @@ import logging
 
 import requests
 
-from openscientist.providers.base import SelfHostedOpenAiWire
+from openscientist.providers.base import LiveCheckResult, SelfHostedOpenAiWire
 from openscientist.settings import ProviderSettings
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,9 @@ logger = logging.getLogger(__name__)
 def _probe_llamacpp_context_tokens(base_url: str, api_key: str | None) -> int | None:
     """Read the launched window from ``/props`` ``default_generation_settings.n_ctx``.
 
-    Not ``/v1/models`` ``n_ctx_train`` (the trained maximum, which over-budgets a
-    server launched smaller). ``/props`` sits at the root, not under ``/v1``.
+    The trained maximum from ``/v1/models`` ``n_ctx_train`` over-budgets a server
+    launched smaller, so the probe reads the launched value. ``/props`` sits at
+    the server root.
     """
     root = base_url.rstrip("/").removesuffix("/v1").rstrip("/")
     headers = {"authorization": f"Bearer {api_key}"} if api_key else {}
@@ -66,3 +67,13 @@ class LlamaCppProvider(SelfHostedOpenAiWire):
     def _probe_context_tokens(base_url: str, model_id: str, api_key: str | None) -> int | None:
         # /props is server-global, so model_id is unused (unlike vLLM's per-card probe).
         return _probe_llamacpp_context_tokens(base_url, api_key)
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        window = _probe_llamacpp_context_tokens(p.llamacpp_base_url, p.llamacpp_api_key)
+        if window:
+            return LiveCheckResult(ok=True, detail=f"Reached llama.cpp (context window {window}).")
+        return LiveCheckResult(
+            ok=False,
+            detail=f"Could not reach the llama.cpp server at {p.llamacpp_base_url}.",
+        )

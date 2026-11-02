@@ -140,3 +140,13 @@ def test_get_provider_selects_azure(monkeypatch: pytest.MonkeyPatch) -> None:
         assert isinstance(get_provider(), AzureOpenAIProvider)
     finally:
         clear_settings_cache()
+
+
+def test_airgap_posture_is_unsupported_without_credentials() -> None:
+    """Without a key and a resource the provider cannot be routed through the proxy."""
+    from openscientist.providers.base import AirgapEgress
+
+    posture = AzureOpenAIProvider.airgap_posture(
+        SimpleNamespace(azure_openai_api_key=None, azure_openai_resource=None)  # type: ignore[arg-type]
+    )
+    assert posture.mode is AirgapEgress.UNSUPPORTED
