@@ -9,14 +9,15 @@ The buckets it surfaces are pinned here.
 from __future__ import annotations
 
 import contextlib
-import threading
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from nicegui import ui
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from openscientist.database.models import CostRecord
 from openscientist.providers.base import CostInfo
@@ -208,43 +209,139 @@ def _panel_ui_mock() -> MagicMock:
     return mock
 
 
-async def test_provider_section_shows_the_provider_cost_numbers() -> None:
-    """The provider cost panel surfaces the numbers the provider API reports."""
-    cost_info = CostInfo(
+def _fake_provider(total: float | None, recent: float | None) -> SimpleNamespace:
+    """The provider billing boundary the page reads its figures from."""
+    info = CostInfo(
         provider_name="Fake",
-        total_spend_usd=12.5,
-        recent_spend_usd=1.25,
+        total_spend_usd=total,
+        recent_spend_usd=recent,
         recent_period_hours=24,
     )
-    loop_thread = threading.get_ident()
-    cost_threads: list[int] = []
-    lookbacks: list[int] = []
-
-    def fake_get_cost_info(lookback_hours: int = 24) -> CostInfo:
-        lookbacks.append(lookback_hours)
-        cost_threads.append(threading.get_ident())
-        return cost_info
-
-    provider = SimpleNamespace(
-        get_cost_info=fake_get_cost_info,
-        evaluate_budget=lambda info: {"errors": [], "warnings": []},
+    return SimpleNamespace(
+        id="fake", display_name="Fake", get_cost_info=lambda lookback_hours=24: info
     )
+
+
+async def _ledger_job(engine: AsyncEngine, cost: float) -> UUID:
+    """One deployment-wide ledger row; the test deletes the job when done."""
+    from openscientist.database.models import Job
+
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        job = Job(research_question="Q?")
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        session.add(
+            CostRecord(
+                job_id=job.id,
+                operation_type="discovery",
+                provider="anthropic",
+                model="m",
+                input_tokens=1,
+                output_tokens=1,
+                cost_usd=cost,
+            )
+        )
+        await session.commit()
+        return job.id
+
+
+async def _delete_job(engine: AsyncEngine, job_id: UUID) -> None:
+    from openscientist.database.models import Job
+
+    async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        await session.execute(delete(Job).where(Job.id == job_id))
+        await session.commit()
+
+
+async def _render_panel_labels(
+    provider: SimpleNamespace,
+) -> list[str]:
+    """Render the real panel and collect the labels it builds."""
+    from openscientist import budget
+
     mock_ui = _panel_ui_mock()
     with (
         patch.object(billing, "get_admin_session", lambda: _admin_session([])),
         patch.object(billing, "render_empty_state", MagicMock()),
         patch.object(billing, "get_provider", return_value=provider),
+        patch.object(budget, "get_provider", return_value=provider),
         patch.object(billing, "ui", mock_ui),
     ):
         await billing.render_billing_panel()
+    return [c.args[0] for c in mock_ui.label.call_args_list if c.args]
 
-    labels = [call.args[0] for call in mock_ui.label.call_args_list if call.args]
-    assert "$12.50" in labels
-    assert "$1.25" in labels
-    assert "Provider: Fake" in labels
-    # The provider cost API is a blocking call, so the panel fetches it off the loop thread.
-    assert lookbacks == [24]
-    assert cost_threads and cost_threads[0] != loop_thread
+
+async def test_project_section_shows_the_enforcement_figures_and_verdict(
+    test_engine: AsyncEngine,
+) -> None:
+    """The page shows the higher of the ledger and the billed spend, and the
+    verdict the enforcement acts on."""
+    from openscientist import budget
+    from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+
+    budget._billed = None
+    job_id = None
+    try:
+        job_id = await _ledger_job(test_engine, 10.0)
+        await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+        labels = await _render_panel_labels(_fake_provider(total=500.0, recent=50.0))
+        assert "$500.00" in labels
+        assert "$50.00" in labels
+        assert "Budget Limit Reached" in labels
+        assert any("Project spend total limit of $100.00" in label for label in labels)
+        assert "Provider: Fake" in labels
+    finally:
+        budget._billed = None
+        await reset_admin_settings_row(test_engine)
+        if job_id is not None:
+            await _delete_job(test_engine, job_id)
+
+
+async def test_project_section_shows_the_24h_warning_card(test_engine: AsyncEngine) -> None:
+    """At or above the warning threshold and below the hard 24 h limit, the
+    page warns without refusing."""
+    from openscientist import budget
+    from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+
+    budget._billed = None
+    job_id = None
+    try:
+        job_id = await _ledger_job(test_engine, 10.0)
+        await set_admin_settings_row(
+            test_engine, max_project_spend_24h_usd=100.0, warn_project_spend_24h_usd=40.0
+        )
+        labels = await _render_panel_labels(_fake_provider(total=60.0, recent=50.0))
+        assert "Budget Warning" in labels
+        assert any("warning threshold $40.00" in label for label in labels)
+        assert "Budget Limit Reached" not in labels
+    finally:
+        budget._billed = None
+        await reset_admin_settings_row(test_engine)
+        if job_id is not None:
+            await _delete_job(test_engine, job_id)
+
+
+async def test_project_section_counts_the_ledger_when_the_billing_reports_none(
+    test_engine: AsyncEngine,
+) -> None:
+    from openscientist import budget
+    from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+
+    budget._billed = None
+    job_id = None
+    try:
+        job_id = await _ledger_job(test_engine, 10.0)
+        await set_admin_settings_row(test_engine)
+        labels = await _render_panel_labels(_fake_provider(total=None, recent=None))
+        assert "$10.00" in labels
+        assert "Budget Limit Reached" not in labels
+        assert "Budget Warning" not in labels
+    finally:
+        budget._billed = None
+        await reset_admin_settings_row(test_engine)
+        if job_id is not None:
+            await _delete_job(test_engine, job_id)
 
 
 async def test_a_chat_record_is_labelled_chat() -> None:

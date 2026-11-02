@@ -1,8 +1,4 @@
-"""
-CBORG provider implementation.
-
-Uses CBORG API for model access and cost tracking.
-"""
+"""CBORG provider (model access and cost tracking via the CBORG API)."""
 
 import logging
 import os
@@ -11,23 +7,28 @@ from datetime import UTC, datetime, timedelta
 import requests
 
 from openscientist.exceptions import ProviderError
-from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
+from openscientist.providers.base import (
+    AirgapEgress,
+    AirgapPosture,
+    ClaudeCompatible,
+    CostInfo,
+    LiveCheckResult,
+    LlmUpstream,
+    SetupQuestion,
+    _listing_live_check,
+)
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._anthropic_common import anthropic_container_env
-from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
 
 
 class CborgProvider(ClaudeCompatible):
-    """
-    CBORG API provider (current implementation).
+    """CBORG API provider.
 
-    KNOWN ISSUES:
-    - Newer versions of Claude CLI may send headers that CBORG doesn't recognize,
-      causing HTTP 400 errors. If you encounter authentication or request errors,
-      check your Claude CLI version and consider using an older version if needed.
+    Newer Claude CLI versions send headers CBORG rejects with HTTP 400, so on
+    auth or request errors check the CLI version.
     """
 
     @property
@@ -36,13 +37,7 @@ class CborgProvider(ClaudeCompatible):
 
     display_name = "CBORG"
 
-    @classmethod
-    def validate_model_format(cls, model: str | None) -> str | None:
-        return cls.model_format_error(
-            model,
-            r"^claude-",
-            "an Anthropic model name on CBORG (expected to start with 'claude-')",
-        )
+    model_format_description = "an Anthropic model name on CBORG (expected to start with 'claude-')"
 
     def validate_required_config(self) -> list[str]:
         return self.required_config_errors(get_settings().provider)
@@ -55,6 +50,27 @@ class CborgProvider(ClaudeCompatible):
         if not provider.anthropic_base_url:
             errors.append("ANTHROPIC_BASE_URL not set (should be https://api.cborg.lbl.gov)")
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("ANTHROPIC_AUTH_TOKEN", kind="secret", help="CBORG token"),
+            SetupQuestion(
+                "ANTHROPIC_BASE_URL",
+                help="CBORG endpoint, https://api.cborg.lbl.gov unless it differs",
+            ),
+            *super().setup_questions(),
+        )
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.anthropic_base_url or not p.anthropic_auth_token:
+            return LiveCheckResult(
+                ok=True, detail="No CBORG endpoint or token to check with; skipped."
+            )
+        base = p.anthropic_base_url.rstrip("/")
+        headers = {"authorization": f"Bearer {p.anthropic_auth_token}"}
+        return _listing_live_check(f"{base}/v1/models", headers, cls.display_name)
 
     def claude_sdk_env(self) -> dict[str, str]:
         """Auth env vars the claude-agent-sdk CLI must see."""
@@ -85,18 +101,23 @@ class CborgProvider(ClaudeCompatible):
             return {"ANTHROPIC_BASE_URL": proxy_base_url, "ANTHROPIC_AUTH_TOKEN": placeholder}
         return {}
 
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.anthropic_base_url and provider.anthropic_auth_token:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
+        )
+
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at the CBORG gateway.
 
-        omp never reads ``ANTHROPIC_AUTH_TOKEN``, the name Claude Code uses for a
-        gateway bearer and the one both our container env and proxy override
-        publish, so untranslated it reaches the gateway with no credential at all.
-
-        Mapped to ``ANTHROPIC_API_KEY`` rather than ``ANTHROPIC_OAUTH_TOKEN``
-        because omp's OAuth path also attaches Anthropic's OAuth beta header,
-        which a gateway has no reason to accept. Proxied, the proxy takes either
-        header and substitutes the real bearer upstream, so this only decides the
-        unproxied header form.
+        omp never reads ``ANTHROPIC_AUTH_TOKEN``, the name the container env and
+        proxy override publish, so copy it to ``ANTHROPIC_API_KEY``. Avoid
+        ``ANTHROPIC_OAUTH_TOKEN``, because omp's OAuth path also attaches
+        Anthropic's OAuth beta header, which a gateway has no reason to accept,
+        and proxied the proxy takes either header anyway.
         """
         s = get_settings().provider
         base = proxy or s.anthropic_base_url
@@ -110,43 +131,21 @@ class CborgProvider(ClaudeCompatible):
             env["ANTHROPIC_API_KEY"] = token
         return env
 
-    def claude_model_name(self) -> str:
-        """Model name for ClaudeAgentOptions.model."""
-        return get_settings().provider.model or "claude-sonnet-5-5"
-
-    def _validate_optional_config(self) -> list[str]:
-        """Check optional CBORG configuration."""
-        warnings = []
-        settings = get_settings()
-
-        if not settings.provider.model:
-            warnings.append("OPENSCIENTIST_MODEL not set (will use claude-sonnet-5-5)")
-
-        return warnings
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        return ("ANTHROPIC_API_KEY",)
 
     def setup_environment(self) -> None:
         """CBORG environment should be configured via .env and docker-compose.yml."""
-        # Unset conflicting provider routing vars
-        clear_provider_mode_flags(logger)
-        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
+        super().setup_environment()
         logger.info("CBORG provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get CBORG cost information.
-
-        Args:
-            lookback_hours: Time window for recent spend calculation
-
-        Returns:
-            CostInfo with CBORG spend data
-        """
+        """Get CBORG cost information."""
         settings = get_settings()
         token = settings.provider.anthropic_auth_token
         if not token:
             raise ValueError("ANTHROPIC_AUTH_TOKEN not set")
 
-        # Get total spend and budget from /key/info
         try:
             info_response = requests.get(
                 "https://api.cborg.lbl.gov/key/info",
@@ -164,7 +163,6 @@ class CborgProvider(ClaudeCompatible):
             logger.error("Failed to fetch CBORG /key/info: %s", e)
             raise ProviderError(f"Failed to fetch CBORG /key/info: {e}") from e
 
-        # Get recent spend from /user/daily/activity
         data_lag_note: str | None = None
         try:
             end_time = datetime.now(UTC)
@@ -183,7 +181,6 @@ class CborgProvider(ClaudeCompatible):
             )
             activity_response.raise_for_status()
 
-            # Sum up costs from activity records
             activity_data = activity_response.json().get("data", [])
             recent_spend = sum(record.get("spend", 0) for record in activity_data)
 
@@ -193,7 +190,6 @@ class CborgProvider(ClaudeCompatible):
             recent_spend = None
             data_lag_note = "Recent activity data unavailable"
 
-        # Calculate budget remaining
         budget_remaining = None
         if max_budget is not None:
             budget_remaining = max_budget - total_spend

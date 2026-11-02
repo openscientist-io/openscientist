@@ -19,6 +19,7 @@ from sqlalchemy import delete
 from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import phenix_installation_ok
 from openscientist_tools import phenix as phenix_module
 from openscientist_tools.phenix import (
     compare_structures,
@@ -33,7 +34,7 @@ def _phenix_available_in_test_env() -> bool:
     phenix_path = os.environ.get("PHENIX_PATH")
     if not phenix_path:
         return False
-    return (Path(phenix_path) / "bin" / "phenix.about").is_file()
+    return phenix_installation_ok(phenix_path)
 
 
 PHENIX_REQUIRED = pytest.mark.skipif(
@@ -222,7 +223,9 @@ async def test_run_phenix_tool_missing_input_file(
 ) -> None:
     monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
     result = await run_phenix_tool("phenix.clashscore", ["nonexistent.pdb"])
-    assert result == "❌ Error: File not found: nonexistent.pdb"
+    # The error names the missing input file
+    assert result.startswith("❌")
+    assert "nonexistent.pdb" in result
 
 
 async def test_compare_structures_appends_rmsd_interpretation(

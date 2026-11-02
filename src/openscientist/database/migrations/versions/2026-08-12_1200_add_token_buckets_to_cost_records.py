@@ -1,9 +1,8 @@
 """Add cache and reasoning token columns to cost_records.
 
-TokenUsage has always carried five non-overlapping buckets, but only input and
-output were persisted. Cached reads dominate agentic runs -- every turn resends
-the conversation -- so cost computed from two buckets understates reality
-without any sign that it has, and per-model token comparisons are meaningless.
+Cached reads dominate agentic runs, every turn resending the conversation, so
+cost computed from input and output tokens understates reality and per-model
+token comparisons are meaningless.
 
 Revision ID: add_token_buckets
 Revises: add_pubmed_mirror

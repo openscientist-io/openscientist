@@ -23,12 +23,14 @@ from openscientist.agent.factory import agent_class_for_provider_id
 from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx, thread_safe_user_session
+from openscientist.exceptions import BudgetExceededError
 from openscientist.job.repository import get_job, get_share_permission
-from openscientist.job.types import JobInfo, JobStatus
+from openscientist.job.types import JobInfo, JobStatus, completed_iterations
 from openscientist.job_chat import get_chat_history, send_chat_message
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.pdf_generator import markdown_to_pdf
+from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.ui_components import (
     STATUS_COLORS,
@@ -66,11 +68,7 @@ def _derive_progress_from_ks(
         return default_iterations, 0
     findings_count = len(ks_data.get("findings", []))
     ks_iteration = int(ks_data.get("iteration", 1))
-    if status in ("running", "awaiting_feedback"):
-        iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-    else:
-        iterations_completed = ks_iteration
-    return iterations_completed, findings_count
+    return completed_iterations(status, ks_iteration), findings_count
 
 
 async def _load_knowledge_state(
@@ -921,6 +919,12 @@ def _format_model_name(llm_model: str | None) -> str | None:
 def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[Any]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
+    queue_reason = getattr(latest_job, "queue_reason", None)
+    if latest_job.status == JobStatus.QUEUED and queue_reason:
+        badges.append(("Waiting on", queue_reason, "orange"))
+    stop_note = getattr(latest_job, "stop_note", None)
+    if latest_job.status == JobStatus.COMPLETED and stop_note:
+        badges.append(("Stopped early", stop_note, "orange"))
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
         badges.append(
             (
@@ -961,6 +965,9 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
+    run_environment = run_environment_text(latest_job.version_info)
+    if run_environment:
+        ui.label(run_environment).classes("text-xs text-gray-500 mt-1")
 
     if latest_job.status == JobStatus.RUNNING and latest_ks:
         agent_status = latest_ks.get("agent_status")
@@ -1149,7 +1156,9 @@ def _download_artifacts_zip(job_id: str) -> None:
     ui.download(f"/web/jobs/{job_id}/artifacts.zip")
 
 
-async def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -> None:
+async def _download_pdf_report(
+    report_path: Path, pdf_path: Path, job_id: str, run_environment: str | None
+) -> None:
     # Serve existing PDF if available (avoids overwriting WeasyPrint PDF with fpdf2)
     if pdf_path.exists():
         ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
@@ -1164,7 +1173,9 @@ async def _download_pdf_report(report_path: Path, pdf_path: Path, job_id: str) -
         stripped_path.write_text(stripped, encoding="utf-8")
         try:
             # Rendering a long report takes seconds of CPU.
-            await asyncio.to_thread(markdown_to_pdf, stripped_path, pdf_path)
+            await asyncio.to_thread(
+                markdown_to_pdf, stripped_path, pdf_path, run_environment=run_environment
+            )
         finally:
             stripped_path.unlink(missing_ok=True)
         ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
@@ -1235,7 +1246,12 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
         if pdf_path.exists() or report_path.exists():
             ui.button(
                 "Download PDF",
-                on_click=lambda: _download_pdf_report(report_path, pdf_path, context.job_id),
+                on_click=lambda: _download_pdf_report(
+                    report_path,
+                    pdf_path,
+                    context.job_id,
+                    run_environment_text(context.job_info.version_info),
+                ),
                 icon="picture_as_pdf",
             ).props("color=primary")
         else:
@@ -1652,6 +1668,12 @@ class _ChatTabController:
             self._toggle_typing_indicator(False)
             self._play_sound("sound-receive")
             await self._render_messages()
+        except BudgetExceededError as exc:
+            logger.warning("Chat turn refused by a budget limit: %s", exc)
+            if guard.is_connected:
+                self._toggle_typing_indicator(False)
+                self._play_sound("sound-error")
+                ui.notify(str(exc), type="negative")
         except Exception as exc:
             logger.error("Chat error: %s", exc, exc_info=True)
             if guard.is_connected:

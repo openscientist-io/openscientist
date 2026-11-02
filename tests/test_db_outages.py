@@ -25,6 +25,11 @@ from openscientist.database.retry import DatabaseUnavailableError
 from openscientist.job_manager import JobManager, JobStatus
 from openscientist.orchestrator.discovery import _assert_job_running
 from openscientist.orchestrator.iteration import update_job_status
+from tests.admin_row import (
+    default_admin_settings_values,
+    reset_admin_settings_row,
+    set_admin_settings_row,
+)
 from tests.db_logins import reset_database_state
 from tests.db_outage import Forwarder
 
@@ -35,6 +40,16 @@ def _no_knowledge_state_progress() -> Iterator[None]:
         "openscientist.job_manager._load_progress_from_knowledge_state", return_value=(0, 0)
     ):
         yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine):
+    """The row the slot checks and the queue pick read, with a roomy cap."""
+    await set_admin_settings_row(test_engine, max_concurrent_jobs=5)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest_asyncio.fixture
@@ -341,7 +356,7 @@ async def test_a_worker_write_applies_once_the_database_returns(
 async def test_startup_recovery_runs_once_the_database_returns(
     database: Forwarder, test_engine: AsyncEngine, job_in: dict[JobStatus, UUID], tmp_path: Path
 ) -> None:
-    manager = JobManager(jobs_dir=tmp_path, max_concurrent=5)
+    manager = JobManager(jobs_dir=tmp_path)
     database.down()
     with (
         patch("openscientist.job_container.JobContainerRunner", return_value=MagicMock()),
@@ -433,7 +448,7 @@ async def test_a_lost_container_is_cancelled_when_cleanup_fails(
 
     runner = MagicMock()
     runner.cleanup.side_effect = RuntimeError("docker down")
-    manager = JobManager(jobs_dir=tmp_path, max_concurrent=5)
+    manager = JobManager(jobs_dir=tmp_path)
     try:
         with (
             patch.object(manager, "_run_job"),
@@ -457,7 +472,7 @@ async def test_startup_does_not_wait_for_a_down_database(
     queued job up once it is back."""
     import openscientist.web_app as web_app_module
 
-    manager = JobManager(jobs_dir=tmp_path, max_concurrent=5)
+    manager = JobManager(jobs_dir=tmp_path)
     saved = web_app_module._state.job_manager
     web_app_module._state.job_manager = None
     try:
@@ -514,14 +529,43 @@ async def test_a_pick_that_meets_an_outage_starts_the_job_after_it(
             _stop_manager_background(manager)
 
 
+async def test_a_pick_before_the_row_is_seeded_starts_the_job_once_it_is(
+    test_engine: AsyncEngine, job_in: dict[JobStatus, UUID], tmp_path: Path
+) -> None:
+    """Startup recovery can pick before the web seeds the admin settings row,
+    so a pick that finds no row picks again until the row is there."""
+    manager = JobManager(jobs_dir=tmp_path)
+    queued = str(job_in[JobStatus.QUEUED])
+    with patch.object(manager, "_run_job"):
+        try:
+            async with test_engine.begin() as conn:
+                await conn.execute(text("DELETE FROM admin_settings"))
+            assert not await asyncio.to_thread(manager._start_next_queued_job)
+            await set_admin_settings_row(test_engine, max_concurrent_jobs=5)
+            for _ in range(100):
+                if queued in manager._running_jobs:
+                    break
+                await asyncio.sleep(0.2)
+            assert queued in manager._running_jobs
+        finally:
+            _stop_manager_background(manager)
+
+
 def test_a_pick_error_other_than_an_outage_is_not_scheduled_to_retry(tmp_path: Path) -> None:
     """A pick that fails for a reason the retry cannot fix is logged and
     stopped there: no background repick is scheduled for it."""
     import openscientist.job_manager as job_manager_module
 
     manager = JobManager(jobs_dir=tmp_path)
-    with patch.object(
-        job_manager_module, "next_queued_job", side_effect=RuntimeError("pick blew up")
+    with (
+        patch.object(
+            job_manager_module, "next_queued_job", side_effect=RuntimeError("pick blew up")
+        ),
+        patch.object(
+            job_manager_module,
+            "current_admin_settings_sync",
+            return_value=default_admin_settings_values(),
+        ),
     ):
         assert not manager._start_next_queued_job()
     assert manager._repick is None

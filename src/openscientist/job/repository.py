@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import User
@@ -214,3 +214,31 @@ async def delete_job(job_id: str, user_id: UUID | None = None) -> None:
         if job:
             await session.delete(job)
             await session.commit()
+
+
+async def set_queue_reason(job_id: str, reason: str | None) -> str | None:
+    """Write ``reason`` as the reason a queued job waits on, None clearing it.
+
+    Returns the previous reason, so the caller tells the first hold apart
+    from a re-check of a job already waiting."""
+    async with _job_session(None) as session:
+        job = await session.get(JobModel, UUID(job_id))
+        if job is None:
+            return None
+        previous = job.queue_reason
+        await session.execute(
+            update(JobModel).where(JobModel.id == job.id).values(queue_reason=reason)
+        )
+        await session.commit()
+    return previous
+
+
+async def any_queued_job_held() -> bool:
+    """Whether some queued job waits on a budget limit."""
+    stmt = (
+        select(JobModel.id)
+        .where(JobModel.status == JobStatus.QUEUED.value, JobModel.queue_reason.is_not(None))
+        .limit(1)
+    )
+    async with _job_session(None) as session:
+        return (await session.scalar(stmt)) is not None

@@ -34,6 +34,7 @@ def status_update_statement(
     allowed_from: Collection[JobStatus | str],
     error_message: str | None = None,
     cancellation_reason: str | None = None,
+    stop_note: str | None = None,
     takes_slot: bool = False,
 ):
     """The guarded UPDATE moving the job to ``status`` if it is in one of
@@ -44,6 +45,8 @@ def status_update_statement(
         values["error_message"] = error_message
     if cancellation_reason:
         values["cancellation_reason"] = cancellation_reason
+    if stop_note:
+        values["stop_note"] = stop_note
     if takes_slot:
         values["started_at"] = func.now()
         values["ended_at"] = None

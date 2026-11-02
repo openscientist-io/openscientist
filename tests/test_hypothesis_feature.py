@@ -495,6 +495,29 @@ class TestStatsBadgesHypotheses:
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
 
+    def test_completed_job_with_a_stop_note_shows_it(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        job = SimpleNamespace(
+            status=JobStatus.COMPLETED,
+            iterations_completed=2,
+            max_iterations=5,
+            findings_count=0,
+            llm_provider="anthropic",
+            llm_model="m",
+            stop_note="Job cost limit of $5.00 reached: the job has spent $5.00.",
+        )
+        badges = _stats_badges(job, lit_count=0)
+        badge = next((b for b in badges if b[0] == "Stopped early"), None)
+        assert badge is not None
+        assert badge[1] == "Job cost limit of $5.00 reached: the job has spent $5.00."
+
+    def test_completed_job_without_a_stop_note_shows_no_badge(self) -> None:
+        from openscientist.webapp_components.pages.job_detail import _stats_badges
+
+        badges = _stats_badges(self._make_job(), lit_count=0)
+        assert all(b[0] != "Stopped early" for b in badges)
+
     def test_codex_job_shows_agent_and_provider_not_model(self) -> None:
         from openscientist.webapp_components.pages.job_detail import _stats_badges
 

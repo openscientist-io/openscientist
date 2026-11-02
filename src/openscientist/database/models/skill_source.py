@@ -1,8 +1,4 @@
-"""
-SkillSource model for external skill repositories.
-
-Tracks external sources (e.g., GitHub repos) from which skills can be synced.
-"""
+"""SkillSource model for external skill repositories."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -17,25 +13,7 @@ if TYPE_CHECKING:
 
 
 class SkillSource(UUIDv7Mixin, Base):
-    """
-    External source for syncing skills.
-
-    Represents a repository or directory from which skills can be imported
-    and kept in sync. Supports GitHub repos and local filesystem paths.
-
-    Attributes:
-        source_type: Type of source (github/local)
-        name: Human-readable name for the source
-        url: URL for remote sources (e.g., GitHub repo URL)
-        path: Local filesystem path for local sources
-        branch: Git branch to sync from (for GitHub sources)
-        skills_path: Subdirectory within repo containing skills
-        last_synced_at: Timestamp of last successful sync
-        last_commit_sha: Last synced Git commit SHA
-        is_enabled: Whether this source is enabled for syncing
-        sync_error: Error message from last failed sync attempt
-        skills: Skills imported from this source
-    """
+    """External source for syncing skills."""
 
     __tablename__ = "skill_sources"
 

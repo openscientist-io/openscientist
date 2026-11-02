@@ -253,9 +253,9 @@ async def test_execute_code_invalid_language_returns_error(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
     result = await execute_code("anything", language="lisp")
-    assert result == (
-        "❌ ERROR: Unsupported language 'lisp'. Supported: 'python', 'rust', 'sparql'"
-    )
+    # The unsupported language is reported and nothing is executed or logged
+    assert result.startswith("❌")
+    assert "lisp" in result
     assert patched_ks_persistence.data["analysis_log"] == []
 
 
@@ -293,7 +293,10 @@ async def test_execute_code_broker_unavailable_returns_error(
     broker.side_effect = BrokerError("connection refused")
 
     result = await execute_code("print('hi')")
-    assert result.startswith("❌ ERROR: code execution service unavailable")
+    # The transport error is surfaced, so the agent can tell a dead service
+    # apart from a failed execution
+    assert result.startswith("❌")
+    assert "connection refused" in result
     # A transport failure is exceptional: nothing is logged as an execution.
     assert patched_ks_persistence.data["analysis_log"] == []
 
@@ -346,8 +349,10 @@ async def test_execute_code_python_data_load_failure(
     missing.write_text("dummy")
 
     result = await execute_code("print('hi')")
-    assert "❌ ERROR: Cannot execute code" in result
-    assert "data file failed to load" in result
+    # The error names the failing stage and the file that could not be loaded
+    assert result.startswith("❌")
+    assert "data file" in result.lower()
+    assert str(missing) in result
     broker.assert_not_called()
 
 

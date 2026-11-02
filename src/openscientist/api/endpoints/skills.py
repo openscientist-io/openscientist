@@ -1,9 +1,4 @@
-"""
-Skills management endpoints.
-
-Provides REST API endpoints for listing, searching, and matching skills
-to research questions.
-"""
+"""Skills management endpoints."""
 
 import logging
 from datetime import datetime
@@ -34,7 +29,6 @@ SKILL_TAGS_QUERY = Query(
 )
 
 
-# Pydantic models for request/response
 class SkillResponse(BaseModel):
     """Response for a skill."""
 
@@ -152,19 +146,12 @@ async def list_skills(
     offset: int = Query(0, ge=0, description="Pagination offset"),
     limit: int = Query(50, ge=1, le=100, description="Pagination limit"),
 ) -> SkillListResponse:
-    """
-    List skills with optional filtering.
-
-    Supports filtering by category, full-text search, and tags.
-    Skills are returned in alphabetical order by name.
-    """
+    """List skills with optional filtering by category, tags, or full-text search."""
     await set_current_user(session, user.id)
 
     if search:
-        # Use full-text search with PostgreSQL
         conditions = _build_skill_filters(category, tags)
 
-        # Create tsquery from search terms
         tsquery = func.plainto_tsquery("english", search)
         conditions.append(Skill.search_vector.op("@@")(tsquery))
 
@@ -187,15 +174,12 @@ async def list_skills(
         result = await session.execute(stmt)
         skills = list(result.scalars().all())
     else:
-        # Regular query with filters
         conditions = _build_skill_filters(category, tags)
 
-        # Get total count
         count_stmt = select(func.count(Skill.id)).where(*conditions)
         count_result = await session.execute(count_stmt)
         total = count_result.scalar() or 0
 
-        # Get paginated results
         stmt = (
             select(Skill)
             .where(*conditions)
@@ -217,14 +201,9 @@ async def list_categories(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> CategoryListResponse:
-    """
-    List all skill categories.
-
-    Returns a list of unique category names from all enabled skills.
-    """
+    """List the distinct categories of enabled skills."""
     await set_current_user(session, user.id)
 
-    # Get unique categories from enabled skills
     stmt = (
         select(Skill.category).where(Skill.is_enabled.is_(True)).distinct().order_by(Skill.category)
     )
@@ -240,11 +219,7 @@ async def get_skill(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> SkillDetailResponse:
-    """
-    Get a skill by ID.
-
-    Returns full skill details including content.
-    """
+    """Get a skill by ID."""
     await set_current_user(session, user.id)
 
     skill_uuid = parse_uuid(skill_id, "skill_id")
@@ -272,11 +247,7 @@ async def get_skill_by_slug(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> SkillDetailResponse:
-    """
-    Get a skill by category and slug.
-
-    Returns full skill details including content.
-    """
+    """Get a skill by category and slug."""
     await set_current_user(session, user.id)
 
     stmt = select(Skill).where(
@@ -367,14 +338,9 @@ async def list_skill_sources(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> SkillSourceListResponse:
-    """
-    List all skill sources.
-
-    Requires admin access (enforced by RLS policy).
-    """
+    """List all skill sources. Requires admin access, enforced by the RLS policy."""
     await set_current_user(session, user.id)
 
-    # RLS policy enforces admin-only access
     stmt = select(SkillSource).order_by(SkillSource.name)
     result = await session.execute(stmt)
     sources = list(result.scalars().all())
@@ -391,14 +357,9 @@ async def create_skill_source(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> SkillSourceResponse:
-    """
-    Create a new skill source.
-
-    The source will be synced automatically by the background scheduler.
-    """
+    """Create a new skill source. It is synced automatically by the background scheduler."""
     await set_current_user(session, user.id)
 
-    # Validate source type specific fields
     if source_data.source_type == "github" and not source_data.url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -434,11 +395,7 @@ async def sync_skill_source_endpoint(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> SyncTriggerResponse:
-    """
-    Manually trigger a sync for a skill source.
-
-    Requires admin access (enforced by RLS policy).
-    """
+    """Manually trigger a sync for a skill source. Requires admin access via the RLS policy."""
     await set_current_user(session, user.id)
 
     # Verify admin access by trying to read the source (RLS will block non-admins)
@@ -481,11 +438,7 @@ async def delete_skill_source(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
-    """
-    Delete a skill source.
-
-    This will also delete all skills from this source (cascade).
-    """
+    """Delete a skill source and, by cascade, all of its skills."""
     await set_current_user(session, user.id)
 
     source_uuid = parse_uuid(source_id, "source_id")

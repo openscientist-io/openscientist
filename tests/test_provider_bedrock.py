@@ -246,5 +246,8 @@ class TestBedrockClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="bedrock-custom")
-        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.bedrock.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert BedrockProvider().claude_model_name() == "bedrock-custom"
