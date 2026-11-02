@@ -73,6 +73,17 @@ def _published_rate(entry: dict[str, Any], keys: tuple[str, ...], derived: float
     return derived
 
 
+def has_price(model: str) -> bool:
+    """Whether the pricing database holds an entry for ``model``, exact or
+    normalised.
+
+    The ledger prices a unit of work on the same lookup, so a model it finds no
+    entry for costs nothing in the ledger, and its spend cannot be enforced.
+    """
+    pricing = _get_litellm_pricing()
+    return bool(pricing.get(model) or pricing.get(normalize_model_name(model)))
+
+
 def estimate_cost_usd(
     model: str,
     input_tokens: int,

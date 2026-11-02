@@ -658,19 +658,20 @@ class TestBudgetSettings:
     def test_zero_budget_rejected(self):
         """Zero budget is rejected."""
         with pytest.raises(ValidationError) as exc_info:
-            BudgetSettings(APP_MAX_BUDGET_USD=0)
+            BudgetSettings(MAX_JOB_COST_USD=0)
         assert "must be positive" in str(exc_info.value)
 
     def test_valid_budget_values(self):
         """Valid budget values pass validation."""
         settings = BudgetSettings(
-            MAX_PROJECT_SPEND_WARN=50.0,
-            MAX_PROJECT_SPEND_HARD=200.0,
             MAX_JOB_COST_USD=5.0,
-            APP_MAX_BUDGET_USD=500.0,
+            MAX_PROJECT_SPEND_TOTAL_USD=1000.0,
+            MAX_PROJECT_SPEND_24H_USD=50.0,
+            WARN_PROJECT_SPEND_24H_USD=40.0,
         )
         assert settings.max_job_cost_usd == 5.0
-        assert settings.app_max_budget_usd == 500.0
+        assert settings.max_project_spend_total_usd == 1000.0
+        assert settings.warn_project_spend_24h_usd == 40.0
 
 
 class TestPhenixSettings:

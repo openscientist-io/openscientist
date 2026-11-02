@@ -1,9 +1,4 @@
-"""
-User model for authentication and authorization.
-
-The User model represents authenticated users in the system.
-Users can log in via OAuth providers (GitHub, Google) and own jobs.
-"""
+"""User model for authentication and authorization."""
 
 from typing import TYPE_CHECKING, Optional
 
@@ -21,23 +16,7 @@ if TYPE_CHECKING:
 
 
 class User(UUIDv7Mixin, Base):
-    """
-    User account.
-
-    Users authenticate via OAuth providers and own jobs. Multiple OAuth
-    accounts can be linked to a single user (e.g., both GitHub and Google).
-
-    Attributes:
-        email: User's primary email address (unique, indexed)
-        name: User's display name
-        is_active: Whether the user account is active (for admin disable)
-        is_approved: Whether the user is approved to start new jobs
-        is_priority: Whether the user's queued jobs start ahead of other users' jobs
-        oauth_accounts: OAuth provider accounts linked to this user
-        sessions: Active login sessions for this user
-        api_keys: API keys created by this user
-        jobs: Jobs owned by this user
-    """
+    """User account."""
 
     __tablename__ = "users"
 

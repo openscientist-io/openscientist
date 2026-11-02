@@ -7,13 +7,15 @@
 FROM python:3.12-slim
 
 # Install system dependencies
-# WeasyPrint requires: pango, cairo, harfbuzz, gdk-pixbuf (for PNG/JPEG)
+# WeasyPrint requires: pango, cairo, harfbuzz, gdk-pixbuf (for PNG/JPEG), and
+# the fonts the web and the agent render reports with
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     jq \
     fonts-dejavu-core \
     fonts-noto-core \
+    fonts-liberation \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
     libpangocairo-1.0-0 \
