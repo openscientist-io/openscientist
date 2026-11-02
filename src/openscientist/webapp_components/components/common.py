@@ -115,8 +115,12 @@ def get_category_color(category: str) -> str:
 def render_stat_badges(
     stats: list[tuple[str, str | int, str]],
     icon_map: dict[str, str] | None = None,
-) -> None:
-    """Render a compact row of stat badges that wraps on narrow screens."""
+) -> ui.row:
+    """Render a compact row of stat badges that wraps on narrow screens.
+
+    Returns the row so a caller can append a small sibling, like the
+    run-environment info icon.
+    """
     default_icons = {
         "Total": "list",
         "Total Jobs": "list",
@@ -135,16 +139,17 @@ def render_stat_badges(
     }
     icons = {**default_icons, **(icon_map or {})}
 
-    with ui.row().classes("w-full gap-2 flex-wrap items-center mb-2"):
+    with ui.row().classes("w-full gap-1 flex-wrap items-center mb-1") as badges_row:
         for label, value, color in stats:
             badge_color = color if color else "gray"
             icon = icons.get(label, "tag")
             with (
-                ui.badge(color=badge_color).props("outline").classes("px-3 py-1 text-sm"),
+                ui.badge(color=badge_color).props("outline").classes("px-2 py-0.5 text-xs"),
                 ui.row().classes("items-center gap-1"),
             ):
                 ui.icon(icon, size="xs")
                 ui.label(f"{label}: {value}").classes("font-medium")
+    return badges_row
 
 
 def render_empty_state(message: str) -> None:
@@ -230,17 +235,21 @@ def make_action_button_slot(
     icon: str | None = None,
     color: str = "primary",
 ) -> str:
-    """Quasar slot template for an action button that emits ``event_name`` with the row."""
+    """Quasar slot template for an icon-only action button whose tooltip is
+    ``label``, emitting ``event_name`` with the row."""
     icon_attr = f'icon="{icon}"' if icon else ""
     return f"""
 <q-td :props="props">
     <q-btn
+        flat
+        dense
         size="sm"
         color="{color}"
         {icon_attr}
-        label="{label}"
         @click="$parent.$emit('{event_name}', props.row)"
-    />
+    >
+        <q-tooltip>{label}</q-tooltip>
+    </q-btn>
 </q-td>
 """
 
@@ -314,6 +323,45 @@ async def render_user_search(
     search_input.on_value_change(_on_search_change)
 
     return search_input, results_container
+
+
+def _inject_density_styles() -> None:
+    """Register the shared density CSS: compact cards and a wrapped environment tooltip.
+
+    Call exactly once at app bootstrap (same reason as ``_inject_pubmed_badge_styles``).
+    """
+    ui.add_head_html(
+        """
+        <style>
+        .os-density-card .q-card__section {
+            padding: 8px 12px;
+        }
+        .os-env-tooltip {
+            max-width: 420px;
+            white-space: normal;
+        }
+        .os-compact-upload .q-uploader__header-content {
+            padding: 4px 8px;
+        }
+        .os-compact-upload {
+            min-height: 0;
+        }
+        .os-compact-upload .q-uploader__list {
+            min-height: 0;
+        }
+        .os-compact-upload .q-uploader__list:empty {
+            display: none;
+        }
+        /* Colour, not opacity, so the tooltip child keeps its own text colour. */
+        .q-tab.os-tab-disabled,
+        .q-tab.os-tab-disabled .q-tab__label,
+        .q-tab.os-tab-disabled .q-icon {
+            color: rgba(0, 0, 0, 0.35);
+        }
+        </style>
+        """,
+        shared=True,
+    )
 
 
 def _inject_thinking_status_styles() -> None:

@@ -22,9 +22,11 @@ from openscientist.webapp_components.components.notifications import (
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.pages.job_detail.chat import _render_chat_tab
 from openscientist.webapp_components.pages.job_detail.common import (
+    _chat_tab_tooltip,
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
+    _report_tab_tooltip,
 )
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
 from openscientist.webapp_components.pages.job_detail.timeline import _render_timeline_tab
@@ -182,10 +184,22 @@ def _render_job_status_notices(context: _JobDetailContext) -> None:
 
 
 async def _render_job_tabs(context: _JobDetailContext) -> None:
+    # Computed once at render: the page reloads on every status that unlocks a
+    # tab, so a tab never has to be re-enabled by the pollers.
+    report_tooltip = _report_tab_tooltip(context.job_info.status)
+    chat_tooltip = _chat_tab_tooltip(context.job_info.status)
     with ui.tabs().classes("w-full") as tabs:
         timeline_tab = ui.tab("Research Log")
         report_tab = ui.tab("Report")
+        if report_tooltip is not None:
+            report_tab.props("disable").classes("os-tab-disabled")
+            with report_tab:
+                ui.tooltip(report_tooltip)
         chat_tab = ui.tab("Chat")
+        if chat_tooltip is not None:
+            chat_tab.props("disable").classes("os-tab-disabled")
+            with chat_tab:
+                ui.tooltip(chat_tooltip)
 
     with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
         with ui.tab_panel(timeline_tab):

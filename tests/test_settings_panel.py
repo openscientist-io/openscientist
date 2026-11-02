@@ -19,6 +19,14 @@ from sqlalchemy.sql.selectable import Select
 
 from openscientist.admin_settings import AdminSettingsValues
 from openscientist.database.models import AdminSettingChange, AdminSettings, User
+from openscientist.settings import (
+    AirgapSettings,
+    AuthSettings,
+    BudgetSettings,
+    ContainerSettings,
+    FileSettings,
+    Settings,
+)
 from openscientist.webapp_components.pages import settings_panel
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import fake_admin_session
@@ -288,12 +296,13 @@ async def _history_session() -> AsyncIterator[_HistorySession]:
     yield _HistorySession()
 
 
-def _make_element() -> MagicMock:
+def _make_element(*_args: object, **_kwargs: object) -> MagicMock:
     """One NiceGUI stand-in element that also serves as a context manager."""
     element = MagicMock()
     element.__enter__ = MagicMock(return_value=element)
     element.__exit__ = MagicMock(return_value=False)
     element.classes.return_value = element
+    element.style.return_value = element
     return element
 
 
@@ -364,6 +373,50 @@ async def test_the_airgap_switch_is_disabled_exactly_when_the_floor_locks_it(
         switch.return_value.props.assert_called_with("disable")
     else:
         switch.return_value.props.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_each_field_shows_the_description_from_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The helper text under a field is the settings.py description of the env
+    field the admin setting maps to, so the wording cannot drift into two copies."""
+    monkeypatch.setattr(
+        settings_panel,
+        "current_admin_settings",
+        AsyncMock(return_value=_panel_values(airgap_locked=False)),
+    )
+    monkeypatch.setattr(settings_panel, "get_admin_session", _history_session())
+    mock_ui = _panel_ui_mock()
+    with (
+        patch.object(settings_panel, "ui", mock_ui),
+        patch.object(settings_panel, "render_empty_state", MagicMock()),
+        patch.object(settings_panel, "render_alert_banner", MagicMock()),
+    ):
+        await settings_panel.render_settings_panel()
+
+    expected = {
+        BudgetSettings.model_fields["max_job_cost_usd"].description,
+        BudgetSettings.model_fields["warn_project_spend_24h_usd"].description,
+        ContainerSettings.model_fields["agent_cpu"].description,
+        ContainerSettings.model_fields["agent_memory"].description,
+        ContainerSettings.model_fields["agent_timeout"].description,
+        FileSettings.model_fields["max_file_size_mb"].description,
+        Settings.model_fields["max_concurrent_jobs"].description,
+        Settings.model_fields["scheduler_window_hours"].description,
+        AuthSettings.model_fields["session_duration_days"].description,
+        AirgapSettings.model_fields["enabled"].description,
+    }
+    rendered: list[str] = [
+        call.args[0]
+        for call in mock_ui.label.call_args_list
+        if call.args and isinstance(call.args[0], str)
+    ]
+    for desc in expected:
+        # The helper line merges the description and the bound, so the wording
+        # is a prefix of the rendered label, not a standalone one.
+        assert desc is not None
+        assert any(desc in label for label in rendered)
 
 
 def test_a_history_row_names_the_changer_or_unknown() -> None:
