@@ -12,6 +12,7 @@ import enum
 import inspect
 import logging
 import os
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -160,6 +161,15 @@ class AgentConfig:
     tool_server_env: Mapping[str, str] = field(default_factory=dict)
 
 
+def _resolve_bin(env_name: str, binary: str) -> str:
+    """The harness binary. The env override wins, then ``PATH``, then the
+    literal name so a missing binary still names itself in the failure."""
+    override = os.environ.get(env_name)
+    if override:
+        return override
+    return shutil.which(binary) or binary
+
+
 class AbstractAgent[P: Provider](abc.ABC):
     """Agent runtime parameterised over the provider family it accepts.
 
@@ -244,6 +254,19 @@ class AbstractAgent[P: Provider](abc.ABC):
     @abc.abstractmethod
     async def shutdown(self) -> None: ...
 
+    def timed_out_result(self) -> IterationResult:
+        """A turn cut at the wall-clock bound. The fields stay empty because the
+        work before the cut is already persisted via tools."""
+        return IterationResult(
+            outcome=TurnOutcome.TIMED_OUT, output="", tool_calls=0, transcript=[], error=""
+        )
+
+    def failed_result(self, error: Exception | str) -> IterationResult:
+        """A failed turn. ``error`` may be the exception or a prebuilt message."""
+        return IterationResult(
+            outcome=TurnOutcome.FAILED, output="", tool_calls=0, transcript=[], error=str(error)
+        )
+
     # ----- prompt vocabulary (single substitution path) -----
 
     @classmethod
@@ -278,13 +301,14 @@ class AbstractAgent[P: Provider](abc.ABC):
         return render_chat_context(cls.prompt_fragments())
 
     @classmethod
-    @abc.abstractmethod
     def discovery_system_prompt(
         cls, *, use_hypotheses: bool = False, phenix_available: bool = False
     ) -> str:
-        """The system prompt this backend uses for a discovery run. Claude returns the
-        concise ``system_prompt`` (its rich doc is written into ``.claude/``), codex
-        returns the full ``job_doc`` (delivered via ``AGENTS.md``)."""
+        """The system prompt this backend uses for a discovery run. The default is the
+        full ``job_doc``, which the harness delivers via its job file (``AGENTS.md``
+        for codex). Claude overrides it with the concise ``system_prompt``, because
+        its rich doc is written into ``.claude/`` separately."""
+        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
 
     # ----- per-job side effects (run where the agent instance lives) -----
 
@@ -326,6 +350,23 @@ class AbstractAgent[P: Provider](abc.ABC):
         # with an empty prefix, which is Claude and codex.
         body = apply_mcp_tool_prefix(render_skill_md(skill), self.prompt_fragments())
         (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
+
+    def _job_dir(self) -> Path:
+        """The absolute job dir. A relative one such as ``jobs/<id>`` would be
+        resolved against the harness's own working dir and doubled."""
+        return self._config.job_dir.resolve()
+
+    def _subprocess_env(
+        self, job_dir: Path, container_env: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
+        """The full environment for a child process. Passing an env dict replaces the
+        inherited environment, so this must carry the whole parent env, then the
+        provider's container env when given, then the per-job overlay, which wins."""
+        env = dict(os.environ)
+        if container_env:
+            env.update(container_env)
+        env.update(self._job_env_overlay(job_dir))
+        return env
 
     def _job_env_overlay(self, job_dir: Path) -> dict[str, str]:
         """Per-job ``OPENSCIENTIST_*`` env for the tools subprocess. Each backend

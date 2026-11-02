@@ -243,8 +243,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         from the agent container plus the per-job overlays).
         """
         config = self._config
-        env = dict(os.environ)
-        env.update(self._job_env_overlay(config.job_dir))
+        env = super()._subprocess_env(config.job_dir)
         if config.data_file is None:
             env.pop("OPENSCIENTIST_DATA_FILE", None)
         if not config.data_files:

@@ -201,13 +201,12 @@ def test_concrete_subclass_without_backend_is_rejected() -> None:
             # `backend` is intentionally not set.
             @classmethod
             def prompt_fragments(cls) -> BackendFragments:
-                raise NotImplementedError
-
-            @classmethod
-            def discovery_system_prompt(
-                cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-            ) -> str:
-                return ""
+                return BackendFragments(
+                    skills_location="",
+                    builtin_read_tool="",
+                    builtin_read_tool_short="",
+                    mcp_tool_prefix="",
+                )
 
             async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
                 return None
