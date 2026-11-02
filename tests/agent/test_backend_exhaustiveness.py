@@ -20,7 +20,7 @@ from openscientist.agent.base import AbstractAgent, AgentBackend, IterationResul
 # Importing the concrete agents registers them as AbstractAgent subclasses.
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent  # noqa: F401
 from openscientist.agent.codex_agent import CodexAgent
-from openscientist.agent.factory import agent_class_for_provider_id
+from openscientist.agent.factory import agent_class_for_backend, agent_class_for_provider_id
 from openscientist.agent.omp_agent import OmpAgent  # noqa: F401
 from openscientist.prompts.common import BackendFragments
 from openscientist.providers import provider_class, provider_ids
@@ -84,6 +84,11 @@ def test_every_backend_has_exactly_one_agent() -> None:
     assert set(by_backend) == set(AgentBackend), "every AgentBackend member needs an agent"
     for backend, classes in by_backend.items():
         assert len(classes) == 1, f"{backend} has multiple agents: {classes}"
+
+
+def test_every_backend_resolves_to_its_agent() -> None:
+    for cls in _concrete_agent_classes():
+        assert agent_class_for_backend(cls.backend) is cls
 
 
 def test_every_provider_resolves_to_a_concrete_agent() -> None:
