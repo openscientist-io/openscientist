@@ -1,14 +1,7 @@
 """Ollama provider (drives omp against a local model).
 
-Routes omp at a locally hosted Ollama server through its OpenAI-compatible
-endpoint (default ``http://localhost:11434/v1``), which serves open-weight
-models such as ``gpt-oss:20b`` with tool calling. Ollama is local and keyless,
-so no API key is sent.
-
-Because the server runs on the host, the base URL must be reachable from
-wherever the agent runs. In-process on the dev box ``localhost`` works
-directly. From inside the agent container, point ``OLLAMA_BASE_URL`` at
-the host (for example ``http://host.docker.internal:11434/v1``).
+The server is keyless, and from inside the agent container ``OLLAMA_BASE_URL``
+must point at the host (for example ``http://host.docker.internal:11434/v1``).
 """
 
 from __future__ import annotations
@@ -48,15 +41,13 @@ def _ollama_http_base(base_url: str) -> str:
 def _probe_ollama_context_tokens(base_url: str, model_id: str) -> int | None:
     """Read the served context window of a loaded Ollama model, or None.
 
-    ``/api/ps`` reports ``context_length`` for currently-loaded models, which
-    reflects the deployment's ``num_ctx`` (e.g. ``OLLAMA_CONTEXT_LENGTH``), the
-    number we must budget against. A cold model gets None rather than the
-    ``/api/show`` trained maximum: both callers run before the first model call,
-    so the trained figure would be the usual answer rather than a rare fallback,
-    and it over-budgets a server launched smaller (262144 reported against a
-    32768 deployment). ``probed_model_profile`` turns None into a conservative
-    budget plus a warning naming ``OPENSCIENTIST_MODEL_CONTEXT_TOKENS``, which
-    is the number the operator can actually act on.
+    ``/api/ps`` reports ``context_length`` for loaded models, which reflects the
+    deployment's ``num_ctx`` (e.g. ``OLLAMA_CONTEXT_LENGTH``), the number we must
+    budget against. A cold model gets None instead of the ``/api/show`` trained
+    maximum. Both callers run before the first model call, and the trained figure
+    over-budgets a server launched smaller (a 262144 report against a 32768
+    deployment). ``probed_model_profile`` turns None into a conservative budget
+    plus a warning naming ``OPENSCIENTIST_MODEL_CONTEXT_TOKENS``.
     """
     root = _ollama_http_base(base_url)
     try:
@@ -91,14 +82,14 @@ class OllamaProvider(OpenAiWireCompatible):
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         if proxy:
             return super().harness_env(proxy=proxy)
-        # Local, keyless: point an OpenAI-family harness straight at Ollama.
+        # Local and keyless, so the URL is the direct one and the key is a dummy.
         s = get_settings().provider
         return {"OPENAI_BASE_URL": s.ollama_base_url, "OPENAI_API_KEY": "ollama"}
 
     def validate_required_config(self) -> list[str]:
-        # Local and keyless: the base URL and model both have defaults, so
-        # there is nothing the operator must supply for the provider to
-        # construct. Reachability is a runtime concern, surfaced by the run.
+        # Local and keyless. The base URL and model both have defaults, so the
+        # operator supplies nothing for construction. Reachability is a runtime
+        # concern, surfaced by the run.
         return []
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
@@ -113,7 +104,7 @@ class OllamaProvider(OpenAiWireCompatible):
         )
 
     def llm_upstream(self) -> LlmUpstream | None:
-        # Keyless: forward to Ollama with no injected auth.
+        # Keyless. Forward to Ollama with no injected auth.
         return LlmUpstream(get_settings().provider.ollama_base_url, {})
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:

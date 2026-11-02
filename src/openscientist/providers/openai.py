@@ -1,9 +1,7 @@
 """Direct OpenAI API provider (drives the Codex agent).
 
-Routes the Codex agent at OpenAI's default endpoint. Authentication is
-either an ``OPENAI_API_KEY`` (API auth) or the ChatGPT OAuth login that
-the codex CLI stores in ``~/.codex/auth.json``. ``CodexAgent`` provisions
-whichever is available into the per-job ``CODEX_HOME``.
+Auth is ``OPENAI_API_KEY`` or the ChatGPT OAuth login the codex CLI stores
+in ``~/.codex/auth.json``.
 """
 
 from __future__ import annotations
@@ -118,7 +116,7 @@ class OpenAIDirectProvider(CodexCompatible):
         ]
 
     def codex_model_name(self) -> str | None:
-        # No forced default: codex uses its account/config default unless the
+        # No forced default. codex uses its account or config default unless the
         # operator sets OPENSCIENTIST_MODEL (some accounts reject explicit ids).
         return get_settings().provider.model
 

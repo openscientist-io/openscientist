@@ -1,8 +1,4 @@
-"""
-AWS Bedrock provider implementation.
-
-Uses AWS Bedrock for model access. Cost tracking via AWS Cost Explorer.
-"""
+"""AWS Bedrock provider (cost tracking via AWS Cost Explorer)."""
 
 import logging
 import os
@@ -112,7 +108,7 @@ class BedrockProvider(ClaudeCompatible):
         placeholder: str,
         gcp_credentials_container_path: str | None = None,
     ) -> dict[str, str]:
-        # Strip any SigV4 credential: bearer mode routes through the proxy.
+        # Strip any SigV4 credential. Bearer mode routes through the proxy.
         env = super().proxied_container_env(
             proxy_base_url=proxy_base_url,
             placeholder=placeholder,
@@ -131,11 +127,11 @@ class BedrockProvider(ClaudeCompatible):
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at Bedrock.
 
-        omp drives Bedrock through the AWS SDK using the standard ``AWS_*``
-        names, which match ours, so SigV4 needs no translation and no proxy: it
-        signs its own requests and ``airgap_egress`` already reports DIRECT.
+        omp drives Bedrock through the AWS SDK with the standard ``AWS_*``
+        names, so SigV4 needs no translation and no proxy. omp signs its own
+        requests and ``airgap_egress`` reports DIRECT.
 
-        Bearer mode is the gap. Our proxy override sets
+        Bearer mode is the gap. The proxy override sets
         ``ANTHROPIC_BEDROCK_BASE_URL``, a Claude Code name omp does not read, and
         omp exposes no Bedrock base-URL override, so a proxied bearer setup
         cannot be expressed. Refuse rather than let omp reach AWS directly with
@@ -159,7 +155,6 @@ class BedrockProvider(ClaudeCompatible):
         return AirgapPosture(AirgapEgress.DIRECT, direct_endpoints=((host, 443),))
 
     def _validate_optional_config(self) -> list[str]:
-        """Check optional Bedrock configuration."""
         warnings = []
         settings = get_settings()
 
@@ -174,24 +169,16 @@ class BedrockProvider(ClaudeCompatible):
         return warnings
 
     def setup_environment(self) -> None:
-        """
-        Set up environment for Bedrock.
-
-        Ensures CLAUDE_CODE_USE_BEDROCK is set and unsets conflicting
-        environment variables from other providers.
-        """
-        # Enable Bedrock mode for Claude Code
         os.environ["CLAUDE_CODE_USE_BEDROCK"] = "1"  # env-ok
 
-        # Unset conflicting provider routing vars
         clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_BEDROCK")
         clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
 
         # Unset direct API key to avoid conflicts
         clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
 
-        # Unset empty vars that interfere with Bedrock auth
-        # This happens when docker-compose passes VAR=${VAR} and it's unset
+        # Clear empty vars that interfere with Bedrock auth. docker-compose
+        # passes VAR=${VAR} through when the var is unset.
         empty_vars_to_clear = [
             "AWS_PROFILE",
             "AWS_SESSION_TOKEN",
@@ -205,38 +192,21 @@ class BedrockProvider(ClaudeCompatible):
         logger.info("Bedrock provider initialized (using AWS credentials)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get Bedrock cost information from AWS Cost Explorer.
-
-        Args:
-            lookback_hours: Time window for recent spend calculation
-
-        Returns:
-            CostInfo with Bedrock spend data
-
-        Note:
-            Requires AWS Cost Explorer access. Cost data typically has
-            a 24-48 hour lag in AWS.
-        """
+        """Get Bedrock cost information from AWS Cost Explorer."""
         now = datetime.now(UTC)
 
         # AWS Cost Explorer requires ce:GetCostAndUsage permission
-        # For now, return unavailable status with instructions
-        # Full implementation would use boto3 cost explorer client
         try:
             import boto3  # type: ignore[import-untyped]
 
             settings = get_settings()
-            # Initialize Cost Explorer client
             ce_client = boto3.client("ce", region_name=settings.provider.aws_region or "us-east-1")
 
-            # Calculate time windows (Cost Explorer requires date strings)
+            # Cost Explorer requires date strings
             end_date = now.strftime("%Y-%m-%d")
             start_date_recent = (now - timedelta(hours=lookback_hours)).strftime("%Y-%m-%d")
-            # For total, go back 1 year (reasonable default)
             start_date_total = (now - timedelta(days=365)).strftime("%Y-%m-%d")
 
-            # Query for Bedrock costs
             def get_bedrock_cost(start: str, end: str) -> float:
                 response = ce_client.get_cost_and_usage(
                     TimePeriod={"Start": start, "End": end},

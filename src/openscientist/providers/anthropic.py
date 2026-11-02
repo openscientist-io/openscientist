@@ -1,8 +1,4 @@
-"""
-Direct Anthropic API provider.
-
-For users who want to use their own Anthropic API key.
-"""
+"""Direct Anthropic API provider."""
 
 import logging
 import os
@@ -17,12 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(ClaudeCompatible):
-    """
-    Direct Anthropic API provider.
-
-    Uses ANTHROPIC_API_KEY for authentication directly with Anthropic's API.
-    This is for users who want to bring their own personal API key.
-    """
+    """Direct Anthropic API provider (API key or OAuth token from claude login)."""
 
     @property
     def id(self) -> str:
@@ -86,12 +77,11 @@ class AnthropicProvider(ClaudeCompatible):
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at Anthropic.
 
-        ``ANTHROPIC_BASE_URL`` is spelled the same as Claude Code uses, so the
-        endpoint needs no translation, but the subscription token does: omp reads
-        ``ANTHROPIC_OAUTH_TOKEN`` where Claude Code reads
-        ``CLAUDE_CODE_OAUTH_TOKEN``. Both the real token and the proxy placeholder
-        are published under the Claude Code name, so without this omp sees no
-        credential at all on the OAuth path.
+        ``ANTHROPIC_BASE_URL`` is spelled as Claude Code uses it, so the endpoint
+        needs no translation. The OAuth token name differs though. omp reads
+        ``ANTHROPIC_OAUTH_TOKEN``, but the real token and the proxy placeholder
+        are published under Claude Code's ``CLAUDE_CODE_OAUTH_TOKEN``, so omp
+        sees no credential on the OAuth path without this copy.
         """
         p = get_settings().provider
         env = {}
@@ -110,7 +100,6 @@ class AnthropicProvider(ClaudeCompatible):
         return get_settings().provider.model or "claude-sonnet-5-5"
 
     def _validate_optional_config(self) -> list[str]:
-        """Check optional configuration."""
         warnings = []
         settings = get_settings()
 
@@ -120,15 +109,12 @@ class AnthropicProvider(ClaudeCompatible):
         return warnings
 
     def setup_environment(self) -> None:
-        """Set up environment for Anthropic direct API or OAuth token."""
         settings = get_settings()
 
-        # Unset conflicting provider routing vars
         clear_provider_mode_flags(logger)
         clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
 
-        # If using OAuth token (from claude login), set CLAUDE_CODE_OAUTH_TOKEN
-        # which is what the Claude Code CLI expects for OAuth authentication
+        # The Claude Code CLI expects the OAuth token in CLAUDE_CODE_OAUTH_TOKEN
         if settings.provider.claude_code_oauth_token and not settings.provider.anthropic_api_key:
             os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = (
                 settings.provider.claude_code_oauth_token
@@ -140,12 +126,8 @@ class AnthropicProvider(ClaudeCompatible):
         logger.info("Anthropic provider initialized (using %s)", auth_method)
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get cost information.
-
-        Note: Anthropic's API doesn't provide a usage/billing endpoint,
-        so we return unknown for cost tracking.
-        """
+        """Cost information. Anthropic's API has no billing endpoint, so
+        spend is unknown."""
         return CostInfo(
             provider_name=self.display_name,
             total_spend_usd=None,

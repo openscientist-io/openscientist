@@ -1,12 +1,7 @@
 """Azure OpenAI Service provider (drives the Codex agent).
 
-Routes the Codex agent at an Azure-hosted OpenAI deployment. On Azure's
-OpenAI v1 surface the deployment name is the request-body model, so
-``OPENSCIENTIST_MODEL`` names it.
-Authentication is an ``AZURE_OPENAI_API_KEY`` sent as a Bearer token.
-
-This is distinct from ``FoundryProvider``, which is ``ClaudeCompatible`` and
-serves Anthropic models through Azure AI Foundry.
+Distinct from ``FoundryProvider``, which is ``ClaudeCompatible`` and serves
+Anthropic models through Azure AI Foundry.
 """
 
 from __future__ import annotations
@@ -96,14 +91,11 @@ class AzureOpenAIProvider(CodexCompatible):
         return {}
 
     def codex_config_overrides(self) -> list[str]:
-        # A [model_providers.azure-openai] TOML table. The key is sent as a
-        # Bearer token (env_key). api-version is optional on the v1 surface, so
-        # it is pinned only when the operator configures one.
+        # api-version is optional on the v1 surface, so pin it only when configured.
         s = get_settings().provider
-        # Codex only supports wire_api = "responses" (the chat wire was removed).
+        # Codex only supports wire_api = "responses".
         # stream_max_retries makes codex reconnect through Azure's intermittent
-        # streaming disconnects (a known Azure-side timeout, openai/codex#9936),
-        # which it otherwise treats as a fatal "stream disconnected" error.
+        # streaming disconnects (https://github.com/openai/codex/issues/9936).
         base_url = os.environ.get(LLM_PROXY_URL_ENV) or self._base_url()
         lines = [
             "[model_providers.azure-openai]",
