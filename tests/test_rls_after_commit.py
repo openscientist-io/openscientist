@@ -16,7 +16,7 @@ from openscientist.database.engine import get_engine
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
-from openscientist.job_manager import _job_session
+from openscientist.job.repository import _job_session
 
 _WHO = text("SELECT current_user, current_setting('app.current_user_id', true)")
 
