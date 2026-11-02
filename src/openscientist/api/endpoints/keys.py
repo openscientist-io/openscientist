@@ -1,8 +1,4 @@
-"""
-API key management endpoints.
-
-Provides REST API endpoints for creating, listing, and revoking API keys.
-"""
+"""API key management endpoints."""
 
 import logging
 from datetime import datetime
@@ -30,7 +26,6 @@ CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
 SESSION_DEP = Depends(get_session)
 
 
-# Pydantic models for request/response
 class APIKeyCreate(BaseModel):
     """Request body for creating an API key."""
 
@@ -75,18 +70,12 @@ async def create_api_key(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> APIKeyCreateResponse:
-    """
-    Create a new API key for the authenticated user.
+    """Create a new API key. The full key is returned once and cannot be retrieved later.
 
-    The full API key (name:secret) is only returned in this response and cannot
-    be retrieved later. Store it securely!
-
-    Rate limit: 10 keys per user maximum.
+    Users may hold at most 10 keys.
     """
-    # Set RLS context
     await set_current_user(session, user.id)
 
-    # Check if name already exists for this user
     stmt = select(APIKey).where(
         APIKey.user_id == user.id,
         APIKey.name == key_data.name,
@@ -98,7 +87,6 @@ async def create_api_key(
             detail=f"API key with name '{key_data.name}' already exists",
         )
 
-    # Check key count limit
     count_result = await session.execute(
         select(func.count(APIKey.id)).where(APIKey.user_id == user.id)
     )
@@ -108,11 +96,9 @@ async def create_api_key(
             detail="Maximum of 10 API keys per user",
         )
 
-    # Generate secret and hash it
     secret = generate_api_key_secret()
     key_hash = hash_secret(secret)
 
-    # Create API key
     api_key = APIKey(
         user_id=user.id,
         name=key_data.name,
@@ -125,7 +111,6 @@ async def create_api_key(
 
     logger.info("Created API key '%s' for user %s", key_data.name, user.email)
 
-    # Return full key (this is the only time it's shown)
     return APIKeyCreateResponse(
         id=str(api_key.id),
         name=api_key.name,
@@ -141,12 +126,7 @@ async def list_api_keys(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> APIKeyListResponse:
-    """
-    List all API keys for the authenticated user.
-
-    Note: The secret portion of keys is not included (it's only shown once at creation).
-    """
-    # Set RLS context
+    """List all API keys for the authenticated user. Secrets are only shown once, at creation."""
     await set_current_user(session, user.id)
 
     stmt = select(APIKey).where(APIKey.user_id == user.id).order_by(APIKey.created_at.desc())
@@ -173,12 +153,7 @@ async def revoke_api_key(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
-    """
-    Revoke (deactivate) an API key.
-
-    Revoked keys cannot be reactivated - create a new key instead.
-    """
-    # Set RLS context
+    """Revoke an API key. Revoked keys cannot be reactivated."""
     await set_current_user(session, user.id)
 
     api_key = await get_api_key_by_id(key_id, user, session)
@@ -189,7 +164,6 @@ async def revoke_api_key(
             detail="API key not found",
         )
 
-    # Deactivate the key
     api_key.is_active = False
     await session.commit()
 

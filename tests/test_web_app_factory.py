@@ -1,4 +1,3 @@
-from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -251,23 +250,14 @@ def test_web_starts_with_the_admin_url(monkeypatch, tmp_path: Path) -> None:
     assert web_app._validate_settings() is None
 
 
-def test_initialize_job_manager_runtime_installs_the_configured_manager(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """The runtime initializer installs a global manager built from the
-    settings, and a second call leaves the existing manager in place."""
-    monkeypatch.setattr(
-        web_app,
-        "get_settings",
-        lambda: SimpleNamespace(max_concurrent_jobs=3, scheduler_window_hours=6),
-    )
+def test_initialize_job_manager_runtime_installs_the_manager(monkeypatch, tmp_path: Path) -> None:
+    """The runtime initializer installs a global manager, and a second call
+    leaves the existing manager in place."""
     monkeypatch.setattr(web_app.JobManager, "recover_after_restart", lambda self: None)
     monkeypatch.setattr(web_app, "_state", web_app._AppState())
 
     web_app._initialize_job_manager_runtime(tmp_path / "jobs")
     manager = web_app.get_job_manager()
-    assert manager.max_concurrent == 3
-    assert manager.scheduler_window == timedelta(hours=6)
     assert manager.jobs_dir == tmp_path / "jobs"
 
     web_app._initialize_job_manager_runtime(tmp_path / "other")

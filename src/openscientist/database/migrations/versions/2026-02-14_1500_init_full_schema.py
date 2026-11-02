@@ -3,17 +3,6 @@
 Revision ID: init_full_schema
 Revises:
 Create Date: 2026-02-14 15:00:00.000000+00:00
-
-This migration creates the complete OpenScientist database schema including:
-- User authentication (users, oauth_accounts, sessions, api_keys)
-- Jobs and knowledge state
-- Skills and skill sources
-- MCP servers
-- Administrators
-- Row-level security policies
-- Full-text search indexes
-
-This is a consolidated migration that replaces the previous incremental migrations.
 """
 
 from collections.abc import Sequence

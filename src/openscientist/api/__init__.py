@@ -1,14 +1,6 @@
-"""
-REST API for OpenScientist.
+"""REST API for OpenScientist.
 
-Provides programmatic access to job management and API key management.
-All endpoints require API key authentication via Bearer token.
-
-API Key Format:
-    Authorization: Bearer <name>:<secret>
-
-Example:
-    curl -H "Authorization: Bearer my-key:abc123..." https://openscientist.example.com/api/v1/jobs
+All endpoints require Bearer authentication with a ``name:secret`` API key.
 """
 
 from typing import Any

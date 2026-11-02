@@ -1,9 +1,4 @@
-"""
-Job sharing model for multi-user collaboration.
-
-Job shares allow users to grant view or edit access to their jobs.
-Permissions are enforced at the database level via Row-Level Security.
-"""
+"""Job sharing model for multi-user collaboration."""
 
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -20,22 +15,7 @@ if TYPE_CHECKING:
 
 
 class JobShare(UUIDv7Mixin, Base):
-    """
-    Job sharing permission.
-
-    Grants a user access to another user's job with a specific permission level.
-
-    Permission levels:
-    - 'view': Read-only access to job and results
-    - 'edit': Can modify job parameters and cancel/resume
-
-    Attributes:
-        job_id: Foreign key to the shared job
-        shared_with_user_id: Foreign key to user being granted access
-        permission_level: Permission level ('view' or 'edit')
-        job: Related Job object
-        shared_with_user: Related User object
-    """
+    """Job sharing permission."""
 
     __tablename__ = "job_shares"
     __table_args__ = (

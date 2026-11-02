@@ -1,6 +1,7 @@
 """Tests for the session-authenticated artifact download route."""
 
 import io
+import json
 import tempfile
 import zipfile
 from pathlib import Path
@@ -46,6 +47,7 @@ async def test_web_download_streams_zip_for_owner(
         research_question="Artifacts download job",
         description="artifact route test",
         status="completed",
+        version_info={"openscientist_commit": "abc123def456"},
     )
     db_session.add(job)
     await db_session.commit()
@@ -73,6 +75,7 @@ async def test_web_download_streams_zip_for_owner(
     assert f"{job.id}_artifacts.zip" in response.headers["content-disposition"]
     with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
         assert "report.md" in zf.namelist()
+        assert json.loads(zf.read("provenance.json")) == {"openscientist_commit": "abc123def456"}
 
     leftovers = list(Path(tempfile.gettempdir()).glob(f"openscientist_{job.id}_*"))
     assert leftovers == []
