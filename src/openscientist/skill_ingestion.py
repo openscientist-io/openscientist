@@ -1,8 +1,5 @@
 """
 Skill ingestion service for parsing and syncing skills.
-
-Handles parsing markdown skills with YAML frontmatter and syncing
-skills from external sources like GitHub repositories.
 """
 
 import asyncio
@@ -27,27 +24,12 @@ from .database.models import Skill, SkillSource
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Base Class for Extensible Ingesters
-# =============================================================================
-
 
 class BaseSkillIngester(ABC):
-    """
-    Abstract base class for skill ingesters.
+    """Abstract base class for skill ingesters.
 
-    To add a new source type:
-    1. Create a class that inherits from BaseSkillIngester
-    2. Implement the sync_source() method
-    3. Register it with register_ingester("source_type", YourIngester)
-
-    Example:
-        class S3SkillIngester(BaseSkillIngester):
-            async def sync_source(self, session, source, **kwargs):
-                # Fetch skills from S3 bucket
-                ...
-
-        register_ingester("s3", S3SkillIngester)
+    To add a new source type, subclass it, implement ``sync_source`` and
+    register the class with ``register_ingester("source_type", YourIngester)``.
     """
 
     @abstractmethod
@@ -57,16 +39,9 @@ class BaseSkillIngester(ABC):
         source: SkillSource,
         **kwargs: Any,
     ) -> dict[str, int]:
-        """
-        Sync skills from a source.
+        """Sync skills from a source.
 
-        Args:
-            session: Database session
-            source: SkillSource to sync from
-            **kwargs: Additional arguments (e.g., github_token)
-
-        Returns:
-            Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
+        Returns counts with keys created, updated, unchanged and errors.
         """
 
     async def close(self) -> None:
@@ -93,25 +68,11 @@ class SkillParseError(Exception):
 
 
 class SkillParser:
-    """
-    Parser for skill markdown files with YAML frontmatter.
+    """Parser for skill markdown files with YAML frontmatter.
 
-    Skills are markdown files with YAML frontmatter containing metadata:
-
-    ```markdown
-    ---
-    name: Metabolomics Analysis
-    category: metabolomics
-    description: Statistical analysis of metabolomics data
-    tags:
-      - statistics
-      - metabolomics
-    ---
-
-    # Metabolomics Analysis
-
-    Content here...
-    ```
+    The frontmatter must be a mapping with ``name`` and ``category`` (which
+    falls back to the parent directory name), plus optional ``description``,
+    ``slug`` and ``tags``.
     """
 
     FRONTMATTER_PATTERN = re.compile(
@@ -120,35 +81,12 @@ class SkillParser:
     )
 
     def parse_file(self, path: Path) -> ParsedSkill:
-        """
-        Parse a skill markdown file.
-
-        Args:
-            path: Path to the markdown file
-
-        Returns:
-            ParsedSkill object with parsed metadata and content
-
-        Raises:
-            SkillParseError: If the file cannot be parsed
-        """
+        """Parse a skill markdown file."""
         content = path.read_text(encoding="utf-8")
         return self.parse_content(content, str(path))
 
     def parse_content(self, content: str, source_path: str) -> ParsedSkill:
-        """
-        Parse skill content with YAML frontmatter.
-
-        Args:
-            content: Raw markdown content
-            source_path: Path for error reporting and slug generation
-
-        Returns:
-            ParsedSkill object
-
-        Raises:
-            SkillParseError: If parsing fails
-        """
+        """Parse skill content with YAML frontmatter."""
         match = self.FRONTMATTER_PATTERN.match(content)
         if not match:
             raise SkillParseError(
@@ -165,15 +103,13 @@ class SkillParser:
         if not isinstance(frontmatter, dict):
             raise SkillParseError(f"YAML frontmatter must be a mapping in {source_path}")
 
-        # Extract required fields
         name = frontmatter.get("name")
         if not name:
             raise SkillParseError(f"Missing 'name' in frontmatter: {source_path}")
 
         category = frontmatter.get("category")
         if not category:
-            # Derive category from path structure
-            # Use immediate parent directory as category (e.g., "biopython" from "skills/biopython/SKILL.md")
+            # Derive the category from the immediate parent directory name.
             path_parts = Path(source_path).parts
             if len(path_parts) >= 2:
                 category = path_parts[-2]
@@ -182,27 +118,23 @@ class SkillParser:
                     f"Missing 'category' in frontmatter and cannot derive from path: {source_path}"
                 )
 
-        # Generate slug from filename or name
         slug = frontmatter.get("slug")
         if not slug:
             filename_stem = Path(source_path).stem
-            # For generic filenames (SKILL.md, README.md, INDEX.md), use parent directory
+            # Generic filenames (SKILL.md, README.md, INDEX.md) fall back to the parent directory.
             if filename_stem.upper() in ("SKILL", "README", "INDEX"):
                 path_parts = Path(source_path).parts
                 slug = path_parts[-2] if len(path_parts) >= 2 else filename_stem
             else:
                 slug = filename_stem
-            # Sanitize slug
             slug = re.sub(r"[^a-z0-9-]", "-", slug.lower())
             slug = re.sub(r"-+", "-", slug).strip("-")
 
-        # Optional fields
         description = frontmatter.get("description")
         tags = frontmatter.get("tags", [])
         if not isinstance(tags, list):
             tags = [tags] if tags else []
 
-        # Compute content hash
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
         return ParsedSkill(
@@ -218,12 +150,7 @@ class SkillParser:
 
 
 class GitHubSkillIngester(BaseSkillIngester):
-    """
-    Ingests skills from a GitHub repository.
-
-    Uses GitHub's REST API to fetch skill files from a repository
-    and parse them into the database.
-    """
+    """Ingests skills from a GitHub repository via its REST API."""
 
     GITHUB_API_BASE = "https://api.github.com"
     MIN_REQUEST_INTERVAL_SECONDS = 1.0
@@ -234,12 +161,9 @@ class GitHubSkillIngester(BaseSkillIngester):
         github_token: str | None = None,
         parser: SkillParser | None = None,
     ):
-        """
-        Initialize the GitHub skill ingester.
+        """Initialize the GitHub skill ingester.
 
-        Args:
-            github_token: Optional GitHub personal access token for higher rate limits
-            parser: Optional SkillParser instance (creates default if not provided)
+        A github_token raises the API rate limit.
         """
         self.github_token = github_token
         self.parser = parser or SkillParser()
@@ -320,18 +244,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         return response
 
     def _parse_github_url(self, url: str) -> tuple[str, str]:
-        """
-        Parse owner and repo from a GitHub URL.
-
-        Args:
-            url: GitHub repository URL
-
-        Returns:
-            Tuple of (owner, repo)
-
-        Raises:
-            ValueError: If URL is not a valid GitHub repo URL
-        """
+        """Parse owner and repo from a GitHub URL."""
         patterns = [
             r"github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$",
             r"github\.com/([^/]+)/([^/]+)",
@@ -345,17 +258,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         raise ValueError(f"Invalid GitHub URL: {url}")
 
     async def get_latest_commit(self, owner: str, repo: str, branch: str) -> str:
-        """
-        Get the latest commit SHA for a branch.
-
-        Args:
-            owner: Repository owner
-            repo: Repository name
-            branch: Branch name
-
-        Returns:
-            Commit SHA string
-        """
+        """Get the latest commit SHA for a branch."""
         url = f"{self.GITHUB_API_BASE}/repos/{owner}/{repo}/commits/{branch}"
         response = await self._github_get(url)
         response.raise_for_status()
@@ -367,16 +270,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         archive_bytes: bytes,
         skills_path: str = "",
     ) -> list[dict[str, Any]]:
-        """
-        Extract SKILL.md files from a GitHub tarball.
-
-        Args:
-            archive_bytes: Tarball bytes from GitHub
-            skills_path: Optional subdirectory containing skills
-
-        Returns:
-            List of dicts with repo-relative path and raw content bytes
-        """
+        """Extract SKILL.md files from a GitHub tarball."""
         prefix = skills_path.strip("/")
         prefix_with_sep = f"{prefix}/" if prefix else ""
         skill_files: list[dict[str, Any]] = []
@@ -416,11 +310,10 @@ class GitHubSkillIngester(BaseSkillIngester):
         branch: str,
         skills_path: str = "",
     ) -> list[dict[str, Any]]:
-        """
-        Fetch all SKILL.md files from a repository tarball.
+        """Fetch all SKILL.md files from a single repository tarball.
 
-        This avoids one request per skill file to raw.githubusercontent.com,
-        which is the path that triggered the observed 429 warnings.
+        One archive fetch avoids the per-file raw.githubusercontent.com
+        requests that draw 429s.
         """
         url = f"{self.GITHUB_API_BASE}/repos/{owner}/{repo}/tarball/{branch}"
         response = await self._github_get(url, follow_redirects=True)
@@ -433,17 +326,7 @@ class GitHubSkillIngester(BaseSkillIngester):
         source: SkillSource,
         **kwargs: Any,
     ) -> dict[str, int]:
-        """
-        Sync skills from a GitHub source.
-
-        Args:
-            session: Database session
-            source: SkillSource to sync from
-            **kwargs: Additional arguments (e.g., force=True)
-
-        Returns:
-            Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
-        """
+        """Sync skills from a GitHub source."""
         if source.source_type != "github":
             raise ValueError(f"Source {source.id} is not a GitHub source")
 
@@ -454,10 +337,8 @@ class GitHubSkillIngester(BaseSkillIngester):
         branch = source.branch
         force = kwargs.get("force", False)
 
-        # Get latest commit
         commit_sha = await self.get_latest_commit(owner, repo, branch)
 
-        # Short-circuit: skip if commit SHA unchanged (unless forced)
         if not force and source.last_commit_sha == commit_sha:
             logger.info("Skipping %s: commit unchanged (%s)", source.name, commit_sha[:12])
             source.last_synced_at = datetime.now(UTC)
@@ -471,8 +352,6 @@ class GitHubSkillIngester(BaseSkillIngester):
                 "skipped_reason": "commit_unchanged",  # type: ignore[dict-item]
             }
 
-        # Fetch skill files from a single repository archive to avoid
-        # rate-limited per-file requests against raw.githubusercontent.com.
         skill_files = await self.fetch_skill_files_from_archive(
             owner,
             repo,
@@ -488,7 +367,6 @@ class GitHubSkillIngester(BaseSkillIngester):
                 content = file_info["content_bytes"].decode("utf-8")
                 parsed = self.parser.parse_content(content, file_info["path"])
 
-                # Check if skill exists
                 stmt = select(Skill).where(
                     Skill.source_id == source.id,
                     Skill.source_path == file_info["path"],
@@ -501,7 +379,6 @@ class GitHubSkillIngester(BaseSkillIngester):
                         stats["unchanged"] += 1
                         continue
 
-                    # Update existing skill
                     existing.name = parsed.name
                     existing.slug = parsed.slug
                     existing.category = parsed.category
@@ -513,7 +390,6 @@ class GitHubSkillIngester(BaseSkillIngester):
                     existing.version = existing.version + 1
                     stats["updated"] += 1
                 else:
-                    # Create new skill
                     skill = Skill(
                         name=parsed.name,
                         slug=parsed.slug,
@@ -531,10 +407,8 @@ class GitHubSkillIngester(BaseSkillIngester):
 
             except (SkillParseError, UnicodeDecodeError) as e:
                 stats["errors"] += 1
-                # Log error but continue
                 logger.warning("Error processing %s: %s", file_info["path"], e)
 
-        # Update source metadata
         source.last_synced_at = datetime.now(UTC)
         source.last_commit_sha = commit_sha
         source.sync_error = None
@@ -545,19 +419,10 @@ class GitHubSkillIngester(BaseSkillIngester):
 
 
 class LocalSkillIngester(BaseSkillIngester):
-    """
-    Ingests skills from a local filesystem directory.
-
-    Scans a directory for markdown skill files and syncs them to the database.
-    """
+    """Ingests skills from a local filesystem directory."""
 
     def __init__(self, parser: SkillParser | None = None):
-        """
-        Initialize the local skill ingester.
-
-        Args:
-            parser: Optional SkillParser instance
-        """
+        """Initialize the local skill ingester."""
         self.parser = parser or SkillParser()
 
     async def sync_source(
@@ -566,17 +431,7 @@ class LocalSkillIngester(BaseSkillIngester):
         source: SkillSource,
         **_kwargs: Any,
     ) -> dict[str, int]:
-        """
-        Sync skills from a local directory source.
-
-        Args:
-            session: Database session
-            source: SkillSource to sync from
-            **_kwargs: Additional arguments (unused)
-
-        Returns:
-            Dict with counts: {'created': N, 'updated': N, 'unchanged': N, 'errors': N}
-        """
+        """Sync skills from a local directory source."""
         if source.source_type != "local":
             raise ValueError(f"Source {source.id} is not a local source")
 
@@ -593,13 +448,11 @@ class LocalSkillIngester(BaseSkillIngester):
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
 
         # Session is expected to be an admin session (bypasses RLS)
-        # Only process SKILL.md files (skip reference docs, READMEs, etc.)
         for md_file in base_path.rglob("**/SKILL.md"):
             try:
                 relative_path = str(md_file.relative_to(Path(source.path)))
                 parsed = self.parser.parse_file(md_file)
 
-                # Check if skill exists from this source
                 stmt = select(Skill).where(
                     Skill.source_id == source.id,
                     Skill.source_path == relative_path,
@@ -612,7 +465,6 @@ class LocalSkillIngester(BaseSkillIngester):
                         stats["unchanged"] += 1
                         continue
 
-                    # Update existing skill
                     existing.name = parsed.name
                     existing.slug = parsed.slug
                     existing.category = parsed.category
@@ -623,7 +475,6 @@ class LocalSkillIngester(BaseSkillIngester):
                     existing.version = existing.version + 1
                     stats["updated"] += 1
                 else:
-                    # Check if skill with same category/slug exists globally
                     stmt_global = select(Skill).where(
                         Skill.category == parsed.category,
                         Skill.slug == parsed.slug,
@@ -632,7 +483,6 @@ class LocalSkillIngester(BaseSkillIngester):
                     existing_global = result_global.scalar_one_or_none()
 
                     if existing_global:
-                        # Skip - skill already exists from another source
                         logger.info(
                             "Skipping %s: skill %s/%s already exists from source %s",
                             relative_path,
@@ -643,7 +493,6 @@ class LocalSkillIngester(BaseSkillIngester):
                         stats["unchanged"] += 1
                         continue
 
-                    # Create new skill
                     skill = Skill(
                         name=parsed.name,
                         slug=parsed.slug,
@@ -662,7 +511,6 @@ class LocalSkillIngester(BaseSkillIngester):
                 stats["errors"] += 1
                 logger.warning("Error processing %s: %s", md_file, e)
 
-        # Update source metadata
         source.last_synced_at = datetime.now(UTC)
         source.sync_error = None
 
@@ -671,11 +519,6 @@ class LocalSkillIngester(BaseSkillIngester):
         return stats
 
 
-# =============================================================================
-# Ingester Registry - Extensible pattern for adding new source types
-# =============================================================================
-
-# Registry mapping source_type -> ingester class
 _INGESTER_REGISTRY: dict[str, type[BaseSkillIngester]] = {}
 
 
@@ -683,17 +526,10 @@ def register_ingester(
     source_type: str,
     ingester_class: type[BaseSkillIngester],
 ) -> None:
-    """
-    Register a skill ingester for a source type.
-
-    Args:
-        source_type: Source type string (e.g., "github", "local", "s3")
-        ingester_class: Class that inherits from BaseSkillIngester
-    """
+    """Register a skill ingester for a source type."""
     _INGESTER_REGISTRY[source_type] = ingester_class
 
 
-# Register built-in ingesters
 register_ingester("github", GitHubSkillIngester)
 register_ingester("local", LocalSkillIngester)
 
@@ -704,24 +540,7 @@ async def sync_skill_source(
     github_token: str | None = None,
     **kwargs: Any,
 ) -> dict[str, int]:
-    """
-    Sync skills from a source based on its type.
-
-    Uses the ingester registry to support extensible source types.
-    New source types can be added by calling register_ingester().
-
-    Args:
-        session: Database session
-        source: SkillSource to sync
-        github_token: Optional GitHub token for API access
-        **kwargs: Additional arguments passed to the ingester
-
-    Returns:
-        Dict with sync statistics
-
-    Raises:
-        ValueError: If source type is not registered
-    """
+    """Sync skills from a source using the registered ingester for its type."""
     source_type = source.source_type
 
     if source_type not in _INGESTER_REGISTRY:
@@ -732,11 +551,9 @@ async def sync_skill_source(
             f"Use register_ingester() to add new types."
         )
 
-    # Get the ingester class and instantiate
     ingester_class = _INGESTER_REGISTRY[source_type]
 
-    # Pass appropriate kwargs based on source type
-    # Type ignore: concrete ingesters have specific init signatures
+    # The concrete ingesters have specific init signatures.
     if source_type == "github":
         ingester = ingester_class(github_token=github_token)  # type: ignore[call-arg]
     else:

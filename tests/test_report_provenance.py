@@ -9,7 +9,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job
-from openscientist.orchestrator.discovery import _try_generate_report_pdf
+from openscientist.orchestrator.report import _try_generate_report_pdf
 
 _RECORDED = {
     "openscientist_commit": "abc123def456",

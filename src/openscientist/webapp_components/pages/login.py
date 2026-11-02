@@ -4,9 +4,9 @@ from nicegui import app, ui
 
 from openscientist.auth.oauth import is_mock_auth_enabled, is_oauth_configured
 from openscientist.settings import get_settings
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.banners import render_alert_banner
+from openscientist.webapp_components.components.common import (
     OPENSCIENTIST_THINKING_SVG,
-    render_alert_banner,
     render_project_resource_links,
 )
 

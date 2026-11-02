@@ -1,8 +1,4 @@
-"""
-Google OAuth provider implementation.
-
-Handles Google OAuth flow and user profile extraction.
-"""
+"""Google OAuth provider implementation."""
 
 import logging
 from typing import Any
@@ -17,22 +13,7 @@ class GoogleProvider:
 
     @staticmethod
     async def get_user_info(token: dict[str, Any]) -> dict[str, Any]:
-        """
-        Fetch user profile from Google userinfo API.
-
-        Args:
-            token: OAuth token response containing access_token
-
-        Returns:
-            Dictionary with user profile:
-            - provider_user_id: Google user ID (sub)
-            - email: Email address
-            - name: Display name
-            - email_verified: Whether provider verified the email
-
-        Raises:
-            httpx.HTTPError: If API request fails
-        """
+        """Fetch the user profile from the Google userinfo API."""
         access_token = token.get("access_token")
         if not access_token:
             raise ValueError("No access_token in token response")

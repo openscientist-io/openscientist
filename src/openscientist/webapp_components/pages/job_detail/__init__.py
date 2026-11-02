@@ -7,8 +7,17 @@ from uuid import UUID
 from nicegui import ui
 
 from openscientist.auth import get_current_user_id, require_auth
+from openscientist.job.repository import get_job, get_share_permission
 from openscientist.job.types import JobInfo, JobStatus
-from openscientist.job_manager import _db_get_job, _db_get_share_permission
+from openscientist.webapp_components.components.banners import render_error_card
+from openscientist.webapp_components.components.dialogs import (
+    render_delete_dialog,
+    render_share_dialog,
+)
+from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.components.notifications import (
+    render_notifications_dialog,
+)
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.pages.job_detail.chat import _render_chat_tab
 from openscientist.webapp_components.pages.job_detail.common import (
@@ -18,13 +27,6 @@ from openscientist.webapp_components.pages.job_detail.common import (
 )
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
 from openscientist.webapp_components.pages.job_detail.timeline import _render_timeline_tab
-from openscientist.webapp_components.ui_components import (
-    render_delete_dialog,
-    render_error_card,
-    render_navigator,
-    render_notifications_dialog,
-    render_share_dialog,
-)
 from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ def _render_job_not_found() -> None:
 
 async def _load_db_job_for_user(job_id: str, user_id: str) -> Any:
     try:
-        return await _db_get_job(job_id, user_id=UUID(user_id))
+        return await get_job(job_id, user_id=UUID(user_id))
     except ValueError:
         return None
     except Exception:
@@ -54,7 +56,7 @@ async def _resolve_job_permissions(job_id: str, user_id: str, db_job: Any) -> tu
     is_owner = db_job.owner_id == UUID(user_id)
     if is_owner:
         return True, True
-    share_permission = await _db_get_share_permission(job_id, UUID(user_id))
+    share_permission = await get_share_permission(job_id, UUID(user_id))
     return False, share_permission == "edit"
 
 

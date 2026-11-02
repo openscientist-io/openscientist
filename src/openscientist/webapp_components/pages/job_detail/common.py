@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from openscientist.database.session import thread_safe_user_session
+from openscientist.job.types import completed_iterations
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
@@ -22,11 +23,7 @@ def _derive_progress_from_ks(
         return default_iterations, 0
     findings_count = len(ks_data.get("findings", []))
     ks_iteration = int(ks_data.get("iteration", 1))
-    if status in ("running", "awaiting_feedback"):
-        iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-    else:
-        iterations_completed = ks_iteration
-    return iterations_completed, findings_count
+    return completed_iterations(status, ks_iteration), findings_count
 
 
 async def _load_knowledge_state(

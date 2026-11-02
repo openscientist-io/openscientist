@@ -1,9 +1,4 @@
-"""
-Alembic migration environment for OpenScientist.
-
-This module configures the Alembic migration context to work with async SQLAlchemy
-and automatically discover all ORM models for migration generation.
-"""
+"""Alembic migration environment for OpenScientist."""
 
 import asyncio
 from logging.config import fileConfig
@@ -15,40 +10,25 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import all models so Alembic autogenerate sees the full metadata graph.
 import openscientist.database.models as models
-
-# Import the Base class and all models so Alembic can detect them
 from openscientist.database.base import Base
 from openscientist.settings import MigrationSettings
 
-# Alembic Config object provides access to alembic.ini values
 config = context.config
 
-# Interpret the config file for Python logging
-# This line sets up loggers basically
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Migrations run as the schema owner, never as the web login or the superuser
 database_url: str = MigrationSettings().required_owner_database_url()
 
-# Set the sqlalchemy.url in the Alembic config
 config.set_main_option("sqlalchemy.url", database_url)
 
-# Add your model's MetaData object here for 'autogenerate' support
 target_metadata = Base.metadata
 MODEL_REGISTRY = models
 
 
 def run_migrations_offline() -> None:
-    """
-    Run migrations in 'offline' mode.
-
-    This configures the context with just a URL and not an Engine,
-    though an Engine is acceptable here as well. By skipping the Engine
-    creation we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the script output.
-    """
+    """Run migrations in 'offline' mode."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -64,20 +44,12 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    """
-    Execute migrations within a database connection.
-
-    Args:
-        connection: Active database connection.
-    """
+    """Execute migrations within a database connection."""
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        compare_type=True,  # Detect column type changes
-        compare_server_default=True,  # Detect default value changes
-        # Include schemas if using multi-schema setup
-        # include_schemas=True,
-        # version_table_schema=target_metadata.schema,
+        compare_type=True,
+        compare_server_default=True,
     )
 
     with context.begin_transaction():
@@ -85,19 +57,11 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    """
-    Run migrations in 'online' mode with async engine.
-
-    In this scenario we need to create an Engine and associate a connection
-    with the context. This is async-aware and uses asyncpg driver.
-    """
-    # Get Alembic config section for SQLAlchemy settings
+    """Run migrations in 'online' mode with an async engine."""
     configuration = config.get_section(config.config_ini_section) or {}
 
-    # Override the connection URL
     configuration["sqlalchemy.url"] = database_url
 
-    # Create async engine
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
@@ -111,15 +75,10 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """
-    Run migrations in 'online' mode.
-
-    Creates an async engine and runs migrations within an async context.
-    """
+    """Run migrations in 'online' mode."""
     asyncio.run(run_async_migrations())
 
 
-# Determine which mode to run migrations in
 if context.is_offline_mode():
     run_migrations_offline()
 else:

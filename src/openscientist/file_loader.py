@@ -10,8 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import FileLoadError, FileTooBigError, UnsupportedFileTypeError
-from openscientist.settings import get_settings
 
 # Try to import python-magic, but make it optional
 try:
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_max_file_size() -> int:
-    """Get max file size in bytes from settings."""
-    return get_settings().file.max_file_size_mb * 1024 * 1024
+    """Get max file size in bytes from the admin settings row."""
+    return current_admin_settings_sync().max_file_size_mb * 1024 * 1024
 
 
 # Supported file extensions
@@ -104,18 +104,11 @@ def get_file_info(file_path: Path) -> dict[str, Any]:
 
     Raises:
         FileNotFoundError: If file doesn't exist
-        FileTooBigError: If file exceeds size limit
     """
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    # Check file size
     size = file_path.stat().st_size
-    if size > _get_max_file_size():
-        raise FileTooBigError(
-            f"File {file_path.name} is {size / 1024 / 1024:.1f}MB, "
-            f"exceeds limit of {_get_max_file_size() / 1024 / 1024}MB"
-        )
 
     # Get extension
     extension = file_path.suffix.lower()
@@ -226,9 +219,6 @@ def load_data_file(file_path: Path) -> pd.DataFrame | None:
 
     Returns:
         DataFrame if tabular data, None otherwise
-
-    Raises:
-        FileTooBigError: If file exceeds size limit
     """
     info = get_file_info(file_path)
 

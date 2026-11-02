@@ -13,26 +13,9 @@
 
 FROM openscientist-base:latest
 
-# Install system dependencies for native extensions (scipy, h5py, scanpy, etc.) and Rust.
-# The libpango/cairo/gdk-pixbuf/glib stack is required by WeasyPrint, which renders
-# final_report.pdf from the report HTML. Without it WeasyPrint fails to load
-# libgobject-2.0-0 and the report falls back to the fpdf2 renderer, producing a PDF
-# that does not match the HTML report shown in the UI.
+# The air-gap firewall entrypoint sets nftables rules, then drops privileges
+# with setpriv from util-linux.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    libhdf5-dev \
-    pkg-config \
-    rustc \
-    curl \
-    ca-certificates \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
-    libffi8 \
-    shared-mime-info \
-    fonts-liberation \
     nftables \
     util-linux \
     && rm -rf /var/lib/apt/lists/*

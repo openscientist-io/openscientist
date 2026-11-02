@@ -10,11 +10,9 @@ from openscientist.auth import is_current_user_admin
 from openscientist.job.types import JobStatus
 from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.run_environment import run_environment_text
+from openscientist.webapp_components.components.badges import transform_pmid_references
+from openscientist.webapp_components.components.common import render_thinking_status
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
-from openscientist.webapp_components.ui_components import (
-    render_thinking_status,
-    transform_pmid_references,
-)
 
 logger = logging.getLogger(__name__)
 

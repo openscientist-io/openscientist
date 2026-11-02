@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist.database import get_session_ctx
 from openscientist.database.models import User
 from openscientist.database.rls import set_current_user
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.notifications import (
     _fetch_notification_settings,
     _set_notifications_enabled,
 )

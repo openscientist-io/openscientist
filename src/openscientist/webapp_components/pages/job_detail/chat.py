@@ -8,12 +8,11 @@ from nicegui import ui
 
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
+from openscientist.exceptions import BudgetExceededError
 from openscientist.job.types import JobStatus
 from openscientist.job_chat import get_chat_history, send_chat_message
+from openscientist.webapp_components.components.common import render_thinking_status
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
-from openscientist.webapp_components.ui_components import (
-    render_thinking_status,
-)
 from openscientist.webapp_components.utils import (
     ClientGuard,
     safe_run_javascript,
@@ -363,6 +362,12 @@ class _ChatTabController:
             self._toggle_typing_indicator(False)
             self._play_sound("sound-receive")
             await self._render_messages()
+        except BudgetExceededError as exc:
+            logger.warning("Chat turn refused by a budget limit: %s", exc)
+            if guard.is_connected:
+                self._toggle_typing_indicator(False)
+                self._play_sound("sound-error")
+                ui.notify(str(exc), type="negative")
         except Exception as exc:
             logger.error("Chat error: %s", exc, exc_info=True)
             if guard.is_connected:

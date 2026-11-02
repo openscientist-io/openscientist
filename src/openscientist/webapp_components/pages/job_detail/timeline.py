@@ -5,9 +5,15 @@ from typing import Any
 from nicegui import ui
 
 from openscientist.agent.factory import agent_class_for_provider_id
+from openscientist.job.repository import get_job
 from openscientist.job.types import JobInfo, JobStatus
-from openscientist.job_manager import _db_get_job
 from openscientist.run_environment import run_environment_text
+from openscientist.webapp_components.components.common import (
+    STATUS_COLORS,
+    render_stat_badges,
+    render_thinking_status,
+)
+from openscientist.webapp_components.components.job_table import render_job_action_buttons
 from openscientist.webapp_components.pages.job_detail.common import (
     _derive_progress_from_ks,
     _JobDetailContext,
@@ -17,12 +23,6 @@ from openscientist.webapp_components.pages.job_detail.feedback import _refresh_f
 from openscientist.webapp_components.pages.job_detail.iterations import (
     _render_timeline_content,
     _show_no_timeline_activity,
-)
-from openscientist.webapp_components.ui_components import (
-    STATUS_COLORS,
-    render_job_action_buttons,
-    render_stat_badges,
-    render_thinking_status,
 )
 from openscientist.webapp_components.utils import (
     guard_client,
@@ -65,6 +65,12 @@ def _format_model_name(llm_model: str | None) -> str | None:
 def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[Any]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
+    queue_reason = getattr(latest_job, "queue_reason", None)
+    if latest_job.status == JobStatus.QUEUED and queue_reason:
+        badges.append(("Waiting on", queue_reason, "orange"))
+    stop_note = getattr(latest_job, "stop_note", None)
+    if latest_job.status == JobStatus.COMPLETED and stop_note:
+        badges.append(("Stopped early", stop_note, "orange"))
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
         badges.append(
             (
@@ -228,7 +234,7 @@ async def _check_and_refresh(
     render_timeline: Any,
     stats_timer_holder: dict[str, Any],
 ) -> None:
-    db_job = await _db_get_job(context.job_id)
+    db_job = await get_job(context.job_id)
     if db_job is None:
         _handle_missing_job_during_poll(stats_timer_holder)
         return

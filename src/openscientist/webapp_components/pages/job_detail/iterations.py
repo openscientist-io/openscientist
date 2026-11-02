@@ -9,13 +9,13 @@ from urllib.parse import quote
 from nicegui import ui
 
 from openscientist.job.types import JobStatus
-from openscientist.webapp_components.pages.job_detail.analysis_log import (
-    _render_analysis_log_actions,
-)
-from openscientist.webapp_components.ui_components import (
-    render_justified_text,
+from openscientist.webapp_components.components.badges import (
     render_pmid_badge,
     render_text_with_pmid_links,
+)
+from openscientist.webapp_components.components.banners import render_justified_text
+from openscientist.webapp_components.pages.job_detail.analysis_log import (
+    _render_analysis_log_actions,
 )
 from openscientist.webapp_components.utils import (
     is_client_connected,

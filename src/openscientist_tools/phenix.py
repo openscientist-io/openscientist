@@ -18,6 +18,7 @@ from typing import Any
 
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.phenix_setup import setup_phenix_env
+from openscientist.settings import phenix_installation_ok
 from openscientist_tools.server import mcp
 from openscientist_tools.state import STATE
 
@@ -296,7 +297,7 @@ def _phenix_installed() -> bool:
     phenix_path = os.environ.get("PHENIX_PATH")
     if not phenix_path:
         return False
-    return (Path(phenix_path) / "bin" / "phenix.about").is_file()
+    return phenix_installation_ok(phenix_path)
 
 
 if _phenix_installed():
