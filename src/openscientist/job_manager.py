@@ -1,7 +1,5 @@
 """
 Job manager for OpenScientist discovery jobs.
-
-Handles job lifecycle, status tracking, and cleanup.
 """
 
 import argparse
@@ -57,14 +55,10 @@ logger = logging.getLogger(__name__)
 
 
 def _effective_model(provider: ProviderSettings) -> str | None:
-    """Resolve the model the active provider will actually use, for recording
-    on the job so the UI can show a model badge.
+    """Resolve the model the active provider will actually use, for the job's UI badge.
 
-    ``OPENSCIENTIST_MODEL`` (and the anthropic default) are checked first, but a
-    provider may carry its model in a provider default (Ollama's, for example), so
-    when those are unset we ask the provider itself. Returns None when nothing
-    resolves (for example codex on the account default), leaving the job with a
-    provider badge only.
+    Returns None when nothing resolves (for example codex on the account
+    default), leaving the job with a provider badge only.
     """
     model = provider.model or provider.anthropic_default_sonnet_model
     if model:
@@ -149,23 +143,7 @@ async def _db_create_job(
     llm_provider: str | None = None,
     llm_config: dict[str, Any] | None = None,
 ) -> JobModel:
-    """Create a job in the database (thread-safe for worker threads).
-
-    Args:
-        job_id: UUID string for the job (used as primary key)
-        research_question: The full research question; drives the agent prompt
-        max_iterations: Maximum iterations allowed
-        use_hypotheses: Whether hypothesis tracking tools are enabled for this job
-        investigation_mode: Investigation mode ('autonomous' or 'coinvestigate')
-        owner_id: UUID of the job owner (optional)
-        short_title: Optional short display label (truncated to 100 chars)
-        description: Optional job description
-        pdb_code: Optional PDB code
-        space_group: Optional crystal space group
-
-    Returns:
-        The created JobModel instance
-    """
+    """Create a job in the database."""
     async with _job_session(owner_id) as session:
         job = JobModel(
             id=UUID(job_id),
@@ -224,11 +202,7 @@ async def _db_update_job_status(
     user_id: UUID | None = None,
     cancellation_reason: str | None = None,
 ) -> JobStatusUpdateResult:
-    """Move the job to ``status`` if it is in one of ``allowed_from`` (thread-safe).
-
-    Returns:
-        JobStatusUpdateResult with ``applied`` and the owner's ntfy settings.
-    """
+    """Move the job to ``status`` if it is in one of ``allowed_from`` (thread-safe)."""
     result = JobStatusUpdateResult()
     values: dict[str, object] = {"status": status.value}
     if error_message:
@@ -390,16 +364,7 @@ async def _db_any_queued_job_held() -> bool:
 
 
 class JobManager:
-    """
-    Manages OpenScientist discovery jobs.
-
-    Features:
-    - Create and queue jobs
-    - Run jobs asynchronously
-    - Track job status
-    - List and query jobs
-    - Clean up old jobs
-    """
+    """Manages OpenScientist discovery jobs."""
 
     #: A job that has not ended, so it may still fail or be cancelled.
     ACTIVE_STATUSES = frozenset(
@@ -419,16 +384,11 @@ class JobManager:
     )
 
     def __init__(self, jobs_dir: Path = Path("jobs")):
-        """
-        Initialize job manager. Building one changes no job: only the web's
-        startup calls :meth:`recover_after_restart`.
+        """Initialize job manager. Building one changes no job.
 
-        The concurrency cap and the scheduler window are not copied here.
-        Each slot check and queue pick reads the admin settings row, so an
-        admin edit applies at the next check.
-
-        Args:
-            jobs_dir: Base directory for jobs
+        Only the web's startup calls :meth:`recover_after_restart`. Each slot
+        check and queue pick reads the admin settings row, so an admin edit
+        applies at the next check.
         """
         self.jobs_dir = Path(jobs_dir)
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
@@ -554,7 +514,7 @@ class JobManager:
             )
         except Exception as e:
             logger.error("Failed to initialize filesystem for job %s: %s", job_id, e)
-            # Compensating action: remove partially-created DB row/files to avoid split-brain.
+            # Compensating cleanup for a partially-created job, so the DB and disk never disagree.
             self._rollback_failed_job_creation(job_id, owner_uuid)
             raise ValueError(f"Failed to initialize job files: {e}") from e
 
@@ -573,34 +533,13 @@ class JobManager:
         pdb_code: str | None = None,
         space_group: str | None = None,
     ) -> JobInfo:
-        """
-        Create a new discovery job.
+        """Create a new discovery job.
 
-        Args:
-            job_id: Unique job identifier
-            research_question: The full research question; drives the agent prompt
-            data_files: List of data file paths (can be empty for literature-only jobs)
-            max_iterations: Maximum iterations
-            use_hypotheses: Whether to enable hypothesis tracking tools
-            auto_start: Whether to start job immediately
-            investigation_mode: "autonomous" (default) or "coinvestigate"
-            owner_id: UUID of the job owner (optional, for orphaned jobs)
-            short_title: Optional short display label (truncated to 100 chars)
-            description: Optional job description
-            pdb_code: Optional PDB code metadata
-            space_group: Optional crystal space group metadata
-
-        Returns:
-            JobInfo object
-
-        Raises:
-            ValueError: If job_id already exists
-            BudgetExceededError: If insufficient budget
+        data_files may be empty for literature-only jobs.
         """
         if await self.get_job(job_id) is not None:
             raise ValueError(f"Job {job_id} already exists")
 
-        # Capture provider & model from current settings
         settings = get_settings()
         llm_provider = settings.provider.provider_id.lower()
         model = _effective_model(settings.provider)
@@ -609,8 +548,6 @@ class JobManager:
         verdict = await check_budget(provider_id=llm_provider, model=model, include_unpriced=True)
         if not verdict.ok:
             raise BudgetExceededError(verdict.message or "A budget limit is reached")
-
-        # Create job in database
         logger.info("Creating job %s in database", job_id)
         owner_uuid = await self._create_db_job_record(
             job_id=job_id,
@@ -650,24 +587,14 @@ class JobManager:
         return job_info
 
     def start_job(self, job_id: str) -> None:
-        """
-        Start a job on a worker thread, or queue it when no slot is free. It
+        """Start a job on a worker thread, or queue it when no slot is free. It
         reads and writes the database synchronously, so callers on an event
-        loop run it through ``asyncio.to_thread``.
-
-        Args:
-            job_id: Job ID
-
-        Raises:
-            ValueError: If job not found, already running, or no longer waiting to start
-        """
+        loop run it through ``asyncio.to_thread``."""
         with self._lock:
-            # Check job exists
             job_info = self._load_job_info(job_id)
             if job_info is None:
                 raise ValueError(f"Job {job_id} not found")
 
-            # Check if already running
             if job_id in self._running_jobs:
                 raise ValueError(f"Job {job_id} is already running")
 
@@ -676,7 +603,6 @@ class JobManager:
                     f"Job {job_id} cannot be started from status {job_info.status.value}"
                 )
 
-            # Check concurrent limit
             if self._get_active_job_count() >= current_admin_settings_sync().max_concurrent_jobs:
                 if not self._update_job_status(
                     job_id, JobStatus.QUEUED, allowed_from=self.WAITING_STATUSES, retry=False
@@ -685,7 +611,6 @@ class JobManager:
                 logger.info("Job %s queued (max concurrent reached)", job_id)
                 return
 
-            # Start the job
             logger.info("Starting job %s", job_id)
             thread = threading.Thread(target=self._run_job, args=(job_id,), daemon=True)
             self._running_jobs[job_id] = thread
@@ -694,16 +619,9 @@ class JobManager:
     async def regenerate_report(self, job_id: str) -> None:
         """Re-run only the report-generation phase for a completed job.
 
-        Backs the admin "Regenerate report" action. Launches the agent
-        container in report-only mode (no discovery iterations: the findings in
-        the persisted KnowledgeState are reused). The job must exist, be
-        completed, and not currently running, and a concurrency slot must be
-        free. Unlike ``start_job`` this does NOT queue: report regeneration is a
-        one-off admin action, so it fails loudly rather than waiting.
-
-        Raises:
-            ValueError: If the job is missing, not completed, already running,
-                or the max concurrent limit is reached.
+        Launches the agent container in report-only mode, reusing the findings
+        in the persisted KnowledgeState. Unlike ``start_job`` this does not
+        queue, because a one-off admin action should fail loudly rather than wait.
         """
         job_info = await self.get_job(job_id)
         with self._lock:
@@ -768,8 +686,7 @@ class JobManager:
             runner.launch(job_id, job_dir, run_mode=run_mode)
             logger.info("Agent container launched for job %s (mode=%s)", job_id, run_mode)
 
-            # Poll the database until the container's agent writes a terminal status.
-            # Also check if the container has exited unexpectedly (crash before DB write).
+            # Poll until the agent writes a terminal status or the container crashed without one.
             timeout_seconds = current_admin_settings_sync().agent_timeout_seconds
             timeout_hours = timeout_seconds / 3600
             elapsed = 0
@@ -817,7 +734,6 @@ class JobManager:
                     )
                     return
 
-            # Hard timeout reached.
             logger.error("Container job %s timed out after %.1f hours", job_id, timeout_hours)
             self._update_job_status(
                 job_id,
@@ -852,9 +768,6 @@ class JobManager:
         A project limit keeps the job queued with the reason it waits on, and
         an unpriced model ends it failed before the container starts, after
         which the pick goes on to the next queued job.
-
-        Returns:
-            Whether a job was started.
         """
         with self._lock:
             try:
@@ -955,15 +868,7 @@ class JobManager:
             pass
 
     async def cancel_job(self, job_id: str) -> None:
-        """
-        Cancel a job that has not ended, stopping its container if it has one.
-
-        Args:
-            job_id: Job ID
-
-        Raises:
-            ValueError: If job not found or already ended
-        """
+        """Cancel a job that has not ended, stopping its container if it has one."""
         if await _db_get_job(job_id) is None:
             raise ValueError(f"Job {job_id} not found")
 
@@ -1004,15 +909,7 @@ class JobManager:
             logger.warning("Failed to stop container for cancelled job %s: %s", job_id, e)
 
     async def get_job(self, job_id: str) -> JobInfo | None:
-        """
-        Get job information.
-
-        Args:
-            job_id: Job ID
-
-        Returns:
-            JobInfo or None if not found
-        """
+        """Get job information."""
         job_model = await _db_get_job(job_id)
         return None if job_model is None else await self._job_info(job_model)
 
@@ -1021,31 +918,15 @@ class JobManager:
         status: JobStatus | None = None,
         limit: int | None = None,
     ) -> list[JobInfo]:
-        """
-        List all jobs from the database (no user filtering).
+        """List all jobs from the database, without user filtering.
 
         For user-facing queries, use a database session with RLS instead.
-
-        Args:
-            status: Filter by status
-            limit: Maximum number of jobs to return
-
-        Returns:
-            List of JobInfo objects, sorted by created_at (newest first)
         """
         db_jobs = await _db_list_jobs(status=status, limit=limit)
         return [await self._job_info(m) for m in db_jobs]
 
     async def delete_job(self, job_id: str) -> None:
-        """
-        Delete a job and its files.
-
-        Args:
-            job_id: Job ID
-
-        Raises:
-            ValueError: If job not found or still running
-        """
+        """Delete a job and its files."""
         job_model = await _db_get_job(job_id)
         if job_model is None:
             raise ValueError(f"Job {job_id} not found")
@@ -1078,31 +959,19 @@ class JobManager:
             logger.info("Deleted job %s", job_id)
 
     def cleanup_old_jobs(self, days: int = 7, keep_completed: bool = True) -> int:
-        """
-        Clean up old jobs.
-
-        Args:
-            days: Delete jobs older than this many days
-            keep_completed: Keep completed jobs regardless of age
-
-        Returns:
-            Number of jobs deleted
-        """
+        """Clean up old jobs."""
         cutoff = datetime.now(UTC) - timedelta(days=days)
         deleted = 0
 
         for job_info in self._list_operational_jobs():
             job_id = job_info.job_id
 
-            # Skip running jobs
             if job_info.status == JobStatus.RUNNING:
                 continue
 
-            # Skip completed jobs if requested
             if keep_completed and job_info.status == JobStatus.COMPLETED:
                 continue
 
-            # Check age
             created_at = datetime.fromisoformat(job_info.created_at)
             if created_at.tzinfo is None:
                 created_at = created_at.replace(tzinfo=UTC)
@@ -1113,7 +982,6 @@ class JobManager:
                 except (OSError, ValueError) as e:
                     logger.error("Failed to delete job %s: %s", job_id, e)
 
-        # Also cleanup orphaned executor containers
         try:
             container_manager = get_container_manager()
             if container_manager.is_available():
@@ -1131,19 +999,13 @@ class JobManager:
         return len(self._running_jobs)
 
     async def get_job_summary(self) -> dict[str, Any]:
-        """
-        Get summary of all jobs (no user filtering).
-
-        Returns:
-            Dictionary with job counts and budget info
-        """
+        """Get a summary of all jobs, without user filtering."""
         jobs = await self.list_jobs()
 
         status_counts = {}
         for status in JobStatus:
             status_counts[status.value] = sum(1 for j in jobs if j.status == status)
 
-        # Get project-level cost info from provider
         try:
             provider = get_provider()
             cost_info = await asyncio.to_thread(provider.get_cost_info, lookback_hours=24)
@@ -1162,17 +1024,12 @@ class JobManager:
         status: JobStatus | None = None,
         limit: int | None = None,
     ) -> list[JobInfo]:
-        """
-        List jobs for operational workflows.
-
-        Jobs are sourced exclusively from the database.
-        """
+        """List jobs for operational workflows."""
         db_jobs = run_sync(_db_list_jobs(status=status, limit=limit))
         return [self._db_model_to_job_info(job) for job in db_jobs]
 
     def _db_model_to_job_info(self, job_model: JobModel) -> JobInfo:
         """Convert a database JobModel to JobInfo with real-time progress from KS."""
-        # Load progress from persisted knowledge state for all jobs.
         job_id = str(job_model.id)
         iterations_completed, findings_count = _load_progress_from_knowledge_state(
             job_id=job_id,
@@ -1368,41 +1225,33 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="OpenScientist Job Manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # List jobs
     list_parser = subparsers.add_parser("list", help="List jobs")
     list_parser.add_argument("--status", help="Filter by status")
     list_parser.add_argument("--limit", type=int, help="Limit number of jobs")
 
-    # Get job
     get_parser = subparsers.add_parser("get", help="Get job info")
     get_parser.add_argument("job_id", help="Job ID")
 
-    # Delete job
     delete_parser = subparsers.add_parser("delete", help="Delete job")
     delete_parser.add_argument("job_id", help="Job ID")
 
-    # Cleanup
     cleanup_parser = subparsers.add_parser("cleanup", help="Clean up old jobs")
     cleanup_parser.add_argument("--days", type=int, default=7, help="Delete jobs older than N days")
     cleanup_parser.add_argument(
         "--delete-completed", action="store_true", help="Delete completed jobs too"
     )
 
-    # Summary
     subparsers.add_parser("summary", help="Get job summary")
 
     args = parser.parse_args()
 
-    # Set up logging
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Create job manager
     manager = JobManager()
 
-    # Execute command
     if args.command == "list":
         status = JobStatus(args.status) if args.status else None
         jobs = asyncio.run(manager.list_jobs(status=status, limit=args.limit))
