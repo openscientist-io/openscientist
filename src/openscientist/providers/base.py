@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from openscientist.models import ModelProfile, default_model_profile, probed_model_profile
 from openscientist.settings import ProviderSettings, get_settings
 
+from . import pricing
 from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
@@ -365,10 +366,15 @@ class Provider(abc.ABC):
         return None
 
     def model_profile(self) -> ModelProfile:
-        """The active model's profile (mainly its context window)."""
-        return default_model_profile(
-            self.effective_model_name(), get_settings().provider.model_context_tokens
-        )
+        """The active model's profile (mainly its context window).
+
+        May fetch the litellm database (cached 24 hours), so callers resolve it once
+        per run off the event loop (``AbstractAgent.warm_model_profile``). A pinned
+        window skips the fetch.
+        """
+        override = get_settings().provider.model_context_tokens
+        catalog = None if override else pricing._get_litellm_pricing()
+        return default_model_profile(self.effective_model_name(), override, catalog)
 
     def probe_context_window(self) -> int | None:
         """Launched context window from a direct probe, or None (hosted APIs do not probe)."""

@@ -15,13 +15,13 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from openscientist.models import normalize_model_name
 from openscientist.providers import provider_class, provider_ids
 from openscientist.providers.base import ClaudeCompatible
 from openscientist.providers.pricing import (
     _FALLBACK_PRICING,
     _LITELLM_PRICING_URL,
     estimate_cost_usd,
-    normalize_model_name,
 )
 from openscientist.settings import get_settings
 
@@ -189,3 +189,11 @@ def test_bedrock_and_vertex_suffixes_normalise_to_litellm_keys() -> None:
         "claude-sonnet-4-5"
     )
     assert normalize_model_name("claude-sonnet-4-5@20250929") == "claude-sonnet-4-5"
+    assert normalize_model_name("us.anthropic.claude-opus-4-6-v1") == "claude-opus-4-6"
+    assert normalize_model_name("global.anthropic.claude-haiku-5-5-v1:0") == "claude-haiku-5-5"
+    assert normalize_model_name("us-gov.anthropic.claude-opus-5") == "claude-opus-5"
+    assert normalize_model_name("claude-opus-5@default") == "claude-opus-5"
+
+
+def test_a_version_ending_outside_claude_stays_part_of_the_name() -> None:
+    assert normalize_model_name("deepseek-v3") == "deepseek-v3"
