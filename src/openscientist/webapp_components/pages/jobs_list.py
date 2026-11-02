@@ -20,18 +20,24 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
 from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.providers import check_provider_config
-from openscientist.webapp_components.ui_components import (
-    render_actions_slot_with_delete,
+from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
-    render_delete_dialog,
-    render_job_id_slot,
-    render_navigator,
     render_pending_approval_notice,
+)
+from openscientist.webapp_components.components.common import (
     render_permission_badge_slot,
-    render_share_dialog,
     render_stat_badges,
+)
+from openscientist.webapp_components.components.dialogs import (
+    render_delete_dialog,
+    render_share_dialog,
+)
+from openscientist.webapp_components.components.job_table import (
+    render_actions_slot_with_delete,
+    render_job_id_slot,
     render_status_cell_slot,
 )
+from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)

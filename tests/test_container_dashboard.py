@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from docker import errors
 from openscientist.database.models import Job, User
-from openscientist.webapp_components.ui_components import format_uptime
+from openscientist.webapp_components.components.common import format_uptime
 from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,

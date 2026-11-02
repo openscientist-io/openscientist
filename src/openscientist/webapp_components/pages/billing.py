@@ -10,7 +10,10 @@ from openscientist.budget import check_budget, project_spend, warning_limit_reac
 from openscientist.database.models import CostRecord
 from openscientist.database.session import get_admin_session
 from openscientist.providers import get_provider
-from openscientist.webapp_components.ui_components import render_empty_state, render_stat_badges
+from openscientist.webapp_components.components.common import (
+    render_empty_state,
+    render_stat_badges,
+)
 
 logger = logging.getLogger(__name__)
 

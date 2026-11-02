@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.job.types import JobStatus
+from openscientist.webapp_components.components.common import STATUS_COLORS
 from openscientist.webapp_components.pages.admin import (
     _build_admin_user_rows,
     _filter_users_for_admin_table,
@@ -28,7 +29,6 @@ from openscientist.webapp_components.pages.admin import (
     set_user_approval_status,
     set_user_priority_status,
 )
-from openscientist.webapp_components.ui_components import STATUS_COLORS
 from openscientist.webapp_components.utils.container_dashboard import (
     DashboardData,
     JobContainerGroup,
