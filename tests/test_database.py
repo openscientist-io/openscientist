@@ -238,9 +238,7 @@ async def test_literature_creation(db_session: AsyncSession, test_job: Job):
         title="Important Paper",
         authors="Smith et al.",
         year=2026,
-        doi="10.1234/test.2026",
         abstract="This is a test abstract",
-        relevance_score=0.95,
     )
     db_session.add(literature)
     await db_session.commit()
@@ -248,7 +246,6 @@ async def test_literature_creation(db_session: AsyncSession, test_job: Job):
 
     assert isinstance(literature.id, UUID)
     assert literature.title == "Important Paper"
-    assert literature.relevance_score == 0.95
 
 
 @pytest.mark.asyncio
@@ -281,7 +278,6 @@ async def test_plot_creation(db_session: AsyncSession, test_job: Job):
         job_id=test_job.id,
         iteration=1,
         file_path="/jobs/test_job/plots/scatter_plot.png",
-        plot_type="scatter",
         title="Test Scatter Plot",
         description="A test plot",
     )
@@ -291,7 +287,6 @@ async def test_plot_creation(db_session: AsyncSession, test_job: Job):
 
     assert isinstance(plot.id, UUID)
     assert plot.title == "Test Scatter Plot"
-    assert plot.plot_type == "scatter"
 
 
 @pytest.mark.asyncio

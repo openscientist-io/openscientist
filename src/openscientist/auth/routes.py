@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.database.models import Administrator, OAuthAccount, Session, User
 from openscientist.settings import get_settings
 
@@ -184,8 +185,8 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
     Returns:
         New Session object
     """
-    settings = get_settings()
-    expires_at = datetime.now(UTC) + timedelta(days=settings.auth.session_duration_days)
+    admin = await current_admin_settings()
+    expires_at = datetime.now(UTC) + timedelta(days=admin.session_duration_days)
 
     session = Session(
         user_id=_UUID(user_id) if isinstance(user_id, str) else user_id,

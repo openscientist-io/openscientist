@@ -276,7 +276,10 @@ class TestVertexClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self, tmp_path: Path) -> None:
         settings = _mock_settings(self._creds_file(tmp_path), model="claude-custom")
-        with patch("openscientist.providers.vertex.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.vertex.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert VertexProvider().claude_model_name() == "claude-custom"
 
 
