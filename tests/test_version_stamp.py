@@ -16,7 +16,7 @@ from sqlalchemy import delete, select
 
 from openscientist.database.models import Job
 from openscientist.database.session import async_session_local
-from openscientist.orchestrator.discovery import _sync_version_metadata
+from openscientist.orchestrator.provenance import _sync_version_metadata
 
 _VERSION_INFO = {"agent_harness": "omp", "agent_harness_version": "17.1.5"}
 
@@ -46,7 +46,7 @@ async def test_the_stamp_is_written(_apply_migrations_once: None) -> None:
     await _create_job(job_id)
     try:
         with patch(
-            "openscientist.orchestrator.discovery.get_version_metadata",
+            "openscientist.orchestrator.provenance.get_version_metadata",
             return_value=_VERSION_INFO,
         ):
             await _sync_version_metadata(str(job_id))
@@ -63,11 +63,11 @@ async def test_a_failed_stamp_does_not_end_the_run(
     must cost the run its version strings, nothing more."""
     with (
         patch(
-            "openscientist.orchestrator.discovery.get_version_metadata",
+            "openscientist.orchestrator.provenance.get_version_metadata",
             return_value=_VERSION_INFO,
         ),
         patch(
-            "openscientist.orchestrator.discovery.async_session_local",
+            "openscientist.orchestrator.provenance.async_session_local",
             side_effect=TimeoutError("statement timeout"),
         ),
         caplog.at_level(logging.WARNING),
@@ -98,14 +98,14 @@ async def test_a_hanging_stamp_gives_up_at_its_deadline(
     connection. The attempt carries its own deadline for those."""
     with (
         patch(
-            "openscientist.orchestrator.discovery.get_version_metadata",
+            "openscientist.orchestrator.provenance.get_version_metadata",
             return_value=_VERSION_INFO,
         ),
         patch(
-            "openscientist.orchestrator.discovery.async_session_local",
+            "openscientist.orchestrator.provenance.async_session_local",
             return_value=_HangingSession(),
         ),
-        patch("openscientist.orchestrator.discovery._STAMP_DEADLINE_SECONDS", 0.2),
+        patch("openscientist.orchestrator.provenance._STAMP_DEADLINE_SECONDS", 0.2),
         caplog.at_level(logging.WARNING),
     ):
         started = time.monotonic()
@@ -120,7 +120,7 @@ async def test_nothing_is_written_when_there_is_no_metadata(_apply_migrations_on
     job_id = uuid4()
     await _create_job(job_id)
     try:
-        with patch("openscientist.orchestrator.discovery.get_version_metadata", return_value={}):
+        with patch("openscientist.orchestrator.provenance.get_version_metadata", return_value={}):
             await _sync_version_metadata(str(job_id))
         assert await _stored_version_info(job_id) is None
     finally:

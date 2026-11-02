@@ -18,11 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, User
 from openscientist.job_manager import JobManager, JobStatus, _db_update_job_status
-from openscientist.orchestrator.discovery import (
+from openscientist.orchestrator.report import (
     _begin_report_phase,
     _persist_final_status,
     _ReportOutcome,
 )
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 _NOW = datetime.now(UTC)
 
@@ -33,6 +34,16 @@ def _no_knowledge_state_progress() -> Iterator[None]:
         "openscientist.job_manager._load_progress_from_knowledge_state", return_value=(0, 0)
     ):
         yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine):
+    """The row each pick reads the slot cap and the scheduler window from."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 @dataclass(frozen=True)
@@ -81,8 +92,13 @@ async def _job(
     return job.id
 
 
-async def _picked(tmp_path: Path, window: timedelta = timedelta(hours=24)) -> set[str]:
-    manager = JobManager(jobs_dir=tmp_path, scheduler_window=window)
+async def _picked(
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    window: timedelta = timedelta(hours=24),
+) -> set[str]:
+    await set_admin_settings_row(test_engine, scheduler_window_hours=window.total_seconds() / 3600)
+    manager = JobManager(jobs_dir=tmp_path)
     with patch.object(manager, "_run_job"):
         await asyncio.to_thread(manager._start_next_queued_job)
     return set(manager._running_jobs)
@@ -109,7 +125,7 @@ async def test_the_owner_with_fewer_hours_goes_first_even_with_a_newer_job(
     bobs = await _job(
         test_engine, owners.bob, JobStatus.QUEUED, created=_NOW - timedelta(minutes=5)
     )
-    assert await _picked(tmp_path) == {str(bobs)}
+    assert await _picked(test_engine, tmp_path) == {str(bobs)}
 
 
 async def test_a_running_job_counts_up_to_now(
@@ -125,7 +141,8 @@ async def test_a_running_job_counts_up_to_now(
     )
     await _job(test_engine, owners.alice, JobStatus.QUEUED, created=_NOW - timedelta(hours=1))
     bobs = await _job(test_engine, owners.bob, JobStatus.QUEUED)
-    manager = JobManager(jobs_dir=tmp_path, max_concurrent=2)
+    await set_admin_settings_row(test_engine, max_concurrent_jobs=2)
+    manager = JobManager(jobs_dir=tmp_path)
     with patch.object(manager, "_run_job"):
         await asyncio.to_thread(manager._start_next_queued_job)
     assert set(manager._running_jobs) == {str(bobs)}
@@ -152,7 +169,9 @@ async def test_only_hours_inside_the_window_count(
         ),
         "bob": await _job(test_engine, owners.bob, JobStatus.QUEUED),
     }
-    assert await _picked(tmp_path, timedelta(hours=window_hours)) == {str(queued[expected])}
+    assert await _picked(test_engine, tmp_path, timedelta(hours=window_hours)) == {
+        str(queued[expected])
+    }
 
 
 async def test_equal_hours_fall_back_to_the_oldest_queued_job(
@@ -161,7 +180,7 @@ async def test_equal_hours_fall_back_to_the_oldest_queued_job(
     older = await _job(test_engine, owners.bob, JobStatus.QUEUED, created=_NOW - timedelta(hours=2))
     await _job(test_engine, owners.alice, JobStatus.QUEUED, created=_NOW - timedelta(hours=1))
     await _job(test_engine, owners.bob, JobStatus.QUEUED)
-    assert await _picked(tmp_path) == {str(older)}
+    assert await _picked(test_engine, tmp_path) == {str(older)}
 
 
 async def _make_priority(test_engine: AsyncEngine, *owners: UUID) -> None:
@@ -184,7 +203,7 @@ async def test_a_priority_owner_goes_first_despite_more_hours(
     await _make_priority(test_engine, owners.alice)
     await _job(test_engine, owners.bob, JobStatus.QUEUED, created=_NOW - timedelta(hours=2))
     alices = await _job(test_engine, owners.alice, JobStatus.QUEUED)
-    assert await _picked(tmp_path) == {str(alices)}
+    assert await _picked(test_engine, tmp_path) == {str(alices)}
 
 
 async def test_priority_owners_are_balanced_among_themselves(
@@ -201,15 +220,15 @@ async def test_priority_owners_are_balanced_among_themselves(
     await _make_priority(test_engine, owners.alice, owners.bob)
     await _job(test_engine, owners.alice, JobStatus.QUEUED, created=_NOW - timedelta(hours=2))
     bobs = await _job(test_engine, owners.bob, JobStatus.QUEUED)
-    assert await _picked(tmp_path) == {str(bobs)}
+    assert await _picked(test_engine, tmp_path) == {str(bobs)}
 
 
-def test_a_failed_pick_starts_no_job(tmp_path: Path) -> None:
+async def test_a_failed_pick_starts_no_job(test_engine: AsyncEngine, tmp_path: Path) -> None:
     manager = JobManager(jobs_dir=tmp_path)
     with patch(
-        "openscientist.job_manager._db_next_queued_job", side_effect=RuntimeError("database down")
+        "openscientist.job_manager._db_next_queued_job", side_effect=RuntimeError("pick blew up")
     ):
-        started = manager._start_next_queued_job()
+        started = await asyncio.to_thread(manager._start_next_queued_job)
     assert started is False
     assert manager._running_jobs == {}
 

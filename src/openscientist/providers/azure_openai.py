@@ -1,12 +1,7 @@
 """Azure OpenAI Service provider (drives the Codex agent).
 
-Routes the Codex agent at an Azure-hosted OpenAI deployment. On Azure's
-OpenAI v1 surface the deployment name is the request-body model, so
-``OPENSCIENTIST_MODEL`` names it.
-Authentication is an ``AZURE_OPENAI_API_KEY`` sent as a Bearer token.
-
-This is distinct from ``FoundryProvider``, which is ``ClaudeCompatible`` and
-serves Anthropic models through Azure AI Foundry.
+Distinct from ``FoundryProvider``, which is ``ClaudeCompatible`` and serves
+Anthropic models through Azure AI Foundry.
 """
 
 from __future__ import annotations
@@ -15,9 +10,14 @@ import os
 
 from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
+    AirgapEgress,
+    AirgapPosture,
     CodexCompatible,
     CostInfo,
+    LiveCheckResult,
     LlmUpstream,
+    SetupQuestion,
+    _listing_live_check,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -65,15 +65,38 @@ class AzureOpenAIProvider(CodexCompatible):
             )
         return errors
 
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("AZURE_OPENAI_API_KEY", kind="secret"),
+            SetupQuestion(
+                "AZURE_OPENAI_RESOURCE",
+                help="the <resource> in https://<resource>.openai.azure.com",
+            ),
+            SetupQuestion("OPENSCIENTIST_MODEL", help="the Azure deployment name"),
+        )
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.azure_openai_resource or not p.azure_openai_api_key:
+            return LiveCheckResult(
+                ok=True, detail="No Azure OpenAI resource or key to check with; skipped."
+            )
+        api_version = p.azure_openai_api_version or "2025-04-01-preview"
+        url = (
+            f"https://{p.azure_openai_resource}.openai.azure.com/openai/deployments"
+            f"?api-version={api_version}"
+        )
+        headers = {"api-key": p.azure_openai_api_key}
+        return _listing_live_check(url, headers, cls.display_name)
+
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # Azure OpenAI spend is tracked through Azure Cost Management, which the
         # foundry provider already wires up. Report unavailable here.
-        return CostInfo(
-            provider_name=self.display_name,
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            recent_period_hours=lookback_hours,
-            data_lag_note="Azure OpenAI per-key cost tracking is not available.",
+        return CostInfo.unavailable(
+            self.display_name,
+            "Azure OpenAI per-key cost tracking is not available.",
+            lookback_hours,
         )
 
     def _base_url(self) -> str:
@@ -95,15 +118,21 @@ class AzureOpenAIProvider(CodexCompatible):
             return {"AZURE_OPENAI_API_KEY": placeholder, LLM_PROXY_URL_ENV: proxy_base_url}
         return {}
 
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.azure_openai_api_key and provider.azure_openai_resource:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
+        )
+
     def codex_config_overrides(self) -> list[str]:
-        # A [model_providers.azure-openai] TOML table. The key is sent as a
-        # Bearer token (env_key). api-version is optional on the v1 surface, so
-        # it is pinned only when the operator configures one.
+        # api-version is optional on the v1 surface, so pin it only when configured.
         s = get_settings().provider
-        # Codex only supports wire_api = "responses" (the chat wire was removed).
+        # Codex only supports wire_api = "responses".
         # stream_max_retries makes codex reconnect through Azure's intermittent
-        # streaming disconnects (a known Azure-side timeout, openai/codex#9936),
-        # which it otherwise treats as a fatal "stream disconnected" error.
+        # streaming disconnects (https://github.com/openai/codex/issues/9936).
         base_url = os.environ.get(LLM_PROXY_URL_ENV) or self._base_url()
         lines = [
             "[model_providers.azure-openai]",

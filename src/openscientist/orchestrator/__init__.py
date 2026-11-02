@@ -2,8 +2,10 @@
 Orchestrator subpackage for OpenScientist discovery.
 
 Module layout:
-- discovery.py  — run_discovery_async(), helpers
+- discovery.py  — run_discovery_async(), the run loop, cancellation guards
 - iteration.py  — prompt builders, increment_ks_iteration, update_job_status
+- provenance.py — version metadata and cost records
+- report.py     — the report-generation phase
 - setup.py      — create_job (filesystem initialization)
 
 All public names are re-exported here to keep a stable import surface
@@ -16,7 +18,6 @@ import logging
 
 # Re-export all public names from submodules
 from openscientist.orchestrator.discovery import (
-    get_version_metadata,
     regenerate_report_async,
     run_discovery_async,
 )
@@ -25,6 +26,7 @@ from openscientist.orchestrator.iteration import (
     update_job_status,
     wait_for_feedback_or_timeout,
 )
+from openscientist.orchestrator.provenance import get_version_metadata
 from openscientist.orchestrator.setup import create_job
 
 logger = logging.getLogger(__name__)

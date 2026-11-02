@@ -12,7 +12,6 @@ import os
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import timedelta
 from pathlib import Path
 
 import uvicorn
@@ -309,12 +308,7 @@ def _register_apple_touch_icon_redirect(host_app: FastAPI) -> None:
 
 
 def _new_job_manager(jobs_dir: Path) -> JobManager:
-    settings = get_settings()
-    return JobManager(
-        jobs_dir=jobs_dir,
-        max_concurrent=settings.max_concurrent_jobs,
-        scheduler_window=timedelta(hours=settings.scheduler_window_hours),
-    )
+    return JobManager(jobs_dir=jobs_dir)
 
 
 def get_job_manager() -> JobManager:
@@ -334,7 +328,10 @@ def get_job_manager() -> JobManager:
 
 
 #: Mapped tables that hold no per-user rows, so no RLS policy guards them.
-_TABLES_WITHOUT_RLS = frozenset({"pubmed_articles", "pubmed_corpus_meta"})
+# The admin settings hold deployment-wide policy, not per-user rows.
+_TABLES_WITHOUT_RLS = frozenset(
+    {"pubmed_articles", "pubmed_corpus_meta", "admin_settings", "admin_setting_changes"}
+)
 
 
 class RlsNotEnforcedError(RuntimeError):
@@ -475,6 +472,9 @@ async def _check_container_images() -> None:
 async def _start_background_tasks(engine: AsyncEngine) -> None:
     """Start background tasks after database verification."""
     await _verify_db_connection_and_rls(engine)
+    from openscientist.admin_settings import seed_admin_settings
+
+    await seed_admin_settings()
     await _ensure_default_skill_sources()
     await _check_container_images()
 
@@ -514,9 +514,18 @@ async def _start_background_tasks(engine: AsyncEngine) -> None:
     # JobManager's startup cleanup of stale containers.
     from openscientist.async_tasks import create_background_task
     from openscientist.job_container.db_login import run_agent_login_reaper
+    from openscientist.job_manager import run_budget_queue_recheck
 
     create_background_task(
         run_agent_login_reaper(_state.jobs_dir), name="agent-login-reaper", logger=logger
+    )
+
+    # The queue is picked on a slot freeing alone, so a project limit holding a
+    # job back would otherwise wait for a slot free that may never come.
+    create_background_task(
+        run_budget_queue_recheck(get_job_manager()),
+        name="budget-queue-recheck",
+        logger=logger,
     )
 
 

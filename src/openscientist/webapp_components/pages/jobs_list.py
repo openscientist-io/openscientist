@@ -18,7 +18,7 @@ from openscientist.database.models import Job, JobShare, User
 from openscientist.database.models.finding import Finding
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
-from openscientist.job.types import JobStatus
+from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.providers import check_provider_config
 from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
@@ -69,13 +69,6 @@ def _truncate_question(question: str, limit: int = 50) -> str:
     if len(question) > limit:
         return question[:limit] + "..."
     return question
-
-
-def _derive_progress_from_db(status: str, current_iteration: int) -> int:
-    """Derive iterations_completed from Job model columns (no KS load needed)."""
-    if status in ("running", "awaiting_feedback"):
-        return current_iteration - 1 if current_iteration > 1 else 0
-    return current_iteration
 
 
 async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID, int]:
@@ -139,7 +132,7 @@ def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[di
             "question": _truncate_question(job.research_question),
             "status": job.status,
             "error": job.error_message or "",
-            "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
+            "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
             "findings": findings_counts.get(job.id, 0),
             "created": job.created_at.isoformat()[:19],
             "can_share": True,
@@ -165,7 +158,7 @@ def _shared_rows(
                 "permission": share.permission_level,
                 "status": job.status,
                 "error": job.error_message or "",
-                "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
+                "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
                 "findings": findings_counts.get(job.id, 0),
                 "created": job.created_at.isoformat()[:19],
                 "can_share": False,

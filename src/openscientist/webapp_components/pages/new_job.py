@@ -8,7 +8,9 @@ from typing import Any
 
 from nicegui import ui
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
+from openscientist.exceptions import BudgetExceededError
 from openscientist.providers import check_provider_config
 from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
@@ -95,6 +97,9 @@ async def _submit_job(
         ui.notify(f"Job {job_id} created and started!", type="positive")
         clear_uploaded_files(session_id)
         ui.navigate.to(f"/job/{job_id}")
+    except BudgetExceededError as exc:
+        logger.warning("Job creation refused by a budget limit: %s", exc)
+        ui.notify(str(exc), type="negative")
     except Exception as exc:
         logger.error("Error creating job: %s", exc, exc_info=True)
         _notify_creation_error(exc)
@@ -104,6 +109,13 @@ async def _handle_upload(e: Any, session_id: str) -> None:
     """Stream upload directly to a temp file and record its path in session state."""
     try:
         name = e.file.name
+        admin = await current_admin_settings()
+        if e.file.size() > admin.max_file_size_mb * 1024 * 1024:
+            ui.notify(
+                f"{name} exceeds the maximum file size of {admin.max_file_size_mb} MB",
+                type="negative",
+            )
+            return
         temp_path = Path(tempfile.mkdtemp()) / name
         await e.file.save(temp_path)
         add_uploaded_file(session_id, name, temp_path)
@@ -128,6 +140,7 @@ async def new_job_page() -> None:
     client.on_disconnect(lambda: clear_uploaded_files(session_id))
 
     is_configured, provider_name, config_errors = check_provider_config()
+    max_file_size_mb = (await current_admin_settings()).max_file_size_mb
     render_navigator(active_page="new", show_new_job=is_configured)
 
     if not user_can_start_jobs:
@@ -159,7 +172,9 @@ async def new_job_page() -> None:
             auto_upload=True,
             on_upload=on_upload,
         ).classes("w-full")
-        ui.label("Maximum file size: 500 MB per file").classes("text-caption text-grey-6")
+        ui.label(f"Maximum file size: {max_file_size_mb} MB per file").classes(
+            "text-caption text-grey-6"
+        )
 
         max_iterations = ui.number(
             label="Max Iterations",
