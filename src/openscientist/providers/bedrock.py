@@ -10,6 +10,7 @@ from openscientist.providers.base import (
     ClaudeCompatible,
     CostInfo,
     LlmUpstream,
+    SetupQuestion,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -64,6 +65,22 @@ class BedrockProvider(ClaudeCompatible):
                 "AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, AWS_PROFILE, or AWS_BEARER_TOKEN_BEDROCK"
             )
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("AWS_REGION", help="AWS region, e.g. us-east-1"),
+            SetupQuestion("AWS_ACCESS_KEY_ID", kind="secret"),
+            SetupQuestion("AWS_SECRET_ACCESS_KEY", kind="secret"),
+            SetupQuestion("AWS_PROFILE", help="or an AWS profile, instead of access keys"),
+            SetupQuestion(
+                "AWS_BEARER_TOKEN_BEDROCK", kind="secret", help="or a Bedrock API bearer token"
+            ),
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL",
+                help="Bedrock model id, e.g. us.anthropic.claude-sonnet-5-5-v2:0",
+            ),
+        )
 
     @classmethod
     def container_env(

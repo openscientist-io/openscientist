@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import requests
 
 from openscientist.exceptions import ProviderError
-from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
+from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream, SetupQuestion
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._anthropic_common import anthropic_container_env
@@ -41,6 +41,17 @@ class CborgProvider(ClaudeCompatible):
         if not provider.anthropic_base_url:
             errors.append("ANTHROPIC_BASE_URL not set (should be https://api.cborg.lbl.gov)")
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("ANTHROPIC_AUTH_TOKEN", kind="secret", help="CBORG token"),
+            SetupQuestion(
+                "ANTHROPIC_BASE_URL",
+                help="CBORG endpoint, https://api.cborg.lbl.gov unless it differs",
+            ),
+            *super().setup_questions(),
+        )
 
     def claude_sdk_env(self) -> dict[str, str]:
         """Auth env vars the claude-agent-sdk CLI must see."""

@@ -8,9 +8,13 @@ import inspect
 import logging
 import os
 import re
+from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, NotRequired, TypedDict
+
+from pydantic import ValidationError
 
 from openscientist.models import ModelProfile, default_model_profile, probed_model_profile
 from openscientist.settings import ProviderSettings, get_settings
@@ -148,6 +152,34 @@ class AirgapPosture:
 LLM_PROXY_URL_ENV = "OPENSCIENTIST_LLM_PROXY_URL"
 
 
+@dataclass(frozen=True)
+class SetupQuestion:
+    """One env variable the setup wizard asks about this provider, in ask order."""
+
+    env: str
+    kind: str = "text"  # text, secret or path
+    help: str | None = None
+
+
+@contextmanager
+def _answers_env(values: Mapping[str, str]):
+    """Hold the wizard's answers in the process environment for the duration of a check."""
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        for key, value in values.items():
+            if value:
+                os.environ[key] = value
+            else:
+                os.environ.pop(key, None)
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+
 class Provider(abc.ABC):
     """A model-hosting service. Family-specific behavior lives on the
     marker subclasses below; configuration validation and cost/budget
@@ -202,6 +234,41 @@ class Provider(abc.ABC):
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
         """Config errors for a settings snapshot, without instantiating."""
         return []
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        """Env variables the setup wizard asks for this provider, in order."""
+        return ()
+
+    @classmethod
+    def setup_answers_errors(cls, provider_id: str, answers: Mapping[str, str]) -> list[str]:
+        """This provider's config errors against a setup wizard's answer set.
+
+        Runs the validation the web runs at startup, holding the answers in the
+        process environment for the duration of the check.
+        """
+        values = dict(answers)
+        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        # The settings build logs the same errors the wizard will show, so the
+        # wizard's caller only sees its own copy.
+        settings_logger = logging.getLogger("openscientist.settings")
+        previous_level = settings_logger.level
+        settings_logger.setLevel(logging.ERROR)
+        try:
+            with _answers_env(values):
+                try:
+                    settings = ProviderSettings(_env_file=None)
+                except ValidationError as exc:
+                    return [
+                        str(error["msg"]).removeprefix("Value error, ") for error in exc.errors()
+                    ]
+                errors = list(cls.required_config_errors(settings))
+                model_error = cls.validate_model_format(settings.model)
+                if model_error:
+                    errors.append(model_error)
+                return errors
+        finally:
+            settings_logger.setLevel(previous_level)
 
     def _validate_optional_config(self) -> list[str]:
         """Warning messages for optional misconfiguration."""
@@ -348,6 +415,15 @@ class ClaudeCompatible(Provider, abc.ABC):
     )
 
     @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL",
+                help=f"model to use (defaults to {cls.default_claude_model})",
+            ),
+        )
+
+    @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
         return cls.model_format_error(model, r"^claude-", cls.model_format_description)
 
@@ -429,6 +505,27 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
     @abc.abstractmethod
     def _probe_context_tokens(base_url: str, model_id: str, api_key: str | None) -> int | None:
         """Read the launched context window from the live server, or None."""
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion(
+                cls.base_url_env,
+                help=(
+                    f"{cls.server_name} endpoint, "
+                    f"e.g. http://host.docker.internal:<port>/v1 for a host server"
+                ),
+            ),
+            SetupQuestion(
+                cls.api_key_env,
+                kind="secret",
+                help="only if the server was launched with an API key",
+            ),
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL",
+                help=f"the model the {cls.server_name} server serves",
+            ),
+        )
 
     def _base_url(self) -> str:
         return self._base_url_of(get_settings().provider)

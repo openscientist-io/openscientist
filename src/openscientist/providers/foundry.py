@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
+from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream, SetupQuestion
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_empty_env_vars
@@ -92,6 +92,15 @@ class FoundryProvider(ClaudeCompatible):
                     "Will use Azure default credential chain (Entra ID authentication)"
                 )
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("ANTHROPIC_FOUNDRY_RESOURCE", help="Foundry resource name"),
+            SetupQuestion("ANTHROPIC_FOUNDRY_BASE_URL", help="or the full Foundry endpoint URL"),
+            SetupQuestion("ANTHROPIC_FOUNDRY_API_KEY", kind="secret"),
+            *super().setup_questions(),
+        )
 
     @classmethod
     def container_env(

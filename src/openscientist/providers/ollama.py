@@ -18,6 +18,7 @@ from openscientist.providers.base import (
     LlmUpstream,
     OmpModelCatalog,
     OpenAiWireCompatible,
+    SetupQuestion,
     self_hosted_omp_model_catalog,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -71,6 +72,16 @@ class OllamaProvider(OpenAiWireCompatible):
         return "ollama"
 
     display_name = "Ollama (local)"
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion(
+                "OLLAMA_BASE_URL",
+                help="Ollama endpoint, e.g. http://host.docker.internal:11434/v1 for a host server",
+            ),
+            SetupQuestion("OPENSCIENTIST_MODEL", help="the model Ollama serves"),
+        )
 
     @classmethod
     def container_env(

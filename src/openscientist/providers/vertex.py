@@ -10,6 +10,7 @@ from openscientist.providers.base import (
     AirgapPosture,
     ClaudeCompatible,
     CostInfo,
+    SetupQuestion,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -54,6 +55,20 @@ class VertexProvider(ClaudeCompatible):
         if not provider.cloud_ml_region:
             errors.append("CLOUD_ML_REGION not set (e.g., us-east5)")
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("ANTHROPIC_VERTEX_PROJECT_ID", help="GCP project ID"),
+            SetupQuestion(
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                kind="path",
+                help="host path to the GCP service account JSON",
+            ),
+            SetupQuestion("GCP_BILLING_ACCOUNT_ID", help="GCP billing account for cost tracking"),
+            SetupQuestion("CLOUD_ML_REGION", help="region, e.g. us-east5"),
+            *super().setup_questions(),
+        )
 
     @classmethod
     def container_env(
