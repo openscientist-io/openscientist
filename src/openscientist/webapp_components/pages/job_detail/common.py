@@ -48,6 +48,7 @@ class _JobDetailContext:
     db_job: Any
     is_owner: bool
     can_edit: bool
+    owner_name: str | None
     job_dir: Path
     ks_data: dict[str, Any] | None
     ks_load_error: str | None

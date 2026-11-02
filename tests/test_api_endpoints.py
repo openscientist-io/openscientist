@@ -871,6 +871,7 @@ class TestJobEndpoints:
             space_group=None,
             queue_reason=None,
             stop_note=None,
+            is_public=False,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -963,6 +964,7 @@ class TestJobEndpoints:
             space_group=None,
             queue_reason=None,
             stop_note=None,
+            is_public=False,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -1060,6 +1062,7 @@ class TestJobEndpoints:
             space_group=None,
             queue_reason=None,
             stop_note=None,
+            is_public=False,
         )
 
         app.dependency_overrides[get_session] = override_get_session

@@ -43,10 +43,12 @@ class FigureBlockProcessor(BlockProcessor):
         parser: object,
         provenance_dir: Path,
         use_base64: bool,
+        excluded_top_level_dirs: tuple[str, ...] = (),
     ) -> None:
         super().__init__(parser)
         self.provenance_dir = provenance_dir
         self.use_base64 = use_base64
+        self.excluded_top_level_dirs = excluded_top_level_dirs
 
     def test(self, parent: etree.Element, block: str) -> bool:
         return bool(_FIGURE_START_RE.match(block))
@@ -67,7 +69,11 @@ class FigureBlockProcessor(BlockProcessor):
 
         # The agent writes the report, so a figure resolves only to one of the
         # job's own artifacts, never to a path it climbs or links its way to.
-        image_path = artifact_file(self.provenance_dir.parent, f"provenance/{filename}")
+        image_path = artifact_file(
+            self.provenance_dir.parent,
+            f"provenance/{filename}",
+            excluded_top_level_dirs=self.excluded_top_level_dirs,
+        )
         if image_path is None:
             logger.warning("Figure not found: %s", filename)
             if caption:
@@ -100,10 +106,12 @@ class ImageSrcTreeProcessor(Treeprocessor):
         md: Markdown,
         provenance_dir: Path,
         use_base64: bool,
+        excluded_top_level_dirs: tuple[str, ...] = (),
     ) -> None:
         super().__init__(md)
         self.provenance_dir = provenance_dir
         self.use_base64 = use_base64
+        self.excluded_top_level_dirs = excluded_top_level_dirs
 
     def run(self, root: etree.Element) -> etree.Element | None:
         for parent in root.iter():
@@ -120,8 +128,12 @@ class ImageSrcTreeProcessor(Treeprocessor):
                 # and only among the job's own artifacts.
                 job_dir = self.provenance_dir.parent
                 image_path = artifact_file(
-                    job_dir, f"provenance/{Path(src).name}"
-                ) or artifact_file(job_dir, src)
+                    job_dir,
+                    f"provenance/{Path(src).name}",
+                    excluded_top_level_dirs=self.excluded_top_level_dirs,
+                ) or artifact_file(
+                    job_dir, src, excluded_top_level_dirs=self.excluded_top_level_dirs
+                )
                 if image_path is None:
                     continue
 
@@ -156,21 +168,36 @@ class FigureExtension(Extension):
         self.config = {
             "provenance_dir": [".", "Directory containing figure images"],
             "use_base64": [False, "Embed images as base64 data URIs"],
+            "excluded_top_level_dirs": [
+                (),
+                "Top-level job directories whose files are never embedded",
+            ],
         }
         super().__init__(**kwargs)
 
     def extendMarkdown(self, md: Markdown) -> None:  # noqa: N802
         provenance_dir = Path(str(self.getConfig("provenance_dir")))
         use_base64 = bool(self.getConfig("use_base64"))
+        excluded_top_level_dirs = tuple(self.getConfig("excluded_top_level_dirs"))
 
         md.parser.blockprocessors.register(
-            FigureBlockProcessor(md.parser, provenance_dir, use_base64),
+            FigureBlockProcessor(
+                md.parser,
+                provenance_dir,
+                use_base64,
+                excluded_top_level_dirs=excluded_top_level_dirs,
+            ),
             "figure_block",
             105,
         )
 
         md.treeprocessors.register(
-            ImageSrcTreeProcessor(md, provenance_dir, use_base64),
+            ImageSrcTreeProcessor(
+                md,
+                provenance_dir,
+                use_base64,
+                excluded_top_level_dirs=excluded_top_level_dirs,
+            ),
             "image_src_resolve",
             5,
         )

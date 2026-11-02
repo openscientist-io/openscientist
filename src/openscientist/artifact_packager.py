@@ -51,6 +51,7 @@ def _shown_file(file_path: Path) -> bool:
 def _iter_artifact_files(
     job_dir: Path,
     excluded_paths: set[Path] | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> Iterator[tuple[Path, Path]]:
     """Yield (absolute_path, archive_relative_path) pairs for artifact files."""
     excluded_paths = excluded_paths or set()
@@ -59,7 +60,9 @@ def _iter_artifact_files(
         dirnames[:] = [
             dirname
             for dirname in dirnames
-            if _shown_dir(root / dirname) and (root / dirname).resolve() not in excluded_paths
+            if _shown_dir(root / dirname)
+            and (root / dirname).resolve() not in excluded_paths
+            and not (root == job_dir and dirname in excluded_top_level_dirs)
         ]
         for filename in filenames:
             file_path = root / filename
@@ -69,13 +72,19 @@ def _iter_artifact_files(
                 yield file_path, file_path.relative_to(job_dir)
 
 
-def artifact_file(job_dir: Path, relative: str) -> Path | None:
+def artifact_file(
+    job_dir: Path,
+    relative: str,
+    excluded_top_level_dirs: tuple[str, ...] = (),
+) -> Path | None:
     """The file at ``relative`` in ``job_dir`` when the artifacts ZIP would
     include it, or None."""
     parts = PurePosixPath(relative).parts
     if not parts or any(part in ("", ".", "..", "/") or "\\" in part for part in parts):
         return None
     if parts == (PROVENANCE_FILE,):
+        return None
+    if parts[0] in excluded_top_level_dirs:
         return None
     path = job_dir
     for dirname in parts[:-1]:
@@ -125,10 +134,15 @@ def _write_artifacts_zip(
     zip_file: zipfile.ZipFile,
     job_dir: Path,
     excluded_paths: set[Path] | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> int:
     """Write job artifacts into an open zip file and return number of files written."""
     included, oversized = _partition_by_size(
-        _iter_artifact_files(job_dir, excluded_paths=excluded_paths)
+        _iter_artifact_files(
+            job_dir,
+            excluded_paths=excluded_paths,
+            excluded_top_level_dirs=excluded_top_level_dirs,
+        )
     )
 
     written = 0
@@ -156,6 +170,7 @@ def create_artifacts_zip_file(
     archive_path: Path,
     job_id: str,
     version_info: dict[str, str] | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> int:
     """Create an artifacts ZIP archive on disk and return number of files written.
 
@@ -167,7 +182,12 @@ def create_artifacts_zip_file(
         excluded_paths.add(archive_path_resolved)
 
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        written = _write_artifacts_zip(zip_file, job_dir, excluded_paths=excluded_paths)
+        written = _write_artifacts_zip(
+            zip_file,
+            job_dir,
+            excluded_paths=excluded_paths,
+            excluded_top_level_dirs=excluded_top_level_dirs,
+        )
         if version_info:
             zip_file.writestr(
                 PROVENANCE_FILE, json.dumps(version_info, indent=2, sort_keys=True) + "\n"

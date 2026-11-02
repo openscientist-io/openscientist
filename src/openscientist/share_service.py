@@ -200,3 +200,59 @@ async def search_active_users(
             .limit(limit)
         )
         return list(result.scalars().all())
+
+
+# Top-level job-directory entries withheld from a viewer who can see a job only
+# because it is public. ``data/`` holds the owner's uploaded input files.
+PUBLIC_VIEWER_EXCLUDED_DIRS: tuple[str, ...] = ("data",)
+
+
+async def set_job_public(
+    session: AsyncSession,
+    owner_id: UUID,
+    *,
+    job_id: str,
+    is_public: bool,
+    not_owned_detail: str,
+) -> Job:
+    """Make an owned job readable by any signed-in user, or private again.
+
+    Raises 403 for anyone who does not own the job, including users who cannot
+    see it at all.
+    """
+    job_uuid = parse_uuid(job_id, "job_id")
+    result = await session.execute(select(Job).where(Job.id == job_uuid))
+    job = result.scalar_one_or_none()
+
+    if job is None or job.owner_id != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=not_owned_detail,
+        )
+
+    job.is_public = is_public
+    await session.commit()
+    await session.refresh(job)
+    return job
+
+
+async def viewer_has_direct_access(session: AsyncSession, job: Job, user_id: UUID) -> bool:
+    """Whether the user owns the job or has it shared, as opposed to seeing it
+    only because it is public."""
+    if job.owner_id == user_id:
+        return True
+    result = await session.execute(
+        select(JobShare.id).where(
+            JobShare.job_id == job.id,
+            JobShare.shared_with_user_id == user_id,
+        )
+    )
+    return result.first() is not None
+
+
+async def withheld_artifact_dirs(session: AsyncSession, job: Job, user_id: UUID) -> tuple[str, ...]:
+    """Job-directory entries to leave out for a viewer who reads the job only
+    because it is public; the owner and share recipients get everything."""
+    if await viewer_has_direct_access(session, job, user_id):
+        return ()
+    return PUBLIC_VIEWER_EXCLUDED_DIRS

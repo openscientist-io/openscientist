@@ -17,6 +17,7 @@ from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.run_environment import run_environment_text
+from openscientist.share_service import withheld_artifact_dirs
 from openscientist.webapp_components.share_routes import get_current_user_from_session
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,9 @@ async def download_job_artifacts(
 ) -> FileResponse:
     job, job_dir = await _visible_job(job_id, user, session)
 
+    # A job readable only because it is public comes without the owner's uploads.
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
         prefix=f"openscientist_{job_dir.name}_",
@@ -92,6 +96,7 @@ async def download_job_artifacts(
             archive_path=archive_path,
             job_id=job_dir.name,
             version_info=job.version_info,
+            excluded_top_level_dirs=excluded_dirs,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
@@ -113,15 +118,24 @@ async def job_artifact(
     session: AsyncSession = SESSION_DEP,
 ) -> FileResponse:
     """One of the job's artifacts, as the artifacts ZIP would include it."""
-    _, job_dir = await _visible_job(job_id, user, session)
-    found = await run_in_threadpool(artifact_file, job_dir, path)
+    job, job_dir = await _visible_job(job_id, user, session)
+    # A public-only reader gets no file the ZIP would withhold, so data/ 404s.
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    found = await run_in_threadpool(artifact_file, job_dir, path, excluded_dirs)
     if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
     return FileResponse(found, headers=_sandboxed(_SANDBOX))
 
 
-def _report_html(job_dir: Path, version_info: dict[str, str] | None) -> str | None:
-    """The job's report for the browser, with its figures embedded, or None."""
+def _report_html(
+    job_dir: Path,
+    version_info: dict[str, str] | None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
+) -> str | None:
+    """The job's report for the browser, with its figures embedded, or None.
+
+    ``excluded_top_level_dirs`` keeps a public reader's report from inlining
+    the owner's uploaded input files."""
     html_path = job_dir / "final_report.html"
     if not html_path.is_file():
         return None
@@ -133,6 +147,7 @@ def _report_html(job_dir: Path, version_info: dict[str, str] | None) -> str | No
             job_dir,
             embed_images=True,
             run_environment=run_environment_text(version_info),
+            excluded_top_level_dirs=excluded_top_level_dirs,
         )
     except Exception:
         logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
@@ -148,7 +163,8 @@ async def job_report(
 ) -> HTMLResponse:
     """The job's report, rendered from its current files."""
     job, job_dir = await _visible_job(job_id, user, session)
-    html = await run_in_threadpool(_report_html, job_dir, job.version_info)
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    html = await run_in_threadpool(_report_html, job_dir, job.version_info, excluded_dirs)
     if html is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
     return HTMLResponse(html, headers=_sandboxed(_REPORT_SANDBOX))

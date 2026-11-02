@@ -113,6 +113,15 @@ def render_status_cell_slot() -> str:
                 >
                     <span class="row items-center" style="white-space:nowrap;">○&nbsp;{{ props.row.status }}</span>
                 </q-badge>
+
+                <!-- Public: teal badge when the owner has opened the job up -->
+                <q-badge
+                    v-if="props.row.is_public"
+                    color="teal"
+                    class="px-2 py-1"
+                >
+                    <span class="row items-center" style="white-space:nowrap;">◎&nbsp;public</span>
+                </q-badge>
             </div>
         </q-td>
     """

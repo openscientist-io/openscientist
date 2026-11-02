@@ -74,6 +74,7 @@ class JobInfo:
     short_title: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    is_public: bool = False
     #: The environment the run recorded (``jobs.version_info``): build, harness, container.
     version_info: dict[str, str] | None = None
 
@@ -123,4 +124,5 @@ class JobInfo:
             version_info=getattr(job, "version_info", None),
             queue_reason=getattr(job, "queue_reason", None),
             stop_note=getattr(job, "stop_note", None),
+            is_public=bool(getattr(job, "is_public", False)),
         )

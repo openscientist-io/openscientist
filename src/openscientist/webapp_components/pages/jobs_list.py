@@ -135,6 +135,7 @@ def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[di
             "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
             "findings": findings_counts.get(job.id, 0),
             "created": job.created_at.isoformat()[:19],
+            "is_public": job.is_public,
             "can_share": True,
             "can_delete": True,
         }
@@ -161,6 +162,7 @@ def _shared_rows(
                 "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
                 "findings": findings_counts.get(job.id, 0),
                 "created": job.created_at.isoformat()[:19],
+                "is_public": job.is_public,
                 "can_share": False,
                 "can_delete": current_user_is_admin,
             }
