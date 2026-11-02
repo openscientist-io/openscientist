@@ -18,8 +18,10 @@ class AddressStep(Step):
                 kind="text",
                 help="public base URL of the web, for links and notifications",
             ),
-            Question.for_env(key="address.port", env="PORT", file="env", kind="port"),
-            # Not a settings field, so the default follows .env.example.
+            # Neither port is a settings field, so the defaults follow .env.example.
+            Question.for_env(
+                key="address.port", env="PORT", file="env", kind="port", default="8080"
+            ),
             Question.for_env(
                 key="address.postgres_port",
                 env="POSTGRES_PORT",

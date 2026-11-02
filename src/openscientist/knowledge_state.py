@@ -21,12 +21,14 @@ from openscientist.database.models.job import Job as JobModel
 from openscientist.database.models.literature import Literature
 from openscientist.database.session import SessionOpener, async_session_local
 
-# Bound the literature abstracts dumped into the report-generation prompt.
-# Dumping every abstract has overflowed the model's context window, dropping the
-# tool definitions so the file-write call is never emitted. The caller passes a
-# budget from the model's context window and abstracts fill it until exhausted,
-# the rest omitted with a note. This default applies only when no budget is given.
-_DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS = 8000
+# Bound the run's detailed facts and the literature abstracts in the
+# report-generation prompt. Dumping every abstract has overflowed the model's
+# context window, dropping the tool definitions so the file-write call is never
+# emitted. The caller passes a budget from the model's context window. The run's
+# facts (hypothesis results, finding interpretations, full iteration summaries,
+# the data files) spend it first, abstracts fill what remains, and the rest are
+# omitted with a note. This default applies only when no budget is given.
+_DEFAULT_REPORT_OUTLINE_BUDGET_CHARS = 8000
 
 
 def _sanitize_for_json(obj: Any) -> Any:
@@ -54,13 +56,7 @@ class KnowledgeState:
         - analysis_log: History of all executed analyses
     """
 
-    def __init__(
-        self,
-        job_id: str,
-        research_question: str,
-        max_iterations: int,
-        use_skills: bool = True,
-    ):
+    def __init__(self, job_id: str, research_question: str, max_iterations: int):
         """
         Initialize a new knowledge graph.
 
@@ -68,14 +64,12 @@ class KnowledgeState:
             job_id: Unique job identifier
             research_question: User's research question
             max_iterations: Maximum number of iterations
-            use_skills: Whether skills are enabled for this job
         """
         self.data: dict[str, Any] = {
             "config": {
                 "job_id": job_id,
                 "research_question": research_question,
                 "max_iterations": max_iterations,
-                "use_skills": use_skills,
                 "started_at": datetime.now(UTC).isoformat(),
             },
             "data_summary": {},
@@ -421,24 +415,34 @@ class KnowledgeState:
 
         return "\n".join(summary_parts)
 
-    def get_report_outline(self, *, abstract_budget_chars: int | None = None) -> str:
+    def get_report_outline(self, *, budget_chars: int | None = None) -> str:
         """Get an outline of accumulated knowledge for the report prompt.
 
-        Includes finding titles, hypothesis outcomes, iteration straplines,
-        and literature entries with abstracts for citation grounding.
+        Includes the data files, the full iteration summaries, findings with
+        their interpretations, hypotheses with their results, and literature
+        entries with abstracts for citation grounding. A first report and a
+        regeneration read the same facts, since a regeneration starts a fresh
+        agent session with this outline as its only source.
 
         Args:
-            abstract_budget_chars: Total character budget for uncited-paper
-                abstracts. Abstracts are included in full until the budget is
-                reached, then omitted with a note. The caller derives this from
-                the model's context window so the prompt cannot overflow it.
-                Defaults to a conservative bound when unset.
+            budget_chars: Character budget for the run's detailed facts and the
+                uncited-paper abstracts. The facts take it first. If they alone
+                exceed it, the iteration summaries shrink to their straplines.
+                Abstracts fill what remains, each in full, and the rest are
+                omitted with a note. The caller derives this from the model's
+                context window so the prompt cannot overflow it. Defaults to a
+                conservative bound when unset.
         """
-        budget = (
-            abstract_budget_chars
-            if abstract_budget_chars is not None
-            else _DEFAULT_REPORT_ABSTRACT_BUDGET_CHARS
-        )
+        budget = budget_chars if budget_chars is not None else _DEFAULT_REPORT_OUTLINE_BUDGET_CHARS
+        data_lines = self._outline_data_lines()
+        findings_lines, findings_chars = self._outline_findings_lines()
+        hypotheses_lines, hypotheses_chars = self._outline_hypotheses_lines()
+        fixed_chars = sum(len(line) for line in data_lines) + findings_chars + hypotheses_chars
+        timeline_lines, timeline_chars = self._outline_timeline_lines(full=True)
+        if fixed_chars + timeline_chars > budget:
+            timeline_lines, timeline_chars = self._outline_timeline_lines(full=False)
+        abstract_budget = max(0, budget - fixed_chars - timeline_chars)
+
         parts: list[str] = [
             f"# Knowledge Outline ({self.data['iteration']} iterations completed)",
             "",
@@ -459,37 +463,10 @@ class KnowledgeState:
         parts.append(f"- {len(self.data['literature'])} papers reviewed")
         parts.append("")
 
-        # Investigation timeline — straplines only
-        summaries = self.data.get("iteration_summaries", [])
-        if summaries:
-            parts.append("## Investigation Timeline")
-            for entry in sorted(summaries, key=lambda e: e["iteration"]):
-                strapline = entry.get("strapline", entry.get("summary", "")[:120])
-                parts.append(f"- Iteration {entry['iteration']}: {strapline}")
-            parts.append("")
-
-        # Findings — titles with citations when available
-        if self.data["findings"]:
-            parts.append("## Findings")
-            for finding in self.data["findings"]:
-                parts.append(f"- {finding['id']}: {finding['title']}")
-                if finding.get("evidence"):
-                    parts.append(f"  Statistical evidence: {finding['evidence']}")
-                for c in finding.get("citations", []):
-                    status = c.get("validation_status", "unchecked")
-                    pmid = c.get("pmid", "?")
-                    snippet = c.get("snippet", "")
-                    explanation = c.get("explanation", "")
-                    parts.append(f'  - PMID:{pmid} [{status}]: "{snippet}"')
-                    if explanation:
-                        parts.append(f"    → {explanation}")
-            parts.append("")
-
-        # Hypotheses — one-line status
-        if all_hyps:
-            parts.append("## Hypotheses")
-            parts.extend(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}" for hyp in all_hyps)
-            parts.append("")
+        parts.extend(data_lines)
+        parts.extend(timeline_lines)
+        parts.extend(findings_lines)
+        parts.extend(hypotheses_lines)
 
         # Literature — titles with abstracts for citation grounding.
         # Papers already cited by findings get title+PMID only (the snippet
@@ -515,7 +492,7 @@ class KnowledgeState:
                     abstract = lit.get("abstract", "")
                     if not abstract:
                         continue
-                    if abstract_chars_spent + len(abstract) > budget:
+                    if abstract_chars_spent + len(abstract) > abstract_budget:
                         abstracts_omitted += 1
                         continue
                     parts.append(f"  Abstract: {abstract}")
@@ -534,6 +511,97 @@ class KnowledgeState:
             parts.append("")
 
         return "\n".join(parts)
+
+    def _outline_data_lines(self) -> list[str]:
+        """The data files the job was given, as setup recorded them."""
+        summary = self.data.get("data_summary") or {}
+        files = summary.get("files") or []
+        if not files:
+            return []
+        lines = ["## Data", f"- Files: {', '.join(str(name) for name in files)}"]
+        details = []
+        if summary.get("file_type"):
+            details.append(str(summary["file_type"]))
+        size = summary.get("file_size_mb")
+        if isinstance(size, int | float):
+            details.append(f"{size:.1f} MB")
+        if details:
+            lines.append(f"- First file: {', '.join(details)}")
+        lines.append("")
+        return lines
+
+    def _outline_timeline_lines(self, *, full: bool) -> tuple[list[str], int]:
+        """Each iteration's strapline, with its full summary when ``full``, and
+        the characters the summaries add."""
+        summaries = self.data.get("iteration_summaries", [])
+        if not summaries:
+            return [], 0
+        lines = ["## Investigation Timeline"]
+        added = 0
+        for entry in sorted(summaries, key=lambda e: e["iteration"]):
+            summary = str(entry.get("summary") or "")
+            strapline = entry.get("strapline") or summary[:120]
+            lines.append(f"- Iteration {entry['iteration']}: {strapline}")
+            if full and summary and summary != strapline:
+                lines.append(f"  {summary}")
+                added += len(summary)
+        lines.append("")
+        return lines, added
+
+    def _outline_findings_lines(self) -> tuple[list[str], int]:
+        """Findings with their evidence, interpretation and citations, and the
+        characters the interpretations add."""
+        if not self.data["findings"]:
+            return [], 0
+        lines = ["## Findings"]
+        added = 0
+        for finding in self.data["findings"]:
+            lines.append(f"- {finding['id']}: {finding['title']}")
+            if finding.get("evidence"):
+                lines.append(f"  Statistical evidence: {finding['evidence']}")
+            interpretation = finding.get("biological_interpretation")
+            if interpretation:
+                lines.append(f"  Interpretation: {interpretation}")
+                added += len(interpretation)
+            for c in finding.get("citations", []):
+                status = c.get("validation_status", "unchecked")
+                pmid = c.get("pmid", "?")
+                snippet = c.get("snippet", "")
+                explanation = c.get("explanation", "")
+                lines.append(f'  - PMID:{pmid} [{status}]: "{snippet}"')
+                if explanation:
+                    lines.append(f"    → {explanation}")
+        lines.append("")
+        return lines, added
+
+    def _outline_hypotheses_lines(self) -> tuple[list[str], int]:
+        """Hypotheses with their status and test result, and the characters the
+        results add."""
+        if not self.data["hypotheses"]:
+            return [], 0
+        lines = ["## Hypotheses"]
+        added = 0
+        for hyp in self.data["hypotheses"]:
+            lines.append(f"- {hyp['id']} [{hyp['status']}]: {hyp['statement']}")
+            result = hyp.get("result")
+            if not isinstance(result, dict):
+                continue
+            result_lines = []
+            if result.get("summary"):
+                result_lines.append(f"  Result: {result['summary']}")
+            statistics = [
+                f"{label} {result[key]}"
+                for key, label in (("p_value", "p ="), ("effect_size", "effect size"))
+                if result.get(key) not in (None, "")
+            ]
+            if statistics:
+                result_lines.append(f"  Statistics: {', '.join(statistics)}")
+            if result.get("conclusion"):
+                result_lines.append(f"  Conclusion: {result['conclusion']}")
+            lines.extend(result_lines)
+            added += sum(len(line) for line in result_lines)
+        lines.append("")
+        return lines, added
 
     def to_dict(self) -> dict[str, Any]:
         """Return the raw data dictionary."""
@@ -673,18 +741,14 @@ class KnowledgeState:
                         title=literature_data["title"],
                         abstract=literature_data.get("abstract"),
                         authors=literature_data.get("authors"),
-                        journal=literature_data.get("journal"),
                         year=literature_data.get("year"),
-                        doi=literature_data.get("doi"),
                         extra_metadata=self._literature_extra_metadata(literature_data),
                     )
                 )
                 continue
             existing.abstract = literature_data.get("abstract")
             existing.authors = literature_data.get("authors")
-            existing.journal = literature_data.get("journal")
             existing.year = literature_data.get("year")
-            existing.doi = literature_data.get("doi")
             existing.extra_metadata = self._literature_extra_metadata(literature_data)
 
     async def _upsert_analysis_log(self, session: AsyncSession, job_uuid: UUID) -> None:
@@ -854,7 +918,6 @@ class KnowledgeState:
                 "job_id": job_id,
                 "research_question": job.research_question,
                 "max_iterations": job.max_iterations,
-                "use_skills": True,
                 "started_at": job.created_at.isoformat(),
             },
             "data_summary": job.data_summary or {},

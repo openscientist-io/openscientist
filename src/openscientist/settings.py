@@ -645,28 +645,13 @@ class BudgetSettings(BaseSettings):
         extra="ignore",
     )
 
-    max_project_spend_warn: float = Field(
-        default=100.0,
-        alias="MAX_PROJECT_SPEND_WARN",
-        description="Project spend that triggers a warning, in USD.",
-    )
-    max_project_spend_hard: float = Field(
-        default=500.0,
-        alias="MAX_PROJECT_SPEND_HARD",
-        description="Hard limit for project spend, in USD.",
-    )
+    # Seed the admin settings row on first start; the Settings tab counts from then on.
     max_job_cost_usd: float = Field(
         default=10.0,
         alias="MAX_JOB_COST_USD",
         description="Per-job cost cap in USD.",
     )
-    app_max_budget_usd: float = Field(
-        default=1000.0,
-        alias="APP_MAX_BUDGET_USD",
-        description="Global app budget in USD.",
-    )
 
-    # Provider-agnostic budget limits
     max_project_spend_total_usd: float = Field(
         default=float("inf"),
         alias="MAX_PROJECT_SPEND_TOTAL_USD",
@@ -684,10 +669,7 @@ class BudgetSettings(BaseSettings):
     )
 
     @field_validator(
-        "max_project_spend_warn",
-        "max_project_spend_hard",
         "max_job_cost_usd",
-        "app_max_budget_usd",
     )
     @classmethod
     def validate_positive(cls, v: float, info: ValidationInfo) -> float:
@@ -971,11 +953,6 @@ class Settings(BaseSettings):
         description="Master secret from which the storage and token encryption secrets are derived.",
     )
 
-    port: int = Field(
-        default=8080,
-        alias="PORT",
-        description="Web server port.",
-    )
     max_concurrent_jobs: int = Field(
         default=1,
         alias="OPENSCIENTIST_MAX_CONCURRENT_JOBS",
