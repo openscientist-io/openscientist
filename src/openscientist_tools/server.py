@@ -16,6 +16,7 @@ def ping(message: str = "hello") -> str:
 
 
 from openscientist_tools import (  # noqa: F401, E402
+    citation,
     code_exec,
     document,
     job_meta,
