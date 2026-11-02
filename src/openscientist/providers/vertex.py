@@ -14,8 +14,6 @@ from openscientist.providers.base import (
 )
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
-
 logger = logging.getLogger(__name__)
 
 
@@ -27,6 +25,8 @@ class VertexProvider(ClaudeCompatible):
         return "vertex"
 
     display_name = "Vertex AI"
+
+    mode_flag = "CLAUDE_CODE_USE_VERTEX"
 
     @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
@@ -100,10 +100,6 @@ class VertexProvider(ClaudeCompatible):
             ]
         )
 
-    def claude_model_name(self) -> str:
-        """Model name for ClaudeAgentOptions.model."""
-        return get_settings().provider.model or "claude-sonnet-5-5"
-
     def airgap_egress(self) -> AirgapPosture:
         region = get_settings().provider.cloud_ml_region
         return AirgapPosture(
@@ -129,11 +125,12 @@ class VertexProvider(ClaudeCompatible):
 
         return warnings
 
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        return ("ANTHROPIC_API_KEY",)
+
     def setup_environment(self) -> None:
         """Vertex AI environment should be configured via .env and docker-compose.yml."""
-        # Keep existing Vertex mode flag (if configured) and clear conflicting ones.
-        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_VERTEX")
-        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
+        super().setup_environment()
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:

@@ -6,7 +6,7 @@ import os
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._anthropic_common import anthropic_container_env
-from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_env_vars, clear_provider_mode_flags
+from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS
 from .base import ClaudeCompatible, CostInfo, LlmUpstream
 
 logger = logging.getLogger(__name__)
@@ -20,12 +20,6 @@ class AnthropicProvider(ClaudeCompatible):
         return "anthropic"
 
     display_name = "Anthropic"
-
-    @classmethod
-    def validate_model_format(cls, model: str | None) -> str | None:
-        return cls.model_format_error(
-            model, r"^claude-", "an Anthropic model name (expected to start with 'claude-')"
-        )
 
     def validate_required_config(self) -> list[str]:
         return self.required_config_errors(get_settings().provider)
@@ -95,25 +89,13 @@ class AnthropicProvider(ClaudeCompatible):
             env["ANTHROPIC_OAUTH_TOKEN"] = oauth
         return env
 
-    def claude_model_name(self) -> str:
-        """Model name for ClaudeAgentOptions.model."""
-        return get_settings().provider.model or "claude-sonnet-5-5"
-
-    def _validate_optional_config(self) -> list[str]:
-        warnings = []
-        settings = get_settings()
-
-        if not settings.provider.model:
-            warnings.append("OPENSCIENTIST_MODEL not set (will use claude-sonnet-5-5)")
-
-        return warnings
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        return VERTEX_PROVIDER_ENV_VARS
 
     def setup_environment(self) -> None:
+        super().setup_environment()
+
         settings = get_settings()
-
-        clear_provider_mode_flags(logger)
-        clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
-
         # The Claude Code CLI expects the OAuth token in CLAUDE_CODE_OAUTH_TOKEN
         if settings.provider.claude_code_oauth_token and not settings.provider.anthropic_api_key:
             os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = (
@@ -128,10 +110,8 @@ class AnthropicProvider(ClaudeCompatible):
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """Cost information. Anthropic's API has no billing endpoint, so
         spend is unknown."""
-        return CostInfo(
-            provider_name=self.display_name,
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            recent_period_hours=lookback_hours,
-            data_lag_note="Cost tracking not available for direct Anthropic API",
+        return CostInfo.unavailable(
+            self.display_name,
+            "Cost tracking not available for direct Anthropic API",
+            lookback_hours,
         )

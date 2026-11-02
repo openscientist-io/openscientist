@@ -104,3 +104,21 @@ class TestMarkdownToPdf:
         markdown_to_pdf(md, pdf_path=tmp_path / "out.pdf")
         # hr triggers pdf.line() call
         mock_pdf.line.assert_called()
+
+
+def test_the_footer_names_the_run_environment(tmp_path: Path) -> None:
+    md = tmp_path / "report.md"
+    md.write_text("# Report\n\nText.\n")
+    written: list[str] = []
+    original = ReportPDF.multi_cell
+
+    def recording_multi_cell(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        written.append(str(kwargs.get("text", args[2] if len(args) > 2 else "")))
+        return original(self, *args, **kwargs)
+
+    with patch.object(ReportPDF, "multi_cell", recording_multi_cell):
+        markdown_to_pdf(
+            md, tmp_path / "out.pdf", run_environment="Run environment: OpenScientist abc123"
+        )
+    assert "Run environment: OpenScientist abc123" in written
+    assert (tmp_path / "out.pdf").read_bytes().startswith(b"%PDF")
