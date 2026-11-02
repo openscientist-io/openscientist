@@ -34,23 +34,24 @@ _LABEL_ENDING_STATUSES = _ENDED_STATUSES | {"awaiting_feedback", "generating_rep
 
 # Budgeting the report prompt against the model's context window. We reserve
 # tokens for the system prompt, tool definitions, the model's own output, and
-# the non-literature sections of the report prompt, then spend the rest on
-# literature abstracts. CHARS_PER_TOKEN is a conservative chars->tokens factor
-# (dense scientific text), so the char budget under-fills rather than overflows.
+# the outline's titles and counts, then spend the rest on the run's detailed
+# facts first and literature abstracts after. CHARS_PER_TOKEN is a conservative
+# chars->tokens factor (dense scientific text), so the char budget under-fills
+# rather than overflows.
 _REPORT_PROMPT_RESERVE_TOKENS = 12000
 _REPORT_PROMPT_CHARS_PER_TOKEN = 3.5
-_REPORT_PROMPT_MIN_ABSTRACT_CHARS = 2000
+_REPORT_PROMPT_MIN_OUTLINE_CHARS = 2000
 
 
-def _report_abstract_budget_chars(context_window_tokens: int) -> int:
-    """Char budget for literature abstracts, derived from the model's context.
+def _report_outline_budget_chars(context_window_tokens: int) -> int:
+    """Char budget for the outline's facts and abstracts, derived from the model's context.
 
     Pure function of the resolved window: the caller passes the agent's cached
     ``model_profile.context_window_tokens`` so this builder does no I/O.
     """
     spare_tokens = context_window_tokens - _REPORT_PROMPT_RESERVE_TOKENS
     return max(
-        _REPORT_PROMPT_MIN_ABSTRACT_CHARS,
+        _REPORT_PROMPT_MIN_OUTLINE_CHARS,
         int(spare_tokens * _REPORT_PROMPT_CHARS_PER_TOKEN),
     )
 
@@ -229,7 +230,7 @@ def build_report_prompt(
 
 {_format_job_description_section(description)}
 
-{ks.get_report_outline(abstract_budget_chars=_report_abstract_budget_chars(context_window_tokens))}
+{ks.get_report_outline(budget_chars=_report_outline_budget_chars(context_window_tokens))}
 
 {figure_section}
 
