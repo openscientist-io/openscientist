@@ -1,10 +1,4 @@
-"""
-Administrator model for admin access control.
-
-The Administrator model tracks users with administrative privileges.
-Admin status is stored separately from the User model for cleaner separation
-and audit trail.
-"""
+"""Administrator model for admin access control."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -22,21 +16,10 @@ if TYPE_CHECKING:
 
 
 class Administrator(Base):
-    """
-    Administrator record linking a user to admin privileges.
+    """Administrator record linking a user to admin privileges.
 
-    This is a separate table rather than a boolean on User to:
-    - Maintain audit trail (who granted, when)
-    - Allow easy revocation without modifying user
-    - Support future role-based access control
-
-    Attributes:
-        user_id: The user who has admin privileges (primary key)
-        granted_by: The admin who granted privileges (NULL for initial setup)
-        granted_at: When admin was granted
-        notes: Optional notes about why admin was granted
-        user: Relationship to the User model
-        granter: Relationship to the User who granted admin
+    A separate table rather than a boolean on User, to keep an audit trail of
+    who granted what and when.
     """
 
     __tablename__ = "administrators"
