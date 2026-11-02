@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from contextlib import ExitStack
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -25,6 +26,14 @@ from openscientist.job_chat import load_job_context
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components.pages import job_detail
+from openscientist.webapp_components.pages.job_detail import (
+    chat,
+    common,
+    feedback,
+    iterations,
+    report,
+    timeline,
+)
 
 
 @dataclass(frozen=True)
@@ -136,8 +145,8 @@ async def _feedback(job_id: str) -> list[str]:
 async def test_the_owners_feedback_is_saved_and_continues_the_job(
     alices_job: _Fixture, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
-    with patch.object(job_detail, "ui"):
-        await job_detail._submit_feedback_and_continue(
+    with patch.object(feedback, "ui"):
+        await feedback._submit_feedback_and_continue(
             tmp_path / alices_job.job_id, alices_job.job_id, str(alices_job.owner), 1, "  Recheck  "
         )
     assert await _feedback(alices_job.job_id) == ["Recheck"]
@@ -148,8 +157,8 @@ async def test_the_owners_feedback_is_saved_and_continues_the_job(
 async def test_a_strangers_feedback_changes_nothing(
     alices_job: _Fixture, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
-    with patch.object(job_detail, "ui"), pytest.raises(ValueError, match="not found"):
-        await job_detail._submit_feedback_and_continue(
+    with patch.object(feedback, "ui"), pytest.raises(ValueError, match="not found"):
+        await feedback._submit_feedback_and_continue(
             tmp_path / alices_job.job_id, alices_job.job_id, str(alices_job.stranger), 1, "Planted"
         )
     assert await _feedback(alices_job.job_id) == []
@@ -160,13 +169,11 @@ async def test_a_strangers_feedback_changes_nothing(
 async def test_the_job_page_shows_the_knowledge_state_to_its_owner_only(
     alices_job: _Fixture,
 ) -> None:
-    data, error = await job_detail._load_knowledge_state(alices_job.job_id, str(alices_job.owner))
+    data, error = await common._load_knowledge_state(alices_job.job_id, str(alices_job.owner))
     assert error is None
     assert data is not None
     assert [f["title"] for f in data["findings"]] == ["Alice's finding"]
-    data, error = await job_detail._load_knowledge_state(
-        alices_job.job_id, str(alices_job.stranger)
-    )
+    data, error = await common._load_knowledge_state(alices_job.job_id, str(alices_job.stranger))
     assert data is None
     assert error
 
@@ -287,24 +294,31 @@ async def test_the_job_page_follows_the_job_from_feedback_to_completion(
             "can_start_jobs": True,
         }
 
-    with (
-        patch("openscientist.web_app.get_job_manager", return_value=manager),
-        patch.object(job_detail, "ui", mock_ui),
-        patch("openscientist.webapp_components.components.badges.ui", mock_ui),
-        patch("openscientist.webapp_components.components.banners.ui", mock_ui),
-        patch("openscientist.webapp_components.components.common.ui", mock_ui),
-        patch("openscientist.webapp_components.components.dialogs.ui", mock_ui),
-        patch("openscientist.webapp_components.components.job_table.ui", mock_ui),
-        patch("openscientist.webapp_components.components.navigation.ui", mock_ui),
-        patch("openscientist.webapp_components.components.navigation.app", fake_app),
-        patch("openscientist.webapp_components.components.notifications.ui", mock_ui),
-        patch.object(client_guard, "is_client_connected", return_value=True),
-        patch.object(client_guard, "ui", mock_ui),
-        patch.object(middleware, "app", fake_app),
-        patch.object(middleware, "_get_session_token", return_value="test-token"),
-        patch.object(middleware, "ui", mock_ui),
-        patch.object(middleware, "validate_session", _validated),
-    ):
+    with ExitStack() as stack:
+        for patcher in (
+            patch("openscientist.web_app.get_job_manager", return_value=manager),
+            patch.object(job_detail, "ui", mock_ui),
+            patch.object(chat, "ui", mock_ui),
+            patch.object(feedback, "ui", mock_ui),
+            patch.object(iterations, "ui", mock_ui),
+            patch.object(report, "ui", mock_ui),
+            patch.object(timeline, "ui", mock_ui),
+            patch("openscientist.webapp_components.components.badges.ui", mock_ui),
+            patch("openscientist.webapp_components.components.banners.ui", mock_ui),
+            patch("openscientist.webapp_components.components.common.ui", mock_ui),
+            patch("openscientist.webapp_components.components.dialogs.ui", mock_ui),
+            patch("openscientist.webapp_components.components.job_table.ui", mock_ui),
+            patch("openscientist.webapp_components.components.navigation.ui", mock_ui),
+            patch("openscientist.webapp_components.components.navigation.app", fake_app),
+            patch("openscientist.webapp_components.components.notifications.ui", mock_ui),
+            patch.object(client_guard, "is_client_connected", return_value=True),
+            patch.object(client_guard, "ui", mock_ui),
+            patch.object(middleware, "app", fake_app),
+            patch.object(middleware, "_get_session_token", return_value="test-token"),
+            patch.object(middleware, "ui", mock_ui),
+            patch.object(middleware, "validate_session", _validated),
+        ):
+            stack.enter_context(patcher)
         # Alice opens her job's page: the page renders with the feedback panel.
         await job_detail.job_detail_page(job_id)
         labels = [c.args[0] for c in mock_ui.label.call_args_list if c.args]

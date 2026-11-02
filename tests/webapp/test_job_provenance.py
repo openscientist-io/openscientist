@@ -10,7 +10,7 @@ from unittest.mock import patch
 from openscientist.database.models import Job
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.run_environment import run_environment_text
-from openscientist.webapp_components.pages import job_detail
+from openscientist.webapp_components.pages.job_detail import timeline
 
 _RECORDED = {
     "openscientist_commit": "abc123def456",
@@ -84,10 +84,10 @@ def test_the_job_page_shows_the_run_environment() -> None:
     )
     context = SimpleNamespace(job_info=info, ks_data=None)
     with (
-        patch.object(job_detail, "ui") as mock_ui,
-        patch.object(job_detail, "is_client_connected", return_value=True),
-        patch.object(job_detail, "render_stat_badges"),
+        patch.object(timeline, "ui") as mock_ui,
+        patch.object(timeline, "is_client_connected", return_value=True),
+        patch.object(timeline, "render_stat_badges"),
     ):
-        job_detail._render_job_stats_content(context)  # type: ignore[arg-type]
+        timeline._render_job_stats_content(context)  # type: ignore[arg-type]
     labels = [str(call.args[0]) for call in mock_ui.label.call_args_list if call.args]
     assert any("abc123def456" in label for label in labels)

@@ -3,7 +3,7 @@
 Tests cover the full vertical slice:
   tools/knowledge.py → tools/registry.py → agent/claude_code_agent.py →
   agent/factory.py → orchestrator/discovery.py → job_manager.py →
-  database/models/job.py → webapp_components/pages/job_detail.py
+  database/models/job.py → webapp_components/pages/job_detail/
 """
 
 from __future__ import annotations
@@ -465,14 +465,14 @@ class TestStatsBadgesHypotheses:
         )
 
     def test_no_hypotheses_badge_when_count_is_zero(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=3, hyp_count=0)
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
 
     def test_hypotheses_badge_appears_when_count_nonzero(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=3, hyp_count=5)
         badge = self._get_badge(badges, "Hypotheses")
@@ -481,7 +481,7 @@ class TestStatsBadgesHypotheses:
         assert badge[2] == "orange"
 
     def test_findings_badge_still_present_alongside_hypotheses(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(findings=4), lit_count=2, hyp_count=3)
         labels = self._get_labels(badges)
@@ -489,14 +489,14 @@ class TestStatsBadgesHypotheses:
         assert "Hypotheses" in labels
 
     def test_default_hyp_count_zero_omits_badge(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=0)
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
 
     def test_completed_job_with_a_stop_note_shows_it(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         job = SimpleNamespace(
             status=JobStatus.COMPLETED,
@@ -513,13 +513,13 @@ class TestStatsBadgesHypotheses:
         assert badge[1] == "Job cost limit of $5.00 reached: the job has spent $5.00."
 
     def test_completed_job_without_a_stop_note_shows_no_badge(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=0)
         assert all(b[0] != "Stopped early" for b in badges)
 
     def test_codex_job_shows_agent_and_provider_not_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         # Codex stores no model id, so the badge must read the agent + provider,
         # not the misleading "Model: Openai".
@@ -529,7 +529,7 @@ class TestStatsBadgesHypotheses:
         assert self._get_badge(badges, "Model") is None
 
     def test_azure_openai_job_shows_codex_and_azure_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(llm_provider="azure-openai"), lit_count=0)
         assert self._badge_value(badges, "Agent") == "Codex"
@@ -537,14 +537,14 @@ class TestStatsBadgesHypotheses:
         assert self._get_badge(badges, "Model") is None
 
     def test_ollama_job_shows_omp_and_ollama_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(llm_provider="ollama"), lit_count=0)
         assert self._badge_value(badges, "Agent") == "Oh My Pi"
         assert self._badge_value(badges, "Provider") == "Ollama (local)"
 
     def test_ollama_job_with_model_shows_provider_and_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="ollama", llm_model="gpt-oss:20b"), lit_count=0
@@ -555,7 +555,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Model") == "gpt-oss:20b"
 
     def test_vllm_job_shows_omp_and_vllm_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="vllm", llm_model="Qwen/Qwen3-32B"), lit_count=0
@@ -566,7 +566,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Model") == "Qwen/Qwen3-32B"
 
     def test_llamacpp_job_shows_omp_and_llamacpp_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="llamacpp", llm_model="meta-llama/Llama-3.1-8B-Instruct"),
@@ -578,7 +578,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Model") == "meta-llama/Llama-3.1-8B-Instruct"
 
     def test_claude_job_shows_agent_and_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="anthropic", llm_model="claude-sonnet-4-5-20250929"),
@@ -590,7 +590,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Provider") == "Anthropic"
 
     def test_no_provider_omits_agent_badge(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=0)
         labels = self._get_labels(badges)
@@ -598,7 +598,7 @@ class TestStatsBadgesHypotheses:
         assert "Provider" not in labels
 
     def test_model_badge_uses_human_readable_label(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(
@@ -613,7 +613,7 @@ class TestStatsBadgesHypotheses:
         assert badge[2] == "cyan"
 
     def test_missing_model_shows_provider_badge_not_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(
@@ -635,7 +635,9 @@ class TestAnalysisLogMetadata:
     """Analysis log helpers should surface concise metadata for the timeline UI."""
 
     def test_search_pubmed_metadata_includes_query_and_result_count(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+        from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _analysis_log_meta_lines,
+        )
 
         lines = _analysis_log_meta_lines(
             {
@@ -652,7 +654,9 @@ class TestAnalysisLogMetadata:
         assert all(line.italic is False for line in lines)
 
     def test_hypothesis_metadata_marks_statement_as_italic(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+        from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _analysis_log_meta_lines,
+        )
 
         lines = _analysis_log_meta_lines(
             {
@@ -671,7 +675,9 @@ class TestAnalysisLogMetadata:
         assert [line.italic for line in lines] == [True, False, False]
 
     def test_execute_code_metadata_adds_duration(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+        from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _analysis_log_meta_lines,
+        )
 
         lines = _analysis_log_meta_lines(
             {
@@ -692,7 +698,9 @@ class TestCollectIterationPlots:
     """Plot collection should skip unreadable metadata files instead of crashing."""
 
     def test_skips_non_utf8_metadata_files(self, tmp_path: Path) -> None:
-        from openscientist.webapp_components.pages.job_detail import _collect_iteration_plots
+        from openscientist.webapp_components.pages.job_detail.iterations import (
+            _collect_iteration_plots,
+        )
 
         plots_dir = tmp_path / "provenance"
         plots_dir.mkdir()
