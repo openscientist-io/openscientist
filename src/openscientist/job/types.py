@@ -27,6 +27,13 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+def completed_iterations(status: str, iteration: int) -> int:
+    """A job running or awaiting feedback is mid-iteration, so one fewer is complete, floored at 0."""
+    if status in (JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK):
+        return iteration - 1 if iteration > 1 else 0
+    return iteration
+
+
 @dataclass
 class JobStatusUpdateResult:
     """Result of updating job status, includes data needed for notifications.

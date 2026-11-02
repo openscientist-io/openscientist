@@ -19,6 +19,7 @@ import openscientist.budget as budget_mod
 from openscientist.budget import BudgetVerdict
 from openscientist.database.models import CostRecord, Job, User
 from openscientist.exceptions import BudgetExceededError
+from openscientist.job.types import completed_iterations
 from openscientist.job_manager import (
     JobInfo,
     JobManager,
@@ -61,6 +62,19 @@ class TestJobStatus:
     def test_string_enum(self):
         assert JobStatus.RUNNING == "running"
         assert isinstance(JobStatus.RUNNING, str)
+
+
+class TestCompletedIterations:
+    """A job still working on an iteration has finished the one before it, floored at 0."""
+
+    @pytest.mark.parametrize("status", [s.value for s in JobStatus])
+    @pytest.mark.parametrize("iteration", [0, 1, 2, 3])
+    def test_counts_only_finished_iterations(self, status, iteration):
+        if status in ("running", "awaiting_feedback"):
+            expected = max(iteration - 1, 0)
+        else:
+            expected = iteration
+        assert completed_iterations(status, iteration) == expected
 
 
 class TestJobInfo:

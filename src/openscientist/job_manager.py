@@ -40,7 +40,12 @@ from openscientist.database.session import thread_safe_admin_session, thread_saf
 from openscientist.exceptions import BudgetExceededError, ProviderError
 from openscientist.job.agent_error import take_agent_error
 from openscientist.job.status import status_update_statement
-from openscientist.job.types import JobInfo, JobStatus, JobStatusUpdateResult
+from openscientist.job.types import (
+    JobInfo,
+    JobStatus,
+    JobStatusUpdateResult,
+    completed_iterations,
+)
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import (
     ensure_user_has_topic,
@@ -89,13 +94,6 @@ async def _job_session(user_id: UUID | None) -> AsyncIterator[AsyncSession]:
         yield session
 
 
-def _derive_progress_from_db(status: str, current_iteration: int) -> int:
-    """Derive iterations_completed from Job model columns (no KS load needed)."""
-    if status in ("running", "awaiting_feedback"):
-        return current_iteration - 1 if current_iteration > 1 else 0
-    return current_iteration
-
-
 async def _load_progress(
     job_id: str,
     status: str,
@@ -108,13 +106,7 @@ async def _load_progress(
             ks = (await KnowledgeState.load_from_database(job_id, session)).data
         findings_count = len(ks.get("findings", []))
         ks_iteration = int(ks.get("iteration", 1))
-
-        if status in ("running", "awaiting_feedback"):
-            iterations_completed = ks_iteration - 1 if ks_iteration > 1 else 0
-        else:
-            iterations_completed = ks_iteration
-
-        return iterations_completed, findings_count
+        return completed_iterations(status, ks_iteration), findings_count
     except Exception as e:
         logger.warning("Failed to load KS for job %s: %s", job_id, e)
         return default_iterations, default_findings
@@ -1132,7 +1124,7 @@ async def _status_notification(
     """Tell the job's owner about ``status``, if they turned notifications on."""
     if not target or not target.ntfy_enabled or not target.owner_id:
         return
-    iterations_completed = _derive_progress_from_db(status.value, target.current_iteration)
+    iterations_completed = completed_iterations(status.value, target.current_iteration)
     try:
         await notify_job_status_change(
             user_id=UUID(target.owner_id),
