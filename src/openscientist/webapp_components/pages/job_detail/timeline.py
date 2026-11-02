@@ -71,6 +71,8 @@ def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[A
     stop_note = getattr(latest_job, "stop_note", None)
     if latest_job.status == JobStatus.COMPLETED and stop_note:
         badges.append(("Stopped early", stop_note, "orange"))
+    if getattr(latest_job, "is_public", False):
+        badges.append(("Public", "anyone signed in", "teal"))
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
         badges.append(
             (
@@ -111,6 +113,8 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
+    if context.owner_name:
+        ui.label(f"Owner: {context.owner_name}").classes("text-xs text-gray-500 mt-1")
     run_environment = run_environment_text(latest_job.version_info)
     if run_environment:
         ui.label(run_environment).classes("text-xs text-gray-500 mt-1")

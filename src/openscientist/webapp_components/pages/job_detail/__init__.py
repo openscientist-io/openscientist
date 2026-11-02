@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from nicegui import ui
+from sqlalchemy import select
 
 from openscientist.auth import get_current_user_id, require_auth
 from openscientist.job.repository import get_job, get_share_permission
@@ -60,6 +61,27 @@ async def _resolve_job_permissions(job_id: str, user_id: str, db_job: Any) -> tu
     return False, share_permission == "edit"
 
 
+async def _owner_name(job_id: str, is_owner: bool) -> str | None:
+    """The owner's display name for a viewer who is not the owner, name only.
+
+    Read through the admin session, because the web login's RLS hides other
+    users' rows. None for the owner, who needs no label.
+    """
+    if is_owner:
+        return None
+    from openscientist.database.models import Job as JobModel
+    from openscientist.database.models import User
+    from openscientist.database.session import get_admin_session
+
+    async with get_admin_session() as session:
+        result = await session.execute(
+            select(User.name)
+            .join(JobModel, JobModel.owner_id == User.id)
+            .where(JobModel.id == UUID(job_id))
+        )
+        return result.scalar_one_or_none()
+
+
 def _job_page_title(job_info: Any) -> str:
     page_title: str = job_info.short_title or job_info.research_question[:50]
     if len(job_info.research_question) > 50 and not job_info.short_title:
@@ -100,6 +122,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         return None
 
     is_owner, can_edit = await _resolve_job_permissions(job_id, user_id, db_job)
+    owner_name = await _owner_name(job_id, is_owner)
 
     job_dir = job_manager.jobs_dir / job_id
     ks_data, ks_load_error = await _load_knowledge_state(job_id, user_id)
@@ -124,6 +147,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         db_job=db_job,
         is_owner=is_owner,
         can_edit=can_edit,
+        owner_name=owner_name,
         job_dir=job_dir,
         ks_data=ks_data,
         ks_load_error=ks_load_error,

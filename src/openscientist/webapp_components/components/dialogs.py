@@ -152,6 +152,30 @@ async def _share_with_user(
     return True, f"Shared with {email}"
 
 
+async def _load_job_public_state(job_id: str) -> tuple[bool, str | None]:
+    """The job's public flag and owner id, read through the admin session."""
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, UUID(job_id))
+    if job_obj is None:
+        return False, None
+    return bool(job_obj.is_public), str(job_obj.owner_id) if job_obj.owner_id else None
+
+
+async def _set_job_public_from_ui(
+    job_id: str, is_public: bool, current_user_id: str
+) -> tuple[bool, str]:
+    """Change a job's public visibility after checking ownership."""
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, UUID(job_id))
+        if not job_obj or str(job_obj.owner_id) != current_user_id:
+            return False, "Only the job owner can change its visibility"
+        job_obj.is_public = is_public
+        await session.commit()
+    if is_public:
+        return True, "Any signed-in user with the link can now view this job"
+    return True, "This job is private again"
+
+
 def _render_selected_share_user(
     selected_user_container: ui.element,
     email: str,
@@ -175,6 +199,7 @@ class _ShareDialogController:
         self,
         job_id: str,
         shares_container: ui.element,
+        public_switch: ui.switch,
         search_input: ui.input,
         search_results: ui.element,
         selected_user_container: ui.element,
@@ -183,6 +208,8 @@ class _ShareDialogController:
     ) -> None:
         self.job_id = job_id
         self.shares_container = shares_container
+        self.public_switch = public_switch
+        self._syncing_public_switch = False
         self.search_input = search_input
         self.search_results = search_results
         self.selected_user_container = selected_user_container
@@ -190,6 +217,39 @@ class _ShareDialogController:
         self.permission_select = permission_select
         self.selected_user_state: dict[str, str | None] = {"email": None, "name": None}
         self.search_counter = {"value": 0}
+
+    async def refresh_public_switch(self) -> None:
+        """Show the job's stored visibility to the owner, or hide it otherwise."""
+        try:
+            is_public, owner_id = await _load_job_public_state(self.job_id)
+        except Exception as exc:
+            logger.error("Failed to load job visibility: %s", exc, exc_info=True)
+            return
+        current_user_id = get_current_user_id()
+        self.public_switch.visible = owner_id is not None and owner_id == current_user_id
+        self._syncing_public_switch = True
+        try:
+            self.public_switch.value = is_public
+        finally:
+            self._syncing_public_switch = False
+
+    async def on_public_change(self, event: Any) -> None:
+        """Persist a visibility change made with the switch."""
+        if self._syncing_public_switch:
+            return
+        try:
+            current_user_id = get_current_user_id()
+            if not current_user_id:
+                ui.notify("You must be signed in to change visibility", type="negative")
+                return
+            success, message = await _set_job_public_from_ui(
+                self.job_id, bool(event.value), current_user_id
+            )
+            ui.notify(message, type="positive" if success else "negative")
+        except Exception as exc:
+            logger.error("Failed to change job visibility: %s", exc, exc_info=True)
+            ui.notify("Error changing visibility", type="negative")
+        await self.refresh_public_switch()
 
     def clear_selection(self) -> None:
         """Clear selected share target and show search input again."""
@@ -210,7 +270,8 @@ class _ShareDialogController:
         self.share_action_row.classes(remove="hidden")
 
     async def refresh_shares(self) -> None:
-        """Reload current shares list from database."""
+        """Reload current shares list and visibility from the database."""
+        await self.refresh_public_switch()
         try:
             shares = await _load_job_shares(self.job_id)
             _render_share_rows(self.shares_container, shares, self.revoke_share)
@@ -288,6 +349,13 @@ def render_share_dialog(job_id: str) -> ui.dialog:
             ui.label("Share Job").classes("text-h6")
             render_job_id_badge(job_id)
 
+        with ui.column().classes("w-full gap-0 mb-2"):
+            public_switch = ui.switch("Anyone signed in can view this job")
+            ui.label(
+                "Readers see the report, findings and job files, but not your uploaded "
+                "inputs, chat or costs. Outputs printed from the data become visible."
+            ).classes("text-xs text-gray-600")
+
         shares_container = ui.column().classes("w-full mb-4")
         ui.separator()
         ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
@@ -307,12 +375,14 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         controller = _ShareDialogController(
             job_id=job_id,
             shares_container=shares_container,
+            public_switch=public_switch,
             search_input=search_input,
             search_results=search_results,
             selected_user_container=selected_user_container,
             share_action_row=share_action_row,
             permission_select=permission_select,
         )
+        public_switch.on_value_change(controller.on_public_change)
         with share_action_row:
             ui.button("Share", icon="person_add", on_click=controller.do_share).props(
                 "color=primary"

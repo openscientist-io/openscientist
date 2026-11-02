@@ -82,7 +82,7 @@ def test_the_job_page_shows_the_run_environment() -> None:
         created_at="2026-10-30T12:00:00Z",
         version_info=_RECORDED,
     )
-    context = SimpleNamespace(job_info=info, ks_data=None)
+    context = SimpleNamespace(job_info=info, ks_data=None, owner_name=None)
     with (
         patch.object(timeline, "ui") as mock_ui,
         patch.object(timeline, "is_client_connected", return_value=True),

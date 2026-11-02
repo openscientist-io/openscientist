@@ -35,6 +35,7 @@ from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job.types import JobStatus
 from openscientist.job_manager import JobManager
+from openscientist.share_service import set_job_public, withheld_artifact_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,7 @@ class JobResponse(BaseModel):
     stop_note: str | None = Field(
         None, description="Why a completed job stopped early at a budget limit, if it did"
     )
+    is_public: bool = Field(False, description="Whether any signed-in user can read this job")
 
 
 class JobListResponse(BaseModel):
@@ -170,6 +172,19 @@ class _JobResponseFields(TypedDict):
     space_group: str | None
     queue_reason: str | None
     stop_note: str | None
+    is_public: bool
+
+
+class JobVisibilityUpdate(BaseModel):
+    """Request to change who can read a job."""
+
+    is_public: bool = Field(
+        ...,
+        description=(
+            "True lets any signed-in user read the job, without its uploaded "
+            "input files; false restores owner/share-only access"
+        ),
+    )
 
 
 async def get_job_by_id(
@@ -218,6 +233,7 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "space_group": job.space_group,
         "queue_reason": job.queue_reason,
         "stop_note": job.stop_note,
+        "is_public": job.is_public,
     }
 
 
@@ -562,6 +578,31 @@ async def cancel_job(
     logger.info("Cancelled job %s for user %s", job.id, user.email)
 
 
+@router.put("/{job_id}/visibility", response_model=JobDetailResponse)
+async def update_job_visibility(
+    job_id: str,
+    update: JobVisibilityUpdate,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> JobDetailResponse:
+    """Make a job readable by any signed-in user, or private again (owner only).
+
+    A public job is reachable by ID or link but stays off other users' job
+    pages. A reader who is neither the owner nor a share recipient does not
+    receive the job's uploaded input files.
+    """
+    await set_current_user(session, user.id)
+    job = await set_job_public(
+        session,
+        user.id,
+        job_id=job_id,
+        is_public=update.is_public,
+        not_owned_detail="Only the job owner can change its visibility",
+    )
+    logger.info("Set job %s is_public=%s for user %s", job.id, job.is_public, user.email)
+    return _job_to_detail_response(job)
+
+
 @router.get("/{job_id}/report")
 async def download_report(
     job_id: str,
@@ -667,6 +708,9 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
+    # A job readable only because it is public comes without the owner's uploads.
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+
     # Build ZIP archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
@@ -682,6 +726,7 @@ async def download_artifacts(
             archive_path=archive_path,
             job_id=str(job.id),
             version_info=job.version_info,
+            excluded_top_level_dirs=excluded_dirs,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
