@@ -23,6 +23,7 @@ from openscientist.agent.factory import agent_class_for_provider_id
 from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx, thread_safe_user_session
+from openscientist.exceptions import BudgetExceededError
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.job_chat import get_chat_history, send_chat_message
 from openscientist.job_manager import _db_get_job, _db_get_share_permission
@@ -922,6 +923,12 @@ def _format_model_name(llm_model: str | None) -> str | None:
 def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[Any]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
+    queue_reason = getattr(latest_job, "queue_reason", None)
+    if latest_job.status == JobStatus.QUEUED and queue_reason:
+        badges.append(("Waiting on", queue_reason, "orange"))
+    stop_note = getattr(latest_job, "stop_note", None)
+    if latest_job.status == JobStatus.COMPLETED and stop_note:
+        badges.append(("Stopped early", stop_note, "orange"))
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
         badges.append(
             (
@@ -1665,6 +1672,12 @@ class _ChatTabController:
             self._toggle_typing_indicator(False)
             self._play_sound("sound-receive")
             await self._render_messages()
+        except BudgetExceededError as exc:
+            logger.warning("Chat turn refused by a budget limit: %s", exc)
+            if guard.is_connected:
+                self._toggle_typing_indicator(False)
+                self._play_sound("sound-error")
+                ui.notify(str(exc), type="negative")
         except Exception as exc:
             logger.error("Chat error: %s", exc, exc_info=True)
             if guard.is_connected:

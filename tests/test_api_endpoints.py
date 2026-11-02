@@ -492,6 +492,9 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
+        test_job_db.stop_note = "Job cost limit of $5.00 reached: the job has spent $5.00."
+        await db_session.commit()
+
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -506,6 +509,7 @@ class TestJobEndpoints:
         assert data["id"] == str(test_job_db.id)
         assert data["research_question"] == "Test API Job"
         assert data["status"] == "pending"
+        assert data["stop_note"] == "Job cost limit of $5.00 reached: the job has spent $5.00."
 
     @pytest.mark.asyncio
     async def test_get_job_detail_reads_research_metadata_from_database(
@@ -589,6 +593,9 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
+        test_job_db.stop_note = "Project spend total limit of $100.00 reached."
+        await db_session.commit()
+
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
@@ -604,6 +611,7 @@ class TestJobEndpoints:
         assert data["status"] == "pending"
         assert data["current_iteration"] == 0
         assert data["max_iterations"] == 5
+        assert data["stop_note"] == "Project spend total limit of $100.00 reached."
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_job_returns_404(
@@ -861,6 +869,8 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
+            stop_note=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -951,6 +961,8 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
+            stop_note=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session
@@ -1046,6 +1058,8 @@ class TestJobEndpoints:
             current_iteration=0,
             pdb_code=None,
             space_group=None,
+            queue_reason=None,
+            stop_note=None,
         )
 
         app.dependency_overrides[get_session] = override_get_session

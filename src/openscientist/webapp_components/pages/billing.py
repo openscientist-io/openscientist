@@ -1,11 +1,12 @@
 """Billing and cost tracking panel."""
 
-import asyncio
 import logging
 
 from nicegui import ui
 from sqlalchemy import select
 
+from openscientist.admin_settings import current_admin_settings
+from openscientist.budget import check_budget, project_spend, warning_limit_reached
 from openscientist.database.models import CostRecord
 from openscientist.database.session import get_admin_session
 from openscientist.providers import get_provider
@@ -18,7 +19,7 @@ async def render_billing_panel() -> None:
     """Render the billing panel (for use as an admin subtab)."""
     with ui.column().classes("w-full gap-6"):
         await _render_db_cost_section()
-        await _render_provider_cost_section()
+        await _render_project_budget_section()
 
 
 def _iteration_label(record: CostRecord) -> str:
@@ -117,73 +118,63 @@ async def _render_db_cost_section() -> None:
     ui.table(columns=columns, rows=rows, row_key="id").classes("w-full")
 
 
-async def _render_provider_cost_section() -> None:
-    """Provider-level cost API."""
+async def _render_project_budget_section() -> None:
+    """The project spend and the verdict the budget enforcement acts on."""
     with ui.card().classes("w-full max-w-4xl"):
-        ui.label("Provider Cost API").classes("text-h6 mb-4")
+        ui.label("Project Budget").classes("text-h6 mb-4")
 
         try:
             provider = get_provider()
-            # Provider cost APIs are blocking HTTP calls, with a timeout of 10 s each.
-            cost_info = await asyncio.to_thread(provider.get_cost_info, lookback_hours=24)
-            budget_check = provider.evaluate_budget(cost_info)
+            # The spend figures and the verdict the enforcement uses, from the
+            # same check_budget the moments of spend call.
+            spend = await project_spend()
+            verdict = await check_budget(provider_id=provider.id, include_unpriced=False)
+            admin = await current_admin_settings()
 
             with ui.row().classes("w-full gap-8 mb-4"):
                 # Total spend
                 with ui.card().classes("flex-1"):
-                    total_spend_display = (
-                        f"${cost_info.total_spend_usd:.2f}"
-                        if cost_info.total_spend_usd is not None
-                        else "N/A"
-                    )
-                    ui.label(total_spend_display).classes("text-h3 text-primary")
+                    ui.label(f"${spend.total:.2f}").classes("text-h3 text-primary")
                     ui.label("Total Spend").classes("text-subtitle2 text-grey")
 
                 # Last 24h
                 with ui.card().classes("flex-1"):
-                    recent_spend_display = (
-                        f"${cost_info.recent_spend_usd:.2f}"
-                        if cost_info.recent_spend_usd is not None
-                        else "N/A"
-                    )
-                    ui.label(recent_spend_display).classes("text-h3")
-                    ui.label(f"Last {cost_info.recent_period_hours} Hours").classes(
-                        "text-subtitle2 text-grey"
-                    )
-
-                # Budget remaining (if available)
-                if cost_info.budget_remaining_usd is not None:
-                    with ui.card().classes("flex-1"):
-                        remaining_color = (
-                            "text-positive"
-                            if cost_info.budget_remaining_usd > 10
-                            else "text-warning"
-                        )
-                        ui.label(f"${cost_info.budget_remaining_usd:.2f}").classes(
-                            f"text-h3 {remaining_color}"
-                        )
-                        ui.label("Budget Remaining").classes("text-subtitle2 text-grey")
+                    ui.label(f"${spend.last_24h:.2f}").classes("text-h3")
+                    ui.label("Last 24 Hours").classes("text-subtitle2 text-grey")
 
             # Provider info
             with ui.card().classes("w-full bg-gray-50"):
                 ui.label("Provider Information").classes("text-subtitle2 font-bold mb-2")
-                ui.label(f"Provider: {cost_info.provider_name}").classes("text-sm")
-                if cost_info.data_lag_note:
-                    ui.label(cost_info.data_lag_note).classes("text-sm text-grey-6")
+                provider_name = (
+                    spend.billed.provider_name
+                    if spend.billed is not None
+                    else provider.display_name
+                )
+                ui.label(f"Provider: {provider_name}").classes("text-sm")
+                if spend.billed is not None and spend.billed.data_lag_note:
+                    ui.label(spend.billed.data_lag_note).classes("text-sm text-grey-6")
 
-            # Budget warnings/errors
-            if budget_check and budget_check.get("errors"):
+            if not verdict.ok:
                 with ui.card().classes("w-full bg-red-50 border border-red-300 mt-4 p-4"):
-                    ui.label("Budget Alerts").classes("text-subtitle2 font-bold text-red-800 mb-2")
-                    for error in budget_check["errors"]:
-                        ui.label(f"⚠️ {error}").classes("text-sm text-red-600")
-            elif budget_check and budget_check.get("warnings"):
+                    ui.label("Budget Limit Reached").classes(
+                        "text-subtitle2 font-bold text-red-800 mb-2"
+                    )
+                    ui.label(f"⚠️ {verdict.message}").classes("text-sm text-red-600")
+            elif warning_limit_reached(
+                spend.last_24h,
+                admin.warn_project_spend_24h_usd,
+                admin.max_project_spend_24h_usd,
+            ):
+                warn = admin.warn_project_spend_24h_usd
                 with ui.card().classes("w-full bg-yellow-50 border border-yellow-300 mt-4 p-4"):
-                    ui.label("Budget Warnings").classes(
+                    ui.label("Budget Warning").classes(
                         "text-subtitle2 font-bold text-yellow-800 mb-2"
                     )
-                    for warning in budget_check["warnings"]:
-                        ui.label(f"⚠️ {warning}").classes("text-sm text-yellow-600")
+                    if warn is not None:
+                        ui.label(
+                            f"⚠️ Last 24 h spend ${spend.last_24h:.2f} is at or above the "
+                            f"warning threshold ${warn:.2f}"
+                        ).classes("text-sm text-yellow-600")
 
         except Exception as e:
             logger.warning("Cost tracking unavailable: %s", e)

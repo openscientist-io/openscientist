@@ -2,8 +2,8 @@
 
 import asyncio
 import threading
-from collections.abc import Mapping
-from contextlib import nullcontext
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,12 +11,34 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+import pytest_asyncio
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from openscientist.database.models import Job
-from openscientist.job_manager import JobInfo, JobManager, JobStatus, JobStatusUpdateResult
+import openscientist.budget as budget_mod
+from openscientist.budget import BudgetVerdict
+from openscientist.database.models import CostRecord, Job, User
+from openscientist.exceptions import BudgetExceededError
+from openscientist.job_manager import (
+    JobInfo,
+    JobManager,
+    JobStatus,
+    JobStatusUpdateResult,
+    run_budget_queue_recheck,
+)
+from openscientist.providers.base import CostInfo
 from openscientist.settings import ProviderSettings
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine):
+    """The row the slot checks, the worker timeout, and the queue pick read."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 class TestJobStatus:
@@ -339,6 +361,7 @@ class TestContainerStatusNotifications:
         self,
         tmp_path: Path,
         statuses: list[tuple[JobStatus, str | None]],
+        stop_notes: list[str | None] | None = None,
     ) -> list[Mapping[str, object]]:
         manager = _new_manager(tmp_path)
         job_id = str(uuid4())
@@ -350,8 +373,9 @@ class TestContainerStatusNotifications:
                 status=status,
                 created_at="2026-02-01T00:00:00+00:00",
                 error=error,
+                stop_note=stop_notes[i] if stop_notes is not None else None,
             )
-            for status, error in statuses
+            for i, (status, error) in enumerate(statuses)
         ]
         target = JobStatusUpdateResult(
             applied=True,
@@ -367,10 +391,6 @@ class TestContainerStatusNotifications:
         with (
             patch("openscientist.job_container.JobContainerRunner", return_value=runner),
             patch("openscientist.job_manager.time.sleep"),
-            patch(
-                "openscientist.settings.get_settings",
-                return_value=SimpleNamespace(container=SimpleNamespace(agent_timeout=3600)),
-            ),
             patch.object(manager, "_load_job_info", side_effect=polls),
             patch.object(manager, "_start_next_queued_job"),
             patch(
@@ -413,6 +433,24 @@ class TestContainerStatusNotifications:
         """cancel_job already notified when it wrote the status."""
         sent = self._run(tmp_path, [(JobStatus.CANCELLED, None)])
         assert [s["new_status"] for s in sent] == ["running"]
+
+    def test_a_completed_job_with_a_stop_note_names_it(self, tmp_path):
+        note = "Job cost limit of $5.00 reached: the job has spent $5.00."
+        sent = self._run(
+            tmp_path,
+            [(JobStatus.RUNNING, None), (JobStatus.COMPLETED, None)],
+            stop_notes=[None, note],
+        )
+        assert [s["new_status"] for s in sent] == ["running", "completed"]
+        assert sent[1]["stop_note"] == note
+
+    def test_a_failed_job_carries_no_stop_note(self, tmp_path):
+        sent = self._run(
+            tmp_path,
+            [(JobStatus.FAILED, "Report generation failed: boom")],
+            stop_notes=["some note"],
+        )
+        assert sent[1]["stop_note"] is None
 
 
 class TestJobManagerKSProgress:
@@ -510,7 +548,7 @@ class TestJobManagerConcurrencyLimit:
 
         try:
             manager = _new_manager(tmp_path)
-            manager.max_concurrent = 1
+            await set_admin_settings_row(test_engine, max_concurrent_jobs=1)
             manager._running_jobs[str(paused.id)] = MagicMock()
 
             with patch.object(manager, "_run_job"):
@@ -601,39 +639,82 @@ class TestJobManagerCleanup:
 class TestJobManagerCreationSafety:
     """Tests for creation-time safety guards."""
 
-    async def test_create_job_blocks_when_budget_limit_exceeded(self, tmp_path):
-        manager = _new_manager(tmp_path)
-        fake_provider = SimpleNamespace(
-            check_budget_limits=lambda: {
-                "can_proceed": False,
-                "errors": ["Provider budget exhausted"],
-            }
-        )
-
-        with (
-            patch.object(manager, "get_job", new_callable=AsyncMock, return_value=None),
-            patch("openscientist.job_manager.get_provider", return_value=fake_provider),
-            pytest.raises(ValueError, match="Cannot create job"),
-        ):
-            await manager.create_job(
-                job_id=str(uuid4()),
-                research_question="Budget test",
-                data_files=[],
-                auto_start=False,
-            )
-
-    async def test_create_job_rolls_back_database_when_filesystem_init_fails(self, tmp_path):
+    async def test_create_job_refused_at_a_project_limit(self, tmp_path, test_engine: AsyncEngine):
+        """The check runs before any row exists, and the caller gets the
+        verdict message."""
         manager = _new_manager(tmp_path)
         job_id = str(uuid4())
-        fake_provider = SimpleNamespace(check_budget_limits=lambda: {"can_proceed": True})
+        info = CostInfo(
+            provider_name="stub",
+            total_spend_usd=500.0,
+            recent_spend_usd=50.0,
+            recent_period_hours=24,
+        )
+        provider = SimpleNamespace(id="anthropic", get_cost_info=lambda lookback_hours=24: info)
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+        with (
+            patch("openscientist.budget.get_provider", return_value=provider),
+            patch("openscientist.job_manager.get_settings") as mock_settings,
+        ):
+            mock_settings.return_value.provider = SimpleNamespace(
+                provider_id="anthropic", model="claude-sonnet-4-6"
+            )
+            mock_settings.return_value.job_dir = tmp_path
+
+            await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+            with pytest.raises(
+                BudgetExceededError, match=r"Project spend total limit of \$100\.00"
+            ):
+                await manager.create_job(
+                    job_id=job_id,
+                    research_question="Budget test",
+                    data_files=[],
+                    auto_start=False,
+                )
+
+        from openscientist.job_manager import _db_get_job
+
+        assert await _db_get_job(job_id) is None
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+
+    async def test_create_job_refused_when_the_default_model_has_no_price(
+        self, tmp_path, test_engine: AsyncEngine
+    ):
+        """With no configured model, the job runs the provider's default model,
+        so that is what the unpriced check looks up."""
+        manager = _new_manager(tmp_path)
+        default_provider = SimpleNamespace(effective_model_name=lambda: "no-such-model-12345")
+        settings = SimpleNamespace(
+            provider=SimpleNamespace(
+                provider_id="anthropic", model=None, anthropic_default_sonnet_model=None
+            ),
+            job_dir=tmp_path,
+        )
+        with (
+            patch("openscientist.job_manager.get_provider", return_value=default_provider),
+            patch("openscientist.job_manager.get_settings", return_value=settings),
+            pytest.raises(BudgetExceededError, match="no-such-model-12345"),
+        ):
+            await set_admin_settings_row(test_engine, max_job_cost_usd=100.0)
+            try:
+                await manager.create_job(
+                    job_id=str(uuid4()),
+                    research_question="Default model test",
+                    data_files=[],
+                    auto_start=False,
+                )
+            finally:
+                await reset_admin_settings_row(test_engine)
+
+    async def test_create_job_rolls_back_database_when_filesystem_init_fails(self, tmp_path):
+        """A filesystem failure after the DB row exists deletes the row again."""
+        manager = _new_manager(tmp_path)
+        job_id = str(uuid4())
 
         with (
             patch.object(manager, "get_job", new_callable=AsyncMock, return_value=None),
-            patch("openscientist.job_manager.get_provider", return_value=fake_provider),
-            patch("openscientist.job_manager._db_create_job", new_callable=AsyncMock),
-            patch(
-                "openscientist.job_manager._db_delete_job", new_callable=AsyncMock
-            ) as mock_db_delete,
             patch("openscientist.job_manager.create_job", side_effect=RuntimeError("disk full")),
             pytest.raises(ValueError, match="Failed to initialize job files"),
         ):
@@ -644,7 +725,9 @@ class TestJobManagerCreationSafety:
                 auto_start=False,
             )
 
-        assert mock_db_delete.await_count == 1
+        from openscientist.job_manager import _db_get_job
+
+        assert await _db_get_job(job_id) is None
 
     async def test_create_job_records_llm_provider_and_model(self, tmp_path):
         manager = _new_manager(tmp_path)
@@ -667,9 +750,13 @@ class TestJobManagerCreationSafety:
             patch.object(
                 manager, "get_job", new_callable=AsyncMock, side_effect=[None, created_job]
             ),
-            patch.object(manager, "_check_budget_before_creation"),
+            patch(
+                "openscientist.job_manager.check_budget",
+                new_callable=AsyncMock,
+                return_value=BudgetVerdict(ok=True, limit=None, message=None),
+            ),
             patch.object(manager, "_create_job_files"),
-            patch("openscientist.settings.get_settings", return_value=settings),
+            patch("openscientist.job_manager.get_settings", return_value=settings),
             patch.object(
                 manager, "_create_db_job_record", new_callable=AsyncMock
             ) as mock_create_db_job_record,
@@ -712,9 +799,13 @@ class TestJobManagerCreationSafety:
             patch.object(
                 manager, "get_job", new_callable=AsyncMock, side_effect=[None, created_job]
             ),
-            patch.object(manager, "_check_budget_before_creation"),
+            patch(
+                "openscientist.job_manager.check_budget",
+                new_callable=AsyncMock,
+                return_value=BudgetVerdict(ok=True, limit=None, message=None),
+            ),
             patch.object(manager, "_create_job_files"),
-            patch("openscientist.settings.get_settings", return_value=settings),
+            patch("openscientist.job_manager.get_settings", return_value=settings),
             patch.object(manager, "_create_db_job_record", new_callable=AsyncMock),
             patch.object(manager, "start_job", side_effect=record_start),
         ):
@@ -773,7 +864,6 @@ class TestJobManagerSummary:
         assert summary["status_counts"]["completed"] == 1
         assert summary["status_counts"]["running"] == 1
         assert summary["cost_info"].total_spend_usd == 12.5
-        assert summary["budget_check"] == {"errors": [], "warnings": []}
         # The provider's blocking cost call runs on a worker thread, with the 24h window.
         assert seen_lookbacks == [24]
         assert cost_threads and cost_threads[0] != loop_thread
@@ -844,7 +934,6 @@ class TestJobManagerCLI:
             "total_jobs": 3,
             "status_counts": {"running": 1},
             "cost_info": None,
-            "budget_check": None,
         }
         fake = MagicMock()
         fake.get_job_summary = AsyncMock(return_value=summary)
@@ -901,3 +990,261 @@ class TestEffectiveModel:
             "openscientist.job_manager.get_provider", side_effect=ValueError("misconfigured")
         ):
             assert _effective_model(self._settings()) is None
+
+
+class TestQueuedJobBudgetHold:
+    """The queue pick enforces the limits: a project limit holds the job in
+    place with a reason, an unpriced model ends it failed, and both notify
+    the owner through ntfy."""
+
+    @asynccontextmanager
+    async def _committed(self, test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
+        async with async_sessionmaker(test_engine, expire_on_commit=False)() as session:
+            yield session
+
+    async def _owner(self, session: AsyncSession) -> User:
+        user = User(
+            email=f"owner-{uuid4().hex[:12]}@example.com",
+            name="Owner",
+            ntfy_topic=f"budget-{uuid4().hex[:12]}",
+        )
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+    async def _job(
+        self, session: AsyncSession, owner: User, model: str, *, clear: bool = True
+    ) -> Job:
+        # Drop queued rows other tests left behind so the pick takes this job.
+        if clear:
+            await session.execute(delete(Job).where(Job.status == JobStatus.QUEUED.value))
+        job = Job(
+            research_question="Q?",
+            owner_id=owner.id,
+            status=JobStatus.QUEUED.value,
+            llm_provider="bedrock",
+            llm_config={"model": model},
+            short_title="Budget hold",
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        return job
+
+    async def _cleanup(self, test_engine: AsyncEngine, owner: User, job: Job) -> None:
+        async with self._committed(test_engine) as session:
+            await session.execute(delete(Job).where(Job.id == job.id))
+            await session.execute(delete(User).where(User.id == owner.id))
+            await session.commit()
+
+    async def _row(self, test_engine: AsyncEngine, job_id: UUID) -> dict:
+        async with self._committed(test_engine) as session:
+            row = await session.execute(select(Job).where(Job.id == job_id))
+            job = row.scalar_one()
+        return {
+            "status": job.status,
+            "queue_reason": job.queue_reason,
+            "error_message": job.error_message,
+        }
+
+    async def _pick(self, manager: JobManager) -> bool:
+        return await asyncio.to_thread(manager._start_next_queued_job)
+
+    async def test_a_held_job_stays_queued_and_the_owner_is_notified_once(
+        self, tmp_path, test_engine: AsyncEngine
+    ):
+        manager = _new_manager(tmp_path)
+        info = CostInfo(
+            provider_name="stub",
+            total_spend_usd=500.0,
+            recent_spend_usd=50.0,
+            recent_period_hours=24,
+        )
+        provider = SimpleNamespace(id="bedrock", get_cost_info=lambda lookback_hours=24: info)
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+        with (
+            patch("openscientist.budget.get_provider", return_value=provider),
+            patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as send,
+            patch.object(manager, "_run_job"),
+        ):
+            async with self._committed(test_engine) as session:
+                owner = await self._owner(session)
+                job = await self._job(session, owner, "claude-sonnet-4-6")
+                job_id = job.id
+                session.add(
+                    CostRecord(
+                        job_id=job.id,
+                        operation_type="discovery",
+                        provider="bedrock",
+                        model="claude-sonnet-4-6",
+                        input_tokens=1,
+                        output_tokens=1,
+                        cost_usd=10.0,
+                    )
+                )
+                await session.commit()
+            try:
+                await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+
+                # The pick holds the job and notifies the owner once.
+                assert await self._pick(manager) is False
+                assert str(job_id) not in manager._running_jobs
+                row = await self._row(test_engine, job_id)
+                assert row["status"] == "queued"
+                assert "Project spend total limit of $100.00" in row["queue_reason"]
+                assert row["error_message"] is None
+
+                # The re-check re-holds the job without a second notification.
+                assert await self._pick(manager) is False
+                assert send.call_count == 1
+
+                # Releasing the limit starts the job and clears the reason.
+                await set_admin_settings_row(test_engine, max_project_spend_total_usd=None)
+                assert await self._pick(manager) is True
+                assert str(job_id) in manager._running_jobs
+                row = await self._row(test_engine, job_id)
+                assert row["status"] == "queued"
+                assert row["queue_reason"] is None
+                assert row["error_message"] is None
+            finally:
+                await self._cleanup(test_engine, owner, job)
+                budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+
+    async def test_a_picked_job_on_an_unpriced_model_ends_failed_and_is_notified(
+        self, tmp_path, test_engine: AsyncEngine
+    ):
+        manager = _new_manager(tmp_path)
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+        with patch("openscientist.ntfy.send_notification", new_callable=AsyncMock) as send:
+            async with self._committed(test_engine) as session:
+                owner = await self._owner(session)
+                job = await self._job(session, owner, "no-such-model-12345")
+                job_id = job.id
+            try:
+                await set_admin_settings_row(test_engine, max_job_cost_usd=100.0)
+
+                assert await self._pick(manager) is False
+                assert str(job_id) not in manager._running_jobs
+                row = await self._row(test_engine, job_id)
+                assert row["status"] == "failed"
+                assert "no-such-model-12345" in row["error_message"]
+                assert row["queue_reason"] is None
+                assert send.call_count == 1
+            finally:
+                await self._cleanup(test_engine, owner, job)
+                budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+
+    async def test_failing_an_unpriced_job_picks_on_to_the_next_queued_job(
+        self, tmp_path, test_engine: AsyncEngine
+    ):
+        """Failing an unpriced job does not stop the pick: the next queued job
+        starts in the same call."""
+        manager = _new_manager(tmp_path)
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+        with (
+            patch("openscientist.ntfy.send_notification", new_callable=AsyncMock),
+            patch.object(manager, "_run_job"),
+        ):
+            async with self._committed(test_engine) as session:
+                owner = await self._owner(session)
+                first = await self._job(session, owner, "no-such-model-12345")
+                second = await self._job(session, owner, "claude-sonnet-4-6", clear=False)
+            try:
+                await set_admin_settings_row(test_engine, max_job_cost_usd=100.0)
+
+                assert await self._pick(manager) is True
+                row = await self._row(test_engine, first.id)
+                assert row["status"] == "failed"
+                assert "no-such-model-12345" in row["error_message"]
+                assert str(second.id) in manager._running_jobs
+            finally:
+                await self._cleanup(test_engine, owner, first)
+                await self._cleanup(test_engine, owner, second)
+                budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+
+    async def test_cancelling_a_held_job_clears_the_reason(
+        self, tmp_path, test_engine: AsyncEngine
+    ):
+        manager = _new_manager(tmp_path)
+        info = CostInfo(
+            provider_name="stub",
+            total_spend_usd=500.0,
+            recent_spend_usd=50.0,
+            recent_period_hours=24,
+        )
+        provider = SimpleNamespace(id="bedrock", get_cost_info=lambda lookback_hours=24: info)
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+        with (
+            patch("openscientist.budget.get_provider", return_value=provider),
+            patch("openscientist.ntfy.send_notification", new_callable=AsyncMock),
+        ):
+            async with self._committed(test_engine) as session:
+                owner = await self._owner(session)
+                job = await self._job(session, owner, "claude-sonnet-4-6")
+                job_id = job.id
+            try:
+                await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+                assert await self._pick(manager) is False
+                assert (await self._row(test_engine, job_id))["queue_reason"] is not None
+
+                await manager.cancel_job(str(job_id))
+                row = await self._row(test_engine, job_id)
+                assert row["status"] == "cancelled"
+                assert row["queue_reason"] is None
+            finally:
+                await self._cleanup(test_engine, owner, job)
+                budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+
+    async def test_the_recheck_picks_a_job_once_its_limit_releases(
+        self, tmp_path, test_engine: AsyncEngine
+    ):
+        manager = _new_manager(tmp_path)
+        info = CostInfo(
+            provider_name="stub",
+            total_spend_usd=500.0,
+            recent_spend_usd=50.0,
+            recent_period_hours=24,
+        )
+        provider = SimpleNamespace(id="bedrock", get_cost_info=lambda lookback_hours=24: info)
+        budget_mod._billed = None
+        budget_mod._billed_at = 0.0
+        with (
+            patch("openscientist.budget.get_provider", return_value=provider),
+            patch("openscientist.ntfy.send_notification", new_callable=AsyncMock),
+            patch.object(manager, "_run_job"),
+        ):
+            async with self._committed(test_engine) as session:
+                owner = await self._owner(session)
+                job = await self._job(session, owner, "claude-sonnet-4-6")
+                job_id = job.id
+            try:
+                await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+                # A normal pick holds the job; the loop only looks for held jobs.
+                assert await self._pick(manager) is False
+                assert (await self._row(test_engine, job_id))["queue_reason"] is not None
+
+                task = asyncio.create_task(run_budget_queue_recheck(manager, interval=0.02))
+                try:
+                    await set_admin_settings_row(test_engine, max_project_spend_total_usd=None)
+                    # The re-check picks every 20 ms; wait for its pick to land.
+                    for _ in range(100):
+                        if str(job_id) in manager._running_jobs:
+                            break
+                        await asyncio.sleep(0.05)
+                    assert str(job_id) in manager._running_jobs
+                    assert (await self._row(test_engine, job_id))["queue_reason"] is None
+                finally:
+                    task.cancel()
+            finally:
+                await self._cleanup(test_engine, owner, job)
+                budget_mod._billed = None
+        budget_mod._billed_at = 0.0

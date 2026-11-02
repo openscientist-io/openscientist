@@ -110,6 +110,12 @@ class JobResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration number")
     pdb_code: str | None = Field(None, description="PDB code")
     space_group: str | None = Field(None, description="Space group")
+    queue_reason: str | None = Field(
+        None, description="Why a queued job waits on a budget limit, if it is held"
+    )
+    stop_note: str | None = Field(
+        None, description="Why a completed job stopped early at a budget limit, if it did"
+    )
 
 
 class JobListResponse(BaseModel):
@@ -127,6 +133,12 @@ class JobStatusResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration")
     max_iterations: int = Field(..., description="Maximum iterations")
     error_message: str | None = Field(None, description="Error message if failed")
+    queue_reason: str | None = Field(
+        None, description="Why a queued job waits on a budget limit, if it is held"
+    )
+    stop_note: str | None = Field(
+        None, description="Why a completed job stopped early at a budget limit, if it did"
+    )
 
 
 class JobDetailResponse(JobResponse):
@@ -156,6 +168,8 @@ class _JobResponseFields(TypedDict):
     current_iteration: int
     pdb_code: str | None
     space_group: str | None
+    queue_reason: str | None
+    stop_note: str | None
 
 
 async def get_job_by_id(
@@ -202,6 +216,8 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "current_iteration": job.current_iteration,
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
+        "queue_reason": job.queue_reason,
+        "stop_note": job.stop_note,
     }
 
 
@@ -302,7 +318,8 @@ async def _persist_uploaded_files(
         try:
             target_path = _build_unique_upload_path(temp_dir, upload.filename or "")
             content = await upload.read()
-            validate_uploaded_file(target_path, content)
+            # The size limit comes from the database, which must stay off the loop.
+            await asyncio.to_thread(validate_uploaded_file, target_path, content)
             target_path.write_bytes(content)
             persisted_files.append(target_path)
         finally:
@@ -505,6 +522,8 @@ async def get_job_status(
         current_iteration=job.current_iteration,
         max_iterations=job.max_iterations,
         error_message=job.error_message,
+        queue_reason=job.queue_reason,
+        stop_note=job.stop_note,
     )
 
 

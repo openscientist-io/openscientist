@@ -215,7 +215,7 @@ AZURE_SUBSCRIPTION_ID=your-subscription-id
 
 ### Budget Controls
 
-Set application-level budget limits (optional):
+Set budget limits (optional). They only seed the admin settings row on first start; from then on the Settings tab counts:
 
 ```bash
 # Maximum total spend across all jobs
@@ -225,11 +225,7 @@ MAX_PROJECT_SPEND_TOTAL_USD=1000
 MAX_PROJECT_SPEND_24H_USD=50
 ```
 
-Budget limits are checked before job creation. The web UI displays:
-
-- Total project spend
-- Recent spend (last 24h)
-- Budget remaining (if provider supports it)
+Limits read the cost ledger and the provider's billed total: a job is refused at creation, a queued job waits with the limit named and its owner notified, and chat turns and report regenerations are refused at the per-job cap. The billing page shows the same spend figures and verdict.
 
 ### Other Settings
 
