@@ -266,6 +266,27 @@ class TestNotifyJobStatusChange:
         assert message_fragment in request.content.decode()
 
     @pytest.mark.asyncio
+    async def test_completed_names_the_stop_note(self):
+        """The note rides the existing completed notification, no second one."""
+        mock_settings = SimpleNamespace(base_url="https://app.test")
+        with (
+            patch("openscientist.ntfy.get_settings", return_value=mock_settings),
+            recorded_ntfy() as requests,
+        ):
+            result = await notify_job_status_change(
+                user_id=uuid4(),
+                job_id="j1",
+                job_title="Boiling water",
+                new_status="completed",
+                ntfy_topic="topic1",
+                stop_note="Project 24-hour spend limit of $5.00 reached.",
+            )
+
+        assert result is True
+        assert len(requests) == 1
+        assert "Project 24-hour spend limit of $5.00 reached." in requests[0].content.decode()
+
+    @pytest.mark.asyncio
     async def test_truncates_long_title(self):
         """Titles longer than 50 chars are truncated to 50 chars plus an ellipsis before routing."""
         mock_settings = SimpleNamespace(base_url="https://app.test")

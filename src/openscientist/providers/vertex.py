@@ -1,8 +1,4 @@
-"""
-Google Cloud Vertex AI provider implementation.
-
-Uses Vertex AI for model access and GCP Billing API for cost tracking.
-"""
+"""Google Cloud Vertex AI provider (cost tracking via the GCP Billing API)."""
 
 import logging
 import os
@@ -14,11 +10,11 @@ from openscientist.providers.base import (
     AirgapPosture,
     ClaudeCompatible,
     CostInfo,
+    LiveCheckResult,
+    SetupQuestion,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
-
-from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +27,8 @@ class VertexProvider(ClaudeCompatible):
         return "vertex"
 
     display_name = "Vertex AI"
+
+    mode_flag = "CLAUDE_CODE_USE_VERTEX"
 
     @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
@@ -58,6 +56,66 @@ class VertexProvider(ClaudeCompatible):
         if not provider.cloud_ml_region:
             errors.append("CLOUD_ML_REGION not set (e.g., us-east5)")
         return errors
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("ANTHROPIC_VERTEX_PROJECT_ID", help="GCP project ID"),
+            SetupQuestion(
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                kind="path",
+                help="host path to the GCP service account JSON",
+            ),
+            SetupQuestion("GCP_BILLING_ACCOUNT_ID", help="GCP billing account for cost tracking"),
+            SetupQuestion("CLOUD_ML_REGION", help="region, e.g. us-east5"),
+            *super().setup_questions(),
+        )
+
+    @classmethod
+    def live_check_billed(cls) -> bool:
+        # Vertex has no free listing; the check is a one-token completion.
+        return True
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.anthropic_vertex_project_id or not p.cloud_ml_region:
+            return LiveCheckResult(
+                ok=True, detail="No Vertex project or region to check with; skipped."
+            )
+        model = p.model or cls.default_claude_model
+        url = (
+            "https://aiplatform.googleapis.com/v1/projects/"
+            f"{p.anthropic_vertex_project_id}/locations/{p.cloud_ml_region}"
+            f"/publishers/anthropic/models/{model}:rawPredict"
+        )
+        body = {
+            "anthropic_version": "vertex-2023-10-16",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+        }
+        try:
+            from google.auth import default
+            from google.auth.transport.requests import AuthorizedSession
+        except ImportError:
+            return LiveCheckResult(
+                ok=False, detail="google-auth is not installed; cannot check Vertex."
+            )
+        try:
+            credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        except Exception as exc:  # noqa: BLE001 - surface any credential error
+            return LiveCheckResult(ok=False, detail=f"Vertex credentials failed: {exc}")
+        import requests
+
+        try:
+            with AuthorizedSession(credentials) as session:
+                resp = session.post(url, json=body, timeout=30)
+        except requests.RequestException as exc:
+            return LiveCheckResult(ok=False, detail=f"Could not reach Vertex: {exc}")
+        if not 200 <= resp.status_code < 300:
+            return LiveCheckResult(
+                ok=False, detail=f"Vertex check returned HTTP {resp.status_code}."
+            )
+        return LiveCheckResult(ok=True, detail="Reached Vertex with a one-token completion.")
 
     @classmethod
     def container_env(
@@ -104,12 +162,9 @@ class VertexProvider(ClaudeCompatible):
             ]
         )
 
-    def claude_model_name(self) -> str:
-        """Model name for ClaudeAgentOptions.model."""
-        return get_settings().provider.model or "claude-sonnet-5-5"
-
-    def airgap_egress(self) -> AirgapPosture:
-        region = get_settings().provider.cloud_ml_region
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        region = provider.cloud_ml_region
         return AirgapPosture(
             AirgapEgress.DIRECT,
             direct_endpoints=(
@@ -119,7 +174,6 @@ class VertexProvider(ClaudeCompatible):
         )
 
     def _validate_optional_config(self) -> list[str]:
-        """Check optional Vertex AI configuration."""
         warnings = []
         settings = get_settings()
 
@@ -134,26 +188,19 @@ class VertexProvider(ClaudeCompatible):
 
         return warnings
 
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        return ("ANTHROPIC_API_KEY",)
+
     def setup_environment(self) -> None:
         """Vertex AI environment should be configured via .env and docker-compose.yml."""
-        # Keep existing Vertex mode flag (if configured) and clear conflicting ones.
-        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_VERTEX")
-        clear_env_vars(logger, ("ANTHROPIC_API_KEY",))
+        super().setup_environment()
         logger.info("Vertex AI provider initialized (configuration from environment)")
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get Vertex AI cost information from Cloud Billing API.
+        """Get Vertex AI cost information from the Cloud Billing API.
 
-        Args:
-            lookback_hours: Time window for recent spend calculation
-
-        Returns:
-            CostInfo with Vertex AI spend data
-
-        Note:
-            Requires BigQuery billing export to be enabled in GCP Console.
-            Data has 1-6 hour lag due to GCP billing pipeline.
+        Requires the BigQuery billing export enabled in GCP Console. Data has a
+        1-6 hour lag in the GCP billing pipeline.
         """
         try:
             from google.cloud import bigquery
@@ -165,7 +212,6 @@ class VertexProvider(ClaudeCompatible):
             )
             raise
 
-        # Load credentials
         settings = get_settings()
         creds_env = settings.provider.google_application_credentials
         if not creds_env:
@@ -178,20 +224,15 @@ class VertexProvider(ClaudeCompatible):
         if not billing_account:
             raise ProviderError("GCP_BILLING_ACCOUNT_ID not set")
 
-        # Initialize BigQuery client
         bq_client = bigquery.Client(credentials=credentials, project=project_id)
 
-        # Calculate time windows
         now = datetime.now(UTC)
         recent_start = now - timedelta(hours=lookback_hours)
 
-        # BigQuery billing export table name
-        # Format: billing_export.gcp_billing_export_v1_{billing_account_with_underscores}
         billing_table = (
             f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
         )
 
-        # Query for total spend (all time for Vertex AI in this project only)
         total_query = f"""
         SELECT SUM(cost) as total_cost
         FROM `{billing_table}`
@@ -199,7 +240,6 @@ class VertexProvider(ClaudeCompatible):
           AND project.id = '{project_id}'
         """
 
-        # Query for recent spend (filter by project AND time window)
         recent_query = f"""
         SELECT SUM(cost) as recent_cost
         FROM `{billing_table}`
@@ -209,22 +249,20 @@ class VertexProvider(ClaudeCompatible):
         """
 
         try:
-            # Execute queries
             total_result = list(bq_client.query(total_query).result())
             total_spend = float(total_result[0].total_cost or 0)
 
             recent_result = list(bq_client.query(recent_query).result())
             recent_spend = float(recent_result[0].recent_cost or 0)
 
-            # Estimate data lag (GCP billing typically has 1-6 hour delay)
-            # Assume ~3 hour average lag
+            # ~3 hour average of the 1-6 hour billing delay
             lag_time = now - timedelta(hours=3)
             data_lag_note = f"Data current as of ~{lag_time.strftime('%I:%M %p %Z')}"
 
         except Exception as e:
             logger.warning("Could not fetch Vertex AI billing data: %s", e)
             logger.warning("Ensure BigQuery billing export is enabled in GCP Console.")
-            # Return None if billing data unavailable (permissions, export not enabled, etc.)
+            # Return None if billing data is unavailable (permissions, export missing)
             total_spend = None
             recent_spend = None
             data_lag_note = "Billing data unavailable (ensure BigQuery export is enabled)"

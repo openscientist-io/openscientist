@@ -19,6 +19,7 @@ from sqlalchemy import delete
 from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import phenix_installation_ok
 from openscientist_tools import phenix as phenix_module
 from openscientist_tools.phenix import (
     compare_structures,
@@ -33,7 +34,7 @@ def _phenix_available_in_test_env() -> bool:
     phenix_path = os.environ.get("PHENIX_PATH")
     if not phenix_path:
         return False
-    return (Path(phenix_path) / "bin" / "phenix.about").is_file()
+    return phenix_installation_ok(phenix_path)
 
 
 PHENIX_REQUIRED = pytest.mark.skipif(

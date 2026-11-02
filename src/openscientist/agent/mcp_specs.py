@@ -1,7 +1,7 @@
 """Specs describing how to launch an external MCP server.
 
-Used by the agent executor to construct `claude-agent-sdk` MCP
-server config entries for `ClaudeAgentOptions.mcp_servers`.
+Used to construct ``claude-agent-sdk`` MCP server config entries for
+``ClaudeAgentOptions.mcp_servers``.
 """
 
 from __future__ import annotations
@@ -23,11 +23,10 @@ class StdioMcpServerSpec(BaseModel):
     cwd: str | None = None
 
     def to_sdk_config(self) -> dict[str, Any]:
-        """Return the `claude-agent-sdk` `McpStdioServerConfig` dict.
+        """Return the ``claude-agent-sdk`` ``McpStdioServerConfig`` dict.
 
-        The `cwd` field is intentionally omitted: the SDK config has
-        no place for it, and the launcher reads ``spec.cwd`` directly
-        when spawning the subprocess.
+        ``cwd`` is intentionally omitted. The SDK config has no place for it, and
+        the launcher reads ``spec.cwd`` directly when spawning the subprocess.
         """
         cfg: dict[str, Any] = {"type": "stdio", "command": self.command}
         if self.args:

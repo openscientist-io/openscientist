@@ -1,8 +1,4 @@
-"""
-OAuth configuration and client management.
-
-Provides OAuth client initialization and configuration for supported providers.
-"""
+"""OAuth configuration and client management."""
 
 import logging
 
@@ -13,17 +9,11 @@ from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-# OAuth configuration
 _oauth: OAuth | None = None
 
 
 def get_oauth_config() -> Config:
-    """
-    Get Starlette config for OAuth.
-
-    Returns:
-        Starlette Config object with OAuth settings
-    """
+    """Get the Starlette config for OAuth."""
     settings = get_settings()
     return Config(
         environ={
@@ -38,19 +28,13 @@ def get_oauth_config() -> Config:
 
 
 def get_oauth_client() -> OAuth:
-    """
-    Get or create the OAuth client singleton.
-
-    Returns:
-        OAuth client instance configured with all providers
-    """
+    """Get or create the OAuth client singleton."""
     global _oauth
     if _oauth is None:
         config = get_oauth_config()
         _oauth = OAuth(config)
         settings = get_settings()
 
-        # Register Google provider
         google_client_id = settings.auth.google_client_id
         if google_client_id:
             _oauth.register(
@@ -64,7 +48,6 @@ def get_oauth_client() -> OAuth:
         else:
             logger.info("Google OAuth not configured (GOOGLE_CLIENT_ID not set)")
 
-        # Register GitHub provider
         github_client_id = settings.auth.github_client_id
         if github_client_id:
             _oauth.register(
@@ -82,7 +65,6 @@ def get_oauth_client() -> OAuth:
         else:
             logger.info("GitHub OAuth not configured (GITHUB_CLIENT_ID not set)")
 
-        # Register ORCID provider
         orcid_client_id = settings.auth.orcid_client_id
         if orcid_client_id:
             _oauth.register(
@@ -100,22 +82,12 @@ def get_oauth_client() -> OAuth:
 
 
 def is_oauth_configured() -> bool:
-    """
-    Check if at least one OAuth provider is configured.
-
-    Returns:
-        True if GitHub, Google, ORCID, or mock auth (dev mode) is configured
-    """
+    """Check if at least one OAuth provider is configured."""
     settings = get_settings()
     return settings.auth.is_oauth_configured or settings.dev.dev_mode
 
 
 def is_mock_auth_enabled() -> bool:
-    """
-    Check if mock authentication is enabled (dev mode only).
-
-    Returns:
-        True if OPENSCIENTIST_DEV_MODE is enabled
-    """
+    """Check if mock authentication is enabled."""
     settings = get_settings()
     return settings.dev.dev_mode

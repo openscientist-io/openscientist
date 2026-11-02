@@ -139,3 +139,11 @@ class TestMarkdownToPdf:
         assert "Text below" in text
         # exactly one full-width horizontal line stroke, from the hr (footer off)
         assert _horizontal_lines(pdf_path) == 1
+
+
+def test_the_footer_names_the_run_environment(tmp_path: Path) -> None:
+    md = tmp_path / "report.md"
+    md.write_text("# Report\n\nText.\n")
+    pdf_path = tmp_path / "out.pdf"
+    markdown_to_pdf(md, pdf_path, run_environment="Run environment: OpenScientist abc123")
+    assert "Run environment: OpenScientist abc123" in _extract_text(pdf_path)

@@ -1,11 +1,4 @@
-"""Provider base hierarchy (two-axis Provider x Agent model).
-
-A `Provider` is a model-hosting service (Anthropic, Vertex, Bedrock,
-OpenAI, ...). It owns cross-family concerns: configuration validation
-and cost/budget tracking. The `ClaudeCompatible` and `CodexCompatible`
-subclasses add the wire-format-specific methods that let a provider be
-driven by the Claude Code agent or the Codex agent respectively.
-"""
+"""Provider base hierarchy (two-axis Provider x Agent model)."""
 
 from __future__ import annotations
 
@@ -15,13 +8,18 @@ import inspect
 import logging
 import os
 import re
+from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, NotRequired, TypedDict
 
-from openscientist.exceptions import ProviderError
+from pydantic import ValidationError
+
 from openscientist.models import ModelProfile, default_model_profile, probed_model_profile
 from openscientist.settings import ProviderSettings, get_settings
+
+from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
 
 logger = logging.getLogger(__name__)
 
@@ -101,26 +99,27 @@ class CostInfo:
 
     provider_name: str
 
-    # Total project spending (all time)
     # None = unknown/unavailable (e.g., permissions error)
     total_spend_usd: float | None
-
-    # Recent spending (configurable time window)
-    # None = unknown/unavailable (e.g., permissions error)
     recent_spend_usd: float | None
-    recent_period_hours: int  # e.g., 24 for "last 24h"
-
-    # Budget tracking (optional - provider-specific)
+    recent_period_hours: int
     budget_limit_usd: float | None = None
     budget_remaining_usd: float | None = None
-
-    # Data freshness
     last_updated: datetime = field(default_factory=lambda: datetime.now(UTC))
     data_lag_note: str | None = None  # e.g., "Data current as of 6:35 AM ET"
-
-    # Provider-specific extras
     key_expires: str | None = None  # CBORG only
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def unavailable(cls, provider_name: str, note: str, lookback_hours: int) -> CostInfo:
+        """A CostInfo whose spend is unknown, with ``note`` saying why."""
+        return cls(
+            provider_name=provider_name,
+            total_spend_usd=None,
+            recent_spend_usd=None,
+            recent_period_hours=lookback_hours,
+            data_lag_note=note,
+        )
 
 
 @dataclass(frozen=True)
@@ -153,10 +152,91 @@ class AirgapPosture:
 LLM_PROXY_URL_ENV = "OPENSCIENTIST_LLM_PROXY_URL"
 
 
+@dataclass(frozen=True)
+class SetupQuestion:
+    """One env variable the setup wizard asks about this provider, in ask order."""
+
+    env: str
+    kind: str = "text"  # text, secret or path
+    help: str | None = None
+
+
+@dataclass(frozen=True)
+class LiveCheckResult:
+    """The setup wizard's live check outcome.
+
+    ``detail`` is the human-readable result shown to the installer and must
+    never contain a secret.
+    """
+
+    ok: bool
+    detail: str = ""
+
+
+@contextmanager
+def _answers_env(values: Mapping[str, str]):
+    """Hold the wizard's answers in the process environment for the duration of a check."""
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        for key, value in values.items():
+            if value:
+                os.environ[key] = value
+            else:
+                os.environ.pop(key, None)
+        yield
+    finally:
+        for key, old_value in previous.items():
+            if old_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = old_value
+
+
+def _listing_live_check(url: str, headers: dict[str, str], what: str) -> LiveCheckResult:
+    """One free model-listing call: reachability plus a sane response body."""
+    import requests
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+    except requests.RequestException as exc:
+        return LiveCheckResult(ok=False, detail=f"Could not reach {what}: {exc}")
+    if not 200 <= resp.status_code < 300:
+        return LiveCheckResult(ok=False, detail=f"{what} listing returned HTTP {resp.status_code}.")
+    try:
+        payload = resp.json()
+    except ValueError:
+        return LiveCheckResult(ok=False, detail=f"{what} listing returned a non-JSON body.")
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, list):
+        return LiveCheckResult(ok=True, detail=f"Reached {what} ({len(data)} models).")
+    return LiveCheckResult(ok=True, detail=f"Reached {what}.")
+
+
+def _completion_live_check(
+    url: str, headers: dict[str, str], body: dict[str, object], what: str
+) -> LiveCheckResult:
+    """One minimal billed completion (max_tokens 1) as the live check."""
+    import requests
+
+    try:
+        resp = requests.post(url, headers=headers, json=body, timeout=30)
+    except requests.RequestException as exc:
+        return LiveCheckResult(ok=False, detail=f"Could not reach {what}: {exc}")
+    if not 200 <= resp.status_code < 300:
+        return LiveCheckResult(ok=False, detail=f"{what} check returned HTTP {resp.status_code}.")
+    return LiveCheckResult(ok=True, detail=f"Reached {what} with a one-token completion.")
+
+
 class Provider(abc.ABC):
     """A model-hosting service. Family-specific behavior lives on the
     marker subclasses below; configuration validation and cost/budget
     tracking are shared here."""
+
+    #: When ``proxy_env_overrides`` routes this provider's LLM traffic
+    #: through the proxy (this env var equals the proxy URL), the keys in
+    #: ``proxied_env_strip_keys`` are dropped from the container env.
+    proxied_env_condition_key: ClassVar[str | None] = None
+    proxied_env_strip_keys: ClassVar[tuple[str, ...]] = ()
 
     def __init__(self) -> None:
         errors = self.validate_required_config()
@@ -179,9 +259,8 @@ class Provider(abc.ABC):
     def id(self) -> str:
         """Stable identifier used by the factory selector."""
 
-    #: Human-facing provider name for the UI and logs. Concrete providers set
-    #: it as a class attribute, so it is readable without instantiating (which
-    #: would validate credentials). Enforced in ``__init_subclass__``.
+    #: Human-facing name, readable without instantiating (which would validate
+    #: credentials). Enforced in ``__init_subclass__``.
     display_name: ClassVar[str]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -200,91 +279,93 @@ class Provider(abc.ABC):
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
-        """Config errors for a settings snapshot, without instantiating. Base: none."""
+        """Config errors for a settings snapshot, without instantiating."""
         return []
 
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        """Env variables the setup wizard asks for this provider, in order."""
+        return ()
+
+    @classmethod
+    def setup_answers_errors(cls, provider_id: str, answers: Mapping[str, str]) -> list[str]:
+        """This provider's config errors against a setup wizard's answer set.
+
+        Runs the validation the web runs at startup, holding the answers in the
+        process environment for the duration of the check.
+        """
+        values = dict(answers)
+        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        # The settings build logs the same errors the wizard will show, so the
+        # wizard's caller only sees its own copy.
+        settings_logger = logging.getLogger("openscientist.settings")
+        previous_level = settings_logger.level
+        settings_logger.setLevel(logging.ERROR)
+        try:
+            with _answers_env(values):
+                try:
+                    settings = ProviderSettings(_env_file=None)
+                except ValidationError as exc:
+                    return [
+                        str(error["msg"]).removeprefix("Value error, ") for error in exc.errors()
+                    ]
+                errors = list(cls.required_config_errors(settings))
+                model_error = cls.validate_model_format(settings.model)
+                if model_error:
+                    errors.append(model_error)
+                return errors
+        finally:
+            settings_logger.setLevel(previous_level)
+
+    @classmethod
+    def live_check_billed(cls) -> bool:
+        """Whether the live check makes a billed request (a minimal completion)."""
+        return False
+
+    @classmethod
+    def live_check(cls, provider_id: str, answers: Mapping[str, str]) -> LiveCheckResult:
+        """One real bounded-timeout call against the configured provider.
+
+        Holds the wizard's answers in the process environment only for the
+        duration of the call, then runs the provider-specific check.
+        """
+        values = dict(answers)
+        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        settings_logger = logging.getLogger("openscientist.settings")
+        previous_level = settings_logger.level
+        settings_logger.setLevel(logging.ERROR)
+        try:
+            with _answers_env(values):
+                try:
+                    p = ProviderSettings(_env_file=None)
+                except ValidationError as exc:
+                    return LiveCheckResult(
+                        ok=False,
+                        detail="; ".join(str(error["msg"]) for error in exc.errors()),
+                    )
+                return cls._live_check(p)
+        finally:
+            settings_logger.setLevel(previous_level)
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        """Provider-specific live check against a settings snapshot. Base: none."""
+        return LiveCheckResult(ok=True, detail="No live check for this provider.")
+
     def _validate_optional_config(self) -> list[str]:
-        """Return warning messages for optional misconfiguration (empty by
-        default)."""
+        """Warning messages for optional misconfiguration."""
         return []
 
     @abc.abstractmethod
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """Project spending information."""
 
-    def check_budget_limits(self, lookback_hours: int = 24) -> dict[str, Any]:
-        """Whether the project is within budget, with warnings and errors."""
-        try:
-            cost_info = self.get_cost_info(lookback_hours=lookback_hours)
-        except (ProviderError, ValueError, OSError) as e:
-            logger.error("Could not fetch cost info for budget check: %s", e)
-            return {
-                "can_proceed": True,
-                "warnings": [f"Could not check budget limits: {e}"],
-                "errors": [],
-            }
-
-        return self.evaluate_budget(cost_info)
-
-    def evaluate_budget(self, cost_info: CostInfo) -> dict[str, Any]:
-        """Evaluate budget against a pre-fetched CostInfo (avoids a duplicate API call)."""
-        warnings = []
-        errors = []
-
-        if cost_info.total_spend_usd is None or cost_info.recent_spend_usd is None:
-            warnings.append(
-                f"Cost data unavailable for budget check. "
-                f"Reason: {cost_info.data_lag_note or 'Unknown'}"
-            )
-        else:
-            settings = get_settings()
-            max_total = settings.budget.max_project_spend_total_usd
-            if cost_info.total_spend_usd >= max_total:
-                errors.append(
-                    f"Total spend ${cost_info.total_spend_usd:.2f} exceeds limit ${max_total:.2f}"
-                )
-
-            max_recent = settings.budget.max_project_spend_24h_usd
-            if cost_info.recent_spend_usd >= max_recent:
-                errors.append(
-                    f"Last {cost_info.recent_period_hours}h spend "
-                    f"${cost_info.recent_spend_usd:.2f} "
-                    f"exceeds limit ${max_recent:.2f}"
-                )
-
-            warn_recent = settings.budget.warn_project_spend_24h_usd
-            if (
-                cost_info.recent_spend_usd >= warn_recent
-                and cost_info.recent_spend_usd < max_recent
-            ):
-                warnings.append(
-                    f"Last {cost_info.recent_period_hours}h spend "
-                    f"${cost_info.recent_spend_usd:.2f} "
-                    f"approaching limit (warning threshold: ${warn_recent:.2f})"
-                )
-
-        # Provider-specific budget (e.g., CBORG max_budget)
-        if cost_info.budget_remaining_usd is not None:
-            if cost_info.budget_remaining_usd <= 0:
-                errors.append(
-                    f"{self.display_name} budget exhausted "
-                    f"(${cost_info.budget_limit_usd or 0:.2f} limit)"
-                )
-            elif cost_info.budget_remaining_usd < 10:
-                warnings.append(
-                    f"{self.display_name} budget low: "
-                    f"${cost_info.budget_remaining_usd:.2f} remaining"
-                )
-
-        return {"can_proceed": len(errors) == 0, "warnings": warnings, "errors": errors}
-
     def effective_model_name(self) -> str | None:
         """Model id this provider drives, or None when it defers to an account default."""
         return None
 
     def model_profile(self) -> ModelProfile:
-        """The active model's profile (mainly its context window). Self-hosted
-        providers override to probe the live deployment."""
+        """The active model's profile (mainly its context window)."""
         return default_model_profile(
             self.effective_model_name(), get_settings().provider.model_context_tokens
         )
@@ -300,10 +381,9 @@ class Provider(abc.ABC):
         """
         pinned = get_settings().provider.model_context_tokens
         if pinned is not None:
-            # Pass the pin on rather than skip it. It is set in this process's
-            # environment, but the container resolves the window again on its own
-            # side, so returning nothing here left it probing (the very thing
-            # pinning exists to avoid) and silently taking the 8192 fallback.
+            # Pass the pin on rather than skip it. The container resolves the
+            # window on its own side, so skipping it left the container probing
+            # and silently taking the 8192 fallback.
             return {"OPENSCIENTIST_MODEL_CONTEXT_TOKENS": str(pinned)}
         window = self.probe_context_window()
         if not window:
@@ -320,12 +400,21 @@ class Provider(abc.ABC):
 
     def airgap_egress(self) -> AirgapPosture:
         """Air-gapped egress posture for the active config, read by the firewall
-        and proxy-start. Pure, no network. Defaults to PROXY, providers override."""
-        if self.proxy_env_overrides(proxy_base_url="", placeholder=""):
-            return AirgapPosture(AirgapEgress.PROXY)
+        and proxy-start. Pure, no network."""
+        return type(self).airgap_posture(get_settings().provider)
+
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        """Air-gapped egress posture for a settings snapshot, without the full app.
+
+        The setup wizard evaluates it from the provider's own settings before the
+        database and other app settings exist, so it must not build the full
+        settings. Pure, no network. The default is a provider that cannot be
+        air-gapped; providers that proxy (or egress directly) override it.
+        """
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,
-            reason=f"{self.display_name} cannot be air-gapped.",
+            reason=f"{cls.display_name} cannot be air-gapped.",
         )
 
     def proxied_container_env(
@@ -340,6 +429,12 @@ class Provider(abc.ABC):
             gcp_credentials_container_path=gcp_credentials_container_path
         )
         env.update(self.proxy_env_overrides(proxy_base_url=proxy_base_url, placeholder=placeholder))
+        if (
+            self.proxied_env_condition_key
+            and env.get(self.proxied_env_condition_key) == proxy_base_url
+        ):
+            for key in self.proxied_env_strip_keys:
+                env.pop(key, None)
         return env
 
     @classmethod
@@ -358,20 +453,17 @@ class Provider(abc.ABC):
         """Env a provider-agnostic harness (omp) needs to reach this provider.
 
         ``proxy`` is the in-container LLM proxy URL when active, in which case
-        the returned env MUST route the harness at it. Abstract on purpose: this
-        used to default to ``{}``, which meant an unwired provider silently sent
-        the harness to the vendor with the real credential, bypassing the
-        key-replacement proxy. A provider nobody has wired must fail loudly, so
-        every concrete provider answers for itself. Returning ``{}`` is still a
-        valid answer for a provider that signs its own requests and is reached
-        directly, but it now has to be stated rather than inherited.
+        the returned env MUST route the harness at it. A provider nobody has
+        wired must fail loudly, so every concrete provider answers for itself.
+        Returning ``{}`` is valid for a provider that signs its own requests
+        and is reached directly.
         """
 
     def omp_model_catalog(self, *, context_window: int) -> OmpModelCatalog | None:
         """``models.yml`` declaring this provider's model to the omp harness, or
         None when omp's built-in catalog already knows it. Self-hosted providers
-        override: omp cannot resolve ``--model`` for a server it has never heard
-        of. The codex analog is ``codex_config_overrides``.
+        override because omp cannot resolve ``--model`` for a server it has
+        never heard of. The codex analog is ``codex_config_overrides``.
 
         ``context_window`` is passed in rather than resolved here because
         resolving it can probe the live server, and the caller already holds the
@@ -382,13 +474,13 @@ class Provider(abc.ABC):
     @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
         """Error message if ``model`` does not match this provider's naming
-        convention, else None. Base enforces no pattern."""
+        convention, else None."""
         return None
 
     @staticmethod
     def model_format_error(model: str | None, pattern: str, description: str) -> str | None:
-        """Shared helper: None if ``model`` is unset or matches ``pattern``,
-        else a uniform mismatch message naming ``description``."""
+        """None if ``model`` is unset or matches ``pattern``, else a uniform
+        mismatch message naming ``description``."""
         if not model or re.match(pattern, model):
             return None
         return (
@@ -401,20 +493,61 @@ class ClaudeCompatible(Provider, abc.ABC):
     """Provider that speaks the Anthropic Messages API and can be driven
     by the Claude Code agent."""
 
-    @abc.abstractmethod
+    #: CLAUDE_CODE_USE_* mode flag this provider drives the Claude CLI under,
+    #: or None for providers with no routing flag (direct API, CBORG).
+    mode_flag: ClassVar[str | None] = None
+
+    #: Model fallback when OPENSCIENTIST_MODEL is unset.
+    default_claude_model: ClassVar[str] = "claude-sonnet-5-5"
+
+    #: Description of a valid model id, for validate_model_format.
+    model_format_description: ClassVar[str] = (
+        "an Anthropic model name (expected to start with 'claude-')"
+    )
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL",
+                help=f"model to use (defaults to {cls.default_claude_model})",
+            ),
+        )
+
+    @classmethod
+    def validate_model_format(cls, model: str | None) -> str | None:
+        return cls.model_format_error(model, r"^claude-", cls.model_format_description)
+
+    def _set_own_flag(self) -> None:
+        """Set the provider's own mode flag, if it has one. Vertex keeps its
+        flag from the environment, so the default is a no-op."""
+
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        """Env vars setup_environment clears after the mode flags."""
+        return ()
+
     def setup_environment(self) -> None:
-        """Configure process environment variables for the Claude CLI
-        (auth + routing flags), clearing any conflicting flags from a
-        previously-selected provider."""
+        """Claude CLI env setup. Sets the provider's own mode flag
+        (``_set_own_flag``), clears the conflicting mode flags (keeping
+        ``mode_flag``) and the vars from ``_conflicting_env_vars``.
+        Subclasses that finish the setup (auth, logging) call this first."""
+        self._set_own_flag()
+        clear_provider_mode_flags(logger, active_flag=self.mode_flag)
+        clear_env_vars(logger, self._conflicting_env_vars())
 
     @abc.abstractmethod
     def claude_sdk_env(self) -> dict[str, str]:
         """Environment variables the claude-agent-sdk CLI must see
         (e.g., ANTHROPIC_API_KEY, ANTHROPIC_BASE_URL, AWS_REGION)."""
 
-    @abc.abstractmethod
     def claude_model_name(self) -> str:
         """Model name to pass to ClaudeAgentOptions.model."""
+        return get_settings().provider.model or self.default_claude_model
+
+    def _validate_optional_config(self) -> list[str]:
+        if not get_settings().provider.model:
+            return [f"OPENSCIENTIST_MODEL not set (will use {self.default_claude_model})"]
+        return []
 
     def effective_model_name(self) -> str | None:
         return self.claude_model_name()
@@ -463,6 +596,27 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
     @abc.abstractmethod
     def _probe_context_tokens(base_url: str, model_id: str, api_key: str | None) -> int | None:
         """Read the launched context window from the live server, or None."""
+
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion(
+                cls.base_url_env,
+                help=(
+                    f"{cls.server_name} endpoint, "
+                    f"e.g. http://host.docker.internal:<port>/v1 for a host server"
+                ),
+            ),
+            SetupQuestion(
+                cls.api_key_env,
+                kind="secret",
+                help="only if the server was launched with an API key",
+            ),
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL",
+                help=f"the model the {cls.server_name} server serves",
+            ),
+        )
 
     def _base_url(self) -> str:
         return self._base_url_of(get_settings().provider)
@@ -520,8 +674,14 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
             env[self.api_key_env] = placeholder
         return env
 
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        # Self-hosted servers always route through the proxy.
+        return AirgapPosture(AirgapEgress.PROXY)
+
     def _endpoint(self) -> tuple[str, str | None]:
-        """Base URL and key to reach the server: the proxy and placeholder when proxied, else the real values."""
+        """Base URL and key to reach the server, the proxy and placeholder when
+        proxied, else the real values."""
         proxy = os.environ.get(LLM_PROXY_URL_ENV)
         if proxy:
             return proxy, os.environ.get("OPENAI_API_KEY")
@@ -538,8 +698,8 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
         return self._probe_context_tokens(self._base_url(), model, self._api_key())
 
     def model_profile(self) -> ModelProfile:
-        # Probe the live window, not the trained maximum. Normally the launcher
-        # resolves it app-side (override below), so this proxied probe is a fallback.
+        # Probe the live window, not the trained maximum. The launcher normally
+        # resolves it app-side, so this proxied probe is a fallback.
         base_url, key = self._endpoint()
         return probed_model_profile(
             model_id=self.effective_model_name(),
