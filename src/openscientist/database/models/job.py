@@ -172,6 +172,13 @@ class Job(UUIDv7Mixin, Base):
         comment="Why a completed job stopped early at a budget limit, or that its budget could not be checked",
     )
 
+    is_public: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="The owner has made this job readable by any signed-in user",
+    )
+
     result_summary: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
