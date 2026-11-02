@@ -80,7 +80,6 @@ def _write_config(jobs_dir: Path, job_id: str, **overrides) -> dict:
         "status": "pending",
         "created_at": datetime.now(UTC).isoformat(),
         "max_iterations": 10,
-        "use_skills": True,
         "investigation_mode": "autonomous",
         **overrides,
     }
@@ -105,7 +104,6 @@ def _make_db_job(
         "current_iteration": 0,
         "error_message": None,
         "cancellation_reason": None,
-        "use_skills": True,
         "investigation_mode": "autonomous",
         "owner_id": None,
         "short_title": None,

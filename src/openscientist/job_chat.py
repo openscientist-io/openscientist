@@ -109,14 +109,8 @@ def _append_literature(parts: list[str], literature: list[Any]) -> None:
         if not isinstance(lit, dict):
             continue
         title = lit.get("title", "Unknown")
-        relevance = lit.get("relevance_score", "unknown")
-        parts.append(f"\n## Paper {i} (Relevance: {relevance})")
+        parts.append(f"\n## Paper {i}")
         parts.append(f"Title: {title}")
-
-        key_findings = lit.get("key_findings", [])
-        if key_findings:
-            parts.append("Key findings:")
-            parts.extend(f"- {kf}" for kf in key_findings)
     parts.append("")
 
 

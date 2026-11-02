@@ -30,7 +30,6 @@ class FeedbackHistory(UUIDv7Mixin, Base):
         iteration: Iteration number when feedback was provided
         feedback_type: Type of feedback (correction/suggestion/question/approval)
         feedback_text: User's feedback text
-        response_text: LLM's response to the feedback
         applied: Whether feedback has been incorporated
         job: Related Job object
     """
@@ -61,12 +60,6 @@ class FeedbackHistory(UUIDv7Mixin, Base):
         Text,
         nullable=False,
         comment="User's feedback text",
-    )
-
-    response_text: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="LLM's response to the feedback",
     )
 
     applied: Mapped[bool] = mapped_column(

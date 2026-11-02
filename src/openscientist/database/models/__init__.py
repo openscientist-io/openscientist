@@ -25,7 +25,6 @@ from .finding_literature import finding_literature
 
 # Knowledge state models
 from .hypothesis import Hypothesis
-from .hypothesis_spawn import HypothesisSpawn
 from .iteration_summary import IterationSummary
 
 # Job models
@@ -56,7 +55,6 @@ __all__ = [
     "FeedbackHistory",
     "Finding",
     "Hypothesis",
-    "HypothesisSpawn",
     "IterationSummary",
     "Job",
     "JobChatMessage",
