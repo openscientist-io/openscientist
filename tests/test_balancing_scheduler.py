@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, User
 from openscientist.job_manager import JobManager, JobStatus, _db_update_job_status
-from openscientist.orchestrator.discovery import (
+from openscientist.orchestrator.report import (
     _begin_report_phase,
     _persist_final_status,
     _ReportOutcome,

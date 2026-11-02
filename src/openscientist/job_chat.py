@@ -391,7 +391,8 @@ async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dic
     to the turn's response file. Returns a status dict for the entrypoint."""
     from openscientist.agent.base import AgentConfig
     from openscientist.agent.factory import build_agent
-    from openscientist.orchestrator.discovery import _CostLedger, _finalize_executor
+    from openscientist.orchestrator.discovery import _finalize_executor
+    from openscientist.orchestrator.provenance import _CostLedger
     from openscientist.providers import get_provider
 
     job_dir = Path(job_dir)

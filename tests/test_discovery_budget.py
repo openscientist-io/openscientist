@@ -28,11 +28,8 @@ from openscientist.exec_broker import create_exec_broker_app
 from openscientist.exec_broker_client import ask_budget
 from openscientist.job_container.secrets import issue_run_credentials, revoke_run_credentials
 from openscientist.orchestrator import discovery
-from openscientist.orchestrator.discovery import (
-    _begin_report_phase,
-    _ReportOutcome,
-    run_discovery_async,
-)
+from openscientist.orchestrator.discovery import run_discovery_async
+from openscientist.orchestrator.report import _begin_report_phase, _ReportOutcome
 from openscientist.providers.base import CostInfo, Provider
 from openscientist.settings import clear_settings_cache
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row

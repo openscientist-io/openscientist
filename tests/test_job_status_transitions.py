@@ -29,14 +29,16 @@ from openscientist.job_manager import (
     _db_update_job_status,
 )
 from openscientist.orchestrator.discovery import (
-    _begin_report_phase,
     _DiscoveryCancelledError,
-    _persist_final_status,
-    _ReportOutcome,
     regenerate_report_async,
     run_discovery_async,
 )
 from openscientist.orchestrator.iteration import update_job_status
+from openscientist.orchestrator.report import (
+    _begin_report_phase,
+    _persist_final_status,
+    _ReportOutcome,
+)
 from openscientist.webapp_components import ui_components
 from openscientist.webapp_components.pages import job_detail
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
