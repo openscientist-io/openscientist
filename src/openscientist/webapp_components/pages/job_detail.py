@@ -926,6 +926,9 @@ def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[A
     queue_reason = getattr(latest_job, "queue_reason", None)
     if latest_job.status == JobStatus.QUEUED and queue_reason:
         badges.append(("Waiting on", queue_reason, "orange"))
+    stop_note = getattr(latest_job, "stop_note", None)
+    if latest_job.status == JobStatus.COMPLETED and stop_note:
+        badges.append(("Stopped early", stop_note, "orange"))
     if latest_job.status not in [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED]:
         badges.append(
             (

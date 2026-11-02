@@ -1256,7 +1256,11 @@ class JobManager:
             logger.warning("Failed to load notification target for %s: %s", job_info.job_id, e)
             return
         self._send_status_notification(
-            job_info.job_id, job_info.status, target, error_message=job_info.error
+            job_info.job_id,
+            job_info.status,
+            target,
+            error_message=job_info.error,
+            stop_note=job_info.stop_note if job_info.status is JobStatus.COMPLETED else None,
         )
 
     @staticmethod
@@ -1267,6 +1271,7 @@ class JobManager:
         *,
         error_message: str | None = None,
         cancellation_reason: str | None = None,
+        stop_note: str | None = None,
     ) -> None:
         """:func:`_status_notification` for worker threads."""
         run_sync(
@@ -1276,6 +1281,7 @@ class JobManager:
                 target,
                 error_message=error_message,
                 cancellation_reason=cancellation_reason,
+                stop_note=stop_note,
             )
         )
 
@@ -1287,6 +1293,7 @@ async def _status_notification(
     *,
     error_message: str | None = None,
     cancellation_reason: str | None = None,
+    stop_note: str | None = None,
 ) -> None:
     """Tell the job's owner about ``status``, if they turned notifications on."""
     if not target or not target.ntfy_enabled or not target.owner_id:
@@ -1301,6 +1308,7 @@ async def _status_notification(
             error_message=error_message,
             cancellation_reason=cancellation_reason,
             iteration=iterations_completed,
+            stop_note=stop_note,
             ntfy_topic=target.ntfy_topic,
         )
     except Exception as e:

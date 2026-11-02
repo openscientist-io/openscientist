@@ -28,6 +28,8 @@ from openscientist.database.models import (
     SkillSource,
     User,
 )
+from openscientist.exec_broker_client import BudgetCheck
+from openscientist.orchestrator import discovery
 from tests.admin_row import reset_admin_settings_row
 from tests.db_logins import (
     ADMIN_PASSWORD,
@@ -90,6 +92,16 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def discovery_budget_allows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loop's budget check allows by default. The budget tests override it."""
+
+    async def _allow(*, job_id: str) -> BudgetCheck:
+        return BudgetCheck(True, None, None)
+
+    monkeypatch.setattr(discovery, "ask_budget", _allow)
 
 
 @pytest.fixture(scope="session")

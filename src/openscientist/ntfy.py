@@ -153,12 +153,17 @@ async def notify_job_started(topic: str, job_id: str, title: str, base_url: str)
     )
 
 
-async def notify_job_completed(topic: str, job_id: str, title: str, base_url: str) -> bool:
+async def notify_job_completed(
+    topic: str, job_id: str, title: str, base_url: str, stop_note: str | None = None
+) -> bool:
     """Send notification when a job completes successfully."""
+    message = f"Your job '{title}' has completed successfully."
+    if stop_note:
+        message = f"Your job '{title}' has completed: {stop_note}"
     return await send_notification(
         topic=topic,
         title="Job Completed",
-        message=f"Your job '{title}' has completed successfully.",
+        message=message,
         priority="default",
         tags=["white_check_mark"],
         click_url=f"{base_url}/job/{job_id}",
@@ -231,6 +236,7 @@ async def notify_job_status_change(
     error_message: str | None = None,
     cancellation_reason: str | None = None,
     iteration: int | None = None,
+    stop_note: str | None = None,
     ntfy_topic: str | None = None,
 ) -> bool:
     """Send notification for a job status change if user has ntfy enabled.
@@ -279,7 +285,7 @@ async def notify_job_status_change(
     if new_status == "running":
         return await notify_job_started(topic, job_id, short_title, base_url)
     if new_status == "completed":
-        return await notify_job_completed(topic, job_id, short_title, base_url)
+        return await notify_job_completed(topic, job_id, short_title, base_url, stop_note)
     if new_status == "failed":
         return await notify_job_failed(
             topic, job_id, short_title, error_message or "Unknown error", base_url

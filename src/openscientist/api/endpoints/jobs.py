@@ -113,6 +113,9 @@ class JobResponse(BaseModel):
     queue_reason: str | None = Field(
         None, description="Why a queued job waits on a budget limit, if it is held"
     )
+    stop_note: str | None = Field(
+        None, description="Why a completed job stopped early at a budget limit, if it did"
+    )
 
 
 class JobListResponse(BaseModel):
@@ -132,6 +135,9 @@ class JobStatusResponse(BaseModel):
     error_message: str | None = Field(None, description="Error message if failed")
     queue_reason: str | None = Field(
         None, description="Why a queued job waits on a budget limit, if it is held"
+    )
+    stop_note: str | None = Field(
+        None, description="Why a completed job stopped early at a budget limit, if it did"
     )
 
 
@@ -163,6 +169,7 @@ class _JobResponseFields(TypedDict):
     pdb_code: str | None
     space_group: str | None
     queue_reason: str | None
+    stop_note: str | None
 
 
 async def get_job_by_id(
@@ -210,6 +217,7 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
         "queue_reason": job.queue_reason,
+        "stop_note": job.stop_note,
     }
 
 
@@ -515,6 +523,7 @@ async def get_job_status(
         max_iterations=job.max_iterations,
         error_message=job.error_message,
         queue_reason=job.queue_reason,
+        stop_note=job.stop_note,
     )
 
 

@@ -60,6 +60,7 @@ class JobInfo:
     error: str | None = None
     cancellation_reason: str | None = None
     queue_reason: str | None = None
+    stop_note: str | None = None
     use_hypotheses: bool = False
     investigation_mode: str = "autonomous"
     owner_id: str | None = None
@@ -114,4 +115,5 @@ class JobInfo:
             llm_model=(job.llm_config or {}).get("model") if hasattr(job, "llm_config") else None,
             version_info=getattr(job, "version_info", None),
             queue_reason=getattr(job, "queue_reason", None),
+            stop_note=getattr(job, "stop_note", None),
         )

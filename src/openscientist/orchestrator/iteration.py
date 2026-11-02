@@ -414,6 +414,7 @@ async def _persist_job_status(
     job_uuid: UUID,
     status: str,
     error_message: str | None,
+    stop_note: str | None,
     allowed_from: Collection[str],
     open_session: SessionOpener,
     retry_for: float,
@@ -421,6 +422,8 @@ async def _persist_job_status(
     values: dict[str, object] = {"status": status}
     if error_message:
         values["error_message"] = error_message
+    if stop_note:
+        values["stop_note"] = stop_note
     if status in _ENDED_STATUSES:
         values["ended_at"] = func.now()
     if status in _LABEL_ENDING_STATUSES:
@@ -450,6 +453,7 @@ async def update_job_status(
     job_dir: Path,
     status: str,
     error_message: str | None = None,
+    stop_note: str | None = None,
     *,
     allowed_from: Collection[str],
     open_session: SessionOpener | None = None,
@@ -458,8 +462,9 @@ async def update_job_status(
     """Move the job to ``status`` if it is in one of ``allowed_from``, in
     ``open_session``, else the process's own login. Returns whether it applied.
 
-    A lost connection is retried for ``retry_for`` seconds and then raised, as
-    is any other database error."""
+    ``error_message`` is written for failures, and ``stop_note`` for a job that
+    completed early at a budget limit. A lost connection is retried for
+    ``retry_for`` seconds and then raised, as is any other database error."""
     job_id = job_dir.name
 
     job_uuid = _parse_job_uuid(job_id)
@@ -471,6 +476,7 @@ async def update_job_status(
         job_uuid,
         status,
         error_message,
+        stop_note,
         allowed_from,
         open_session or async_session_local,
         retry_for,

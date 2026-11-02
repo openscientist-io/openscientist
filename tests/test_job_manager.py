@@ -361,6 +361,7 @@ class TestContainerStatusNotifications:
         self,
         tmp_path: Path,
         statuses: list[tuple[JobStatus, str | None]],
+        stop_notes: list[str | None] | None = None,
     ) -> list[Mapping[str, object]]:
         manager = _new_manager(tmp_path)
         job_id = str(uuid4())
@@ -372,8 +373,9 @@ class TestContainerStatusNotifications:
                 status=status,
                 created_at="2026-02-01T00:00:00+00:00",
                 error=error,
+                stop_note=stop_notes[i] if stop_notes is not None else None,
             )
-            for status, error in statuses
+            for i, (status, error) in enumerate(statuses)
         ]
         target = JobStatusUpdateResult(
             applied=True,
@@ -431,6 +433,24 @@ class TestContainerStatusNotifications:
         """cancel_job already notified when it wrote the status."""
         sent = self._run(tmp_path, [(JobStatus.CANCELLED, None)])
         assert [s["new_status"] for s in sent] == ["running"]
+
+    def test_a_completed_job_with_a_stop_note_names_it(self, tmp_path):
+        note = "Job cost limit of $5.00 reached: the job has spent $5.00."
+        sent = self._run(
+            tmp_path,
+            [(JobStatus.RUNNING, None), (JobStatus.COMPLETED, None)],
+            stop_notes=[None, note],
+        )
+        assert [s["new_status"] for s in sent] == ["running", "completed"]
+        assert sent[1]["stop_note"] == note
+
+    def test_a_failed_job_carries_no_stop_note(self, tmp_path):
+        sent = self._run(
+            tmp_path,
+            [(JobStatus.FAILED, "Report generation failed: boom")],
+            stop_notes=["some note"],
+        )
+        assert sent[1]["stop_note"] is None
 
 
 class TestJobManagerKSProgress:
