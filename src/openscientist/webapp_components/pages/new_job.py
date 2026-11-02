@@ -157,57 +157,73 @@ async def new_job_page() -> None:
     async def on_upload(event: Any) -> None:
         await _handle_upload(event, session_id)
 
-    with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):
-        ui.label("Submit Discovery Job").classes("text-h5 mb-4")
+    # The page height minus the header (4.5rem) and the page padding, so the card centres.
+    with (
+        ui.column()
+        .classes("w-full items-center justify-center")
+        .style("min-height: calc(100vh - 6.5rem)"),
+        ui.card().classes("w-full max-w-2xl p-6 gap-4"),
+    ):
+        ui.label("Submit Discovery Job").classes("text-h6")
 
-        research_question = ui.textarea(
-            label="Research Question",
-            placeholder="e.g., What interesting patterns can be found in the attached data, and what biological mechanisms explain them?",
-            validation={"Too short": lambda value: len(value) >= 10},
-        ).classes("w-full")
+        research_question = (
+            ui.textarea(
+                label="Research Question",
+                placeholder="e.g., What interesting patterns can be found in the attached data, and what biological mechanisms explain them?",
+                validation={"Too short": lambda value: len(value) >= 10},
+            )
+            .classes("w-full")
+            .props("outlined autogrow input-style={'minHeight': '72px'}")
+        )
 
         ui.upload(
-            label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
+            label=f"Upload Data Files (Optional - Max {max_file_size_mb} MB per file)",
             multiple=True,
             auto_upload=True,
             on_upload=on_upload,
-        ).classes("w-full")
-        ui.label(f"Maximum file size: {max_file_size_mb} MB per file").classes(
-            "text-caption text-grey-6"
-        )
+        ).classes("w-full os-compact-upload")
 
-        max_iterations = ui.number(
-            label="Max Iterations",
-            value=10,
-            min=2,
-            max=100,
-            step=1,
-        ).classes("w-full")
+        ui.separator()
 
-        ui.separator().classes("my-4")
-        use_hypotheses = ui.switch("Hypothesis Generation", value=False)
-        ui.label(
-            "Track scientific hypotheses across iterations — propose, test, and confirm/reject them."
-        ).classes("text-sm text-gray-700 mt-1")
+        with ui.row().classes("w-full items-start gap-x-8 gap-y-4"):
+            max_iterations = (
+                ui.number(
+                    label="Max Iterations",
+                    value=10,
+                    min=2,
+                    max=100,
+                    step=1,
+                )
+                .classes("w-28")
+                .props("outlined dense")
+            )
 
-        ui.separator().classes("my-4")
-        coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
-        ui.label(
-            "Requires your active participation. After each iteration, I will pause to receive your feedback."
-        ).classes("text-sm text-gray-700 mt-1")
-        ui.label(
-            "Requires you to stay near your computer. Auto-continues after 15 min if you don't respond."
-        ).classes("text-xs text-orange-700")
+            with ui.column().classes("flex-1 gap-3"):
+                with ui.column().classes("gap-0"):
+                    use_hypotheses = ui.switch("Hypothesis Generation", value=False)
+                    ui.label("Track scientific hypotheses across iterations.").classes(
+                        "text-sm text-gray-600 ml-12"
+                    )
 
-        ui.button(
-            "Start Discovery",
-            on_click=lambda: _submit_job(
-                job_manager=job_manager,
-                user_can_start_jobs=user_can_start_jobs,
-                session_id=session_id,
-                research_question=research_question,
-                max_iterations=max_iterations,
-                use_hypotheses=use_hypotheses,
-                coinvestigate_mode=coinvestigate_mode,
-            ),
-        ).classes("w-full mt-4")
+                with ui.column().classes("gap-0"):
+                    coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
+                    ui.label("Pauses after each iteration for your feedback.").classes(
+                        "text-sm text-gray-600 ml-12"
+                    )
+                    ui.label(
+                        "Stay near your computer. Auto-continues after 15 min without a response."
+                    ).classes("text-xs text-orange-700 ml-12")
+
+        with ui.row().classes("w-full justify-end"):
+            ui.button(
+                "Start Discovery",
+                on_click=lambda: _submit_job(
+                    job_manager=job_manager,
+                    user_can_start_jobs=user_can_start_jobs,
+                    session_id=session_id,
+                    research_question=research_question,
+                    max_iterations=max_iterations,
+                    use_hypotheses=use_hypotheses,
+                    coinvestigate_mode=coinvestigate_mode,
+                ),
+            ).props("color=primary")

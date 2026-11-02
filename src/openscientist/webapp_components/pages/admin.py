@@ -521,46 +521,61 @@ def _render_admin_users_table(
             "body-cell-actions",
             """
             <q-td :props="props">
-                <div class="q-gutter-xs">
+                <div class="row items-center gap-1 justify-center flex-wrap">
                     <q-btn
                         v-if="!props.row.is_approved"
+                        flat
+                        dense
                         size="sm"
                         color="positive"
                         icon="check"
-                        label="Approve"
                         @click="$parent.$emit('approve-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Approve user</q-tooltip>
+                    </q-btn>
                     <q-btn
                         v-else
+                        flat
+                        dense
                         size="sm"
                         color="warning"
                         icon="remove_circle"
-                        label="Unapprove"
                         @click="$parent.$emit('unapprove-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Remove approval</q-tooltip>
+                    </q-btn>
                     <q-btn
                         v-if="!props.row.is_priority"
+                        flat
+                        dense
                         size="sm"
                         color="purple"
                         icon="bolt"
-                        label="Make priority"
                         @click="$parent.$emit('prioritise-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Make priority user</q-tooltip>
+                    </q-btn>
                     <q-btn
                         v-else
+                        flat
+                        dense
                         size="sm"
                         color="grey"
                         icon="bolt"
-                        label="Remove priority"
                         @click="$parent.$emit('deprioritise-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Remove priority</q-tooltip>
+                    </q-btn>
                     <q-btn
+                        flat
+                        dense
                         size="sm"
                         color="negative"
                         icon="delete"
-                        label="Delete"
                         @click="$parent.$emit('delete-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Delete user</q-tooltip>
+                    </q-btn>
                 </div>
             </q-td>
             """,
@@ -841,11 +856,13 @@ _REVIEW_TOKEN_ACTIONS_SLOT = r"""
         v-if="props.row.can_revoke"
         flat
         dense
+        size="sm"
         color="negative"
         icon="block"
-        label="Revoke"
         @click="$parent.$emit('revoke', props.row)"
-    />
+    >
+        <q-tooltip>Revoke token</q-tooltip>
+    </q-btn>
     <span v-else class="text-grey">-</span>
 </q-td>
 """

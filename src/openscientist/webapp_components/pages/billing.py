@@ -63,42 +63,34 @@ async def _render_db_cost_section() -> None:
         ]
     )
 
+    # Short headers and the dense prop keep the table inside its card at narrow
+    # widths; the table scrolls horizontally inside the card if it still overflows.
     columns = [
         {"name": "job_id", "label": "Job", "field": "job_id", "align": "left"},
-        {"name": "iteration", "label": "Iteration", "field": "iteration", "align": "right"},
+        {"name": "iteration", "label": "It.", "field": "iteration", "align": "right"},
         {"name": "model", "label": "Model", "field": "model", "align": "left"},
-        {"name": "provider", "label": "Provider", "field": "provider", "align": "left"},
-        {
-            "name": "input_tokens",
-            "label": "Input Tokens",
-            "field": "input_tokens",
-            "align": "right",
-        },
-        {
-            "name": "output_tokens",
-            "label": "Output Tokens",
-            "field": "output_tokens",
-            "align": "right",
-        },
+        {"name": "provider", "label": "Prov.", "field": "provider", "align": "left"},
+        {"name": "input_tokens", "label": "In", "field": "input_tokens", "align": "right"},
+        {"name": "output_tokens", "label": "Out", "field": "output_tokens", "align": "right"},
         {
             "name": "cache_read_tokens",
-            "label": "Cache Read",
+            "label": "Cache R",
             "field": "cache_read_tokens",
             "align": "right",
         },
         {
             "name": "cache_write_tokens",
-            "label": "Cache Write",
+            "label": "Cache W",
             "field": "cache_write_tokens",
             "align": "right",
         },
         {
             "name": "reasoning_tokens",
-            "label": "Reasoning",
+            "label": "Reason",
             "field": "reasoning_tokens",
             "align": "right",
         },
-        {"name": "cost_usd", "label": "Cost (USD)", "field": "cost_usd", "align": "right"},
+        {"name": "cost_usd", "label": "Cost", "field": "cost_usd", "align": "right"},
         {"name": "created_at", "label": "Date", "field": "created_at", "align": "left"},
     ]
     rows = [
@@ -118,13 +110,13 @@ async def _render_db_cost_section() -> None:
         }
         for r in cost_records
     ]
-    ui.table(columns=columns, rows=rows, row_key="id").classes("w-full")
+    ui.table(columns=columns, rows=rows, row_key="id").props("dense").classes("w-full")
 
 
 async def _render_project_budget_section() -> None:
     """The project spend and the verdict the budget enforcement acts on."""
-    with ui.card().classes("w-full max-w-4xl"):
-        ui.label("Project Budget").classes("text-h6 mb-4")
+    with ui.card().classes("w-full max-w-4xl os-density-card"):
+        ui.label("Project Budget").classes("text-h6 mb-2")
 
         try:
             provider = get_provider()
@@ -134,19 +126,19 @@ async def _render_project_budget_section() -> None:
             verdict = await check_budget(provider_id=provider.id, include_unpriced=False)
             admin = await current_admin_settings()
 
-            with ui.row().classes("w-full gap-8 mb-4"):
+            with ui.row().classes("w-full gap-4 mb-2 flex-wrap"):
                 # Total spend
-                with ui.card().classes("flex-1"):
-                    ui.label(f"${spend.total:.2f}").classes("text-h3 text-primary")
+                with ui.card().classes("flex-1 min-w-40 os-density-card"):
+                    ui.label(f"${spend.total:.2f}").classes("text-2xl text-primary")
                     ui.label("Total Spend").classes("text-subtitle2 text-grey")
 
                 # Last 24h
-                with ui.card().classes("flex-1"):
-                    ui.label(f"${spend.last_24h:.2f}").classes("text-h3")
+                with ui.card().classes("flex-1 min-w-40 os-density-card"):
+                    ui.label(f"${spend.last_24h:.2f}").classes("text-2xl")
                     ui.label("Last 24 Hours").classes("text-subtitle2 text-grey")
 
             # Provider info
-            with ui.card().classes("w-full bg-gray-50"):
+            with ui.card().classes("w-full bg-gray-50 os-density-card"):
                 ui.label("Provider Information").classes("text-subtitle2 font-bold mb-2")
                 provider_name = (
                     spend.billed.provider_name

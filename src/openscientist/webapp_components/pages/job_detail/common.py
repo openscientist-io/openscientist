@@ -7,10 +7,32 @@ from typing import Any
 from uuid import UUID
 
 from openscientist.database.session import thread_safe_user_session
-from openscientist.job.types import completed_iterations
+from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
+
+
+def _report_tab_tooltip(status: JobStatus) -> str | None:
+    """The tooltip of a disabled Report tab, or None when the tab is enabled.
+
+    The report renders for finished jobs; a failed job may still have written
+    a partial final report.
+    """
+    if status in (JobStatus.COMPLETED, JobStatus.FAILED):
+        return None
+    return "The report is available once the job finishes."
+
+
+def _chat_tab_tooltip(status: JobStatus) -> str | None:
+    """The tooltip of a disabled Chat tab, or None when the tab is enabled.
+
+    The assistant answers from the findings, which exist only after the job
+    has finished.
+    """
+    if status is JobStatus.COMPLETED:
+        return None
+    return "Chat opens once the job finishes."
 
 
 def _derive_progress_from_ks(

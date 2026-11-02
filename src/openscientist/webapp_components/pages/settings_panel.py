@@ -9,14 +9,23 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from nicegui import ui
+from pydantic_settings import BaseSettings
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from openscientist.admin_settings import current_admin_settings
+from openscientist.admin_settings import AdminSettingsValues, current_admin_settings
 from openscientist.auth import get_current_user_id, is_current_user_admin
 from openscientist.database.models import AdminSettingChange, AdminSettings, User
 from openscientist.database.session import get_admin_session
-from openscientist.settings import get_settings
+from openscientist.settings import (
+    AirgapSettings,
+    AuthSettings,
+    BudgetSettings,
+    ContainerSettings,
+    FileSettings,
+    Settings,
+    get_settings,
+)
 from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.components.common import render_empty_state
 
@@ -51,6 +60,58 @@ _LABELS = {column: label for column, label, *_ in (*_FIELDS, _AIRGAP)}
 _INT_COLUMNS = {column for column, *_, kind in _FIELDS if kind == "int"}
 _CHECK = re.compile(r"ck_admin_settings_([a-z0-9_]+)")
 
+# (group title, columns) in the order the form shows them.
+_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "Budgets",
+        (
+            "max_job_cost_usd",
+            "max_project_spend_total_usd",
+            "max_project_spend_24h_usd",
+            "warn_project_spend_24h_usd",
+        ),
+    ),
+    (
+        "Agent and executor",
+        (
+            "agent_cpu",
+            "executor_cpu",
+            "agent_memory_mib",
+            "executor_memory_mib",
+            "agent_timeout_seconds",
+            "executor_timeout_seconds",
+        ),
+    ),
+    ("Scheduling", ("max_concurrent_jobs", "scheduler_window_hours")),
+    ("Files and session", ("max_file_size_mb", "session_duration_days")),
+)
+
+# The settings.py model and field each admin column maps to, so the panel can
+# read the description instead of keeping a second copy of the wording.
+_DESCRIPTION_SOURCES: dict[str, tuple[type[BaseSettings], str]] = {
+    "max_job_cost_usd": (BudgetSettings, "max_job_cost_usd"),
+    "max_project_spend_total_usd": (BudgetSettings, "max_project_spend_total_usd"),
+    "max_project_spend_24h_usd": (BudgetSettings, "max_project_spend_24h_usd"),
+    "warn_project_spend_24h_usd": (BudgetSettings, "warn_project_spend_24h_usd"),
+    "agent_cpu": (ContainerSettings, "agent_cpu"),
+    "executor_cpu": (ContainerSettings, "executor_cpu"),
+    "agent_memory_mib": (ContainerSettings, "agent_memory"),
+    "executor_memory_mib": (ContainerSettings, "executor_memory"),
+    "agent_timeout_seconds": (ContainerSettings, "agent_timeout"),
+    "executor_timeout_seconds": (ContainerSettings, "executor_timeout"),
+    "max_file_size_mb": (FileSettings, "max_file_size_mb"),
+    "max_concurrent_jobs": (Settings, "max_concurrent_jobs"),
+    "scheduler_window_hours": (Settings, "scheduler_window_hours"),
+    "session_duration_days": (AuthSettings, "session_duration_days"),
+    "airgapped": (AirgapSettings, "enabled"),
+}
+
+
+def _description_for(column: str) -> str:
+    """The settings.py description of the env field an admin column maps to."""
+    model, field_name = _DESCRIPTION_SOURCES[column]
+    return str(model.model_fields[field_name].description)
+
 
 def _value_text(value: object) -> str:
     """The text form of a value, no limit for None and on or off for the switch."""
@@ -67,6 +128,35 @@ def _current_user_uuid() -> UUID | None:
     if user_id is None:
         return None
     return UUID(user_id)
+
+
+_FIELD_BY_COLUMN = {column: (label, unit, rng, kind) for column, label, unit, rng, kind in _FIELDS}
+
+
+def _render_setting_field(
+    column: str,
+    current: AdminSettingsValues,
+    numbers: dict[str, ui.number],
+    no_limit: dict[str, ui.checkbox],
+) -> None:
+    """One form field: value input, and one helper line with the description and the bound."""
+    label, unit, rng, kind = _FIELD_BY_COLUMN[column]
+    value = getattr(current, column)
+    name = f"{label} ({unit})" if unit else label
+    with ui.column().classes("min-w-0 gap-0"):
+        if kind == "budget":
+            field = ui.number(label=name, value=None if value is None else float(value), min=0)
+        elif kind == "int":
+            field = ui.number(label=name, value=value, min=0, step=1)
+        else:
+            field = ui.number(label=name, value=value, min=0)
+        field.props("outlined dense")
+        numbers[column] = field.classes("w-full")
+        if kind == "budget":
+            no_limit[column] = (
+                ui.checkbox("No limit", value=value is None).props("dense").classes("mt-1")
+            )
+        ui.label(f"{_description_for(column)} ({rng})").classes("text-xs text-gray-500")
 
 
 def _rejected_setting(exc: IntegrityError) -> str:
@@ -93,7 +183,7 @@ async def save_admin_settings(values: dict[str, object]) -> tuple[bool, str]:
             await session.execute(select(AdminSettings).where(AdminSettings.id.is_(True)))
         ).scalar_one_or_none()
         if row is None:
-            return False, "The admin settings row is missing; the web seeds it at startup."
+            return False, "The admin settings row is missing. The web seeds it at startup."
 
         # The floor owns the switch, so a locked form never edits the row's value.
         fields = [field for field in (*_FIELDS, _AIRGAP) if not (floor and field[0] == "airgapped")]
@@ -184,33 +274,29 @@ async def _render_settings(container: ui.column) -> None:
             ui.label("Settings").classes("text-lg font-bold mb-2")
             numbers: dict[str, ui.number] = {}
             no_limit: dict[str, ui.checkbox] = {}
-            for column, label, unit, rng, kind in _FIELDS:
-                value = getattr(current, column)
-                name = f"{label} ({unit})" if unit else label
-                with ui.row().classes("w-full items-center gap-4"):
-                    if kind == "budget":
-                        numbers[column] = ui.number(
-                            label=name,
-                            value=None if value is None else float(value),
-                            min=0,
-                        ).classes("w-80")
-                    elif kind == "int":
-                        numbers[column] = ui.number(label=name, value=value, min=0, step=1).classes(
-                            "w-80"
-                        )
-                    else:
-                        numbers[column] = ui.number(label=name, value=value, min=0).classes("w-80")
-                    numbers[column].props("outlined dense")
-                    if kind == "budget":
-                        no_limit[column] = ui.checkbox("No limit", value=value is None)
-                    ui.label(rng).classes("text-xs text-gray-500")
+            for group_title, columns in _GROUPS:
+                ui.label(group_title).classes("text-subtitle2 font-bold text-gray-700 mt-4")
+                # As many columns as fit, each at least 15rem wide.
+                with (
+                    ui.element("div")
+                    .classes("w-full gap-x-6 gap-y-3")
+                    .style(
+                        "display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr))"
+                    )
+                ):
+                    for column in columns:
+                        _render_setting_field(column, current, numbers, no_limit)
 
-            switch = ui.switch("Air-gap", value=current.airgapped)
-            if current.airgap_locked:
-                switch.props("disable")
-                ui.label(
-                    "Locked on because OPENSCIENTIST_AIRGAPPED is set in the environment."
-                ).classes("text-xs text-gray-500")
+            ui.label("Connection").classes("text-subtitle2 font-bold text-gray-700 mt-4")
+            with ui.row().classes("w-full items-start gap-4"):
+                switch = ui.switch("Air-gap", value=current.airgapped)
+                with ui.column().classes("gap-0"):
+                    ui.label(_description_for("airgapped")).classes("text-xs text-gray-500")
+                    if current.airgap_locked:
+                        switch.props("disable")
+                        ui.label(
+                            "Locked on because OPENSCIENTIST_AIRGAPPED is set in the environment."
+                        ).classes("text-xs text-gray-500")
 
             async def save() -> None:
                 try:
@@ -224,7 +310,8 @@ async def _render_settings(container: ui.column) -> None:
                     container.clear()
                     await _render_settings(container)
 
-            ui.button("Save", icon="save", on_click=save).props("color=primary")
+            with ui.row().classes("w-full justify-end mt-4"):
+                ui.button("Save", icon="save", on_click=save).props("color=primary")
 
         history = ui.column().classes("w-full")
         await _load_history(history)

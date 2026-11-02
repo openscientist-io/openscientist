@@ -132,7 +132,8 @@ async def test_an_upload_under_the_rows_size_limit_is_recorded(
 async def test_the_page_shows_the_rows_file_size_limit(
     test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The signed-in page shows the limit the admin settings row holds."""
+    """The signed-in page shows the limit the admin settings row holds in the upload
+    header, and the research-question field."""
     from openscientist import web_app
     from openscientist.auth import middleware
     from openscientist.webapp_components.pages import new_job
@@ -167,6 +168,10 @@ async def test_the_page_shows_the_rows_file_size_limit(
         ):
             await new_job.new_job_page()
 
-        mock_ui.label.assert_any_call("Maximum file size: 250 MB per file")
+        assert mock_ui.upload.call_args.kwargs["label"] == (
+            "Upload Data Files (Optional - Max 250 MB per file)"
+        )
+        mock_ui.textarea.assert_called_once()
+        assert mock_ui.textarea.call_args.kwargs["label"] == "Research Question"
     finally:
         await reset_admin_settings_row(test_engine)

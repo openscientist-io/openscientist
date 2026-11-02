@@ -101,6 +101,19 @@ def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[A
     return badges
 
 
+def _status_line_for(latest_job: Any, latest_ks: dict[str, Any] | None) -> str | None:
+    """The live status line under the badges, or None when nothing is live.
+
+    The report phase names itself, because a regenerating job carries no
+    fresh agent status.
+    """
+    if latest_job.status == JobStatus.GENERATING_REPORT:
+        return "Generating report..."
+    if latest_job.status == JobStatus.RUNNING and latest_ks:
+        return latest_ks.get("agent_status")
+    return None
+
+
 def _render_job_stats_content(context: _JobDetailContext) -> None:
     if not is_client_connected():
         return
@@ -112,18 +125,19 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     latest_ks = context.ks_data
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
-    render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
-    if context.owner_name:
-        ui.label(f"Owner: {context.owner_name}").classes("text-xs text-gray-500 mt-1")
+    badges_row = render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
     run_environment = run_environment_text(latest_job.version_info)
     if run_environment:
-        ui.label(run_environment).classes("text-xs text-gray-500 mt-1")
+        with badges_row:
+            with ui.icon("info").props("size=sm").classes("text-gray-400 align-middle"):
+                ui.tooltip(run_environment).classes("os-env-tooltip")
+    if context.owner_name:
+        ui.label(f"Owner: {context.owner_name}").classes("text-xs text-gray-500 mt-1")
 
-    if latest_job.status == JobStatus.RUNNING and latest_ks:
-        agent_status = latest_ks.get("agent_status")
-        if agent_status:
-            with ui.element("div").classes("mt-2"):
-                render_thinking_status(agent_status)
+    status_line = _status_line_for(latest_job, latest_ks)
+    if status_line:
+        with ui.element("div").classes("mt-2"):
+            render_thinking_status(status_line)
 
 
 def _render_research_question_card(context: _JobDetailContext) -> None:

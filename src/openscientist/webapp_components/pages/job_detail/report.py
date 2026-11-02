@@ -11,7 +11,6 @@ from openscientist.job.types import JobStatus
 from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.components.badges import transform_pmid_references
-from openscientist.webapp_components.components.common import render_thinking_status
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 
 logger = logging.getLogger(__name__)
@@ -168,9 +167,6 @@ def _render_report_tab(context: _JobDetailContext) -> None:
     report_path = context.job_dir / "final_report.md"
     html_path = context.job_dir / "final_report.html"
     pdf_path = context.job_dir / "final_report.pdf"
-
-    if context.job_info.status == JobStatus.GENERATING_REPORT:
-        render_thinking_status("Generating report...")
 
     # Only show the report when the job has finished. The agent may write
     # final_report.md mid-run, but it is not ready for display until the

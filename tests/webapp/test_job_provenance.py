@@ -89,5 +89,6 @@ def test_the_job_page_shows_the_run_environment() -> None:
         patch.object(timeline, "render_stat_badges"),
     ):
         timeline._render_job_stats_content(context)  # type: ignore[arg-type]
-    labels = [str(call.args[0]) for call in mock_ui.label.call_args_list if call.args]
-    assert any("abc123def456" in label for label in labels)
+    tooltips = [str(call.args[0]) for call in mock_ui.tooltip.call_args_list if call.args]
+    # The line moved into the info icon's tooltip, carrying the same text.
+    assert run_environment_text(_RECORDED) in tooltips

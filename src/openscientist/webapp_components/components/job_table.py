@@ -29,13 +29,13 @@ def render_status_cell_slot() -> str:
     """Quasar slot template for a status column with failed-job error tooltip."""
     return r"""
         <q-td :props="props">
-            <div class="row items-center gap-2">
+            <div class="row items-center gap-1 flex-wrap">
                 <!-- Failed status: Red badge with white text and error tooltip -->
                 <q-badge
                     v-if="props.row.status === 'failed'"
                     color="red"
                     text-color="white"
-                    class="px-3 py-1 font-bold cursor-pointer"
+                    class="px-1.5 py-0.5 font-bold cursor-pointer"
                 >
                     <span class="row items-center" style="white-space:nowrap;">✗&nbsp;{{ props.row.status }}</span>
                     <q-tooltip
@@ -55,7 +55,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else-if="props.row.status === 'completed'"
                     color="green"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">✓&nbsp;{{ props.row.status }}</span>
                 </q-badge>
@@ -64,7 +64,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else-if="props.row.status === 'running'"
                     color="teal"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">▶&nbsp;{{ props.row.status }}</span>
                 </q-badge>
@@ -73,7 +73,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else-if="props.row.status === 'queued'"
                     color="blue"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">⟳&nbsp;{{ props.row.status }}</span>
                 </q-badge>
@@ -82,7 +82,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else-if="props.row.status === 'awaiting_feedback'"
                     color="orange"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">⏸&nbsp;{{ props.row.status }}</span>
                 </q-badge>
@@ -91,7 +91,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else-if="props.row.status === 'generating_report'"
                     color="teal"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">⟳&nbsp;generating report</span>
                 </q-badge>
@@ -100,7 +100,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else-if="props.row.status === 'cancelled'"
                     color="grey"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">⊗&nbsp;{{ props.row.status }}</span>
                 </q-badge>
@@ -109,7 +109,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-else
                     color="grey"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">○&nbsp;{{ props.row.status }}</span>
                 </q-badge>
@@ -118,7 +118,7 @@ def render_status_cell_slot() -> str:
                 <q-badge
                     v-if="props.row.is_public"
                     color="teal"
-                    class="px-2 py-1"
+                    class="px-1.5 py-0.5"
                 >
                     <span class="row items-center" style="white-space:nowrap;">◎&nbsp;public</span>
                 </q-badge>
@@ -134,7 +134,7 @@ def render_actions_slot_with_delete() -> str:
     """
     return r"""
         <q-td :props="props">
-            <div class="row items-center gap-1 justify-center">
+            <div class="row items-center gap-1 justify-center flex-wrap">
                 <!-- Share button - conditionally shown based on can_share (owners only) -->
                 <q-btn
                     v-if="props.row.can_share"
