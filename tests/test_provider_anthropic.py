@@ -176,7 +176,10 @@ class TestAnthropicClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="claude-custom-model")
-        with patch("openscientist.providers.anthropic.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.anthropic.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert AnthropicProvider().claude_model_name() == "claude-custom-model"
 
 
@@ -209,3 +212,15 @@ class TestAnthropicGetCostInfo:
             cost = provider.get_cost_info(lookback_hours=48)
 
         assert cost.recent_period_hours == 48
+
+
+def test_airgap_posture_is_unsupported_without_credentials() -> None:
+    """Without any credential the provider cannot be routed through the proxy."""
+    from types import SimpleNamespace
+
+    from openscientist.providers.base import AirgapEgress
+
+    posture = AnthropicProvider.airgap_posture(
+        SimpleNamespace(anthropic_api_key=None, claude_code_oauth_token=None)  # type: ignore[arg-type]
+    )
+    assert posture.mode is AirgapEgress.UNSUPPORTED

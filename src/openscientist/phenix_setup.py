@@ -4,7 +4,7 @@ import os
 import sys
 from typing import Any
 
-from openscientist.settings import get_settings
+from openscientist.settings import get_settings, phenix_installation_ok
 
 
 class PhenixConfigError(ValueError):
@@ -81,7 +81,7 @@ def setup_phenix_env(*, raise_on_error: bool = False) -> dict[str, Any] | None:
         return None
 
     bin_dir = os.path.join(phenix_path, "bin")
-    if not os.path.isdir(bin_dir) or not os.path.exists(os.path.join(bin_dir, "phenix.about")):
+    if not phenix_installation_ok(phenix_path):
         msg = (
             f"Phenix installation at {phenix_path} is missing bin/phenix.about. "
             f"Expected a Phenix 2.x install layout."

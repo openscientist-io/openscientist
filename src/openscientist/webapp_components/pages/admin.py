@@ -15,8 +15,11 @@ from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_j
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
 from openscientist.database.models import Job, ReviewToken, User
 from openscientist.database.session import get_admin_session
+from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.billing import render_billing_panel
+from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.ui_components import (
+    STATUS_COLORS,
     format_uptime,
     make_action_button_slot,
     render_alert_banner,
@@ -128,6 +131,7 @@ async def admin_page() -> None:
             review_tokens_tab = ui.tab("Review Tokens", icon="rate_review")
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
+            settings_tab = ui.tab("Settings", icon="tune")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
             # Orphaned Jobs Panel (deferred — not the default tab)
@@ -149,6 +153,10 @@ async def admin_page() -> None:
             # Billing Panel (deferred)
             with ui.tab_panel(billing_tab):
                 ui.timer(0.1, render_billing_panel, once=True)
+
+            # Settings Panel (deferred)
+            with ui.tab_panel(settings_tab):
+                ui.timer(0.1, render_settings_panel, once=True)
 
 
 async def render_orphaned_jobs_panel() -> None:
@@ -693,15 +701,11 @@ async def render_containers_panel() -> None:
 
 
 def _job_status_color(status: str) -> str:
-    """Map a job status string to a Quasar badge color."""
-    return {
-        "running": "yellow",
-        "queued": "blue",
-        "pending": "grey",
-        "completed": "green",
-        "failed": "red",
-        "cancelled": "grey",
-    }.get(status, "grey")
+    """The badge colour every other page uses for ``status``."""
+    try:
+        return STATUS_COLORS[JobStatus(status)]
+    except ValueError:
+        return "gray"
 
 
 def _render_dashboard_unavailable_state(data: DashboardData) -> bool:

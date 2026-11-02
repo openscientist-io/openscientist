@@ -1,9 +1,7 @@
 """Direct OpenAI API provider (drives the Codex agent).
 
-Routes the Codex agent at OpenAI's default endpoint. Authentication is
-either an ``OPENAI_API_KEY`` (API auth) or the ChatGPT OAuth login that
-the codex CLI stores in ``~/.codex/auth.json``. ``CodexAgent`` provisions
-whichever is available into the per-job ``CODEX_HOME``.
+Auth is ``OPENAI_API_KEY`` or the ChatGPT OAuth login the codex CLI stores
+in ``~/.codex/auth.json``.
 """
 
 from __future__ import annotations
@@ -17,7 +15,10 @@ from openscientist.providers.base import (
     AirgapPosture,
     CodexCompatible,
     CostInfo,
+    LiveCheckResult,
     LlmUpstream,
+    SetupQuestion,
+    _listing_live_check,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -70,14 +71,35 @@ class OpenAIDirectProvider(CodexCompatible):
             "so ~/.codex/auth.json exists."
         ]
 
+    @classmethod
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("OPENAI_API_KEY", kind="secret"),
+            SetupQuestion(
+                "CODEX_AUTH_HOST_PATH",
+                kind="path",
+                help="or the codex auth.json from `codex login`",
+            ),
+            SetupQuestion(
+                "OPENSCIENTIST_MODEL", help="model id, or leave empty for the codex account default"
+            ),
+        )
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if not p.openai_api_key:
+            return LiveCheckResult(
+                ok=True, detail="No OpenAI API key (ChatGPT login); skipped the live check."
+            )
+        headers = {"authorization": f"Bearer {p.openai_api_key}"}
+        return _listing_live_check(f"{_OPENAI_BASE_URL}/models", headers, cls.display_name)
+
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         # OpenAI exposes no simple per-key spend endpoint, so report unavailable.
-        return CostInfo(
-            provider_name=self.display_name,
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            recent_period_hours=lookback_hours,
-            data_lag_note="OpenAI per-key cost tracking is not available.",
+        return CostInfo.unavailable(
+            self.display_name,
+            "OpenAI per-key cost tracking is not available.",
+            lookback_hours,
         )
 
     def llm_upstream(self) -> LlmUpstream | None:
@@ -91,8 +113,9 @@ class OpenAIDirectProvider(CodexCompatible):
             return {"OPENAI_API_KEY": placeholder, LLM_PROXY_URL_ENV: proxy_base_url}
         return {}
 
-    def airgap_egress(self) -> AirgapPosture:
-        if get_settings().provider.openai_api_key:
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.openai_api_key:
             return AirgapPosture(AirgapEgress.PROXY)
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,
@@ -118,7 +141,7 @@ class OpenAIDirectProvider(CodexCompatible):
         ]
 
     def codex_model_name(self) -> str | None:
-        # No forced default: codex uses its account/config default unless the
+        # No forced default. codex uses its account or config default unless the
         # operator sets OPENSCIENTIST_MODEL (some accounts reject explicit ids).
         return get_settings().provider.model
 
