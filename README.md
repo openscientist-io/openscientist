@@ -69,13 +69,9 @@ OpenScientist supports **Phenix integration** for protein structure analysis:
 git clone <repository-url>
 cd openscientist
 
-# Create .env file (copy from example and configure)
-cp .env.example .env
-# Edit .env with your provider credentials
-
-# Build and start
-make build
-make start
+# Create and configure the env files, then build and start
+# (the first run runs the setup wizard and asks a few questions)
+uv run openscientist
 ```
 
 ### Access the UI
@@ -114,8 +110,7 @@ openscientist/
 ├── AGENTS.md              # Development guide for coding agents
 ├── jobs/                  # Job results (created at runtime)
 ├── Dockerfile             # Docker image definition
-├── docker-compose.yml     # Container orchestration
-└── Makefile               # Build and deployment commands
+└── docker-compose.yml     # Container orchestration
 ```
 
 ## Configuration
@@ -215,7 +210,7 @@ AZURE_SUBSCRIPTION_ID=your-subscription-id
 
 ### Budget Controls
 
-Set application-level budget limits (optional):
+Set budget limits (optional). They only seed the admin settings row on first start; from then on the Settings tab counts:
 
 ```bash
 # Maximum total spend across all jobs
@@ -225,11 +220,7 @@ MAX_PROJECT_SPEND_TOTAL_USD=1000
 MAX_PROJECT_SPEND_24H_USD=50
 ```
 
-Budget limits are checked before job creation. The web UI displays:
-
-- Total project spend
-- Recent spend (last 24h)
-- Budget remaining (if provider supports it)
+Limits read the cost ledger and the provider's billed total: a job is refused at creation, a queued job waits with the limit named and its owner notified, and chat turns and report regenerations are refused at the per-job cap. The billing page shows the same spend figures and verdict.
 
 ### Other Settings
 
