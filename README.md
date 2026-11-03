@@ -175,6 +175,7 @@ AWS_SECRET_ACCESS_KEY=your-secret-access-key
 
 **Cost Tracking**: Via AWS Cost Explorer (24-48 hour lag)
 **Note**: Requires IAM permissions for `bedrock:InvokeModel` and `ce:GetCostAndUsage`
+**Credential custody**: The AWS credential above is held by the web, which signs every Bedrock call (SigV4 for access keys/profiles, or injects the Bedrock API key). The agent container holds no AWS credential of its own; it reaches Bedrock only through the web's LLM proxy.
 
 #### Option 4: Azure AI Foundry (Microsoft Foundry)
 

@@ -15,6 +15,7 @@ from openscientist.providers.base import (
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    StaticHeadersSigning,
     _listing_live_check,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -83,16 +84,16 @@ class CborgProvider(ClaudeCompatible):
         return env
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         return anthropic_container_env(provider)
 
     def llm_upstream(self) -> LlmUpstream | None:
         s = get_settings().provider
         if s.anthropic_base_url and s.anthropic_auth_token:
             base = s.anthropic_base_url.rstrip("/")
-            return LlmUpstream(base, {"authorization": f"Bearer {s.anthropic_auth_token}"})
+            return LlmUpstream(
+                base, StaticHeadersSigning({"authorization": f"Bearer {s.anthropic_auth_token}"})
+            )
         return None
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:

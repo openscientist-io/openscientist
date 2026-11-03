@@ -14,6 +14,7 @@ from openscientist.database.session import get_admin_session
 from openscientist.share_service import find_share_target_by_email
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.common import render_dialog_actions
+from openscientist.webapp_components.utils.permissions import current_job_access
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,10 @@ class _ShareDialogController:
             if not current_user_id:
                 ui.notify("You must be signed in to change visibility", type="negative")
                 return
+            access = await current_job_access(self.job_id, current_user_id)
+            if access is None or not access.is_owner:
+                ui.notify("Only the job owner can change its visibility", type="negative")
+                return
             success, message = await _set_job_public_from_ui(
                 self.job_id, bool(event.value), current_user_id
             )
@@ -246,6 +251,10 @@ class _ShareDialogController:
             if not current_user_id:
                 ui.notify("You must be signed in to revoke shares", type="negative")
                 return
+            access = await current_job_access(self.job_id, current_user_id)
+            if access is None or not access.is_owner:
+                ui.notify("Only the job owner can revoke shares", type="negative")
+                return
             success, message = await _revoke_share(self.job_id, share_id, current_user_id)
             ui.notify(message, type="positive" if success else "negative")
             if success:
@@ -284,6 +293,10 @@ class _ShareDialogController:
             current_user_id = get_current_user_id()
             if not current_user_id:
                 ui.notify("You must be signed in to share jobs", type="negative")
+                return
+            access = await current_job_access(self.job_id, current_user_id)
+            if access is None or not access.is_owner:
+                ui.notify("Only the job owner can share this job", type="negative")
                 return
             success, message = await _share_with_user(
                 self.job_id,
@@ -352,6 +365,42 @@ def render_share_dialog(job_id: str) -> ui.dialog:
     return dialog
 
 
+async def confirm_delete_job(
+    job_id: str,
+    job_manager: "JobManager",
+    on_deleted: Callable[[], None | Awaitable[None]] | None,
+    dialog: ui.dialog,
+) -> None:
+    """Delete a job (cancelling it first when active) as its current owner."""
+    dialog.close()
+    try:
+        current_user_id = get_current_user_id()
+        if not current_user_id:
+            ui.notify("You must be signed in to delete jobs", type="negative")
+            return
+        access = await current_job_access(job_id, current_user_id)
+        if access is None or not access.is_owner:
+            ui.notify("Only the job owner can delete this job", type="negative")
+            return
+
+        job_info = await job_manager.get_job(job_id)
+        if job_info and job_info.status in job_manager.ACTIVE_STATUSES:
+            await job_manager.cancel_job(job_id)
+
+        await job_manager.delete_job(job_id)
+        short_id = job_id[-8:] if len(job_id) > 8 else job_id
+        ui.notify(f"Job {short_id} deleted successfully", type="positive")
+        if on_deleted:
+            result = on_deleted()
+            if result is not None:
+                await result
+    except ValueError:
+        ui.notify("Invalid job or job cannot be deleted in its current state.", type="negative")
+    except Exception as e:
+        logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
+        ui.notify("Failed to delete job. Please try again.", type="negative")
+
+
 def render_delete_dialog(
     job_id: str,
     job_manager: "JobManager",
@@ -386,37 +435,7 @@ def render_delete_dialog(
                 ).classes("text-caption text-red-600")
 
         async def on_confirm() -> None:
-            dialog.close()
-            try:
-                # Verify caller is the job owner
-                current_user_id = get_current_user_id()
-                if not current_user_id:
-                    ui.notify("You must be signed in to delete jobs", type="negative")
-                    return
-                async with get_admin_session() as session:
-                    job_obj = await session.get(Job, UUID(job_id))
-                if not job_obj or str(job_obj.owner_id) != current_user_id:
-                    ui.notify("Only the job owner can delete this job", type="negative")
-                    return
-
-                job_info = await job_manager.get_job(job_id)
-                if job_info and job_info.status in job_manager.ACTIVE_STATUSES:
-                    await job_manager.cancel_job(job_id)
-
-                await job_manager.delete_job(job_id)
-                short_id = job_id[-8:] if len(job_id) > 8 else job_id
-                ui.notify(f"Job {short_id} deleted successfully", type="positive")
-                if on_deleted:
-                    result = on_deleted()
-                    if result is not None:
-                        await result
-            except ValueError:
-                ui.notify(
-                    "Invalid job or job cannot be deleted in its current state.", type="negative"
-                )
-            except Exception as e:
-                logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
-                ui.notify("Failed to delete job. Please try again.", type="negative")
+            await confirm_delete_job(job_id, job_manager, on_deleted, dialog)
 
         render_dialog_actions(
             on_confirm=on_confirm,
