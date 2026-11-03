@@ -35,7 +35,7 @@ from openscientist.exceptions import MissingImageError
 from openscientist.job_manager import JobManager
 from openscientist.listener import ListenerBindError
 from openscientist.security import register_scanner_block_middleware
-from openscientist.settings import get_settings
+from openscientist.settings import Settings, dev_mode_problems, get_settings
 from openscientist.version import get_version_string
 from openscientist.webapp_components.components.badges import register_badge_head_html
 from openscientist.webapp_components.components.common import (
@@ -683,6 +683,15 @@ def _refuse_unsafe_database_login(database_url: str) -> None:
         raise SystemExit(1)
 
 
+def _refuse_unsafe_dev_mode(settings: Settings) -> None:
+    """Exit when dev mode would expose the mock logins past this machine."""
+    problems = dev_mode_problems(settings)
+    for message in problems:
+        logger.error("Refusing to start: %s", message)
+    if problems:
+        raise SystemExit(1)
+
+
 def main(
     host: str = "0.0.0.0",
     port: int = 8080,
@@ -730,8 +739,10 @@ def main(
 
     from openscientist.settings import get_settings
 
-    _refuse_unsafe_database_login(get_settings().database.database_url)
-    reload = get_settings().dev.dev_mode
+    settings = get_settings()
+    _refuse_unsafe_database_login(settings.database.database_url)
+    _refuse_unsafe_dev_mode(settings)
+    reload = settings.dev.dev_mode
     os.environ[JOBS_DIR_ENV] = str(jobs_dir)
 
     logger.info("Starting NiceGUI server on %s:%s (reload=%s)", host, port, reload)

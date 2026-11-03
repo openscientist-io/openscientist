@@ -27,6 +27,7 @@ def _head() -> list[str]:
         "",  # OPENSCIENTIST_MODEL
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT
+        "",  # OPENSCIENTIST_BIND_ADDRESS
         "",  # POSTGRES_PORT
         "",  # OPENSCIENTIST_HARNESS
         "",  # OPENSCIENTIST_MAX_CONCURRENT_JOBS
