@@ -19,6 +19,7 @@ from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.components.badges import transform_pmid_references
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
+from openscientist.webapp_components.utils.permissions import revalidate_admin_session
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +84,10 @@ async def _regenerate_report(context: _JobDetailContext) -> None:
     are not re-run; the persisted findings are reused). Overwrites the existing
     final report, so the caller confirms first.
     """
-    # Server-side authorization: never rely on the button only being rendered
-    # for admins. is_current_user_admin() reads the auth-time is_admin flag in
-    # app.storage.user (set during authentication, not forgeable by the client
-    # over the websocket), so re-checking it here guards the action itself.
-    if not is_current_user_admin():
+    # Server-side authorization: the caller's session and admin flag are
+    # re-read from the database at action time, so an admin who was logged
+    # out, demoted or deleted loses the action in an open tab.
+    if not await revalidate_admin_session():
         logger.warning("Non-admin attempt to regenerate report for job %s blocked", context.job_id)
         ui.notify("You are not authorized to regenerate reports.", type="negative")
         return

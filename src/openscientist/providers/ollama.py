@@ -22,6 +22,7 @@ from openscientist.providers.base import (
     OmpModelCatalog,
     OpenAiWireCompatible,
     SetupQuestion,
+    StaticHeadersSigning,
     self_hosted_omp_model_catalog,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -98,9 +99,7 @@ class OllamaProvider(OpenAiWireCompatible):
         )
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         # The model is forwarded generically as OPENSCIENTIST_MODEL.
         return {"OLLAMA_BASE_URL": provider.ollama_base_url}
 
@@ -130,7 +129,7 @@ class OllamaProvider(OpenAiWireCompatible):
 
     def llm_upstream(self) -> LlmUpstream | None:
         # Keyless. Forward to Ollama with no injected auth.
-        return LlmUpstream(get_settings().provider.ollama_base_url, {})
+        return LlmUpstream(get_settings().provider.ollama_base_url, StaticHeadersSigning({}))
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         # omp sends the placeholder so the proxy authenticates the container.

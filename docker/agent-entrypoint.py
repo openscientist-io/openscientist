@@ -27,6 +27,10 @@ import signal
 import sys
 from pathlib import Path
 
+# Files the harness and its children write into the job tree must stay group
+# readable and never world readable, even though the kernel umask is 0022.
+os.umask(0o007)
+
 # Set up logging before any imports
 logging.basicConfig(
     level=logging.INFO,

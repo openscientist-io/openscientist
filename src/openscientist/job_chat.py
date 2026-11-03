@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_files import read_job_file_text, write_job_file
 from openscientist.knowledge_state import KnowledgeState
 
@@ -368,6 +369,8 @@ async def _send_message_via_container(
     # The job directory is agent-writable, so the request is written and the
     # reply is read through the symlink-safe walk.
     write_job_file(job_dir, request_path.name, json.dumps(request))
+    # The container's agent user reads this turn's request, so hand it over.
+    apply_job_ownership(request_path)
 
     logger.info("Running chat turn for job %s in a hardened container", job_id)
     try:
