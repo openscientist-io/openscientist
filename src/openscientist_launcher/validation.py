@@ -114,6 +114,7 @@ class ExecRequest:
     memory_mib: int
     cpu: float
     airgapped: bool
+    egress_allow: tuple[str, ...]
     code: str
     language: str
     data_path: Path | None
@@ -337,7 +338,8 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
     if not isinstance(body, dict):
         raise ValidationError("the request body must be an object")
     unknown = _unknown_fields(
-        body, ("job_id", "timeout_seconds", "memory_mib", "cpu", "airgapped", "input")
+        body,
+        ("job_id", "timeout_seconds", "memory_mib", "cpu", "airgapped", "egress_allow", "input"),
     )
     if unknown:
         raise ValidationError(f"unknown fields: {', '.join(unknown)}")
@@ -350,6 +352,23 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
         raise ValidationError("memory_mib exceeds the launcher's bound")
     cpu = _as_number(body, "cpu", maximum=cfg.executor_max_cpu)
     airgapped = _as_bool(body, "airgapped")
+
+    # An open executor starts behind the restrict firewall, so it must be
+    # told which endpoints to keep; an air-gapped one has no network at all.
+    egress_allow: tuple[str, ...] = ()
+    raw_egress = body.get("egress_allow")
+    if airgapped:
+        if raw_egress is not None:
+            raise ValidationError("egress_allow is not allowed when airgapped")
+    else:
+        if raw_egress is None or not isinstance(raw_egress, list) or not raw_egress:
+            raise ValidationError("egress_allow is required when not airgapped")
+        if len(raw_egress) > cfg.max_egress_entries:
+            raise ValidationError("egress_allow exceeds the launcher's entry bound")
+        for entry in raw_egress:
+            if not isinstance(entry, str) or not EGRESS_ENTRY.match(entry):
+                raise ValidationError("egress_allow entry is not a valid host:port")
+        egress_allow = tuple(raw_egress)
 
     input_body = _as_mapping(body, "input")
     unknown_input = _unknown_fields(input_body, EXECUTOR_INPUT_FIELDS)
@@ -393,6 +412,7 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
         memory_mib=memory_mib,
         cpu=cpu,
         airgapped=airgapped,
+        egress_allow=egress_allow,
         code=code,
         language=language,
         data_path=data_path,

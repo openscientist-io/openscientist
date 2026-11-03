@@ -66,9 +66,12 @@ container-scoped operation answers 404 for anything that does not carry it.
 
 Its health check (`python -m openscientist_launcher.health`) verifies the
 socket file, the Docker daemon and both template images; the web service
-waits for it to be healthy before starting. Until the web service's own socket
-mount is removed in a later change, the web still runs with the socket as
-today, and the launcher runs alongside it.
+waits for it to be healthy before starting. The web speaks to the launcher
+through the socket volume mounted at `/run/launcher` (override the path with
+`OPENSCIENTIST_LAUNCHER_SOCKET_PATH`): every executor run and the admin
+container dashboard go through the launcher's API. The web service's own
+socket mount is still used by the agent container path, which moves to the
+launcher in a later change; the launcher runs alongside it.
 
 ## Managing Jobs
 

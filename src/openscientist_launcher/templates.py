@@ -17,6 +17,10 @@ PHENIX_PATH = "/opt/phenix"
 MARKER_LABEL = "openscientist.launcher"
 FIREWALL_ENTRYPOINT = ["/agent-firewall-entrypoint.sh"]
 NET_ADMIN = "NET_ADMIN"
+FIREWALL_ALLOW_ENV = "OPENSCIENTIST_FIREWALL_ALLOW"
+FIREWALL_MODE_ENV = "OPENSCIENTIST_FIREWALL_MODE"
+FIREWALL_RUN_AS_ENV = "OPENSCIENTIST_FIREWALL_RUN_AS"
+FIREWALL_MODE_RESTRICT = "restrict"
 
 
 def _labels(cfg: LauncherConfig, job_id: str, container_type: str) -> dict[str, str]:
@@ -40,7 +44,7 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
     if launch.mode == "chat" and launch.chat_turn is not None:
         env["OPENSCIENTIST_CHAT_TURN"] = launch.chat_turn
     if launch.airgapped:
-        env["OPENSCIENTIST_FIREWALL_ALLOW"] = ",".join(launch.egress_allow)
+        env[FIREWALL_ALLOW_ENV] = ",".join(launch.egress_allow)
 
     job_mount = f"{AGENT_APP_DIR}/jobs/{launch.job_id}"
     volumes: dict[str, dict[str, str]] = {
@@ -115,7 +119,7 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
     }
     encoded = base64.b64encode(json.dumps(payload).encode()).decode()
 
-    return {
+    kwargs: dict[str, Any] = {
         "image": cfg.executor_image,
         "name": name,
         "stdin_open": True,
@@ -132,3 +136,15 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
         "entrypoint": [],
         "command": ["sh", "-c", f"echo {encoded} | base64 -d | python -m openscientist_executor"],
     }
+    if not req.airgapped:
+        # The firewall installs the egress rules as root, then drops to the
+        # executor user with NET_ADMIN gone, so it cannot undo them.
+        kwargs["cap_add"] = [NET_ADMIN]
+        kwargs["user"] = "root"
+        kwargs["entrypoint"] = FIREWALL_ENTRYPOINT
+        kwargs["environment"] = {
+            FIREWALL_ALLOW_ENV: ",".join(req.egress_allow),
+            FIREWALL_MODE_ENV: FIREWALL_MODE_RESTRICT,
+            FIREWALL_RUN_AS_ENV: "executor",
+        }
+    return kwargs
