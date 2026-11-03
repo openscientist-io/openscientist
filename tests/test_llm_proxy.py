@@ -321,7 +321,15 @@ class TestCodexUpstream:
         assert isinstance(upstream.signing, ChatgptSigning)
         assert provider.llm_upstream().signing is upstream.signing
 
-    def test_openai_without_any_credential_has_no_upstream(self, active_provider):
+    def test_openai_without_any_credential_has_no_upstream(
+        self, active_provider, monkeypatch, tmp_path
+    ):
+        # A host-side codex login alone satisfies the provider's config check,
+        # but the web serves no upstream without a key or CODEX_AUTH_HOST_PATH.
+        codex_home = tmp_path / ".codex"
+        codex_home.mkdir()
+        _write_chatgpt_login(codex_home / "auth.json")
+        monkeypatch.setenv("HOME", str(tmp_path))
         provider = active_provider(OPENSCIENTIST_PROVIDER="openai")
         assert provider.llm_upstream() is None
 
