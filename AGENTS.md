@@ -20,21 +20,29 @@ Follow the pull request policy in [`CONTRIBUTING.md`](CONTRIBUTING.md#pull-reque
 ## Project Structure
 
 ```text
-src/openscientist/
-├── agent/            # AgentExecutor protocol and ClaudeCodeAgent
-├── api/              # FastAPI REST endpoints
-├── auth/             # Authentication (OAuth, sessions, middleware)
-├── database/         # SQLAlchemy models and migrations
-├── job/              # Job lifecycle, scheduling, and types
-├── job_container/    # Container-per-job isolation
-├── mcp_server/       # MCP server for agent tools
-├── orchestrator/     # Discovery orchestration (setup, iteration, report)
-├── providers/        # LLM provider abstractions (Anthropic, Vertex, etc.)
-├── tools/            # @tool-decorated callables for SDK agent path
-├── webapp_components/# NiceGUI pages and components
-├── prompts.py        # Agent system prompts
-├── settings.py       # Pydantic settings with TOML support
-└── web_app.py        # Main application entry point
+src/
+├── openscientist/
+│   ├── agent/            # AbstractAgent and the Claude Code, Codex and omp harnesses
+│   ├── api/              # FastAPI REST endpoints
+│   ├── auth/             # Authentication (OAuth, sessions, middleware)
+│   ├── database/         # SQLAlchemy models and migrations
+│   ├── job/              # Job lifecycle, scheduling, and types
+│   ├── job_container/    # Container-per-job isolation
+│   ├── orchestrator/     # Discovery orchestration (setup, iteration, report)
+│   ├── providers/        # LLM providers (Anthropic, Vertex, OpenAI, Ollama, etc.)
+│   ├── prompts/          # Agent system prompts
+│   ├── pubmed_mirror/    # Optional local PubMed corpus for air-gapped jobs
+│   ├── report/           # Report rendering to HTML and PDF
+│   ├── transcript/       # One transcript schema for every harness
+│   ├── webapp_components/# NiceGUI pages and components
+│   ├── job_manager.py    # Starts, tracks and cancels jobs
+│   ├── knowledge_state.py# A job's hypotheses, findings and literature
+│   ├── llm_proxy.py      # Key-replacement proxy between job containers and the provider
+│   ├── exec_broker.py    # Runs a job container's code without the Docker socket
+│   ├── settings.py       # Pydantic settings
+│   └── web_app.py        # Main application entry point
+├── openscientist_tools/  # MCP server with the agent's tools, run inside the job container
+└── openscientist_executor/ # Runs model-written code inside the executor container
 ```
 
 ## Development Setup
@@ -43,17 +51,15 @@ src/openscientist/
 # Install dependencies
 uv sync
 
-# Set up environment variables (see .env.example, .env.db.example, .env.owner.example)
-export DATABASE_URL="postgresql+asyncpg://openscientist_web:..."
-export OPENSCIENTIST_SECRET_KEY="$(openssl rand -hex 32)"
-export ANTHROPIC_API_KEY="..."  # or other provider credentials
+# Create the env files, generating the database passwords and the master secret
+uv run openscientist setup
 
 # Create the database logins, then migrate as openscientist_owner (OWNER_DATABASE_URL)
 docker compose run --rm db-bootstrap
 uv run alembic upgrade head
 
-# Start development server
-uv run python -m openscientist.web_app --reload
+# Start development server (OPENSCIENTIST_DEV_MODE=true enables auto-reload)
+uv run python -m openscientist.web_app
 ```
 
 ## Testing
@@ -63,7 +69,7 @@ uv run python -m openscientist.web_app --reload
 uv run pytest
 
 # Run with coverage
-uv run pytest --cov=openscientist
+uv run pytest --cov=src/openscientist
 ```
 
 ### Testing Conventions
@@ -76,7 +82,7 @@ uv run pytest --cov=openscientist
 async def test_job(db_session: AsyncSession, webapp_user: User) -> Job:
     job = Job(
         owner_id=webapp_user.id,
-        title="Test research question",
+        research_question="Test research question",
         status="pending",
     )
     db_session.add(job)
@@ -89,20 +95,7 @@ class MockJobInfo:  # Don't do this
     status = "pending"
 ```
 
-**Organize tests in submodules.** Each test file should be in its own submodule when possible, mirroring the source structure:
-
-```text
-tests/
-├── webapp/
-│   ├── pages/
-│   │   ├── test_jobs_list.py
-│   │   ├── test_job_detail.py
-│   │   └── test_new_job.py
-│   └── conftest.py
-├── api/
-│   └── test_endpoints.py
-└── conftest.py
-```
+**Test layout.** Most tests sit flat in `tests/` as `test_<module>.py`. Subpackages such as `agent/`, `openscientist_tools/`, `transcript/` and `webapp/` group related tests, with shared fixtures in the `conftest.py` files of `tests/`, `tests/openscientist_tools/` and `tests/webapp/`.
 
 **NiceGUI browser simulation.** Use `user_simulation` for UI tests with `browser` as the variable name (not `user`, to avoid confusion with database User model):
 
@@ -118,21 +111,21 @@ async with user_simulation(root=some_page) as browser:
 - **Python 3.12+** with type hints
 - **Formatting**: `ruff format`
 - **Linting**: `ruff check`
-- **Type checking**: `mypy --strict`
+- **Type checking**: `uv run mypy src/openscientist/ tests/`, as CI runs it
 - Use `pathlib.Path` over `os.path`
 - Use f-strings for formatting
 - Use pydantic for settings and validation
 
 ## UI Component Reuse
 
-**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from `src/openscientist/webapp_components/ui_components.py`.
+**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from the `src/openscientist/webapp_components/components/` package (`badges`, `banners`, `common`, `dialogs`, `job_table`, `navigation`, `notifications`).
 
 ### Error Banners
 
 Use these instead of creating inline error displays:
 
 ```python
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.banners import (
     render_config_error_banner,  # Provider config errors
     render_alert_banner,         # Generic error/warning/info
 )
@@ -151,12 +144,12 @@ render_alert_banner(
 
 ### Status Badges
 
-Use `get_status_badge_props()` and `render_status_cell_slot()` for job status display.
+Use `render_status_cell_slot()` for job status display in tables and `STATUS_COLORS` elsewhere.
 
 ### Adding New Components
 
 When you need a new UI pattern used in multiple places:
-1. Add a reusable function to `ui_components.py`
+1. Add a reusable function to the fitting module under `src/openscientist/webapp_components/components/`
 2. Document it in this section
 3. Update existing inline code to use the component
 
@@ -171,38 +164,23 @@ When you need a new UI pattern used in multiple places:
 ### Providers (`src/openscientist/providers/`)
 
 - `check_provider_config()` - Validates LLM provider setup
-- Supports: Anthropic, CBORG, Vertex AI, Bedrock, Foundry, Codex
+- Supports Anthropic, CBORG, Vertex AI, AWS Bedrock, Azure AI Foundry, OpenAI, Azure OpenAI, Ollama, vLLM and llama.cpp
 
 ### Web App (`src/openscientist/webapp_components/`)
 
 - NiceGUI-based UI
 - Pages in `pages/` subdirectory
-- Shared components in `utils/`
-
-## Development Tools
-
-See `tools/README.md` for helper scripts.
-
-### tile_screenshots.py
-
-Creates tiled images from screenshots for documenting UI flows:
-
-```bash
-uv run python tools/tile_screenshots.py \
-  screenshots/*.png \
-  -o output.png \
-  -a annotations.json \
-  -c 2
-```
+- Shared UI components in `ui_components.py`, helpers in `utils/`
 
 ## Environment Variables
 
 | Variable               | Required | Description                         |
 | ---------------------- | -------- | ----------------------------------- |
 | `DATABASE_URL`         | Yes      | PostgreSQL connection string        |
+| `ADMIN_DATABASE_URL`   | Yes      | Connection string of the `openscientist_admin` login |
 | `OPENSCIENTIST_SECRET_KEY`    | Yes      | Master secret (derives all auth keys)|
-| `OPENSCIENTIST_PROVIDER` | Yes    | Provider name (anthropic, cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, vllm, llamacpp). There is no default: an unset value raises at startup. The previous name `CLAUDE_PROVIDER` is no longer accepted and raises at startup if set. |
-| `OPENSCIENTIST_MODEL`  | No       | Model id for the selected provider. The previous name `ANTHROPIC_MODEL` is no longer accepted and raises at startup if set. |
+| `OPENSCIENTIST_PROVIDER` | Yes    | Provider name (anthropic, cborg, vertex, bedrock, foundry, openai, azure-openai, ollama, vllm, llamacpp). There is no default: an unset value raises at startup. |
+| `OPENSCIENTIST_MODEL`  | No       | Model id for the selected provider. |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
 | `OPENSCIENTIST_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
 | `OPENSCIENTIST_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
@@ -211,4 +189,3 @@ uv run python tools/tile_screenshots.py \
 
 - `docs/DESIGN.md` - Architecture and design decisions
 - `docs/DEPLOYMENT.md` - Production deployment guide
-- `docs/DISCOVERY_AGENT_REFERENCE.md` - Discovery agent prompt reference

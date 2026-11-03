@@ -2,47 +2,44 @@
 
 import html
 import re
-from contextlib import suppress
 from pathlib import Path
-from unittest.mock import Mock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
-from openscientist.job_manager import JobStatus
-from openscientist.webapp_components.ui_components import (
+from openscientist.job_manager import JobManager, JobStatus
+from openscientist.webapp_components.components.badges import (
+    _get_job_id_badge_html,
+    _get_pubmed_badge_html,
+    register_badge_head_html,
+    render_job_id_badge,
+    render_pmid_badge,
+    render_text_with_pmid_links,
+    transform_pmid_references,
+)
+from openscientist.webapp_components.components.common import (
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
     OPENSCIENTIST_RELEASE_URL,
     STATUS_COLORS,
-    STATUS_ICONS,
-    _get_job_id_badge_html,
-    _get_pubmed_badge_html,
     _inject_thinking_status_styles,
     get_project_resource_links,
-    get_status_badge_props,
-    register_badge_head_html,
-    render_job_id_badge,
-    render_job_id_slot,
-    render_pmid_badge,
-    render_status_cell_slot,
-    render_text_with_pmid_links,
     render_thinking_status,
-    transform_pmid_references,
+)
+from openscientist.webapp_components.components.job_table import (
+    render_job_id_slot,
+    render_status_cell_slot,
 )
 
 
 class TestStatusConstants:
-    """Tests for status color and icon mappings."""
+    """Tests for the status color mapping."""
 
     def test_status_colors_defined(self):
         """Test that all job statuses have color mappings."""
         for status in JobStatus:
             assert status in STATUS_COLORS
             assert isinstance(STATUS_COLORS[status], str)
-
-    def test_status_icons_defined(self):
-        """Test that all job statuses have icon mappings."""
-        for status in JobStatus:
-            assert status in STATUS_ICONS
-            assert isinstance(STATUS_ICONS[status], str)
 
 
 class TestProjectResourceLinks:
@@ -56,68 +53,6 @@ class TestProjectResourceLinks:
             ("Paper", OPENSCIENTIST_PAPER_URL),
             ("Latest Release", OPENSCIENTIST_RELEASE_URL),
         ]
-
-
-class TestGetStatusBadgeProps:
-    """Tests for get_status_badge_props function."""
-
-    def test_pending_status(self):
-        """Test badge props for pending status."""
-        props = get_status_badge_props(JobStatus.PENDING)
-        assert props["color"] == "gray"
-        assert props["icon"] == "○"
-        assert props["text"] == "pending"
-
-    def test_queued_status(self):
-        """Test badge props for queued status."""
-        props = get_status_badge_props(JobStatus.QUEUED)
-        assert props["color"] == "blue"
-        assert props["icon"] == "⟳"
-        assert props["text"] == "queued"
-
-    def test_running_status(self):
-        """Test badge props for running status."""
-        props = get_status_badge_props(JobStatus.RUNNING)
-        assert props["color"] == "teal"
-        assert props["icon"] == "▶"
-        assert props["text"] == "running"
-
-    def test_completed_status(self):
-        """Test badge props for completed status."""
-        props = get_status_badge_props(JobStatus.COMPLETED)
-        assert props["color"] == "green"
-        assert props["icon"] == "✓"
-        assert props["text"] == "completed"
-
-    def test_failed_status(self):
-        """Test badge props for failed status."""
-        props = get_status_badge_props(JobStatus.FAILED)
-        assert props["color"] == "red"
-        assert props["icon"] == "✗"
-        assert props["text"] == "failed"
-        assert "bg-red-600" in props["classes"]
-        assert "text-white" in props["classes"]
-
-    def test_cancelled_status(self):
-        """Test badge props for cancelled status."""
-        props = get_status_badge_props(JobStatus.CANCELLED)
-        assert props["color"] == "gray"
-        assert props["icon"] == "⊗"
-        assert props["text"] == "cancelled"
-
-    def test_awaiting_feedback_status(self):
-        """Test badge props for awaiting feedback status."""
-        props = get_status_badge_props(JobStatus.AWAITING_FEEDBACK)
-        assert props["color"] == "orange"
-        assert props["icon"] == "⏸"
-        assert props["text"] == "awaiting feedback"
-
-    def test_props_structure(self):
-        """Test that props dict has all required keys."""
-        props = get_status_badge_props(JobStatus.RUNNING)
-        required_keys = ["color", "icon", "text", "classes"]
-        for key in required_keys:
-            assert key in props
 
 
 class TestRenderStatusCellSlot:
@@ -184,26 +119,15 @@ class TestRenderStatusCellSlot:
 
 
 class TestRenderErrorCard:
-    """Tests for render_error_card function (basic structure testing)."""
+    """render_error_card renders the given error details and job state into the page."""
 
-    @patch("openscientist.webapp_components.ui_components.ui")
-    def test_render_error_card_called(self, mock_ui):
-        """Test that render_error_card can be called without errors."""
-        from openscientist.webapp_components.ui_components import render_error_card
+    def test_render_error_card_called(self):
+        """The card's labels carry the error details and job state, and the raw
+        output is rendered as a code block."""
+        from nicegui import ui
 
-        # Mock UI components
-        mock_ui.card.return_value.__enter__ = Mock()
-        mock_ui.card.return_value.__exit__ = Mock(return_value=False)
-        mock_ui.row.return_value.__enter__ = Mock()
-        mock_ui.row.return_value.__exit__ = Mock(return_value=False)
-        mock_ui.column.return_value.__enter__ = Mock()
-        mock_ui.column.return_value.__exit__ = Mock(return_value=False)
-        mock_ui.expansion.return_value.__enter__ = Mock()
-        mock_ui.expansion.return_value.__exit__ = Mock(return_value=False)
-        mock_ui.element.return_value.__enter__ = Mock()
-        mock_ui.element.return_value.__exit__ = Mock(return_value=False)
-        mock_ui.button.return_value.__enter__ = Mock()
-        mock_ui.button.return_value.__exit__ = Mock(return_value=False)
+        from openscientist.job.types import JobInfo
+        from openscientist.webapp_components.components.banners import render_error_card
 
         error_info = {
             "category": "configuration",
@@ -215,20 +139,39 @@ class TestRenderErrorCard:
             "contact_admin": True,
         }
 
-        job_info = Mock()
-        job_info.status = JobStatus.FAILED
-        job_info.iterations_completed = 1
-        job_info.max_iterations = 5
-        job_info.failed_at = "2026-02-05T10:00:00"
+        job_info = JobInfo(
+            job_id="j1",
+            research_question="Q?",
+            status=JobStatus.FAILED,
+            created_at="2026-02-05T09:00:00",
+            failed_at="2026-02-05T10:00:00",
+            max_iterations=5,
+            iterations_completed=1,
+        )
 
-        job_dir = Path("/fake/job/dir")
+        job_dir = Path("/nonexistent/job/dir")
 
-        # Some exceptions are acceptable due to mock limitations.
-        with suppress(Exception):
-            render_error_card(error_info, job_info, job_dir)
+        # Render for real, then locate the card this call created in the page slot
+        before = {id(child) for child in ui.context.slot.children}
+        render_error_card(error_info, job_info, job_dir)
+        new_children = [c for c in ui.context.slot.children if id(c) not in before]
+        assert len(new_children) == 1
+        card = new_children[0]
 
-        # Verify UI elements were called
-        assert mock_ui.card.called or mock_ui.row.called
+        labels = [e.text for e in card.descendants() if isinstance(e, ui.label)]
+        assert "Test Error" in labels
+        assert "Test message" in labels
+        assert "Step 1" in labels
+        assert "Step 2" in labels
+        assert any("administrator" in label for label in labels)
+        assert "Error Category: Configuration" in labels
+        assert "Job Status: failed" in labels
+        assert "Iterations Completed: 1/5" in labels
+        assert "Failed At: 2026-02-05T10:00:00" in labels
+
+        code_blocks = [e for e in card.descendants() if type(e).__name__ == "Code"]
+        assert len(code_blocks) == 1
+        assert code_blocks[0]._props["content"] == "Raw error"
 
 
 class TestPmidLinkParsing:
@@ -391,35 +334,147 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
     never from per-render code, no matter how many badges get rendered."""
 
     def test_register_badge_head_html_registers_both_style_blocks(self):
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
-            register_badge_head_html()
+        """Both badge style blocks land in the shared head HTML every page receives."""
+        from nicegui.client import Client
 
-        assert mock_add.call_count == 2
+        before = Client.shared_head_html
+        register_badge_head_html()
+        added = Client.shared_head_html[len(before) :]
+
+        # The PubMed badge CSS and its click handler script
+        assert ".pubmed-badge" in added
+        assert "window._pubmedClickHandlerAdded" in added
+        # The job ID badge CSS and its click handler script
+        assert ".job-id-badge" in added
+        assert "window._jobIdClickHandlerAdded" in added
+        assert added.count("<style>") == 2
 
     def test_rendering_many_badges_never_touches_add_head_html(self):
-        with (
-            patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add,
-            patch("openscientist.webapp_components.ui_components.ui.html"),
-        ):
-            for i in range(50):
-                render_pmid_badge(str(12000000 + i))
-                render_job_id_badge(f"12345678-1234-1234-1234-{i:012d}")
-                render_text_with_pmid_links(f"See PMID: {12000000 + i}")
+        from nicegui.client import Client
 
-        mock_add.assert_not_called()
+        before = Client.shared_head_html
+        for i in range(50):
+            render_pmid_badge(str(12000000 + i))
+            render_job_id_badge(f"12345678-1234-1234-1234-{i:012d}")
+            render_text_with_pmid_links(f"See PMID: {12000000 + i}")
+
+        assert Client.shared_head_html == before
 
     def test_inject_thinking_status_styles_adds_head_html(self):
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
-            _inject_thinking_status_styles()
+        """The thinking-status CSS lands in the shared head HTML."""
+        from nicegui.client import Client
 
-        mock_add.assert_called_once()
+        before = Client.shared_head_html
+        _inject_thinking_status_styles()
+        added = Client.shared_head_html[len(before) :]
+
+        assert ".thinking-label" in added
+        assert "openscientist-pulse-text" in added
 
     def test_rendering_many_thinking_statuses_never_touches_add_head_html(self):
         """render_thinking_status is refreshed on a 2-second poll timer for any
         actively-watched running job -- this is the call site that produced
         the original leak, so it must never call add_head_html itself."""
-        with patch("openscientist.webapp_components.ui_components.ui.add_head_html") as mock_add:
-            for _ in range(50):
-                render_thinking_status("Searching PubMed...")
+        from nicegui.client import Client
 
-        mock_add.assert_not_called()
+        before = Client.shared_head_html
+        for _ in range(50):
+            render_thinking_status("Searching PubMed...")
+
+        assert Client.shared_head_html == before
+
+
+class TestRenderDeleteDialog:
+    """The delete dialog loads the job's current state on show, and its confirm
+    handler cancels an active job before deleting it."""
+
+    @staticmethod
+    def _mock_ui() -> MagicMock:
+        def factory(*_args: object, **_kwargs: object) -> MagicMock:
+            element = MagicMock()
+            element.__enter__ = MagicMock(return_value=element)
+            element.__exit__ = MagicMock(return_value=False)
+            element.classes.return_value = element
+            return element
+
+        mock = MagicMock()
+        for name in ("card", "column", "row", "element", "expansion"):
+            setattr(mock, name, factory)
+        return mock
+
+    @staticmethod
+    def _running_manager(job_id: str) -> SimpleNamespace:
+        from openscientist.job.types import JobInfo
+
+        return SimpleNamespace(
+            get_job=AsyncMock(
+                return_value=JobInfo(
+                    job_id=job_id,
+                    research_question="Q?",
+                    status=JobStatus.RUNNING,
+                    created_at="2026-01-01T00:00:00",
+                )
+            ),
+            cancel_job=AsyncMock(),
+            delete_job=AsyncMock(),
+            ACTIVE_STATUSES=JobManager.ACTIVE_STATUSES,
+        )
+
+    async def test_showing_the_dialog_uses_the_job_s_current_state(self):
+        from openscientist.webapp_components.components.dialogs import render_delete_dialog
+
+        job_id = "12345678-1234-1234-1234-123456789012"
+        mock_ui = self._mock_ui()
+        manager = self._running_manager(job_id)
+        with (
+            patch("openscientist.webapp_components.components.dialogs.ui", mock_ui),
+            patch("openscientist.webapp_components.components.badges.ui", mock_ui),
+            patch("openscientist.webapp_components.components.common.ui", mock_ui),
+        ):
+            dialog = render_delete_dialog(job_id, manager)
+            show_calls = [c for c in dialog.on.call_args_list if c.args and c.args[0] == "show"]
+            assert show_calls, "the dialog must reload its content when shown"
+            await show_calls[0].args[1]()
+
+        # The dialog warns that the running job is cancelled before deletion.
+        labels = [c.args[0] for c in mock_ui.label.call_args_list if c.args]
+        assert "Delete Job" in labels
+        assert "This job is currently active and will be cancelled before deletion." in labels
+        manager.get_job.assert_awaited_once_with(job_id)
+
+    async def test_confirm_cancels_the_active_job_before_deleting_it(self):
+        from openscientist.webapp_components.components import dialogs
+
+        job_id = str(uuid4())
+        owner = str(uuid4())
+        mock_ui = self._mock_ui()
+        manager = self._running_manager(job_id)
+        deleted = {"value": False}
+        actions: dict[str, object] = {}
+
+        from openscientist.webapp_components.utils.permissions import JobAccess
+
+        with (
+            patch.object(dialogs, "ui", mock_ui),
+            patch.object(dialogs, "get_current_user_id", return_value=owner),
+            patch.object(
+                dialogs,
+                "current_job_access",
+                AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+            ),
+            patch.object(
+                dialogs,
+                "render_dialog_actions",
+                side_effect=lambda **kwargs: actions.update(kwargs),
+            ),
+        ):
+            dialogs.render_delete_dialog(
+                job_id, manager, on_deleted=lambda: deleted.update(value=True)
+            )
+            await actions["on_confirm"]()  # type: ignore[arg-type]
+
+        manager.cancel_job.assert_awaited_once_with(job_id)
+        manager.delete_job.assert_awaited_once_with(job_id)
+        assert deleted["value"] is True
+        messages = [c.args[0] for c in mock_ui.notify.call_args_list if c.args]
+        assert f"Job {job_id[-8:]} deleted successfully" in messages

@@ -8,31 +8,16 @@ Verifies that:
 4. Admin session functionality works
 """
 
+from uuid import UUID
+
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.database import (
-    list_rls_policies,
-    set_current_user,
-    verify_rls_enabled,
-)
-from openscientist.database.models import Job, JobShare, User
+from openscientist.database import set_current_user
+from openscientist.database.models import Administrator, Job, JobShare, User
 from tests.helpers import enable_rls
-
-
-@pytest.mark.asyncio
-async def test_rls_enabled_on_tables(db_session: AsyncSession):
-    """Verify that RLS is enabled on all expected tables."""
-    # Check critical tables
-    assert await verify_rls_enabled(db_session, "users")
-    assert await verify_rls_enabled(db_session, "jobs")
-    assert await verify_rls_enabled(db_session, "job_shares")
-    assert await verify_rls_enabled(db_session, "api_keys")
-    assert await verify_rls_enabled(db_session, "hypotheses")
-    assert await verify_rls_enabled(db_session, "findings")
-    assert await verify_rls_enabled(db_session, "review_tokens")
-    assert await verify_rls_enabled(db_session, "review_tokens")
 
 
 @pytest.mark.asyncio
@@ -193,7 +178,7 @@ async def test_job_sharing_view_permission(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_job_sharing_edit_permission(db_session: AsyncSession):
-    """Test that edit permission grants full access."""
+    """Test that edit permission allows the changes the web makes for editors."""
     # Create two users and a job
     owner = User(email="owner2@example.com", name="Owner 2")
     editor = User(email="editor@example.com", name="Editor")
@@ -220,20 +205,28 @@ async def test_job_sharing_edit_permission(db_session: AsyncSession):
     # Enable RLS before setting user context (superuser bypasses RLS)
     await enable_rls(db_session)
 
-    # Editor should be able to read and update the job
+    # The web flips the job's status for an editor, so that stays open.
     await set_current_user(db_session, editor.id)
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     edited_job = result.scalar_one()
-
-    # Update the job
-    edited_job.research_question = "Updated by Editor"
+    edited_job.status = "running"
     db_session.add(edited_job)
     await db_session.commit()
 
-    # Verify the update persisted
+    # The owner's fields are fenced by the grant on the app role, so a change
+    # to one raises instead of persisting.
+    with pytest.raises(DBAPIError, match="permission denied for table"):
+        async with db_session.begin_nested():
+            await db_session.execute(
+                text("UPDATE jobs SET research_question = 'Updated by Editor' WHERE id = :id"),
+                {"id": job.id},
+            )
+
+    # The job stays owned and worded by the owner.
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     job_check = result.scalar_one()
-    assert job_check.research_question == "Updated by Editor"
+    assert job_check.research_question == "Editable Job"
+    assert job_check.owner_id == owner.id
 
 
 @pytest.mark.asyncio
@@ -336,6 +329,49 @@ async def test_get_session_enforces_rls(test_engine):
         )
 
 
+async def _insert_own_job(session: AsyncSession, *, approved: bool, admin: bool) -> Job:
+    """Create a user, then insert a job as that user through the app role."""
+    user = User(email=f"starter-{approved}-{admin}@example.com", name="Starter")
+    user.is_approved = approved
+    session.add(user)
+    await session.flush()
+    if admin:
+        session.add(Administrator(user_id=user.id))
+        await session.flush()
+
+    await enable_rls(session)
+    await set_current_user(session, user.id)
+    job = Job(owner_id=user.id, research_question="Can I start?")
+    session.add(job)
+    await session.flush()
+    return job
+
+
+async def _stored_owner(session: AsyncSession, job: Job) -> UUID | None:
+    result = await session.execute(text("SELECT owner_id FROM jobs WHERE id = :id"), {"id": job.id})
+    return result.scalar_one_or_none()
+
+
+@pytest.mark.asyncio
+async def test_approved_user_can_insert_own_job(db_session: AsyncSession):
+    job = await _insert_own_job(db_session, approved=True, admin=False)
+    assert await _stored_owner(db_session, job) == job.owner_id
+
+
+@pytest.mark.asyncio
+async def test_unapproved_admin_can_insert_own_job(db_session: AsyncSession):
+    """Admins may start jobs without the approval flag, as the UI already allows."""
+    job = await _insert_own_job(db_session, approved=False, admin=True)
+    assert await _stored_owner(db_session, job) == job.owner_id
+
+
+@pytest.mark.asyncio
+async def test_unapproved_user_cannot_insert_own_job(db_session: AsyncSession):
+    with pytest.raises(DBAPIError, match="jobs_insert_requires_start_permission"):
+        await _insert_own_job(db_session, approved=False, admin=False)
+    await db_session.rollback()
+
+
 @pytest.mark.asyncio
 async def test_bypassrls_role_sees_all_jobs(test_engine):
     """Verify that admin/BYPASSRLS role can see all jobs (sanity check).
@@ -373,16 +409,6 @@ async def test_bypassrls_role_sees_all_jobs(test_engine):
 
         # Admin bypasses RLS — sees all jobs regardless of set_current_user
         assert len(visible) >= 2
-
-
-@pytest.mark.asyncio
-async def test_list_rls_policies(db_session: AsyncSession):
-    """Test listing RLS policies."""
-    policies = await list_rls_policies(db_session, "jobs")
-    assert len(policies) > 0
-    # Should have policies for jobs table
-    policy_names = [p["name"] for p in policies]
-    assert any("jobs" in name for name in policy_names)
 
 
 # =============================================================================
@@ -462,70 +488,4 @@ def test_logout_uses_admin_session():
     assert "get_admin_session" in source, (
         "logout must use get_admin_session(), not get_session(). "
         "Session deletion requires cross-tenant access."
-    )
-
-
-def test_user_facing_pages_use_get_session():
-    """User-facing pages must use get_session(), not bare AsyncSessionLocal().
-
-    AsyncSessionLocal() (without thread_safe=True) creates sessions on the
-    main engine as the database superuser. Without SET ROLE openscientist_app, the
-    superuser bypasses all RLS policies. Pages must use get_session() which
-    automatically drops privileges.
-
-    Note: AsyncSessionLocal(thread_safe=True) in job_manager._db_* functions
-    is acceptable because those functions manually call SET ROLE openscientist_app
-    when a user_id is provided.
-    """
-    import ast
-    from pathlib import Path
-
-    # Files to inspect: all webapp_components pages + ui_components
-    pages_dir = Path("src/openscientist/webapp_components/pages")
-    ui_components = Path("src/openscientist/webapp_components/ui_components.py")
-
-    files_to_check = [*list(pages_dir.glob("*.py")), ui_components]
-    violations = []
-
-    for filepath in files_to_check:
-        if filepath.name == "__init__.py":
-            continue
-
-        source = filepath.read_text()
-
-        # Parse the AST to find AsyncSessionLocal() calls without thread_safe=True
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
-            continue
-
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-
-            # Check for AsyncSessionLocal() calls
-            func = node.func
-            func_name = None
-            if isinstance(func, ast.Name):
-                func_name = func.id
-            elif isinstance(func, ast.Attribute):
-                func_name = func.attr
-
-            if func_name != "AsyncSessionLocal":
-                continue
-
-            # Check if thread_safe=True is passed (which is acceptable)
-            has_thread_safe = any(
-                kw.arg == "thread_safe"
-                and isinstance(kw.value, ast.Constant)
-                and kw.value.value is True
-                for kw in node.keywords
-            )
-            if not has_thread_safe:
-                violations.append(f"{filepath.relative_to('src')}:{node.lineno}")
-
-    assert not violations, (
-        "AsyncSessionLocal() (without thread_safe=True) found in user-facing code. "
-        "Use get_session() instead to enforce RLS via SET ROLE openscientist_app.\n"
-        "Violations:\n" + "\n".join(f"  - {v}" for v in violations)
     )

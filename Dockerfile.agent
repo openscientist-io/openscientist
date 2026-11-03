@@ -11,49 +11,22 @@
 #   openscientist.job_id=<uuid>   set by JobContainerRunner at runtime
 #   openscientist.type=agent
 
-# --- Stage: build the open-codex CLI from the fork --------------------------
-# The open-codex branch carries the fixes that let codex drive open-weight
-# models served by Ollama: flatten MCP namespace tools for providers without
-# namespace support, a function-form apply_patch (with a +-prefix patch-body
-# description so open models format added lines correctly), and a web_search
-# capability gate that stops the hosted tool from corrupting tool calls on
-# non-OpenAI providers. Pinned to a commit on open-codex for reproducibility.
-FROM rust:1.95-bookworm AS codex-build
-ARG CODEX_REPO=https://github.com/LucaCappelletti94/codex.git
-ARG CODEX_REF=8f8009fcab89baafa51c15c9542734b1c94de8b6
-RUN git clone "${CODEX_REPO}" /codex \
-    && git -C /codex checkout "${CODEX_REF}" \
-    && cargo build --release --manifest-path /codex/codex-rs/Cargo.toml -p codex-cli \
-    && cp /codex/codex-rs/target/release/codex /usr/local/bin/codex
-
 FROM openscientist-base:latest
 
-# Install system dependencies for native extensions (scipy, h5py, scanpy, etc.) and Rust.
-# The libpango/cairo/gdk-pixbuf/glib stack is required by WeasyPrint, which renders
-# final_report.pdf from the report HTML. Without it WeasyPrint fails to load
-# libgobject-2.0-0 and the report falls back to the fpdf2 renderer, producing a PDF
-# that does not match the HTML report shown in the UI.
+# The firewall entrypoint sets nftables rules, then drops privileges
+# with setpriv from util-linux.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    libhdf5-dev \
-    pkg-config \
-    rustc \
-    curl \
-    ca-certificates \
-    libpango-1.0-0 \
-    libpangocairo-1.0-0 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
-    libffi8 \
-    shared-mime-info \
-    fonts-liberation \
     nftables \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd --uid 1001 --create-home --shell /bin/bash agent
+# The web chowns the job tree it creates to this uid:gid, so both must stay in
+# sync with job_container.identity (the tests in tests/test_job_dir_permissions.py
+# check it). The executor image pins the same GID so it can use the tree.
+ARG AGENT_UID=1001
+ARG AGENT_GID=1001
+RUN groupadd --gid ${AGENT_GID} jobs \
+    && useradd --uid ${AGENT_UID} --gid ${AGENT_GID} --create-home --shell /bin/bash agent
 
 WORKDIR /app
 
@@ -62,23 +35,12 @@ COPY pyproject.toml README.md uv.lock ./
 COPY src/ ./src/
 
 # Install dependencies including claude-agent-sdk and openai-codex (both listed
-# in pyproject.toml). The official openai-codex bundles its codex binary only as
-# a musl wheel, which is dropped via the uv override in pyproject.toml. The
-# binary is provisioned separately below.
+# in pyproject.toml). openai-codex brings the codex binary it is pinned to.
 RUN uv export --locked --no-dev --no-emit-project --format requirements-txt \
         -o /tmp/requirements.txt \
     && uv pip install --system -r /tmp/requirements.txt \
     && uv pip install --system --no-deps -e . \
     && rm /tmp/requirements.txt
-
-# Install the open-codex CLI built in the codex-build stage above (namespace
-# tools, function apply_patch, web_search capability gate, and the apply_patch
-# +-prefix description fix). Built from the fork rather than the upstream
-# release because the open-weight fixes are not yet upstream. It goes on PATH at
-# /usr/local/bin/codex, where CodexAgent._resolve_codex_bin (shutil.which) finds
-# it.
-COPY --from=codex-build /usr/local/bin/codex /usr/local/bin/codex
-RUN chmod +x /usr/local/bin/codex
 
 # omp harness CLI (OPENSCIENTIST_HARNESS=omp): pinned static binary onto PATH.
 # The checksum is the release asset digest, not just the tag: a git tag is
@@ -95,7 +57,7 @@ RUN curl -fsSL "${OMP_RELEASE_BASE}/${OMP_VERSION}/omp-linux-x64" -o /tmp/omp \
 # Copy agent entrypoint
 COPY docker/agent-entrypoint.py /agent-entrypoint.py
 
-# Air-gapped egress firewall entrypoint (used when the runner enables airgap).
+# Egress firewall entrypoint, installed for every launch in both firewall modes.
 COPY docker/agent-firewall-entrypoint.sh /agent-firewall-entrypoint.sh
 RUN chmod +x /agent-firewall-entrypoint.sh
 

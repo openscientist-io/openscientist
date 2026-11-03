@@ -20,10 +20,7 @@ from openscientist.agent.base import AbstractAgent, AgentBackend, IterationResul
 # Importing the concrete agents registers them as AbstractAgent subclasses.
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent  # noqa: F401
 from openscientist.agent.codex_agent import CodexAgent
-from openscientist.agent.factory import (
-    agent_class_for_provider_id,
-    backend_for_provider_id,
-)
+from openscientist.agent.factory import agent_class_for_backend, agent_class_for_provider_id
 from openscientist.agent.omp_agent import OmpAgent  # noqa: F401
 from openscientist.prompts.common import BackendFragments
 from openscientist.providers import provider_class, provider_ids
@@ -89,13 +86,16 @@ def test_every_backend_has_exactly_one_agent() -> None:
         assert len(classes) == 1, f"{backend} has multiple agents: {classes}"
 
 
+def test_every_backend_resolves_to_its_agent() -> None:
+    for cls in _concrete_agent_classes():
+        assert agent_class_for_backend(cls.backend) is cls
+
+
 def test_every_provider_resolves_to_a_concrete_agent() -> None:
     concrete = _concrete_agent_classes()
     for provider_id in provider_ids():
         agent_cls = agent_class_for_provider_id(provider_id)
         assert agent_cls in concrete, provider_id
-        # The id-keyed backend resolver agrees with the resolved agent class.
-        assert backend_for_provider_id(provider_id) is agent_cls.backend, provider_id
 
 
 def test_every_provider_class_is_registered() -> None:
@@ -206,13 +206,12 @@ def test_concrete_subclass_without_backend_is_rejected() -> None:
             # `backend` is intentionally not set.
             @classmethod
             def prompt_fragments(cls) -> BackendFragments:
-                raise NotImplementedError
-
-            @classmethod
-            def discovery_system_prompt(
-                cls, *, use_hypotheses: bool = False, phenix_available: bool = False
-            ) -> str:
-                return ""
+                return BackendFragments(
+                    skills_location="",
+                    builtin_read_tool="",
+                    builtin_read_tool_short="",
+                    mcp_tool_prefix="",
+                )
 
             async def prepare_job_workspace(self, *, use_hypotheses: bool = False) -> None:
                 return None

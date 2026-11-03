@@ -3,7 +3,6 @@
 from pathlib import Path
 
 _ALLOWED_REFERENCES = {
-    Path("src/openscientist/bootstrap.py"),  # migration-only read source
     Path("src/openscientist/artifact_packager.py"),  # explicit archive exclusion list
 }
 

@@ -1,12 +1,6 @@
 """Tests for literature module."""
 
-from unittest.mock import MagicMock, patch
-
-from openscientist.literature import (
-    _parse_pubmed_xml,
-    format_literature_for_prompt,
-    search_pubmed,
-)
+from openscientist.literature import _parse_pubmed_xml
 
 # ─── _parse_pubmed_xml ───────────────────────────────────────────────
 
@@ -82,65 +76,3 @@ class TestParsePubmedXml:
             [],
         )
         assert papers == []
-
-
-# ─── search_pubmed (mocked) ──────────────────────────────────────────
-
-
-class TestSearchPubmed:
-    """Tests for PubMed search with mocked HTTP."""
-
-    @patch("openscientist.literature.requests.get")
-    @patch("openscientist.literature.time.sleep")
-    def test_search_and_fetch(self, _mock_sleep, mock_get):
-        # Mock esearch response
-        search_resp = MagicMock()
-        search_resp.json.return_value = {"esearchresult": {"idlist": ["12345678"]}}
-        search_resp.raise_for_status = MagicMock()
-
-        # Mock efetch response
-        fetch_resp = MagicMock()
-        fetch_resp.text = SAMPLE_XML
-        fetch_resp.raise_for_status = MagicMock()
-
-        mock_get.side_effect = [search_resp, fetch_resp]
-
-        papers = search_pubmed("hypothermia metabolomics", max_results=5)
-        assert len(papers) >= 1
-        assert papers[0]["pmid"] == "12345678"
-
-    @patch("openscientist.literature.requests.get")
-    def test_no_results_returns_empty(self, mock_get):
-        resp = MagicMock()
-        resp.json.return_value = {"esearchresult": {"idlist": []}}
-        resp.raise_for_status = MagicMock()
-        mock_get.return_value = resp
-
-        papers = search_pubmed("nonexistent query xyz")
-        assert papers == []
-
-
-# ─── format_literature_for_prompt ─────────────────────────────────────
-
-
-class TestFormatLiteratureForPrompt:
-    """Tests for literature formatting."""
-
-    def test_no_papers(self):
-        result = format_literature_for_prompt([])
-        assert "No literature" in result
-
-    def test_formats_papers(self):
-        papers = [
-            {"pmid": "111", "title": "Paper A about things", "year": "2024"},
-            {"pmid": "222", "title": "Paper B about stuff", "year": "2023"},
-        ]
-        result = format_literature_for_prompt(papers)
-        assert "PMID 111" in result
-        assert "Paper A" in result
-        assert "2024" in result
-
-    def test_respects_max_papers(self):
-        papers = [{"pmid": str(i), "title": f"Paper {i}", "year": "2024"} for i in range(10)]
-        result = format_literature_for_prompt(papers, max_papers=3)
-        assert result.count("PMID") == 3

@@ -15,10 +15,16 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job
+from openscientist.job_container import db_login
 from openscientist.job_container.db_login import (
     create_agent_login,
     drop_agent_login,
     reap_agent_logins,
+)
+from openscientist.job_container.secrets import (
+    broker_accepts,
+    issue_run_credentials,
+    proxy_accepts,
 )
 
 
@@ -47,6 +53,28 @@ async def job_id(test_engine: AsyncEngine) -> AsyncGenerator[UUID, None]:
     yield job.id
     async with test_engine.begin() as conn:
         await conn.execute(text("DELETE FROM jobs WHERE id = :id"), {"id": job.id})
+
+
+@pytest.mark.asyncio
+async def test_a_failed_login_creation_does_not_reveal_the_password(
+    job_id: UUID, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The role name is taken, so ``CREATE ROLE`` fails, and its error carries
+    the statement the database rejected."""
+    taken = "0123456789abcdef0123456789abcdef"
+    password = "the-agent-password-nobody-may-see"
+    monkeypatch.setattr(db_login.secrets, "token_hex", lambda _n: taken)
+    monkeypatch.setattr(db_login.secrets, "token_urlsafe", lambda _n: password)
+    async with test_engine.begin() as conn:
+        await conn.execute(text(f"CREATE ROLE agent_{taken}"))
+    try:
+        with pytest.raises(Exception) as failure:
+            await create_agent_login(str(job_id), lifetime_seconds=300)
+        assert f"agent_{taken}" in str(failure.value)
+        assert password not in str(failure.value)
+    finally:
+        async with test_engine.begin() as conn:
+            await conn.execute(text(f"DROP ROLE agent_{taken}"))
 
 
 @pytest.mark.asyncio
@@ -101,6 +129,15 @@ async def test_dropping_a_login_ends_its_open_sessions(job_id: UUID) -> None:
     finally:
         if not conn.is_closed():
             conn.terminate()
+
+
+@pytest.mark.asyncio
+async def test_dropping_a_login_ends_its_runs_proxy_and_broker_credentials(job_id: UUID) -> None:
+    login = await create_agent_login(str(job_id), lifetime_seconds=300)
+    credentials = issue_run_credentials(str(job_id), login.role, "discovery")
+    await drop_agent_login(login.role)
+    assert not proxy_accepts(credentials.llm_placeholder)
+    assert not broker_accepts(str(job_id), credentials.exec_token)
 
 
 @pytest.mark.asyncio

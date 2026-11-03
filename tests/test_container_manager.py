@@ -4,28 +4,45 @@ Tests for container_manager module.
 Contains both unit tests (mocked Docker) and integration tests (real Docker).
 """
 
+import asyncio
 import json
 import tempfile
+from collections.abc import AsyncGenerator
 from datetime import UTC
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+from tests.helpers import assert_names_a_build_command
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+    """The row each execution reads its limits and the airgap flag from."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 class TestContainerManagerUnit:
     """Unit tests with mocked Docker client."""
 
     def test_init_defaults(self):
-        """Test ContainerManager initializes with default values."""
+        """The limits are not copied at init; the row supplies them at execution."""
         from openscientist.container_manager import ContainerManager
 
         manager = ContainerManager()
         assert manager.image == "openscientist-executor:latest"
-        assert manager.memory_limit == "2g"
-        assert manager.cpu_limit == 0.5
-        assert manager.timeout == 120
+        assert manager.memory_limit is None
+        assert manager.cpu_limit is None
+        assert manager.timeout is None
 
     def test_init_custom_values(self):
         """Test ContainerManager accepts custom values."""
@@ -133,7 +150,8 @@ class TestContainerManagerUnit:
             )
 
         assert result["success"] is False
-        assert "image not found" in result["error"].lower()
+        assert manager.image in result["error"]
+        assert_names_a_build_command(result["error"])
 
     def test_cleanup_job_containers(self):
         """Test cleanup of containers by job ID."""
@@ -437,11 +455,7 @@ class TestBuildVolumesHostTranslation:
         mock_settings = MagicMock()
         mock_settings.container.container_app_dir = "/app"
         mock_settings.container.executor_image = "test:latest"
-        mock_settings.container.executor_memory = "2g"
-        mock_settings.container.executor_cpu = 0.5
-        mock_settings.container.executor_timeout = 120
         mock_settings.container.agent_network = None
-        mock_settings.airgap.enabled = False
         return mgr, mock_client, mock_settings
 
     @staticmethod
@@ -453,62 +467,60 @@ class TestBuildVolumesHostTranslation:
         return cast(dict[str, dict[str, str]], call_kwargs[1]["volumes"])
 
     def test_build_volumes_translates_output_dir(self, tmp_path: Path) -> None:
-        """When host_project_dir is set, output_dir is translated."""
+        """When host_project_dir is set, the output_dir volume source is the real
+        to_host_path translation of the container path."""
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup_execute_code()
-        mock_settings.container.host_project_dir = "/host/project"
+        # Real directories standing in for the container app dir and the host
+        # project dir, so the real to_host_path performs the mapping.
+        app_dir = tmp_path / "app"
+        host_dir = tmp_path / "host_project"
+        app_dir.mkdir()
+        mock_settings.container.container_app_dir = str(app_dir)
+        mock_settings.container.host_project_dir = str(host_dir)
 
         with (
             patch("openscientist.container_manager.get_settings", return_value=mock_settings),
             patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
         ):
-            # Use an output_dir under /app to trigger translation
-            output_dir = tmp_path / "provenance"
-            output_dir.mkdir()
+            # An output_dir under the container app dir triggers translation
+            output_dir = app_dir / "jobs" / "123" / "provenance"
+            output_dir.mkdir(parents=True)
+            mgr.execute_code(
+                code='print("hi")',
+                job_id="test-translate",
+                output_dir=str(output_dir),
+            )
 
-            # Patch to_host_path to simulate translation
-            with patch("openscientist.container_manager.to_host_path") as mock_thp:
-                mock_thp.return_value = Path("/host/project/jobs/123/provenance")
-                mgr.execute_code(
-                    code='print("hi")',
-                    job_id="test-translate",
-                    output_dir=str(output_dir),
-                )
-                mock_thp.assert_called()
-
-            assert "/host/project/jobs/123/provenance" in self._get_run_volumes(mock_client)
+        volumes = self._get_run_volumes(mock_client)
+        host_output_dir = str(host_dir / "jobs" / "123" / "provenance")
+        assert host_output_dir in volumes
+        # The mount still points at the container output path
+        assert volumes[host_output_dir] == {"bind": "/output", "mode": "rw"}
 
     def test_build_volumes_translates_data_file_paths(self, tmp_path: Path) -> None:
-        """When host_project_dir is set, data file paths are translated."""
+        """When host_project_dir is set, the data directory volume source is the real
+        to_host_path translation of the container path."""
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup_execute_code()
-        mock_settings.container.host_project_dir = "/host/project"
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
+        # Real directories standing in for the container app dir and the host
+        # project dir, so the real to_host_path performs the mapping.
+        app_dir = tmp_path / "app"
+        host_dir = tmp_path / "host_project"
+        data_dir = app_dir / "data"
+        data_dir.mkdir(parents=True)
         data_file = data_dir / "file.csv"
         data_file.write_text("a,b\n1,2\n")
-
-        host_data_dir = tmp_path / "host_data"
-        host_data_dir.mkdir()
-        (host_data_dir / "file.csv").write_text("a,b\n1,2\n")
-
-        def mock_to_host_path(path, cs):
-            try:
-                rel = path.relative_to(data_dir)
-                return host_data_dir / rel
-            except ValueError:
-                pass
-            return path
+        mock_settings.container.container_app_dir = str(app_dir)
+        mock_settings.container.host_project_dir = str(host_dir)
 
         with (
             patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.container_manager.to_host_path", side_effect=mock_to_host_path),
             patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
         ):
-            output_dir = tmp_path / "out"
+            output_dir = app_dir / "out"
             output_dir.mkdir()
             mgr.execute_code(
                 code='print("hi")',
@@ -517,7 +529,10 @@ class TestBuildVolumesHostTranslation:
                 data_files=[{"path": str(data_file), "name": "file.csv"}],
             )
 
-        assert str(host_data_dir) in self._get_run_volumes(mock_client)
+        volumes = self._get_run_volumes(mock_client)
+        assert str(host_dir / "data") in volumes
+        # The mount still points at the container data path
+        assert volumes[str(host_dir / "data")] == {"bind": "/data", "mode": "ro"}
 
     def test_build_volumes_no_translation_without_host_dir(self, tmp_path: Path) -> None:
         """When host_project_dir is not set, paths pass through unchanged."""
@@ -571,9 +586,6 @@ class TestExecuteCodeAirgapNetwork:
         mock_settings.container.container_app_dir = "/app"
         mock_settings.container.host_project_dir = None
         mock_settings.container.executor_image = "test:latest"
-        mock_settings.container.executor_memory = "2g"
-        mock_settings.container.executor_cpu = 0.5
-        mock_settings.container.executor_timeout = 120
         mock_settings.container.agent_network = "openscientist_default"
         return mgr, mock_client, mock_settings
 
@@ -581,11 +593,14 @@ class TestExecuteCodeAirgapNetwork:
     def _run_kwargs(mock_client: MagicMock) -> dict[str, object]:
         return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
 
-    def test_airgap_enabled_uses_no_network(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_enabled_uses_no_network(
+        self, test_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup()
-        mock_settings.airgap.enabled = True
+        await set_admin_settings_row(test_engine, airgapped=True)
 
         output_dir = tmp_path / "out"
         output_dir.mkdir()
@@ -596,7 +611,8 @@ class TestExecuteCodeAirgapNetwork:
                 return_value="openscientist_default",
             ) as mock_resolve,
         ):
-            mgr.execute_code(
+            await asyncio.to_thread(
+                mgr.execute_code,
                 code='print("hi")',
                 job_id="airgap-on",
                 output_dir=str(output_dir),
@@ -606,12 +622,20 @@ class TestExecuteCodeAirgapNetwork:
         assert kwargs.get("network") == "none"
         assert "network_mode" not in kwargs
         mock_resolve.assert_not_called()
+        # With no network there is nothing to filter, so the executor keeps
+        # its own user and entrypoint.
+        assert kwargs.get("user") == "executor"
+        assert kwargs.get("entrypoint") == []
+        assert kwargs.get("cap_add") is None
 
-    def test_airgap_disabled_uses_resolved_network(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_disabled_uses_resolved_network(
+        self, test_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
         from unittest.mock import patch
 
         mgr, mock_client, mock_settings = self._setup()
-        mock_settings.airgap.enabled = False
+        await set_admin_settings_row(test_engine, airgapped=False)
 
         output_dir = tmp_path / "out"
         output_dir.mkdir()
@@ -622,7 +646,8 @@ class TestExecuteCodeAirgapNetwork:
                 return_value="openscientist_default",
             ) as mock_resolve,
         ):
-            mgr.execute_code(
+            await asyncio.to_thread(
+                mgr.execute_code,
                 code='print("hi")',
                 job_id="airgap-off",
                 output_dir=str(output_dir),
@@ -632,6 +657,49 @@ class TestExecuteCodeAirgapNetwork:
         assert kwargs.get("network") == "openscientist_default"
         assert "network_mode" not in kwargs
         mock_resolve.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_restricted_executor_runs_behind_the_firewall(
+        self, test_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
+        """Without air-gap the executor keeps the compose network and installs
+        the same in-container firewall as the agent, dropping to its own user."""
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup()
+        await set_admin_settings_row(test_engine, airgapped=False)
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch(
+                "openscientist.job_container.resolve_docker_network",
+                return_value="openscientist_default",
+            ),
+        ):
+            await asyncio.to_thread(
+                mgr.execute_code,
+                code='print("hi")',
+                job_id="restrict-on",
+                output_dir=str(output_dir),
+            )
+
+        kwargs = self._run_kwargs(mock_client)
+        assert kwargs.get("network") == "openscientist_default"
+        assert kwargs.get("user") == "root"
+        assert kwargs.get("cap_add") == ["NET_ADMIN"]
+        assert kwargs.get("entrypoint") == ["/agent-firewall-entrypoint.sh"]
+        assert kwargs.get("security_opt") == ["no-new-privileges:true"]
+        environment = cast(dict[str, str], kwargs.get("environment"))
+        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert environment["OPENSCIENTIST_FIREWALL_RUN_AS"] == "executor"
+        # The executor never opens Postgres, so the allow-list is only the
+        # web's broker and LLM proxy.
+        assert set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(",")) == {
+            "openscientist:8081",
+            "openscientist:8082",
+        }
 
 
 class TestGetContainerManager:
@@ -676,7 +744,7 @@ class TestContainerManagerIntegration:
 
         manager = ContainerManager()
         if not manager.check_image_available():
-            pytest.skip("Executor image not built. Run 'make build-executor' first.")
+            pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
 
     def test_execute_simple_code(self):
         """Test executing simple Python code."""
@@ -728,24 +796,45 @@ class TestContainerManagerIntegration:
 
     def test_network_enabled(self):
         """Test that network access is available (needed for requests, SPARQL, cargo, etc.)."""
+        import uuid
+        from unittest.mock import patch
+
         from openscientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
-        # Probe a purpose-built connectivity endpoint (Google's generate_204:
-        # tiny, no body, returns a fixed 204, and does not rate-limit or 503
-        # like httpbin.org). Any successful HTTP response proves egress works,
-        # so assert on a sentinel rather than a specific status code.
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code=(
-                    "import requests; "
-                    'r = requests.get("https://www.google.com/generate_204", timeout=10); '
-                    'print("NETWORK_OK", r.status_code)'
+        # The executor resolves names through Docker's built-in DNS, which
+        # lives on loopback and only exists on user-defined networks, so the
+        # egress firewall allows it. The default bridge instead inherits the
+        # host's resolv.conf, whose resolvers sit in a private range the
+        # firewall refuses. Run on a throwaway user network, the way a
+        # compose deployment would.
+        network_name = f"openscientist-net-test-{uuid.uuid4().hex[:8]}"
+        network = manager.client.networks.create(network_name, driver="bridge")
+        try:
+            # Probe a purpose-built connectivity endpoint (Google's
+            # generate_204: tiny, no body, returns a fixed 204, and does not
+            # rate-limit or 503 like httpbin.org). Any successful HTTP
+            # response proves egress works, so assert on a sentinel rather
+            # than a specific status code.
+            with (
+                patch(
+                    "openscientist.job_container.resolve_docker_network",
+                    return_value=network_name,
                 ),
-                job_id="integration-test-4",
-                output_dir=tmpdir,
-            )
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                result = manager.execute_code(
+                    code=(
+                        "import requests; "
+                        'r = requests.get("https://www.google.com/generate_204", timeout=10); '
+                        'print("NETWORK_OK", r.status_code)'
+                    ),
+                    job_id="integration-test-4",
+                    output_dir=tmpdir,
+                )
+        finally:
+            network.remove()
 
         assert result["success"] is True
         assert "NETWORK_OK" in result["output"]

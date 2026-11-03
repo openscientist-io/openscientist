@@ -3,7 +3,8 @@
 import pytest
 
 from openscientist.database.models.job import Job
-from openscientist.knowledge_state import KnowledgeState, _sanitize_for_json
+from openscientist.knowledge_state import KnowledgeState
+from openscientist.knowledge_state_db import sanitize_for_json
 
 
 @pytest.fixture
@@ -13,7 +14,6 @@ def ks() -> KnowledgeState:
         job_id="test_job",
         research_question="What drives metabolite X?",
         max_iterations=20,
-        use_skills=True,
     )
 
 
@@ -28,7 +28,6 @@ class TestKnowledgeStateInit:
         assert cfg["job_id"] == "test_job"
         assert cfg["research_question"] == "What drives metabolite X?"
         assert cfg["max_iterations"] == 20
-        assert cfg["use_skills"] is True
 
     def test_empty_collections(self, ks):
         assert ks.data["hypotheses"] == []
@@ -214,24 +213,20 @@ class TestAnalysisLog:
 class TestIterationSummaries:
     """Tests for iteration summary tracking."""
 
-    def test_add_and_get_summary(self, ks):
+    def test_add_summary(self, ks):
         ks.add_iteration_summary(1, "Explored the data", strapline="Data exploration")
-        result = ks.get_iteration_summary(1)
-        assert result == "Explored the data"
+        [entry] = ks.data["iteration_summaries"]
+        assert (entry["iteration"], entry["summary"], entry["strapline"]) == (
+            1,
+            "Explored the data",
+            "Data exploration",
+        )
 
     def test_update_existing_summary(self, ks):
         ks.add_iteration_summary(1, "First version")
-        ks.add_iteration_summary(1, "Updated version")
-        result = ks.get_iteration_summary(1)
-        assert result == "Updated version"
-
-    def test_get_nonexistent_returns_none(self, ks):
-        assert ks.get_iteration_summary(99) is None
-
-    def test_increment_iteration(self, ks):
-        assert ks.data["iteration"] == 1
-        ks.increment_iteration()
-        assert ks.data["iteration"] == 2
+        ks.add_iteration_summary(1, "Updated version", strapline="Second take")
+        [entry] = ks.data["iteration_summaries"]
+        assert (entry["summary"], entry["strapline"]) == ("Updated version", "Second take")
 
 
 class TestFeedback:
@@ -282,184 +277,32 @@ class TestGetSummary:
         assert "Rejected Hypotheses" in summary
         assert "Bad idea" in summary
 
+    def test_data_section_states_only_what_setup_records(self, ks):
+        """Setup records file names, type and size, never sample or feature
+        counts, so the summary must not claim them as unknown."""
+        ks.set_data_summary({"files": ["data.csv"], "file_type": "csv", "file_size_mb": 1.5})
+        summary = ks.get_summary()
+        assert "data.csv" in summary
+        assert "Samples:" not in summary
+        assert "Features:" not in summary
+
 
 class TestVersionInfo:
-    """Tests for version info metadata."""
+    """The version stamp is written to the job by the discovery run, not by the
+    knowledge state."""
 
-    def test_set_version_info(self, ks):
-        ks.set_version_info({"claude_model": "claude-4", "openscientist_commit": "abc123"})
-        assert ks.data["config"]["version_info"]["claude_model"] == "claude-4"
-
-    async def test_save_to_database_persists_version_info(self, ks, db_session):
-        job = Job(research_question="What drives metabolite X?", status="running")
-        db_session.add(job)
-        await db_session.commit()
-
-        ks.set_version_info({"claude_code_version": "2.0.14", "claude_agent_sdk_version": "0.1.4"})
-        await ks.save_to_database(str(job.id), session=db_session)
-        await db_session.refresh(job)
-
-        assert job.version_info == {
-            "claude_code_version": "2.0.14",
-            "claude_agent_sdk_version": "0.1.4",
-        }
-
-    async def test_save_to_database_without_version_info_leaves_null(self, ks, db_session):
-        job = Job(research_question="What drives metabolite X?", status="running")
-        db_session.add(job)
-        await db_session.commit()
-
-        await ks.save_to_database(str(job.id), session=db_session)
-        await db_session.refresh(job)
-
-        assert job.version_info is None
-
-    async def test_reloaded_state_does_not_null_recorded_version_info(self, ks, db_session):
-        job = Job(research_question="What drives metabolite X?", status="running")
-        db_session.add(job)
-        await db_session.commit()
-
+    async def test_saving_the_state_keeps_the_recorded_version_stamp(self, ks, db_session):
         recorded = {"agent_harness": "omp", "agent_harness_version": "17.4.0"}
-        ks.set_version_info(recorded)
-        await ks.save_to_database(str(job.id), session=db_session)
-        await db_session.refresh(job)
+        job = Job(
+            research_question="What drives metabolite X?", status="running", version_info=recorded
+        )
+        db_session.add(job)
+        await db_session.commit()
 
-        # Report regeneration reloads state from the DB (its config carries no
-        # version_info) and saves again. The recorded provenance must survive.
-        reloaded = KnowledgeState._new_from_job_record(str(job.id), job)
-        assert "version_info" not in reloaded.data["config"]
-        await reloaded.save_to_database(str(job.id), session=db_session)
+        await ks.save_to_database(str(job.id), session=db_session)
         await db_session.refresh(job)
 
         assert job.version_info == recorded
-
-
-class TestGetReportSummary:
-    """Tests for the comprehensive report summary generation."""
-
-    def test_includes_all_findings_not_just_last_three(self, ks):
-        for i in range(5):
-            ks.add_finding(f"Finding {i + 1}", f"evidence-{i + 1}")
-        summary = ks.get_report_summary()
-        for i in range(5):
-            assert f"Finding {i + 1}" in summary
-            assert f"evidence-{i + 1}" in summary
-
-    def test_includes_supported_hypotheses_with_results(self, ks):
-        hid = ks.add_hypothesis("Gene X is upregulated")
-        ks.update_hypothesis(
-            hid,
-            {
-                "status": "supported",
-                "result": {
-                    "summary": "Significant upregulation observed",
-                    "p_value": "p=0.003",
-                    "effect_size": "Cohen's d=1.2",
-                    "conclusion": "Strong evidence for upregulation",
-                },
-            },
-        )
-        summary = ks.get_report_summary()
-        assert "Gene X is upregulated" in summary
-        assert "Supported Hypotheses" in summary
-        assert "p=0.003" in summary
-        assert "Cohen's d=1.2" in summary
-        assert "Strong evidence for upregulation" in summary
-
-    def test_includes_rejected_hypotheses_with_conclusions(self, ks):
-        hid = ks.add_hypothesis("Protein Y is degraded")
-        ks.update_hypothesis(
-            hid,
-            {
-                "status": "rejected",
-                "result": {"conclusion": "No degradation observed"},
-            },
-        )
-        summary = ks.get_report_summary()
-        assert "Rejected Hypotheses" in summary
-        assert "Protein Y is degraded" in summary
-        assert "No degradation observed" in summary
-
-    def test_includes_pending_hypotheses_as_knowledge_gaps(self, ks):
-        ks.add_hypothesis("Untested idea")
-        summary = ks.get_report_summary()
-        assert "Knowledge Gaps" in summary
-        assert "Untested idea" in summary
-
-    def test_includes_iteration_summaries_timeline(self, ks):
-        ks.add_iteration_summary(1, "Explored data structure", strapline="Data exploration")
-        ks.add_iteration_summary(2, "Tested correlation hypothesis")
-        summary = ks.get_report_summary()
-        assert "Investigation Timeline" in summary
-        assert "Explored data structure" in summary
-        assert "Tested correlation hypothesis" in summary
-        assert "Data exploration" in summary
-
-    def test_includes_literature_with_truncated_abstracts(self, ks):
-        long_abstract = "A" * 300
-        ks.add_literature("12345", "Important paper", long_abstract, relevance_to=["H001"])
-        summary = ks.get_report_summary()
-        assert "Literature Reviewed" in summary
-        assert "Important paper" in summary
-        assert "PMID: 12345" in summary
-        # Abstract should be truncated to 200 chars + "..."
-        assert "A" * 200 + "..." in summary
-        assert "A" * 201 not in summary.split("...")[0]
-        assert "Relevant to: H001" in summary
-
-    def test_excludes_analysis_log(self, ks):
-        ks.log_analysis("execute_code", code="import pandas", output="success")
-        summary = ks.get_report_summary()
-        assert "import pandas" not in summary
-
-    def test_includes_progress_overview_counts(self, ks):
-        ks.add_hypothesis("H one")
-        h2 = ks.add_hypothesis("H two")
-        ks.update_hypothesis(h2, {"status": "supported", "result": {}})
-        h3 = ks.add_hypothesis("H three")
-        ks.update_hypothesis(h3, {"status": "rejected", "result": {}})
-        ks.add_finding("F one", "ev")
-
-        summary = ks.get_report_summary()
-        assert "Total hypotheses proposed: 3" in summary
-        assert "Supported: 1" in summary
-        assert "Rejected: 1" in summary
-        assert "Pending: 1" in summary
-        assert "Findings confirmed: 1" in summary
-
-    def test_handles_empty_state(self, ks):
-        summary = ks.get_report_summary()
-        assert "Research Question" in summary
-        assert "What drives metabolite X?" in summary
-        # Should not crash and should have progress counts of 0
-        assert "Total hypotheses proposed: 0" in summary
-        assert "Findings confirmed: 0" in summary
-
-    def test_includes_consensus_answer_if_set(self, ks):
-        ks.data["consensus_answer"] = "The answer is 42."
-        summary = ks.get_report_summary()
-        assert "Previous Consensus Answer" in summary
-        assert "The answer is 42." in summary
-
-    def test_no_consensus_section_when_unset(self, ks):
-        summary = ks.get_report_summary()
-        assert "Previous Consensus Answer" not in summary
-
-    def test_finding_optional_fields_included(self, ks):
-        ks.add_finding(
-            "Complex finding",
-            "p<0.001",
-            supporting_hypotheses=["H001", "H002"],
-            literature_support=["L001"],
-            plots=["volcano_plot.png"],
-        )
-        # Set interpretation
-        ks.data["findings"][0]["biological_interpretation"] = "Pathway activation"
-        summary = ks.get_report_summary()
-        assert "Pathway activation" in summary
-        assert "H001, H002" in summary
-        assert "L001" in summary
-        assert "volcano_plot.png" in summary
 
 
 class TestAgentStatus:
@@ -470,83 +313,50 @@ class TestAgentStatus:
         assert ks.data["agent_status"] == "Analyzing data distribution"
         assert ks.data["agent_status_updated_at"] is not None
 
-    def test_clear_agent_status(self, ks):
-        ks.set_agent_status("Working...")
-        ks.clear_agent_status()
-        assert ks.data["agent_status"] is None
-        assert ks.data["agent_status_updated_at"] is None
-
-    def test_get_agent_status(self, ks):
-        assert ks.get_agent_status() is None
-        ks.set_agent_status("Searching PubMed")
-        assert ks.get_agent_status() == "Searching PubMed"
-
-    def test_get_agent_status_not_set(self, ks):
-        assert ks.get_agent_status() is None
-
-
-class TestIncrementIteration:
-    """Tests for increment_iteration standalone."""
-
-    def test_increments(self, ks):
-        assert ks.data["iteration"] == 1
-        ks.increment_iteration()
-        assert ks.data["iteration"] == 2
-        ks.increment_iteration()
-        assert ks.data["iteration"] == 3
-
-
-class TestGetIterationSummaryNotFound:
-    """Additional edge case for get_iteration_summary."""
-
-    def test_missing_iteration_returns_none(self, ks):
-        ks.add_iteration_summary(1, "Summary for iter 1")
-        assert ks.get_iteration_summary(999) is None
-
 
 class TestSanitizeForJson:
-    """Tests for _sanitize_for_json helper."""
+    """Tests for the sanitize_for_json helper."""
 
     def test_nan_replaced_with_none(self):
-        assert _sanitize_for_json(float("nan")) is None
+        assert sanitize_for_json(float("nan")) is None
 
     def test_inf_replaced_with_none(self):
-        assert _sanitize_for_json(float("inf")) is None
+        assert sanitize_for_json(float("inf")) is None
 
     def test_neg_inf_replaced_with_none(self):
-        assert _sanitize_for_json(float("-inf")) is None
+        assert sanitize_for_json(float("-inf")) is None
 
     def test_normal_float_unchanged(self):
-        assert _sanitize_for_json(3.14) == 3.14
+        assert sanitize_for_json(3.14) == 3.14
 
     def test_zero_unchanged(self):
-        assert _sanitize_for_json(0.0) == 0.0
+        assert sanitize_for_json(0.0) == 0.0
 
     def test_non_float_types_unchanged(self):
-        assert _sanitize_for_json(42) == 42
-        assert _sanitize_for_json("hello") == "hello"
-        assert _sanitize_for_json(True) is True
-        assert _sanitize_for_json(None) is None
+        assert sanitize_for_json(42) == 42
+        assert sanitize_for_json("hello") == "hello"
+        assert sanitize_for_json(True) is True
+        assert sanitize_for_json(None) is None
 
     def test_nan_in_list(self):
-        result = _sanitize_for_json([1.0, float("nan"), 3.0])
+        result = sanitize_for_json([1.0, float("nan"), 3.0])
         assert result == [1.0, None, 3.0]
 
     def test_nan_in_dict(self):
-        result = _sanitize_for_json({"a": float("nan"), "b": 2.0})
+        result = sanitize_for_json({"a": float("nan"), "b": 2.0})
         assert result == {"a": None, "b": 2.0}
 
     def test_deeply_nested(self):
         data = {"groups": [{"values": [float("nan"), float("inf"), 1.5]}]}
-        result = _sanitize_for_json(data)
+        result = sanitize_for_json(data)
         assert result == {"groups": [{"values": [None, None, 1.5]}]}
 
     def test_none_passthrough(self):
-        assert _sanitize_for_json(None) is None
+        assert sanitize_for_json(None) is None
 
     def test_empty_containers(self):
-        assert _sanitize_for_json({}) == {}
-        assert _sanitize_for_json([]) == []
+        assert sanitize_for_json({}) == {}
+        assert sanitize_for_json([]) == []
 
 
 class TestGetReportOutline:
@@ -562,7 +372,7 @@ class TestGetReportOutline:
         # With ample budget, a long abstract is included in full (no truncation).
         abstract = "A" * 2000
         ks.add_literature("12345678", "My Paper Title", abstract)
-        outline = ks.get_report_outline(abstract_budget_chars=100_000)
+        outline = ks.get_report_outline(budget_chars=100_000)
         assert abstract in outline
 
     def test_omits_abstracts_past_budget_with_note(self, ks):
@@ -570,7 +380,7 @@ class TestGetReportOutline:
         # full until the budget is reached, then the rest are omitted with a note.
         for i in range(60):
             ks.add_literature(f"{1000000 + i}", f"Paper {i}", "Z" * 2000)
-        outline = ks.get_report_outline(abstract_budget_chars=8000)
+        outline = ks.get_report_outline(budget_chars=8000)
         abstract_text = "".join(line for line in outline.splitlines() if "Z" in line)
         # Roughly the budget's worth of abstracts (plus one straddling paper).
         assert len(abstract_text) < 8000 + 2000 + 200
@@ -581,8 +391,8 @@ class TestGetReportOutline:
     def test_larger_budget_includes_more_abstracts(self, ks):
         for i in range(60):
             ks.add_literature(f"{2000000 + i}", f"Paper {i}", "Z" * 2000)
-        small = ks.get_report_outline(abstract_budget_chars=8000).count("Abstract:")
-        large = ks.get_report_outline(abstract_budget_chars=200_000).count("Abstract:")
+        small = ks.get_report_outline(budget_chars=8000).count("Abstract:")
+        large = ks.get_report_outline(budget_chars=200_000).count("Abstract:")
         assert large > small
         assert large == 60  # 200k budget fits all 60 x 2000-char abstracts
 
@@ -642,6 +452,66 @@ class TestGetReportOutline:
         ks.add_finding("My Finding", "p < 0.001, d = 0.8")
         outline = ks.get_report_outline()
         assert "Statistical evidence: p < 0.001, d = 0.8" in outline
+
+    def test_includes_hypothesis_results_and_conclusions(self, ks):
+        hid = ks.add_hypothesis("X causes Y")
+        ks.update_hypothesis(
+            hid,
+            {
+                "status": "supported",
+                "result": {
+                    "summary": "X raised Y in every replicate",
+                    "p_value": "0.003",
+                    "effect_size": "d = 1.2",
+                    "conclusion": "X drives Y",
+                },
+            },
+        )
+        outline = ks.get_report_outline()
+        assert "X raised Y in every replicate" in outline
+        assert "0.003" in outline
+        assert "d = 1.2" in outline
+        assert "X drives Y" in outline
+
+    def test_includes_finding_interpretations(self, ks):
+        ks.add_finding("Y rises", "p < 0.01")
+        ks.data["findings"][-1]["biological_interpretation"] = "X activates the Y pathway"
+        assert "X activates the Y pathway" in ks.get_report_outline()
+
+    def test_includes_full_iteration_summaries(self, ks):
+        summary = "Loaded the data, ran a PCA and found that PC1 separates treated samples. " * 4
+        ks.add_iteration_summary(1, summary, strapline="PCA separates treatment")
+        outline = ks.get_report_outline()
+        assert "PCA separates treatment" in outline
+        assert summary.strip() in outline
+
+    def test_includes_the_data_files(self, ks):
+        ks.set_data_summary(
+            {"files": ["expr.csv", "meta.csv"], "file_type": "csv", "file_size_mb": 1.5}
+        )
+        outline = ks.get_report_outline()
+        assert "expr.csv" in outline
+        assert "meta.csv" in outline
+        assert "1.5 MB" in outline
+
+    def test_run_facts_take_their_room_from_the_abstracts(self, ks):
+        for i in range(10):
+            ks.add_literature(f"{3000000 + i}", f"Paper {i}", "Z" * 1000)
+        without_facts = ks.get_report_outline(budget_chars=8000).count("Abstract:")
+        ks.add_finding("Y rises", "p < 0.01")
+        ks.data["findings"][-1]["biological_interpretation"] = "I" * 4000
+        with_facts = ks.get_report_outline(budget_chars=8000)
+        assert "I" * 4000 in with_facts
+        assert with_facts.count("Abstract:") < without_facts
+
+    def test_summaries_fall_back_to_straplines_when_the_facts_alone_overflow(self, ks):
+        ks.add_iteration_summary(1, "S" * 9000, strapline="First look at the data")
+        ks.add_finding("Y rises", "p < 0.01")
+        ks.data["findings"][-1]["biological_interpretation"] = "X activates the Y pathway"
+        outline = ks.get_report_outline(budget_chars=8000)
+        assert "First look at the data" in outline
+        assert "S" * 9000 not in outline
+        assert "X activates the Y pathway" in outline
 
 
 class TestToDict:

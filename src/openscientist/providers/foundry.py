@@ -1,24 +1,24 @@
-"""
-Azure AI Foundry (Microsoft Foundry) provider implementation.
-
-Uses Azure AI Foundry for model access. Supports both API key and Entra ID authentication.
-Cost tracking via Azure Cost Management API.
-"""
+"""Azure AI Foundry provider (API key or Entra ID auth, cost via Azure Cost Management)."""
 
 import logging
 import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from openscientist.providers.base import ClaudeCompatible, CostInfo, LlmUpstream
+from openscientist.providers.base import (
+    AirgapEgress,
+    AirgapPosture,
+    ClaudeCompatible,
+    CostInfo,
+    LiveCheckResult,
+    LlmUpstream,
+    SetupQuestion,
+    StaticHeadersSigning,
+    _completion_live_check,
+)
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._env_cleanup import (
-    VERTEX_PROVIDER_ENV_VARS,
-    clear_empty_env_vars,
-    clear_env_vars,
-    clear_provider_mode_flags,
-)
+from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_empty_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,9 @@ def _query_azure_cost_usd(
     start: datetime,
     end: datetime,
 ) -> float:
-    """
-    Query Azure Cost Management for total cost between start and end.
+    """Total cost between start and end from Azure Cost Management.
 
-    Returns the aggregated cost as a float. The currency is the subscription's
-    billing currency (typically USD for US subscriptions).
+    The currency is the subscription's billing currency, typically USD.
     """
     from azure.mgmt.costmanagement.models import (  # noqa: PLC0415
         QueryAggregation,
@@ -66,6 +64,18 @@ class FoundryProvider(ClaudeCompatible):
 
     display_name = "Azure AI Foundry"
 
+    mode_flag = "CLAUDE_CODE_USE_FOUNDRY"
+
+    # Foundry mode rejects resource and base URL together, so when routing
+    # through the proxy the resource is dropped and only the base URL remains.
+    proxied_env_condition_key = "ANTHROPIC_FOUNDRY_BASE_URL"
+    proxied_env_strip_keys = ("ANTHROPIC_FOUNDRY_RESOURCE",)
+
+    @classmethod
+    def validate_model_format(cls, model: str | None) -> str | None:
+        # Deployment names are user-defined Azure identifiers, so no pattern.
+        return None
+
     def validate_required_config(self) -> list[str]:
         return self.required_config_errors(get_settings().provider)
 
@@ -94,9 +104,57 @@ class FoundryProvider(ClaudeCompatible):
         return errors
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def setup_questions(cls) -> tuple[SetupQuestion, ...]:
+        return (
+            SetupQuestion("ANTHROPIC_FOUNDRY_RESOURCE", help="Foundry resource name"),
+            SetupQuestion("ANTHROPIC_FOUNDRY_BASE_URL", help="or the full Foundry endpoint URL"),
+            SetupQuestion("ANTHROPIC_FOUNDRY_API_KEY", kind="secret"),
+            *super().setup_questions(),
+        )
+
+    @classmethod
+    def live_check_billed(cls) -> bool:
+        # Foundry has no free listing; the check is a one-token completion.
+        return True
+
+    @classmethod
+    def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
+        if p.anthropic_foundry_base_url:
+            base_url = p.anthropic_foundry_base_url
+        elif p.anthropic_foundry_resource:
+            base_url = cls._build_base_url_from_resource(p.anthropic_foundry_resource)
+        else:
+            return LiveCheckResult(ok=True, detail="No Foundry endpoint to check with; skipped.")
+        if p.anthropic_foundry_api_key:
+            token = p.anthropic_foundry_api_key
+        else:
+            # No API key, so mint a short-lived Entra ID token via the default chain.
+            try:
+                from azure.identity import DefaultAzureCredential
+            except ImportError:
+                return LiveCheckResult(
+                    ok=False,
+                    detail="No Foundry API key and azure-identity is not installed.",
+                )
+            try:
+                token = (
+                    DefaultAzureCredential()
+                    .get_token("https://cognitiveservices.azure.com/.default")
+                    .token
+                )
+            except Exception as exc:  # noqa: BLE001 - surface any credential error
+                return LiveCheckResult(ok=False, detail=f"Foundry Entra ID token failed: {exc}")
+        url = f"{base_url.rstrip('/')}/v1/messages"
+        body = {
+            "model": p.model or "claude-sonnet-4-5",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+        headers = {"x-api-key": token}
+        return _completion_live_check(url, headers, body, cls.display_name)
+
+    @classmethod
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         env = {"CLAUDE_CODE_USE_FOUNDRY": "1"}
         # Claude Code treats resource and base_url as mutually exclusive.
         if provider.anthropic_foundry_resource:
@@ -116,7 +174,10 @@ class FoundryProvider(ClaudeCompatible):
         p = get_settings().provider
         if not (p.anthropic_foundry_base_url or p.anthropic_foundry_resource):
             return None
-        return LlmUpstream(self._resolve_base_url(), {"x-api-key": self._resolve_api_key()})
+        return LlmUpstream(
+            self._resolve_base_url(),
+            StaticHeadersSigning({"x-api-key": self._resolve_api_key()}),
+        )
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         p = get_settings().provider
@@ -127,35 +188,25 @@ class FoundryProvider(ClaudeCompatible):
             "ANTHROPIC_FOUNDRY_API_KEY": placeholder,
         }
 
-    def proxied_container_env(
-        self,
-        *,
-        proxy_base_url: str,
-        placeholder: str,
-        gcp_credentials_container_path: str | None = None,
-    ) -> dict[str, str]:
-        # Claude CLI foundry mode rejects resource and base_url together, so when
-        # routing through the proxy the base_url wins and the resource is dropped.
-        env = super().proxied_container_env(
-            proxy_base_url=proxy_base_url,
-            placeholder=placeholder,
-            gcp_credentials_container_path=gcp_credentials_container_path,
+    @classmethod
+    def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
+        if provider.anthropic_foundry_base_url or provider.anthropic_foundry_resource:
+            return AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(
+            AirgapEgress.UNSUPPORTED,
+            reason=f"{cls.display_name} cannot be air-gapped.",
         )
-        if env.get("ANTHROPIC_FOUNDRY_BASE_URL") == proxy_base_url:
-            env.pop("ANTHROPIC_FOUNDRY_RESOURCE", None)
-        return env
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
         """Route omp at Foundry.
 
-        This is the case that failed in review. omp keys Foundry mode off
-        ``CLAUDE_CODE_USE_FOUNDRY`` and then reads ``FOUNDRY_BASE_URL``, not the
-        ``ANTHROPIC_FOUNDRY_BASE_URL`` that Claude Code and our container env
-        use. With the name unset omp fell through its chain to
-        ``https://api.anthropic.com``, which the air-gap firewall drops, so every
-        turn hung until it timed out. Foundry mode sends the credential as
-        ``Authorization: Bearer``, which the proxy already accepts, so the
-        placeholder needs no special handling.
+        omp keys Foundry mode off ``CLAUDE_CODE_USE_FOUNDRY`` and reads
+        ``FOUNDRY_BASE_URL``, not the ``ANTHROPIC_FOUNDRY_BASE_URL`` that Claude
+        Code and the container env use, so it must be set explicitly. An unset
+        name falls through to ``https://api.anthropic.com``, which the air-gap
+        firewall drops. Foundry mode sends the credential as ``Authorization:
+        Bearer``, which the proxy already accepts, so the placeholder needs no
+        special handling.
         """
         p = get_settings().provider
         if not (p.anthropic_foundry_base_url or p.anthropic_foundry_resource):
@@ -165,16 +216,10 @@ class FoundryProvider(ClaudeCompatible):
             "FOUNDRY_BASE_URL": proxy or self._resolve_base_url(),
         }
 
-    def claude_model_name(self) -> str:
-        """Model name for ClaudeAgentOptions.model."""
-        return get_settings().provider.model or "claude-sonnet-4-5"
-
     def _validate_optional_config(self) -> list[str]:
-        """Check optional Foundry configuration."""
         warnings = []
         settings = get_settings()
 
-        # Model deployment names (optional - Claude Code has defaults)
         if not settings.provider.anthropic_default_sonnet_model:
             warnings.append(
                 "ANTHROPIC_DEFAULT_SONNET_MODEL not set "
@@ -195,30 +240,21 @@ class FoundryProvider(ClaudeCompatible):
 
         return warnings
 
-    def setup_environment(self) -> None:
-        """
-        Set up environment for Azure Foundry.
-
-        Ensures CLAUDE_CODE_USE_FOUNDRY is set and unsets conflicting
-        environment variables from other providers.
-        """
-        # Enable Foundry mode for Claude Code
+    def _set_own_flag(self) -> None:
         os.environ["CLAUDE_CODE_USE_FOUNDRY"] = "1"  # env-ok
 
-        # Note: Claude Code 2.1.42+ will construct the base URL from ANTHROPIC_FOUNDRY_RESOURCE
-        # automatically, so we don't need to set ANTHROPIC_FOUNDRY_BASE_URL here.
-        # In fact, setting both causes an error: "baseURL and resource are mutually exclusive"
+    def _conflicting_env_vars(self) -> tuple[str, ...]:
+        return VERTEX_PROVIDER_ENV_VARS + (
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+        )
 
-        # Unset conflicting provider routing vars
-        clear_provider_mode_flags(logger, active_flag="CLAUDE_CODE_USE_FOUNDRY")
-        clear_env_vars(logger, VERTEX_PROVIDER_ENV_VARS)
-        clear_env_vars(logger, ("AWS_BEARER_TOKEN_BEDROCK",))
+    def setup_environment(self) -> None:
+        super().setup_environment()
 
-        # Unset direct Anthropic API key to avoid conflicts
-        clear_env_vars(logger, ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"))
-
-        # Unset empty vars that interfere with auth
-        # This happens when docker-compose passes VAR=${VAR} and it's unset
+        # Clear empty vars that interfere with auth. docker-compose passes
+        # VAR=${VAR} through when the var is unset.
         empty_vars_to_clear = [
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
@@ -238,10 +274,10 @@ class FoundryProvider(ClaudeCompatible):
         return f"https://{resource}.services.ai.azure.com/anthropic"
 
     def _resolve_api_key(self) -> str:
-        """Return bearer token for Anthropic client.
+        """Return the bearer token for the Anthropic client.
 
-        Uses the configured API key if present; otherwise fetches a short-lived
-        Entra ID token via Azure's default credential chain.
+        Uses the configured API key if present, else a short-lived Entra ID
+        token via Azure's default credential chain.
         """
         settings = get_settings()
         api_key = settings.provider.anthropic_foundry_api_key
@@ -266,21 +302,12 @@ class FoundryProvider(ClaudeCompatible):
         )
 
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
-        """
-        Get Azure Foundry cost information from Azure Cost Management API.
+        """Get Azure Foundry cost information from Azure Cost Management.
 
-        Requires AZURE_SUBSCRIPTION_ID to be set. Optionally AZURE_RESOURCE_GROUP
-        scopes the query to a specific resource group (recommended to avoid pulling
-        all subscription costs).
-
-        Uses DefaultAzureCredential for authentication (Entra ID / managed identity).
-        Cost data typically has a 1–3 day lag in Azure.
-
-        Args:
-            lookback_hours: Time window for recent spend calculation
-
-        Returns:
-            CostInfo with Foundry spend data
+        Requires AZURE_SUBSCRIPTION_ID. AZURE_RESOURCE_GROUP optionally scopes
+        the query to one resource group. Authentication uses AZURE_TENANT_ID,
+        AZURE_CLIENT_ID and AZURE_CLIENT_SECRET. Cost data typically has a 1–3
+        day lag in Azure.
         """
         now = datetime.now(UTC)
         settings = get_settings()
@@ -352,11 +379,10 @@ class FoundryProvider(ClaudeCompatible):
             )
             client = CostManagementClient(credential)
 
-            # Total spend: current calendar month (month-to-date)
+            # Total spend is month-to-date
             month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             total_spend = _query_azure_cost_usd(client, scope, month_start, now)
 
-            # Recent spend: last lookback_hours
             recent_start = now - timedelta(hours=lookback_hours)
             recent_spend = _query_azure_cost_usd(client, scope, recent_start, now)
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from functools import partial
+from collections.abc import Collection
 from pathlib import Path
 from typing import Literal, TypedDict
 from uuid import UUID
@@ -17,7 +17,9 @@ from uuid import UUID
 from sqlalchemy import select
 
 from openscientist.database.models.job import Job as JobModel
-from openscientist.database.session import AsyncSessionLocal, SessionOpener
+from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS, retry_async
+from openscientist.database.session import SessionOpener, async_session_local
+from openscientist.job.status import status_update_statement
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.prompts.common import namespace_tool_mentions
 
@@ -27,23 +29,24 @@ FEEDBACK_TIMEOUT_SECONDS = 15 * 60  # 15 minutes
 
 # Budgeting the report prompt against the model's context window. We reserve
 # tokens for the system prompt, tool definitions, the model's own output, and
-# the non-literature sections of the report prompt, then spend the rest on
-# literature abstracts. CHARS_PER_TOKEN is a conservative chars->tokens factor
-# (dense scientific text), so the char budget under-fills rather than overflows.
+# the outline's titles and counts, then spend the rest on the run's detailed
+# facts first and literature abstracts after. CHARS_PER_TOKEN is a conservative
+# chars->tokens factor (dense scientific text), so the char budget under-fills
+# rather than overflows.
 _REPORT_PROMPT_RESERVE_TOKENS = 12000
 _REPORT_PROMPT_CHARS_PER_TOKEN = 3.5
-_REPORT_PROMPT_MIN_ABSTRACT_CHARS = 2000
+_REPORT_PROMPT_MIN_OUTLINE_CHARS = 2000
 
 
-def _report_abstract_budget_chars(context_window_tokens: int) -> int:
-    """Char budget for literature abstracts, derived from the model's context.
+def _report_outline_budget_chars(context_window_tokens: int) -> int:
+    """Char budget for the outline's facts and abstracts, derived from the model's context.
 
     Pure function of the resolved window: the caller passes the agent's cached
     ``model_profile.context_window_tokens`` so this builder does no I/O.
     """
     spare_tokens = context_window_tokens - _REPORT_PROMPT_RESERVE_TOKENS
     return max(
-        _REPORT_PROMPT_MIN_ABSTRACT_CHARS,
+        _REPORT_PROMPT_MIN_OUTLINE_CHARS,
         int(spare_tokens * _REPORT_PROMPT_CHARS_PER_TOKEN),
     )
 
@@ -90,13 +93,7 @@ def build_initial_prompt(
             "executor.",
             tool_prefix,
         )
-        data_context = (
-            f"Data summary:\n"
-            f"- Files: {data_files}\n"
-            f"- Columns: {ks.data['data_summary'].get('columns', [])}\n"
-            f"- Samples: {ks.data['data_summary'].get('n_samples', 'Unknown')}\n"
-            f"{access_note}"
-        )
+        data_context = f"Data summary:\n- Files: {data_files}\n{access_note}"
     else:
         data_context = (
             "No data files provided. You may use literature search and computational methods."
@@ -228,7 +225,7 @@ def build_report_prompt(
 
 {_format_job_description_section(description)}
 
-{ks.get_report_outline(abstract_budget_chars=_report_abstract_budget_chars(context_window_tokens))}
+{ks.get_report_outline(budget_chars=_report_outline_budget_chars(context_window_tokens))}
 
 {figure_section}
 
@@ -376,24 +373,27 @@ def build_consensus_retry_prompt(research_question: str, *, tool_prefix: str) ->
 Calling that tool is the only action for this step."""
 
 
-def increment_ks_iteration(job_id: str) -> None:
+async def increment_ks_iteration(job_id: str) -> None:
     """Increment the persisted knowledge-state iteration counter."""
-    ks = KnowledgeState.load_from_database_sync(job_id)
+    ks = await KnowledgeState.load_from_database(job_id)
     ks.data["iteration"] += 1
-    ks.save_to_database_sync(job_id)
+    await ks.save_to_database(job_id)
 
 
 async def _get_job_status(job_id: str) -> str | None:
-    """Fetch current job status from the database."""
-    try:
-        async with AsyncSessionLocal(thread_safe=True) as session:
+    """Fetch current job status from the database, retrying a lost connection
+    for :data:`CONTAINER_DB_RETRY_SECONDS`."""
+
+    async def read() -> str | None:
+        async with async_session_local() as session:
             result = await session.execute(
                 select(JobModel.status).where(JobModel.id == UUID(job_id))
             )
             return result.scalar_one_or_none()
-    except Exception as e:
-        logger.warning("Failed to fetch status for job %s: %s", job_id, e)
-        return None
+
+    return await retry_async(
+        read, within=CONTAINER_DB_RETRY_SECONDS, what=f"reading the status of job {job_id}"
+    )
 
 
 def _parse_job_uuid(job_id: str) -> UUID | None:
@@ -409,43 +409,63 @@ async def _persist_job_status(
     job_uuid: UUID,
     status: str,
     error_message: str | None,
+    stop_note: str | None,
+    allowed_from: Collection[str],
     open_session: SessionOpener,
-) -> None:
-    try:
+    retry_for: float,
+) -> bool:
+    stmt = status_update_statement(
+        job_uuid,
+        status,
+        allowed_from=allowed_from,
+        error_message=error_message,
+        stop_note=stop_note,
+    ).returning(JobModel.id)
+
+    async def write() -> bool:
         async with open_session() as session:
-            job_result = await session.execute(select(JobModel).where(JobModel.id == job_uuid))
-            job = job_result.scalar_one_or_none()
-            if job is None:
-                logger.warning("Cannot update status for missing job %s", job_id)
-                return
-            job.status = status
-            if error_message:
-                job.error_message = error_message
+            if (await session.execute(stmt)).scalar_one_or_none() is None:
+                logger.info(
+                    "Job %s is not in %s, so it stays as it is", job_id, sorted(allowed_from)
+                )
+                return False
             await session.commit()
-    except Exception as e:
-        logger.warning("Failed to update status for job %s: %s", job_id, e)
+            return True
+
+    return await retry_async(write, within=retry_for, what=f"moving job {job_id} to {status}")
 
 
 async def update_job_status(
     job_dir: Path,
     status: str,
     error_message: str | None = None,
+    stop_note: str | None = None,
     *,
+    allowed_from: Collection[str],
     open_session: SessionOpener | None = None,
-) -> None:
-    """Update job status in ``open_session``, else the process's own login, and notify the owner."""
+    retry_for: float = CONTAINER_DB_RETRY_SECONDS,
+) -> bool:
+    """Move the job to ``status`` if it is in one of ``allowed_from``, in
+    ``open_session``, else the process's own login. Returns whether it applied.
+
+    ``error_message`` is written for failures, and ``stop_note`` for a job that
+    completed early at a budget limit. A lost connection is retried for
+    ``retry_for`` seconds and then raised, as is any other database error."""
     job_id = job_dir.name
 
     job_uuid = _parse_job_uuid(job_id)
     if job_uuid is None:
-        return
+        return False
 
-    await _persist_job_status(
+    return await _persist_job_status(
         job_id,
         job_uuid,
         status,
         error_message,
-        open_session or partial(AsyncSessionLocal, thread_safe=True),
+        stop_note,
+        allowed_from,
+        open_session or async_session_local,
+        retry_for,
     )
 
 

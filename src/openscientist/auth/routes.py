@@ -1,8 +1,4 @@
-"""
-Authentication routes for OAuth login/logout.
-
-Handles OAuth callback flows and session creation for authenticated users.
-"""
+"""Authentication routes for OAuth login/logout."""
 
 import logging
 from datetime import UTC, datetime, timedelta
@@ -12,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.database.models import Administrator, OAuthAccount, Session, User
 from openscientist.settings import get_settings
 
@@ -23,6 +20,10 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+class UnverifiedEmailError(Exception):
+    """Raised when a sign-in presents an email the provider has not verified."""
+
+
 async def _maybe_bootstrap_admin(
     db: AsyncSession,
     user: User,
@@ -30,12 +31,10 @@ async def _maybe_bootstrap_admin(
     email_verified: bool | None,
     auth_provider: str | None,
 ) -> bool:
-    """
-    Grant bootstrap admin privileges based on BOOTSTRAP_ADMIN_EMAILS.
+    """Grant bootstrap admin privileges from BOOTSTRAP_ADMIN_EMAILS.
 
-    Returns:
-        True if user is in the bootstrap allowlist (whether newly granted or already admin),
-        False otherwise.
+    Returns True if the user is in the allowlist, whether newly granted or
+    already admin.
     """
     allowlist = get_settings().auth.bootstrap_admin_emails_set
     if not allowlist:
@@ -88,27 +87,8 @@ async def create_or_update_user(
     email_verified: bool | None = None,
     auth_provider: str | None = None,
 ) -> User:
-    """
-    Create or update user from OAuth data.
-
-    If an OAuth account exists, update its tokens and return the associated user.
-    If not, create a new user and OAuth account link.
-
-    Args:
-        db: Database session
-        provider: OAuth provider name (github, google, orcid)
-        provider_user_id: User's ID on the provider
-        email: User's email
-        name: User's display name
-        access_token: OAuth access token
-        refresh_token: OAuth refresh token (optional)
-        email_verified: Whether provider confirmed email verification
-        auth_provider: Provider name for logging bootstrap grants
-
-    Returns:
-        User object (created or existing)
-    """
-    # Check if OAuth account exists (eager load user to avoid lazy load in async)
+    """Create or update a user from OAuth data."""
+    # Eager load the user to avoid a lazy load in async
     oauth_stmt = (
         select(OAuthAccount)
         .options(selectinload(OAuthAccount.user))
@@ -121,7 +101,6 @@ async def create_or_update_user(
     oauth_account = oauth_result.scalar_one_or_none()
 
     if oauth_account:
-        # Update existing OAuth account
         oauth_account.access_token = access_token
         oauth_account.refresh_token = refresh_token
         oauth_account.email = email
@@ -130,13 +109,23 @@ async def create_or_update_user(
         user = oauth_account.user
         logger.info("Updated OAuth account for user %s (provider=%s)", user.id, provider)
     else:
-        # Check if user exists with this email
+        # A new identity must be tied to an email the provider verified, so
+        # an unverified address can neither link to nor impersonate a user
+        if email_verified is not True:
+            logger.warning(
+                "Refused %s sign-in for %s: email not verified by the provider",
+                provider,
+                provider_user_id,
+            )
+            raise UnverifiedEmailError(
+                f"{provider} did not verify the email address for {provider_user_id}"
+            )
+
         user_stmt = select(User).where(User.email == email)
         user_result = await db.execute(user_stmt)
         existing_user = user_result.scalar_one_or_none()
 
         if not existing_user:
-            # Create new user
             user = User(
                 email=email,
                 name=name,
@@ -147,7 +136,6 @@ async def create_or_update_user(
         else:
             user = existing_user
 
-        # Create OAuth account link
         oauth_account = OAuthAccount(
             user_id=user.id,
             provider=provider,
@@ -174,18 +162,9 @@ async def create_or_update_user(
 
 
 async def create_session(db: AsyncSession, user_id: str) -> Session:
-    """
-    Create a new session for a user.
-
-    Args:
-        db: Database session
-        user_id: User ID (as string, will be converted to UUID)
-
-    Returns:
-        New Session object
-    """
-    settings = get_settings()
-    expires_at = datetime.now(UTC) + timedelta(days=settings.auth.session_duration_days)
+    """Create a new session for a user."""
+    admin = await current_admin_settings()
+    expires_at = datetime.now(UTC) + timedelta(days=admin.session_duration_days)
 
     session = Session(
         user_id=_UUID(user_id) if isinstance(user_id, str) else user_id,

@@ -8,7 +8,10 @@ never embedded. ``isolate_figure_tags`` puts them on their own line first.
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
+
+import pytest
 
 from openscientist.report.processor import isolate_figure_tags
 from openscientist.report.renderer import render_report_html
@@ -117,3 +120,61 @@ def test_missing_figure_falls_back_to_caption_text(tmp_path: Path) -> None:
     assert "[Figure: Missing figure]" in html
     assert "<img" not in html
     assert "{{figure" not in html
+
+
+# --- figures come only from the job's own artifacts ---------------------------
+
+_SECRET = b"OPENSCIENTIST_SECRET_KEY=not-for-reports"
+
+
+@pytest.mark.parametrize("embed", [True, False], ids=["browser", "pdf"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "{{figure:../../outside/secret.png|caption=Leak}}",
+        "{{figure:../.omp-home/agent.db|caption=Leak}}",
+        "{{figure:linked.png|caption=Leak}}",
+        "![Leak](../outside/secret.png)",
+        "![Leak](.omp-home/agent.db)",
+        "![Leak](provenance/linked.png)",
+    ],
+)
+def test_a_figure_outside_the_jobs_artifacts_embeds_nothing(
+    tmp_path: Path, source: str, embed: bool
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.png").write_bytes(_SECRET)
+    (tmp_path / "job").mkdir()
+    job_dir = _job_dir(tmp_path / "job")
+    (job_dir / ".omp-home").mkdir()
+    (job_dir / ".omp-home" / "agent.db").write_bytes(_SECRET)
+    (job_dir / "provenance" / "linked.png").symlink_to(outside / "secret.png")
+    html = _render(job_dir, f"Finding.\n\n{source}\n", embed=embed)
+    assert base64.b64encode(_SECRET).decode() not in html
+    assert "file://" not in html
+
+
+def test_a_figure_among_the_jobs_artifacts_still_embeds(tmp_path: Path) -> None:
+    job_dir = _job_dir(tmp_path, "fa.png")
+    html = _render(job_dir, "{{figure:fa.png|caption=A}}\n\n![B](provenance/fa.png)\n", embed=True)
+    assert html.count(f"data:image/png;base64,{base64.b64encode(_PNG_1x1).decode()}") == 2
+
+
+def test_the_footer_names_the_run_environment(tmp_path: Path) -> None:
+    md_path = tmp_path / "final_report.md"
+    md_path.write_text("# Report", encoding="utf-8")
+    html = render_report_html(
+        md_path, tmp_path, run_environment="Run environment: OpenScientist abc123def456"
+    )
+    footer = html[html.index("<footer") :]
+    assert "Run environment: OpenScientist abc123def456" in footer
+
+
+def test_the_run_environment_is_escaped(tmp_path: Path) -> None:
+    """The agent's database login can write the recorded environment."""
+    md_path = tmp_path / "final_report.md"
+    md_path.write_text("# Report", encoding="utf-8")
+    html = render_report_html(md_path, tmp_path, run_environment="<script>alert(1)</script>")
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html

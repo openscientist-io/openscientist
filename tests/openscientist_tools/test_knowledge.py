@@ -14,7 +14,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 from sqlalchemy import delete
 
-from openscientist.database import AsyncSessionLocal
+from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
 from openscientist.knowledge_state import KnowledgeState
 from openscientist_tools.knowledge import (
@@ -38,7 +38,7 @@ async def _spawned_for_job(
     """Create a Job row, spawn the subprocess MCP server with env bound to
     that job_id (and optional ``env_overrides``), yield a connected
     `ClientSession`, then delete the Job."""
-    async with AsyncSessionLocal(thread_safe=True) as setup:
+    async with async_session_local() as setup:
         setup.add(
             Job(
                 id=job_id,
@@ -60,7 +60,7 @@ async def _spawned_for_job(
                 await session.initialize()
                 yield session
     finally:
-        async with AsyncSessionLocal(thread_safe=True) as cleanup:
+        async with async_session_local() as cleanup:
             await cleanup.execute(delete(Job).where(Job.id == job_id))
             await cleanup.commit()
 
@@ -80,10 +80,10 @@ def _state_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
 # ----- In-process branch coverage (mocked KS persistence) -----
 
 
-def test_update_knowledge_state_records_finding(
+async def test_update_knowledge_state_records_finding(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
-    result = update_knowledge_state(
+    result = await update_knowledge_state(
         title="Carnosine accumulation in cold-adapted cells",
         evidence="p<0.01, n=12",
         interpretation="suggests upregulated synthesis",
@@ -98,10 +98,10 @@ def test_update_knowledge_state_records_finding(
     assert last_log["title"] == "Carnosine accumulation in cold-adapted cells"
 
 
-def test_update_knowledge_state_with_unchecked_citation(
+async def test_update_knowledge_state_with_unchecked_citation(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
-    result = update_knowledge_state(
+    result = await update_knowledge_state(
         title="Finding with citation",
         evidence="p=0.02",
         citations=[
@@ -117,7 +117,7 @@ def test_update_knowledge_state_with_unchecked_citation(
     assert "paper not in literature list" in result
 
 
-def test_update_knowledge_state_with_mismatch_citation(
+async def test_update_knowledge_state_with_mismatch_citation(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
     patched_ks_persistence.add_literature(
@@ -126,7 +126,7 @@ def test_update_knowledge_state_with_mismatch_citation(
         abstract="Cells adapt to cold by upregulating chaperones.",
         search_query="cold adaptation",
     )
-    result = update_knowledge_state(
+    result = await update_knowledge_state(
         title="Finding with mismatch",
         evidence="p=0.04",
         citations=[
@@ -142,10 +142,10 @@ def test_update_knowledge_state_with_mismatch_citation(
     assert "snippet not found in abstract" in result
 
 
-def test_add_hypothesis_returns_id_and_records(
+async def test_add_hypothesis_returns_id_and_records(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
-    result = add_hypothesis("Cold exposure increases carnosine via X pathway")
+    result = await add_hypothesis("Cold exposure increases carnosine via X pathway")
     assert result == "✅ Hypothesis H001 added: Cold exposure increases carnosine via X pathway"
     hyps = patched_ks_persistence.data["hypotheses"]
     assert len(hyps) == 1
@@ -153,28 +153,28 @@ def test_add_hypothesis_returns_id_and_records(
     assert hyps[0]["statement"] == "Cold exposure increases carnosine via X pathway"
 
 
-def test_update_hypothesis_invalid_status(
+async def test_update_hypothesis_invalid_status(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
-    result = update_hypothesis(hypothesis_id="H001", status="bogus")
+    result = await update_hypothesis(hypothesis_id="H001", status="bogus")
     assert result.startswith("❌ Invalid status 'bogus'")
     assert "pending, testing, supported, rejected" in result
 
 
-def test_update_hypothesis_nonexistent_id_returns_error(
+async def test_update_hypothesis_nonexistent_id_returns_error(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
-    result = update_hypothesis(hypothesis_id="H999", status="supported")
+    result = await update_hypothesis(hypothesis_id="H999", status="supported")
     assert result.startswith("❌ ")
 
 
-def test_update_hypothesis_supported_includes_emoji_and_result(
+async def test_update_hypothesis_supported_includes_emoji_and_result(
     patched_ks_persistence: KnowledgeState,
 ) -> None:
     patched_ks_persistence.add_hypothesis(statement="Stub", proposed_by="agent")
     patched_ks_persistence.data["iteration"] = 4
 
-    result = update_hypothesis(
+    result = await update_hypothesis(
         hypothesis_id="H001",
         status="supported",
         result_summary="strong correlation",
@@ -194,13 +194,13 @@ def test_update_hypothesis_supported_includes_emoji_and_result(
     "status,emoji",
     [("testing", "🔬"), ("supported", "✅"), ("rejected", "❌")],
 )
-def test_update_hypothesis_status_emoji_map(
+async def test_update_hypothesis_status_emoji_map(
     patched_ks_persistence: KnowledgeState,
     status: str,
     emoji: str,
 ) -> None:
     patched_ks_persistence.add_hypothesis(statement="Stub", proposed_by="agent")
-    result = update_hypothesis(hypothesis_id="H001", status=status)
+    result = await update_hypothesis(hypothesis_id="H001", status=status)
     assert result == f"{emoji} Hypothesis H001 updated to '{status}'"
 
 
@@ -235,7 +235,7 @@ async def test_update_knowledge_state_via_subprocess(
         )
         assert _text(response).startswith("✅ Finding #1 recorded: Subprocess finding")
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         assert len(reloaded.data["findings"]) == 1
         assert reloaded.data["findings"][0]["title"] == "Subprocess finding"
 
@@ -259,7 +259,7 @@ async def test_add_hypothesis_via_subprocess(
         response = await mcp.call_tool("add_hypothesis", {"statement": "Cold induces carnosine"})
         assert _text(response) == "✅ Hypothesis H001 added: Cold induces carnosine"
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         assert len(reloaded.data["hypotheses"]) == 1
         assert reloaded.data["hypotheses"][0]["statement"] == "Cold induces carnosine"
 
@@ -272,7 +272,7 @@ async def test_update_hypothesis_via_subprocess(
     _apply_migrations_once: None,
 ) -> None:
     job_id = uuid4()
-    async with AsyncSessionLocal(thread_safe=True) as setup:
+    async with async_session_local() as setup:
         setup.add(
             Job(
                 id=job_id,
@@ -284,9 +284,9 @@ async def test_update_hypothesis_via_subprocess(
         )
         await setup.commit()
     try:
-        seeded = KnowledgeState.load_from_database_sync(str(job_id))
+        seeded = await KnowledgeState.load_from_database(str(job_id))
         seeded.add_hypothesis(statement="Seed statement", proposed_by="agent")
-        seeded.save_to_database_sync(str(job_id))
+        await seeded.save_to_database(str(job_id))
 
         env = server_env(tmp_path, OPENSCIENTIST_JOB_ID=str(job_id))
         env["DATABASE_URL"] = test_database_url
@@ -302,11 +302,11 @@ async def test_update_hypothesis_via_subprocess(
                 )
                 assert _text(response) == "✅ Hypothesis H001 updated to 'supported'"
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         entry = next(h for h in reloaded.data["hypotheses"] if h["id"] == "H001")
         assert entry["status"] == "supported"
     finally:
-        async with AsyncSessionLocal(thread_safe=True) as cleanup:
+        async with async_session_local() as cleanup:
             await cleanup.execute(delete(Job).where(Job.id == job_id))
             await cleanup.commit()
 

@@ -18,7 +18,7 @@ _VALID_STATUSES = ["pending", "testing", "supported", "rejected"]
 _STATUS_EMOJI = {"testing": "🔬", "supported": "✅", "rejected": "❌"}
 
 
-def update_knowledge_state(
+async def update_knowledge_state(
     title: str,
     evidence: str,
     interpretation: str = "",
@@ -42,7 +42,7 @@ def update_knowledge_state(
     Returns:
         Confirmation with finding number and citation validation results
     """
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
     finding_id = ks.add_finding(title=title, evidence=evidence, citations=citations)
     for f in ks.data["findings"]:
         if f["id"] == finding_id:
@@ -54,7 +54,7 @@ def update_knowledge_state(
         title=title,
         description=description,
     )
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
     finding_count = len(ks.data["findings"])
 
     parts = [f"✅ Finding #{finding_count} recorded: {title}"]
@@ -71,7 +71,7 @@ def update_knowledge_state(
     return "\n".join(parts)
 
 
-def add_hypothesis(statement: str) -> str:
+async def add_hypothesis(statement: str) -> str:
     """Add a new hypothesis to test.
 
     Args:
@@ -80,14 +80,14 @@ def add_hypothesis(statement: str) -> str:
     Returns:
         Confirmation with hypothesis ID
     """
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
     hyp_id = ks.add_hypothesis(statement=statement, proposed_by="agent")
     ks.log_analysis(action="add_hypothesis", hypothesis_id=hyp_id, statement=statement)
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
     return f"✅ Hypothesis {hyp_id} added: {statement}"
 
 
-def update_hypothesis(
+async def update_hypothesis(
     hypothesis_id: str,
     status: str,
     result_summary: str = "",
@@ -114,7 +114,7 @@ def update_hypothesis(
     if status not in _VALID_STATUSES:
         return f"❌ Invalid status '{status}'. Must be one of: {', '.join(_VALID_STATUSES)}"
 
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
 
     updates: dict[str, object] = {"status": status}
     if status in ("supported", "rejected"):
@@ -137,7 +137,7 @@ def update_hypothesis(
         status=status,
         result_summary=result_summary,
     )
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
 
     emoji = _STATUS_EMOJI.get(status, "📝")
     return f"{emoji} Hypothesis {hypothesis_id} updated to '{status}'"

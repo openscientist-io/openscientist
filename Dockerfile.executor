@@ -3,8 +3,24 @@
 
 FROM openscientist-base:latest
 
-# Create non-root user for security
-RUN useradd --create-home executor
+# Create non-root user for security. The GID is the job group the web chowns
+# the job tree to; keep it in sync with job_container.identity (checked by the
+# tests in tests/test_job_dir_permissions.py).
+ARG EXECUTOR_UID=1000
+ARG JOBS_GID=1001
+RUN groupadd --gid ${JOBS_GID} jobs \
+    && useradd --uid ${EXECUTOR_UID} --gid ${JOBS_GID} --create-home executor
+
+# The egress firewall entrypoint installs nftables rules and drops to the
+# executor user with setpriv from util-linux.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nftables \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+# Egress firewall entrypoint, run as root before dropping to the executor user.
+COPY docker/agent-firewall-entrypoint.sh /agent-firewall-entrypoint.sh
+RUN chmod +x /agent-firewall-entrypoint.sh
 
 WORKDIR /app
 
@@ -33,12 +49,16 @@ RUN cargo build --manifest-path /tmp/cargo-seed/Cargo.toml \
     && rm -rf /tmp/cargo-seed \
     && chmod -R a+rwX $CARGO_HOME
 
-# Install Python dependencies using uv
-COPY requirements-executor.txt .
-RUN uv pip install --system -r requirements-executor.txt
+# Install the `executor` extra from the lock. The base image already carries
+# the main dependencies.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv export --locked --no-dev --extra executor --no-emit-project --format requirements-txt \
+        -o /tmp/requirements.txt \
+    && uv pip install --system -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
 # Create directories for data and output
-RUN mkdir -p /data /output && chown executor:executor /data /output
+RUN mkdir -p /data /output && chown executor:jobs /data /output
 
 # Copy executor module
 COPY src/openscientist_executor /app/openscientist_executor

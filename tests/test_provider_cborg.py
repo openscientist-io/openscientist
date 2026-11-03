@@ -1,11 +1,13 @@
 """Tests for CBORG provider."""
 
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
+from openscientist.providers.base import AirgapEgress
 from openscientist.providers.cborg import CborgProvider
 from openscientist.settings import clear_settings_cache
 
@@ -243,10 +245,16 @@ class TestCborgClaudeCompatible:
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="claude-custom-model")
-        with patch("openscientist.providers.cborg.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.cborg.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert CborgProvider().claude_model_name() == "claude-custom-model"
 
-    def test_claude_model_name_falls_back_to_default(self) -> None:
-        settings = _mock_settings(model=None)
-        with patch("openscientist.providers.cborg.get_settings", return_value=settings):
-            assert CborgProvider().claude_model_name() == "claude-sonnet-4-20250514"
+
+def test_airgap_posture_is_unsupported_without_credentials() -> None:
+    """Without an endpoint and a token the provider cannot be routed through the proxy."""
+    posture = CborgProvider.airgap_posture(
+        SimpleNamespace(anthropic_base_url=None, anthropic_auth_token=None)  # type: ignore[arg-type]
+    )
+    assert posture.mode is AirgapEgress.UNSUPPORTED

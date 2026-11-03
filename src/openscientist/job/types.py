@@ -27,9 +27,21 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+def completed_iterations(status: str, iteration: int) -> int:
+    """A job running or awaiting feedback is mid-iteration, so one fewer is complete, floored at 0."""
+    if status in (JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK):
+        return iteration - 1 if iteration > 1 else 0
+    return iteration
+
+
 @dataclass
 class JobStatusUpdateResult:
-    """Result of updating job status, includes data needed for notifications."""
+    """Result of updating job status, includes data needed for notifications.
+
+    ``applied`` is False when the job was not in a status the write may leave.
+    """
+
+    applied: bool = False
 
     ntfy_enabled: bool = False
     ntfy_topic: str | None = None
@@ -54,12 +66,17 @@ class JobInfo:
     findings_count: int = 0
     error: str | None = None
     cancellation_reason: str | None = None
+    queue_reason: str | None = None
+    stop_note: str | None = None
     use_hypotheses: bool = False
     investigation_mode: str = "autonomous"
     owner_id: str | None = None
     short_title: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    is_public: bool = False
+    #: The environment the run recorded (``jobs.version_info``): build, harness, container.
+    version_info: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -104,4 +121,8 @@ class JobInfo:
             short_title=getattr(job, "short_title", None),
             llm_provider=getattr(job, "llm_provider", None),
             llm_model=(job.llm_config or {}).get("model") if hasattr(job, "llm_config") else None,
+            version_info=getattr(job, "version_info", None),
+            queue_reason=getattr(job, "queue_reason", None),
+            stop_note=getattr(job, "stop_note", None),
+            is_public=bool(getattr(job, "is_public", False)),
         )

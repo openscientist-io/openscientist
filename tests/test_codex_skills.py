@@ -1,4 +1,4 @@
-"""Tests for delivering skills to the codex/Ollama agent as native SKILL.md."""
+"""Tests for delivering skills to the codex agent as native SKILL.md."""
 
 from __future__ import annotations
 

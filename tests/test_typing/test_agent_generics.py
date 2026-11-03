@@ -83,9 +83,9 @@ def test_rejects_subclass_missing_abstract_method(tmp_path: Path) -> None:
 
 
 def test_rejects_subclass_missing_backend_divergent_member(tmp_path: Path) -> None:
-    """A subclass that implements run_iteration/shutdown but omits a newer
-    backend-divergent abstract member (e.g. discovery_system_prompt) is still
-    rejected at construction, so a new backend cannot silently skip it."""
+    """A subclass that implements run_iteration/shutdown but omits a backend-divergent
+    abstract member (prompt_fragments) is still rejected at construction, so a new
+    backend cannot silently skip it."""
     code = """
         from openscientist.agent.base import AbstractAgent, AgentConfig, IterationResult
         from openscientist.providers.base import ClaudeCompatible
@@ -99,7 +99,7 @@ def test_rejects_subclass_missing_backend_divergent_member(tmp_path: Path) -> No
 
             async def shutdown(self) -> None:
                 return None
-            # prompt_fragments / discovery_system_prompt / prepare_job_workspace omitted
+            # prompt_fragments omitted
 
 
         def _make(config: AgentConfig, provider: ClaudeCompatible) -> None:

@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import async_session_local
 
 # websearch_to_tsquery is injection-safe and never raises on arbitrary input.
 _SEARCH_SQL = text(
@@ -45,7 +45,7 @@ async def run_search(
 
 
 async def search_local(query: str, max_results: int = 10) -> list[dict[str, Any]]:
-    async with AsyncSessionLocal(thread_safe=True) as session:
+    async with async_session_local() as session:
         return await run_search(session, query, max_results)
 
 

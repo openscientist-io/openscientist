@@ -14,9 +14,10 @@ from pathlib import Path
 import jinja2
 import markdown as md  # type: ignore[import-untyped]
 
+from openscientist.job_files import read_job_file_text
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
-from openscientist.webapp_components.ui_components import transform_pmid_references
+from openscientist.webapp_components.components.badges import transform_pmid_references
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ def render_report_html(
     job_dir: Path,
     *,
     embed_images: bool = False,
+    run_environment: str | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> str:
     """Convert markdown report to styled HTML with embedded figures.
 
@@ -49,11 +52,18 @@ def render_report_html(
         job_dir: Root job directory (parent of provenance/).
         embed_images: If False, use file:// paths (for WeasyPrint PDF).
             If True, use base64 data URIs (for web UI display).
+        run_environment: The run's recorded environment, shown in the footer.
+        excluded_top_level_dirs: Job-directory top-level entries whose files are
+            not embedded, so a public reader's report never inlines uploaded inputs.
 
     Returns:
         Complete HTML document as a string.
     """
-    raw_markdown = markdown_path.read_text(encoding="utf-8")
+    # The job directory is agent-writable, so the markdown is read through the
+    # symlink-safe walk; a planted link is a missing report.
+    raw_markdown = read_job_file_text(job_dir, markdown_path.relative_to(job_dir).as_posix())
+    if raw_markdown is None:
+        raise FileNotFoundError(f"Markdown report not found: {markdown_path}")
     provenance_dir = job_dir / "provenance"
 
     # 1. Apply PMID badge transforms (before markdown conversion,
@@ -75,6 +85,7 @@ def render_report_html(
             FigureExtension(
                 provenance_dir=str(provenance_dir),
                 use_base64=embed_images,
+                excluded_top_level_dirs=excluded_top_level_dirs,
             ),
         ],
     )
@@ -85,4 +96,5 @@ def render_report_html(
     return template.render(
         body=body_html,
         css=css,
+        run_environment=run_environment,
     )

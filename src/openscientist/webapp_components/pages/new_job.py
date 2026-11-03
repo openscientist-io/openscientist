@@ -8,13 +8,15 @@ from typing import Any
 
 from nicegui import ui
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
+from openscientist.exceptions import BudgetExceededError
 from openscientist.providers import check_provider_config
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
-    render_navigator,
     render_pending_approval_notice,
 )
+from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
@@ -51,7 +53,7 @@ def _notify_creation_error(error: Exception) -> None:
     ui.notify("Error creating job. Please try again or contact support.", type="negative")
 
 
-def _submit_job(
+async def _submit_job(
     *,
     job_manager: Any,
     user_can_start_jobs: bool,
@@ -82,7 +84,7 @@ def _submit_job(
     mode = "coinvestigate" if coinvestigate_mode.value else "autonomous"
 
     try:
-        job_manager.create_job(
+        await job_manager.create_job(
             job_id=job_id,
             research_question=question,
             data_files=data_files,
@@ -95,6 +97,9 @@ def _submit_job(
         ui.notify(f"Job {job_id} created and started!", type="positive")
         clear_uploaded_files(session_id)
         ui.navigate.to(f"/job/{job_id}")
+    except BudgetExceededError as exc:
+        logger.warning("Job creation refused by a budget limit: %s", exc)
+        ui.notify(str(exc), type="negative")
     except Exception as exc:
         logger.error("Error creating job: %s", exc, exc_info=True)
         _notify_creation_error(exc)
@@ -104,6 +109,13 @@ async def _handle_upload(e: Any, session_id: str) -> None:
     """Stream upload directly to a temp file and record its path in session state."""
     try:
         name = e.file.name
+        admin = await current_admin_settings()
+        if e.file.size() > admin.max_file_size_mb * 1024 * 1024:
+            ui.notify(
+                f"{name} exceeds the maximum file size of {admin.max_file_size_mb} MB",
+                type="negative",
+            )
+            return
         temp_path = Path(tempfile.mkdtemp()) / name
         await e.file.save(temp_path)
         add_uploaded_file(session_id, name, temp_path)
@@ -116,7 +128,7 @@ async def _handle_upload(e: Any, session_id: str) -> None:
 
 @ui.page("/new")
 @require_auth
-def new_job_page() -> None:
+async def new_job_page() -> None:
     """Job submission form."""
     from openscientist import web_app
 
@@ -128,6 +140,7 @@ def new_job_page() -> None:
     client.on_disconnect(lambda: clear_uploaded_files(session_id))
 
     is_configured, provider_name, config_errors = check_provider_config()
+    max_file_size_mb = (await current_admin_settings()).max_file_size_mb
     render_navigator(active_page="new", show_new_job=is_configured)
 
     if not user_can_start_jobs:
@@ -144,55 +157,73 @@ def new_job_page() -> None:
     async def on_upload(event: Any) -> None:
         await _handle_upload(event, session_id)
 
-    with ui.card().classes("w-full max-w-2xl mx-auto mt-8"):
-        ui.label("Submit Discovery Job").classes("text-h5 mb-4")
+    # The page height minus the header (4.5rem) and the page padding, so the card centres.
+    with (
+        ui.column()
+        .classes("w-full items-center justify-center")
+        .style("min-height: calc(100vh - 6.5rem)"),
+        ui.card().classes("w-full max-w-2xl p-6 gap-4"),
+    ):
+        ui.label("Submit Discovery Job").classes("text-h6")
 
-        research_question = ui.textarea(
-            label="Research Question",
-            placeholder="e.g., What interesting patterns can be found in the attached data, and what biological mechanisms explain them?",
-            validation={"Too short": lambda value: len(value) >= 10},
-        ).classes("w-full")
+        research_question = (
+            ui.textarea(
+                label="Research Question",
+                placeholder="e.g., What interesting patterns can be found in the attached data, and what biological mechanisms explain them?",
+                validation={"Too short": lambda value: len(value) >= 10},
+            )
+            .classes("w-full")
+            .props("outlined autogrow input-style={'minHeight': '72px'}")
+        )
 
         ui.upload(
-            label="Upload Data Files (Optional - Tabular, Structures, Sequences, Images)",
+            label=f"Upload Data Files (Optional - Max {max_file_size_mb} MB per file)",
             multiple=True,
             auto_upload=True,
             on_upload=on_upload,
-        ).classes("w-full")
-        ui.label("Maximum file size: 500 MB per file").classes("text-caption text-grey-6")
+        ).classes("w-full os-compact-upload")
 
-        max_iterations = ui.number(
-            label="Max Iterations",
-            value=10,
-            min=2,
-            max=100,
-            step=1,
-        ).classes("w-full")
+        ui.separator()
 
-        ui.separator().classes("my-4")
-        use_hypotheses = ui.switch("Hypothesis Generation", value=False)
-        ui.label(
-            "Track scientific hypotheses across iterations — propose, test, and confirm/reject them."
-        ).classes("text-sm text-gray-700 mt-1")
+        with ui.row().classes("w-full items-start gap-x-8 gap-y-4"):
+            max_iterations = (
+                ui.number(
+                    label="Max Iterations",
+                    value=10,
+                    min=2,
+                    max=100,
+                    step=1,
+                )
+                .classes("w-28")
+                .props("outlined dense")
+            )
 
-        ui.separator().classes("my-4")
-        coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
-        ui.label(
-            "Requires your active participation. After each iteration, I will pause to receive your feedback."
-        ).classes("text-sm text-gray-700 mt-1")
-        ui.label(
-            "Requires you to stay near your computer. Auto-continues after 15 min if you don't respond."
-        ).classes("text-xs text-orange-700")
+            with ui.column().classes("flex-1 gap-3"):
+                with ui.column().classes("gap-0"):
+                    use_hypotheses = ui.switch("Hypothesis Generation", value=False)
+                    ui.label("Track scientific hypotheses across iterations.").classes(
+                        "text-sm text-gray-600 ml-12"
+                    )
 
-        ui.button(
-            "Start Discovery",
-            on_click=lambda: _submit_job(
-                job_manager=job_manager,
-                user_can_start_jobs=user_can_start_jobs,
-                session_id=session_id,
-                research_question=research_question,
-                max_iterations=max_iterations,
-                use_hypotheses=use_hypotheses,
-                coinvestigate_mode=coinvestigate_mode,
-            ),
-        ).classes("w-full mt-4")
+                with ui.column().classes("gap-0"):
+                    coinvestigate_mode = ui.switch("Coinvestigate Mode", value=False)
+                    ui.label("Pauses after each iteration for your feedback.").classes(
+                        "text-sm text-gray-600 ml-12"
+                    )
+                    ui.label(
+                        "Stay near your computer. Auto-continues after 15 min without a response."
+                    ).classes("text-xs text-orange-700 ml-12")
+
+        with ui.row().classes("w-full justify-end"):
+            ui.button(
+                "Start Discovery",
+                on_click=lambda: _submit_job(
+                    job_manager=job_manager,
+                    user_can_start_jobs=user_can_start_jobs,
+                    session_id=session_id,
+                    research_question=research_question,
+                    max_iterations=max_iterations,
+                    use_hypotheses=use_hypotheses,
+                    coinvestigate_mode=coinvestigate_mode,
+                ),
+            ).props("color=primary")

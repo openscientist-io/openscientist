@@ -8,7 +8,9 @@ thread lifecycle, usage mapping, and failure handling.
 
 from __future__ import annotations
 
+import asyncio
 import tomllib
+from collections.abc import AsyncIterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +18,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from openai_codex import ApprovalMode, Sandbox
+from openai_codex.generated.v2_all import (
+    ItemCompletedNotification,
+    ThreadTokenUsageUpdatedNotification,
+    TurnCompletedNotification,
+)
+from openai_codex.models import Notification
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, TokenUsage, TurnOutcome
 from openscientist.agent.codex_agent import CodexAgent
@@ -35,32 +43,51 @@ class _Provider(StubCodexProvider):
         return "gpt-test"
 
     def codex_sdk_env(self) -> dict[str, str]:
-        return {"OPENAI_API_KEY": "sk-secret"}
+        return {"CODEX_API_KEY": "sk-secret"}
 
 
-class _Item:
-    """Minimal stand-in for an SDK thread item. Only ``model_dump`` is used."""
-
-    def __init__(self, **fields: Any) -> None:
-        self._fields = fields
-
-    def model_dump(self, mode: str = "json") -> dict[str, Any]:
-        return dict(self._fields)
+_THREAD_ID = "thread-1"
+_TURN_ID = "turn-1"
 
 
-def _usage(*, input_tokens: int, cached: int, output: int, reasoning: int = 0) -> SimpleNamespace:
-    """Build a usage payload shaped like the SDK's ThreadTokenUsage (``.last``
-    is the per-turn TokenUsageBreakdown). The counts nest the way the SDK
-    reports them: cached sits inside input, reasoning inside output, and
-    ``total_tokens`` counts each token once."""
-    last = SimpleNamespace(
-        input_tokens=input_tokens,
-        cached_input_tokens=cached,
-        output_tokens=output,
-        reasoning_output_tokens=reasoning,
-        total_tokens=input_tokens + output,
+def _usage(*, input_tokens: int, cached: int, output: int, reasoning: int = 0) -> Notification:
+    """A usage report whose thread running ``total`` holds these counts, nested
+    the way codex reports them: cached sits inside input, reasoning inside
+    output. ``last`` holds a sliver, since it covers only the latest model
+    request of the turn."""
+    total = {
+        "inputTokens": input_tokens,
+        "cachedInputTokens": cached,
+        "outputTokens": output,
+        "reasoningOutputTokens": reasoning,
+        "totalTokens": input_tokens + output,
+    }
+    last = {
+        "inputTokens": 1,
+        "cachedInputTokens": 0,
+        "outputTokens": 1,
+        "reasoningOutputTokens": 0,
+        "totalTokens": 2,
+    }
+    payload = ThreadTokenUsageUpdatedNotification.model_validate(
+        {"threadId": _THREAD_ID, "turnId": _TURN_ID, "tokenUsage": {"total": total, "last": last}}
     )
-    return SimpleNamespace(last=last, total=last)
+    return Notification(method="thread/tokenUsage/updated", payload=payload)
+
+
+def _item(item: dict[str, Any]) -> Notification:
+    payload = ItemCompletedNotification.model_validate(
+        {"completedAtMs": 0, "item": item, "threadId": _THREAD_ID, "turnId": _TURN_ID}
+    )
+    return Notification(method="item/completed", payload=payload)
+
+
+def _completed(*, status: str = "completed", error: str | None = None) -> Notification:
+    turn: dict[str, Any] = {"id": _TURN_ID, "items": [], "status": status}
+    if error is not None:
+        turn["error"] = {"message": error}
+    payload = TurnCompletedNotification.model_validate({"threadId": _THREAD_ID, "turn": turn})
+    return Notification(method="turn/completed", payload=payload)
 
 
 def _agent(tmp_path: Path, **cfg_kwargs: object) -> CodexAgent:
@@ -69,29 +96,55 @@ def _agent(tmp_path: Path, **cfg_kwargs: object) -> CodexAgent:
 
 
 def _turn(
-    *, final: str = "done", items: list[Any] | None = None, usage: Any = None
-) -> SimpleNamespace:
+    *,
+    final: str = "done",
+    items: list[dict[str, Any]] | None = None,
+    usage: list[Notification] | None = None,
+    end: Notification | None = None,
+) -> list[Notification]:
+    """The notifications of one turn: its items, its usage reports, its end."""
     if items is None:
         items = [
-            _Item(id="a1", type="agentMessage", text=final),
-            _Item(
-                id="c1",
-                type="commandExecution",
-                command="ls",
-                aggregated_output="out",
-                exit_code=0,
-                status="completed",
-            ),
+            {"id": "a1", "type": "agentMessage", "text": final},
+            {
+                "id": "c1",
+                "type": "commandExecution",
+                "command": "ls",
+                "commandActions": [],
+                "cwd": "/tmp",
+                "aggregatedOutput": "out",
+                "exitCode": 0,
+                "source": "unifiedExecStartup",
+                "status": "completed",
+            },
         ]
-    return SimpleNamespace(items=items, final_response=final, usage=usage)
+    return [*map(_item, items), *(usage or []), end or _completed()]
 
 
-def _patch_codex(turn: SimpleNamespace) -> tuple[MagicMock, MagicMock]:
-    """Return (MockAsyncCodex, thread) with ``thread.run`` returning ``turn``."""
+def _handle(events: list[Notification], *, then_hang: bool = False) -> SimpleNamespace:
+    """A started turn that streams ``events``, then hangs if asked."""
+
+    async def stream() -> AsyncIterator[Notification]:
+        for event in events:
+            yield event
+        if then_hang:
+            await asyncio.sleep(5)
+
+    return SimpleNamespace(id=_TURN_ID, stream=stream)
+
+
+def _patch_codex(*turns: list[Notification]) -> tuple[MagicMock, MagicMock]:
+    """Return (MockAsyncCodex, thread), whose turns stream ``turns`` in order,
+    the last one repeating."""
     mock_codex_cls = MagicMock(name="AsyncCodex")
     inst = mock_codex_cls.return_value
     thread = MagicMock(name="Thread")
-    thread.run = AsyncMock(return_value=turn)
+    queue = list(turns)
+
+    def start(_prompt: str) -> SimpleNamespace:
+        return _handle(queue.pop(0) if len(queue) > 1 else queue[0])
+
+    thread.turn = AsyncMock(side_effect=start)
     inst.thread_start = AsyncMock(return_value=thread)
     inst.close = AsyncMock()
     return mock_codex_cls, thread
@@ -124,7 +177,7 @@ def test_mcp_env_merges_tool_server_env(tmp_path: Path) -> None:
 
 async def test_run_iteration_success(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    turn = _turn(final="the answer", usage=_usage(input_tokens=100, cached=20, output=50))
+    turn = _turn(final="the answer", usage=[_usage(input_tokens=100, cached=20, output=50)])
     mock_codex_cls, thread = _patch_codex(turn)
 
     with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
@@ -135,32 +188,37 @@ async def test_run_iteration_success(tmp_path: Path) -> None:
     # one non-message item -> one tool call
     assert result.tool_calls == 1
     assert [e.type for e in result.transcript] == ["assistant_text", "shell_execution"]
-    thread.run.assert_awaited_once_with("hello")
+    thread.turn.assert_awaited_once_with("hello")
+
+
+async def test_the_answer_is_the_final_answer_message(tmp_path: Path) -> None:
+    """Commentary sent after the final answer does not replace it."""
+    agent = _agent(tmp_path)
+    items = [
+        {"id": "a1", "type": "agentMessage", "text": "the answer", "phase": "final_answer"},
+        {"id": "a2", "type": "agentMessage", "text": "an aside", "phase": "commentary"},
+    ]
+    mock_codex_cls, _ = _patch_codex(_turn(items=items))
+
+    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+        result = await agent.run_iteration("hello")
+
+    assert result.output == "the answer"
 
 
 async def test_run_iteration_cuts_runaway_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A turn that exceeds the wall-clock bound is cut so a looping model cannot
-    hang the job. success stays True (the discovery loop raises on failure) and
-    the runaway client is torn down."""
-    import asyncio
-
+    hang the job, the runaway client is torn down, and the tokens the turn
+    spent before the cut stay counted."""
     from openscientist.agent import codex_agent
 
     monkeypatch.setattr(codex_agent, "_TURN_TIMEOUT_SECONDS", 0.01)
     agent = _agent(tmp_path)
-    mock_codex_cls = MagicMock(name="AsyncCodex")
-    inst = mock_codex_cls.return_value
-    thread = MagicMock(name="Thread")
-
-    async def never_ends(_prompt: str) -> object:
-        await asyncio.sleep(5)  # exceeds the 0.01s bound
-        return _turn()
-
-    thread.run = never_ends
-    inst.thread_start = AsyncMock(return_value=thread)
-    inst.close = AsyncMock()
+    mock_codex_cls, thread = _patch_codex([])
+    spent = [_usage(input_tokens=100, cached=20, output=50)]
+    thread.turn = AsyncMock(return_value=_handle(spent, then_hang=True))
 
     with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
         result = await agent.run_iteration("go")
@@ -171,40 +229,95 @@ async def test_run_iteration_cuts_runaway_turn(
     assert result.success is False
     assert result.tool_calls == 0
     assert result.transcript == []
-    inst.close.assert_awaited()  # runaway turn torn down
+    mock_codex_cls.return_value.close.assert_awaited()  # runaway turn torn down
+    assert agent.total_tokens == TokenUsage(input_tokens=80, output_tokens=50, cache_read_tokens=20)
 
 
-async def test_usage_subtraction_accumulates(tmp_path: Path) -> None:
+async def test_a_turn_is_billed_for_every_model_request(tmp_path: Path) -> None:
+    """Codex reports usage after each model request of a turn, and its ``last``
+    covers only that request. The turn costs the growth of the thread's total,
+    and a report repeated on a rate-limit update adds nothing."""
     agent = _agent(tmp_path)
-    turn = _turn(usage=_usage(input_tokens=100, cached=20, output=50))
-    mock_codex_cls, _ = _patch_codex(turn)
+    reports = [
+        _usage(input_tokens=100, cached=20, output=50),
+        _usage(input_tokens=250, cached=120, output=90, reasoning=10),
+        _usage(input_tokens=250, cached=120, output=90, reasoning=10),
+        _usage(input_tokens=400, cached=200, output=130, reasoning=10),
+    ]
+    mock_codex_cls, _ = _patch_codex(_turn(usage=reports))
 
     with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
         await agent.run_iteration("hi")
 
-    tu = agent.total_tokens
-    assert tu.input_tokens == 80  # 100 - 20 cached
-    assert tu.cache_read_tokens == 20
-    assert tu.output_tokens == 50
-    assert tu.cache_write_tokens == 0
-    assert tu.reasoning_tokens == 0
+    assert agent.total_tokens == TokenUsage(
+        input_tokens=200, output_tokens=120, cache_read_tokens=200, reasoning_tokens=10
+    )
 
 
-def test_usage_from_payload_math() -> None:
+async def test_each_turn_is_billed_what_it_added_to_its_thread(tmp_path: Path) -> None:
+    """A thread's total runs across its turns, and a new thread starts at zero."""
+    agent = _agent(tmp_path)
+    mock_codex_cls, _ = _patch_codex(
+        _turn(usage=[_usage(input_tokens=100, cached=0, output=10)]),
+        _turn(usage=[_usage(input_tokens=300, cached=0, output=30)]),
+        _turn(usage=[_usage(input_tokens=50, cached=0, output=5)]),
+    )
+
+    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+        await agent.run_iteration("one")
+        await agent.run_iteration("two")
+        assert agent.total_tokens == TokenUsage(input_tokens=300, output_tokens=30)
+        await agent.run_iteration("three", reset_session=True)
+
+    assert agent.total_tokens == TokenUsage(input_tokens=350, output_tokens=35)
+
+
+async def test_a_filled_context_window_restarts_the_count(tmp_path: Path) -> None:
+    """When the context window fills, codex sets its total to the window size
+    with every bucket zeroed, then counts on from there."""
+    agent = _agent(tmp_path)
+    reports = [
+        _usage(input_tokens=1000, cached=0, output=100),
+        _usage(input_tokens=0, cached=0, output=0),
+        _usage(input_tokens=200, cached=0, output=20),
+    ]
+    mock_codex_cls, _ = _patch_codex(_turn(usage=reports))
+
+    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+        await agent.run_iteration("hi")
+
+    assert agent.total_tokens == TokenUsage(input_tokens=1200, output_tokens=120)
+
+
+async def test_a_failed_turn_reports_its_error(tmp_path: Path) -> None:
+    agent = _agent(tmp_path)
+    turn = _turn(
+        usage=[_usage(input_tokens=100, cached=0, output=10)],
+        end=_completed(status="failed", error="context too long"),
+    )
+    mock_codex_cls, _ = _patch_codex(turn)
+
+    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+        result = await agent.run_iteration("hi")
+
+    assert result.outcome is TurnOutcome.FAILED
+    assert result.error == "context too long"
+    assert agent.total_tokens == TokenUsage(input_tokens=100, output_tokens=10)
+
+
+def test_usage_from_breakdown_math() -> None:
     """Both nested sub-counts leave their parent, so the buckets are disjoint
-    and sum to the payload's own total of 37 rather than over-counting to 40."""
-    tu = CodexAgent._usage_from_payload(_usage(input_tokens=30, cached=12, output=7, reasoning=3))
-    assert tu == TokenUsage(
+    and sum to the breakdown's own total of 37 rather than over-counting to 40."""
+    counts = SimpleNamespace(
+        input_tokens=30, cached_input_tokens=12, output_tokens=7, reasoning_output_tokens=3
+    )
+    assert CodexAgent._usage_from_breakdown(counts) == TokenUsage(
         input_tokens=18,
         output_tokens=4,
         cache_read_tokens=12,
         cache_write_tokens=0,
         reasoning_tokens=3,
     )
-
-
-def test_usage_from_payload_none_last() -> None:
-    assert CodexAgent._usage_from_payload(SimpleNamespace(last=None)) == TokenUsage()
 
 
 async def test_run_iteration_writes_config_and_agents_md(
@@ -232,7 +345,7 @@ async def test_run_iteration_writes_config_and_agents_md(
     # CodexConfig points the child at the per-job config home + provider auth.
     config_arg = mock_codex_cls.call_args.args[0]
     assert config_arg.env["CODEX_HOME"] == str(tmp_path / ".codex")
-    assert config_arg.env["OPENAI_API_KEY"] == "sk-secret"
+    assert config_arg.env["CODEX_API_KEY"] == "sk-secret"
     assert config_arg.cwd == str(tmp_path)
 
 
@@ -291,12 +404,10 @@ async def test_thread_is_reused_then_reset(tmp_path: Path) -> None:
 
 async def test_run_failure_returns_error_and_rebuilds(tmp_path: Path) -> None:
     agent = _agent(tmp_path)
-    mock_codex_cls = MagicMock(name="AsyncCodex")
+    mock_codex_cls, thread = _patch_codex(_turn())
     inst = mock_codex_cls.return_value
-    thread = MagicMock(name="Thread")
-    thread.run = AsyncMock(side_effect=RuntimeError("boom"))
-    inst.thread_start = AsyncMock(return_value=thread)
-    inst.close = AsyncMock()
+    working_turn = thread.turn
+    thread.turn = AsyncMock(side_effect=RuntimeError("boom"))
 
     with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
         result = await agent.run_iteration("go")
@@ -305,7 +416,7 @@ async def test_run_failure_returns_error_and_rebuilds(tmp_path: Path) -> None:
         assert result.output == ""
         inst.close.assert_awaited()  # client torn down on failure
         # client cleared -> next call rebuilds it
-        thread.run = AsyncMock(return_value=_turn(usage=None))
+        thread.turn = working_turn
         await agent.run_iteration("retry")
         assert mock_codex_cls.call_count == 2
 
@@ -323,6 +434,16 @@ async def test_shutdown_closes_client(tmp_path: Path) -> None:
 
 
 # ── transcript bridge (SDK item -> model_dump -> CODEX) ────────────────
+
+
+class _Item:
+    """Minimal stand-in for an SDK thread item. Only ``model_dump`` is used."""
+
+    def __init__(self, **fields: Any) -> None:
+        self._fields = fields
+
+    def model_dump(self, mode: str = "json") -> dict[str, Any]:
+        return dict(self._fields)
 
 
 def test_to_transcript_empty() -> None:
@@ -410,14 +531,7 @@ def test_unknown_item_becomes_unknown_entry() -> None:
     assert entries[0].source == "codex"
 
 
-# ── thread options + auth provisioning ─────────────────────────────────
-
-
-class _KeylessProvider(_Provider):
-    """Codex stub with no API key (forces auth.json provisioning)."""
-
-    def codex_sdk_env(self) -> dict[str, str]:
-        return {}
+# ── thread options ─────────────────────────────────────────────────────
 
 
 async def test_thread_start_sandbox_full_access(tmp_path: Path) -> None:
@@ -452,32 +566,3 @@ def test_toml_str_escapes_control_chars() -> None:
     value = 'a"b\\c\nd\te'
     parsed = tomllib.loads(f"k = {_toml_str(value)}")
     assert parsed["k"] == value
-
-
-async def test_auth_not_provisioned_when_key_present(tmp_path: Path) -> None:
-    agent = _agent(tmp_path)  # _Provider supplies OPENAI_API_KEY
-    mock_codex_cls, _ = _patch_codex(_turn(usage=None))
-    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
-        await agent.run_iteration("go")
-    assert not (tmp_path / ".codex" / "auth.json").exists()
-
-
-async def test_auth_provisioned_from_codex_home_when_no_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    fake_home = tmp_path / "home"
-    (fake_home / ".codex").mkdir(parents=True)
-    (fake_home / ".codex" / "auth.json").write_text('{"tokens": {}}')
-
-    config = AgentConfig(job_dir=tmp_path / "job")
-    agent = CodexAgent(config, _KeylessProvider())
-    mock_codex_cls, _ = _patch_codex(_turn(usage=None))
-    with (
-        patch("openscientist.agent.codex_agent.Path.home", return_value=fake_home),
-        patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls),
-    ):
-        await agent.run_iteration("go")
-    copied = config.job_dir / ".codex" / "auth.json"
-    assert copied.exists()
-    assert copied.read_text() == '{"tokens": {}}'

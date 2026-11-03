@@ -15,8 +15,6 @@ dependencies = [
     # Core scientific computing
     "pandas>=3.0.0",
     "numpy>=2.2.0,<2.4",
-    "scipy>=1.15.0",
-    "scikit-learn>=1.6.0",
 
     # File format support
     "python-magic>=0.4.27",  # MIME type detection
@@ -32,17 +30,6 @@ dependencies = [
     "matplotlib>=3.7.0",
     "seaborn>=0.12.0",
 
-    # Statistics
-    "statsmodels>=0.14.0",
-
-    # Domain-specific
-    "networkx>=3.0",
-
-    # Single-cell genomics
-    "scanpy>=1.12.0",
-    "anndata>=0.12.0",
-    "h5py>=3.10.0",
-
     # API clients
     "requests>=2.31.0",
 
@@ -57,8 +44,6 @@ dependencies = [
     # Authentication (OAuth)
     "authlib>=1.3.0",
     "httpx>=0.27.0",  # Required by authlib for async OAuth
-    "python-jose[cryptography]>=3.3.0",  # JWT handling
-    "bcrypt>=4.0.0",  # Password hashing
 
     # Database
     "sqlalchemy[asyncio]>=2.0.0",
@@ -67,9 +52,6 @@ dependencies = [
 
     # REST API
     "slowapi>=0.1.9",  # Rate limiting for FastAPI
-
-    # Type hints
-    "typing-extensions>=4.8.0",
 
     # Cloud providers (for cost tracking and authentication)
     "google-cloud-bigquery>=3.11.0",  # Vertex AI
@@ -93,28 +75,71 @@ dependencies = [
     # Claude Agent SDK (required – powers the agent execution path)
     "claude-agent-sdk>=0.1.46",
 
-    # Codex SDK (second agent backend, official OpenAI package). The codex
-    # binary is provisioned separately and selected via CodexConfig.codex_bin,
-    # so the musl-only openai-codex-cli-bin dependency is dropped below.
-    "openai-codex>=0.1.0b2",
+    # Codex SDK (second agent backend, official OpenAI package). It installs
+    # the codex binary its protocol is pinned to (openai-codex-cli-bin).
+    "openai-codex>=0.163.0",
+
+    # The LLM proxy terminates the codex Responses websocket with this client.
+    "websockets>=14.0",
 
     # SPARQL queries against remote endpoints
     "SPARQLWrapper>=2.0.0",
 
     # Progress bars for the PubMed mirror ingest CLI
     "tqdm>=4.67.0",
+
+    # CLI (setup wizard, start, stop)
+    "typer>=0.21.1,<0.22",
+    "rich>=14.3.2,<15",
+]
+
+[project.scripts]
+openscientist = "openscientist.cli.app:main"
+openscientist-launcher = "openscientist_launcher.main:main"
+
+[project.optional-dependencies]
+# Scientific stack for the executor container, installed from the lock by
+# Dockerfile.executor. The web and agent images do not install it.
+executor = [
+    # Core scientific computing
+    "scipy>=1.15.0",
+    "scikit-learn>=1.6.0",
+
+    # Statistics
+    "statsmodels>=0.14.0",
+
+    # Domain-specific
+    "networkx>=3.0",
+
+    # Single-cell genomics
+    "scanpy>=1.12.0",
+    "anndata>=0.12.0",
+    "h5py>=3.10.0",
+
+    # Bioinformatics
+    "biopython>=1.84",
+
+    # Dimensionality reduction and clustering
+    "umap-learn>=0.5.0",
+    "leidenalg>=0.10.0",
+    "python-igraph>=0.11.0",
+
+    # Statistical tests (effect sizes, ANOVA, mixed models)
+    "pingouin>=0.5.0",
+
+    # DataFrames for large datasets
+    "polars>=1.0.0",
+
+    # Interactive visualization
+    "plotly>=5.0.0",
+
+    # Differential expression analysis
+    "pydeseq2>=0.4.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.uv]
-# The official openai-codex pulls openai-codex-cli-bin, which ships only
-# musllinux wheels and so will not resolve on a glibc host. We provide the
-# codex binary ourselves (CodexConfig.codex_bin), so drop that dependency by
-# overriding it with a marker that is never satisfied.
-override-dependencies = ["openai-codex-cli-bin ; sys_platform == 'no_such_platform'"]
 
 [tool.ruff]
 line-length = 100
@@ -123,6 +148,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "N", "W"]
 ignore = ["E501"]  # Line too long (handled by formatter)
+
+[tool.ruff.lint.flake8-bugbear]
+# Typer's documented way to declare options in a command's signature.
+extend-immutable-calls = ["typer.Option"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/openscientist/database/migrations/versions/*" = ["E402"]  # Alembic auto-generated imports after docstrings
@@ -150,43 +179,6 @@ markers = [
     "integration: marks tests as integration tests (require Docker and executor image)",
     "network: marks tests that call a live third-party API (deselected in CI, which shares egress IPs and gets rate limited)",
 ]
-
-[tool.coverage.run]
-source = ["src/openscientist"]
-omit = [
-    "*/tests/*",
-    "*/__pycache__/*",
-    "*/.venv/*",
-    "*/site-packages/*",
-]
-relative_files = true
-
-[tool.coverage.report]
-precision = 2
-show_missing = true
-skip_covered = false
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-    "@abstractmethod",
-    "@overload",
-    "except ImportError:",
-]
-# Minimum coverage threshold
-fail_under = 60
-
-[tool.coverage.html]
-directory = "htmlcov"
-
-[tool.coverage.xml]
-output = "coverage.xml"
-
-[tool.coverage.paths]
-source = ["src/openscientist"]
 
 [dependency-groups]
 dev = [

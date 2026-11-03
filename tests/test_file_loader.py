@@ -14,6 +14,19 @@ from openscientist.file_loader import (
     load_tabular_file,
     validate_uploaded_file,
 )
+from tests.admin_row import default_admin_settings_values
+
+
+@pytest.fixture(autouse=True)
+def _admin_settings_row():
+    """The size check reads the row at use, and these tests have no database
+    for it."""
+    with patch(
+        "openscientist.file_loader.current_admin_settings_sync",
+        return_value=default_admin_settings_values(),
+    ):
+        yield
+
 
 # ─── get_file_info ────────────────────────────────────────────────────
 
@@ -58,20 +71,8 @@ class TestGetFileInfo:
         with pytest.raises(FileNotFoundError):
             get_file_info(tmp_path / "nonexistent.csv")
 
-    def test_file_too_big(self, tmp_path):
-        p = tmp_path / "big.csv"
-        p.write_text("x" * 100)
-        with (
-            patch("openscientist.file_loader._get_max_file_size", return_value=10),
-            pytest.raises(
-                FileTooBigError,
-                match="exceeds limit",
-            ),
-        ):
-            get_file_info(p)
 
-
-# ─── load_tabular_file ────────────────────────────────────────────────
+# ─── load_tabular_file ────────────────────────────────────────────────────
 
 
 class TestLoadTabularFile:
@@ -163,30 +164,36 @@ class TestValidateUploadedFile:
     """Tests for upload validation."""
 
     def test_valid_csv_passes(self, tmp_path):
-        content = b"a,b\n1,2\n"
-        validate_uploaded_file(tmp_path / "data.csv", content)
+        path = tmp_path / "data.csv"
+        path.write_bytes(b"a,b\n1,2\n")
+        validate_uploaded_file(path)
 
     def test_file_too_big_raises(self, tmp_path):
-        content = b"x" * 100
+        path = tmp_path / "data.csv"
+        path.write_bytes(b"x" * 100)
         with (
             patch("openscientist.file_loader._get_max_file_size", return_value=10),
             pytest.raises(
                 FileTooBigError,
             ),
         ):
-            validate_uploaded_file(tmp_path / "data.csv", content)
+            validate_uploaded_file(path)
 
     def test_executable_content_raises(self, tmp_path):
         """Executable MIME types should be rejected."""
+        path = tmp_path / "data.csv"
+        path.write_bytes(b"fake-binary")
         with patch("openscientist.file_loader.magic") as mock_magic:
             mock_magic.from_buffer.return_value = "application/x-executable"
             with pytest.raises(ValueError, match="Executable file detected"):
-                validate_uploaded_file(tmp_path / "data.csv", b"fake-binary")
+                validate_uploaded_file(path)
 
     def test_validation_works_without_python_magic(self, tmp_path):
         """When python-magic is unavailable, validation should use fallback MIME."""
+        path = tmp_path / "data.csv"
+        path.write_bytes(b"a,b\n1,2\n")
         with (
             patch("openscientist.file_loader.HAS_MAGIC", False),
             patch("openscientist.file_loader.magic", None),
         ):
-            validate_uploaded_file(tmp_path / "data.csv", b"a,b\n1,2\n")
+            validate_uploaded_file(path)

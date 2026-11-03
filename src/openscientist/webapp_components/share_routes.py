@@ -1,9 +1,4 @@
-"""
-Web routes for job sharing functionality.
-
-Provides FastAPI routes for job sharing used by the NiceGUI web interface.
-These routes use session-based authentication instead of API keys.
-"""
+"""Web routes for job sharing, used by the NiceGUI interface with session auth."""
 
 import logging
 from typing import Any
@@ -27,13 +22,12 @@ from openscientist.share_service import (
 
 logger = logging.getLogger(__name__)
 
-# Web UI routes use session auth - exclude from API docs
+# Session-auth routes for the web UI. Excluded from the API docs.
 router = APIRouter(prefix="/web/shares", include_in_schema=False)
 CURRENT_USER_ID_DEP = Depends(get_current_user_id)
 SESSION_DEP = Depends(get_session)
 
 
-# Pydantic models for request/response
 class ShareCreate(BaseModel):
     """Request body for creating a job share."""
 
@@ -67,16 +61,7 @@ class UserSearchResult(BaseModel):
 
 
 def _share_to_response(share: JobShare, target_user: User) -> ShareResponse:
-    """
-    Convert persisted sharing rows into API response shape.
-
-    Args:
-        share: Job share row.
-        target_user: User row referenced by ``share.shared_with_user_id``.
-
-    Returns:
-        Serialized share response.
-    """
+    """Convert a share row and target user into a ShareResponse."""
     return ShareResponse(
         id=str(share.id),
         job_id=str(share.job_id),
@@ -87,26 +72,20 @@ def _share_to_response(share: JobShare, target_user: User) -> ShareResponse:
 
 
 async def get_current_user_from_session(
-    user_id: UUID = CURRENT_USER_ID_DEP,
+    user_id: str | None = CURRENT_USER_ID_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> User:
-    """
-    Resolve the authenticated user for web-session routes.
+    """Resolve the signed-in user for web-session routes. 401 when signed out or missing."""
+    try:
+        user_uuid = UUID(str(user_id)) if user_id is not None else None
+    except ValueError:
+        user_uuid = None
+    if user_uuid is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
 
-    Args:
-        user_id: User ID extracted from session middleware.
-        session: Request-scoped database session.
-
-    Returns:
-        Active user record for downstream authorization checks.
-
-    Raises:
-        HTTPException: If the session references a missing user.
-    """
-    stmt = select(User).where(User.id == user_id)
-    result = await session.execute(stmt)
-    user = result.scalar_one_or_none()
-
+    # The web login reads users under RLS, which shows a user only their own row.
+    await set_current_user(session, user_uuid)
+    user = (await session.execute(select(User).where(User.id == user_uuid))).scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -126,19 +105,7 @@ async def create_share(
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> ShareResponse:
-    """
-    Create or update a share for a job owned by the current user.
-
-    Args:
-        job_id: Target job UUID string.
-        share_data: Share target email and permission payload.
-        user: Authenticated session user.
-        session: Request-scoped database session.
-
-    Returns:
-        Persisted share metadata for the target user.
-    """
-    # Set RLS context
+    """Create or update a share for a job owned by the current user."""
     await set_current_user(session, user.id)
 
     share, target_user = await create_or_update_share(
@@ -159,18 +126,7 @@ async def list_job_shares(
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> list[ShareResponse]:
-    """
-    List all shares configured for an owned job.
-
-    Args:
-        job_id: Target job UUID string.
-        user: Authenticated session user.
-        session: Request-scoped database session.
-
-    Returns:
-        Shares for the job, ordered by target user email.
-    """
-    # Set RLS context
+    """List the shares of a job owned by the current user."""
     await set_current_user(session, user.id)
 
     shares = await list_shares_for_owned_job(
@@ -188,18 +144,7 @@ async def revoke_share(
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> dict[str, Any]:
-    """
-    Revoke an existing share on a job owned by the caller.
-
-    Args:
-        share_id: Share UUID string.
-        user: Authenticated session user.
-        session: Request-scoped database session.
-
-    Returns:
-        Success payload consumed by the web UI.
-    """
-    # Set RLS context
+    """Revoke a share on a job owned by the caller."""
     await set_current_user(session, user.id)
 
     await revoke_share_for_owned_job(
@@ -218,17 +163,7 @@ async def search_users(
     limit: int = Query(10, ge=1, le=100),
     _user: User = CURRENT_SESSION_USER_DEP,
 ) -> list[UserSearchResult]:
-    """
-    Search active users for share-target autocompletion.
-
-    Args:
-        q: Case-insensitive search query.
-        limit: Maximum number of users to return.
-        _user: Authenticated session user (auth gate only).
-
-    Returns:
-        Matching users (id, email, display name).
-    """
+    """Search active users for share-target autocompletion in the web UI."""
     users = await search_active_users(
         q,
         limit,

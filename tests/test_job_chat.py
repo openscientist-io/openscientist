@@ -5,31 +5,35 @@ Tests chat message creation, conversation history, context loading,
 and executor error handling.
 """
 
+import asyncio
 import json
+import threading
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, IterationResult, TurnOutcome
-from openscientist.database.models import Job, JobChatMessage, User
+from openscientist.database.models import CostRecord, Job, JobChatMessage, User
 from openscientist.database.rls import set_current_user
+from openscientist.exceptions import BudgetExceededError
 from openscientist.job_chat import (
-    _CHAT_REQUEST_FILE,
-    _CHAT_RESPONSE_FILE,
     _build_chat_request,
+    _chat_turn_files,
+    _send_message_via_container,
     get_chat_history,
     load_job_context,
     run_chat_turn_async,
     send_chat_message,
 )
 from openscientist.providers.base import Provider
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import StubClaudeProvider as _ChatProvider
 from tests.helpers import enable_rls
 
@@ -61,8 +65,8 @@ def _chat_runner_writing(response):
     """Run the chat turn against a fake container that writes the given response
     file, with a stubbed provider for building the request."""
 
-    def _run(job_id, job_dir, *, timeout=300):
-        (Path(job_dir) / _CHAT_RESPONSE_FILE).write_text(json.dumps(response))
+    def _run(job_id, job_dir, chat_turn, *, timeout=300):
+        _chat_turn_files(Path(job_dir), chat_turn)[1].write_text(json.dumps(response))
 
     runner = MagicMock()
     runner.run_chat_turn.side_effect = _run
@@ -357,8 +361,6 @@ async def test_load_job_context_with_knowledge_state():
     ks.data["literature"] = [
         {
             "title": "Crystal Structures of Proteins",
-            "relevance_score": 0.92,
-            "key_findings": ["Finding 1", "Finding 2"],
         },
     ]
     ks.data["iteration_summaries"] = [
@@ -545,8 +547,7 @@ async def test_send_chat_message_cleans_up_ipc_files(
     with _chat_runner_writing({"output": "ok"}):
         await send_chat_message(db_session, test_job.id, "hi", job_dir)
 
-    assert not (job_dir / _CHAT_REQUEST_FILE).exists()
-    assert not (job_dir / _CHAT_RESPONSE_FILE).exists()
+    assert list(job_dir.iterdir()) == []
 
 
 @pytest.mark.asyncio
@@ -647,7 +648,8 @@ async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
     request's system prompt, and writes the reply."""
     job_dir = temp_jobs_dir / "chat-turn"
     job_dir.mkdir()
-    (job_dir / _CHAT_REQUEST_FILE).write_text(
+    request_path, response_path = _chat_turn_files(job_dir, "t1")
+    request_path.write_text(
         json.dumps({"system_prompt": "You are helpful.", "model_override": None, "prompt": "hi"})
     )
 
@@ -659,10 +661,10 @@ async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
         patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
         patch("openscientist.agent.factory.build_agent", _build_agent_recorder(captured, result)),
     ):
-        status = await run_chat_turn_async(job_dir)
+        status = await run_chat_turn_async(job_dir, "t1", "00000000-0000-0000-0000-000000000001")
 
     assert status["status"] == "completed"
-    response = json.loads((job_dir / _CHAT_RESPONSE_FILE).read_text())
+    response = json.loads(response_path.read_text())
     assert response["output"] == "reply"
     assert captured["config"].system_prompt == "You are helpful."
     assert (job_dir / ".claude" / "CLAUDE.md").exists()
@@ -673,7 +675,8 @@ async def test_run_chat_turn_async_records_error(temp_jobs_dir: Path):
     """A failed turn is captured as an error in the response file, not raised."""
     job_dir = temp_jobs_dir / "chat-turn-err"
     job_dir.mkdir()
-    (job_dir / _CHAT_REQUEST_FILE).write_text(
+    request_path, response_path = _chat_turn_files(job_dir, "t1")
+    request_path.write_text(
         json.dumps({"system_prompt": "SP", "model_override": None, "prompt": "hi"})
     )
 
@@ -685,8 +688,121 @@ async def test_run_chat_turn_async_records_error(temp_jobs_dir: Path):
         patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
         patch("openscientist.agent.factory.build_agent", _build_agent_recorder(captured, result)),
     ):
-        status = await run_chat_turn_async(job_dir)
+        status = await run_chat_turn_async(job_dir, "t1", "00000000-0000-0000-0000-000000000001")
 
     assert status["status"] == "failed"
-    response = json.loads((job_dir / _CHAT_RESPONSE_FILE).read_text())
+    response = json.loads(response_path.read_text())
     assert response["error"] == "boom"
+
+
+@pytest.mark.asyncio
+async def test_overlapping_chat_turns_each_get_their_own_reply(temp_jobs_dir: Path):
+    """Two turns on one job at once, as from two tabs, each answer their own
+    question, and the turn that ends first leaves the other's files alone."""
+    job_dir = temp_jobs_dir / "overlap"
+    job_dir.mkdir()
+    both_requested = threading.Barrier(2, timeout=10)
+    both_replied = threading.Barrier(2, timeout=10)
+
+    def _container(job_id, job_dir, chat_turn, *, timeout=300):
+        both_requested.wait()
+        asyncio.run(run_chat_turn_async(Path(job_dir), chat_turn, job_id))
+        both_replied.wait()
+
+    from openscientist.agent import factory
+
+    real_build_agent = factory.build_agent
+
+    def _build_agent_answering(config: AgentConfig, provider: Provider):
+        agent = real_build_agent(config, provider)
+
+        async def _answer(prompt, **kwargs):
+            return IterationResult(
+                outcome=TurnOutcome.COMPLETED,
+                output=f"answer to {prompt}",
+                tool_calls=0,
+                transcript=[],
+            )
+
+        agent.run_iteration = _answer  # type: ignore[method-assign]
+        return agent
+
+    async def _request(session, job_id, message):
+        return {"system_prompt": "SP", "model_override": None, "prompt": message}
+
+    runner = MagicMock()
+    runner.run_chat_turn.side_effect = _container
+    with (
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
+        patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
+        patch("openscientist.job_chat._build_chat_request", _request),
+        patch("openscientist.agent.factory.build_agent", _build_agent_answering),
+    ):
+        session = MagicMock(spec=AsyncSession)
+        replies = await asyncio.gather(
+            _send_message_via_container(session, UUID(int=1), "question A", job_dir),
+            _send_message_via_container(session, UUID(int=1), "question B", job_dir),
+        )
+
+    assert replies == ["answer to question A", "answer to question B"]
+    assert [p.name for p in job_dir.iterdir() if p.name.startswith(".chat")] == []
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_refused_at_the_job_cap(
+    test_engine: AsyncEngine, temp_jobs_dir: Path
+) -> None:
+    """A job at its cost cap is refused before the container starts, and no
+    chat row is written."""
+    async with async_sessionmaker(test_engine, expire_on_commit=False)() as session:
+        owner = User(email=f"chat-budget-{uuid4().hex[:12]}@example.com", name="Owner")
+        session.add(owner)
+        await session.commit()
+        await session.refresh(owner)
+        job = Job(
+            owner_id=owner.id,
+            research_question="Chat budget",
+            llm_provider="bedrock",
+            llm_config={"model": "claude-sonnet-4-6"},
+            status="running",
+        )
+        session.add(job)
+        await session.commit()
+        await session.refresh(job)
+        session.add(
+            CostRecord(
+                job_id=job.id,
+                operation_type="chat",
+                provider="bedrock",
+                model="claude-sonnet-4-6",
+                input_tokens=1,
+                output_tokens=1,
+                cost_usd=100.0,
+            )
+        )
+        await session.commit()
+        job_id = job.id
+
+    job_dir = temp_jobs_dir / str(job_id)
+    job_dir.mkdir()
+    with (
+        patch(
+            "openscientist.job_chat._send_message_via_container", new_callable=AsyncMock
+        ) as container,
+        pytest.raises(BudgetExceededError, match=r"Job cost limit of \$100\.00"),
+    ):
+        await set_admin_settings_row(test_engine, max_job_cost_usd=100.0)
+        try:
+            async with async_sessionmaker(test_engine, expire_on_commit=False)() as call_session:
+                await send_chat_message(call_session, job_id, "hi", job_dir)
+        finally:
+            await reset_admin_settings_row(test_engine)
+
+    container.assert_not_awaited()
+    async with async_sessionmaker(test_engine, expire_on_commit=False)() as session:
+        count = await session.scalar(select(func.count()).where(JobChatMessage.job_id == job_id))
+        assert count == 0
+        await session.execute(delete(CostRecord).where(CostRecord.job_id == job_id))
+        await session.execute(delete(Job).where(Job.id == job_id))
+        await session.execute(delete(User).where(User.email == owner.email))
+        await session.commit()

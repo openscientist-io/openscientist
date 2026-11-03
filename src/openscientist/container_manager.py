@@ -14,7 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from openscientist.admin_settings import current_admin_settings_sync
+from openscientist.exceptions import MissingImageError
 from openscientist.job_container import to_host_path
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.settings import get_settings
 
 if TYPE_CHECKING:
@@ -59,6 +62,10 @@ class ContainerManager:
         """
         Initialize container manager.
 
+        The memory, CPU, and timeout limits are read from the admin settings
+        row at each execution when not given here, so an admin edit applies at
+        the next execution.
+
         Args:
             image: Docker image for executor containers
             memory_limit: Memory limit (e.g., "2g")
@@ -67,9 +74,9 @@ class ContainerManager:
         """
         settings = get_settings()
         self.image = image or settings.container.executor_image
-        self.memory_limit = memory_limit or settings.container.executor_memory
-        self.cpu_limit = cpu_limit if cpu_limit is not None else settings.container.executor_cpu
-        self.timeout = timeout if timeout is not None else settings.container.executor_timeout
+        self.memory_limit = memory_limit
+        self.cpu_limit = cpu_limit
+        self.timeout = timeout
         self._client: "_docker_module.DockerClient | None" = None
 
     @property
@@ -242,9 +249,18 @@ class ContainerManager:
         """
         import docker.errors
 
+        admin = current_admin_settings_sync()
         timeout = timeout if timeout is not None else self.timeout
+        if timeout is None:
+            timeout = admin.executor_timeout_seconds
+        memory_limit = (
+            self.memory_limit if self.memory_limit is not None else f"{admin.executor_memory_mib}m"
+        )
+        cpu_limit = self.cpu_limit if self.cpu_limit is not None else admin.executor_cpu
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
+        # The executor container writes here as its own uid, sharing the job group.
+        apply_job_ownership(output_dir)
 
         # First, validate files exist using container-local paths.
         volumes, host_to_container = self._build_volumes(
@@ -296,19 +312,43 @@ class ContainerManager:
             "Spawning executor container: %s (image=%s, mem=%s, cpu=%.2f)",
             container_name,
             self.image,
-            self.memory_limit,
-            self.cpu_limit,
+            memory_limit,
+            cpu_limit,
         )
 
         from openscientist.job_container import resolve_docker_network
 
-        # Air-gapped executors run untrusted code and need no network, so use
-        # Docker's no-networking "none" network. Otherwise attach the resolved
-        # compose network, unchanged.
-        if get_settings().airgap.enabled:
+        # Air-gapped executors run untrusted code and need no network. In
+        # restricted mode the executor keeps public egress but still installs
+        # the in-container firewall.
+        if admin.airgapped:
             network = "none"
+            run_user = "executor"
+            cap_add: list[str] | None = None
+            entrypoint: list[str] = []
+            environment: dict[str, str] | None = None
         else:
-            network = resolve_docker_network(self.client, get_settings().container.agent_network)
+            from openscientist.job_container.egress import (
+                FIREWALL_ALLOW_ENV,
+                FIREWALL_MODE_ENV,
+                FIREWALL_RUN_AS_ENV,
+                MODE_RESTRICT,
+                derive_restricted_egress_allowlist,
+                format_egress_allowlist,
+            )
+
+            network = resolve_docker_network(self.client, cs.agent_network)
+            run_user = "root"
+            cap_add = ["NET_ADMIN"]
+            entrypoint = ["/agent-firewall-entrypoint.sh"]
+            # The executor never opens Postgres; only the agent logs in there.
+            environment = {
+                FIREWALL_ALLOW_ENV: format_egress_allowlist(
+                    derive_restricted_egress_allowlist(settings, include_postgres=False)
+                ),
+                FIREWALL_MODE_ENV: MODE_RESTRICT,
+                FIREWALL_RUN_AS_ENV: "executor",
+            }
 
         try:
             # Run container
@@ -320,12 +360,14 @@ class ContainerManager:
                 detach=False,
                 network=network,
                 # Resource limits
-                mem_limit=self.memory_limit,
-                nano_cpus=int(self.cpu_limit * 1e9),
+                mem_limit=memory_limit,
+                nano_cpus=int(cpu_limit * 1e9),
                 # Security settings
                 read_only=False,  # Need write access for plots
                 security_opt=["no-new-privileges:true"],
-                user="executor",
+                user=run_user,
+                cap_add=cap_add,
+                environment=environment,
                 # Labels for cleanup
                 labels={
                     "openscientist.job_id": job_id,
@@ -335,8 +377,7 @@ class ContainerManager:
                 volumes=volumes,
                 # Timeout
                 stop_signal="SIGKILL",
-                # Clear the entrypoint so we can use shell piping
-                entrypoint=[],
+                entrypoint=entrypoint,
                 # Input via base64-encoded stdin to avoid shell quoting issues
                 command=[
                     "sh",
@@ -375,12 +416,7 @@ class ContainerManager:
 
         except docker.errors.ImageNotFound:
             logger.error("Executor image not found: %s", self.image)
-            return _container_error_result(
-                error=(
-                    f"Executor image not found: {self.image}. "
-                    "Run 'make build-executor' to build it."
-                ),
-            )
+            return _container_error_result(error=str(MissingImageError(self.image)))
 
         except docker.errors.APIError as e:
             logger.error("Docker API error: %s", e)
@@ -474,9 +510,12 @@ class ContainerManager:
 
         return removed
 
-    def check_image_available(self) -> bool:
+    def check_image_available(self, image: str | None = None) -> bool:
         """
-        Check if the executor image is available.
+        Check if an image is on the Docker host.
+
+        Args:
+            image: The image to look for, the executor image when omitted
 
         Returns:
             True if image exists, False otherwise
@@ -484,7 +523,7 @@ class ContainerManager:
         import docker.errors
 
         try:
-            self.client.images.get(self.image)
+            self.client.images.get(image or self.image)
             return True
         except docker.errors.ImageNotFound:
             return False

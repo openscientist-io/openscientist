@@ -1,7 +1,5 @@
 """
 Code execution with sandboxing for OpenScientist.
-
-Executes Python code with timeouts, import whitelisting, and safety measures.
 """
 
 import ast
@@ -30,11 +28,7 @@ from openscientist.file_loader import (
     STRUCTURE_EXTENSIONS,
 )
 
-# Extensions that are never tabular data -- load_data() must not attempt to
-# parse these as CSV. Reuses file_loader.py's classification (the executor
-# container has the full `openscientist` package, so this import is free) so
-# the two "what kind of file is this" implementations can't drift apart again
-# the way they did for .h5ad.
+# Reused from file_loader so the two file-kind classifications can't drift.
 NON_TABULAR_EXTENSIONS = (
     HDF5_EXTENSIONS | STRUCTURE_EXTENSIONS | SEQUENCE_EXTENSIONS | IMAGE_EXTENSIONS
 )
@@ -78,16 +72,7 @@ def timeout_handler(_signum: int, _frame: Any) -> None:
 
 
 def validate_imports(code: str, allowed_imports: list[str]) -> None:
-    """
-    Validate that code only imports allowed modules.
-
-    Args:
-        code: Python code to validate
-        allowed_imports: List of allowed module names
-
-    Raises:
-        ForbiddenImportError: If code imports forbidden modules
-    """
+    """Validate that code only imports allowed modules."""
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
@@ -96,7 +81,7 @@ def validate_imports(code: str, allowed_imports: list[str]) -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                module_name = alias.name.split(".")[0]  # Get top-level module
+                module_name = alias.name.split(".")[0]
                 if module_name not in allowed_imports:
                     raise ForbiddenImportError(
                         f"Import of '{alias.name}' is not allowed. "
@@ -114,10 +99,9 @@ def validate_imports(code: str, allowed_imports: list[str]) -> None:
 def load_data(data_path: str | None) -> pd.DataFrame | None:
     """Load tabular data from disk for code execution.
 
-    Returns None for non-tabular formats (h5ad, structures, sequences,
-    images) rather than raising -- the caller still has the raw path via
-    `data_files`, and code_executor.ALLOWED_IMPORTS whitelists scanpy/
-    anndata/h5py/biopython etc. for exactly this case.
+    Returns None rather than raising for non-tabular formats because the
+    caller keeps the raw path and ALLOWED_IMPORTS whitelists scanpy, anndata
+    and h5py for exactly this case.
     """
     if not data_path:
         return None
@@ -140,8 +124,7 @@ def load_data(data_path: str | None) -> pd.DataFrame | None:
         return pd.read_json(path)
     if suffix in NON_TABULAR_EXTENSIONS:
         return None
-    # Unrecognized extension: best-effort CSV guess, but a wrong guess must
-    # not crash the executor before the user's own code gets to run.
+    # A wrong best-effort CSV guess for an unrecognized extension must not crash the executor.
     try:
         return pd.read_csv(path)
     except (UnicodeDecodeError, pd.errors.ParserError, OSError):
@@ -302,34 +285,10 @@ def execute_code(
     data_files: list[dict[str, Any]] | None = None,
     save_code_with_plots: bool = True,
 ) -> dict[str, Any]:
-    """
-    Execute Python code in sandboxed environment.
+    """Execute Python code in a sandboxed environment.
 
-    Security measures:
-    - Timeout: 60 seconds max (configurable)
-    - Import whitelist: Only scientific computing libraries
-    - No network access (except via explicit tools)
-    - No file system access outside workspace
-    - Runs inside Docker container for additional isolation
-
-    Args:
-        code: Python code to execute
-        data: DataFrame available as `data` variable (None for non-tabular files)
-        plots_dir: Directory to save generated plots
-        timeout: Max execution time in seconds (default: 60)
-        description: Optional description of what's being investigated
-        iteration: Current iteration number
-        data_files: List of file metadata dicts (paths, types, etc.)
-
-    Returns:
-        Dictionary with execution results:
-        {
-            "success": bool,
-            "output": str,        # Printed output
-            "plots": [paths],     # Generated plot files
-            "error": str,         # If failed
-            "execution_time": float
-        }
+    Runs inside the executor Docker container for isolation. plt.show() and
+    plt.savefig() are hooked so plots land in plots_dir with metadata JSON files.
     """
     try:
         validate_imports(code, ALLOWED_IMPORTS)
@@ -388,9 +347,8 @@ def execute_code(
         _restore_plot_hooks(original_show, original_savefig)
 
 
-# A descriptive User-Agent is required by public SPARQL endpoints such as
-# Wikidata (see its User-Agent policy). Generic library defaults get
-# throttled or blocked, especially from datacenter IPs.
+# Public SPARQL endpoints such as Wikidata require a descriptive User-Agent
+# and throttle generic defaults, especially from datacenter IPs.
 SPARQL_USER_AGENT = "OpenScientist/1.0 (+https://github.com/openscientist-io/openscientist)"
 
 
@@ -402,27 +360,14 @@ def execute_sparql_code(
     iteration: int = 0,
     data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """
-    Execute a SPARQL query against a remote endpoint.
+    """Execute a SPARQL query against a remote endpoint.
 
-    The query must include an endpoint comment on its own line:
-        # ENDPOINT: https://query.wikidata.org/sparql
-
-    Args:
-        code: SPARQL query, with a ``# ENDPOINT: <url>`` comment
-        plots_dir: Unused, kept for API consistency
-        timeout: Query timeout in seconds (default: 60)
-        description: Optional description of what's being investigated
-        iteration: Current iteration number
-        data_files: Unused, kept for API consistency
-
-    Returns:
-        Dictionary with execution results (no plots for SPARQL)
+    The query must include an endpoint comment on its own line, e.g.
+    ``# ENDPOINT: https://query.wikidata.org/sparql``.
     """
     _ = (plots_dir, description, iteration, data_files)
     start_time = time.time()
 
-    # Parse endpoint from query comments
     endpoint: str | None = None
     for line in code.splitlines():
         stripped = line.strip()
@@ -480,7 +425,6 @@ def execute_sparql_code(
 
     execution_time = time.time() - start_time
 
-    # Format results as a plain-text table
     if not isinstance(results, dict):
         results = {}
     bindings = results.get("results", {}).get("bindings", [])
@@ -489,7 +433,6 @@ def execute_sparql_code(
     if not bindings:
         output = "Query returned 0 results."
     else:
-        # Build rows
         rows = [[b.get(v, {}).get("value", "") for v in vars_] for b in bindings]
         col_widths = [max(len(v), *(len(r[i]) for r in rows)) for i, v in enumerate(vars_)]
         sep = "  ".join("-" * w for w in col_widths)
@@ -508,9 +451,8 @@ def execute_sparql_code(
     }
 
 
-# Cargo.toml template used for every agent Rust execution.
-# All listed crates are pre-compiled into the executor image (cargo-seed/),
-# so cargo reuses the artifacts without downloading or recompiling them.
+# Cargo.toml for every agent Rust execution. All listed crates are
+# pre-compiled into the executor image (cargo-seed/), so cargo skips downloads.
 _RUST_CARGO_TOML = """\
 [package]
 name = "analysis"
@@ -540,23 +482,10 @@ def execute_rust_code(
     iteration: int = 0,
     data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """
-    Execute Rust code using cargo run.
+    """Execute Rust code with cargo run in a temporary cargo project.
 
-    The code is placed in src/main.rs of a temporary cargo project whose
-    Cargo.toml includes all pre-seeded crates. The executor image pre-compiles
-    these crates so incremental builds are fast.
-
-    Args:
-        code: Rust source code (full src/main.rs content)
-        plots_dir: Unused, kept for API consistency
-        timeout: Max total time (compile + run) in seconds (default: 300)
-        description: Optional description of what's being investigated
-        iteration: Current iteration number
-        data_files: Unused, kept for API consistency
-
-    Returns:
-        Dictionary with execution results (no plots for Rust)
+    The code is written to src/main.rs and built against the pre-seeded
+    crates in the executor image, so builds skip downloads and recompiles.
     """
     import os
     import subprocess
@@ -573,10 +502,8 @@ def execute_rust_code(
         (src_dir / "main.rs").write_text(code, encoding="utf-8")
 
         env = os.environ.copy()
-        # Inside the executor Docker image, /usr/local/cargo holds the pre-seeded
-        # registry and pre-compiled dependency artifacts. Use them when available
-        # so cargo skips downloading and recompiling. Outside the container (e.g.
-        # on the developer host) cargo falls back to ~/.cargo as normal.
+        # The executor image pre-seeds /usr/local/cargo with its registry and
+        # compiled artifacts, so cargo skips downloads and recompiles there.
         _seeded_cargo = Path("/usr/local/cargo")
         if _seeded_cargo.exists():
             env.setdefault("CARGO_HOME", str(_seeded_cargo))
@@ -612,7 +539,6 @@ def execute_rust_code(
         execution_time = time.time() - start_time
         output = run_result.stdout
         if run_result.returncode != 0:
-            # Include stderr (compile errors / runtime errors) on failure
             if run_result.stderr:
                 output += f"\nstderr:\n{run_result.stderr}"
             return {
@@ -633,15 +559,7 @@ def execute_rust_code(
 
 
 def format_execution_result(result: dict[str, Any]) -> str:
-    """
-    Format execution result for display to agent.
-
-    Args:
-        result: Result from execute_code()
-
-    Returns:
-        Formatted string
-    """
+    """Format execution result for display to the agent."""
     if result["success"]:
         parts = [" Code executed successfully\n"]
         if result["output"]:

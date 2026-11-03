@@ -5,10 +5,8 @@ from textwrap import dedent
 from nicegui import ui
 
 from openscientist.auth import require_auth
-from openscientist.webapp_components.ui_components import (
-    render_navigator,
-    render_project_resource_links,
-)
+from openscientist.webapp_components.components.common import render_project_resource_links
+from openscientist.webapp_components.components.navigation import render_navigator
 
 DOCS_PAGE_CONTENT_MARKDOWN = dedent(
     """
@@ -98,7 +96,7 @@ DOCS_PAGE_CONTENT_MARKDOWN = dedent(
 
 @ui.page("/docs")
 @require_auth
-def docs_page() -> None:
+async def docs_page() -> None:
     """Documentation page with user guide."""
     render_navigator(active_page="docs")
 

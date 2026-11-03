@@ -304,61 +304,6 @@ class TestGitHubSkillIngester:
 
         await ingester.close()
 
-    @pytest.mark.asyncio
-    async def test_list_skill_files(self):
-        """Test listing skill files from a repo (only SKILL.md files)."""
-        ingester = GitHubSkillIngester()
-
-        # Simulate K-Dense-style repo structure where each skill is in
-        # its own directory with a SKILL.md file
-        mock_tree = {
-            "tree": [
-                # Valid SKILL.md files in skill directories
-                {
-                    "path": "scientific-skills/biopython/SKILL.md",
-                    "type": "blob",
-                    "sha": "sha1",
-                },
-                {
-                    "path": "scientific-skills/pubchem/SKILL.md",
-                    "type": "blob",
-                    "sha": "sha2",
-                },
-                # Reference files that should be filtered out
-                {
-                    "path": "scientific-skills/biopython/examples.md",
-                    "type": "blob",
-                    "sha": "sha3",
-                },
-                {
-                    "path": "scientific-skills/README.md",
-                    "type": "blob",
-                    "sha": "sha4",
-                },
-                # Wrong directory
-                {"path": "other/tool/SKILL.md", "type": "blob", "sha": "sha5"},
-                # Directory entry, not a blob
-                {"path": "scientific-skills", "type": "tree", "sha": "sha6"},
-            ]
-        }
-
-        with patch.object(ingester, "_get_client") as mock_get_client:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = mock_tree
-            mock_response.raise_for_status = MagicMock()
-            mock_client.get.return_value = mock_response
-            mock_get_client.return_value = mock_client
-
-            files = await ingester.list_skill_files("owner", "repo", "main", "scientific-skills")
-
-            # Should only include SKILL.md files in the correct path
-            assert len(files) == 2
-            assert files[0]["path"] == "scientific-skills/biopython/SKILL.md"
-            assert files[1]["path"] == "scientific-skills/pubchem/SKILL.md"
-
-        await ingester.close()
-
     def test_extract_skill_files_from_archive(self):
         """Test filtering SKILL.md files out of a repository tarball."""
         ingester = GitHubSkillIngester()

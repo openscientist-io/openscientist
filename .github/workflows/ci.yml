@@ -5,45 +5,60 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A newer push to the same pull request cancels the older run. Runs on main
+# always finish, so every merge commit keeps its own result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          # The lint steps install and run third-party code, so the checkout
+          # token must not sit in .git/config for them to read.
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      - run: uv sync --locked
 
       - name: Lint
-        run: uv run ruff check src/ tests/
+        run: uv run --locked ruff check src/ tests/
 
       - name: Format check
-        run: uv run ruff format --check src/ tests/
+        run: uv run --locked ruff format --check src/ tests/
 
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      - run: uv sync --locked
 
       - name: Type check
-        run: uv run mypy src/openscientist/ tests/
+        run: uv run --locked mypy src/openscientist/ tests/
 
   test:
     runs-on: ubuntu-latest
@@ -56,7 +71,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
         env:
           POSTGRES_USER: openscientist
           POSTGRES_PASSWORD: openscientist_dev_password
@@ -73,17 +88,19 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://openscientist:openscientist_dev_password@localhost:5434/openscientist
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
         with:
           enable-cache: true
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
-      - run: uv sync
+      - run: uv sync --locked
 
       - name: Unit & Integration Tests
         # Live third-party APIs are deselected: NCBI rate limits by IP and the

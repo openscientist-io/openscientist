@@ -31,24 +31,12 @@ class _Body:
 
 
 @pytest.mark.asyncio
-async def test_timeout_returns_at_the_deadline_from_a_running_loop() -> None:
-    """The caller waited for the whole coroutine before reporting its timeout,
-    so a stalled write failed the caller long after it had already finished."""
+async def test_a_running_loop_is_refused_rather_than_blocked() -> None:
+    """Called on a running loop, the bridge blocked that loop until the work
+    finished, which on the web's loop froze every page and request with it."""
     body = _Body()
-    started = time.monotonic()
-    with pytest.raises(concurrent.futures.TimeoutError):
-        run_sync(body.run(), timeout=0.5)
-    assert time.monotonic() - started < _GRACE_SECONDS
-
-
-@pytest.mark.asyncio
-async def test_timeout_cancels_the_work_from_a_running_loop() -> None:
-    """Reporting a timeout while the coroutine keeps mutating the database is
-    what let a failed run still commit its write."""
-    body = _Body()
-    with pytest.raises(concurrent.futures.TimeoutError):
-        run_sync(body.run(), timeout=0.5)
-    assert body.cancelled
+    with pytest.raises(RuntimeError, match="running event loop"):
+        run_sync(body.run())
     assert not body.finished
 
 
@@ -65,11 +53,6 @@ def test_timeout_applies_without_a_running_loop() -> None:
 async def _answer() -> str:
     await asyncio.sleep(0)
     return "answer"
-
-
-@pytest.mark.asyncio
-async def test_a_result_still_comes_back_from_a_running_loop() -> None:
-    assert run_sync(_answer()) == "answer"
 
 
 def test_a_result_still_comes_back_without_a_running_loop() -> None:
@@ -94,8 +77,7 @@ async def _take_one(closed: dict[str, bool], kept: list[AsyncIterator[int]]) -> 
     return "took one"
 
 
-@pytest.mark.asyncio
-async def test_a_live_async_generator_is_finalised_at_shutdown() -> None:
+def test_a_live_async_generator_is_finalised_at_shutdown() -> None:
     """``asyncio.run`` shuts down async generators before the loop goes away.
     A hand-rolled loop must do the same, or a suspended generator never runs
     its ``finally`` and whatever it holds is never released."""

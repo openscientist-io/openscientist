@@ -10,8 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import FileLoadError, FileTooBigError, UnsupportedFileTypeError
-from openscientist.settings import get_settings
 
 # Try to import python-magic, but make it optional
 try:
@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def _get_max_file_size() -> int:
-    """Get max file size in bytes from settings."""
-    return get_settings().file.max_file_size_mb * 1024 * 1024
+    """Get max file size in bytes from the admin settings row."""
+    return current_admin_settings_sync().max_file_size_mb * 1024 * 1024
 
 
 # Supported file extensions
@@ -104,18 +104,11 @@ def get_file_info(file_path: Path) -> dict[str, Any]:
 
     Raises:
         FileNotFoundError: If file doesn't exist
-        FileTooBigError: If file exceeds size limit
     """
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    # Check file size
     size = file_path.stat().st_size
-    if size > _get_max_file_size():
-        raise FileTooBigError(
-            f"File {file_path.name} is {size / 1024 / 1024:.1f}MB, "
-            f"exceeds limit of {_get_max_file_size() / 1024 / 1024}MB"
-        )
 
     # Get extension
     extension = file_path.suffix.lower()
@@ -226,9 +219,6 @@ def load_data_file(file_path: Path) -> pd.DataFrame | None:
 
     Returns:
         DataFrame if tabular data, None otherwise
-
-    Raises:
-        FileTooBigError: If file exceeds size limit
     """
     info = get_file_info(file_path)
 
@@ -253,9 +243,13 @@ def load_data_file(file_path: Path) -> pd.DataFrame | None:
     return None
 
 
-def validate_uploaded_file(file_path: Path, content: bytes) -> None:
+# Magic detection only needs the leading bytes, so a large file is never read whole.
+_MAGIC_HEAD_BYTES = 1024 * 1024
+
+
+def validate_uploaded_file(file_path: Path) -> None:
     """
-    Validate uploaded file for security.
+    Validate a persisted upload for security.
 
     Checks:
     - File size
@@ -263,27 +257,29 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
     - No executable content
 
     Args:
-        file_path: Path where file will be saved
-        content: File content bytes
+        file_path: The written file to validate
 
     Raises:
         FileTooBigError: If file too large
         ValueError: If file fails validation
     """
     # Check size
-    if len(content) > _get_max_file_size():
+    size = file_path.stat().st_size
+    if size > _get_max_file_size():
         raise FileTooBigError(
-            f"File is {len(content) / 1024 / 1024:.1f}MB, "
-            f"exceeds limit of {_get_max_file_size() / 1024 / 1024}MB"
+            f"File is {size / 1024 / 1024:.1f}MB, "
+            f"exceeds the limit of {_get_max_file_size() / 1024 / 1024}MB"
         )
 
     # Get extension
     extension = file_path.suffix.lower()
 
-    # Detect actual file type from content
+    # Detect actual file type from the leading bytes
+    with file_path.open("rb") as handle:
+        head = handle.read(_MAGIC_HEAD_BYTES)
     if HAS_MAGIC:
         try:
-            mime_type = magic.from_buffer(content, mime=True)
+            mime_type = magic.from_buffer(head, mime=True)
         except (ValueError, OSError) as e:
             logger.warning("Could not detect MIME type from content: %s", e)
             mime_type = "application/octet-stream"
@@ -328,5 +324,5 @@ def validate_uploaded_file(file_path: Path, content: bytes) -> None:
         "File validation passed: %s (%s, %d bytes)",
         file_path.name,
         mime_type,
-        len(content),
+        size,
     )

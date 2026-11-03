@@ -15,9 +15,11 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 from sqlalchemy import delete
 
-from openscientist.database import AsyncSessionLocal
+from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
+from openscientist.database.models.pubmed_article import PubMedArticle
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import get_settings
 from openscientist_tools.pubmed import search_pubmed
 from openscientist_tools.state import STATE
 
@@ -72,7 +74,7 @@ def _state_job_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(STATE, "job_id", "test-job-uuid")
 
 
-def test_returns_formatted_markdown(
+async def test_returns_formatted_markdown(
     monkeypatch: pytest.MonkeyPatch,
     patched_ks_persistence: KnowledgeState,
 ) -> None:
@@ -81,7 +83,7 @@ def test_returns_formatted_markdown(
         _fake_requests_get(esearch_payload=_ESEARCH_TWO_HITS, efetch_xml=_EFETCH_TWO_PAPERS),
     )
 
-    result = search_pubmed(query="cold adapted carnosine", max_results=10)
+    result = await search_pubmed(query="cold adapted carnosine", max_results=10)
 
     assert result.startswith("Found 2 papers for query: 'cold adapted carnosine'")
     assert "PMID: 12345678" in result
@@ -89,7 +91,7 @@ def test_returns_formatted_markdown(
     assert "Carnosine in cold-adapted cells" in result
 
 
-def test_writes_literature_and_log_to_knowledge_state(
+async def test_writes_literature_and_log_to_knowledge_state(
     monkeypatch: pytest.MonkeyPatch,
     patched_ks_persistence: KnowledgeState,
 ) -> None:
@@ -98,7 +100,7 @@ def test_writes_literature_and_log_to_knowledge_state(
         _fake_requests_get(esearch_payload=_ESEARCH_TWO_HITS, efetch_xml=_EFETCH_TWO_PAPERS),
     )
 
-    search_pubmed(query="cold adapted carnosine", description="why")
+    await search_pubmed(query="cold adapted carnosine", description="why")
 
     assert len(patched_ks_persistence.data["literature"]) == 2
     pmids = {entry["pmid"] for entry in patched_ks_persistence.data["literature"]}
@@ -111,7 +113,7 @@ def test_writes_literature_and_log_to_knowledge_state(
     assert last_log["description"] == "why"
 
 
-def test_empty_results(
+async def test_empty_results(
     monkeypatch: pytest.MonkeyPatch,
     patched_ks_persistence: KnowledgeState,
 ) -> None:
@@ -120,7 +122,7 @@ def test_empty_results(
         _fake_requests_get(esearch_payload=_ESEARCH_EMPTY, efetch_xml=""),
     )
 
-    result = search_pubmed(query="nonexistent topic xyzzy")
+    result = await search_pubmed(query="nonexistent topic xyzzy")
 
     assert result == "No papers found for query: 'nonexistent topic xyzzy'"
     assert patched_ks_persistence.data["literature"] == []
@@ -142,6 +144,43 @@ def test_parse_pubmed_xml_title_with_inline_markup() -> None:
     assert papers[0]["title"] == "LAMA5 links matrix to a niche."
 
 
+async def test_airgap_search_reads_the_local_corpus(
+    monkeypatch: pytest.MonkeyPatch,
+    test_database_url: str,
+    _apply_migrations_once: None,
+    patched_ks_persistence: KnowledgeState,
+) -> None:
+    async with async_session_local() as session:
+        session.add(
+            PubMedArticle(
+                pmid=72613445,
+                title="CRISPR gene editing in mice",
+                abstract="A study of CRISPR off-target effects.",
+                authors="Doe",
+                journal="Nature",
+                year=2020,
+            )
+        )
+        await session.commit()
+    try:
+        monkeypatch.setattr(get_settings().airgap, "enabled", True)
+        result = await search_pubmed(query="crispr", max_results=5)
+    finally:
+        async with async_session_local() as session:
+            await session.execute(delete(PubMedArticle).where(PubMedArticle.pmid == 72613445))
+            await session.commit()
+
+    assert result.startswith("Found 1 papers for query: 'crispr'")
+    assert "CRISPR gene editing in mice" in result
+    assert "PMID: 72613445" in result
+    literature = patched_ks_persistence.data["literature"]
+    assert len(literature) == 1
+    assert literature[0]["pmid"] == "72613445"
+    last_log = patched_ks_persistence.data["analysis_log"][-1]
+    assert last_log["action"] == "search_pubmed"
+    assert last_log["results_count"] == 1
+
+
 # Opt-in: this is the only test here that calls NCBI for real, and NCBI rate
 # limits by IP. From a shared CI runner the search returns zero results and the
 # assertions below fail for reasons unrelated to the code. The search_pubmed
@@ -158,7 +197,7 @@ async def test_subprocess_smoke_real_ncbi(
 ) -> None:
     """End-to-end: subprocess MCP server hits real NCBI and writes to real DB."""
     job_id = uuid4()
-    async with AsyncSessionLocal(thread_safe=True) as session:
+    async with async_session_local() as session:
         session.add(
             Job(
                 id=job_id,
@@ -186,12 +225,12 @@ async def test_subprocess_smoke_real_ncbi(
                 assert isinstance(block, TextContent)
                 assert block.text.startswith("Found ") and "PMID:" in block.text
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         assert len(reloaded.data["literature"]) >= 1
         last_log = reloaded.data["analysis_log"][-1]
         assert last_log["action"] == "search_pubmed"
         assert last_log["query"] == "CRISPR Cas9"
     finally:
-        async with AsyncSessionLocal(thread_safe=True) as session:
+        async with async_session_local() as session:
             await session.execute(delete(Job).where(Job.id == job_id))
             await session.commit()

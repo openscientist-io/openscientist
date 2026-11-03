@@ -18,20 +18,27 @@ from openscientist.database.models import Job, JobShare, User
 from openscientist.database.models.finding import Finding
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
-from openscientist.job.types import JobStatus
+from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.providers import check_provider_config
-from openscientist.webapp_components.ui_components import (
-    render_actions_slot_with_delete,
+from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
-    render_delete_dialog,
-    render_job_id_slot,
-    render_navigator,
     render_pending_approval_notice,
+)
+from openscientist.webapp_components.components.common import (
     render_permission_badge_slot,
-    render_share_dialog,
     render_stat_badges,
+)
+from openscientist.webapp_components.components.dialogs import (
+    owned_job_for_caller,
+    render_delete_dialog,
+    render_share_dialog,
+)
+from openscientist.webapp_components.components.job_table import (
+    render_actions_slot_with_delete,
+    render_job_id_slot,
     render_status_cell_slot,
 )
+from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
@@ -63,13 +70,6 @@ def _truncate_question(question: str, limit: int = 50) -> str:
     if len(question) > limit:
         return question[:limit] + "..."
     return question
-
-
-def _derive_progress_from_db(status: str, current_iteration: int) -> int:
-    """Derive iterations_completed from Job model columns (no KS load needed)."""
-    if status in ("running", "awaiting_feedback"):
-        return current_iteration - 1 if current_iteration > 1 else 0
-    return current_iteration
 
 
 async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID, int]:
@@ -133,9 +133,10 @@ def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[di
             "question": _truncate_question(job.research_question),
             "status": job.status,
             "error": job.error_message or "",
-            "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
+            "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
             "findings": findings_counts.get(job.id, 0),
             "created": job.created_at.isoformat()[:19],
+            "is_public": job.is_public,
             "can_share": True,
             "can_delete": True,
         }
@@ -159,9 +160,10 @@ def _shared_rows(
                 "permission": share.permission_level,
                 "status": job.status,
                 "error": job.error_message or "",
-                "iterations": f"{_derive_progress_from_db(job.status, job.current_iteration)}/{job.max_iterations}",
+                "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
                 "findings": findings_counts.get(job.id, 0),
                 "created": job.created_at.isoformat()[:19],
+                "is_public": job.is_public,
                 "can_share": False,
                 "can_delete": current_user_is_admin,
             }
@@ -207,8 +209,10 @@ async def _refresh_shared_jobs(
         logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
 
 
-def _show_share_dialog(job_id: str) -> None:
-    """Open share dialog."""
+async def _show_share_dialog(job_id: str) -> None:
+    """Open the share dialog when the caller owns the job the event names."""
+    if await owned_job_for_caller(job_id, get_current_user_id()) is None:
+        return
     dialog = render_share_dialog(job_id)
     dialog.open()
 
@@ -226,7 +230,7 @@ def _show_delete_dialog(
 
 @ui.page("/jobs")
 @require_auth
-def jobs_page() -> None:
+async def jobs_page() -> None:
     """Jobs list page."""
     from openscientist import web_app
 

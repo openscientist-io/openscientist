@@ -61,7 +61,7 @@ def server_params() -> Callable[[dict[str, str]], StdioServerParameters]:
 
 @pytest.fixture
 def patched_ks_persistence(monkeypatch: pytest.MonkeyPatch) -> KnowledgeState:
-    """Replace `KnowledgeState.{load,save}_from_database_sync` with
+    """Replace `KnowledgeState.{load,save}_from_database` with
     in-memory no-ops and return a real `KnowledgeState` instance that
     the tool body mutates."""
     real_ks = KnowledgeState(
@@ -69,14 +69,17 @@ def patched_ks_persistence(monkeypatch: pytest.MonkeyPatch) -> KnowledgeState:
         research_question="placeholder question",
         max_iterations=1,
     )
+
+    async def _load(cls, job_id, session=None) -> KnowledgeState:
+        return real_ks
+
+    async def _save(self, job_id, session=None) -> None:
+        return None
+
     monkeypatch.setattr(
         KnowledgeState,
-        "load_from_database_sync",
-        classmethod(lambda cls, job_id, user_id=None: real_ks),
+        "load_from_database",
+        classmethod(_load),
     )
-    monkeypatch.setattr(
-        KnowledgeState,
-        "save_to_database_sync",
-        lambda self, job_id, user_id=None: None,
-    )
+    monkeypatch.setattr(KnowledgeState, "save_to_database", _save)
     return real_ks

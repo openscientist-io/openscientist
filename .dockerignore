@@ -34,9 +34,7 @@ reports/
 # Documentation
 notes/
 *.md
-!CLAUDE.md
 !README.md
-!CHAT_CLAUDE.md
 
 # Environment
 .env

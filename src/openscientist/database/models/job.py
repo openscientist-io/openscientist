@@ -1,9 +1,4 @@
-"""
-Job model for scientific analysis jobs.
-
-The Job model represents a complete OpenScientist analysis workflow, tracking
-status, configuration, and relationships to all job artifacts.
-"""
+"""Job model for scientific analysis jobs."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -26,35 +21,7 @@ if TYPE_CHECKING:
 
 
 class Job(UUIDv7Mixin, Base):
-    """
-    Scientific analysis job.
-
-    Represents a complete OpenScientist workflow from data upload through
-    iterative analysis to final report generation.
-
-    Attributes:
-        owner_id: Foreign key to user who owns this job (NULL for orphaned)
-        research_question: Research question that drives the agent prompt
-        short_title: Optional short display label (model- or user-generated)
-        description: User-provided job description
-        investigation_mode: Investigation mode (autonomous/coinvestigate)
-        status: Current job status (pending/running/completed/failed/cancelled)
-        max_iterations: Maximum number of analysis iterations allowed
-        current_iteration: Current iteration number (0-based)
-        pdb_code: PDB code if analyzing existing structure
-        space_group: Crystal space group
-        resume_iteration: Iteration to resume from (NULL for new jobs)
-        llm_provider: LLM provider being used (vertex/bedrock/cborg)
-        llm_config: LLM configuration (model, temperature, etc.)
-        error_message: Error message if job failed
-        result_summary: Final analysis summary
-        owner: Related User object
-        shares: Job sharing permissions
-        data_files: Uploaded data files for this job
-        hypotheses: Generated hypotheses
-        chat_messages: In-page chat messages
-        cost_records: Cost tracking records
-    """
+    """Scientific analysis job."""
 
     __tablename__ = "jobs"
 
@@ -132,12 +99,6 @@ class Job(UUIDv7Mixin, Base):
         comment="Crystal space group",
     )
 
-    resume_iteration: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
-        comment="Iteration to resume from (NULL for new jobs)",
-    )
-
     llm_provider: Mapped[str] = mapped_column(
         String(50),
         nullable=False,
@@ -175,6 +136,18 @@ class Job(UUIDv7Mixin, Base):
         comment="Timestamp when agent_status was last updated",
     )
 
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the job last took a slot, for the balancing scheduler",
+    )
+
+    ended_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When the job last ended, for the balancing scheduler",
+    )
+
     error_message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -185,6 +158,25 @@ class Job(UUIDv7Mixin, Base):
         Text,
         nullable=True,
         comment="Reason why the job was cancelled",
+    )
+
+    queue_reason: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Why a queued job waits on a budget limit; cleared when it starts or is cancelled",
+    )
+
+    stop_note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Why a completed job stopped early at a budget limit, or that its budget could not be checked",
+    )
+
+    is_public: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default="false",
+        comment="The owner has made this job readable by any signed-in user",
     )
 
     result_summary: Mapped[str | None] = mapped_column(

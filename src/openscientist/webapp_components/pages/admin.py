@@ -9,27 +9,36 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from nicegui import app, ui
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
+from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
-from openscientist.database.models import Job, ReviewToken, User
+from openscientist.database.models import Job, ReviewToken, Session, User
 from openscientist.database.session import get_admin_session
-from openscientist.webapp_components.pages.billing import render_billing_panel
-from openscientist.webapp_components.ui_components import (
+from openscientist.job.types import JobStatus
+from openscientist.settings import get_settings
+from openscientist.webapp_components.components.badges import render_job_id_badge
+from openscientist.webapp_components.components.banners import render_alert_banner
+from openscientist.webapp_components.components.common import (
+    STATUS_COLORS,
     format_uptime,
     make_action_button_slot,
-    render_alert_banner,
     render_container_status_badge,
     render_dialog_actions,
     render_empty_state,
-    render_job_id_badge,
-    render_job_id_slot,
-    render_navigator,
     render_stat_badges,
     render_user_search,
 )
+from openscientist.webapp_components.components.job_table import render_job_id_slot
+from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.pages.billing import render_billing_panel
+from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import guard_client, setup_timer_cleanup
+from openscientist.webapp_components.utils.permissions import (
+    refuse_stale_admin_session,
+    revalidate_admin_session,
+)
 
 if TYPE_CHECKING:
     from openscientist.webapp_components.utils.container_dashboard import (
@@ -90,6 +99,27 @@ async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bo
     return True, "User approval removed successfully"
 
 
+async def set_user_priority_status(user_id: UUID, is_priority: bool) -> tuple[bool, str]:
+    """Mark a user's queued jobs as starting ahead of other users' jobs, or not.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    async with get_admin_session() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not user:
+            return False, "User not found"
+        if bool(user.is_priority) == is_priority:
+            state = "already" if is_priority else "not"
+            return False, f"User is {state} a priority user"
+        user.is_priority = is_priority
+        await session.commit()
+
+    if is_priority:
+        return True, "User is now a priority user"
+    return True, "User is no longer a priority user"
+
+
 @ui.page("/admin")
 @require_auth
 @require_admin
@@ -107,6 +137,7 @@ async def admin_page() -> None:
             review_tokens_tab = ui.tab("Review Tokens", icon="rate_review")
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
+            settings_tab = ui.tab("Settings", icon="tune")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
             # Orphaned Jobs Panel (deferred — not the default tab)
@@ -128,6 +159,10 @@ async def admin_page() -> None:
             # Billing Panel (deferred)
             with ui.tab_panel(billing_tab):
                 ui.timer(0.1, render_billing_panel, once=True)
+
+            # Settings Panel (deferred)
+            with ui.tab_panel(settings_tab):
+                ui.timer(0.1, render_settings_panel, once=True)
 
 
 async def render_orphaned_jobs_panel() -> None:
@@ -266,38 +301,12 @@ async def show_assign_dialog(job_id: str) -> None:
             if not selected_user:
                 ui.notify("Please select a user", color="negative")
                 return
-
             try:
-                selected_user_id = UUID(str(selected_user["id"]))
-                async with get_admin_session() as session:
-                    result = await assign_orphaned_job(
-                        session=session,
-                        job_id=UUID(job_id),
-                        user_id=selected_user_id,
-                    )
-
-                if result.ok:
-                    ui.notify("Job assigned successfully", color="positive")
-                    dialog.close()
-                    ui.navigate.reload()
-                    return
-
-                if result.reason == "job_not_found":
-                    ui.notify("Job not found", color="negative")
-                    return
-                if result.reason == "already_owned":
-                    ui.notify("Job is no longer orphaned", color="warning")
-                    return
-                if result.reason == "user_not_found":
-                    ui.notify("Selected user was not found", color="negative")
-                    return
-
-                ui.notify("Failed to assign job", color="negative")
-            except (TypeError, KeyError, ValueError):
+                user_id = str(selected_user["id"])
+            except KeyError:
                 ui.notify("Invalid user selection", color="negative")
-            except Exception as e:
-                logger.error("Error assigning job: %s", e, exc_info=True)
-                ui.notify("Failed to assign job. Check server logs.", color="negative")
+                return
+            await _confirm_assign_orphaned_job(job_id, user_id, dialog=dialog)
 
         render_dialog_actions(
             on_confirm=do_assign,
@@ -306,6 +315,42 @@ async def show_assign_dialog(job_id: str) -> None:
         )
 
     dialog.open()
+
+
+async def _confirm_assign_orphaned_job(
+    job_id: str, selected_user_id: str, *, dialog: ui.dialog
+) -> None:
+    """Assign an orphaned job once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    try:
+        async with get_admin_session() as session:
+            result = await assign_orphaned_job(
+                session=session,
+                job_id=UUID(job_id),
+                user_id=UUID(selected_user_id),
+            )
+        if result.ok:
+            ui.notify("Job assigned successfully", color="positive")
+            dialog.close()
+            ui.navigate.reload()
+            return
+        if result.reason == "job_not_found":
+            ui.notify("Job not found", color="negative")
+            return
+        if result.reason == "already_owned":
+            ui.notify("Job is no longer orphaned", color="warning")
+            return
+        if result.reason == "user_not_found":
+            ui.notify("Selected user was not found", color="negative")
+            return
+        ui.notify("Failed to assign job", color="negative")
+    except (TypeError, KeyError, ValueError):
+        ui.notify("Invalid user selection", color="negative")
+    except Exception as e:
+        logger.error("Error assigning job: %s", e, exc_info=True)
+        ui.notify("Failed to assign job. Check server logs.", color="negative")
 
 
 async def delete_user(user_id: UUID) -> tuple[bool, str]:
@@ -335,10 +380,29 @@ async def delete_user(user_id: UUID) -> tuple[bool, str]:
         if not user:
             return False, "User not found"
 
+        await session.execute(
+            update(ReviewToken).where(ReviewToken.redeemed_by_id == user_id).values(is_active=False)
+        )
         await session.delete(user)
         await session.commit()
 
     return True, "User deleted successfully"
+
+
+async def revoke_review_token(token_id: UUID) -> tuple[bool, str]:
+    """Revoke a review token and end the sessions of the reviewer it redeemed."""
+    async with get_admin_session() as session:
+        result = await session.execute(select(ReviewToken).where(ReviewToken.id == token_id))
+        review_token = result.scalar_one_or_none()
+        if not review_token:
+            return False, "Token not found"
+        review_token.is_active = False
+        if review_token.redeemed_by_id is not None:
+            await session.execute(
+                delete(Session).where(Session.user_id == review_token.redeemed_by_id)
+            )
+        await session.commit()
+    return True, "Token revoked"
 
 
 def _get_admin_current_user_id() -> str | None:
@@ -362,6 +426,12 @@ def _admin_users_columns() -> list[dict[str, str]]:
             "name": "approval_status",
             "label": "Approval",
             "field": "approval_status",
+            "align": "center",
+        },
+        {
+            "name": "priority_status",
+            "label": "Priority",
+            "field": "priority_status",
             "align": "center",
         },
         {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
@@ -388,6 +458,8 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
             "job_count": job_counts.get(user.id, 0),
             "approval_status": "Approved" if user.is_approved else "Pending",
             "is_approved": bool(user.is_approved),
+            "priority_status": "Priority" if user.is_priority else "Normal",
+            "is_priority": bool(user.is_priority),
         }
         for user in users
     ]
@@ -396,6 +468,9 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
 async def _handle_approval_update(
     e: Any, is_approved: bool, reload_users: Callable[[], Awaitable[None]]
 ) -> None:
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
     user_id = e.args.get("id")
     if not user_id:
         ui.notify("Invalid user selection", color="negative")
@@ -428,6 +503,30 @@ async def _handle_approval_update(
         ui.notify(error_message, color="negative")
 
 
+async def _handle_priority_update(
+    e: Any, is_priority: bool, reload_users: Callable[[], Awaitable[None]]
+) -> None:
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    user_id = e.args.get("id")
+    if not user_id:
+        ui.notify("Invalid user selection", color="negative")
+        return
+    try:
+        success, message = await set_user_priority_status(UUID(user_id), is_priority=is_priority)
+    except ValueError:
+        ui.notify("Invalid user selection", color="negative")
+        return
+    except Exception as ex:
+        logger.error("Error setting priority of user %s: %s", user_id, ex, exc_info=True)
+        ui.notify("Failed to change the user's priority. Check server logs.", color="negative")
+        return
+    ui.notify(message, color="positive" if success else "info")
+    if success:
+        await reload_users()
+
+
 def _render_admin_users_table(
     users_container: ui.column,
     rows: list[dict[str, object]],
@@ -449,33 +548,75 @@ def _render_admin_users_table(
             """,
         )
         users_table.add_slot(
+            "body-cell-priority_status",
+            """
+            <q-td :props="props">
+                <q-badge
+                    :color="props.row.is_priority ? 'purple' : 'grey'"
+                    :label="props.row.priority_status"
+                />
+            </q-td>
+            """,
+        )
+        users_table.add_slot(
             "body-cell-actions",
             """
             <q-td :props="props">
-                <div class="q-gutter-xs">
+                <div class="row items-center gap-1 justify-center flex-wrap">
                     <q-btn
                         v-if="!props.row.is_approved"
+                        flat
+                        dense
                         size="sm"
                         color="positive"
                         icon="check"
-                        label="Approve"
                         @click="$parent.$emit('approve-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Approve user</q-tooltip>
+                    </q-btn>
                     <q-btn
                         v-else
+                        flat
+                        dense
                         size="sm"
                         color="warning"
                         icon="remove_circle"
-                        label="Unapprove"
                         @click="$parent.$emit('unapprove-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Remove approval</q-tooltip>
+                    </q-btn>
                     <q-btn
+                        v-if="!props.row.is_priority"
+                        flat
+                        dense
+                        size="sm"
+                        color="purple"
+                        icon="bolt"
+                        @click="$parent.$emit('prioritise-user', props.row)"
+                    >
+                        <q-tooltip>Make priority user</q-tooltip>
+                    </q-btn>
+                    <q-btn
+                        v-else
+                        flat
+                        dense
+                        size="sm"
+                        color="grey"
+                        icon="bolt"
+                        @click="$parent.$emit('deprioritise-user', props.row)"
+                    >
+                        <q-tooltip>Remove priority</q-tooltip>
+                    </q-btn>
+                    <q-btn
+                        flat
+                        dense
                         size="sm"
                         color="negative"
                         icon="delete"
-                        label="Delete"
                         @click="$parent.$emit('delete-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Delete user</q-tooltip>
+                    </q-btn>
                 </div>
             </q-td>
             """,
@@ -486,6 +627,12 @@ def _render_admin_users_table(
 
         async def unapprove_user(e: Any) -> None:
             await _handle_approval_update(e, is_approved=False, reload_users=reload_users)
+
+        async def prioritise_user(e: Any) -> None:
+            await _handle_priority_update(e, is_priority=True, reload_users=reload_users)
+
+        async def deprioritise_user(e: Any) -> None:
+            await _handle_priority_update(e, is_priority=False, reload_users=reload_users)
 
         async def handle_delete_user(e: Any) -> None:
             user_id = e.args.get("id")
@@ -501,6 +648,8 @@ def _render_admin_users_table(
 
         users_table.on("approve-user", approve_user)
         users_table.on("unapprove-user", unapprove_user)
+        users_table.on("prioritise-user", prioritise_user)
+        users_table.on("deprioritise-user", deprioritise_user)
         users_table.on("delete-user", handle_delete_user)
 
 
@@ -513,17 +662,7 @@ def _open_delete_user_dialog(
     """Open confirmation dialog for user deletion."""
 
     async def do_delete() -> None:
-        try:
-            success, message = await delete_user(UUID(user_id))
-            ui.notify(message, color="positive" if success else "negative")
-            dialog.close()
-            if success:
-                await on_deleted()
-        except ValueError:
-            ui.notify("Invalid user selection", color="negative")
-        except Exception as ex:
-            logger.error("Error deleting user %s: %s", user_id, ex, exc_info=True)
-            ui.notify("Failed to delete user. Check server logs.", color="negative")
+        await _confirm_delete_user(user_id, dialog=dialog, on_deleted=on_deleted)
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Delete User").classes("text-lg font-bold mb-2")
@@ -538,6 +677,29 @@ def _open_delete_user_dialog(
             confirm_props="color=negative",
         )
     dialog.open()
+
+
+async def _confirm_delete_user(
+    user_id: str,
+    *,
+    dialog: ui.dialog,
+    on_deleted: Callable[[], Awaitable[None]],
+) -> None:
+    """Delete a user once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    try:
+        success, message = await delete_user(UUID(user_id))
+        ui.notify(message, color="positive" if success else "negative")
+        dialog.close()
+        if success:
+            await on_deleted()
+    except ValueError:
+        ui.notify("Invalid user selection", color="negative")
+    except Exception as ex:
+        logger.error("Error deleting user %s: %s", user_id, ex, exc_info=True)
+        ui.notify("Failed to delete user. Check server logs.", color="negative")
 
 
 async def render_users_panel() -> None:
@@ -608,15 +770,11 @@ async def render_containers_panel() -> None:
 
 
 def _job_status_color(status: str) -> str:
-    """Map a job status string to a Quasar badge color."""
-    return {
-        "running": "yellow",
-        "queued": "blue",
-        "pending": "grey",
-        "completed": "green",
-        "failed": "red",
-        "cancelled": "grey",
-    }.get(status, "grey")
+    """The badge colour every other page uses for ``status``."""
+    try:
+        return STATUS_COLORS[JobStatus(status)]
+    except ValueError:
+        return "gray"
 
 
 def _render_dashboard_unavailable_state(data: DashboardData) -> bool:
@@ -752,11 +910,13 @@ _REVIEW_TOKEN_ACTIONS_SLOT = r"""
         v-if="props.row.can_revoke"
         flat
         dense
+        size="sm"
         color="negative"
         icon="block"
-        label="Revoke"
         @click="$parent.$emit('revoke', props.row)"
-    />
+    >
+        <q-tooltip>Revoke token</q-tooltip>
+    </q-btn>
     <span v-else class="text-grey">-</span>
 </q-td>
 """
@@ -786,17 +946,48 @@ def _review_token_rows(tokens: list[ReviewToken]) -> list[dict[str, Any]]:
                 "expires_at": token.expires_at.strftime("%Y-%m-%d %H:%M")
                 if token.expires_at
                 else "Never",
-                "can_revoke": token.is_active and not token.is_redeemed,
+                "can_revoke": token.is_active,
             }
         )
     return rows
 
 
+async def _create_review_token(label: str, expiry_days: int) -> None:
+    """Create a review token once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    current_user_id = get_current_user_id()
+    if not current_user_id:
+        ui.notify("You must be signed in", type="negative")
+        return
+
+    expires_at = datetime.now(UTC) + timedelta(days=expiry_days)
+    plaintext = generate_review_token()
+    token_hash = _hash_token(plaintext)
+
+    try:
+        async with get_admin_session() as session:
+            review_token = ReviewToken(
+                token_hash=token_hash,
+                label=label,
+                created_by_id=UUID(current_user_id),
+                expires_at=expires_at,
+            )
+            session.add(review_token)
+            await session.commit()
+    except Exception as exc:
+        logger.error("Failed to create review token: %s", exc, exc_info=True)
+        ui.notify("Failed to create token. Please try again.", type="negative")
+        return
+
+    settings = get_settings()
+    magic_link = f"{settings.auth.app_url}/review/{plaintext}"
+    await _show_token_created_dialog(magic_link)
+
+
 async def render_review_tokens_panel() -> None:
     """Render the review tokens management panel."""
-    from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
-    from openscientist.settings import get_settings
-
     with ui.column().classes("w-full gap-4"):
         ui.markdown("## Review Tokens")
         ui.markdown(
@@ -831,35 +1022,8 @@ async def render_review_tokens_panel() -> None:
                     if not label:
                         ui.notify("Reviewer label is required", type="negative")
                         return
-
-                    current_user_id = get_current_user_id()
-                    if not current_user_id:
-                        ui.notify("You must be signed in", type="negative")
-                        return
-
                     expiry_days = int(expiry_input.value or 30)
-                    expires_at = datetime.now(UTC) + timedelta(days=expiry_days)
-                    plaintext = generate_review_token()
-                    token_hash = _hash_token(plaintext)
-
-                    try:
-                        async with get_admin_session() as session:
-                            review_token = ReviewToken(
-                                token_hash=token_hash,
-                                label=label,
-                                created_by_id=UUID(current_user_id),
-                                expires_at=expires_at,
-                            )
-                            session.add(review_token)
-                            await session.commit()
-                    except Exception as exc:
-                        logger.error("Failed to create review token: %s", exc, exc_info=True)
-                        ui.notify("Failed to create token. Please try again.", type="negative")
-                        return
-
-                    settings = get_settings()
-                    magic_link = f"{settings.auth.app_url}/review/{plaintext}"
-                    await _show_token_created_dialog(magic_link)
+                    await _create_review_token(label, expiry_days)
                     label_input.value = ""
                     await load_tokens()
 
@@ -936,13 +1100,33 @@ async def _show_token_created_dialog(magic_link: str) -> None:
             ui.button(icon="content_copy", on_click=copy_link).props("flat color=primary").tooltip(
                 "Copy to clipboard"
             )
-        ui.markdown(
-            "Send this link to the reviewer. They will be logged in automatically "
-            "when they click it."
-        ).classes("mt-4 text-sm text-gray-600")
+        ui.markdown("Send this link to the reviewer. It opens a sign-in page for them.").classes(
+            "mt-4 text-sm text-gray-600"
+        )
         with ui.row().classes("w-full justify-end mt-4"):
             ui.button("Done", on_click=dialog.close).props("color=primary")
     dialog.open()
+
+
+async def _confirm_revoke_review_token(
+    token_id: str,
+    *,
+    dialog: ui.dialog,
+    on_revoked: Callable[[], Awaitable[None]],
+) -> None:
+    """Revoke a review token once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    try:
+        success, message = await revoke_review_token(UUID(token_id))
+        ui.notify(message, type="positive" if success else "negative")
+        dialog.close()
+        if success:
+            await on_revoked()
+    except Exception as exc:
+        logger.error("Failed to revoke review token: %s", exc, exc_info=True)
+        ui.notify("Failed to revoke token. Please try again.", type="negative")
 
 
 def _open_revoke_token_dialog(
@@ -954,29 +1138,12 @@ def _open_revoke_token_dialog(
     """Open confirmation dialog for token revocation."""
 
     async def do_revoke() -> None:
-        try:
-            async with get_admin_session() as session:
-                result = await session.execute(
-                    select(ReviewToken).where(ReviewToken.id == UUID(token_id))
-                )
-                review_token = result.scalar_one_or_none()
-                if not review_token:
-                    ui.notify("Token not found", type="negative")
-                    dialog.close()
-                    return
-                review_token.is_active = False
-                await session.commit()
-            ui.notify("Token revoked", type="positive")
-            dialog.close()
-            await on_revoked()
-        except Exception as exc:
-            logger.error("Failed to revoke review token: %s", exc, exc_info=True)
-            ui.notify("Failed to revoke token. Please try again.", type="negative")
+        await _confirm_revoke_review_token(token_id, dialog=dialog, on_revoked=on_revoked)
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Revoke Review Token").classes("text-lg font-bold mb-2")
         ui.label(f'Are you sure you want to revoke the token "{token_label}"?').classes("mb-2")
-        ui.label("The reviewer will no longer be able to use this link to log in.").classes(
+        ui.label("The link stops working and the reviewer's open sessions end.").classes(
             "text-sm text-gray-600 mb-4"
         )
         render_dialog_actions(

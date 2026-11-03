@@ -589,6 +589,26 @@ class TestRunIteration:
         assert agent._token_usage.input_tokens > 0
 
     @pytest.mark.asyncio
+    async def test_cancel_still_records_token_usage(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stopping a job cancels its turn, and the stop writes the cost of the
+        iteration in progress, so the partial stream counts here too."""
+        bin_path = tmp_path / "fake_omp"
+        _write_stub(bin_path, _STREAM)
+        monkeypatch.setenv("OPENSCIENTIST_OMP_BIN", str(bin_path))
+        monkeypatch.setenv("OMP_STUB_EMIT_FIRST", "1")
+        monkeypatch.setenv("OMP_STUB_SLEEP", "120")
+        agent = _agent(tmp_path, system_prompt="SYS")
+
+        turn = asyncio.create_task(agent.run_iteration("go"))
+        await asyncio.sleep(2)
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(turn, timeout=30)
+        assert agent.total_tokens.input_tokens > 0
+
+    @pytest.mark.asyncio
     async def test_closed_pipes_without_exit_still_time_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -690,13 +710,14 @@ class TestAuthProvisioning:
         monkeypatch.setenv("OMP_AUTH_HOST_PATH", str(src))
         get_settings.cache_clear()
         job_dir = tmp_path / "job"
-        job_dir.mkdir()
+        # Inside the container the run's home is mounted at the job's .omp-home.
+        home = job_dir / ".omp-home"
+        home.mkdir(parents=True)
         try:
-            OmpAgent.provision_host_prelaunch(get_settings(), job_dir)
+            OmpAgent.provision_run_home(get_settings(), home)
         finally:
             get_settings.cache_clear()
 
-        home = job_dir / ".omp-home"
         assert (home / "agent.db").read_text() == "db"
         assert (home / "config.yml").read_text() == "cfg"
 

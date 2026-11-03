@@ -1,11 +1,8 @@
-"""
-Shared (backend-agnostic) prompt building blocks for the OpenScientist
+"""Shared (backend-agnostic) prompt building blocks for the OpenScientist
 orchestrator.
 
-The system prompt and per-job doc bodies live here, parameterised over a
-small set of backend-divergent fragments (`BackendFragments`) so the
-Claude and Codex variants share one body. See `prompts.claude` /
-`prompts.codex` for the concrete fragments and public entry points.
+The system prompt and per-job doc bodies live here, parameterised over
+``BackendFragments`` so the Claude and Codex variants share one body.
 """
 
 import re
@@ -20,8 +17,8 @@ from ..database.models import Skill
 
 @dataclass(frozen=True)
 class BackendFragments:
-    """The handful of strings that differ between the Claude and Codex
-    agents' built-in tool vocabulary and environment."""
+    """The strings that differ between backends' built-in tool vocabulary and
+    environment."""
 
     skills_location: str
     """Phrase naming where workflow/domain skills live (e.g. the
@@ -34,14 +31,6 @@ class BackendFragments:
     builtin_read_tool_short: str
     """Shorter form of the same, as it appears in the warning line."""
 
-    search_skills_doc: str
-    """The ``**search_skills**`` tool-doc block. Present for Claude, empty for
-    codex (which has no such tool, codex surfaces skills natively)."""
-
-    skills_discovery_note: str
-    """The 'discover additional skills' note. Present for Claude, empty for
-    codex."""
-
     mcp_tool_prefix: str
     """Prepended to every ``openscientist-tools`` tool name the prompts mention,
     so the prompts name tools exactly as the backend exposes them. Empty for
@@ -52,8 +41,8 @@ class BackendFragments:
 #: Every tool the ``openscientist-tools`` MCP server can expose. The prompt
 #: bodies name these in backticks, so a backend that namespaces MCP tools
 #: rewrites the mentions through ``mcp_tool_prefix``. Kept explicit rather than
-#: introspected: prompts are built without a running server, and a stale name
-#: here only means one un-rewritten mention.
+#: introspected because prompts are built without a running server, and a stale
+#: name here only means one un-rewritten mention.
 MCP_TOOL_NAMES: tuple[str, ...] = (
     "execute_code",
     "read_document",
@@ -70,9 +59,8 @@ MCP_TOOL_NAMES: tuple[str, ...] = (
     "parse_alphafold_confidence",
 )
 
-# The three ways a prompt marks a name as a tool to call: backticked, bold, or
-# an actual call. A name already carrying the prefix is preceded by a word
-# character and cannot match.
+# Matches backticked, bold, and call-form tool mentions. A name already
+# carrying the prefix is preceded by a word character and cannot match.
 _MCP_TOOL_MENTION = re.compile(
     r"(?<!\w)(?:`(?P<tick>{names})`|\*\*(?P<bold>{names})\*\*|(?P<call>{names})(?=[ \t]*\())".format(
         names="|".join(MCP_TOOL_NAMES)
@@ -94,13 +82,11 @@ def namespace_tool_mentions(doc: str, prefix: str) -> str:
     Covers every form the prompts use to mark a tool as callable, because the
     skills write ``search_pubmed("...")`` and the shared doc writes
     ``**execute_code**``, and a form left bare teaches a name the backend
-    cannot resolve. An empty prefix is the identity, so Claude and codex
-    bodies are unchanged.
+    cannot resolve. An empty prefix is the identity.
 
     Pass only text this repository authored. A turn prompt also carries the
     scientist's question, description and feedback, and rewriting a tool name
-    inside those puts a question to the model that nobody asked, so callers
-    namespace their own instructions before interpolating anyone else's words.
+    inside those puts a question to the model that nobody asked.
     """
     if not prefix:
         return doc
@@ -159,20 +145,15 @@ def build_job_doc(
     phenix_available: bool = False,
     frags: BackendFragments,
 ) -> str:
-    """Backend-agnostic per-job instructions doc (the `CLAUDE.md` / `AGENTS.md`
-    content), with backend fragments substituted at the end.
+    """Backend-agnostic per-job instructions doc (the ``CLAUDE.md`` /
+    ``AGENTS.md`` content), with backend fragments substituted at the end.
 
-    The body is authored in Claude's vocabulary; the backend-divergent
-    phrases are swapped for ``frags`` so the Claude path is byte-identical
-    (identity substitution) and the Codex path gets its own vocabulary.
-
-    When use_hypotheses is False, the add_hypothesis/update_hypothesis tool
-    docs and the Hypothesis Tracking Workflow section are omitted so the
-    agent is not instructed to call tools that don't exist.
+    The body is authored in Claude's vocabulary, so the backend-divergent
+    phrases are swapped for ``frags``.
     """
     parts: list[str] = []
 
-    # --- Header and mission ---
+    # Header and mission
     parts.append("""\
 # OpenScientist: Scientific Hypothesis Agent for Novel Discovery
 
@@ -208,7 +189,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - Returns: titles, full abstracts, PMIDs
 - Full abstracts are returned so you can extract exact quotes for citations
 {{AIRGAP_SEARCH_NOTE}}
-{{SEARCH_SKILLS_DOC}}**update_knowledge_state** - Record a confirmed finding
+**update_knowledge_state** - Record a confirmed finding
 
 - `title`: Concise finding title
 - `evidence`: Statistical evidence (p-values, effect sizes, confidence intervals)
@@ -220,7 +201,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
   - `explanation`: Brief explanation of why this quote supports the finding
   Snippets are validated against stored abstracts. Use exact text from the abstract.""")
 
-    # --- Hypothesis tools (conditional) ---
+    # Hypothesis tools (conditional)
     if use_hypotheses:
         parts.append("""
 **add_hypothesis** - Record a hypothesis before testing
@@ -236,11 +217,11 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - `p_value`: Statistical p-value as a float (use 0.0 if not applicable)
 - `effect_size`: Effect size as a float (use 0.0 if not applicable)""")
 
-    # --- Remaining core tools ---
+    # Remaining core tools
     parts.append("""
 **read_document** - Extract text from binary documents
 
-- `file_path`: Path to the document on the host job directory (relative to `data/`, or absolute). This is a host-side path, unrelated to the `/data` paths used inside `execute_code`.
+- `file_path`: Path to the document on the host job directory (a bare filename in `data/`, or an absolute path inside the job directory). Only files inside the job directory are readable. This is a host-side path, unrelated to the `/data` paths used inside `execute_code`.
 - Supports: PDF, Word (.docx), Excel (.xlsx)
 - Returns clean text suitable for analysis
 
@@ -265,7 +246,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 - `answer`: 1–3 direct sentences answering the research question
 - Call this after writing `./final_report.md`""")
 
-    # --- Hypothesis Tracking Workflow (conditional) ---
+    # Hypothesis Tracking Workflow (conditional)
     if use_hypotheses:
         parts.append("""
 ### Hypothesis Tracking Workflow
@@ -281,7 +262,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 
 Always use hypothesis tracking — even for literature-only investigations.""")
 
-    # --- Structural Biology Tools (only when Phenix is available) ---
+    # Structural Biology Tools (only when Phenix is available)
     if phenix_available:
         parts.append("""
 ### Structural Biology Tools (Phenix is available)
@@ -311,7 +292,7 @@ Always use hypothesis tracking — even for literature-only investigations.""")
 There are two distinct path worlds. Do not mix them:
 
 - Inside `execute_code`: never open files by a path you typed. Use the pre-loaded `data` DataFrame for the primary file, and `pd.read_csv(data_files[i]["path"])` for any additional file. The `data_files[i]["path"]` values are in-container `/data` paths and are the only correct way to reach files from `execute_code`.
-- `read_document` and the Phenix tools run host-side and take job-directory paths (relative to `data/`, or absolute). Use them only for the file types noted below.
+- `read_document` and the Phenix tools run host-side and read only files inside the job directory (bare filenames in `data/`, or absolute paths inside it). Use them only for the file types noted below.
 
 Use the correct tool for each file type:
 
@@ -349,8 +330,6 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 3. **Every result:** Apply the checklist in `workflow--result-interpretation.md`.
 4. **Choosing next step:** Use `workflow--prioritization.md` to decide what to investigate next.
 5. **Late phase:** Consult `workflow--stopping-criteria.md` to decide when to write the final report.
-
-{{SKILLS_DISCOVERY_NOTE}}
 
 ## Your Approach
 
@@ -489,17 +468,9 @@ def _airgap_search_note() -> str:
 def substitute_fragments(doc: str, frags: BackendFragments) -> str:
     """Swap the backend-divergent phrases in a Claude-authored doc.
 
-    For the Claude fragments these are identity substitutions, so a
-    Claude-authored body is unchanged. For codex they drop the ``search_skills``
-    tool, the ``.claude/skills/`` path, and the ``Read`` tool name. Skill-
-    discovery sentinels are filled first so the codex case drops the
-    ``.claude/skills/`` reference inside the ``search_skills`` block entirely.
-    Shared by the discovery job doc and the chat context so they cannot
-    diverge.
+    Shared by the discovery job doc and the chat context so they cannot diverge.
     """
     doc = doc.replace("{{AIRGAP_SEARCH_NOTE}}", _airgap_search_note())
-    doc = doc.replace("{{SEARCH_SKILLS_DOC}}", frags.search_skills_doc)
-    doc = doc.replace("{{SKILLS_DISCOVERY_NOTE}}", frags.skills_discovery_note)
     doc = doc.replace("`.claude/skills/`", frags.skills_location)
     doc = doc.replace("Claude's built-in `Read` tool", frags.builtin_read_tool)
     doc = doc.replace("Claude's `Read` tool", frags.builtin_read_tool_short)
@@ -522,10 +493,8 @@ def read_chat_template() -> str:
 def render_chat_context(frags: BackendFragments) -> str:
     """The job-chat guidance with backend fragments substituted.
 
-    Routes the chat context through the same substitution as the discovery
-    job doc, so the chat agent is never told about tools or paths its backend
-    lacks. Identity for Claude; for codex it drops the ``Read`` tool name and
-    the ``.claude/skills/`` reference the raw template uses.
+    Uses the same substitution as the discovery job doc, so the chat agent is
+    never told about tools or paths its backend lacks.
     """
     return substitute_fragments(read_chat_template(), frags)
 
@@ -533,17 +502,9 @@ def render_chat_context(frags: BackendFragments) -> str:
 async def get_enabled_skills(
     session: AsyncSession,
 ) -> list[Skill]:
-    """
-    Get all enabled skills.
+    """Get all enabled skills.
 
-    All enabled skills are now available to every job - there is no
-    per-job skill selection.
-
-    Args:
-        session: Database session
-
-    Returns:
-        List of enabled Skill objects
+    Every job can use all of them. There is no per-job skill selection.
     """
     stmt = select(Skill).where(Skill.is_enabled.is_(True)).order_by(Skill.category, Skill.name)
     result = await session.execute(stmt)

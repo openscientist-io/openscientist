@@ -106,3 +106,11 @@ def fake_admin_session(session_obj: Any) -> Any:
         yield session_obj
 
     return _ctx
+
+
+def assert_names_a_build_command(message: str) -> None:
+    """``message`` tells the reader to build the missing images and names the
+    command that builds them."""
+    from openscientist.exceptions import BUILD_IMAGES_COMMAND
+
+    assert BUILD_IMAGES_COMMAND in message, message

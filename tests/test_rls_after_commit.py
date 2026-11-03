@@ -12,26 +12,13 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-import openscientist.database.engine as engine_module
-import openscientist.database.session as session_module
 from openscientist.database.engine import get_engine
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
-from openscientist.job_manager import _job_session
+from openscientist.job.repository import _job_session
 
 _WHO = text("SELECT current_user, current_setting('app.current_user_id', true)")
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def _own_shared_engine() -> AsyncGenerator[None, None]:
-    """The shared pooled engine belongs to one event loop, and each test has its own."""
-    engine_module._engine = None
-    session_module._session_factory = None
-    yield
-    await get_engine().dispose()
-    engine_module._engine = None
-    session_module._session_factory = None
 
 
 @dataclass(frozen=True)

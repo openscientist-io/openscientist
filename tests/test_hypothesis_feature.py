@@ -3,7 +3,7 @@
 Tests cover the full vertical slice:
   tools/knowledge.py → tools/registry.py → agent/claude_code_agent.py →
   agent/factory.py → orchestrator/discovery.py → job_manager.py →
-  database/models/job.py → webapp_components/pages/job_detail.py
+  database/models/job.py → webapp_components/pages/job_detail/
 """
 
 from __future__ import annotations
@@ -251,7 +251,7 @@ class TestGetAgentHypotheses:
 
 
 def _make_mock_session_for_job(job: Any) -> Any:
-    """Build a mock AsyncSessionLocal context manager that returns a single job."""
+    """Build a mock async_session_local context manager that returns a single job."""
     job_result = MagicMock()
     job_result.scalar_one_or_none.return_value = job
 
@@ -289,7 +289,7 @@ class TestLoadRuntimeContextHypotheses:
         job_dir.mkdir()
 
         with patch(
-            "openscientist.orchestrator.discovery.AsyncSessionLocal",
+            "openscientist.orchestrator.discovery.async_session_local",
             return_value=_make_mock_session_for_job(job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -304,7 +304,7 @@ class TestLoadRuntimeContextHypotheses:
         job_dir.mkdir()
 
         with patch(
-            "openscientist.orchestrator.discovery.AsyncSessionLocal",
+            "openscientist.orchestrator.discovery.async_session_local",
             return_value=_make_mock_session_for_job(job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -320,7 +320,7 @@ class TestLoadRuntimeContextHypotheses:
         job_dir.mkdir()
 
         with patch(
-            "openscientist.orchestrator.discovery.AsyncSessionLocal",
+            "openscientist.orchestrator.discovery.async_session_local",
             return_value=_make_mock_session_for_job(job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -337,12 +337,12 @@ class TestLoadRuntimeContextHypotheses:
 
 
 # ---------------------------------------------------------------------------
-# 8. job_manager._db_create_job — DB write path (via mocked session)
+# 8. repository.create_job_row — DB write path (via mocked session)
 # ---------------------------------------------------------------------------
 
 
 class TestDbCreateJobHypotheses:
-    """_db_create_job must build a JobModel with the correct use_hypotheses flag."""
+    """create_job_row must build a JobModel with the correct use_hypotheses flag."""
 
     def _make_session_mock(self) -> tuple[Any, list]:
         """Return (mock_session_cm, captured_jobs_list) for inspecting JobModel instances."""
@@ -360,13 +360,13 @@ class TestDbCreateJobHypotheses:
         return mock_cm, captured
 
     async def test_creates_job_with_use_hypotheses_true(self) -> None:
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Research with hypotheses",
                 max_iterations=3,
@@ -377,13 +377,13 @@ class TestDbCreateJobHypotheses:
         assert captured[0].use_hypotheses is True
 
     async def test_creates_job_with_use_hypotheses_false(self) -> None:
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Research without hypotheses",
                 max_iterations=3,
@@ -395,13 +395,13 @@ class TestDbCreateJobHypotheses:
 
     async def test_creates_job_with_default_use_hypotheses_false(self) -> None:
         """Default must be False so existing callers are not surprised."""
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Default hypotheses test",
                 max_iterations=3,
@@ -411,13 +411,13 @@ class TestDbCreateJobHypotheses:
         assert captured[0].use_hypotheses is False
 
     async def test_creates_job_with_llm_metadata(self) -> None:
-        from openscientist.job_manager import _db_create_job
+        from openscientist.job.repository import create_job_row
 
         mock_cm, captured = self._make_session_mock()
         job_id = str(uuid4())
 
-        with patch("openscientist.job_manager.thread_safe_admin_session", return_value=mock_cm):
-            await _db_create_job(
+        with patch("openscientist.job.repository.thread_safe_admin_session", return_value=mock_cm):
+            await create_job_row(
                 job_id,
                 "Research with model metadata",
                 max_iterations=3,
@@ -465,14 +465,14 @@ class TestStatsBadgesHypotheses:
         )
 
     def test_no_hypotheses_badge_when_count_is_zero(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=3, hyp_count=0)
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
 
     def test_hypotheses_badge_appears_when_count_nonzero(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=3, hyp_count=5)
         badge = self._get_badge(badges, "Hypotheses")
@@ -481,7 +481,7 @@ class TestStatsBadgesHypotheses:
         assert badge[2] == "orange"
 
     def test_findings_badge_still_present_alongside_hypotheses(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(findings=4), lit_count=2, hyp_count=3)
         labels = self._get_labels(badges)
@@ -489,14 +489,37 @@ class TestStatsBadgesHypotheses:
         assert "Hypotheses" in labels
 
     def test_default_hyp_count_zero_omits_badge(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=0)
         labels = self._get_labels(badges)
         assert "Hypotheses" not in labels
 
+    def test_completed_job_with_a_stop_note_shows_it(self) -> None:
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
+
+        job = SimpleNamespace(
+            status=JobStatus.COMPLETED,
+            iterations_completed=2,
+            max_iterations=5,
+            findings_count=0,
+            llm_provider="anthropic",
+            llm_model="m",
+            stop_note="Job cost limit of $5.00 reached: the job has spent $5.00.",
+        )
+        badges = _stats_badges(job, lit_count=0)
+        badge = next((b for b in badges if b[0] == "Stopped early"), None)
+        assert badge is not None
+        assert badge[1] == "Job cost limit of $5.00 reached: the job has spent $5.00."
+
+    def test_completed_job_without_a_stop_note_shows_no_badge(self) -> None:
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
+
+        badges = _stats_badges(self._make_job(), lit_count=0)
+        assert all(b[0] != "Stopped early" for b in badges)
+
     def test_codex_job_shows_agent_and_provider_not_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         # Codex stores no model id, so the badge must read the agent + provider,
         # not the misleading "Model: Openai".
@@ -506,33 +529,33 @@ class TestStatsBadgesHypotheses:
         assert self._get_badge(badges, "Model") is None
 
     def test_azure_openai_job_shows_codex_and_azure_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(llm_provider="azure-openai"), lit_count=0)
         assert self._badge_value(badges, "Agent") == "Codex"
         assert self._badge_value(badges, "Provider") == "Azure OpenAI Service"
         assert self._get_badge(badges, "Model") is None
 
-    def test_ollama_job_shows_codex_and_ollama_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+    def test_ollama_job_shows_omp_and_ollama_provider(self) -> None:
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(llm_provider="ollama"), lit_count=0)
-        assert self._badge_value(badges, "Agent") == "Codex"
+        assert self._badge_value(badges, "Agent") == "Oh My Pi"
         assert self._badge_value(badges, "Provider") == "Ollama (local)"
 
     def test_ollama_job_with_model_shows_provider_and_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="ollama", llm_model="gpt-oss:20b"), lit_count=0
         )
         # Provider (where it is hosted) and model (which one ran) appear together.
-        assert self._badge_value(badges, "Agent") == "Codex"
+        assert self._badge_value(badges, "Agent") == "Oh My Pi"
         assert self._badge_value(badges, "Provider") == "Ollama (local)"
         assert self._badge_value(badges, "Model") == "gpt-oss:20b"
 
     def test_vllm_job_shows_omp_and_vllm_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="vllm", llm_model="Qwen/Qwen3-32B"), lit_count=0
@@ -543,7 +566,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Model") == "Qwen/Qwen3-32B"
 
     def test_llamacpp_job_shows_omp_and_llamacpp_provider(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="llamacpp", llm_model="meta-llama/Llama-3.1-8B-Instruct"),
@@ -555,7 +578,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Model") == "meta-llama/Llama-3.1-8B-Instruct"
 
     def test_claude_job_shows_agent_and_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(llm_provider="anthropic", llm_model="claude-sonnet-4-5-20250929"),
@@ -567,7 +590,7 @@ class TestStatsBadgesHypotheses:
         assert self._badge_value(badges, "Provider") == "Anthropic"
 
     def test_no_provider_omits_agent_badge(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(self._make_job(), lit_count=0)
         labels = self._get_labels(badges)
@@ -575,7 +598,7 @@ class TestStatsBadgesHypotheses:
         assert "Provider" not in labels
 
     def test_model_badge_uses_human_readable_label(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(
@@ -590,7 +613,7 @@ class TestStatsBadgesHypotheses:
         assert badge[2] == "cyan"
 
     def test_missing_model_shows_provider_badge_not_model(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _stats_badges
+        from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
         badges = _stats_badges(
             self._make_job(
@@ -612,7 +635,9 @@ class TestAnalysisLogMetadata:
     """Analysis log helpers should surface concise metadata for the timeline UI."""
 
     def test_search_pubmed_metadata_includes_query_and_result_count(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+        from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _analysis_log_meta_lines,
+        )
 
         lines = _analysis_log_meta_lines(
             {
@@ -629,7 +654,9 @@ class TestAnalysisLogMetadata:
         assert all(line.italic is False for line in lines)
 
     def test_hypothesis_metadata_marks_statement_as_italic(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+        from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _analysis_log_meta_lines,
+        )
 
         lines = _analysis_log_meta_lines(
             {
@@ -648,7 +675,9 @@ class TestAnalysisLogMetadata:
         assert [line.italic for line in lines] == [True, False, False]
 
     def test_execute_code_metadata_adds_duration(self) -> None:
-        from openscientist.webapp_components.pages.job_detail import _analysis_log_meta_lines
+        from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _analysis_log_meta_lines,
+        )
 
         lines = _analysis_log_meta_lines(
             {
@@ -669,7 +698,9 @@ class TestCollectIterationPlots:
     """Plot collection should skip unreadable metadata files instead of crashing."""
 
     def test_skips_non_utf8_metadata_files(self, tmp_path: Path) -> None:
-        from openscientist.webapp_components.pages.job_detail import _collect_iteration_plots
+        from openscientist.webapp_components.pages.job_detail.iterations import (
+            _collect_iteration_plots,
+        )
 
         plots_dir = tmp_path / "provenance"
         plots_dir.mkdir()
@@ -854,10 +885,10 @@ class TestNewJobPageStructure:
 class TestEndToEndHypothesesFlow:
     """Test the full create → persist → read flow for use_hypotheses."""
 
-    def test_create_db_job_record_passes_use_hypotheses_to_db_create_job(
+    async def test_create_db_job_record_passes_use_hypotheses_to_create_job_row(
         self, tmp_path: Path
     ) -> None:
-        """_create_db_job_record(use_hypotheses=True) calls _db_create_job with use_hypotheses=True."""
+        """_create_db_job_record(use_hypotheses=True) calls create_job_row with use_hypotheses=True."""
         from openscientist.job_manager import JobManager
 
         job_id = str(uuid4())
@@ -867,9 +898,9 @@ class TestEndToEndHypothesesFlow:
         jm = JobManager(jobs_dir=jobs_dir)
 
         with patch(
-            "openscientist.job_manager._db_create_job", new_callable=AsyncMock
+            "openscientist.job_manager.create_job_row", new_callable=AsyncMock
         ) as mock_db_create:
-            jm._create_db_job_record(
+            await jm._create_db_job_record(
                 job_id=job_id,
                 research_question="Test",
                 max_iterations=3,
@@ -901,7 +932,7 @@ class TestEndToEndHypothesesFlow:
             investigation_mode="autonomous",
         )
         with patch(
-            "openscientist.orchestrator.discovery.AsyncSessionLocal",
+            "openscientist.orchestrator.discovery.async_session_local",
             return_value=_make_mock_session_for_job(fake_job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -925,7 +956,7 @@ class TestEndToEndHypothesesFlow:
             investigation_mode="autonomous",
         )
         with patch(
-            "openscientist.orchestrator.discovery.AsyncSessionLocal",
+            "openscientist.orchestrator.discovery.async_session_local",
             return_value=_make_mock_session_for_job(fake_job),
         ):
             runtime = await _load_runtime_context(job_dir)
@@ -1009,7 +1040,6 @@ class TestGenerateJobClaudeMd:
         assert "set_job_title" in content
         assert "set_consensus_answer" in content
         assert "read_document" in content
-        assert "search_skills" in content
 
     def test_with_hypotheses_still_contains_core_tools(self) -> None:
         from openscientist.prompts import generate_job_claude_md
@@ -1097,7 +1127,7 @@ class TestWriteSkillsToClaudeDirJobClaudeMd:
 
         agent = ClaudeCodeAgent(AgentConfig(job_dir=tmp_path), StubClaudeProvider())
         with patch(
-            "openscientist.database.session.AsyncSessionLocal",
+            "openscientist.database.session.async_session_local",
             side_effect=Exception("no db"),
         ):
             await agent.prepare_job_workspace(**kwargs)

@@ -9,35 +9,51 @@ import asyncio
 import importlib
 import logging
 import os
+import secrets
+import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from nicegui import app, ui
+from fastapi.staticfiles import StaticFiles
+from nicegui import app, core, ui
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from openscientist.container_manager import get_container_manager
 from openscientist.database.login_guard import (
     DATABASE_SECRETS,
     database_login_problem,
     leaked_database_secrets,
 )
+from openscientist.database.models import Job
+from openscientist.database.rls import APP_ROLE, tables_without_enforced_rls
+from openscientist.exceptions import MissingImageError
 from openscientist.job_manager import JobManager
-from openscientist.security import register_scanner_block_middleware
-from openscientist.settings import get_settings
+from openscientist.listener import ListenerBindError
+from openscientist.security import (
+    register_scanner_block_middleware,
+    register_security_headers_middleware,
+)
+from openscientist.settings import Settings, dev_mode_problems, get_settings
 from openscientist.version import get_version_string
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.badges import register_badge_head_html
+from openscientist.webapp_components.components.common import (
+    _inject_density_styles,
     _inject_thinking_status_styles,
-    register_badge_head_html,
 )
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
+# Pinned Swagger UI and ReDoc bundles, served same-origin by the docs pages.
+DOCS_ASSETS_DIR = Path(__file__).parent / "docs_assets"
 # Path to built-in skills directory at project root
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 JOBS_DIR_ENV = "OPENSCIENTIST_JOBS_DIR"
@@ -70,6 +86,27 @@ def _patch_nicegui_timer() -> None:
 _patch_nicegui_timer()
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _replace_nicegui_500() -> None:
+    """The internal app's 500 page without the exception text, the traceback going to the log."""
+    from nicegui.client import Client
+    from nicegui.error import error_content
+    from nicegui.page import page
+
+    async def _page_500(request: Request, exception: Exception) -> Response:
+        logger.error("Unhandled page exception", exc_info=exception)
+        if not request.scope.get("nicegui_page_path"):
+            raise exception
+        with Client(page(""), request=request) as client:
+            error_content(500)
+        return client.build_response(request, 500)
+
+    # Captured into the middleware stack at build time, so this must run before the first request.
+    app.add_exception_handler(Exception, _page_500)
+
+
+_replace_nicegui_500()
+
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
 # Use override=False so Docker/system env vars take precedence over .env
@@ -99,8 +136,24 @@ _settings_error = _validate_settings()
 if _settings_error is None:
     STORAGE_SECRET = get_settings().auth.storage_secret
 else:
-    # Fallback for import-time usage — app will show config error page
-    STORAGE_SECRET = "unconfigured-fallback"
+    # The error mode has no settings to derive a secret from, so it signs storage per process.
+    STORAGE_SECRET = secrets.token_hex(32)
+
+
+def _require_valid_secret_key() -> None:
+    """Exit when the master secret is missing, the published placeholder, or too short."""
+    try:
+        get_settings()
+    except ValidationError as error:
+        logger.error("Refusing to start: %s", error)
+        raise SystemExit(1) from error
+
+
+def _restrict_socket_io_origins() -> None:
+    """Socket.io handshakes come only from the app's own origin."""
+    parts = urlsplit(get_settings().base_url)
+    allowed = f"{parts.scheme}://{parts.netloc}"
+    core.sio.eio.cors_allowed_origins = lambda requested, _environ: requested == allowed
 
 
 def _create_config_error_page(error_message: str) -> None:
@@ -185,8 +238,10 @@ def _register_api_routes(host_app: FastAPI) -> None:
     """Register REST API routes with the host FastAPI app."""
     try:
         from openscientist.api import api_router
+        from openscientist.api.errors import register_database_error_handlers
 
         host_app.include_router(api_router)
+        register_database_error_handlers(host_app)
         logger.info("REST API routes registered at /api/v1")
     except Exception as e:
         logger.warning("Failed to register API routes: %s", e)
@@ -215,14 +270,23 @@ def _register_download_routes() -> None:
 
 
 def _register_review_routes() -> None:
-    """Register review token redemption route on the NiceGUI app."""
+    """Register review token routes on the NiceGUI app."""
     try:
-        from openscientist.auth.fastapi_routes import redeem_review_token
+        from openscientist.auth.fastapi_routes import (
+            redeem_review_token,
+            review_confirmation_page,
+        )
 
         app.add_api_route(
             "/review/{token}",
-            redeem_review_token,
+            review_confirmation_page,
             methods=["GET"],
+            include_in_schema=False,
+        )
+        app.add_api_route(
+            "/review/{token}",
+            redeem_review_token,
+            methods=["POST"],
             include_in_schema=False,
         )
         logger.info("Review token route registered at /review/{token}")
@@ -236,27 +300,56 @@ _APP_VERSION = "1.0.0"
 _APP_DESCRIPTION = "REST API for Scientific Hypothesis Agent for Novel Discovery"
 
 
+# The docs pages render the vendored bundles and, for ReDoc, spawn a Web
+# Worker from a blob: URL, so they carry their own CSP that adds worker-src
+# blob: to the app's self-only policy. The security-headers middleware
+# leaves responses that already set a CSP untouched.
+_DOCS_CSP = (
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "font-src 'self' data:; "
+    "worker-src 'self' blob:; "
+    "object-src 'none'; "
+    "base-uri 'self'"
+)
+
+
 def _register_openapi_docs(host_app: FastAPI) -> None:
     """Register OpenAPI documentation routes (Swagger UI and ReDoc).
 
-    NiceGUI disables FastAPI's built-in docs, so we add them manually.
+    NiceGUI disables FastAPI's built-in docs, so we add them manually. The
+    Swagger/ReDoc bundles are served same-origin (no CDN) so the pages load
+    under the app's self-only CSP and work air-gapped.
     """
+    host_app.mount("/docs-assets", StaticFiles(directory=str(DOCS_ASSETS_DIR)))
 
     @host_app.get("/api-docs", include_in_schema=False)
     async def swagger_ui_html() -> HTMLResponse:
         """Swagger UI documentation."""
-        return get_swagger_ui_html(
+        response = get_swagger_ui_html(
             openapi_url="/openapi.json",
             title=f"{host_app.title} - Swagger UI",
+            swagger_js_url="/docs-assets/swagger-ui-bundle.js",
+            swagger_css_url="/docs-assets/swagger-ui.css",
+            swagger_favicon_url="/assets/favicon-32.png",
         )
+        response.headers["content-security-policy"] = _DOCS_CSP
+        return response
 
     @host_app.get("/api-redoc", include_in_schema=False)
     async def redoc_html() -> HTMLResponse:
         """ReDoc documentation."""
-        return get_redoc_html(
+        response = get_redoc_html(
             openapi_url="/openapi.json",
             title=f"{host_app.title} - ReDoc",
+            redoc_js_url="/docs-assets/redoc.standalone.js",
+            redoc_favicon_url="/assets/favicon-32.png",
+            with_google_fonts=False,
         )
+        response.headers["content-security-policy"] = _DOCS_CSP
+        return response
 
     @host_app.get("/openapi.json", include_in_schema=False)
     async def openapi_json() -> JSONResponse:
@@ -301,6 +394,10 @@ def _register_apple_touch_icon_redirect(host_app: FastAPI) -> None:
         return RedirectResponse("/assets/apple-touch-icon.png", status_code=301)
 
 
+def _new_job_manager(jobs_dir: Path) -> JobManager:
+    return JobManager(jobs_dir=jobs_dir)
+
+
 def get_job_manager() -> JobManager:
     """
     Get the global job manager instance, initializing if needed.
@@ -313,69 +410,72 @@ def get_job_manager() -> JobManager:
     """
     if _state.job_manager is None:
         logger.warning("Job manager was None, initializing now (likely due to module reload)")
-        _state.job_manager = JobManager(
-            jobs_dir=_state.jobs_dir,
-            max_concurrent=get_settings().max_concurrent_jobs,
-        )
+        _state.job_manager = _new_job_manager(_state.jobs_dir)
     return _state.job_manager
 
 
+#: Mapped tables that hold no per-user rows, so no RLS policy guards them.
+# The admin settings hold deployment-wide policy, not per-user rows.
+_TABLES_WITHOUT_RLS = frozenset(
+    {"pubmed_articles", "pubmed_corpus_meta", "admin_settings", "admin_setting_changes"}
+)
+
+
+class RlsNotEnforcedError(RuntimeError):
+    """A table that holds per-user rows is missing, or its RLS is not both
+    enabled and forced, so the web would serve rows past their policies."""
+
+
 async def _verify_db_connection_and_rls(engine: AsyncEngine) -> None:
-    """Verify database connection, tables, and RLS configuration."""
+    """Verify the database connection and the RLS configuration.
+
+    A database that cannot be reached only logs, so the web still starts and
+    shows its outage page. A reachable database whose RLS is not enforced, on a
+    table that holds per-user rows or through an app role that bypasses it,
+    raises ``RlsNotEnforcedError``, which stops the web from starting.
+
+    Raises:
+        RlsNotEnforcedError: RLS is not enforced on a table or by the app role.
+    """
     from sqlalchemy import text
 
+    protected = frozenset(Job.metadata.tables) - _TABLES_WITHOUT_RLS
     try:
         async with engine.begin() as conn:
-            # Simple query to verify connection
             await conn.execute(text("SELECT 1"))
             logger.info("Database connection verified")
-
-            # Verify RLS is properly configured
-            rls_result = await conn.execute(
-                text(
-                    "SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE relname = 'jobs'"
+            unprotected = await tables_without_enforced_rls(conn, protected)
+            role = (
+                await conn.execute(
+                    text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = :role"),
+                    {"role": APP_ROLE},
                 )
-            )
-            rls_row = rls_result.first()
-            if rls_row is None:
-                logger.warning("RLS CHECK: 'jobs' table not found — migrations may not have run")
-            elif not rls_row[0] or not rls_row[1]:
-                logger.error(
-                    "RLS CHECK FAILED: jobs table has rowsecurity=%s, forcerowsecurity=%s — "
-                    "run 'alembic upgrade head' to fix",
-                    rls_row[0],
-                    rls_row[1],
-                )
-            else:
-                logger.info("RLS CHECK: jobs table has RLS enabled and forced")
-
-            # Verify openscientist_app role exists and is not superuser
-            role_result = await conn.execute(
-                text(
-                    "SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'openscientist_app'"
-                )
-            )
-            role_row = role_result.first()
-            if role_row is None:
-                logger.error(
-                    "RLS CHECK FAILED: 'openscientist_app' role does not exist — "
-                    "run 'alembic upgrade head' to create it"
-                )
-            elif role_row[0]:
-                logger.error(
-                    "RLS CHECK FAILED: 'openscientist_app' role is a SUPERUSER — "
-                    "this bypasses all RLS policies"
-                )
-            elif role_row[1]:
-                logger.error(
-                    "RLS CHECK FAILED: 'openscientist_app' role has BYPASSRLS — "
-                    "this bypasses all RLS policies"
-                )
-            else:
-                logger.info("RLS CHECK: openscientist_app role is correctly configured")
+            ).first()
     except Exception as e:
         logger.error("Database connection failed: %s", e)
         logger.warning("Application will continue but database features may not work")
+        return
+
+    problems = []
+    if unprotected:
+        problems.append(f"RLS is not enabled and forced on {', '.join(unprotected)}")
+    if role is None:
+        problems.append(f"the '{APP_ROLE}' role does not exist")
+    elif role.rolsuper:
+        problems.append(f"the '{APP_ROLE}' role is a SUPERUSER, which bypasses every policy")
+    elif role.rolbypassrls:
+        problems.append(f"the '{APP_ROLE}' role has BYPASSRLS, which bypasses every policy")
+    if problems:
+        raise RlsNotEnforcedError(
+            f"{'; '.join(problems)}. Run 'alembic upgrade head' as the owner, or restore "
+            "the RLS configuration, before starting the web."
+        )
+    logger.info(
+        "RLS CHECK: all %d tables with per-user rows have RLS enabled and forced, and "
+        "the %s role enforces it",
+        len(protected),
+        APP_ROLE,
+    )
 
 
 async def _ensure_default_skill_sources() -> None:
@@ -423,10 +523,47 @@ async def _ensure_default_skill_sources() -> None:
         logger.warning("Failed to seed default skill sources: %s", e)
 
 
+def _missing_container_images() -> list[str] | None:
+    """The agent and executor images Docker does not have, or None when Docker
+    cannot be asked."""
+    manager = get_container_manager()
+    if not manager.is_available():
+        return None
+    container = get_settings().container
+    return [
+        image
+        for image in (container.agent_image, container.executor_image)
+        if not manager.check_image_available(image)
+    ]
+
+
+async def _check_container_images() -> None:
+    """Name at startup each image a job would need and Docker lacks. Docker's
+    client blocks, so the check runs off the event loop."""
+    try:
+        missing = await asyncio.to_thread(_missing_container_images)
+    except Exception as e:
+        logger.warning("Could not check the container images: %s", e)
+        return
+    if missing is None:
+        logger.warning("Docker is not reachable, so the container images were not checked")
+    elif missing:
+        logger.error(
+            "%s Jobs and chat turns fail until the images are built.",
+            " ".join(str(MissingImageError(image)) for image in missing),
+        )
+    else:
+        logger.info("Container images present")
+
+
 async def _start_background_tasks(engine: AsyncEngine) -> None:
     """Start background tasks after database verification."""
     await _verify_db_connection_and_rls(engine)
+    from openscientist.admin_settings import seed_admin_settings
+
+    await seed_admin_settings()
     await _ensure_default_skill_sources()
+    await _check_container_images()
 
     # Start skill sync scheduler
     try:
@@ -437,11 +574,14 @@ async def _start_background_tasks(engine: AsyncEngine) -> None:
     except Exception as e:
         logger.warning("Failed to start skill sync scheduler: %s", e)
 
-    # Start the LLM key-replacement proxy
+    # Start the LLM key-replacement proxy. Agent jobs need it and the execution
+    # broker, so a port that cannot be bound stops the web from starting.
     try:
         from openscientist.llm_proxy import start_llm_proxy
 
         await start_llm_proxy()
+    except ListenerBindError:
+        raise
     except Exception as e:
         logger.warning("Failed to start LLM proxy: %s", e)
 
@@ -451,37 +591,49 @@ async def _start_background_tasks(engine: AsyncEngine) -> None:
 
         await start_exec_broker()
         logger.info("Execution broker started")
+    except ListenerBindError:
+        raise
     except Exception as e:
         logger.warning("Failed to start execution broker: %s", e)
 
-    # Drop database logins that agent containers left behind. The first run
-    # follows JobManager's startup cleanup of stale containers.
+    # Drop database logins and run homes that agent containers left behind, and
+    # harness homes past runs left in job directories. The first run follows
+    # JobManager's startup cleanup of stale containers.
     from openscientist.async_tasks import create_background_task
     from openscientist.job_container.db_login import run_agent_login_reaper
+    from openscientist.job_manager import run_budget_queue_recheck
 
-    create_background_task(run_agent_login_reaper(), name="agent-login-reaper", logger=logger)
+    create_background_task(
+        run_agent_login_reaper(_state.jobs_dir), name="agent-login-reaper", logger=logger
+    )
+
+    # The queue is picked on a slot freeing alone, so a project limit holding a
+    # job back would otherwise wait for a slot free that may never come.
+    create_background_task(
+        run_budget_queue_recheck(get_job_manager()),
+        name="budget-queue-recheck",
+        logger=logger,
+    )
 
 
 def _initialize_job_manager_runtime(jobs_dir: Path) -> None:
     if _state.job_manager is not None:
         return
-    _state.job_manager = JobManager(
-        jobs_dir=jobs_dir,
-        max_concurrent=get_settings().max_concurrent_jobs,
-    )
+    _state.job_manager = _new_job_manager(jobs_dir)
+    # Recovery waits out a database that is still down, so startup does not.
+    threading.Thread(
+        target=_state.job_manager.recover_after_restart, name="job-recovery", daemon=True
+    ).start()
 
 
-def _register_nicegui_static_files(jobs_dir: Path) -> None:
-    """Register static files on the mounted NiceGUI app.
-
-    This preserves existing routing behavior where the `/jobs` UI page
-    wins for the exact path, while `/jobs/*` serves generated artifacts.
-    """
-    for mount, directory in (("/jobs", jobs_dir), ("/assets", ASSETS_DIR)):
-        try:
-            app.add_static_files(mount, str(directory))
-        except (RuntimeError, ValueError) as e:
-            logger.debug("Static files already registered for %s: %s", mount, e)
+def _register_nicegui_static_files() -> None:
+    """Register the static assets on the mounted NiceGUI app. Job files are
+    not static, since only users who may see the job get them, through
+    ``artifact_routes``."""
+    try:
+        app.add_static_files("/assets", str(ASSETS_DIR))
+    except (RuntimeError, ValueError) as e:
+        logger.debug("Static files already registered for /assets: %s", e)
 
 
 def _jobs_dir_from_env(default: Path = Path("jobs")) -> Path:
@@ -496,6 +648,8 @@ def _create_lifespan() -> Callable[[FastAPI], AbstractAsyncContextManager[None]]
 
             engine = get_engine()
             await _start_background_tasks(engine)
+        except (ListenerBindError, RlsNotEnforcedError):
+            raise
         except Exception as e:
             logger.error("Failed to initialize database: %s", e)
             logger.warning("Application will continue but database features may not work")
@@ -531,7 +685,9 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     if _state.app_configured:
         return
 
-    # Middleware and routes must be registered before startup.
+    # Middleware and routes must be registered before startup. The scanner
+    # middleware stays outermost so probe 404s carry no app headers.
+    register_security_headers_middleware(host_app)
     register_scanner_block_middleware(host_app)
     _register_openapi_docs(host_app)
     _register_health_endpoint(host_app)
@@ -547,11 +703,13 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
 
     # Import page modules so @ui.page decorators are registered.
     importlib.import_module("openscientist.webapp_components.pages")
-    _register_nicegui_static_files(jobs_dir)
+    _register_nicegui_static_files()
     _register_pwa_metadata()
     register_badge_head_html()
+    _inject_density_styles()
     _inject_thinking_status_styles()
 
+    _restrict_socket_io_origins()
     ui.run_with(
         host_app,
         mount_path="/",
@@ -567,6 +725,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
 
 def create_app(jobs_dir: Path | None = None) -> FastAPI:
     """Create a host FastAPI app and mount NiceGUI at root."""
+    _require_valid_secret_key()
     resolved_jobs_dir = Path(jobs_dir) if jobs_dir is not None else _jobs_dir_from_env()
 
     if _state.host_app is not None:
@@ -612,6 +771,15 @@ def _refuse_unsafe_database_login(database_url: str) -> None:
         raise SystemExit(1)
 
 
+def _refuse_unsafe_dev_mode(settings: Settings) -> None:
+    """Exit when dev mode would expose the mock logins past this machine."""
+    problems = dev_mode_problems(settings)
+    for message in problems:
+        logger.error("Refusing to start: %s", message)
+    if problems:
+        raise SystemExit(1)
+
+
 def main(
     host: str = "0.0.0.0",
     port: int = 8080,
@@ -636,6 +804,8 @@ def main(
     logger.info(get_version_string())
     logger.info("=" * 60)
 
+    _require_valid_secret_key()
+
     # Check for configuration errors
     if _settings_error is not None:
         logger.error("Configuration error: %s", _settings_error)
@@ -643,6 +813,7 @@ def main(
 
         # Create the error page and run with minimal config
         _create_config_error_page(_settings_error)
+        _restrict_socket_io_origins()
 
         ui.run(
             host=host,
@@ -659,8 +830,10 @@ def main(
 
     from openscientist.settings import get_settings
 
-    _refuse_unsafe_database_login(get_settings().database.database_url)
-    reload = get_settings().dev.dev_mode
+    settings = get_settings()
+    _refuse_unsafe_database_login(settings.database.database_url)
+    _refuse_unsafe_dev_mode(settings)
+    reload = settings.dev.dev_mode
     os.environ[JOBS_DIR_ENV] = str(jobs_dir)
 
     logger.info("Starting NiceGUI server on %s:%s (reload=%s)", host, port, reload)

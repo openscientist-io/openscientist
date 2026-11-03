@@ -5,7 +5,28 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openscientist.providers.bedrock import BedrockProvider
+from openscientist.providers.bedrock import BedrockProvider, SigV4Signing, sigv4_signing_for
+
+
+def verify_sigv4(
+    recorded: dict, *, access_key: str, secret: str, region: str, service: str = "bedrock-runtime"
+) -> None:
+    """Recompute the SigV4 signature over the stub's received request and check
+    the ``Authorization`` header the proxy sent. A match means the forwarded
+    request verifies against the web's credential."""
+    from botocore.auth import SigV4Auth  # type: ignore[import-untyped]
+    from botocore.awsrequest import AWSRequest  # type: ignore[import-untyped]
+    from botocore.credentials import Credentials  # type: ignore[import-untyped]
+
+    url = f"https://{recorded['host']}{recorded['path']}"
+    if recorded["query"]:
+        url = f"{url}?{recorded['query']}"
+    request = AWSRequest(method=recorded["method"], url=url)
+    if recorded["body"]:
+        request.data = recorded["body"]
+    request.headers["X-Amz-Date"] = recorded["headers"]["x-amz-date"]
+    SigV4Auth(Credentials(access_key, secret), service, region).add_auth(request)
+    assert request.headers["Authorization"] == recorded["headers"]["authorization"]
 
 
 class TestBedrockProviderValidation:
@@ -221,38 +242,315 @@ class TestBedrockClaudeCompatible:
         assert any("AWS_REGION" in e for e in errors)
         assert any("credentials" in e.lower() for e in errors)
 
-    def test_claude_sdk_env_access_key_mode(self) -> None:
+    def test_claude_sdk_env_holds_no_aws_credential(self) -> None:
+        # The web signs every request, so the container env carries only the
+        # routing flag and the region, never the AWS credential.
         settings = _mock_settings(region="eu-west-1", access_key="AKIA9", secret="shh")
         with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
             env = BedrockProvider().claude_sdk_env()
         assert env == {
             "CLAUDE_CODE_USE_BEDROCK": "1",
             "AWS_REGION": "eu-west-1",
-            "AWS_ACCESS_KEY_ID": "AKIA9",
-            "AWS_SECRET_ACCESS_KEY": "shh",
         }
 
-    def test_claude_sdk_env_profile_mode(self) -> None:
+    def test_claude_sdk_env_omits_bearer_and_profile(self) -> None:
         settings = _mock_settings(
-            region="us-east-1", access_key=None, secret=None, profile="bedrock-prof"
+            region="us-east-1",
+            access_key=None,
+            secret=None,
+            profile="bedrock-prof",
+            bearer="bt-real",
         )
         with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
             env = BedrockProvider().claude_sdk_env()
         assert env == {
             "CLAUDE_CODE_USE_BEDROCK": "1",
             "AWS_REGION": "us-east-1",
-            "AWS_PROFILE": "bedrock-prof",
         }
 
     def test_claude_model_name_uses_configured_model(self) -> None:
         settings = _mock_settings(model="bedrock-custom")
-        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+        with (
+            patch("openscientist.providers.bedrock.get_settings", return_value=settings),
+            patch("openscientist.providers.base.get_settings", return_value=settings),
+        ):
             assert BedrockProvider().claude_model_name() == "bedrock-custom"
 
-    def test_claude_model_name_falls_back_to_bedrock_default(self) -> None:
-        settings = _mock_settings(model=None)
-        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
-            assert (
-                BedrockProvider().claude_model_name()
-                == "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+
+class TestSigV4Signing:
+    """The proxy-side AWS SigV4 signing: resolves through botocore's chain,
+    refreshes as botocore does, and signs the bedrock-runtime host."""
+
+    def test_signs_with_the_web_credentials(self, monkeypatch) -> None:
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        signing = SigV4Signing(region="us-east-1")
+        headers = signing.credential_headers(
+            method="POST", path="/model/m/invoke", query="", body=b"{}"
+        )
+        assert headers["authorization"].startswith("AWS4-HMAC-SHA256")
+        assert "/us-east-1/bedrock-runtime/aws4_request" in headers["authorization"]
+        assert "x-amz-date" in headers
+
+    def test_signature_verifies_against_the_web_credential(self, monkeypatch) -> None:
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        signing = SigV4Signing(region="eu-west-2")
+        path = "/model/us.anthropic.claude-sonnet-5-5/invoke-with-response-stream"
+        headers = signing.credential_headers(method="POST", path=path, query="", body=b"{}")
+        # The stub receives the request to the regional host; verify it.
+        verify_sigv4(
+            {
+                "method": "POST",
+                "host": "bedrock-runtime.eu-west-2.amazonaws.com",
+                "path": path,
+                "query": "",
+                "headers": {
+                    "authorization": headers["authorization"],
+                    "x-amz-date": headers["x-amz-date"],
+                },
+                "body": b"{}",
+            },
+            access_key="TESTAKID",
+            secret="TESTSECRET",
+            region="eu-west-2",
+        )
+
+    def test_a_wrong_credential_fails_verification(self, monkeypatch) -> None:
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        signing = SigV4Signing(region="us-east-1")
+        path = "/model/m/invoke"
+        headers = signing.credential_headers(method="POST", path=path, query="", body=b"{}")
+        with pytest.raises(AssertionError):
+            verify_sigv4(
+                {
+                    "method": "POST",
+                    "host": "bedrock-runtime.us-east-1.amazonaws.com",
+                    "path": path,
+                    "query": "",
+                    "headers": {
+                        "authorization": headers["authorization"],
+                        "x-amz-date": headers["x-amz-date"],
+                    },
+                    "body": b"{}",
+                },
+                access_key="OTHERAKID",
+                secret="OTHERSECRET",
+                region="us-east-1",
             )
+
+    def test_the_session_token_is_signed(self, monkeypatch) -> None:
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.setenv("AWS_SESSION_TOKEN", "sess-token")
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        signing = SigV4Signing(region="us-east-1")
+        headers = signing.credential_headers(
+            method="POST", path="/model/m/invoke", query="", body=b"{}"
+        )
+        assert headers["x-amz-security-token"] == "sess-token"
+        assert "x-amz-security-token" in headers["authorization"].lower().split("signedheaders=")[1]
+
+    def test_upstream_url_is_the_bedrock_host(self) -> None:
+        signing = SigV4Signing(region="us-east-1")
+        assert signing.base_url == "https://bedrock-runtime.us-east-1.amazonaws.com"
+        assert (
+            signing.upstream_url(base_url=signing.base_url, path="/model/m/invoke", query="x=1")
+            == "https://bedrock-runtime.us-east-1.amazonaws.com/model/m/invoke?x=1"
+        )
+
+    def test_missing_credentials_refuse_to_sign(self, monkeypatch) -> None:
+        for key in (
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_PROFILE",
+        ):
+            monkeypatch.delenv(key, raising=False)
+
+        class _EmptySession:
+            def get_credentials(self):
+                return None
+
+        from openscientist.exceptions import ProviderError
+
+        signing = SigV4Signing(region="us-east-1", session=_EmptySession())
+        with pytest.raises(ProviderError, match="AWS credentials"):
+            signing.credential_headers(method="POST", path="/x", query="", body=b"{}")
+
+
+class _FrozenCreds:
+    def __init__(self, access: str, secret: str) -> None:
+        self.access_key = access
+        self.secret_key = secret
+        self.token = None
+
+
+class _RefreshableCreds:
+    """Mimics a refreshable botocore credential: each frozen read returns the
+    next key in a sequence, so a refresh yields a different signature."""
+
+    def __init__(self) -> None:
+        self._seq = 0
+
+    def get_frozen_credentials(self) -> _FrozenCreds:
+        self._seq += 1
+        return _FrozenCreds(f"AK-{self._seq}", f"SK-{self._seq}")
+
+
+class _FakeSession:
+    def __init__(self, credentials: object) -> None:
+        self._credentials = credentials
+
+    def get_credentials(self):
+        return self._credentials
+
+
+class TestSigV4Refresh:
+    """The signing re-reads the credential's frozen value per request, the way
+    botocore refreshes a credential past its staleness window."""
+
+    def test_a_refreshed_credential_changes_the_signature(self) -> None:
+        signing = SigV4Signing(region="us-east-1", session=_FakeSession(_RefreshableCreds()))
+        first = signing.credential_headers(method="POST", path="/x", query="", body=b"{}")
+        second = signing.credential_headers(method="POST", path="/x", query="", body=b"{}")
+        assert first["authorization"] != second["authorization"]
+        # Each signature verifies against the key it was frozen with.
+        verify_sigv4(
+            {
+                "method": "POST",
+                "host": "bedrock-runtime.us-east-1.amazonaws.com",
+                "path": "/x",
+                "query": "",
+                "headers": {
+                    "authorization": first["authorization"],
+                    "x-amz-date": first["x-amz-date"],
+                },
+                "body": b"{}",
+            },
+            access_key="AK-1",
+            secret="SK-1",
+            region="us-east-1",
+        )
+        verify_sigv4(
+            {
+                "method": "POST",
+                "host": "bedrock-runtime.us-east-1.amazonaws.com",
+                "path": "/x",
+                "query": "",
+                "headers": {
+                    "authorization": second["authorization"],
+                    "x-amz-date": second["x-amz-date"],
+                },
+                "body": b"{}",
+            },
+            access_key="AK-2",
+            secret="SK-2",
+            region="us-east-1",
+        )
+
+    def test_sigv4_signing_for_caches_per_region(self) -> None:
+        assert sigv4_signing_for("us-east-1") is sigv4_signing_for("us-east-1")
+        assert sigv4_signing_for("us-east-1") is not sigv4_signing_for("eu-west-1")
+
+
+class TestBedrockUpstream:
+    """The proxy's upstream for Bedrock: the web signs (SigV4) or injects the
+    bearer, and the container holds no credential of its own."""
+
+    def test_sigv4_upstream_signs_with_the_web_credential(self, monkeypatch) -> None:
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
+        settings = _mock_settings(region="eu-west-1", bearer=None)
+        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+            upstream = BedrockProvider().llm_upstream()
+        assert upstream is not None
+        assert upstream.base_url == "https://bedrock-runtime.eu-west-1.amazonaws.com"
+        assert isinstance(upstream.signing, SigV4Signing)
+
+    def test_bearer_upstream_injects_the_bearer(self) -> None:
+        settings = _mock_settings(
+            region="us-east-1", access_key=None, secret=None, bearer="bt-real"
+        )
+        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+            upstream = BedrockProvider().llm_upstream()
+        assert upstream is not None
+        assert upstream.base_url == "https://bedrock-runtime.us-east-1.amazonaws.com"
+        assert upstream.signing is not None
+
+    def test_upstream_is_none_without_a_region(self) -> None:
+        # Constructed with a valid region, then reads a region-less config:
+        # no region, no host, so the proxy has no upstream to forward to.
+        valid = _mock_settings(region="us-east-1", access_key="AKIA9", secret="shh")
+        with patch("openscientist.providers.bedrock.get_settings", return_value=valid):
+            provider = BedrockProvider()
+        no_region = _mock_settings(region=None, access_key="AKIA9", secret="shh")
+        with patch("openscientist.providers.bedrock.get_settings", return_value=no_region):
+            assert provider.llm_upstream() is None
+
+
+class TestBedrockProxiedContainerEnv:
+    """The container env for Bedrock: routed at the proxy, holding no AWS
+    credential, with the gateway bearer (SigV4) or the Bedrock bearer."""
+
+    def test_sigv4_gateway_mode_routes_the_container_through_the_proxy(self) -> None:
+        settings = _mock_settings(region="us-east-1", access_key="AKIA9", secret="shh", bearer=None)
+        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+            env = BedrockProvider().proxy_env_overrides(
+                proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
+            )
+        assert env == {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "ANTHROPIC_BEDROCK_BASE_URL": "http://openscientist:8081",
+            "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
+            "ANTHROPIC_AUTH_TOKEN": "job-1.tok",
+        }
+
+    def test_bearer_mode_sets_the_bedrock_bearer(self) -> None:
+        settings = _mock_settings(
+            region="us-east-1", access_key=None, secret=None, bearer="bt-real"
+        )
+        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+            env = BedrockProvider().proxy_env_overrides(
+                proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
+            )
+        assert env["ANTHROPIC_BEDROCK_BASE_URL"] == "http://openscientist:8081"
+        assert env["AWS_BEARER_TOKEN_BEDROCK"] == "job-1.tok"
+        assert "CLAUDE_CODE_SKIP_BEDROCK_AUTH" not in env
+
+    def test_airgap_posture_is_the_proxy(self) -> None:
+        from openscientist.providers.base import AirgapEgress
+
+        sigv4 = _mock_settings(region="us-east-1", access_key="AKIA9", secret="shh")
+        assert BedrockProvider.airgap_posture(sigv4.provider).mode == AirgapEgress.PROXY
+        bearer = _mock_settings(region="us-east-1", access_key=None, secret=None, bearer="bt-real")
+        assert BedrockProvider.airgap_posture(bearer.provider).mode == AirgapEgress.PROXY
+
+
+class TestBedrockOmpHarness:
+    """omp at Bedrock is refused: it cannot be routed through the proxy, so it
+    fails fast at launch with no direct egress and no in-container credential."""
+
+    def test_omp_sigv4_is_refused(self) -> None:
+        settings = _mock_settings(region="us-east-1", access_key="AKIA9", secret="shh")
+        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+            with pytest.raises(ValueError, match="omp harness"):
+                BedrockProvider().harness_env(proxy="http://openscientist:8081")
+
+    def test_omp_bearer_is_refused(self) -> None:
+        settings = _mock_settings(
+            region="us-east-1", access_key=None, secret=None, bearer="bt-real"
+        )
+        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
+            with pytest.raises(ValueError, match="omp harness"):
+                BedrockProvider().harness_env(proxy="http://openscientist:8081")

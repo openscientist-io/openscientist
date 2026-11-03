@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from openscientist.knowledge_state import KnowledgeState
@@ -11,7 +12,7 @@ from openscientist_tools.state import STATE
 
 
 @mcp.tool()
-def search_pubmed(query: str, max_results: int = 10, description: str = "") -> str:
+async def search_pubmed(query: str, max_results: int = 10, description: str = "") -> str:
     """Search PubMed for scientific papers.
 
     Args:
@@ -22,13 +23,13 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
     Returns:
         Formatted list of papers with titles, abstracts, and PMIDs
     """
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
 
     short_query = query[:60] + "..." if len(query) > 60 else query
     ks.set_agent_status(f"Searching PubMed: {short_query}")
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
 
-    papers = _backend_search_pubmed(query, max_results=max_results)
+    papers = await asyncio.to_thread(_backend_search_pubmed, query, max_results=max_results)
 
     for paper in papers:
         ks.add_literature(
@@ -44,7 +45,7 @@ def search_pubmed(query: str, max_results: int = 10, description: str = "") -> s
         results_count=len(papers),
         description=description,
     )
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
 
     if not papers:
         return f"No papers found for query: '{query}'"

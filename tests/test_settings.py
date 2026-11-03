@@ -16,6 +16,7 @@ from openscientist.settings import (
     ProviderSettings,
     clear_settings_cache,
     get_settings,
+    phenix_installation_ok,
 )
 
 
@@ -214,59 +215,25 @@ class TestHarnessSelection:
 
 
 class TestProviderIdEnvVar:
-    """Tests for OPENSCIENTIST_PROVIDER and rejection of the removed CLAUDE_PROVIDER."""
+    """Tests for the OPENSCIENTIST_PROVIDER env var."""
 
     def test_canonical_env_var_resolves(self, monkeypatch, tmp_path):
         """OPENSCIENTIST_PROVIDER is the canonical env-var name."""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("CLAUDE_PROVIDER", raising=False)
         monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
         settings = ProviderSettings()
         assert settings.provider_id == "anthropic"
 
-    def test_legacy_env_var_raises_clear_error(self, monkeypatch, tmp_path):
-        """Setting the removed CLAUDE_PROVIDER raises with a rename hint."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("OPENSCIENTIST_PROVIDER", raising=False)
-        monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
-        with pytest.raises(ValueError, match="CLAUDE_PROVIDER has been renamed"):
-            ProviderSettings()
-
-    def test_legacy_env_var_rejected_even_when_canonical_also_set(self, monkeypatch, tmp_path):
-        """Both env vars set together still raises so users notice the leftover."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
-        monkeypatch.setenv("CLAUDE_PROVIDER", "anthropic")
-        with pytest.raises(ValueError, match="CLAUDE_PROVIDER has been renamed"):
-            ProviderSettings()
-
 
 class TestModelEnvVar:
-    """Tests for OPENSCIENTIST_MODEL and rejection of the removed ANTHROPIC_MODEL."""
+    """Tests for the OPENSCIENTIST_MODEL env var."""
 
     def test_canonical_env_var_resolves(self, monkeypatch, tmp_path):
         """OPENSCIENTIST_MODEL is the canonical env-var name."""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         monkeypatch.setenv("OPENSCIENTIST_MODEL", "claude-sonnet-4-6")
         settings = ProviderSettings()
         assert settings.model == "claude-sonnet-4-6"
-
-    def test_legacy_env_var_raises_clear_error(self, monkeypatch, tmp_path):
-        """Setting the removed ANTHROPIC_MODEL raises with a rename hint."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("OPENSCIENTIST_MODEL", raising=False)
-        monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-        with pytest.raises(ValueError, match="ANTHROPIC_MODEL has been renamed"):
-            ProviderSettings()
-
-    def test_legacy_env_var_rejected_even_when_canonical_also_set(self, monkeypatch, tmp_path):
-        """Both env vars set together still raises so users notice the leftover."""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("OPENSCIENTIST_MODEL", "claude-sonnet-4-6")
-        monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-        with pytest.raises(ValueError, match="ANTHROPIC_MODEL has been renamed"):
-            ProviderSettings()
 
 
 class TestModelFormatValidation:
@@ -347,7 +314,7 @@ class TestModelFormatValidation:
 class TestProviderContainerEnvVars:
     """Tests for ProviderSettings.get_container_env_vars()."""
 
-    def test_vertex_env_vars_use_container_credentials_path_override(self):
+    def test_vertex_env_vars_carry_no_gcp_credential(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="vertex",
             ANTHROPIC_VERTEX_PROJECT_ID="vertex-proj",
@@ -356,14 +323,18 @@ class TestProviderContainerEnvVars:
             CLOUD_ML_REGION="us-east5",
         )
 
-        env = settings.get_container_env_vars(gcp_credentials_container_path="/agent/gcp.json")
+        env = settings.get_container_env_vars()
 
         assert env["OPENSCIENTIST_PROVIDER"] == "vertex"
         assert env["CLAUDE_CODE_USE_VERTEX"] == "1"
-        assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/agent/gcp.json"
+        assert env["ANTHROPIC_VERTEX_PROJECT_ID"] == "vertex-proj"
+        # The web's credential is never published into the container env.
+        assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
         assert "CLAUDE_CODE_USE_BEDROCK" not in env
 
-    def test_bedrock_env_vars_include_flag_and_credentials(self):
+    def test_bedrock_env_vars_hold_no_aws_credential(self):
+        # The web signs every Bedrock request, so the container env carries the
+        # routing flag and region but never the AWS credential.
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="bedrock",
             AWS_REGION="us-east-1",
@@ -376,8 +347,10 @@ class TestProviderContainerEnvVars:
         assert env["OPENSCIENTIST_PROVIDER"] == "bedrock"
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
         assert env["AWS_REGION"] == "us-east-1"
-        assert env["AWS_ACCESS_KEY_ID"] == "AKIAIOSFODNN7EXAMPLE"
-        assert env["AWS_SECRET_ACCESS_KEY"] == "secret"
+        assert "AWS_ACCESS_KEY_ID" not in env
+        assert "AWS_SECRET_ACCESS_KEY" not in env
+        assert "AWS_PROFILE" not in env
+        assert "AWS_SESSION_TOKEN" not in env
         assert "CLAUDE_CODE_USE_VERTEX" not in env
 
     def test_openai_api_key_passed_for_codex_provider(self):
@@ -427,7 +400,7 @@ class TestProviderContainerEnvVars:
         assert "AZURE_OPENAI_API_KEY" not in env
         assert "AZURE_OPENAI_RESOURCE" not in env
 
-    def test_ollama_vars_passed_for_codex_provider(self):
+    def test_ollama_vars_passed_for_ollama_provider(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="ollama",
             OLLAMA_BASE_URL="http://host.docker.internal:11434/v1",
@@ -692,19 +665,20 @@ class TestBudgetSettings:
     def test_zero_budget_rejected(self):
         """Zero budget is rejected."""
         with pytest.raises(ValidationError) as exc_info:
-            BudgetSettings(APP_MAX_BUDGET_USD=0)
+            BudgetSettings(MAX_JOB_COST_USD=0)
         assert "must be positive" in str(exc_info.value)
 
     def test_valid_budget_values(self):
         """Valid budget values pass validation."""
         settings = BudgetSettings(
-            MAX_PROJECT_SPEND_WARN=50.0,
-            MAX_PROJECT_SPEND_HARD=200.0,
             MAX_JOB_COST_USD=5.0,
-            APP_MAX_BUDGET_USD=500.0,
+            MAX_PROJECT_SPEND_TOTAL_USD=1000.0,
+            MAX_PROJECT_SPEND_24H_USD=50.0,
+            WARN_PROJECT_SPEND_24H_USD=40.0,
         )
         assert settings.max_job_cost_usd == 5.0
-        assert settings.app_max_budget_usd == 500.0
+        assert settings.max_project_spend_total_usd == 1000.0
+        assert settings.warn_project_spend_24h_usd == 40.0
 
 
 class TestPhenixSettings:
@@ -749,14 +723,14 @@ class TestPhenixSettings:
         # But is_available returns False
         assert settings.is_available is False
 
-    def test_phenix_file_instead_of_directory(self):
+    def test_phenix_file_instead_of_directory(self, tmp_path):
         """PHENIX_PATH pointing to a file (not directory) results in is_available=False."""
-        with patch("os.path.isdir", return_value=False):
-            settings = PhenixSettings(PHENIX_PATH="/some/file.txt")
-            # Format is valid, so accepted
-            assert settings.phenix_path == "/some/file.txt"
-            # But is_available returns False because it's not a directory
-            assert settings.is_available is False
+        file = tmp_path / "phenix.txt"
+        file.write_text("not a directory")
+        settings = PhenixSettings(PHENIX_PATH=str(file))
+        assert settings.phenix_path == str(file)
+        # But is_available returns False because it's not a directory
+        assert settings.is_available is False
 
     def test_phenix_path_none_is_valid(self):
         """None PHENIX_PATH is valid (Phenix is optional)."""
@@ -769,19 +743,31 @@ class TestPhenixSettings:
         settings = PhenixSettings(PHENIX_HOST_PATH=None)
         assert settings.phenix_host_path is None
 
-    def test_phenix_is_available_checks_phenix_about(self):
-        """is_available is True when bin/phenix.about exists (2.x layout)."""
-        with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
-            mock_exists.side_effect = lambda _p: True
-            settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
-            assert settings.is_available is True
+    def test_phenix_is_available_checks_phenix_about(self, tmp_path):
+        """is_available is True when bin/phenix.about is a regular file (2.x layout)."""
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "phenix.about").write_text("phenix 2.x")
+        settings = PhenixSettings(PHENIX_PATH=str(tmp_path))
+        assert settings.is_available is True
 
-    def test_phenix_not_available_without_phenix_about(self):
+    def test_phenix_not_available_without_phenix_about(self, tmp_path):
         """is_available is False when bin/phenix.about is missing."""
-        with patch("os.path.exists") as mock_exists, patch("os.path.isdir", return_value=True):
-            mock_exists.side_effect = lambda path: "phenix.about" not in path
-            settings = PhenixSettings(PHENIX_PATH="/opt/phenix")
-            assert settings.is_available is False
+        (tmp_path / "bin").mkdir()
+        settings = PhenixSettings(PHENIX_PATH=str(tmp_path))
+        assert settings.is_available is False
+
+    def test_phenix_installation_ok_on_real_trees(self, tmp_path):
+        """phenix_installation_ok on real temp trees: regular file ok, dir, missing file and missing bin not."""
+        about = tmp_path / "bin" / "phenix.about"
+        about.parent.mkdir()
+        about.write_text("phenix 2.x")
+        assert phenix_installation_ok(str(tmp_path)) is True
+        (tmp_path / "dirabout" / "bin" / "phenix.about").mkdir(parents=True)
+        assert phenix_installation_ok(str(tmp_path / "dirabout")) is False
+        (tmp_path / "nofile" / "bin").mkdir(parents=True)
+        assert phenix_installation_ok(str(tmp_path / "nofile")) is False
+        (tmp_path / "nobin").mkdir()
+        assert phenix_installation_ok(str(tmp_path / "nobin")) is False
 
 
 class TestFileSettings:

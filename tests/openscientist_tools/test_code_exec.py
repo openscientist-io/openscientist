@@ -25,10 +25,10 @@ from sqlalchemy import delete
 
 from openscientist import exec_broker
 from openscientist.container_manager import get_container_manager
-from openscientist.database import AsyncSessionLocal
+from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
 from openscientist.exec_broker_client import BrokerError
-from openscientist.job_container.secrets import make_exec_placeholder
+from openscientist.job_container.secrets import issue_run_credentials, revoke_run_credentials
 from openscientist.knowledge_state import KnowledgeState
 from openscientist_tools import code_exec as code_exec_module
 from openscientist_tools.code_exec import execute_code
@@ -63,10 +63,7 @@ def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generato
         container=SimpleNamespace(container_app_dir=str(tmp_path), host_project_dir=None),
     )
     monkeypatch.setattr(exec_broker, "get_settings", lambda: fake_settings)
-    app = exec_broker.create_exec_broker_app(
-        master_key=lambda: fake_settings.secret_key,
-        manager=get_container_manager,
-    )
+    app = exec_broker.create_exec_broker_app(manager=get_container_manager)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -84,15 +81,23 @@ def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generato
     finally:
         server.should_exit = True
         thread.join(timeout=10)
+        while _issued_roles:
+            revoke_run_credentials(_issued_roles.pop())
+
+
+#: Login roles of the runs :func:`_broker_env` started, ended with the broker.
+_issued_roles: list[str] = []
 
 
 def _broker_env(job_id: UUID, broker_url: str) -> dict[str, str]:
-    """Subprocess env pointing the tool at the test broker with a valid token."""
+    """Subprocess env pointing the tool at the test broker with a live run's token."""
+    role = f"agent_{uuid4().hex}"
+    _issued_roles.append(role)
     return {
         "OPENSCIENTIST_EXEC_BROKER_URL": broker_url,
-        "OPENSCIENTIST_EXEC_TOKEN": make_exec_placeholder(
-            os.environ["OPENSCIENTIST_SECRET_KEY"], str(job_id)
-        ),
+        "OPENSCIENTIST_EXEC_TOKEN": issue_run_credentials(
+            str(job_id), role, "discovery"
+        ).exec_token,
     }
 
 
@@ -106,7 +111,7 @@ async def _spawned_for_job(
     *,
     env_overrides: dict[str, str] | None = None,
 ) -> AsyncGenerator[ClientSession, None]:
-    async with AsyncSessionLocal(thread_safe=True) as setup:
+    async with async_session_local() as setup:
         setup.add(
             Job(
                 id=job_id,
@@ -130,7 +135,7 @@ async def _spawned_for_job(
                 await session.initialize()
                 yield session
     finally:
-        async with AsyncSessionLocal(thread_safe=True) as cleanup:
+        async with async_session_local() as cleanup:
             await cleanup.execute(delete(Job).where(Job.id == job_id))
             await cleanup.commit()
 
@@ -181,7 +186,7 @@ def _mock_broker(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) -> Mag
 # ----- In-process branch coverage (broker HTTP mocked) -----
 
 
-def test_execute_code_python_happy_path(
+async def test_execute_code_python_happy_path(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -191,7 +196,7 @@ def test_execute_code_python_happy_path(
         {"success": True, "output": "hello world", "execution_time": 0.5, "plots": []},
     )
 
-    result = execute_code("print('hello world')")
+    result = await execute_code("print('hello world')")
 
     assert "hello world" in result
     assert "successfully" in result.lower() or "✅" in result
@@ -208,7 +213,7 @@ def test_execute_code_python_happy_path(
     assert last_log["success"] is True
 
 
-def test_execute_code_rust_happy_path(
+async def test_execute_code_rust_happy_path(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -218,7 +223,7 @@ def test_execute_code_rust_happy_path(
         {"success": True, "output": "42", "execution_time": 1.2, "plots": []},
     )
 
-    execute_code('fn main(){println!("42");}', language="rust")
+    await execute_code('fn main(){println!("42");}', language="rust")
 
     call_kwargs = broker.call_args.kwargs
     assert call_kwargs["language"] == "rust"
@@ -227,7 +232,7 @@ def test_execute_code_rust_happy_path(
     assert "data_path" not in call_kwargs
 
 
-def test_execute_code_sparql_happy_path(
+async def test_execute_code_sparql_happy_path(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -237,26 +242,26 @@ def test_execute_code_sparql_happy_path(
         {"success": True, "output": "rows: 0", "execution_time": 0.3, "plots": []},
     )
 
-    execute_code("SELECT * WHERE { ?s ?p ?o } LIMIT 1", language="sparql")
+    await execute_code("SELECT * WHERE { ?s ?p ?o } LIMIT 1", language="sparql")
 
     call_kwargs = broker.call_args.kwargs
     assert call_kwargs["language"] == "sparql"
     assert call_kwargs["timeout"] == 60
 
 
-def test_execute_code_invalid_language_returns_error(
+async def test_execute_code_invalid_language_returns_error(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
 ) -> None:
-    result = execute_code("anything", language="lisp")
-    assert result == (
-        "❌ ERROR: Unsupported language 'lisp'. Supported: 'python', 'rust', 'sparql'"
-    )
+    result = await execute_code("anything", language="lisp")
+    # The unsupported language is reported and nothing is executed or logged
+    assert result.startswith("❌")
+    assert "lisp" in result
     assert patched_ks_persistence.data["analysis_log"] == []
 
 
-def test_execute_code_failure_returns_error_format(
+async def test_execute_code_failure_returns_error_format(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -273,7 +278,7 @@ def test_execute_code_failure_returns_error_format(
         },
     )
 
-    result = execute_code("print(1/0)")
+    result = await execute_code("print(1/0)")
     assert "❌" in result or "failed" in result.lower()
     assert "ZeroDivisionError" in result or "division by zero" in result
 
@@ -281,7 +286,7 @@ def test_execute_code_failure_returns_error_format(
     assert last_log["success"] is False
 
 
-def test_execute_code_broker_unavailable_returns_error(
+async def test_execute_code_broker_unavailable_returns_error(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -289,13 +294,16 @@ def test_execute_code_broker_unavailable_returns_error(
     broker = _mock_broker(monkeypatch, {})
     broker.side_effect = BrokerError("connection refused")
 
-    result = execute_code("print('hi')")
-    assert result.startswith("❌ ERROR: code execution service unavailable")
+    result = await execute_code("print('hi')")
+    # The transport error is surfaced, so the agent can tell a dead service
+    # apart from a failed execution
+    assert result.startswith("❌")
+    assert "connection refused" in result
     # A transport failure is exceptional: nothing is logged as an execution.
     assert patched_ks_persistence.data["analysis_log"] == []
 
 
-def test_execute_code_python_with_data_files(
+async def test_execute_code_python_with_data_files(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -309,7 +317,7 @@ def test_execute_code_python_with_data_files(
         {"success": True, "output": "", "execution_time": 0.1, "plots": []},
     )
 
-    execute_code("pass")
+    await execute_code("pass")
 
     call_kwargs = broker.call_args.kwargs
     assert call_kwargs["data_path"] == str((state_job_dir / "a.csv").resolve())
@@ -322,7 +330,7 @@ def test_execute_code_python_with_data_files(
     }
 
 
-def test_execute_code_python_data_load_failure(
+async def test_execute_code_python_data_load_failure(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -342,13 +350,15 @@ def test_execute_code_python_data_load_failure(
     # so make sure the file exists so we hit the load branch.
     missing.write_text("dummy")
 
-    result = execute_code("print('hi')")
-    assert "❌ ERROR: Cannot execute code" in result
-    assert "data file failed to load" in result
+    result = await execute_code("print('hi')")
+    # The error names the failing stage and the file that could not be loaded
+    assert result.startswith("❌")
+    assert "data file" in result.lower()
+    assert str(missing) in result
     broker.assert_not_called()
 
 
-def test_execute_code_cache_hits_on_second_call(
+async def test_execute_code_cache_hits_on_second_call(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -371,8 +381,8 @@ def test_execute_code_cache_hits_on_second_call(
         {"success": True, "output": "", "execution_time": 0, "plots": []},
     )
 
-    execute_code("pass")
-    execute_code("pass")
+    await execute_code("pass")
+    await execute_code("pass")
 
     assert call_count["n"] == 1
 
@@ -411,7 +421,7 @@ async def test_execute_python_via_subprocess(
         text = _text(response)
         assert "hello world" in text
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         last_log = reloaded.data["analysis_log"][-1]
         assert last_log["action"] == "execute_code"
         assert last_log["success"] is True
@@ -448,7 +458,7 @@ async def test_execute_rust_via_subprocess(
         text = _text(response)
         assert "hi from rust" in text
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         last_log = reloaded.data["analysis_log"][-1]
         assert last_log["action"] == "execute_code"
         assert last_log["success"] is True
@@ -493,7 +503,7 @@ async def test_execute_python_with_plot_via_subprocess(
         plots = sorted((job_dir / "provenance").glob("plot_*.png"))
         assert plots, "no plot files were written by the executor"
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         last_log = reloaded.data["analysis_log"][-1]
         assert last_log["success"] is True
         assert len(last_log["plots"]) >= 1
@@ -542,7 +552,7 @@ async def test_execute_python_with_data_file_via_subprocess(
         assert "rows: 2" in text
         assert "first: sentinel-42" in text
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         last_log = reloaded.data["analysis_log"][-1]
         assert last_log["success"] is True
 
@@ -630,7 +640,7 @@ async def test_execute_python_failure_via_subprocess(
         text = _text(response)
         assert "ZeroDivisionError" in text or "division by zero" in text
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         last_log = reloaded.data["analysis_log"][-1]
         assert last_log["action"] == "execute_code"
         assert last_log["success"] is False

@@ -1,27 +1,63 @@
 """Tests for openscientist.job_container module."""
 
+import asyncio
 import hashlib
 import hmac
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from docker import errors as docker_errors
+from openscientist.exceptions import MissingImageError
+from openscientist.exec_broker_client import EXEC_TOKEN_ENV
+from openscientist.job_chat import CHAT_TURN_ENV
 from openscientist.job_container.db_login import AGENT_LOGIN_LABEL, AgentLogin
 from openscientist.job_container.runner import (
+    _STOP_GRACE_SECONDS,
     AGENT_APP_DIR,
-    AGENT_GCP_CREDENTIALS_PATH,
     JobContainerRunner,
 )
-from openscientist.job_container.secrets import derive_job_secret, make_exec_placeholder
+from openscientist.job_container.secrets import (
+    broker_accepts,
+    derive_job_secret,
+    proxy_accepts,
+    revoke_run_credentials,
+)
 from openscientist.providers.base import AirgapEgress, AirgapPosture
-from openscientist.settings import Settings
+from openscientist.settings import Settings, clear_settings_cache
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+from tests.helpers import assert_names_a_build_command
+
+
+@pytest.fixture(autouse=True)
+def _no_airgap_floor(monkeypatch: pytest.MonkeyPatch):
+    """The environment without the airgap floor, so the row alone decides."""
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def admin_settings_row(test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+    """The row each launch reads the limits, lifetime, and airgap flag from."""
+    await set_admin_settings_row(test_engine)
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 class _FakeProvider:
+    #: The LLM placeholder of the latest launch.
+    last_placeholder = ""
+
     def __init__(self, posture: AirgapPosture | None = None) -> None:
         self._posture = posture
 
@@ -30,12 +66,9 @@ class _FakeProvider:
         *,
         proxy_base_url: str,
         placeholder: str,
-        gcp_credentials_container_path: str | None = None,
     ) -> dict[str, str]:
-        env = {"EXTRA_ENV": "1"}
-        if gcp_credentials_container_path:
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = gcp_credentials_container_path
-        return env
+        _FakeProvider.last_placeholder = placeholder
+        return {"EXTRA_ENV": "1"}
 
     def prelaunch_model_context_env(self) -> dict[str, str]:
         return {}
@@ -75,7 +108,6 @@ class TestContainerDatabaseLogin:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {}
         provider.codex_auth_host_path = None
-        provider.gcp_credentials_host_path = None
         provider.provider_id = "anthropic"
         return SimpleNamespace(
             container=SimpleNamespace(
@@ -110,7 +142,8 @@ class TestContainerDatabaseLogin:
                 return_value=Path("/app/jobs/job-123"),
             ),
             patch(
-                "openscientist.agent.factory.agent_class_for_provider_id", return_value=MagicMock()
+                "openscientist.agent.factory.agent_class_for_provider_id",
+                return_value=MagicMock(RUN_HOME=None),
             ),
         )
 
@@ -124,6 +157,18 @@ class TestContainerDatabaseLogin:
         assert not any("web-pw" in value for value in kwargs["environment"].values())
         assert kwargs["labels"][AGENT_LOGIN_LABEL] == _LOGIN.role
         agent_login.opened.assert_called_once_with("job-123", lifetime_seconds=14400)
+
+    def test_the_container_gets_live_credentials_of_its_own_run(self, agent_login) -> None:
+        mock_client = MagicMock()
+        a, b, c, d = self._launch_patches()
+        with a, b, c, d:
+            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        try:
+            env = mock_client.containers.run.call_args.kwargs["environment"]
+            assert broker_accepts("job-123", env[EXEC_TOKEN_ENV])
+            assert proxy_accepts(_FakeProvider.last_placeholder)
+        finally:
+            revoke_run_credentials(_LOGIN.role)
 
     def test_no_container_starts_without_its_login(self, agent_login) -> None:
         agent_login.opened.side_effect = RuntimeError("cannot create role")
@@ -139,6 +184,20 @@ class TestContainerDatabaseLogin:
         a, b, c, d = self._launch_patches()
         with a, b, c, d, pytest.raises(docker_errors.APIError):
             self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_a_missing_agent_image_fails_with_how_to_build_it(self, agent_login) -> None:
+        """The job's error names the image and a real target that builds it,
+        and the run still gives its login back."""
+        mock_client = MagicMock()
+        mock_client.containers.run.side_effect = docker_errors.ImageNotFound(
+            "No such image: openscientist-agent:latest"
+        )
+        a, b, c, d = self._launch_patches()
+        with a, b, c, d, pytest.raises(MissingImageError) as raised:
+            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        assert "openscientist-agent:latest" in str(raised.value)
+        assert_names_a_build_command(str(raised.value))
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
     def test_cleanup_gives_back_the_login_of_the_removed_container(self, agent_login) -> None:
@@ -161,7 +220,7 @@ class TestContainerDatabaseLogin:
         mock_client.containers.run.return_value = container
         a, b, c, d = self._launch_patches()
         with a, b, c, d, pytest.raises(RuntimeError, match="exited with code 1"):
-            self._runner(mock_client).run_chat_turn("job-123", Path("/app/jobs/job-123"))
+            self._runner(mock_client).run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
         agent_login.opened.assert_called_once_with("job-123", lifetime_seconds=300)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
@@ -196,7 +255,6 @@ class TestJobContainerRunner:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {"EXTRA_ENV": "1"}
         provider.codex_auth_host_path = None
-        provider.gcp_credentials_host_path = None
         return SimpleNamespace(
             container=SimpleNamespace(
                 host_project_dir=host_project_dir,
@@ -502,7 +560,6 @@ class TestPhenixMount:
         settings.database.effective_database_url = "postgresql+asyncpg://test"
         settings.provider.get_container_env_vars.return_value = {}
         settings.provider.google_application_credentials = None
-        settings.provider.gcp_credentials_host_path = None
         settings.provider.codex_auth_host_path = None
         settings.airgap.enabled = False
 
@@ -514,12 +571,10 @@ class TestPhenixMount:
 
         return settings
 
-    @patch("openscientist.job_container.runner.os.stat")
     @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
     @patch("openscientist.job_container.runner.get_settings")
-    def test_phenix_mounted_when_available(self, mock_get_settings, _net, mock_stat):
+    def test_phenix_mounted_when_available(self, mock_get_settings, _net):
         """The configured Linux Phenix path is mounted into the agent container."""
-        mock_stat.return_value = MagicMock(st_gid=999)
         settings = self._mock_settings(
             phenix_available=True,
             phenix_path="/opt/phenix",
@@ -541,12 +596,10 @@ class TestPhenixMount:
         assert volumes["/Applications/phenix-1.21.2"] == {"bind": "/opt/phenix", "mode": "ro"}
         assert env["PHENIX_PATH"] == "/opt/phenix"
 
-    @patch("openscientist.job_container.runner.os.stat")
     @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
     @patch("openscientist.job_container.runner.get_settings")
-    def test_phenix_not_mounted_without_host_path(self, mock_get_settings, _net, mock_stat):
+    def test_phenix_not_mounted_without_host_path(self, mock_get_settings, _net):
         """Phenix is not mounted when phenix_host_path is unset."""
-        mock_stat.return_value = MagicMock(st_gid=999)
         settings = self._mock_settings(
             phenix_available=True,
             phenix_path="/Applications/phenix-1.21.2",
@@ -568,12 +621,10 @@ class TestPhenixMount:
             assert "phenix" not in key.lower()
         assert "PHENIX_PATH" not in env
 
-    @patch("openscientist.job_container.runner.os.stat")
     @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
     @patch("openscientist.job_container.runner.get_settings")
-    def test_phenix_not_mounted_when_unavailable(self, mock_get_settings, _net, mock_stat):
+    def test_phenix_not_mounted_when_unavailable(self, mock_get_settings, _net):
         """Phenix mounts are omitted when the feature is unavailable."""
-        mock_stat.return_value = MagicMock(st_gid=999)
         settings = self._mock_settings(phenix_available=False)
         mock_get_settings.return_value = settings
 
@@ -590,145 +641,6 @@ class TestPhenixMount:
         for key in volumes:
             assert "phenix" not in key.lower()
         assert "PHENIX_PATH" not in env
-
-
-class TestGcpCredentialsMount:
-    """GCP creds are mounted and advertised only when the operator sets a host
-    path. google_application_credentials is the container-internal path baked
-    into the web image, so using it as a bind source broke launch for every
-    provider (#243)."""
-
-    @staticmethod
-    def _settings(*, host_path: str | None) -> SimpleNamespace:
-        provider = MagicMock()
-        provider.get_container_env_vars.return_value = {}
-        # Always set, exactly as the web image's Dockerfile ENV leaves it.
-        provider.google_application_credentials = "/app/gcp-credentials.json"
-        provider.gcp_credentials_host_path = host_path
-        return SimpleNamespace(
-            container=SimpleNamespace(host_project_dir=None, container_app_dir="/app"),
-            provider=provider,
-            database=SimpleNamespace(effective_database_url="postgresql://db"),
-            phenix=SimpleNamespace(phenix_host_path=None),
-            airgap=SimpleNamespace(enabled=False),
-            secret_key="master-key",
-        )
-
-    def test_volumes_omit_creds_without_host_path(self) -> None:
-        """No host path means no bind, and never the container-internal path (#243)."""
-        volumes = JobContainerRunner._build_container_volumes(
-            cast(Settings, self._settings(host_path=None)),
-            job_dir_host=Path("/srv/jobs/job-1"),
-            job_mount="/agent/jobs/job-1",
-        )
-        assert "/app/gcp-credentials.json" not in volumes
-        assert all(v["bind"] != AGENT_GCP_CREDENTIALS_PATH for v in volumes.values())
-
-    def test_volumes_bind_host_path_read_only(self) -> None:
-        """A set host path is bound read-only at the agent mount point."""
-        volumes = JobContainerRunner._build_container_volumes(
-            cast(Settings, self._settings(host_path="/host/creds.json")),
-            job_dir_host=Path("/srv/jobs/job-1"),
-            job_mount="/agent/jobs/job-1",
-        )
-        assert volumes["/host/creds.json"] == {"bind": AGENT_GCP_CREDENTIALS_PATH, "mode": "ro"}
-
-    def _make_runner(self) -> tuple[JobContainerRunner, MagicMock]:
-        mock_client = MagicMock()
-        with patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client):
-            return JobContainerRunner(), mock_client
-
-    def _launch_settings(self, *, host_path: str | None) -> MagicMock:
-        settings = MagicMock()
-        settings.container.host_project_dir = None
-        settings.container.container_app_dir = "/app"
-        settings.secret_key = "test-secret"
-        settings.database.effective_database_url = "postgresql+asyncpg://test"
-        settings.provider.gcp_credentials_host_path = host_path
-        settings.provider.codex_auth_host_path = None
-        settings.airgap.enabled = False
-        settings.phenix.phenix_host_path = None
-        return settings
-
-    @patch("openscientist.job_container.runner.os.stat")
-    @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
-    @patch("openscientist.job_container.runner.get_settings")
-    def test_launch_mounts_and_advertises_with_host_path(self, mock_get_settings, _net, mock_stat):
-        """With a host path the runner threads the container path so the provider
-        emits GOOGLE_APPLICATION_CREDENTIALS, and the creds file is bound."""
-        mock_stat.return_value = MagicMock(st_gid=999)
-        mock_get_settings.return_value = self._launch_settings(host_path="/host/creds.json")
-        runner, mock_client = self._make_runner()
-
-        with patch.object(Path, "exists", return_value=True):
-            runner.launch("job-1", Path("/app/jobs/job-1"))
-
-        call = cast(MagicMock, mock_client.containers.run).call_args
-        volumes = call.kwargs.get("volumes") or call[1].get("volumes")
-        env = call.kwargs.get("environment") or call[1].get("environment")
-        assert volumes["/host/creds.json"] == {"bind": AGENT_GCP_CREDENTIALS_PATH, "mode": "ro"}
-        assert env["GOOGLE_APPLICATION_CREDENTIALS"] == AGENT_GCP_CREDENTIALS_PATH
-
-    @patch("openscientist.job_container.runner.os.stat")
-    @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
-    @patch("openscientist.job_container.runner.get_settings")
-    def test_launch_omits_creds_without_host_path(self, mock_get_settings, _net, mock_stat):
-        """Without a host path nothing is mounted and no creds env is advertised."""
-        mock_stat.return_value = MagicMock(st_gid=999)
-        mock_get_settings.return_value = self._launch_settings(host_path=None)
-        runner, mock_client = self._make_runner()
-
-        with patch.object(Path, "exists", return_value=True):
-            runner.launch("job-1", Path("/app/jobs/job-1"))
-
-        call = cast(MagicMock, mock_client.containers.run).call_args
-        volumes = call.kwargs.get("volumes") or call[1].get("volumes")
-        env = call.kwargs.get("environment") or call[1].get("environment")
-        assert all(v["bind"] != AGENT_GCP_CREDENTIALS_PATH for v in volumes.values())
-        assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
-
-
-class TestCodexAuthProvisioning:
-    """`CodexAgent.provision_host_prelaunch` copies the codex CLI auth into the
-    per-job CODEX_HOME (agent-readable), instead of mounting the host file,
-    which the non-root agent could not read across the uid/permission
-    boundary. It is the backend's host-side, pre-launch hook."""
-
-    def _settings(self, codex_auth_host_path: str | None) -> MagicMock:
-        settings = MagicMock()
-        settings.provider.codex_auth_host_path = codex_auth_host_path
-        return settings
-
-    def test_copies_auth_into_codex_home_agent_readable(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        src = tmp_path / "host-auth.json"
-        src.write_text('{"tokens": {}}')
-        job_dir = tmp_path / "job"
-        job_dir.mkdir()
-
-        CodexAgent.provision_host_prelaunch(self._settings(str(src)), job_dir)
-
-        dest = job_dir / ".codex" / "auth.json"
-        assert dest.read_text() == '{"tokens": {}}'
-        assert (dest.stat().st_mode & 0o777) == 0o644  # agent (uid 1001) can read
-        assert (dest.parent.stat().st_mode & 0o777) == 0o777  # agent can write config.toml
-
-    def test_noop_when_unset(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        job_dir = tmp_path / "job"
-        job_dir.mkdir()
-        CodexAgent.provision_host_prelaunch(self._settings(None), job_dir)
-        assert not (job_dir / ".codex").exists()
-
-    def test_noop_when_source_missing(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        job_dir = tmp_path / "job"
-        job_dir.mkdir()
-        CodexAgent.provision_host_prelaunch(self._settings(str(tmp_path / "nope.json")), job_dir)
-        assert not (job_dir / ".codex" / "auth.json").exists()
 
 
 class TestJobSecretInjection:
@@ -756,6 +668,8 @@ class TestJobSecretInjection:
             job_mount="/agent/jobs/job-1",
             provider_env={},
             database_url="postgresql://agent",
+            exec_token="job-1.exec",
+            airgapped=False,
         )
         expected = hmac.new(b"master-key", b"job_secret:job-1", hashlib.sha256).hexdigest()
         assert env["OPENSCIENTIST_SECRET_KEY"] == expected
@@ -770,6 +684,8 @@ class TestJobSecretInjection:
             job_mount="/agent/jobs/job-a",
             provider_env={},
             database_url="postgresql://agent",
+            exec_token="job-a.exec",
+            airgapped=False,
         )
         env_b = JobContainerRunner._build_container_environment(
             cast(Settings, settings),
@@ -777,6 +693,8 @@ class TestJobSecretInjection:
             job_mount="/agent/jobs/job-b",
             provider_env={},
             database_url="postgresql://agent",
+            exec_token="job-b.exec",
+            airgapped=False,
         )
         secret_a = env_a["OPENSCIENTIST_SECRET_KEY"]
         secret_b = env_b["OPENSCIENTIST_SECRET_KEY"]
@@ -798,26 +716,13 @@ class TestJobSecretInjection:
         expected_storage = hmac.new(derived.encode(), b"storage_secret", hashlib.sha256).hexdigest()
         assert settings.auth.storage_secret == expected_storage
 
-    def test_env_injects_exec_token_and_broker_url(self) -> None:
-        """The container env carries a per-job exec placeholder and the broker URL."""
-        settings = self._settings(master="master-key")
-        env = JobContainerRunner._build_container_environment(
-            cast(Settings, settings),
-            job_id="job-x",
-            job_mount="/agent/jobs/job-x",
-            provider_env={},
-            database_url="postgresql://agent",
-        )
-        assert env["OPENSCIENTIST_EXEC_TOKEN"] == make_exec_placeholder("master-key", "job-x")
-        assert env["OPENSCIENTIST_EXEC_TOKEN"].startswith("job-x.")
-        assert env["OPENSCIENTIST_EXEC_BROKER_URL"].endswith(":8082")
 
-
-class TestAirgapFirewallLaunch:
-    """The job container runs behind the nftables egress firewall when air-gapped."""
+class TestFirewallLaunch:
+    """The job container runs behind the in-container nftables egress firewall
+    in every mode, air-gapped or not."""
 
     @staticmethod
-    def _settings(*, airgap: bool, provider_id: str = "ollama") -> SimpleNamespace:
+    def _settings(*, provider_id: str = "ollama") -> SimpleNamespace:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {}
         provider.codex_auth_host_path = None
@@ -831,11 +736,8 @@ class TestAirgapFirewallLaunch:
                 host_project_dir=None,
                 container_app_dir="/app",
                 agent_network=None,
-                agent_memory="8g",
-                agent_cpu=2.0,
                 agent_platform=None,
                 agent_image="openscientist-agent:latest",
-                agent_timeout=14400,
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -843,19 +745,27 @@ class TestAirgapFirewallLaunch:
             ),
             phenix=SimpleNamespace(phenix_host_path=None),
             secret_key="secret",
-            airgap=SimpleNamespace(enabled=airgap),
         )
 
-    def _launch(
-        self, settings: SimpleNamespace, posture: AirgapPosture | None = None
+    async def _launch(
+        self,
+        test_engine: AsyncEngine,
+        airgapped: bool,
+        posture: AirgapPosture | None = None,
+        provider_id: str = "ollama",
     ) -> dict[str, object]:
+        """Launch with the row's airgap flag, and return the container run kwargs."""
+        await set_admin_settings_row(test_engine, airgapped=airgapped)
         mock_client = MagicMock()
         mock_container = MagicMock()
         mock_container.short_id = "abc123"
         mock_client.containers.run.return_value = mock_container
         with (
             patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch(
+                "openscientist.job_container.runner.get_settings",
+                return_value=self._settings(provider_id=provider_id),
+            ),
             patch(
                 "openscientist.job_container.runner.get_provider",
                 return_value=_FakeProvider(posture),
@@ -867,20 +777,22 @@ class TestAirgapFirewallLaunch:
             ),
             patch(
                 "openscientist.agent.factory.agent_class_for_provider_id",
-                return_value=MagicMock(),
+                return_value=MagicMock(RUN_HOME=None),
             ),
             patch.object(Path, "exists", return_value=True),
         ):
             runner = JobContainerRunner()
-            runner.launch("job-123", Path("/app/jobs/job-123"))
+            await asyncio.to_thread(runner.launch, "job-123", Path("/app/jobs/job-123"))
         return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
 
-    def test_airgap_launch_applies_firewall(self) -> None:
-        run_kwargs = self._launch(self._settings(airgap=True))
+    @pytest.mark.asyncio
+    async def test_airgap_launch_applies_firewall(self, test_engine: AsyncEngine) -> None:
+        run_kwargs = await self._launch(test_engine, airgapped=True)
         assert run_kwargs["cap_add"] == ["NET_ADMIN"]
         assert run_kwargs["user"] == "root"
         assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         environment = cast(dict[str, str], run_kwargs["environment"])
+        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
         entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
         assert "postgres:5432" in entries
         assert "openscientist:8082" in entries
@@ -889,27 +801,39 @@ class TestAirgapFirewallLaunch:
         assert "openscientist:8081" in entries
         assert "host.docker.internal:11434" not in entries
 
-    def test_airgap_launch_passes_no_command(self) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_launch_passes_no_command(self, test_engine: AsyncEngine) -> None:
         """The firewall entrypoint execs its arguments and falls back to the agent
         entrypoint only when it gets none, so a command here would silently replace
         the agent with whatever was passed."""
-        run_kwargs = self._launch(self._settings(airgap=True))
+        run_kwargs = await self._launch(test_engine, airgapped=True)
         assert "command" not in run_kwargs or run_kwargs["command"] is None
 
-    def test_non_airgap_launch_has_no_firewall(self) -> None:
-        run_kwargs = self._launch(self._settings(airgap=False))
-        assert run_kwargs["cap_add"] is None
-        assert run_kwargs["user"] is None
-        assert run_kwargs["entrypoint"] is None
+    @pytest.mark.asyncio
+    async def test_restricted_launch_applies_firewall(self, test_engine: AsyncEngine) -> None:
+        """Without air-gap the firewall keeps public egress and allowlists only
+        the web's services, so no provider posture is consulted."""
+        run_kwargs = await self._launch(test_engine, airgapped=False)
+        assert run_kwargs["cap_add"] == ["NET_ADMIN"]
+        assert run_kwargs["user"] == "root"
+        assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         environment = cast(dict[str, str], run_kwargs["environment"])
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in environment
+        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(",")) == {
+            "postgres:5432",
+            "openscientist:8081",
+            "openscientist:8082",
+        }
 
-    def test_airgap_launch_supports_bedrock(self) -> None:
+    @pytest.mark.asyncio
+    async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:
         posture = AirgapPosture(
             AirgapEgress.DIRECT,
             direct_endpoints=(("bedrock-runtime.us-east-1.amazonaws.com", 443),),
         )
-        run_kwargs = self._launch(self._settings(airgap=True, provider_id="bedrock"), posture)
+        run_kwargs = await self._launch(
+            test_engine, airgapped=True, provider_id="bedrock", posture=posture
+        )
         environment = cast(dict[str, str], run_kwargs["environment"])
         entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
         assert "bedrock-runtime.us-east-1.amazonaws.com:443" in entries
@@ -946,12 +870,21 @@ class TestChatTurnLaunch:
             airgap=SimpleNamespace(enabled=False),
         )
 
-    def _run_chat(self, settings: SimpleNamespace, *, exit_code: int = 0):
+    def _run_chat(
+        self,
+        settings: SimpleNamespace,
+        *,
+        exit_code: int = 0,
+        stop_error: Exception | None = None,
+    ):
         mock_client = MagicMock()
         mock_container = MagicMock()
         mock_container.short_id = "abc123"
         mock_container.wait.return_value = {"StatusCode": exit_code}
         mock_container.logs.return_value = b"container log"
+        mock_container.labels = {AGENT_LOGIN_LABEL: _LOGIN.role}
+        if stop_error is not None:
+            mock_container.stop.side_effect = stop_error
         mock_client.containers.run.return_value = mock_container
         with (
             patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
@@ -963,11 +896,11 @@ class TestChatTurnLaunch:
             ),
             patch(
                 "openscientist.agent.factory.agent_class_for_provider_id",
-                return_value=MagicMock(),
+                return_value=MagicMock(RUN_HOME=None),
             ),
             patch.object(Path, "exists", return_value=True),
         ):
-            JobContainerRunner().run_chat_turn("job-123", Path("/app/jobs/job-123"))
+            JobContainerRunner().run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
         return mock_client, mock_container
 
     def test_chat_turn_launches_hardened_container(self) -> None:
@@ -980,9 +913,36 @@ class TestChatTurnLaunch:
         # The chat container carries the per-job derived secret, never the master.
         assert env["OPENSCIENTIST_SECRET_KEY"] != "master-key"
         assert env["OPENSCIENTIST_RUN_MODE"] == "chat"
+        assert env[CHAT_TURN_ENV] == "t1"
         mock_container.wait.assert_called_once()
-        mock_container.remove.assert_called_once_with(force=True)
+        # Stopped with the grace a turn needs to write its cost, then removed.
+        calls = [c for c in mock_container.method_calls if c[0] in ("stop", "remove")]
+        assert calls == [call.stop(timeout=_STOP_GRACE_SECONDS), call.remove(force=True)]
 
     def test_chat_turn_raises_on_nonzero_exit(self) -> None:
         with pytest.raises(RuntimeError, match="exited with code 1"):
             self._run_chat(self._settings(), exit_code=1)
+
+    def test_chat_turn_removes_container_and_drops_login_when_stop_fails(
+        self,
+        agent_login: SimpleNamespace,
+    ) -> None:
+        _, mock_container = self._run_chat(
+            self._settings(),
+            stop_error=docker_errors.APIError("stop failed"),
+        )
+        # A failed stop must not lose the cleanup either.
+        mock_container.remove.assert_called_once_with(force=True)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_chat_turn_tolerates_stop_when_container_is_gone(
+        self,
+        agent_login: SimpleNamespace,
+    ) -> None:
+        _, mock_container = self._run_chat(
+            self._settings(),
+            stop_error=docker_errors.NotFound("no such container"),
+        )
+        # A container already gone is swallowed silently, cleanup still runs.
+        mock_container.remove.assert_called_once_with(force=True)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)

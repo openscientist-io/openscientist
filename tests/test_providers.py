@@ -118,40 +118,34 @@ class TestGetProvider:
 
 
 class TestAgentBackendForProvider:
-    """`backend_for_provider_id` maps a provider id to its agent backend
-    without instantiating the provider (which would validate auth)."""
+    """`agent_class_for_provider_id` maps a provider id to its agent backend
+    without instantiating the provider, which would validate auth (no auth env
+    is set here)."""
 
     def test_codex_compatible_provider_maps_to_codex(self):
         from openscientist.agent.base import AgentBackend
-        from openscientist.agent.factory import backend_for_provider_id
+        from openscientist.agent.factory import agent_class_for_provider_id
 
-        assert backend_for_provider_id("openai") is AgentBackend.CODEX
-        assert backend_for_provider_id("azure-openai") is AgentBackend.CODEX
-        assert backend_for_provider_id("ollama") is AgentBackend.CODEX
-        # vLLM is OpenAI-wire but not a Codex backend, so omp is its only harness.
-        assert backend_for_provider_id("vllm") is AgentBackend.OMP
-        # llama.cpp is likewise OpenAI-wire but not a Codex backend.
-        assert backend_for_provider_id("llamacpp") is AgentBackend.OMP
+        assert agent_class_for_provider_id("openai").backend is AgentBackend.CODEX
+        assert agent_class_for_provider_id("azure-openai").backend is AgentBackend.CODEX
+        # Ollama, vLLM and llama.cpp are OpenAI-wire but not Codex backends, so
+        # omp is their only harness.
+        assert agent_class_for_provider_id("ollama").backend is AgentBackend.OMP
+        assert agent_class_for_provider_id("vllm").backend is AgentBackend.OMP
+        assert agent_class_for_provider_id("llamacpp").backend is AgentBackend.OMP
 
     def test_claude_compatible_providers_map_to_claude_code(self):
         from openscientist.agent.base import AgentBackend
-        from openscientist.agent.factory import backend_for_provider_id
+        from openscientist.agent.factory import agent_class_for_provider_id
 
         for pid in ("anthropic", "cborg", "vertex", "bedrock", "foundry"):
-            assert backend_for_provider_id(pid) is AgentBackend.CLAUDE_CODE
+            assert agent_class_for_provider_id(pid).backend is AgentBackend.CLAUDE_CODE
 
     def test_unknown_provider_defaults_to_claude_code(self):
         from openscientist.agent.base import AgentBackend
-        from openscientist.agent.factory import backend_for_provider_id
+        from openscientist.agent.factory import agent_class_for_provider_id
 
-        assert backend_for_provider_id("does-not-exist") is AgentBackend.CLAUDE_CODE
-
-    def test_does_not_instantiate_provider(self):
-        # No auth env is set, yet this must not raise (instantiation would).
-        from openscientist.agent.base import AgentBackend
-        from openscientist.agent.factory import backend_for_provider_id
-
-        assert backend_for_provider_id("openai") is AgentBackend.CODEX
+        assert agent_class_for_provider_id("does-not-exist").backend is AgentBackend.CLAUDE_CODE
 
 
 class TestProviderInit:
@@ -192,100 +186,6 @@ class TestCostInfo:
         )
         assert info.budget_remaining_usd == 150.0
         assert info.data_lag_note == "Data current as of 6:35 AM"
-
-
-class TestCheckBudgetLimits:
-    """Tests for Provider.check_budget_limits()."""
-
-    def _make_provider(self, **cost_kwargs) -> StubProvider:
-        cost = CostInfo(
-            provider_name="stub",
-            recent_period_hours=24,
-            **cost_kwargs,
-        )
-        return StubProvider(cost_info=cost)
-
-    def test_under_budget_can_proceed(self):
-        provider = self._make_provider(total_spend_usd=10.0, recent_spend_usd=5.0)
-        with patch.dict(
-            os.environ,
-            {
-                "MAX_PROJECT_SPEND_TOTAL_USD": "1000",
-                "MAX_PROJECT_SPEND_24H_USD": "100",
-            },
-        ):
-            clear_settings_cache()
-            result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert result["errors"] == []
-
-    def test_total_spend_exceeded_blocks(self):
-        provider = self._make_provider(total_spend_usd=1001.0, recent_spend_usd=5.0)
-        with patch.dict(os.environ, {"MAX_PROJECT_SPEND_TOTAL_USD": "1000"}):
-            clear_settings_cache()
-            result = provider.check_budget_limits()
-        assert result["can_proceed"] is False
-        assert any("Total spend" in e for e in result["errors"])
-
-    def test_recent_spend_exceeded_blocks(self):
-        provider = self._make_provider(total_spend_usd=10.0, recent_spend_usd=200.0)
-        with patch.dict(os.environ, {"MAX_PROJECT_SPEND_24H_USD": "100"}):
-            clear_settings_cache()
-            result = provider.check_budget_limits()
-        assert result["can_proceed"] is False
-        assert any("Last 24h" in e for e in result["errors"])
-
-    def test_warning_threshold_warns_but_allows(self):
-        provider = self._make_provider(total_spend_usd=10.0, recent_spend_usd=80.0)
-        with patch.dict(
-            os.environ,
-            {
-                "MAX_PROJECT_SPEND_24H_USD": "100",
-                "WARN_PROJECT_SPEND_24H_USD": "75",
-            },
-        ):
-            clear_settings_cache()
-            result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("approaching" in w for w in result["warnings"])
-
-    def test_provider_budget_exhausted_blocks(self):
-        provider = self._make_provider(
-            total_spend_usd=10.0,
-            recent_spend_usd=5.0,
-            budget_limit_usd=100.0,
-            budget_remaining_usd=0.0,
-        )
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is False
-        assert any("exhausted" in e for e in result["errors"])
-
-    def test_provider_budget_low_warns(self):
-        provider = self._make_provider(
-            total_spend_usd=10.0,
-            recent_spend_usd=5.0,
-            budget_limit_usd=100.0,
-            budget_remaining_usd=5.0,
-        )
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("budget low" in w for w in result["warnings"])
-
-    def test_cost_info_unavailable_warns_but_allows(self):
-        provider = self._make_provider(
-            total_spend_usd=None,
-            recent_spend_usd=None,
-            data_lag_note="Billing data delayed",
-        )
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("unavailable" in w for w in result["warnings"])
-
-    def test_cost_fetch_failure_warns_but_allows(self):
-        provider = StubProvider(cost_info=None)  # get_cost_info will raise
-        result = provider.check_budget_limits()
-        assert result["can_proceed"] is True
-        assert any("Could not check" in w for w in result["warnings"])
 
 
 # ─── check_provider_config ────────────────────────────────────────────
@@ -525,6 +425,13 @@ class TestProviderEnvironmentSwitching:
                 patchers.append(
                     patch("openscientist.providers.vertex.os.path.exists", return_value=True)
                 )
+            # The base reads the shared settings for the model warning.
+            if provider_cls in (AnthropicProvider, CborgProvider):
+                patchers.append(
+                    patch(
+                        "openscientist.providers.base.get_settings", return_value=settings_factory()
+                    )
+                )
 
             with ExitStack() as stack:
                 for patcher in patchers:
@@ -548,3 +455,21 @@ def test_base_provider_does_not_resolve_context_window_app_side() -> None:
         return_value=SimpleNamespace(provider=SimpleNamespace(model_context_tokens=None)),
     ):
         assert stub.prelaunch_model_context_env() == {}
+
+
+# ─── live_check dispatch ─────────────────────────────────────────────────────
+
+
+def test_live_check_reports_settings_validation_errors() -> None:
+    """A settings-level error (the model format) fails the check without reaching the network."""
+    result = AnthropicProvider.live_check(
+        "anthropic", {"ANTHROPIC_API_KEY": "sk-test", "OPENSCIENTIST_MODEL": "gpt-4o"}
+    )
+    assert not result.ok
+    assert "OPENSCIENTIST_MODEL" in result.detail
+
+
+def test_live_check_without_a_provider_override_reports_no_check() -> None:
+    """A provider that leaves the base _live_check in place reports no check."""
+    result = StubProvider.live_check("stub", {})
+    assert result.ok

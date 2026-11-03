@@ -6,11 +6,12 @@ Docker socket. Accepts only execute_code parameters, never a container spec.
 from __future__ import annotations
 
 import asyncio
-import hmac
 import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import uvicorn
 from starlette.applications import Starlette
@@ -18,15 +19,42 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from openscientist.admin_settings import current_admin_settings
+from openscientist.budget import check_budget
 from openscientist.container_manager import ContainerManager, get_container_manager
-from openscientist.exec_broker_client import EXEC_BROKER_PORT, EXEC_TOKEN_HEADER
-from openscientist.job_container.secrets import make_exec_placeholder
+from openscientist.database.models.job import Job as JobModel
+from openscientist.database.session import get_admin_session
+from openscientist.exec_broker_client import EXEC_TOKEN_HEADER
+from openscientist.job_container.secrets import broker_accepts
 from openscientist.job_container.utils import HostPathSettings, to_container_path
+from openscientist.job_manager import _effective_model
+from openscientist.listener import bind_listener
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_LANGUAGES = frozenset({"python", "rust", "sparql"})
+
+# Rust execution is compile-bound, so its cap never undercuts the tool's window.
+_RUST_MIN_TIMEOUT_SECONDS = 300
+
+# The executor runs untrusted code, so the result it hands back stays small.
+_RESULT_FIELD_LIMIT = 10_000
+_TRUNCATED_NOTE = "\n[...truncated]"
+_PLOT_LIMIT = 50
+
+
+def _bounded_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Cap the untrusted result's string fields and plot list in place."""
+    for field in ("output", "error", "traceback"):
+        value = result.get(field)
+        if isinstance(value, str) and len(value) > _RESULT_FIELD_LIMIT:
+            keep = _RESULT_FIELD_LIMIT - len(_TRUNCATED_NOTE)
+            result[field] = value[:keep].rstrip() + _TRUNCATED_NOTE
+    plots = result.get("plots")
+    if isinstance(plots, list) and len(plots) > _PLOT_LIMIT:
+        result["plots"] = plots[:_PLOT_LIMIT]
+    return result
 
 
 class _PathConfinementError(ValueError):
@@ -46,12 +74,8 @@ def _confined_container_path(host_path: str, cs: HostPathSettings, job_root: Pat
     return container_path
 
 
-def create_exec_broker_app(
-    *,
-    master_key: Callable[[], str],
-    manager: Callable[[], ContainerManager],
-) -> Starlette:
-    """Build the broker ASGI app. The callables are resolved per request."""
+def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starlette:
+    """Build the broker ASGI app. The manager is resolved per request."""
 
     async def handler(request: Request) -> Response:
         presented = request.headers.get(EXEC_TOKEN_HEADER, "")
@@ -67,9 +91,7 @@ def create_exec_broker_app(
         if not isinstance(job_id, str) or not job_id:
             return JSONResponse({"error": "missing job_id"}, status_code=400)
 
-        # Recompute the token from the claimed job_id and constant-time compare.
-        expected = make_exec_placeholder(master_key(), job_id)
-        if not presented or not hmac.compare_digest(expected, presented):
+        if not presented or not broker_accepts(job_id, presented):
             return Response("unauthorized", status_code=401)
 
         language = body.get("language", "python")
@@ -86,12 +108,36 @@ def create_exec_broker_app(
             return JSONResponse({"error": "missing output_dir"}, status_code=400)
         try:
             iteration = int(body.get("iteration", 0))
-            timeout_raw = body.get("timeout")
-            timeout = int(timeout_raw) if timeout_raw else None
         except (TypeError, ValueError):
+            return JSONResponse({"error": "iteration must be an integer"}, status_code=400)
+
+        raw_timeout = body.get("timeout")
+        if raw_timeout is None:
+            timeout: int | None = None
+        elif (
+            isinstance(raw_timeout, bool)
+            or not isinstance(raw_timeout, (int, float))
+            or (isinstance(raw_timeout, float) and not math.isfinite(raw_timeout))
+        ):
             return JSONResponse(
-                {"error": "iteration and timeout must be integers"}, status_code=400
+                {"error": "timeout must be a positive number of seconds"},
+                status_code=422,
             )
+        elif int(raw_timeout) <= 0:
+            return JSONResponse(
+                {"error": "timeout must be a positive number of seconds"},
+                status_code=422,
+            )
+        else:
+            try:
+                admin = await current_admin_settings()
+            except Exception:
+                logger.exception("Failed to read the admin settings for job %s", job_id)
+                return Response("the admin settings could not be read", status_code=500)
+            cap = admin.executor_timeout_seconds
+            if language == "rust":
+                cap = max(cap, _RUST_MIN_TIMEOUT_SECONDS)
+            timeout = min(int(raw_timeout), cap)
 
         data_path_raw = body.get("data_path")
         data_files_raw = body.get("data_files", [])
@@ -133,9 +179,64 @@ def create_exec_broker_app(
             data_files=data_files,
             language=language,
         )
-        return JSONResponse(result)
+        return JSONResponse(_bounded_result(result))
 
-    return Starlette(routes=[Route("/execute", handler, methods=["POST"])])
+    async def budget_handler(request: Request) -> Response:
+        presented = request.headers.get(EXEC_TOKEN_HEADER, "")
+        try:
+            raw: Any = await request.json()
+        except Exception:
+            return JSONResponse({"error": "request body must be JSON"}, status_code=400)
+        if not isinstance(raw, dict):
+            return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
+        body: dict[str, Any] = raw
+
+        job_id = body.get("job_id")
+        if not isinstance(job_id, str) or not job_id:
+            return JSONResponse({"error": "missing job_id"}, status_code=400)
+        request_id = body.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            return JSONResponse({"error": "missing request_id"}, status_code=400)
+
+        if not presented or not broker_accepts(job_id, presented):
+            return Response("unauthorized", status_code=401)
+
+        try:
+            job_uuid = UUID(job_id)
+        except ValueError:
+            return JSONResponse({"error": "job_id must be a UUID"}, status_code=400)
+        async with get_admin_session() as session:
+            job = await session.get(JobModel, job_uuid)
+        if job is None:
+            return JSONResponse({"error": "job not found"}, status_code=404)
+
+        try:
+            verdict = await check_budget(
+                job_id=job_uuid,
+                provider_id=job.llm_provider,
+                model=(job.llm_config or {}).get("model")
+                or _effective_model(get_settings().provider),
+                include_unpriced=False,
+            )
+        except Exception:
+            # The server's own 500 for an internal error, which the run retries.
+            logger.exception("Budget check failed for job %s", job_id)
+            return Response("the budget check failed", status_code=500)
+        return JSONResponse(
+            {
+                "request_id": request_id,
+                "ok": verdict.ok,
+                "limit": verdict.limit,
+                "message": verdict.message,
+            }
+        )
+
+    return Starlette(
+        routes=[
+            Route("/execute", handler, methods=["POST"]),
+            Route("/budget", budget_handler, methods=["POST"]),
+        ]
+    )
 
 
 class _NoSignalServer(uvicorn.Server):
@@ -150,15 +251,18 @@ _broker_task: asyncio.Task[None] | None = None
 
 
 async def start_exec_broker() -> None:
-    """Start the broker listener as a loop task. The single, always-on exec path."""
+    """Start the broker listener as a loop task. The single, always-on exec path.
+
+    Raises:
+        ListenerBindError: Its port cannot be bound.
+    """
     global _broker_server, _broker_task
     if _broker_task is not None:
         return
-    app = create_exec_broker_app(
-        master_key=lambda: get_settings().secret_key,
-        manager=get_container_manager,
-    )
-    config = uvicorn.Config(app, host="0.0.0.0", port=EXEC_BROKER_PORT, log_level="warning")
+    port = get_settings().container.exec_broker_port
+    sock = bind_listener(port, name="execution broker", setting="OPENSCIENTIST_EXEC_BROKER_PORT")
+    app = create_exec_broker_app(manager=get_container_manager)
+    config = uvicorn.Config(app, log_level="warning")
     _broker_server = _NoSignalServer(config)
-    _broker_task = asyncio.create_task(_broker_server.serve())
-    logger.info("Execution broker listening on port %d", EXEC_BROKER_PORT)
+    _broker_task = asyncio.create_task(_broker_server.serve(sockets=[sock]))
+    logger.info("Execution broker listening on port %d", port)

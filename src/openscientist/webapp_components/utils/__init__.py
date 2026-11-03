@@ -14,22 +14,16 @@ from openscientist.webapp_components.utils.session import (
     clear_uploaded_files,
     get_uploaded_files,
 )
-from openscientist.webapp_components.utils.transcript_parser import (
-    get_action_description,
-    parse_transcript_actions,
-)
 
 __all__ = [
     "ClientGuard",
     "add_uploaded_file",
     "clear_uploaded_files",
     "get_event_value",
-    "get_action_description",
     "get_uploaded_files",
     "guard_client",
     "is_client_connected",
     "is_dev_mode",
-    "parse_transcript_actions",
     "safe_run_javascript",
     "setup_timer_cleanup",
 ]

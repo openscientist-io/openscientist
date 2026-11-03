@@ -83,7 +83,7 @@ class TestSetupPhenixEnv:
             os.environ,
             {
                 "OPENSCIENTIST_PROVIDER": "anthropic",
-                "OPENSCIENTIST_SECRET_KEY": "test",
+                "OPENSCIENTIST_SECRET_KEY": "a" * 64,
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
             },
             clear=True,
@@ -114,66 +114,49 @@ class TestSetupPhenixEnv:
                 setup_phenix_env(raise_on_error=True)
             assert "does not exist" in str(exc_info.value)
 
-    @patch("openscientist.phenix_setup.os.path.isdir")
-    @patch("openscientist.phenix_setup.os.path.exists")
-    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
-    def test_missing_phenix_about_returns_none(self, mock_exists, mock_isdir):
+    def test_missing_phenix_about_returns_none(self, tmp_path):
         """Install without bin/phenix.about is treated as not-a-Phenix-2.x install."""
+        (tmp_path / "bin").mkdir()
+        with patch.dict(os.environ, {"PHENIX_PATH": str(tmp_path)}):
+            clear_settings_cache()
+            assert setup_phenix_env() is None
 
-        def exists_side_effect(path):
-            return "phenix.about" not in path
+    def test_missing_phenix_about_raises_with_flag(self, tmp_path):
+        (tmp_path / "bin").mkdir()
+        with patch.dict(os.environ, {"PHENIX_PATH": str(tmp_path)}):
+            clear_settings_cache()
+            with pytest.raises(PhenixConfigError) as exc_info:
+                setup_phenix_env(raise_on_error=True)
+            assert "phenix.about" in str(exc_info.value)
 
-        mock_exists.side_effect = exists_side_effect
-        mock_isdir.return_value = True
-        assert setup_phenix_env() is None
+    def test_valid_2x_install_sets_path_and_prefix(self, tmp_path):
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "phenix.about").write_text("phenix 2.x")
+        with patch.dict(os.environ, {"PHENIX_PATH": str(tmp_path)}):
+            clear_settings_cache()
+            env = setup_phenix_env()
+            assert env is not None
+            assert env["PATH"].startswith(f"{tmp_path}/bin:")
+            assert env["PHENIX"] == str(tmp_path)
+            assert env["PHENIX_PREFIX"] == str(tmp_path)
 
-    @patch("openscientist.phenix_setup.os.path.isdir")
-    @patch("openscientist.phenix_setup.os.path.exists")
-    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
-    def test_missing_phenix_about_raises_with_flag(self, mock_exists, mock_isdir):
-        def exists_side_effect(path):
-            return "phenix.about" not in path
-
-        mock_exists.side_effect = exists_side_effect
-        mock_isdir.return_value = True
-        with pytest.raises(PhenixConfigError) as exc_info:
-            setup_phenix_env(raise_on_error=True)
-        assert "phenix.about" in str(exc_info.value)
-
-    @patch("openscientist.phenix_setup.os.path.isdir")
-    @patch("openscientist.phenix_setup.os.path.exists")
-    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix"})
-    def test_valid_2x_install_sets_path_and_prefix(self, mock_exists, mock_isdir):
-        clear_settings_cache()
-        mock_exists.return_value = True
-        mock_isdir.return_value = True
-        env = setup_phenix_env()
-        assert env is not None
-        assert env["PATH"].startswith("/opt/phenix/bin:")
-        assert env["PHENIX"] == "/opt/phenix"
-        assert env["PHENIX_PREFIX"] == "/opt/phenix"
-
-    @patch("openscientist.phenix_setup.os.path.isdir")
-    @patch("openscientist.phenix_setup.os.path.exists")
-    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix", "JOB_ID": "abc-uuid"})
-    def test_job_id_is_stripped_from_env(self, mock_exists, mock_isdir):
+    def test_job_id_is_stripped_from_env(self, tmp_path):
         """JOB_ID must not leak into Phenix env (Phenix SGE utils parse it as int)."""
-        clear_settings_cache()
-        mock_exists.return_value = True
-        mock_isdir.return_value = True
-        env = setup_phenix_env()
-        assert env is not None
-        assert "JOB_ID" not in env
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "phenix.about").write_text("phenix 2.x")
+        with patch.dict(os.environ, {"PHENIX_PATH": str(tmp_path), "JOB_ID": "abc-uuid"}):
+            clear_settings_cache()
+            env = setup_phenix_env()
+            assert env is not None
+            assert "JOB_ID" not in env
 
-    @patch("openscientist.phenix_setup.os.path.isdir")
-    @patch("openscientist.phenix_setup.os.path.exists")
-    @patch.dict(os.environ, {"PHENIX_PATH": "/opt/phenix", "PATH": ""})
-    def test_empty_path_does_not_add_trailing_colon(self, mock_exists, mock_isdir):
+    def test_empty_path_does_not_add_trailing_colon(self, tmp_path):
         """Empty PATH must not yield 'bin_dir:' (trailing colon implies CWD in PATH)."""
-        clear_settings_cache()
-        mock_exists.return_value = True
-        mock_isdir.return_value = True
-        env = setup_phenix_env()
-        assert env is not None
-        assert env["PATH"] == "/opt/phenix/bin"
-        assert not env["PATH"].endswith(":")
+        (tmp_path / "bin").mkdir()
+        (tmp_path / "bin" / "phenix.about").write_text("phenix 2.x")
+        with patch.dict(os.environ, {"PHENIX_PATH": str(tmp_path), "PATH": ""}):
+            clear_settings_cache()
+            env = setup_phenix_env()
+            assert env is not None
+            assert env["PATH"] == f"{tmp_path}/bin"
+            assert not env["PATH"].endswith(":")

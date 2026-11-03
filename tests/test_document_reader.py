@@ -1,45 +1,13 @@
 """Tests for document_reader module."""
 
-from pathlib import Path
-
 import pytest
 
 from openscientist.document_reader import (
     extract_text_from_docx,
     extract_text_from_pdf,
     extract_text_from_xlsx,
-    is_binary_document,
-    is_text_file,
     read_document,
 )
-
-
-class TestFileTypeDetection:
-    """Tests for file type detection functions."""
-
-    def test_is_binary_document_pdf(self):
-        assert is_binary_document(Path("test.pdf")) is True
-        assert is_binary_document(Path("test.PDF")) is True
-
-    def test_is_binary_document_docx(self):
-        assert is_binary_document(Path("test.docx")) is True
-        assert is_binary_document(Path("test.doc")) is True
-
-    def test_is_binary_document_xlsx(self):
-        assert is_binary_document(Path("test.xlsx")) is True
-        assert is_binary_document(Path("test.xls")) is True
-
-    def test_is_binary_document_text_files(self):
-        assert is_binary_document(Path("test.csv")) is False
-        assert is_binary_document(Path("test.txt")) is False
-        assert is_binary_document(Path("test.json")) is False
-
-    def test_is_text_file(self):
-        assert is_text_file(Path("test.csv")) is True
-        assert is_text_file(Path("test.txt")) is True
-        assert is_text_file(Path("test.json")) is True
-        assert is_text_file(Path("test.md")) is True
-        assert is_text_file(Path("test.pdf")) is False
 
 
 class TestPDFExtraction:

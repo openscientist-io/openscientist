@@ -7,7 +7,6 @@ Uses caching based on commit SHA to avoid redundant syncs.
 
 import asyncio
 import logging
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -52,7 +51,6 @@ class SkillSyncScheduler:
     - Periodic sync at configurable intervals
     - Caching based on commit SHA (skips if unchanged)
     - Rate limiting to avoid hammering sources
-    - Graceful shutdown
     """
 
     def __init__(
@@ -80,21 +78,12 @@ class SkillSyncScheduler:
             return
 
         self._running = True
+        # The event loop keeps only a weak reference to a task, so this one holds it.
         self._task = asyncio.create_task(self._run_loop())
         logger.info(
             "Skill sync scheduler started (interval: %d seconds)",
             self.sync_interval,
         )
-
-    async def stop(self) -> None:
-        """Stop the background sync task gracefully."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-        logger.info("Skill sync scheduler stopped")
 
     async def _run_loop(self) -> None:
         """Main loop that runs sync periodically."""
@@ -105,11 +94,10 @@ class SkillSyncScheduler:
             logger.error("Initial skill sync failed: %s", e)
 
         # Then run periodically
-        while self._running:
+        while True:
             try:
                 await asyncio.sleep(self.sync_interval)
-                if self._running:
-                    await self.sync_all_sources()
+                await self.sync_all_sources()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -295,11 +283,3 @@ async def start_skill_scheduler() -> None:
     """Start the global skill sync scheduler."""
     scheduler = get_scheduler()
     await scheduler.start()
-
-
-async def stop_skill_scheduler() -> None:
-    """Stop the global skill sync scheduler."""
-    global _scheduler
-    if _scheduler:
-        await _scheduler.stop()
-        _scheduler = None

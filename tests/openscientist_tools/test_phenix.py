@@ -16,9 +16,10 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 from sqlalchemy import delete
 
-from openscientist.database import AsyncSessionLocal
+from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import phenix_installation_ok
 from openscientist_tools import phenix as phenix_module
 from openscientist_tools.phenix import (
     compare_structures,
@@ -33,7 +34,7 @@ def _phenix_available_in_test_env() -> bool:
     phenix_path = os.environ.get("PHENIX_PATH")
     if not phenix_path:
         return False
-    return (Path(phenix_path) / "bin" / "phenix.about").is_file()
+    return phenix_installation_ok(phenix_path)
 
 
 PHENIX_REQUIRED = pytest.mark.skipif(
@@ -84,7 +85,7 @@ async def _spawned_for_job(
     *,
     env_overrides: dict[str, str] | None = None,
 ) -> AsyncGenerator[ClientSession, None]:
-    async with AsyncSessionLocal(thread_safe=True) as setup:
+    async with async_session_local() as setup:
         setup.add(
             Job(
                 id=job_id,
@@ -117,7 +118,7 @@ async def _spawned_for_job(
                 await session.initialize()
                 yield session
     finally:
-        async with AsyncSessionLocal(thread_safe=True) as cleanup:
+        async with async_session_local() as cleanup:
             await cleanup.execute(delete(Job).where(Job.id == job_id))
             await cleanup.commit()
 
@@ -149,7 +150,7 @@ def _fake_setup_phenix_env() -> dict[str, str]:
 # ----- In-process branch coverage -----
 
 
-def test_run_phenix_tool_happy_path(
+async def test_run_phenix_tool_happy_path(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -165,7 +166,7 @@ def test_run_phenix_tool_happy_path(
     )
     monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", lambda *a, **kw: completed)
 
-    result = run_phenix_tool("phenix.clashscore", ["model.pdb"])
+    result = await run_phenix_tool("phenix.clashscore", ["model.pdb"])
     assert "MolProbity clashscore = 5.0" in result
     assert "Command: phenix.clashscore" in result
 
@@ -175,7 +176,7 @@ def test_run_phenix_tool_happy_path(
     assert last_log["success"] is True
 
 
-def test_run_phenix_tool_nonzero_returncode(
+async def test_run_phenix_tool_nonzero_returncode(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -191,14 +192,14 @@ def test_run_phenix_tool_nonzero_returncode(
     )
     monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", lambda *a, **kw: completed)
 
-    result = run_phenix_tool("phenix.clashscore", ["model.pdb"])
+    result = await run_phenix_tool("phenix.clashscore", ["model.pdb"])
     assert "❌" in result
     assert "exited with code 1" in result
     assert "bad input file" in result
     assert patched_ks_persistence.data["analysis_log"][-1]["success"] is False
 
 
-def test_run_phenix_tool_timeout(
+async def test_run_phenix_tool_timeout(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -211,21 +212,128 @@ def test_run_phenix_tool_timeout(
 
     monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", _raise_timeout)
 
-    result = run_phenix_tool("phenix.clashscore", ["model.pdb"])
+    result = await run_phenix_tool("phenix.clashscore", ["model.pdb"])
     assert "timed out after 5 minutes" in result
 
 
-def test_run_phenix_tool_missing_input_file(
+async def test_run_phenix_tool_missing_input_file(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
 ) -> None:
     monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
-    result = run_phenix_tool("phenix.clashscore", ["nonexistent.pdb"])
-    assert result == "❌ Error: File not found: nonexistent.pdb"
+    result = await run_phenix_tool("phenix.clashscore", ["nonexistent.pdb"])
+    # The error names the missing input file
+    assert result.startswith("❌")
+    assert "nonexistent.pdb" in result
 
 
-def test_compare_structures_appends_rmsd_interpretation(
+def _recording_subprocess_run() -> tuple[list[list[str]], object]:
+    """Return a fake ``subprocess.run`` that records each attempted command."""
+    calls: list[list[str]] = []
+
+    def _record(
+        cmd: list[str], *args: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(args=list(cmd), returncode=0, stdout="", stderr="")
+
+    return calls, _record
+
+
+async def test_run_phenix_tool_refuses_traversal_name(
+    monkeypatch: pytest.MonkeyPatch,
+    state_job_dir: Path,
+) -> None:
+    (state_job_dir / "model.pdb").write_text("dummy")
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    result = await run_phenix_tool("phenix.clashscore", ["../model.pdb"])
+    assert calls == []
+    assert result.startswith("❌")
+
+
+async def test_run_phenix_tool_refuses_absolute_path(
+    monkeypatch: pytest.MonkeyPatch,
+    state_job_dir: Path,
+) -> None:
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    result = await run_phenix_tool("phenix.clashscore", ["/etc/passwd"])
+    assert calls == []
+    assert result.startswith("❌")
+
+
+async def test_run_phenix_tool_refuses_dash_prefixed_name(
+    monkeypatch: pytest.MonkeyPatch,
+    state_job_dir: Path,
+) -> None:
+    (state_job_dir / "data" / "-help.pdb").write_text("dummy")
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    result = await run_phenix_tool("phenix.clashscore", ["-help.pdb"])
+    assert calls == []
+    assert result.startswith("❌")
+
+
+async def test_run_phenix_tool_valid_name_builds_expected_command(
+    monkeypatch: pytest.MonkeyPatch,
+    state_job_dir: Path,
+    patched_ks_persistence: KnowledgeState,
+) -> None:
+    (state_job_dir / "data" / "model.pdb").write_text("dummy")
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    await run_phenix_tool("phenix.clashscore", ["model.pdb"])
+    assert calls == [["phenix.clashscore", str(state_job_dir / "data" / "model.pdb")]]
+
+
+async def test_compare_structures_refuses_out_of_data_name(
+    monkeypatch: pytest.MonkeyPatch,
+    state_job_dir: Path,
+) -> None:
+    (state_job_dir / "model.pdb").write_text("dummy")
+    (state_job_dir / "data" / "pred.pdb").write_text("dummy")
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    result = await compare_structures("../model.pdb", "pred.pdb")
+    assert calls == []
+    assert result.startswith("❌")
+
+
+def test_parse_alphafold_confidence_refuses_out_of_data_name(state_job_dir: Path) -> None:
+    _write_pdb(state_job_dir / "outside.pdb", [(1, 95.0), (2, 92.0)])
+    result = parse_alphafold_confidence("../outside.pdb")
+    assert result.startswith("❌")
+    assert "Residues analyzed" not in result
+
+
+def test_parse_alphafold_confidence_refuses_dash_prefixed_name(
+    state_job_dir: Path,
+) -> None:
+    _write_pdb(state_job_dir / "data" / "-model.pdb", [(1, 95.0)])
+    result = parse_alphafold_confidence("-model.pdb")
+    assert result.startswith("❌")
+    assert "Residues analyzed" not in result
+
+
+def test_parse_alphafold_confidence_refuses_pae_traversal(state_job_dir: Path) -> None:
+    _write_pdb(state_job_dir / "data" / "model.pdb", [(1, 95.0)])
+    result = parse_alphafold_confidence("model.pdb", pae_json="../pae.json")
+    assert result.startswith("❌")
+
+
+async def test_compare_structures_appends_rmsd_interpretation(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
     patched_ks_persistence: KnowledgeState,
@@ -242,7 +350,7 @@ def test_compare_structures_appends_rmsd_interpretation(
     )
     monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", lambda *a, **kw: completed)
 
-    result = compare_structures("exp.pdb", "pred.pdb")
+    result = await compare_structures("exp.pdb", "pred.pdb")
     assert "RMSD = 1.23" in result
     assert "Interpretation hints" in result
     assert "RMSD 1-2 Å" in result
@@ -307,7 +415,7 @@ async def test_run_phenix_tool_via_subprocess(
         assert "❌" not in text
         assert "Command: phenix.clashscore" in text
 
-        reloaded = KnowledgeState.load_from_database_sync(str(job_id))
+        reloaded = await KnowledgeState.load_from_database(str(job_id))
         assert reloaded.data["analysis_log"][-1]["action"] == "run_phenix_tool"
         assert reloaded.data["analysis_log"][-1]["tool_name"] == "phenix.clashscore"
 

@@ -7,7 +7,7 @@ import logging
 from uuid import UUID
 
 from openscientist.database.models.job import Job as JobModel
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import async_session_local
 from openscientist.knowledge_state import KnowledgeState
 from openscientist_tools.server import mcp
 from openscientist_tools.state import STATE
@@ -27,7 +27,7 @@ def _validate_title(title: str) -> str | None:
 
 
 @mcp.tool()
-def set_status(message: str) -> str:
+async def set_status(message: str) -> str:
     """Update the agent's current status message (shown in the UI).
 
     Args:
@@ -37,9 +37,9 @@ def set_status(message: str) -> str:
         Confirmation
     """
     trimmed = message[:80]
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
     ks.set_agent_status(trimmed)
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
     return f"✅ Status updated: {trimmed}"
 
 
@@ -61,7 +61,7 @@ async def set_job_title(title: str) -> str:
     except ValueError:
         return f"❌ Invalid job id: {STATE.job_id}"
     try:
-        async with AsyncSessionLocal(thread_safe=True) as session:
+        async with async_session_local() as session:
             job = await session.get(JobModel, job_uuid)
             if job is None:
                 return "❌ Job not found in database."
@@ -74,7 +74,7 @@ async def set_job_title(title: str) -> str:
 
 
 @mcp.tool()
-def save_iteration_summary(summary: str, strapline: str = "") -> str:
+async def save_iteration_summary(summary: str, strapline: str = "") -> str:
     """Save a summary of this iteration's investigation and findings.
 
     Call this at the end of each iteration.
@@ -86,18 +86,18 @@ def save_iteration_summary(summary: str, strapline: str = "") -> str:
     Returns:
         Confirmation
     """
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
     ks.add_iteration_summary(
         iteration=ks.data["iteration"],
         summary=summary,
         strapline=strapline,
     )
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
     return f"✅ Iteration summary saved: {summary[:100]}"
 
 
 @mcp.tool()
-def set_consensus_answer(answer: str) -> str:
+async def set_consensus_answer(answer: str) -> str:
     """Set the consensus answer to the research question (1-3 sentences, direct).
 
     Call this after writing the final report.
@@ -108,7 +108,7 @@ def set_consensus_answer(answer: str) -> str:
     Returns:
         Confirmation
     """
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
     ks.data["consensus_answer"] = answer.strip()
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
     return "✅ Consensus answer set"

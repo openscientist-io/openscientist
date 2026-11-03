@@ -6,6 +6,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from openscientist import web_app
+from openscientist.security import ScannerBlockMiddleware, SecurityHeadersMiddleware
 
 
 def _noop(*_args, **_kwargs) -> None:
@@ -59,7 +60,10 @@ def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr(
         "openscientist.settings.get_settings",
         lambda: SimpleNamespace(
-            dev=SimpleNamespace(dev_mode=True), database=SimpleNamespace(database_url="unused")
+            dev=SimpleNamespace(dev_mode=True),
+            database=SimpleNamespace(database_url="unused"),
+            auth=SimpleNamespace(app_url="http://localhost:8080"),
+            bind_address="127.0.0.1",
         ),
     )
     monkeypatch.setattr(web_app, "_refuse_unsafe_database_login", lambda _url: None)
@@ -86,7 +90,10 @@ def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(
         "openscientist.settings.get_settings",
         lambda: SimpleNamespace(
-            dev=SimpleNamespace(dev_mode=False), database=SimpleNamespace(database_url="unused")
+            dev=SimpleNamespace(dev_mode=False),
+            database=SimpleNamespace(database_url="unused"),
+            auth=SimpleNamespace(app_url="http://localhost:8080"),
+            bind_address="127.0.0.1",
         ),
     )
     monkeypatch.setattr(web_app, "_refuse_unsafe_database_login", lambda _url: None)
@@ -109,7 +116,7 @@ def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> N
     assert kwargs["reload"] is False
 
 
-def test_register_nicegui_static_files_tolerates_duplicates(monkeypatch, tmp_path: Path) -> None:
+def test_register_nicegui_static_files_tolerates_duplicates(monkeypatch) -> None:
     calls: list[tuple[str, str]] = []
 
     def fake_add_static_files(route: str, directory: str) -> None:
@@ -119,10 +126,11 @@ def test_register_nicegui_static_files_tolerates_duplicates(monkeypatch, tmp_pat
 
     monkeypatch.setattr(web_app.app, "add_static_files", fake_add_static_files)
 
-    web_app._register_nicegui_static_files(tmp_path / "jobs")
+    web_app._register_nicegui_static_files()
 
+    # Job files are never static, since only users who may see the job get them.
     routes = [route for route, _ in calls]
-    assert routes == ["/jobs", "/assets"]
+    assert routes == ["/assets"]
 
 
 def test_register_robots_txt_serves_disallow_all() -> None:
@@ -247,3 +255,80 @@ def test_web_starts_with_the_admin_url(monkeypatch, tmp_path: Path) -> None:
         lambda: _settings_with_admin_url("postgresql+asyncpg://admin:pass@host:5432/db"),
     )
     assert web_app._validate_settings() is None
+
+
+def test_initialize_job_manager_runtime_installs_the_manager(monkeypatch, tmp_path: Path) -> None:
+    """The runtime initializer installs a global manager, and a second call
+    leaves the existing manager in place."""
+    monkeypatch.setattr(web_app.JobManager, "recover_after_restart", lambda self: None)
+    monkeypatch.setattr(web_app, "_state", web_app._AppState())
+
+    web_app._initialize_job_manager_runtime(tmp_path / "jobs")
+    manager = web_app.get_job_manager()
+    assert manager.jobs_dir == tmp_path / "jobs"
+
+    web_app._initialize_job_manager_runtime(tmp_path / "other")
+    assert web_app.get_job_manager() is manager
+
+
+def test_openapi_docs_load_their_assets_from_the_app() -> None:
+    host_app = FastAPI(title="OpenScientist API", version="1.0.0")
+    web_app._register_openapi_docs(host_app)
+    client = TestClient(host_app)
+
+    swagger = client.get("/api-docs")
+    assert "/docs-assets/swagger-ui-bundle.js" in swagger.text
+    assert "/docs-assets/swagger-ui.css" in swagger.text
+    assert "jsdelivr" not in swagger.text
+    assert "tiangolo" not in swagger.text
+
+    redoc = client.get("/api-redoc")
+    assert "/docs-assets/redoc.standalone.js" in redoc.text
+    assert "jsdelivr" not in redoc.text
+    assert "fonts.googleapis.com" not in redoc.text
+
+    # The docs pages carry their own CSP (ReDoc spawns a blob: worker), so the
+    # app's page policy must not be layered over them.
+    for response in (swagger, redoc):
+        csp = response.headers["content-security-policy"]
+        assert "worker-src 'self' blob:" in csp
+        assert "frame-ancestors 'none'" not in csp
+
+    for asset in ("swagger-ui-bundle.js", "swagger-ui.css", "redoc.standalone.js"):
+        response = client.get(f"/docs-assets/{asset}")
+        assert response.status_code == 200
+        assert len(response.content) > 100_000
+
+    logo = client.get("/docs-assets/redoc-logo-mini.svg")
+    assert logo.status_code == 200
+    assert "cdn.redoc.ly" not in client.get("/docs-assets/redoc.standalone.js").text
+
+
+def test_create_app_registers_the_security_headers_middleware(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(web_app, "_state", web_app._AppState())
+    monkeypatch.setattr(web_app, "_register_robots_txt", _noop)
+    monkeypatch.setattr(web_app, "_register_api_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_oauth_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_share_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_review_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_download_routes", _noop)
+    monkeypatch.setattr(web_app, "_initialize_job_manager_runtime", _noop)
+    monkeypatch.setattr(web_app, "_register_nicegui_static_files", _noop)
+    monkeypatch.setattr(web_app, "_register_pwa_metadata", _noop)
+    monkeypatch.setattr(web_app, "register_badge_head_html", _noop)
+    monkeypatch.setattr(web_app, "_inject_density_styles", _noop)
+    monkeypatch.setattr(web_app, "_inject_thinking_status_styles", _noop)
+    monkeypatch.setattr(web_app.ui, "run_with", _noop)
+    _skip_page_module_import(monkeypatch)
+
+    host_app = web_app.create_app(tmp_path / "jobs")
+    classes = [middleware.cls for middleware in host_app.user_middleware]
+    assert SecurityHeadersMiddleware in classes
+    assert ScannerBlockMiddleware in classes
+
+    client = TestClient(host_app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "content-security-policy" in response.headers

@@ -1,14 +1,14 @@
-"""Tests for `OllamaProvider` (local, keyless CodexCompatible provider)."""
+"""Tests for `OllamaProvider` (local, keyless provider driven by omp)."""
 
 from __future__ import annotations
 
-import tomllib
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from openscientist.providers.base import CodexCompatible
+from openscientist.agent.factory import agent_class_for_provider_id
+from openscientist.agent.omp_agent import OmpAgent
 from openscientist.providers.ollama import OllamaProvider
 
 
@@ -37,9 +37,14 @@ def _resp(payload: dict) -> object:
     return r
 
 
-def test_is_codex_compatible() -> None:
-    with patch("openscientist.providers.ollama.get_settings", return_value=_settings()):
-        assert isinstance(OllamaProvider(), CodexCompatible)
+def test_omp_drives_ollama_and_codex_refuses_it() -> None:
+    with patch("openscientist.agent.factory._resolve_harness", return_value="auto"):
+        assert agent_class_for_provider_id("ollama") is OmpAgent
+    with (
+        patch("openscientist.agent.factory._resolve_harness", return_value="codex"),
+        pytest.raises(ValueError, match="requires an OpenAI-compatible"),
+    ):
+        agent_class_for_provider_id("ollama")
 
 
 def test_identity() -> None:
@@ -47,27 +52,6 @@ def test_identity() -> None:
         p = OllamaProvider()
         assert p.id == "ollama"
         assert p.display_name == "Ollama (local)"
-        # codex reserves "ollama" as a built-in id, so the config table and
-        # model_provider use "ollama-local".
-        assert p.codex_model_provider_id() == "ollama-local"
-
-
-def test_config_overrides_are_keyless_responses_surface() -> None:
-    with patch(
-        "openscientist.providers.ollama.get_settings",
-        return_value=_settings(base_url="http://host.docker.internal:11434/v1"),
-    ):
-        cfg = tomllib.loads("\n".join(OllamaProvider().codex_config_overrides()))
-    mp = cfg["model_providers"]["ollama-local"]
-    assert mp["base_url"] == "http://host.docker.internal:11434/v1"
-    assert mp["wire_api"] == "responses"
-    # Local and keyless: codex must not demand an OpenAI login, and no env_key
-    # is sent.
-    assert mp["requires_openai_auth"] is False
-    assert "env_key" not in mp
-    # Slow CPU-offloaded models (gpt-oss:120b) prefill in silence for minutes;
-    # a long stream idle timeout keeps codex from dropping the SSE connection.
-    assert mp["stream_idle_timeout_ms"] == 3600000
 
 
 def test_model_name_falls_back_to_the_provider_default() -> None:
@@ -75,7 +59,7 @@ def test_model_name_falls_back_to_the_provider_default() -> None:
         "openscientist.providers.ollama.get_settings",
         return_value=_settings(model=None),
     ):
-        assert OllamaProvider().codex_model_name() == "gpt-oss:20b"
+        assert OllamaProvider().effective_model_name() == "gpt-oss:20b"
 
 
 def test_model_override_wins() -> None:
@@ -83,12 +67,7 @@ def test_model_override_wins() -> None:
         "openscientist.providers.ollama.get_settings",
         return_value=_settings(model="qwen2.5-coder:32b"),
     ):
-        assert OllamaProvider().codex_model_name() == "qwen2.5-coder:32b"
-
-
-def test_codex_sdk_env_is_empty() -> None:
-    with patch("openscientist.providers.ollama.get_settings", return_value=_settings()):
-        assert OllamaProvider().codex_sdk_env() == {}
+        assert OllamaProvider().effective_model_name() == "qwen2.5-coder:32b"
 
 
 def test_validate_required_config_is_empty() -> None:

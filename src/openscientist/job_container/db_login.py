@@ -11,18 +11,24 @@ the reaper drops what is left.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import logging
 import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from openscientist.async_tasks import run_sync
-from openscientist.database.session import AsyncSessionLocal
+from openscientist.database.session import async_session_local
+from openscientist.job_container.run_home import remove_legacy_job_homes, remove_stale_run_homes
+from openscientist.job_container.secrets import revoke_run_credentials
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -46,21 +52,45 @@ class AgentLogin:
     database_url: str
 
 
+#: PostgreSQL's default ``scram_iterations``.
+_SCRAM_ITERATIONS = 4096
+
+
+def _scram_verifier(password: str) -> str:
+    """The SCRAM-SHA-256 verifier PostgreSQL stores for ``password`` (RFC 7677),
+    which accepts the password at login but cannot be turned back into it."""
+    salt = secrets.token_bytes(16)
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, _SCRAM_ITERATIONS)
+    stored_key = hashlib.sha256(hmac.new(salted, b"Client Key", hashlib.sha256).digest()).digest()
+    server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+
+    def b64(raw: bytes) -> str:
+        return base64.b64encode(raw).decode()
+
+    return f"SCRAM-SHA-256${_SCRAM_ITERATIONS}:{b64(salt)}${b64(stored_key)}:{b64(server_key)}"
+
+
 async def create_agent_login(job_id: str, *, lifetime_seconds: int) -> AgentLogin:
     """Create a login for one container of ``job_id`` and map it to the job."""
     role = f"agent_{secrets.token_hex(16)}"
     password = secrets.token_urlsafe(32)
     valid_until = datetime.now(UTC) + timedelta(seconds=lifetime_seconds) + _GRACE
-    async with AsyncSessionLocal(thread_safe=True) as session:
+    async with async_session_local() as session:
         # CREATE ROLE takes no bind parameters, so the server quotes the values.
+        # The statement is SQL text that errors and the server log repeat, so it
+        # carries the password's SCRAM verifier, never the password.
         statement = (
             await session.execute(
                 text(
                     "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L VALID UNTIL %L "
                     "IN ROLE openscientist_agent', CAST(:role AS text), "
-                    "CAST(:password AS text), CAST(:valid_until AS text))"
+                    "CAST(:verifier AS text), CAST(:valid_until AS text))"
                 ),
-                {"role": role, "password": password, "valid_until": valid_until.isoformat()},
+                {
+                    "role": role,
+                    "verifier": _scram_verifier(password),
+                    "valid_until": valid_until.isoformat(),
+                },
             )
         ).scalar_one()
         await (await session.connection()).exec_driver_sql(statement)
@@ -75,14 +105,16 @@ async def create_agent_login(job_id: str, *, lifetime_seconds: int) -> AgentLogi
 
 
 async def drop_agent_login(role: str) -> None:
-    """Unmap the login, end its sessions and drop it.
+    """End the run's LLM proxy and broker credentials, then unmap the login, end
+    its sessions and drop it.
 
-    The mapping goes first, so the login reaches nothing even if a later step
-    fails.
+    The credentials and the mapping go first, so the run reaches nothing even if
+    a later step fails.
     """
     if not _ROLE_PATTERN.fullmatch(role):
         raise ValueError(f"{role!r} is not an agent login")
-    async with AsyncSessionLocal(thread_safe=True) as session:
+    revoke_run_credentials(role)
+    async with async_session_local() as session:
         await session.execute(
             text("DELETE FROM agent_job_roles WHERE role_name = :role"), {"role": role}
         )
@@ -109,7 +141,7 @@ async def reap_agent_logins(live_roles: set[str] | None) -> list[str]:
     are dropped. Only roles named like an agent login that are members of
     openscientist_agent are considered.
     """
-    async with AsyncSessionLocal(thread_safe=True) as session:
+    async with async_session_local() as session:
         rows = (
             await session.execute(
                 text(
@@ -152,26 +184,39 @@ async def reap_agent_logins(live_roles: set[str] | None) -> list[str]:
     return dropped
 
 
-async def reap_leftover_agent_logins() -> list[str]:
-    """One reaper run, with the live set taken from Docker."""
+async def reap_leftover_agent_logins(jobs_dir: Path) -> list[str]:
+    """One reaper run, with the live set taken from Docker. It also removes the
+    run homes no container needs and the harness homes past runs left inside
+    job directories."""
     # Imported here because the runner imports this module.
     from openscientist.job_container.runner import JobContainerRunner
 
-    def live_roles() -> set[str] | None:
+    def live() -> tuple[set[str] | None, set[str] | None]:
         try:
-            return JobContainerRunner().live_login_roles()
+            runner = JobContainerRunner()
+            return runner.live_login_roles(), runner.live_job_ids()
         except Exception as error:
             logger.warning("Docker unavailable to the login reaper: %s", error)
-            return None
+            return None, None
 
-    return await reap_agent_logins(await asyncio.to_thread(live_roles))
+    live_roles, live_jobs = await asyncio.to_thread(live)
+    dropped = await reap_agent_logins(live_roles)
+
+    def sweep() -> None:
+        remove_stale_run_homes(jobs_dir, live_roles, older_than=_LAUNCH_GRACE)
+        remove_legacy_job_homes(jobs_dir, live_jobs)
+
+    await asyncio.to_thread(sweep)
+    return dropped
 
 
-async def run_agent_login_reaper(interval_seconds: int = REAP_INTERVAL_SECONDS) -> None:
+async def run_agent_login_reaper(
+    jobs_dir: Path, interval_seconds: int = REAP_INTERVAL_SECONDS
+) -> None:
     """Reap at once, then every ``interval_seconds``, for the web's lifetime."""
     while True:
         try:
-            await reap_leftover_agent_logins()
+            await reap_leftover_agent_logins(jobs_dir)
         except Exception as error:
             logger.error("Agent login reaper run failed: %s", error)
         await asyncio.sleep(interval_seconds)

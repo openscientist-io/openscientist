@@ -12,12 +12,10 @@ from sqlalchemy import text, update
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-import openscientist.database.engine as engine_module
-import openscientist.database.session as session_module
 from openscientist.database import get_session_ctx
 from openscientist.database.models import User
 from openscientist.database.rls import set_current_user
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.notifications import (
     _fetch_notification_settings,
     _set_notifications_enabled,
 )
@@ -31,9 +29,7 @@ class _Users:
 
 @pytest_asyncio.fixture
 async def users(test_engine: AsyncEngine) -> AsyncGenerator[_Users, None]:
-    """Two committed users, and a shared engine bound to this test's loop."""
-    engine_module._engine = None
-    session_module._session_factory = None
+    """Two committed users."""
     async with AsyncSession(test_engine, expire_on_commit=False) as session:
         alice = User(email=f"alice-{uuid4().hex}@ntfy.test", name="Alice")
         bob = User(email=f"bob-{uuid4().hex}@ntfy.test", name="Bob")
@@ -44,10 +40,6 @@ async def users(test_engine: AsyncEngine) -> AsyncGenerator[_Users, None]:
         await conn.execute(
             text("DELETE FROM users WHERE id = ANY(:ids)"), {"ids": [alice.id, bob.id]}
         )
-    if engine_module._engine is not None:
-        await engine_module._engine.dispose()
-    engine_module._engine = None
-    session_module._session_factory = None
 
 
 async def _ntfy_enabled(test_engine: AsyncEngine, user_id: UUID) -> bool:
@@ -92,4 +84,14 @@ async def test_a_user_session_cannot_approve_itself(users: _Users) -> None:
             await set_current_user(session, users.alice)
             await session.execute(
                 update(User).where(User.id == users.alice).values(is_approved=True)
+            )
+
+
+@pytest.mark.asyncio
+async def test_a_user_session_cannot_make_itself_a_priority_user(users: _Users) -> None:
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        async with get_session_ctx() as session:
+            await set_current_user(session, users.alice)
+            await session.execute(
+                update(User).where(User.id == users.alice).values(is_priority=True)
             )

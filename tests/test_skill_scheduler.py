@@ -5,6 +5,7 @@ Tests that the scheduler correctly uses DB-based rate limiting
 and passes force through to the ingester.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -97,3 +98,31 @@ class TestSkillSyncSchedulerCaching:
             mock_sync.assert_called_once()
             call_kwargs = mock_sync.call_args.kwargs
             assert call_kwargs["force"] is True
+
+
+class TestSkillSyncSchedulerLoop:
+    """Tests for the periodic sync loop."""
+
+    async def test_failed_sync_does_not_stop_later_syncs(self) -> None:
+        third_sync = asyncio.Event()
+        outcomes: list[object] = [[], RuntimeError("GitHub unreachable"), []]
+
+        async def sync_all_sources() -> list[object]:
+            outcome = outcomes.pop(0) if outcomes else []
+            if not outcomes:
+                third_sync.set()
+            if isinstance(outcome, Exception):
+                raise outcome
+            return []
+
+        scheduler = SkillSyncScheduler(sync_interval=0, github_token="fake-token")
+        with patch.object(scheduler, "sync_all_sources", side_effect=sync_all_sources) as sync:
+            await scheduler.start()
+            await asyncio.wait_for(third_sync.wait(), timeout=5)
+            task = scheduler._task
+            assert task is not None
+            task.cancel()
+            await asyncio.wait_for(task, timeout=5)
+
+        assert sync.await_count >= 3
+        assert task.done() and not task.cancelled()

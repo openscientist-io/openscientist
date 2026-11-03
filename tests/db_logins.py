@@ -10,8 +10,6 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
-import openscientist.database.engine as engine_module
-import openscientist.database.session as session_module
 from openscientist.settings import get_settings
 
 BOOTSTRAP_SQL = Path(__file__).parent.parent / "docker" / "postgres" / "bootstrap.sql"
@@ -60,9 +58,5 @@ def run_bootstrap(
 
 
 def reset_database_state() -> None:
-    """Forget cached settings and engines, so the next session reads the URLs again."""
+    """Forget cached settings, so the next session reads the URLs again."""
     get_settings.cache_clear()
-    engine_module._engine = None
-    engine_module._admin_engine = None
-    session_module._session_factory = None
-    session_module._admin_session_factory = None

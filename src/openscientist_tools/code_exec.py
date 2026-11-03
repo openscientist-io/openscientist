@@ -8,6 +8,7 @@ log_analysis writes.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import time
@@ -71,7 +72,7 @@ def _ensure_data_loaded() -> str | None:
 
 
 @mcp.tool()
-def execute_code(code: str, language: str = "python", description: str = "") -> str:
+async def execute_code(code: str, language: str = "python", description: str = "") -> str:
     """Execute code to analyze data.
 
     Supported languages:
@@ -129,7 +130,7 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
     if load_error and language not in ("rust", "sparql"):
         return f"❌ ERROR: Cannot execute code - data file failed to load.\n\n{load_error}"
 
-    ks = KnowledgeState.load_from_database_sync(STATE.job_id)
+    ks = await KnowledgeState.load_from_database(STATE.job_id)
 
     lang_label = {"python": "Python", "rust": "Rust", "sparql": "SPARQL"}.get(language, language)
     status_msg = f"Running {lang_label} script" if language != "sparql" else "Running SPARQL query"
@@ -139,7 +140,7 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
             f"Running {lang_label} {'query' if language == 'sparql' else 'script'}: {suffix}"
         )
     ks.set_agent_status(status_msg)
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
 
     provenance_dir = STATE.job_dir / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
@@ -166,7 +167,8 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
 
             primary_data_path = _to_host(STATE.data_files[0]) if STATE.data_files else None
 
-            result = execute_code_via_broker(
+            result = await asyncio.to_thread(
+                execute_code_via_broker,
                 code=code,
                 language="python",
                 job_id=job_id,
@@ -178,7 +180,8 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
                 timeout=60,
             )
         else:
-            result = execute_code_via_broker(
+            result = await asyncio.to_thread(
+                execute_code_via_broker,
                 code=code,
                 language=language,
                 job_id=job_id,
@@ -199,6 +202,6 @@ def execute_code(code: str, language: str = "python", description: str = "") -> 
         execution_time=result["execution_time"],
         plots=result.get("plots", []),
     )
-    ks.save_to_database_sync(STATE.job_id)
+    await ks.save_to_database(STATE.job_id)
 
     return format_execution_result(result)

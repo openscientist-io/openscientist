@@ -187,7 +187,7 @@ def test_omp_cache_writes_without_cttl_stay_in_the_short_lived_bucket() -> None:
 
 @dataclass(frozen=True)
 class _CodexBreakdown:
-    """The SDK's per-turn ``TokenUsageBreakdown``, whose counts nest."""
+    """The SDK's ``TokenUsageBreakdown``, whose counts nest."""
 
     input_tokens: int
     cached_input_tokens: int
@@ -196,21 +196,14 @@ class _CodexBreakdown:
     total_tokens: int
 
 
-@dataclass(frozen=True)
-class _CodexUsage:
-    last: _CodexBreakdown
-
-
 # Real numbers from tests/fixtures/transcripts/codex/exec_jsonl/agent_message_only.jsonl.gz,
 # a one-character reply: 40 of the 42 output tokens are reasoning.
-_CODEX_PAYLOAD = _CodexUsage(
-    last=_CodexBreakdown(
-        input_tokens=21_421,
-        cached_input_tokens=3_456,
-        output_tokens=42,
-        reasoning_output_tokens=40,
-        total_tokens=21_463,
-    )
+_CODEX_PAYLOAD = _CodexBreakdown(
+    input_tokens=21_421,
+    cached_input_tokens=3_456,
+    output_tokens=42,
+    reasoning_output_tokens=40,
+    total_tokens=21_463,
 )
 
 # Anthropic reports disjoint buckets and carries no total of its own, so the payload's
@@ -262,8 +255,8 @@ def _bucket_sum(usage: TokenUsage) -> int:
             id="claude_code",
         ),
         pytest.param(
-            CodexAgent._usage_from_payload(_CODEX_PAYLOAD),
-            _CODEX_PAYLOAD.last.total_tokens,
+            CodexAgent._usage_from_breakdown(_CODEX_PAYLOAD),
+            _CODEX_PAYLOAD.total_tokens,
             id="codex",
         ),
         pytest.param(

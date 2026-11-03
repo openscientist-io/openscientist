@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -27,6 +28,9 @@ from openscientist.database.models import (
     SkillSource,
     User,
 )
+from openscientist.exec_broker_client import BudgetCheck
+from openscientist.orchestrator import discovery
+from tests.admin_row import reset_admin_settings_row
 from tests.db_logins import (
     ADMIN_PASSWORD,
     BOOTSTRAP_ENV,
@@ -38,6 +42,7 @@ from tests.db_logins import (
     reset_database_state,
     run_bootstrap,
 )
+from tests.db_outage import Forwarder
 
 
 # Clear any cached settings after environment setup
@@ -54,8 +59,9 @@ def _clear_settings_cache():
 
 # Set up required env vars for Settings validation at import time.
 # The real DATABASE_URL comes from the testcontainer later.
+# The settings gate needs a 64-character key.
 if "OPENSCIENTIST_SECRET_KEY" not in os.environ:
-    os.environ["OPENSCIENTIST_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
+    os.environ["OPENSCIENTIST_SECRET_KEY"] = "0123456789abcdef" * 4
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
 # There is no default provider, so tests that do not select one explicitly need a
@@ -87,6 +93,16 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def discovery_budget_allows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The loop's budget check allows by default. The budget tests override it."""
+
+    async def _allow(*, job_id: str) -> BudgetCheck:
+        return BudgetCheck(True, None, None)
+
+    monkeypatch.setattr(discovery, "ask_budget", _allow)
 
 
 @pytest.fixture(scope="session")
@@ -157,6 +173,17 @@ def _apply_migrations_once(
 
     _apply_alembic_migrations(login_url(test_database_url, "openscientist_owner", OWNER_PASSWORD))
 
+    # A running deployment seeds the admin settings row at startup, so the
+    # session starts the same way and holds the default row between tests.
+    async def _seed_admin_row() -> None:
+        engine = create_async_engine(test_database_url, echo=False)
+        try:
+            await reset_admin_settings_row(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_seed_admin_row())
+
 
 def _apply_alembic_migrations(owner_database_url: str) -> None:
     """Apply all Alembic migrations to the test database.
@@ -218,9 +245,9 @@ def test_database_url(postgres_container: PostgresContainer | None) -> str:
     1. TEST_DATABASE_URL if explicitly set
     2. Testcontainer PostgreSQL (auto-started)
 
-    Also propagates the real URL to env/settings so that code paths using
-    AsyncSessionLocal(thread_safe=True) connect to the testcontainer DB
-    instead of the dummy placeholder URL set at import time.
+    Also propagates the real URL to env/settings so that the app's own sessions
+    connect to the testcontainer DB instead of the dummy placeholder URL set at
+    import time.
     """
     # Check for explicit test database URL
     test_url = os.getenv("TEST_DATABASE_URL")
@@ -237,22 +264,12 @@ def test_database_url(postgres_container: PostgresContainer | None) -> str:
         sync_url: str = postgres_container.get_connection_url()
         url = sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
 
-    # Propagate the real URL so thread-safe session factories connect correctly
+    # Propagate the real URL to the app's sessions
     os.environ["DATABASE_URL"] = url
     os.environ["ADMIN_DATABASE_URL"] = login_url(url, "openscientist_admin", ADMIN_PASSWORD)
     from openscientist.settings import clear_settings_cache
 
     clear_settings_cache()
-
-    # Reset engine/session factory globals so they pick up the new URL
-    import openscientist.database.engine as engine_mod
-    import openscientist.database.session as session_mod
-
-    engine_mod._engine = None
-    engine_mod._admin_engine = None
-    session_mod._session_factory = None
-    session_mod._admin_session_factory = None
-
     return url
 
 
@@ -308,6 +325,24 @@ async def test_engine(
 
     yield engine
     await engine.dispose()
+
+
+@pytest.fixture
+def database(test_engine: AsyncEngine) -> Generator[Forwarder, None, None]:
+    """Point every app login at a forwarder to the test database, which starts
+    up. ``database.down()`` refuses connects until ``database.up()``."""
+    names = ("DATABASE_URL", "ADMIN_DATABASE_URL")
+    saved = {name: os.environ[name] for name in names}
+    target = make_url(saved["DATABASE_URL"])
+    forwarder = Forwarder((target.host or "127.0.0.1", target.port or 5432))
+    for name in names:
+        url = make_url(saved[name]).set(host="127.0.0.1", port=forwarder.port)
+        os.environ[name] = url.render_as_string(hide_password=False)
+    reset_database_state()
+    yield forwarder
+    forwarder.down()
+    os.environ.update(saved)
+    reset_database_state()
 
 
 @pytest_asyncio.fixture

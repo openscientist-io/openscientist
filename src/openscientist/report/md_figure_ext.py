@@ -20,6 +20,7 @@ from markdown.blockprocessors import BlockProcessor  # type: ignore[import-untyp
 from markdown.extensions import Extension  # type: ignore[import-untyped]
 from markdown.treeprocessors import Treeprocessor  # type: ignore[import-untyped]
 
+from openscientist.artifact_packager import artifact_file
 from openscientist.report.processor import _parse_params, _resolve_image_src
 
 logger = logging.getLogger(__name__)
@@ -42,10 +43,12 @@ class FigureBlockProcessor(BlockProcessor):
         parser: object,
         provenance_dir: Path,
         use_base64: bool,
+        excluded_top_level_dirs: tuple[str, ...] = (),
     ) -> None:
         super().__init__(parser)
         self.provenance_dir = provenance_dir
         self.use_base64 = use_base64
+        self.excluded_top_level_dirs = excluded_top_level_dirs
 
     def test(self, parent: etree.Element, block: str) -> bool:
         return bool(_FIGURE_START_RE.match(block))
@@ -64,15 +67,21 @@ class FigureBlockProcessor(BlockProcessor):
         caption = params.get("caption", "")
         width = params.get("width", "")
 
-        image_path = self.provenance_dir / filename
-        if not image_path.exists():
-            logger.warning("Figure not found: %s", image_path)
+        # The agent writes the report, so a figure resolves only to one of the
+        # job's own artifacts, never to a path it climbs or links its way to.
+        image = artifact_file(
+            self.provenance_dir.parent,
+            f"provenance/{filename}",
+            excluded_top_level_dirs=self.excluded_top_level_dirs,
+        )
+        if image is None:
+            logger.warning("Figure not found: %s", filename)
             if caption:
                 p = etree.SubElement(parent, "p")
                 p.text = f"[Figure: {caption}]"
             return True
 
-        src = _resolve_image_src(image_path, self.use_base64)
+        src = _resolve_image_src(image, self.use_base64)
 
         figure = etree.SubElement(parent, "figure")
         if width:
@@ -97,10 +106,12 @@ class ImageSrcTreeProcessor(Treeprocessor):
         md: Markdown,
         provenance_dir: Path,
         use_base64: bool,
+        excluded_top_level_dirs: tuple[str, ...] = (),
     ) -> None:
         super().__init__(md)
         self.provenance_dir = provenance_dir
         self.use_base64 = use_base64
+        self.excluded_top_level_dirs = excluded_top_level_dirs
 
     def run(self, root: etree.Element) -> etree.Element | None:
         for parent in root.iter():
@@ -113,14 +124,20 @@ class ImageSrcTreeProcessor(Treeprocessor):
                 if not src or src.startswith(("http://", "https://", "data:", "file://")):
                     continue
 
-                # Try resolving relative to provenance dir
-                image_path = self.provenance_dir / Path(src).name
-                if not image_path.exists():
-                    image_path = self.provenance_dir.parent / src
-                    if not image_path.exists():
-                        continue
+                # Try the provenance dir, then the path relative to the job dir,
+                # and only among the job's own artifacts.
+                job_dir = self.provenance_dir.parent
+                image = artifact_file(
+                    job_dir,
+                    f"provenance/{Path(src).name}",
+                    excluded_top_level_dirs=self.excluded_top_level_dirs,
+                ) or artifact_file(
+                    job_dir, src, excluded_top_level_dirs=self.excluded_top_level_dirs
+                )
+                if image is None:
+                    continue
 
-                resolved = _resolve_image_src(image_path, self.use_base64)
+                resolved = _resolve_image_src(image, self.use_base64)
                 alt = child.get("alt", "")
 
                 # Build <figure> wrapper
@@ -151,21 +168,36 @@ class FigureExtension(Extension):
         self.config = {
             "provenance_dir": [".", "Directory containing figure images"],
             "use_base64": [False, "Embed images as base64 data URIs"],
+            "excluded_top_level_dirs": [
+                (),
+                "Top-level job directories whose files are never embedded",
+            ],
         }
         super().__init__(**kwargs)
 
     def extendMarkdown(self, md: Markdown) -> None:  # noqa: N802
         provenance_dir = Path(str(self.getConfig("provenance_dir")))
         use_base64 = bool(self.getConfig("use_base64"))
+        excluded_top_level_dirs = tuple(self.getConfig("excluded_top_level_dirs"))
 
         md.parser.blockprocessors.register(
-            FigureBlockProcessor(md.parser, provenance_dir, use_base64),
+            FigureBlockProcessor(
+                md.parser,
+                provenance_dir,
+                use_base64,
+                excluded_top_level_dirs=excluded_top_level_dirs,
+            ),
             "figure_block",
             105,
         )
 
         md.treeprocessors.register(
-            ImageSrcTreeProcessor(md, provenance_dir, use_base64),
+            ImageSrcTreeProcessor(
+                md,
+                provenance_dir,
+                use_base64,
+                excluded_top_level_dirs=excluded_top_level_dirs,
+            ),
             "image_src_resolve",
             5,
         )
