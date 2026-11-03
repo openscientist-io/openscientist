@@ -102,8 +102,10 @@ def _initial_job_state(job_info: Any, ks_data: dict[str, Any] | None) -> dict[st
     }
 
 
-def _create_page_dialogs(job_id: str, job_manager: Any, user_id: str) -> tuple[Any, Any, Any]:
-    share_dialog = render_share_dialog(job_id)
+def _create_page_dialogs(
+    job_id: str, job_manager: Any, user_id: str, is_owner: bool
+) -> tuple[Any, Any, Any]:
+    share_dialog = render_share_dialog(job_id) if is_owner else None
     delete_dialog = render_delete_dialog(
         job_id,
         job_manager,
@@ -139,6 +141,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         job_id,
         job_manager,
         user_id,
+        is_owner,
     )
 
     return _JobDetailContext(
