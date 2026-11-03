@@ -578,6 +578,10 @@ async def test_the_priority_buttons_change_a_users_priority(
         "openscientist.webapp_components.pages.admin.get_admin_session",
         fake_admin_session(db_session),
     )
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.revalidate_admin_session",
+        AsyncMock(return_value=True),
+    )
     user = User(email=f"buttons-{uuid4().hex}@example.com", name="B")
     db_session.add(user)
     await db_session.commit()
@@ -603,6 +607,10 @@ async def test_a_priority_click_without_a_valid_user_changes_nothing(args: dict[
             "openscientist.webapp_components.pages.admin.get_admin_session",
             side_effect=AssertionError("no user, so no database write"),
         ),
+        patch(
+            "openscientist.webapp_components.pages.admin.revalidate_admin_session",
+            AsyncMock(return_value=True),
+        ),
     ):
         events = _table_events(mock_ui, reload_users)
         await events["prioritise-user"](SimpleNamespace(args=args))
@@ -618,6 +626,10 @@ async def test_a_failed_priority_change_tells_the_admin():
         patch(
             "openscientist.webapp_components.pages.admin.set_user_priority_status",
             side_effect=RuntimeError("database down"),
+        ),
+        patch(
+            "openscientist.webapp_components.pages.admin.revalidate_admin_session",
+            AsyncMock(return_value=True),
         ),
     ):
         events = _table_events(mock_ui, reload_users)
