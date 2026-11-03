@@ -11,19 +11,22 @@ import base64
 import contextlib
 import io
 import zipfile
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.artifact_packager import artifact_file, create_artifacts_zip_file
-from openscientist.database.models import Job, JobShare, User
+from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.share_service import (
@@ -79,24 +82,55 @@ def _api_app(db_session: AsyncSession, user: User) -> FastAPI:
     return app
 
 
-def _web_app(db_session: AsyncSession, user: User) -> FastAPI:
-    from openscientist.auth.middleware import get_current_user_id
-    from openscientist.database.session import get_session
+def _web_app() -> FastAPI:
+    """The artifact router on the app's real per-request sessions."""
     from openscientist.webapp_components.artifact_routes import router
 
     app = FastAPI()
-
-    async def override_get_session():
-        await set_current_user(db_session, user.id)
-        yield db_session
-
-    async def override_get_current_user_id():
-        return str(user.id)
-
-    app.dependency_overrides[get_session] = override_get_session
-    app.dependency_overrides[get_current_user_id] = override_get_current_user_id
     app.include_router(router)
     return app
+
+
+@pytest_asyncio.fixture
+async def committed_public_job(
+    test_engine: AsyncEngine,
+) -> AsyncIterator[tuple[User, User, Job, str, str]]:
+    """A committed public job with its owner and a viewer, each holding a
+    live session, so the web's real per-request sessions sign their login
+    cookies in the way the login flow does."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        owner = User(
+            email=f"public-owner-{uuid4().hex}@public.test",
+            name="Public Owner",
+            is_approved=True,
+        )
+        viewer = User(
+            email=f"public-viewer-{uuid4().hex}@public.test",
+            name="Public Viewer",
+            is_approved=True,
+        )
+        db.add(owner)
+        db.add(viewer)
+        await db.flush()
+        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        viewer_login = Session(user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        job = Job(
+            owner_id=owner.id,
+            research_question="Public visibility job",
+            description="visibility test",
+            status="completed",
+            is_public=True,
+        )
+        db.add(owner_login)
+        db.add(viewer_login)
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+    yield owner, viewer, job, str(owner_login.id), str(viewer_login.id)
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id.in_([owner.id, viewer.id])))
+        await db.commit()
 
 
 @pytest.mark.asyncio
@@ -282,10 +316,9 @@ async def test_view_sharee_of_public_job_still_gets_uploads(
 
 @pytest.mark.asyncio
 async def test_web_file_route_404s_uploads_for_public_viewers(
-    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path: Path
+    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path
 ):
-    job = await _job(db_session, test_user, is_public=True)
-    await enable_rls(db_session)
+    _, _, job, owner_token, viewer_token = committed_public_job
     job_dir = tmp_path / str(job.id)
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
@@ -293,14 +326,13 @@ async def test_web_file_route_404s_uploads_for_public_viewers(
 
     with patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)):
         async with AsyncClient(
-            transport=ASGITransport(app=_web_app(db_session, test_user2)), base_url="http://test"
-        ) as client:
-            denied = await client.get(f"/web/jobs/{job.id}/files/data/cohort.csv")
-            report = await client.get(f"/web/jobs/{job.id}/files/report.md")
-        async with AsyncClient(
-            transport=ASGITransport(app=_web_app(db_session, test_user)), base_url="http://test"
-        ) as client:
-            owner_file = await client.get(f"/web/jobs/{job.id}/files/data/cohort.csv")
+            transport=ASGITransport(app=_web_app()), base_url="http://test"
+        ) as c:
+            c.cookies.set("session_token", viewer_token)
+            denied = await c.get(f"/web/jobs/{job.id}/files/data/cohort.csv")
+            report = await c.get(f"/web/jobs/{job.id}/files/report.md")
+            c.cookies.set("session_token", owner_token)
+            owner_file = await c.get(f"/web/jobs/{job.id}/files/data/cohort.csv")
 
     assert denied.status_code == 404
     assert report.status_code == 200
@@ -309,21 +341,22 @@ async def test_web_file_route_404s_uploads_for_public_viewers(
 
 @pytest.mark.asyncio
 async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
-    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path: Path
+    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path
 ):
-    job = await _job(db_session, test_user, is_public=True)
-    await enable_rls(db_session)
+    _, _, job, owner_token, viewer_token = committed_public_job
     job_dir = tmp_path / str(job.id)
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
     (job_dir / "report.md").write_text("# Report")
 
     names: dict[str, set[str]] = {}
+    tokens = {"owner": owner_token, "viewer": viewer_token}
     with patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)):
-        for label, user in (("owner", test_user), ("viewer", test_user2)):
+        for label in ("owner", "viewer"):
             async with AsyncClient(
-                transport=ASGITransport(app=_web_app(db_session, user)), base_url="http://test"
+                transport=ASGITransport(app=_web_app()), base_url="http://test"
             ) as client:
+                client.cookies.set("session_token", tokens[label])
                 response = await client.get(f"/web/jobs/{job.id}/artifacts.zip")
             assert response.status_code == 200, response.text
             with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
@@ -336,11 +369,10 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
 
 @pytest.mark.asyncio
 async def test_web_report_does_not_inline_uploads_for_public_viewers(
-    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path: Path
+    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path
 ):
     secret = b"SECRET-UPLOADED-INPUT"
-    job = await _job(db_session, test_user, is_public=True)
-    await enable_rls(db_session)
+    _, _, job, owner_token, viewer_token = committed_public_job
     job_dir = tmp_path / str(job.id)
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_bytes(secret)
@@ -350,12 +382,11 @@ async def test_web_report_does_not_inline_uploads_for_public_viewers(
     b64 = base64.b64encode(secret).decode("ascii")
     with patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)):
         async with AsyncClient(
-            transport=ASGITransport(app=_web_app(db_session, test_user)), base_url="http://test"
+            transport=ASGITransport(app=_web_app()), base_url="http://test"
         ) as client:
+            client.cookies.set("session_token", owner_token)
             owner_report = await client.get(f"/web/jobs/{job.id}/report.html")
-        async with AsyncClient(
-            transport=ASGITransport(app=_web_app(db_session, test_user2)), base_url="http://test"
-        ) as client:
+            client.cookies.set("session_token", viewer_token)
             viewer_report = await client.get(f"/web/jobs/{job.id}/report.html")
 
     assert owner_report.status_code == 200, owner_report.text

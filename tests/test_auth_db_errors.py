@@ -213,11 +213,11 @@ async def test_logout_during_an_outage_signs_out_now_and_revokes_later(
     session_token: UUID,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pages fall back to the token NiceGUI keeps per browser, so signing out
-    clears it too, or the next page would still find the visitor signed in."""
+    """Signing out clears the per-browser copy NiceGUI keeps, or the next
+    page would still find the visitor signed in."""
     from openscientist.auth import fastapi_routes
 
-    stored: dict[str, object] = {"session_token": str(session_token), "authenticated": True}
+    stored: dict[str, object] = {"user_id": str(session_token), "authenticated": True}
     monkeypatch.setattr(
         fastapi_routes, "app", SimpleNamespace(storage=SimpleNamespace(user=stored))
     )

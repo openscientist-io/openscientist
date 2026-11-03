@@ -18,8 +18,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Authentication and Sessions
 
 - **OAuth 2.0 with major providers.** Users sign in through Google or GitHub using the Authlib library. No passwords are stored or managed by the application.
-- **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
-- **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, not in browser-side storage. Logging out deletes the database record.
+- **Secure session cookies.** The login cookie is marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS when the app URL is https), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
+- **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, and the login cookie is the web's only credential. Every page build and every `/web/*` route validates the cookie against the database session, so an expired or deleted session is rejected there as well. Logging out deletes the database record and clears both the login cookie and the session cookie NiceGUI uses for its per-browser storage, which carries no credentials of its own, is marked `samesite=lax`, and additionally marked `secure` when the app URL is https.
 - **User approval workflow.** New users must be explicitly approved by an admin before they can run jobs, preventing open access.
 
 ### Data Protection

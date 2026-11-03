@@ -623,6 +623,8 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _inject_density_styles()
     _inject_thinking_status_styles()
 
+    # The session cookie carries no login, but it must never travel over plain
+    # HTTP, so Secure follows the deployment URL.
     ui.run_with(
         host_app,
         mount_path="/",
@@ -630,6 +632,10 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
         viewport="width=device-width, initial-scale=1, viewport-fit=cover",
         favicon=ASSETS_DIR / "favicon.ico",
         storage_secret=STORAGE_SECRET,
+        session_middleware_kwargs={
+            "https_only": get_settings().auth.app_url.startswith("https"),
+            "same_site": "lax",
+        },
     )
 
     _state.app_configured = True
