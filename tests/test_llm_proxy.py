@@ -26,8 +26,10 @@ from openscientist.job_container.secrets import (
 from openscientist.llm_proxy import container_proxy_base_url, create_llm_proxy_app
 from openscientist.providers import get_provider
 from openscientist.providers.base import AirgapEgress, LlmUpstream, StaticHeadersSigning
+from openscientist.providers.bedrock import SigV4Signing
 from openscientist.providers.vertex import GoogleAdcSigning
 from openscientist.settings import Settings, get_settings
+from tests.test_provider_bedrock import verify_sigv4
 from tests.test_provider_vertex import FakeVertexCredentials
 
 
@@ -149,6 +151,18 @@ class TestClaudeUpstream:
             StaticHeadersSigning({"authorization": "Bearer bt-real"}),
         )
 
+    def test_bedrock_sigv4_upstream_signs_with_the_web_credential(self, active_provider):
+        provider = active_provider(
+            OPENSCIENTIST_PROVIDER="bedrock",
+            AWS_REGION="us-east-1",
+            AWS_ACCESS_KEY_ID="leaky-ak",
+            AWS_SECRET_ACCESS_KEY="leaky-sk",
+        )
+        upstream = provider.llm_upstream()
+        assert upstream is not None
+        assert upstream.base_url == "https://bedrock-runtime.us-east-1.amazonaws.com"
+        assert isinstance(upstream.signing, SigV4Signing)
+
 
 class TestProxiedContainerEnv:
     """The job-container env transform: redirect LLM traffic, drop GITHUB_TOKEN."""
@@ -211,6 +225,32 @@ class TestProxiedContainerEnv:
         assert "AWS_ACCESS_KEY_ID" not in env
         assert "AWS_SECRET_ACCESS_KEY" not in env
         assert "leaky-ak" not in env.values()
+
+    def test_bedrock_sigv4_routes_the_container_through_the_proxy(self, active_provider):
+        """The container reaches Bedrock only through the proxy and holds no AWS
+        credential of its own; the gateway bearer is the run's placeholder."""
+        provider = active_provider(
+            OPENSCIENTIST_PROVIDER="bedrock",
+            AWS_REGION="us-east-1",
+            AWS_ACCESS_KEY_ID="leaky-ak",
+            AWS_SECRET_ACCESS_KEY="leaky-sk",
+        )
+        env = provider.proxied_container_env(
+            proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
+        )
+        assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+        assert env["ANTHROPIC_BEDROCK_BASE_URL"] == "http://openscientist:8081"
+        assert env["CLAUDE_CODE_SKIP_BEDROCK_AUTH"] == "1"
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "job-1.tok"
+        assert env["AWS_REGION"] == "us-east-1"
+        # The container holds no AWS credential, and no Bedrock bearer.
+        assert "AWS_BEARER_TOKEN_BEDROCK" not in env
+        assert "AWS_ACCESS_KEY_ID" not in env
+        assert "AWS_SECRET_ACCESS_KEY" not in env
+        assert "AWS_PROFILE" not in env
+        assert "AWS_SESSION_TOKEN" not in env
+        assert "leaky-ak" not in env.values()
+        assert "leaky-sk" not in env.values()
 
     def test_foundry_redirects_and_drops_resource(self, active_provider):
         provider = active_provider(
@@ -723,6 +763,134 @@ class TestVertexProxyForwarding:
         assert recorded == []
 
 
+def _recording_bedrock_upstream(recorded: list[dict], payload: bytes) -> httpx.AsyncClient:
+    """A stub bedrock-runtime that records the signed request and streams ``payload``
+    back in two raw chunks, so the eventstream's byte-identity is observable."""
+
+    async def endpoint(request: Request) -> StreamingResponse:
+        body = await request.body()
+        recorded.append(
+            {
+                "method": request.method,
+                "host": request.url.hostname,
+                "path": request.url.path,
+                "query": request.url.query,
+                "headers": dict(request.headers),
+                "body": body,
+            }
+        )
+
+        async def stream():
+            half = len(payload) // 2
+            yield payload[:half]
+            yield payload[half:]
+
+        return StreamingResponse(stream(), media_type="application/vnd.amazon.eventstream")
+
+    app = Starlette(
+        routes=[
+            Route(
+                "/{path:path}",
+                endpoint,
+                methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            )
+        ]
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app))
+
+
+class TestBedrockSigV4ProxyForwarding:
+    """The proxy signs Bedrock SigV4 calls with the web's AWS credential and
+    forwards them to the bedrock-runtime endpoint; the stub stands in for it."""
+
+    _PATH = "/model/us.anthropic.claude-sonnet-5-5/invoke-with-response-stream"
+    # A binary eventstream-like payload with non-UTF8 bytes, to prove the proxy
+    # forwards the eventstream untouched (no re-encoding).
+    _EVENTSTREAM = bytes(range(256)) + b"\x00\x01\xfe\xff"
+
+    def _app(self, recorded: list[dict], payload: bytes = b"upstream-body") -> Starlette:
+        upstream = LlmUpstream(
+            "https://bedrock-runtime.us-east-1.amazonaws.com",
+            SigV4Signing(region="us-east-1"),
+        )
+        return create_llm_proxy_app(
+            upstream=lambda: upstream,
+            client=_recording_bedrock_upstream(recorded, payload),
+        )
+
+    def test_stream_reaches_the_stub_with_a_valid_sigv4(self, placeholder_for, monkeypatch):
+        """A streamed InvokeModelWithResponseStream reaches the stub with a valid
+        SigV4 signature (verified against the web's credential), the body
+        unchanged, and the eventstream response byte-identical."""
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        placeholder = placeholder_for("job-1")
+        recorded: list[dict] = []
+        app = self._app(recorded, payload=self._EVENTSTREAM)
+        with TestClient(app) as client:
+            with client.stream(
+                "POST",
+                self._PATH,
+                headers={
+                    "authorization": f"Bearer {placeholder}",
+                    "content-type": "application/json",
+                },
+                content=b'{"model":"m"}',
+            ) as resp:
+                chunks = list(resp.iter_raw())
+        assert resp.status_code == 200
+        # The eventstream bytes pass through unchanged, streamed (not buffered):
+        # the binary payload is byte-identical and no content-length was set.
+        assert b"".join(chunks) == self._EVENTSTREAM
+        assert "content-length" not in resp.headers
+        assert resp.headers["content-type"] == "application/vnd.amazon.eventstream"
+        assert len(recorded) == 1
+        forwarded = recorded[0]
+        assert forwarded["host"] == "bedrock-runtime.us-east-1.amazonaws.com"
+        assert forwarded["path"] == self._PATH
+        assert forwarded["body"] == b'{"model":"m"}'
+        # The container's placeholder bearer is gone, replaced by a SigV4 signature.
+        assert placeholder not in forwarded["headers"].values()
+        verify_sigv4(forwarded, access_key="TESTAKID", secret="TESTSECRET", region="us-east-1")
+
+    def test_non_stream_invoke_is_signed_too(self, placeholder_for, monkeypatch):
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        placeholder = placeholder_for("job-2")
+        recorded: list[dict] = []
+        app = self._app(recorded)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/model/us.anthropic.claude-sonnet-5-5/invoke",
+                headers={"authorization": f"Bearer {placeholder}"},
+                content=b'{"model":"m"}',
+            )
+        assert resp.status_code == 200
+        forwarded = recorded[0]
+        assert forwarded["host"] == "bedrock-runtime.us-east-1.amazonaws.com"
+        verify_sigv4(forwarded, access_key="TESTAKID", secret="TESTSECRET", region="us-east-1")
+
+    def test_a_wrong_placeholder_is_refused_without_forwarding(self, monkeypatch):
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        recorded: list[dict] = []
+        app = self._app(recorded)
+        with TestClient(app) as client:
+            resp = client.post(
+                self._PATH,
+                headers={"authorization": f"Bearer job-1.{'0' * 64}"},
+                content=b"{}",
+            )
+        assert resp.status_code == 401
+        assert recorded == []
+
+
 class TestStartLlmProxy:
     """start_llm_proxy wires the real proxy app into its listener task."""
 
@@ -807,24 +975,23 @@ class TestStartLlmProxy:
         assert forwarded["headers"]["anthropic-version"] == "2023-06-01"
         assert forwarded["body"] == b'{"m":1}'
 
-    async def test_the_listener_starts_for_a_direct_provider(
+    async def test_the_listener_starts_for_a_provider_without_an_upstream(
         self, active_provider, placeholder_for, monkeypatch
     ) -> None:
-        """The proxy listens for every provider; a direct one just 502s its traffic,
-        so nothing ever bypasses it with a real credential."""
+        """The proxy listens for every provider; one without an upstream just 502s
+        its traffic, so nothing ever bypasses it with a real credential."""
         from openscientist import llm_proxy
 
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
+        # The ChatGPT-login provider has no API key, hence no upstream.
         provider = active_provider(
-            OPENSCIENTIST_PROVIDER="bedrock",
-            AWS_REGION="us-east-1",
-            AWS_ACCESS_KEY_ID="ak",
-            AWS_SECRET_ACCESS_KEY="sk",
+            OPENSCIENTIST_PROVIDER="openai",
+            CODEX_AUTH_HOST_PATH="/tmp/auth.json",
             OPENSCIENTIST_LLM_PROXY_PORT=str(port),
         )
-        assert provider.airgap_egress().mode is AirgapEgress.DIRECT
+        assert provider.airgap_egress().mode is AirgapEgress.UNSUPPORTED
 
         configs: list[Config] = []
         served: list[socket.socket] = []
@@ -966,16 +1133,16 @@ class TestAirgapPosture:
         )
         assert p.airgap_egress().mode is AirgapEgress.PROXY
 
-    def test_bedrock_sigv4_is_direct(self, active_provider):
+    def test_bedrock_sigv4_proxies(self, active_provider):
+        # SigV4 routes through the proxy too: the web signs, the container
+        # holds no credential, so an air-gapped job reaches nothing but the proxy.
         p = active_provider(
             OPENSCIENTIST_PROVIDER="bedrock",
             AWS_REGION="us-east-1",
             AWS_ACCESS_KEY_ID="ak",
             AWS_SECRET_ACCESS_KEY="sk",
         )
-        posture = p.airgap_egress()
-        assert posture.mode is AirgapEgress.DIRECT
-        assert ("bedrock-runtime.us-east-1.amazonaws.com", 443) in posture.direct_endpoints
+        assert p.airgap_egress().mode is AirgapEgress.PROXY
 
     @pytest.mark.parametrize(
         "env",
@@ -1166,23 +1333,26 @@ class TestHarnessRouting:
         with pytest.raises(ValueError, match="proxy"):
             p.harness_env(proxy=None)
 
-    def test_bedrock_sigv4_needs_no_harness_routing(self, active_provider):
-        """SigV4 signs its own requests and omp uses the same AWS names we do."""
+    def test_bedrock_sigv4_refuses_the_omp_harness(self, active_provider):
+        """omp signs Bedrock with SigV4 and exposes no proxy endpoint override,
+        so the proxy cannot verify its request. Refuse rather than let omp reach
+        AWS directly with the web's real credential."""
         p = active_provider(
             OPENSCIENTIST_PROVIDER="bedrock",
             AWS_REGION="us-east-1",
             AWS_ACCESS_KEY_ID="ak",
             AWS_SECRET_ACCESS_KEY="sk",
         )
-        assert p.harness_env(proxy=None) == {}
+        with pytest.raises(ValueError, match="omp harness"):
+            p.harness_env(proxy="http://openscientist:8081")
 
-    def test_bedrock_bearer_refuses_to_be_proxied_under_a_generic_harness(self, active_provider):
-        """omp exposes no Bedrock base-URL override, so a proxied bearer setup
-        cannot be expressed. Refusing beats reaching AWS with the real token."""
+    def test_bedrock_bearer_refuses_the_omp_harness(self, active_provider):
+        """Same for bearer: there is no safe omp route, so refuse and fail fast
+        at launch, with no direct egress and no in-container credential."""
         p = active_provider(
             OPENSCIENTIST_PROVIDER="bedrock",
             AWS_REGION="us-east-1",
             AWS_BEARER_TOKEN_BEDROCK="tok",
         )
-        with pytest.raises(ValueError, match="cannot be routed through the LLM proxy"):
+        with pytest.raises(ValueError, match="omp harness"):
             p.harness_env(proxy="http://openscientist:8081")
