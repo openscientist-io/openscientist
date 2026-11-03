@@ -109,10 +109,12 @@ async def test_a_launch_reads_the_rows_limits_timeout_and_airgap(
     """The next launch takes the limits and lifetime from the row, airgap included."""
     await set_admin_settings_row(test_engine)
     runner = JobContainerRunner.__new__(JobContainerRunner)
+    _provider = MagicMock()
+    _provider.prelaunch_routing_error.return_value = None
     with (
         patch("openscientist.job_container.runner.docker.from_env", return_value=MagicMock()),
         patch("openscientist.job_container.runner.get_settings", return_value=_launcher_settings()),
-        patch("openscientist.job_container.runner.get_provider", return_value=MagicMock()),
+        patch("openscientist.job_container.runner.get_provider", return_value=_provider),
         patch("openscientist.job_container.runner.open_agent_login", return_value=_LOGIN) as opened,
         patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
         patch(

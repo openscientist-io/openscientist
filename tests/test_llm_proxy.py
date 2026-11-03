@@ -940,6 +940,121 @@ class TestBedrockSigV4ProxyForwarding:
         assert recorded == []
 
 
+class TestVaultProxyForwarding:
+    """The proxy signs the forwarded requests of each vault provider with the
+    web-held vault bearer; the stub upstream stands in for the provider's."""
+
+    def _vault(self, tmp_path: Path, provider: str, data: dict) -> Path:
+        from tests.omp_vault import make_vault
+
+        return make_vault(tmp_path, {provider: data})
+
+    def test_each_vault_provider_reaches_the_stub_with_the_web_bearer(
+        self, placeholder_for, tmp_path: Path
+    ):
+        from openscientist.providers.vault import vault_llm_upstream
+        from tests.omp_vault import make_jwt
+
+        fresh_ms = int((datetime.now(UTC) + timedelta(hours=1)).timestamp() * 1000)
+        data_by_provider: dict[str, dict] = {
+            "anthropic": {
+                "access": "vault-anthropic-access",
+                "refresh": "rt",
+                "expires": fresh_ms,
+                "orgId": "org-1",
+            },
+            "openai-codex": {
+                "access": make_jwt(datetime.now(UTC) + timedelta(hours=1)),
+                "refresh": "rt",
+                "expires": fresh_ms,
+            },
+            "github-copilot": {
+                "access": "vault-copilot-access",
+                "refresh": "vault-copilot-access",
+                "expires": fresh_ms,
+                "apiEndpoint": "https://copilot-api.example-corp.com",
+            },
+        }
+        routing: dict[str, dict[str, str]] = {
+            "anthropic": {
+                "host": "api.anthropic.com",
+                "path": "/v1/messages",
+                "upstream_path": "/v1/messages",
+            },
+            "openai-codex": {
+                "host": "chatgpt.com",
+                "path": "/responses",
+                "upstream_path": "/backend-api/codex/responses",
+            },
+            "github-copilot": {
+                "host": "copilot-api.example-corp.com",
+                "path": "/chat/completions",
+                "upstream_path": "/chat/completions",
+            },
+        }
+        for provider, route in routing.items():
+            data = data_by_provider[provider]
+            placeholder = placeholder_for(f"job-{provider}")
+            vault_dir = tmp_path / provider
+            self._vault(vault_dir, provider, data)
+            upstream = vault_llm_upstream(vault_dir, provider)
+            assert upstream is not None
+            recorded: list[dict] = []
+            app = create_llm_proxy_app(
+                upstream=lambda: upstream,  # noqa: B023  resolved before the next iteration
+                client=_recording_upstream(recorded),
+            )
+            with TestClient(app) as client:
+                resp = client.post(
+                    route["path"],
+                    headers={"authorization": f"Bearer {placeholder}"},
+                    content=b'{"in":1}',
+                )
+            assert resp.status_code == 200, provider
+            assert resp.content == b"upstream-body", provider
+            assert len(recorded) == 1
+            forwarded = recorded[0]
+            assert forwarded["host"] == route["host"], provider
+            assert forwarded["path"] == route["upstream_path"], provider
+            assert forwarded["headers"]["authorization"] == f"Bearer {data['access']}", provider
+            assert placeholder not in forwarded["headers"].values()
+            assert forwarded["body"] == b'{"in":1}'
+
+    def test_a_wrong_placeholder_is_refused_without_forwarding(
+        self, placeholder_for, tmp_path: Path
+    ):
+        from openscientist.providers.vault import vault_llm_upstream
+        from tests.omp_vault import make_vault
+
+        fresh_ms = int((datetime.now(UTC) + timedelta(hours=1)).timestamp() * 1000)
+        vault_dir = tmp_path / "vault"
+        make_vault(
+            vault_dir,
+            {
+                "anthropic": {
+                    "access": "vault-anthropic-access",
+                    "refresh": "rt",
+                    "expires": fresh_ms,
+                }
+            },
+        )
+        upstream = vault_llm_upstream(vault_dir, "anthropic")
+        assert upstream is not None
+        placeholder = placeholder_for("job-1")
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(upstream=lambda: upstream, client=_recording_upstream(recorded))
+        with TestClient(app) as client:
+            resp = client.post(
+                "/v1/messages",
+                headers={
+                    "authorization": f"Bearer {placeholder[: placeholder.rfind('.')]}.{'0' * 64}"
+                },
+                content=b"{}",
+            )
+        assert resp.status_code == 401
+        assert recorded == []
+
+
 class TestStartLlmProxy:
     """start_llm_proxy wires the real proxy app into its listener task."""
 

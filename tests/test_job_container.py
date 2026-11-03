@@ -73,6 +73,9 @@ class _FakeProvider:
     def prelaunch_model_context_env(self) -> dict[str, str]:
         return {}
 
+    def prelaunch_routing_error(self) -> str | None:
+        return None
+
     def airgap_egress(self) -> AirgapPosture:
         return self._posture or AirgapPosture(AirgapEgress.PROXY)
 
@@ -175,6 +178,30 @@ class TestContainerDatabaseLogin:
         mock_client = MagicMock()
         a, b, c, d = self._launch_patches()
         with a, b, c, d, pytest.raises(RuntimeError, match="cannot create role"):
+            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        mock_client.containers.run.assert_not_called()
+
+    def test_unroutable_provider_traffic_refuses_before_the_container_starts(
+        self, agent_login
+    ) -> None:
+        """Unroutable proxied traffic refuses at launch, before any container starts."""
+        unroutable = MagicMock()
+        unroutable.prelaunch_routing_error.return_value = (
+            "the omp harness cannot route the ChatGPT login"
+        )
+        mock_client = MagicMock()
+        a, b, c, d = self._launch_patches()
+        with (
+            a,
+            b,
+            c,
+            d,
+            patch(
+                "openscientist.job_container.runner.get_provider",
+                return_value=unroutable,
+            ),
+            pytest.raises(RuntimeError, match="cannot route the ChatGPT login"),
+        ):
             self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
         mock_client.containers.run.assert_not_called()
 

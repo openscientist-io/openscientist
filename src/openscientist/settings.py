@@ -62,7 +62,8 @@ class ProviderSettings(BaseSettings):
         default="auto",
         alias="OPENSCIENTIST_HARNESS",
         description=(
-            "Agent harness: auto (default, derived from provider), claude_code, codex, or omp."
+            "Agent harness: auto (default, derived from provider), claude_code, codex, or omp. "
+            "The openai provider's ChatGPT login needs codex; omp cannot route it."
         ),
     )
 
@@ -259,7 +260,12 @@ class ProviderSettings(BaseSettings):
     omp_auth_host_path: str | None = Field(
         default=None,
         alias="OMP_AUTH_HOST_PATH",
-        description="Host path to the omp agent dir whose stored logins the omp harness uses.",
+        description=(
+            "Host path to the omp agent dir holding the stored logins (agent.db). "
+            "The web holds it and signs the proxied requests for each vault "
+            "provider, refreshing the credentials in place; the job container "
+            "never sees the vault."
+        ),
     )
     gcp_billing_account_id: str | None = Field(
         default=None,

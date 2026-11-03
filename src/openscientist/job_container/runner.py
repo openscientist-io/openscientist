@@ -188,6 +188,9 @@ class JobContainerRunner:
         )
         job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
         provider = get_provider()
+        routing_error = provider.prelaunch_routing_error()
+        if routing_error is not None:
+            raise RuntimeError(routing_error)
         provider_env = provider.proxied_container_env(
             proxy_base_url=container_proxy_base_url(),
             placeholder=credentials.llm_placeholder,

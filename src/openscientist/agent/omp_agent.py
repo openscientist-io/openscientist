@@ -11,7 +11,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
 import signal
 import sys
 from pathlib import Path
@@ -35,7 +34,6 @@ from openscientist.transcript import OMP, TranscriptEntry
 
 if TYPE_CHECKING:
     from openscientist.prompts.common import BackendFragments
-    from openscientist.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -86,39 +84,7 @@ class OmpAgent(AbstractAgent[Provider]):
     # The other backend hooks use the AbstractAgent defaults (env auth,
     # model_override, no chat file).
 
-    # Host omp store files copied to rebuild the vault in the run's home
-    # (WAL/SHM included so an un-checkpointed db stays readable).
-    _OMP_STORE_FILES: ClassVar[tuple[str, ...]] = (
-        "agent.db",
-        "agent.db-wal",
-        "agent.db-shm",
-        "config.yml",
-    )
-
     RUN_HOME: ClassVar[str | None] = ".omp-home"
-
-    @classmethod
-    def provision_run_home(cls, settings: Settings, home: Path) -> None:
-        """Copy the host omp credential vault into the run's home, agent-writable (mounting
-        fails on permissions), which the agent uses as ``PI_CODING_AGENT_DIR``. No-op
-        unless ``omp_auth_host_path`` is set (the API-key path needs no vault)."""
-        src = settings.provider.omp_auth_host_path
-        if not src:
-            return
-        src_path = Path(src).expanduser()
-        if not src_path.is_dir():
-            logger.warning("omp_auth_host_path %s is not a directory, skipping", src_path)
-            return
-        copied = 0
-        for name in cls._OMP_STORE_FILES:
-            f = src_path / name
-            if f.exists():
-                target = home / name
-                shutil.copy2(f, target)
-                # Agent opens the SQLite vault read-write, so it must be writable.
-                target.chmod(0o666)
-                copied += 1
-        logger.info("Provisioned omp auth (%d files) into %s", copied, home)
 
     def _omp_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
