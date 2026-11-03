@@ -176,6 +176,7 @@ def test_default_command_starts_without_asking_when_configured(checkout: Path, m
 
     monkeypatch.setattr(stack, "run_command", fake_run)
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "w" * 64)
     result = runner.invoke(cli_app.app, [], input="")
     assert result.exit_code == 0
     assert "OPENSCIENTIST_PROVIDER" not in result.output
@@ -200,6 +201,7 @@ def test_default_command_runs_wizard_then_starts(checkout: Path, monkeypatch):
 
     monkeypatch.setattr(stack, "run_command", fake_run)
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "w" * 64)
     result = runner.invoke(cli_app.app, [], input=ANTHROPIC_SETUP_ANSWERS)
     assert result.exit_code == 0
     # The checkout starts unconfigured, so the env file's values prove the

@@ -22,9 +22,12 @@ class MockProvider:
         name = user_data.get("name", "Dev User")
         username = user_data.get("username", email.split("@")[0])
 
+        # The mock identity is asserted by the operator, so its email is
+        # treated as verified
         return {
             "provider_user_id": f"mock_{username}",
             "email": email,
             "name": name,
             "username": username,
+            "email_verified": True,
         }

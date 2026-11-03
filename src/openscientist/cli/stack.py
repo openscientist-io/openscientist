@@ -32,6 +32,38 @@ def run_command(argv: tuple[str, ...], env: Mapping[str, str] | None = None) -> 
     return subprocess.run(argv, env=merged_env).returncode
 
 
+def _image_id(image: str) -> str:
+    """The local config digest of a built image, or empty when unreadable."""
+    proc = subprocess.run(
+        ("docker", "image", "inspect", "--format", "{{.Id}}", image),
+        capture_output=True,
+        text=True,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def record_image_digests(root: Path, image_id: Callable[[str], str] | None = None) -> int:
+    """Record each image's digest in .env.owner after the builds.
+
+    The launcher accepts only the digests recorded here, so a rebuilt image is
+    trusted again only through a build that re-records it.
+    """
+    image_id = image_id or _image_id
+    values = envfiles.file_values(root, "env")
+    agent_image = values.get("OPENSCIENTIST_AGENT_IMAGE") or "openscientist-agent:latest"
+    executor_image = values.get("OPENSCIENTIST_EXECUTOR_IMAGE") or "openscientist-executor:latest"
+    for tag, key in (
+        (agent_image, "AGENT_IMAGE_DIGESTS"),
+        (executor_image, "EXECUTOR_IMAGE_DIGESTS"),
+    ):
+        digest = image_id(tag)
+        if not digest:
+            console.print(f"[red]Could not read the digest of {tag}.[/red]")
+            return 1
+        envfiles.set_file_value(root, "owner", key, digest)
+    return 0
+
+
 def build_images(run: CommandRunner, root: Path) -> int:
     """The four image builds, the tags from .env with their :latest fallbacks and the
     default platform on every build; 0 on success."""
@@ -67,6 +99,10 @@ def build_images(run: CommandRunner, root: Path) -> int:
     code = run(("docker", "build", "-f", "Dockerfile.agent", "-t", agent_image, "."), platform_env)
     if code:
         return _failed("the agent image", code)
+    code = record_image_digests(root)
+    if code:
+        console.print("[red]Recording the image digests failed.[/red]")
+        return code
     return 0
 
 

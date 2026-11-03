@@ -18,6 +18,7 @@ GENERATED_SECRETS = {
     "POSTGRES_WEB_PASSWORD": "env",
     "POSTGRES_ADMIN_PASSWORD": "env",
     "OPENSCIENTIST_SECRET_KEY": "env",
+    "LAUNCHER_INSTANCE_ID": "owner",
     "POSTGRES_PASSWORD": "db",
     "POSTGRES_OWNER_PASSWORD": "owner",
 }
@@ -71,6 +72,12 @@ def set_value(lines: list[str], key: str, value: str) -> list[str]:
     return updated
 
 
+def set_file_value(root: Path, file: str, key: str, value: str) -> None:
+    """Rewrite one key of one env file on top of the baseline, atomically."""
+    lines = set_value(_baseline_lines(root, file), key, value)
+    write_file(_file_path(root, file), lines)
+
+
 def parse_values(lines: Iterable[str]) -> dict[str, str]:
     """Uncommented KEY=VALUE pairs, last one wins, with trailing comments dropped."""
     values: dict[str, str] = {}
@@ -106,6 +113,9 @@ def write_file(path: Path, lines: list[str]) -> None:
 def _generate_secret(key: str) -> str:
     if key == "OPENSCIENTIST_SECRET_KEY":
         return secrets.token_hex(32)
+    if key == "LAUNCHER_INSTANCE_ID":
+        # A label value, not a credential: short and readable.
+        return secrets.token_hex(6)
     return secrets.token_urlsafe(32)
 
 
