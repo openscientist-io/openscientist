@@ -670,6 +670,7 @@ class TestPhenixMount:
         assert "PHENIX_PATH" not in env
 
 
+
 class TestJobSecretInjection:
     """The job container receives a per-job derived secret, never the master."""
 

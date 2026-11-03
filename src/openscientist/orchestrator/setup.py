@@ -23,6 +23,10 @@ from openscientist.database.session import (
     thread_safe_user_session,
 )
 from openscientist.file_loader import get_file_info
+from openscientist.job_container.identity import (
+    apply_job_ownership,
+    apply_job_ownership_tree,
+)
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
@@ -117,10 +121,9 @@ def create_job(
     open_session = _owner_session(owner_id)
     job_dir = jobs_dir / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    # chmod after mkdir because mode= is masked by the process umask.
-    # World-writable so the agent container (non-root UID) can write into
-    # the mounted job directory regardless of host/container UID mismatches.
-    job_dir.chmod(0o777)
+    # Owned by the agent container's user, which the executor shares, so no
+    # world bits are needed and no local account can reach the job's data.
+    apply_job_ownership(job_dir)
 
     # Initialize a git repo so the Claude CLI gets proper gitStatus context
     # (includes "Primary working directory: <path>") for all file operations.
@@ -132,18 +135,13 @@ def create_job(
     )
     git_dir = job_dir / ".git"
     if git_dir.exists():
-        # Make world-writable so agent container (non-root UID) can use it.
-        for p in git_dir.rglob("*"):
-            try:
-                p.chmod(0o777 if p.is_dir() else 0o666)
-            except OSError:
-                pass
-        git_dir.chmod(0o777)
+        # git init leaves the repository root-owned; hand it to the agent.
+        apply_job_ownership_tree(git_dir)
 
     (job_dir / "data").mkdir(exist_ok=True)
-    (job_dir / "data").chmod(0o777)
+    apply_job_ownership(job_dir / "data")
     (job_dir / "provenance").mkdir(exist_ok=True)
-    (job_dir / "provenance").chmod(0o777)
+    apply_job_ownership(job_dir / "provenance")
 
     data_paths: list[Path] = []
     if data_files:
@@ -151,8 +149,7 @@ def create_job(
             original_name = Path(data_file).name
             dest = job_dir / "data" / original_name
             shutil.copy(data_file, dest)
-            # chmod after copy so the agent container (non-root UID) can read it.
-            dest.chmod(0o666)
+            apply_job_ownership(dest)
             data_paths.append(dest)
 
     if data_paths:
