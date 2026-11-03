@@ -27,6 +27,10 @@ from openscientist.agent.base import (
     _resolve_bin,
 )
 from openscientist.exceptions import McpToolsUnavailableError
+from openscientist.job_container.identity import (
+    RUN_HOME_DIR_MODE,
+    apply_job_ownership,
+)
 from openscientist.providers.base import LLM_PROXY_URL_ENV, Provider
 from openscientist.settings import get_settings
 from openscientist.transcript import OMP, TranscriptEntry
@@ -74,6 +78,7 @@ class OmpAgent(AbstractAgent[Provider]):
     # model_override, no chat file).
 
     RUN_HOME: ClassVar[str | None] = ".omp-home"
+
 
     def _omp_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
@@ -176,9 +181,9 @@ class OmpAgent(AbstractAgent[Provider]):
         home = self._omp_home()
         if not home.exists():
             # Only on creation, because the home of an existing container run is already
-            # agent-writable and chmod on a root-owned dir fails for the agent.
+            # agent-owned and chmod on a root-owned dir fails for the agent.
             home.mkdir(parents=True, exist_ok=True)
-            home.chmod(0o777)
+            apply_job_ownership(home, dir_mode=RUN_HOME_DIR_MODE)
         path = home / "models.yml"
         path.write_text(yaml.safe_dump(dict(catalog), sort_keys=False), encoding="utf-8")
         logger.info("Wrote omp model catalog to %s", path)
