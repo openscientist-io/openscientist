@@ -58,9 +58,6 @@ class _FakeProvider:
     #: The LLM placeholder of the latest launch.
     last_placeholder = ""
 
-    def __init__(self, posture: AirgapPosture | None = None) -> None:
-        self._posture = posture
-
     def proxied_container_env(
         self,
         *,
@@ -77,7 +74,7 @@ class _FakeProvider:
         return None
 
     def airgap_egress(self) -> AirgapPosture:
-        return self._posture or AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(AirgapEgress.PROXY)
 
 
 @pytest.fixture(autouse=True)
@@ -777,7 +774,6 @@ class TestAirgapFirewallLaunch:
         self,
         test_engine: AsyncEngine,
         airgapped: bool,
-        posture: AirgapPosture | None = None,
         provider_id: str = "ollama",
     ) -> dict[str, object]:
         """Launch with the row's airgap flag, and return the container run kwargs."""
@@ -794,7 +790,7 @@ class TestAirgapFirewallLaunch:
             ),
             patch(
                 "openscientist.job_container.runner.get_provider",
-                return_value=_FakeProvider(posture),
+                return_value=_FakeProvider(),
             ),
             patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
             patch(
@@ -842,20 +838,6 @@ class TestAirgapFirewallLaunch:
         assert run_kwargs["entrypoint"] is None
         environment = cast(dict[str, str], run_kwargs["environment"])
         assert "OPENSCIENTIST_FIREWALL_ALLOW" not in environment
-
-    @pytest.mark.asyncio
-    async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:
-        posture = AirgapPosture(
-            AirgapEgress.DIRECT,
-            direct_endpoints=(("bedrock-runtime.us-east-1.amazonaws.com", 443),),
-        )
-        run_kwargs = await self._launch(
-            test_engine, airgapped=True, provider_id="bedrock", posture=posture
-        )
-        environment = cast(dict[str, str], run_kwargs["environment"])
-        entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
-        assert "bedrock-runtime.us-east-1.amazonaws.com:443" in entries
-        assert "openscientist:8081" not in entries
 
 
 class TestChatTurnLaunch:

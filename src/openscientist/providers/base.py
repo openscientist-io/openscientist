@@ -186,7 +186,6 @@ class AirgapEgress(enum.Enum):
     """How the job container reaches the LLM under air-gap, deciding the firewall allowlist."""
 
     PROXY = "proxy"
-    DIRECT = "direct"
     UNSUPPORTED = "unsupported"
 
 
@@ -195,7 +194,6 @@ class AirgapPosture:
     """A provider's air-gapped egress posture for the active configuration."""
 
     mode: AirgapEgress
-    direct_endpoints: tuple[tuple[str, int], ...] = ()
     reason: str = ""
 
 
@@ -487,7 +485,7 @@ class Provider(abc.ABC):
         The setup wizard evaluates it from the provider's own settings before the
         database and other app settings exist, so it must not build the full
         settings. Pure, no network. The default is a provider that cannot be
-        air-gapped; providers that proxy (or egress directly) override it.
+        air-gapped; proxied providers override it.
         """
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,

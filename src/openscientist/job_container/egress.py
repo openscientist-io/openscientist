@@ -1,9 +1,7 @@
 """Egress allowlist for the air-gapped job-container firewall.
 
-Turns the active provider's air-gap posture (`Provider.airgap_egress`) into the
-host:port set the container may reach: always Postgres and the broker, plus the
-proxy for a PROXY posture or the provider's fixed endpoints for a DIRECT one. An
-UNSUPPORTED posture is refused.
+The allow-list is fixed for every provider: Postgres, the execution broker and
+the LLM proxy. An UNSUPPORTED posture is refused.
 """
 
 from __future__ import annotations
@@ -44,8 +42,6 @@ def derive_egress_allowlist(settings: Settings, posture: AirgapPosture) -> list[
         from openscientist.llm_proxy import container_proxy_base_url
 
         entries.append(_host_port(container_proxy_base_url()))
-    else:
-        entries.extend(posture.direct_endpoints)
 
     seen: set[tuple[str, int]] = set()
     unique: list[tuple[str, int]] = []
