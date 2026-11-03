@@ -25,12 +25,27 @@ from openscientist_tools.state import STATE
 logger = logging.getLogger(__name__)
 
 
+def _safe_data_filename(filename: str) -> str | None:
+    """Return *filename* if it is a bare name usable inside ``data/``.
+
+    Nothing else (path components, ``..``, absolute paths, empty names,
+    option-injecting ``-`` prefixes) is accepted.
+    """
+    name = Path(filename).name
+    if not name or name in (".", "..") or name.startswith("-") or name != filename:
+        return None
+    return name
+
+
 def _resolve_phenix_file_paths(input_files: list[str]) -> tuple[list[str], str | None]:
     """Resolve input filenames under the job's data directory."""
     data_dir = STATE.job_dir / "data"
     resolved_files: list[str] = []
     for filename in input_files:
-        file_path = data_dir / filename
+        name = _safe_data_filename(filename)
+        if name is None:
+            return [], f"❌ Error: File names must be bare filenames in data/: {filename}"
+        file_path = data_dir / name
         if not file_path.exists():
             return [], f"❌ Error: File not found: {filename}"
         resolved_files.append(str(file_path))
@@ -191,7 +206,8 @@ async def run_phenix_tool(
 
     Args:
         tool_name: Name of Phenix tool (e.g., "phenix.clashscore")
-        input_files: List of PDB/mmCIF file paths (relative to job data directory)
+        input_files: List of PDB/mmCIF filenames (bare names inside the
+            job data directory, e.g. "model.pdb")
         arguments: Optional dict of command-line arguments
         description: What you're investigating
 
@@ -212,8 +228,10 @@ async def compare_structures(
     """Compare experimental and predicted protein structures using Phenix.
 
     Args:
-        experimental_pdb: Experimental structure file (relative to job data dir)
-        predicted_pdb: Predicted structure file (relative to job data dir)
+        experimental_pdb: Experimental structure filename (bare name
+            inside the job data dir, e.g. "exp.pdb")
+        predicted_pdb: Predicted structure filename (bare name inside
+            the job data dir)
         description: What you're investigating
 
     Returns:
@@ -238,14 +256,19 @@ def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str | None = None) 
     """Extract AlphaFold confidence metrics (pLDDT) from a PDB file.
 
     Args:
-        alphafold_pdb: AlphaFold PDB file (relative to job data dir)
-        pae_json: Optional PAE JSON file
+        alphafold_pdb: AlphaFold PDB filename (bare name inside the job
+            data dir, e.g. "model.pdb")
+        pae_json: Optional PAE JSON filename (bare name inside the job
+            data dir)
 
     Returns:
         Per-residue confidence scores and summary statistics
     """
     data_dir = STATE.job_dir / "data"
-    pdb_path = data_dir / alphafold_pdb
+    pdb_name = _safe_data_filename(alphafold_pdb)
+    if pdb_name is None:
+        return f"❌ Error: File names must be bare filenames in data/: {alphafold_pdb}"
+    pdb_path = data_dir / pdb_name
 
     if not pdb_path.exists():
         return f"❌ Error: File not found: {alphafold_pdb}"
@@ -282,8 +305,11 @@ def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str | None = None) 
         output.append("\n✅ No low confidence regions detected")
 
     if pae_json:
+        pae_name = _safe_data_filename(pae_json)
+        if pae_name is None:
+            return f"❌ Error: File names must be bare filenames in data/: {pae_json}"
         try:
-            pae_count = _load_pae_entry_count(data_dir / pae_json)
+            pae_count = _load_pae_entry_count(data_dir / pae_name)
         except (OSError, ValueError, json.JSONDecodeError) as e:
             return f"❌ Error parsing AlphaFold file: {e}"
         if pae_count is not None:
