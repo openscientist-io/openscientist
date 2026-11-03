@@ -8,7 +8,7 @@ page's action handlers refuse and change nothing.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -16,9 +16,6 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import core as nicegui_core
-from nicegui.client import Client as NiceguiClient
-from nicegui.slot import Slot as NiceguiSlot
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -42,7 +39,7 @@ from openscientist.webapp_components.pages.job_detail import common as job_detai
 from openscientist.webapp_components.pages.job_detail import feedback as feedback_module
 from openscientist.webapp_components.pages.job_detail import report as report_module
 from openscientist.webapp_components.pages.job_detail import timeline as timeline_module
-from openscientist.webapp_components.utils import permissions
+from openscientist.webapp_components.utils import client_guard, permissions
 
 
 def _storage_for(user: User, login: Session, is_admin: bool) -> dict[str, object]:
@@ -118,22 +115,13 @@ async def _purge(test_engine: AsyncEngine, *statements) -> None:
         await db.commit()
 
 
-def _reset_nicegui_slot_state() -> None:
-    """Undo the global pseudo-client bootstrap so later test files start clean."""
-    script_client = nicegui_core.script_client
-    if script_client is not None:
-        NiceguiClient.instances.pop(script_client.id, None)
-    nicegui_core.script_client = None
-    nicegui_core.script_mode = False
-    NiceguiSlot.stacks.clear()
-
-
 @pytest.fixture(autouse=True)
-def _no_nicegui_slot_state() -> Generator[None, None, None]:
-    """These tests never build a page, so no test may leave NiceGUI slot state behind."""
-    _reset_nicegui_slot_state()
-    yield
-    _reset_nicegui_slot_state()
+def _no_real_nicegui(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the real NiceGUI ui out of these tests so no script client gets created."""
+    monkeypatch.setattr(client_guard, "is_client_connected", lambda: True)
+    monkeypatch.setattr(client_guard, "safe_run_javascript", lambda code: None)
+    monkeypatch.setattr(chat_module, "safe_run_javascript", lambda code: None)
+    monkeypatch.setattr(timeline_module, "is_client_connected", lambda: True)
 
 
 @pytest_asyncio.fixture
