@@ -43,7 +43,7 @@ class _Provider(StubCodexProvider):
         return "gpt-test"
 
     def codex_sdk_env(self) -> dict[str, str]:
-        return {"OPENAI_API_KEY": "sk-secret"}
+        return {"CODEX_API_KEY": "sk-secret"}
 
 
 _THREAD_ID = "thread-1"
@@ -345,7 +345,7 @@ async def test_run_iteration_writes_config_and_agents_md(
     # CodexConfig points the child at the per-job config home + provider auth.
     config_arg = mock_codex_cls.call_args.args[0]
     assert config_arg.env["CODEX_HOME"] == str(tmp_path / ".codex")
-    assert config_arg.env["OPENAI_API_KEY"] == "sk-secret"
+    assert config_arg.env["CODEX_API_KEY"] == "sk-secret"
     assert config_arg.cwd == str(tmp_path)
 
 
@@ -531,14 +531,7 @@ def test_unknown_item_becomes_unknown_entry() -> None:
     assert entries[0].source == "codex"
 
 
-# ── thread options + auth provisioning ─────────────────────────────────
-
-
-class _KeylessProvider(_Provider):
-    """Codex stub with no API key (forces auth.json provisioning)."""
-
-    def codex_sdk_env(self) -> dict[str, str]:
-        return {}
+# ── thread options ─────────────────────────────────────────────────────
 
 
 async def test_thread_start_sandbox_full_access(tmp_path: Path) -> None:
@@ -573,32 +566,3 @@ def test_toml_str_escapes_control_chars() -> None:
     value = 'a"b\\c\nd\te'
     parsed = tomllib.loads(f"k = {_toml_str(value)}")
     assert parsed["k"] == value
-
-
-async def test_auth_not_provisioned_when_key_present(tmp_path: Path) -> None:
-    agent = _agent(tmp_path)  # _Provider supplies OPENAI_API_KEY
-    mock_codex_cls, _ = _patch_codex(_turn(usage=None))
-    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
-        await agent.run_iteration("go")
-    assert not (tmp_path / ".codex" / "auth.json").exists()
-
-
-async def test_auth_provisioned_from_codex_home_when_no_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    fake_home = tmp_path / "home"
-    (fake_home / ".codex").mkdir(parents=True)
-    (fake_home / ".codex" / "auth.json").write_text('{"tokens": {}}')
-
-    config = AgentConfig(job_dir=tmp_path / "job")
-    agent = CodexAgent(config, _KeylessProvider())
-    mock_codex_cls, _ = _patch_codex(_turn(usage=None))
-    with (
-        patch("openscientist.agent.codex_agent.Path.home", return_value=fake_home),
-        patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls),
-    ):
-        await agent.run_iteration("go")
-    copied = config.job_dir / ".codex" / "auth.json"
-    assert copied.exists()
-    assert copied.read_text() == '{"tokens": {}}'

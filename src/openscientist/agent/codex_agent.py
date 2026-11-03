@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
@@ -36,13 +35,11 @@ from openscientist.agent.base import (
     TranscriptEntry,
     TurnOutcome,
 )
-from openscientist.job_container.identity import PRIVATE_FILE_MODE, apply_job_ownership
 from openscientist.providers.base import CodexCompatible
 from openscientist.transcript import CODEX
 
 if TYPE_CHECKING:
     from openscientist.prompts.common import BackendFragments
-    from openscientist.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -147,24 +144,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     RUN_HOME: ClassVar[str | None] = ".codex"
 
-    @classmethod
-    def provision_run_home(cls, settings: Settings, home: Path) -> None:
-        """Copy the codex CLI auth into the run's CODEX_HOME (host file is mode 600
-        owned by another user), readable by the non-root agent (uid 1001). No-op
-        unless ``codex_auth_host_path`` is set (the API-key path needs no file)."""
-        src = settings.provider.codex_auth_host_path
-        if not src:
-            return
-        src_path = Path(src).expanduser()
-        if not src_path.exists():
-            logger.warning("codex_auth_host_path %s does not exist, skipping", src_path)
-            return
-        dest = home / "auth.json"
-        shutil.copy2(src_path, dest)
-        # The operator's login is private to the agent user, not world-readable.
-        apply_job_ownership(dest, file_mode=PRIVATE_FILE_MODE)
-        logger.info("Provisioned codex auth into %s", dest)
-
     def _codex_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
 
@@ -197,19 +176,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         """Deliver the system prompt as ``AGENTS.md`` in the working dir."""
         if self._config.system_prompt:
             (self._job_dir() / "AGENTS.md").write_text(self._config.system_prompt)
-
-    def _ensure_auth(self) -> None:
-        """Make the per-job ``CODEX_HOME`` able to authenticate, falling back to a copy
-        of the codex CLI's stored OAuth login (``~/.codex/auth.json``) when no API key
-        is available, so codex can use the ChatGPT subscription."""
-        if self._provider.codex_sdk_env() or os.environ.get("OPENAI_API_KEY"):
-            return
-        source = Path.home() / ".codex" / "auth.json"
-        dest = self._codex_home() / "auth.json"
-        if source.exists() and not dest.exists():
-            shutil.copy2(source, dest)
-            dest.chmod(0o600)
-            logger.info("Provisioned codex auth into per-job CODEX_HOME")
 
     def _make_codex(self) -> AsyncCodex:
         """Build an ``AsyncCodex`` whose app-server reads the per-job config
@@ -244,7 +210,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         if self._codex is None:
             self._write_codex_config()
             self._write_agents_md()
-            self._ensure_auth()
             self._codex = self._make_codex()
         if self._thread is None:
             self._thread = await self._codex.thread_start(

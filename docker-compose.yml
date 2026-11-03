@@ -189,8 +189,9 @@ services:
       # the web signs its calls with it, agent containers hold none.
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
 
-      # Mount codex CLI auth if using OpenAI/codex ChatGPT login (set CODEX_AUTH_FILE in .env)
-      - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json:ro
+      # Mount codex CLI auth if using OpenAI/codex ChatGPT login (set CODEX_AUTH_FILE in .env).
+      # Writable: the LLM proxy refreshes the access token through it and writes the file back.
+      - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json
 
       # Mount the omp credential vault dir if using the omp harness (set OMP_AUTH_DIR in .env)
       - ${OMP_AUTH_DIR:-/dev/null}:/app/omp-auth:ro

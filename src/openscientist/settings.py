@@ -256,7 +256,11 @@ class ProviderSettings(BaseSettings):
     codex_auth_host_path: str | None = Field(
         default=None,
         alias="CODEX_AUTH_HOST_PATH",
-        description="Host path to the codex CLI auth file for ChatGPT login without an API key.",
+        description=(
+            "Host path to the codex CLI auth file (ChatGPT login). The web holds it "
+            "and the LLM proxy signs the Codex calls upstream with it; the job "
+            "container never sees the file."
+        ),
     )
     omp_auth_host_path: str | None = Field(
         default=None,
