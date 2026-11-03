@@ -744,8 +744,9 @@ class TestJobSecretInjection:
         assert settings.auth.storage_secret == expected_storage
 
 
-class TestAirgapFirewallLaunch:
-    """The job container runs behind the nftables egress firewall when air-gapped."""
+class TestFirewallLaunch:
+    """The job container runs behind the in-container nftables egress firewall
+    in every mode, air-gapped or not."""
 
     @staticmethod
     def _settings(*, provider_id: str = "ollama") -> SimpleNamespace:
@@ -818,6 +819,7 @@ class TestAirgapFirewallLaunch:
         assert run_kwargs["user"] == "root"
         assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         environment = cast(dict[str, str], run_kwargs["environment"])
+        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
         entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
         assert "postgres:5432" in entries
         assert "openscientist:8082" in entries
@@ -835,13 +837,20 @@ class TestAirgapFirewallLaunch:
         assert "command" not in run_kwargs or run_kwargs["command"] is None
 
     @pytest.mark.asyncio
-    async def test_non_airgap_launch_has_no_firewall(self, test_engine: AsyncEngine) -> None:
+    async def test_restricted_launch_applies_firewall(self, test_engine: AsyncEngine) -> None:
+        """Without air-gap the firewall keeps public egress and allowlists only
+        the web's services, so no provider posture is consulted."""
         run_kwargs = await self._launch(test_engine, airgapped=False)
-        assert run_kwargs["cap_add"] is None
-        assert run_kwargs["user"] is None
-        assert run_kwargs["entrypoint"] is None
+        assert run_kwargs["cap_add"] == ["NET_ADMIN"]
+        assert run_kwargs["user"] == "root"
+        assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         environment = cast(dict[str, str], run_kwargs["environment"])
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in environment
+        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(",")) == {
+            "postgres:5432",
+            "openscientist:8081",
+            "openscientist:8082",
+        }
 
     @pytest.mark.asyncio
     async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:
