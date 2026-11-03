@@ -18,6 +18,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Authentication and Sessions
 
 - **OAuth 2.0 with major providers.** Users sign in through Google or GitHub using the Authlib library. No passwords are stored or managed by the application.
+- **Verified email required for new identities.** A new OAuth identity is linked to an existing user, or creates a user, only when the provider reports the email address as verified; sign-in with an unverified address is refused.
 - **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
 - **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, not in browser-side storage. Logging out deletes the database record.
 - **User approval workflow.** New users must be explicitly approved by an admin before they can run jobs, preventing open access.

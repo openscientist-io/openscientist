@@ -16,7 +16,11 @@ from sqlalchemy import select
 from openscientist.admin_settings import current_admin_settings
 from openscientist.auth.oauth import get_oauth_client
 from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider, OrcidProvider
-from openscientist.auth.routes import create_or_update_user, create_session
+from openscientist.auth.routes import (
+    UnverifiedEmailError,
+    create_or_update_user,
+    create_session,
+)
 from openscientist.database.models import Administrator, ReviewToken, Session, User
 from openscientist.database.retry import is_connection_error, retry_sync
 from openscientist.database.session import (
@@ -83,6 +87,7 @@ async def mock_oauth_login() -> RedirectResponse:
             name=user_info["name"],
             access_token="mock_access_token",
             refresh_token=None,
+            email_verified=user_info.get("email_verified"),
         )
         session = await create_session(db, str(user.id))
 
@@ -127,6 +132,7 @@ async def mock_admin_oauth_login() -> RedirectResponse:
             name=user_info["name"],
             access_token="mock_access_token",
             refresh_token=None,
+            email_verified=user_info.get("email_verified"),
         )
         user.is_approved = True
         user_id = user.id
@@ -191,6 +197,7 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
                 name=user_info["name"],
                 access_token="mock_access_token",
                 refresh_token=None,
+                email_verified=user_info.get("email_verified"),
             )
             session = await create_session(db, str(user.id))
 
@@ -279,6 +286,12 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
         logger.info("User %s logged in via %s", user.email, provider)
         return response
 
+    except UnverifiedEmailError:
+        logger.info(
+            "Refused %s sign-in because the provider did not verify the email",
+            provider,
+        )
+        return RedirectResponse(url="/login?error=email_verification_required")
     except HTTPException:
         raise
     except Exception as e:
