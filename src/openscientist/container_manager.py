@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import MissingImageError
 from openscientist.job_container import to_host_path
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.settings import get_settings
 
 if TYPE_CHECKING:
@@ -258,6 +259,8 @@ class ContainerManager:
         cpu_limit = self.cpu_limit if self.cpu_limit is not None else admin.executor_cpu
         output_dir = Path(output_dir).resolve() if output_dir else Path(tempfile.mkdtemp())
         output_dir.mkdir(parents=True, exist_ok=True)
+        # The executor container writes here as its own uid, sharing the job group.
+        apply_job_ownership(output_dir)
 
         # First, validate files exist using container-local paths.
         volumes, host_to_container = self._build_volumes(

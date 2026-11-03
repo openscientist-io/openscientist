@@ -263,7 +263,7 @@ class TestPrivilegeDrop:
         rendered = _render(tmp_path, "postgres:5432")
         assert [arg for arg in rendered.setpriv_argv if arg.startswith("--")] == [
             "--reuid=agent",
-            "--regid=agent",
+            "--regid=jobs",
             "--init-groups",
             "--inh-caps=-all",
             "--bounding-set=-all",

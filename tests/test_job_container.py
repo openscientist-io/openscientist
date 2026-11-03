@@ -666,8 +666,9 @@ class TestCodexAuthProvisioning:
 
         dest = home / "auth.json"
         assert dest.read_text() == '{"tokens": {}}'
-        assert (dest.stat().st_mode & 0o777) == 0o644  # agent (uid 1001) can read
-        assert (home.stat().st_mode & 0o777) == 0o777  # agent can write config.toml
+        # Private to the agent (uid 1001) which owns the run home.
+        assert (dest.stat().st_mode & 0o777) == 0o600
+        assert (home.stat().st_mode & 0o777) == 0o700  # agent can write config.toml
 
     def test_noop_when_unset(self, tmp_path: Path) -> None:
         from openscientist.agent.codex_agent import CodexAgent

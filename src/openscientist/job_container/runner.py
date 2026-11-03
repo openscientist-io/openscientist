@@ -41,6 +41,7 @@ from openscientist.job_container.db_login import (
     close_agent_login,
     open_agent_login,
 )
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_container.run_home import (
     RUN_HOME_LABEL,
     create_run_home,
@@ -484,11 +485,14 @@ class JobContainerRunner:
                     if not self._is_not_found_error(error):
                         logger.warning("Failed to stop container for job %s: %s", job_id, error)
                 if log_dir is not None:
+                    log_path = log_dir / "agent-container.log"
                     try:
                         logs = container.logs(stdout=True, stderr=True).decode(
                             "utf-8", errors="replace"
                         )
-                        (log_dir / "agent-container.log").write_text(logs)
+                        log_path.write_text(logs)
+                        # Saved into the job dir, which the agent user owns.
+                        apply_job_ownership(log_path)
                     except (docker_errors.APIError, OSError) as error:
                         if not self._is_not_found_error(error):
                             logger.warning(

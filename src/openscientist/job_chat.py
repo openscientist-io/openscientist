@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
@@ -365,6 +366,8 @@ async def _send_message_via_container(
     chat_turn = uuid4().hex
     request_path, response_path = _chat_turn_files(job_dir, chat_turn)
     request_path.write_text(json.dumps(request))
+    # The container's agent user reads this turn's request, so hand it over.
+    apply_job_ownership(request_path)
 
     logger.info("Running chat turn for job %s in a hardened container", job_id)
     try:
