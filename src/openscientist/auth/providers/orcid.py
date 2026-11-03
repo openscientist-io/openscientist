@@ -44,7 +44,7 @@ class OrcidProvider:
         oidc_email = userinfo.get("email")
         if oidc_email:
             email = str(oidc_email)
-            email_verified = True
+            email_verified = bool(userinfo.get("email_verified"))
 
         if not email and orcid_id:
             try:

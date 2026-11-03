@@ -11,6 +11,17 @@ ARG JOBS_GID=1001
 RUN groupadd --gid ${JOBS_GID} jobs \
     && useradd --uid ${EXECUTOR_UID} --gid ${JOBS_GID} --create-home executor
 
+# The egress firewall entrypoint installs nftables rules and drops to the
+# executor user with setpriv from util-linux.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nftables \
+    util-linux \
+    && rm -rf /var/lib/apt/lists/*
+
+# Egress firewall entrypoint, run as root before dropping to the executor user.
+COPY docker/agent-firewall-entrypoint.sh /agent-firewall-entrypoint.sh
+RUN chmod +x /agent-firewall-entrypoint.sh
+
 WORKDIR /app
 
 # Install system dependencies for scientific libraries and Rust

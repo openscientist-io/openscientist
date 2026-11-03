@@ -95,6 +95,7 @@ dependencies = [
 
 [project.scripts]
 openscientist = "openscientist.cli.app:main"
+openscientist-launcher = "openscientist_launcher.main:main"
 
 [project.optional-dependencies]
 # Scientific stack for the executor container, installed from the lock by

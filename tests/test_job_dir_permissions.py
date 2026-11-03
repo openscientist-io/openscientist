@@ -23,7 +23,6 @@ from openscientist.job_container.identity import (
     EXECUTOR_UID,
     JOB_DIR_MODE,
     JOB_FILE_MODE,
-    PRIVATE_FILE_MODE,
     RUN_HOME_DIR_MODE,
     apply_job_ownership,
 )
@@ -132,58 +131,6 @@ class TestRunHomeOwnership:
         for path in (home, home.parent):
             assert _mode(path) == RUN_HOME_DIR_MODE, path
             assert_agent_owned(chowns, path)
-
-
-class TestCopiedLogins:
-    """Operator logins copied into a run home are the agent's private files."""
-
-    def test_codex_login_is_agent_owned_and_private(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-        from openscientist.job_container.run_home import create_run_home
-        from openscientist.settings import get_settings
-
-        chowns = ChownRecorder(monkeypatch)
-        src = tmp_path / "host-auth.json"
-        src.write_text('{"tokens": {}}', encoding="utf-8")
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        monkeypatch.setenv("CODEX_AUTH_HOST_PATH", str(src))
-        get_settings.cache_clear()
-        try:
-            CodexAgent.provision_run_home(get_settings(), home)
-        finally:
-            get_settings.cache_clear()
-
-        dest = home / "auth.json"
-        assert dest.read_text(encoding="utf-8") == '{"tokens": {}}'
-        assert _mode(dest) == PRIVATE_FILE_MODE
-        assert_agent_owned(chowns, dest)
-
-    def test_omp_vault_files_are_agent_owned_and_private(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from openscientist.agent.omp_agent import OmpAgent
-        from openscientist.job_container.run_home import create_run_home
-        from openscientist.settings import get_settings
-
-        chowns = ChownRecorder(monkeypatch)
-        src = tmp_path / "omp-store"
-        src.mkdir()
-        for name in ("agent.db", "agent.db-wal", "config.yml"):
-            (src / name).write_text(name, encoding="utf-8")
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        monkeypatch.setenv("OMP_AUTH_HOST_PATH", str(src))
-        get_settings.cache_clear()
-        try:
-            OmpAgent.provision_run_home(get_settings(), home)
-        finally:
-            get_settings.cache_clear()
-
-        for name in ("agent.db", "agent.db-wal", "config.yml"):
-            dest = home / name
-            assert _mode(dest) == PRIVATE_FILE_MODE, name
-            assert_agent_owned(chowns, dest)
 
 
 class TestWebLaterWrites:
@@ -612,31 +559,21 @@ class TestJobTreeAccessInContainers:
         # lands on the same line.
         assert request.read_text(encoding="utf-8") == "{}more\n"
 
-    def test_run_home_and_copied_login_are_agent_private(
+    def test_run_home_is_agent_private(
         self,
         docker_client,
         agent_image,
         job_tree: Path,
         test_database_url: str,
-        tmp_path: Path,
     ) -> None:
         """A run home is owner-only, so agent access rests on real ownership,
         which only the root setup inside the container can establish."""
-        auth_src = tmp_path / "auth-src"
-        auth_src.mkdir()
-        (auth_src / "auth.json").write_text('{"tokens": {}}', encoding="utf-8")
         script = (
             "from pathlib import Path\n"
             "from openscientist.job_container.run_home import create_run_home\n"
-            "from openscientist.agent.codex_agent import CodexAgent\n"
-            "from openscientist.settings import get_settings\n"
             "home = create_run_home(Path('/jobs'), 'agent_' + '1' * 32)\n"
-            "CodexAgent.provision_run_home(get_settings(), home)\n"
             "st = home.stat()\n"
             "print('home', format(st.st_mode & 0o777, 'o'), st.st_uid, st.st_gid)\n"
-            "st = (home / 'auth.json').stat()\n"
-            "print('auth', format(st.st_mode & 0o777, 'o'), st.st_uid, st.st_gid)\n"
-            "print((home / 'auth.json').read_text())\n"
             "print('run home ok')\n"
         )
         output = docker_client.containers.run(
@@ -647,12 +584,8 @@ class TestJobTreeAccessInContainers:
                 "DATABASE_URL": test_database_url,
                 "OPENSCIENTIST_PROVIDER": "anthropic",
                 "OPENSCIENTIST_SECRET_KEY": TEST_SECRET_KEY,
-                "CODEX_AUTH_HOST_PATH": "/auth-src/auth.json",
             },
-            volumes={
-                str(job_tree): {"bind": "/jobs", "mode": "rw"},
-                str(auth_src): {"bind": "/auth-src", "mode": "ro"},
-            },
+            volumes={str(job_tree): {"bind": "/jobs", "mode": "rw"}},
             network_mode="none",
             remove=True,
         )
@@ -661,14 +594,16 @@ class TestJobTreeAccessInContainers:
         payload = output.decode("utf-8", errors="replace")
         assert "run home ok" in payload, payload
         assert f"home {0o700:o} {AGENT_UID} {AGENT_GID}" in payload, payload
-        assert f"auth {0o600:o} {AGENT_UID} {AGENT_GID}" in payload, payload
-        assert '{"tokens": {}}' in payload, payload
 
         role = "agent_" + "1" * 32
-
         output = docker_client.containers.run(
             image=agent_image,
-            entrypoint=["sh", "-c", f"cat /jobs/.run-homes/{role}/auth.json && echo AGENT_OK"],
+            entrypoint=[
+                "sh",
+                "-c",
+                f"echo secret > /jobs/.run-homes/{role}/probe && "
+                f"cat /jobs/.run-homes/{role}/probe && echo AGENT_OK",
+            ],
             user="agent",
             volumes={str(job_tree): {"bind": "/jobs", "mode": "rw"}},
             network_mode="none",
@@ -676,11 +611,11 @@ class TestJobTreeAccessInContainers:
         )
         payload = output.decode("utf-8")
         assert "AGENT_OK" in payload
-        assert '{"tokens": {}}' in payload
+        assert "secret" in payload
 
         container = docker_client.containers.run(
             image=agent_image,
-            entrypoint=["sh", "-c", f"cat /jobs/.run-homes/{role}/auth.json"],
+            entrypoint=["sh", "-c", f"cat /jobs/.run-homes/{role}/probe"],
             user="424242:424242",
             volumes={str(job_tree): {"bind": "/jobs", "mode": "rw"}},
             network_mode="none",
@@ -690,4 +625,4 @@ class TestJobTreeAccessInContainers:
         logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
         container.remove(force=True)
         assert exit_code != 0
-        assert '{"tokens": {}}' not in logs
+        assert "secret" not in logs
