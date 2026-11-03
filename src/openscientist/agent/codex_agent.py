@@ -36,6 +36,7 @@ from openscientist.agent.base import (
     TranscriptEntry,
     TurnOutcome,
 )
+from openscientist.job_container.identity import PRIVATE_FILE_MODE, apply_job_ownership
 from openscientist.providers.base import CodexCompatible
 from openscientist.transcript import CODEX
 
@@ -160,7 +161,8 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             return
         dest = home / "auth.json"
         shutil.copy2(src_path, dest)
-        dest.chmod(0o644)
+        # The operator's login is private to the agent user, not world-readable.
+        apply_job_ownership(dest, file_mode=PRIVATE_FILE_MODE)
         logger.info("Provisioned codex auth into %s", dest)
 
     def _codex_home(self) -> Path:

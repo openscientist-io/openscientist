@@ -5,11 +5,16 @@ Reads execution requests from stdin JSON and writes execution results to stdout 
 """
 
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
 
-from openscientist.code_executor import (
+# Plots and metadata land in the job's provenance dir, so they must stay
+# group-readable and never world-readable.
+os.umask(0o007)
+
+from openscientist.code_executor import (  # noqa: E402
     execute_code,
     execute_rust_code,
     execute_sparql_code,
