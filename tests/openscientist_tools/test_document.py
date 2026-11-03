@@ -87,3 +87,61 @@ async def test_missing_file_with_no_data_dir(
     # The error names the missing file
     assert text.startswith("❌ File not found")
     assert "missing.pdf" in text
+
+
+async def test_absolute_path_outside_job_dir_refused(
+    tmp_path: Path,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+) -> None:
+    job_dir = tmp_path / "job"
+    (job_dir / "data").mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET-42")
+    text = await _call_read_document(server_params(server_env(job_dir)), str(secret))
+    assert "TOPSECRET-42" not in text
+    assert text.startswith("❌")
+
+
+async def test_traversal_path_outside_job_dir_refused(
+    tmp_path: Path,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+) -> None:
+    job_dir = tmp_path / "job"
+    (job_dir / "data").mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET-43")
+    text = await _call_read_document(
+        server_params(server_env(job_dir)), f"{job_dir}/data/../../secret.txt"
+    )
+    assert "TOPSECRET-43" not in text
+    assert text.startswith("❌")
+
+
+async def test_symlink_pointing_out_of_job_dir_refused(
+    tmp_path: Path,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+) -> None:
+    job_dir = tmp_path / "job"
+    (job_dir / "data").mkdir(parents=True)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOPSECRET-44")
+    (job_dir / "data" / "link.txt").symlink_to(secret)
+    text = await _call_read_document(server_params(server_env(job_dir)), "link.txt")
+    assert "TOPSECRET-44" not in text
+    assert text.startswith("❌")
+
+
+async def test_absolute_path_inside_job_dir_read(
+    tmp_path: Path,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+) -> None:
+    job_dir = tmp_path / "job"
+    (job_dir / "data").mkdir(parents=True)
+    note = job_dir / "data" / "note.txt"
+    note.write_text("insider note 77")
+    text = await _call_read_document(server_params(server_env(job_dir)), str(note))
+    assert "insider note 77" in text
