@@ -202,6 +202,10 @@ services:
       # Mount Docker socket for sibling container execution
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
+      # The launcher's unix socket, which the web's executor and dashboard
+      # paths speak to
+      - launcher_socket:/run/launcher
+
     group_add:
       - "${DOCKER_GID:-999}"
 

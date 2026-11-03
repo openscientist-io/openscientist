@@ -792,6 +792,15 @@ class ContainerSettings(BaseSettings):
         alias="OPENSCIENTIST_EXEC_BROKER_PORT",
         description="Port of the web's execution broker, which agent containers call.",
     )
+    launcher_socket_path: str = Field(
+        default="/run/launcher/launcher.sock",
+        alias="OPENSCIENTIST_LAUNCHER_SOCKET_PATH",
+        description=(
+            "Unix socket of the launcher service, which the web shares through the "
+            "launcher_socket volume. Executor runs and the container dashboard go "
+            "through it."
+        ),
+    )
 
 
 def phenix_installation_ok(phenix_path: str) -> bool:

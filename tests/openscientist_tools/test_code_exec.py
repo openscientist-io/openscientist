@@ -23,16 +23,18 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
 from sqlalchemy import delete
 
-from openscientist import exec_broker
+from openscientist import container_manager, exec_broker
 from openscientist.container_manager import get_container_manager
 from openscientist.database import async_session_local
 from openscientist.database.models.job import Job
 from openscientist.exec_broker_client import BrokerError
 from openscientist.job_container.secrets import issue_run_credentials, revoke_run_credentials
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import clear_settings_cache
 from openscientist_tools import code_exec as code_exec_module
 from openscientist_tools.code_exec import execute_code
 from openscientist_tools.state import STATE
+from tests.launcher import EXECUTOR_IMAGE, Launcher, image_digest
 
 
 def _docker_available() -> bool:
@@ -55,14 +57,33 @@ DOCKER_REQUIRED = pytest.mark.skipif(
 
 @pytest.fixture
 def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator[str, None, None]:
-    """Run a real broker for subprocess tests, confining to tmp_path/jobs/<job_id>.
-    host_project_dir is unset so host<->container translation is an identity.
+    """Run a real broker and a real launcher for subprocess tests, confining to
+    tmp_path/jobs/<job_id>. host_project_dir is unset so host<->container
+    translation is an identity.
     """
+    import docker
+
     fake_settings = SimpleNamespace(
         secret_key=os.environ["OPENSCIENTIST_SECRET_KEY"],
         container=SimpleNamespace(container_app_dir=str(tmp_path), host_project_dir=None),
     )
     monkeypatch.setattr(exec_broker, "get_settings", lambda: fake_settings)
+
+    # The broker's manager runs in this process, so point its launcher client
+    # at a real launcher whose job root is the same tmp_path the broker confines.
+    docker_client = docker.from_env()
+    digest = image_digest(docker_client, EXECUTOR_IMAGE)
+    launcher = Launcher.start(
+        tmp_path,
+        tmp_path / "jobs",
+        AGENT_IMAGE_DIGESTS=digest,
+        EXECUTOR_IMAGE_DIGESTS=digest,
+    )
+    monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
+    clear_settings_cache()
+    previous_manager = container_manager._container_manager
+    container_manager._container_manager = None
+
     app = exec_broker.create_exec_broker_app(manager=get_container_manager)
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -83,6 +104,9 @@ def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generato
         thread.join(timeout=10)
         while _issued_roles:
             revoke_run_credentials(_issued_roles.pop())
+        container_manager._container_manager = previous_manager
+        clear_settings_cache()
+        launcher.close()
 
 
 #: Login roles of the runs :func:`_broker_env` started, ended with the broker.

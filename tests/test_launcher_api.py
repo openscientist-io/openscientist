@@ -12,7 +12,6 @@ import base64
 import io
 import json
 import os
-import subprocess
 import tarfile
 import time
 from collections.abc import Iterator
@@ -25,18 +24,13 @@ import pytest
 from docker.models.containers import Container
 
 import docker
+from tests.launcher import EXECUTOR_IMAGE, LAUNCHER_INSTANCE_ID, Launcher, image_digest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 TEST_IMAGE = "openscientist-launcher-test:latest"
-EXECUTOR_IMAGE = "openscientist-executor:latest"
 JOB_ID = "11111111-2222-3333-4444-555555555555"
 LOGIN_ROLE = "agent_" + "a" * 32
-INSTANCE_ID = "test-instance"
-
-
-def _image_id(client: docker.DockerClient, tag: str) -> str:
-    return str(client.images.get(tag).attrs["Id"])
+INSTANCE_ID = LAUNCHER_INSTANCE_ID
 
 
 def _build_test_agent_image(client: docker.DockerClient) -> str:
@@ -75,100 +69,6 @@ def docker_client() -> Iterator[docker.DockerClient]:
 @pytest.fixture(scope="module")
 def test_agent_image(docker_client: docker.DockerClient) -> str:
     return _build_test_agent_image(docker_client)
-
-
-class Launcher:
-    """A launcher subprocess on a unix socket, started like compose would."""
-
-    def __init__(
-        self,
-        proc: subprocess.Popen[bytes],
-        socket_path: Path,
-        env: dict[str, str],
-        log: Path,
-    ) -> None:
-        self.proc = proc
-        self.socket_path = socket_path
-        self.env = env
-        self.log = log
-
-    @staticmethod
-    def start(
-        tmp_path: Path, jobs_root: Path, *, wait_healthy: bool = True, **env_overrides: str
-    ) -> "Launcher":
-        env = {
-            "PATH": os.environ.get("PATH", ""),
-            "JOBS_ROOT": str(jobs_root),
-            "AGENT_IMAGE": TEST_IMAGE,
-            "EXECUTOR_IMAGE": EXECUTOR_IMAGE,
-            "AGENT_IMAGE_DIGESTS": "",
-            "EXECUTOR_IMAGE_DIGESTS": "",
-            "LAUNCHER_INSTANCE_ID": INSTANCE_ID,
-            "LAUNCHER_WEB_UID": str(os.getuid()),
-            "LAUNCHER_WEB_GID": str(os.getgid()),
-            "LAUNCHER_SOCKET_PATH": str(tmp_path / "launcher.sock"),
-            "LAUNCHER_NETWORK": "bridge",
-            "AGENT_MAX_MEMORY_MIB": "8192",
-            "AGENT_MAX_CPU": "4",
-            "EXECUTOR_MAX_MEMORY_MIB": "2048",
-            "EXECUTOR_MAX_CPU": "1",
-            "MAX_LIFETIME_SECONDS": "3600",
-            "MAX_EGRESS_ENTRIES": "8",
-        }
-        env.update(env_overrides)
-        log = tmp_path / "launcher.log"
-        proc = subprocess.Popen(
-            [str(VENV_PYTHON), "-m", "openscientist_launcher"],
-            cwd=REPO_ROOT,
-            env=env,
-            stdout=log.open("wb"),
-            stderr=subprocess.STDOUT,
-        )
-        launcher = Launcher(proc, Path(env["LAUNCHER_SOCKET_PATH"]), env, log)
-        if wait_healthy:
-            launcher._wait_healthy()
-        return launcher
-
-    def client(self) -> httpx.Client:
-        return httpx.Client(
-            transport=httpx.HTTPTransport(uds=str(self.socket_path)),
-            base_url="http://launcher",
-            timeout=120,
-        )
-
-    def _wait_healthy(self) -> None:
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                pytest.fail(f"launcher exited early:\n{self.log.read_text(errors='replace')}")
-            try:
-                response = self.client().get("/v1/health")
-                if response.status_code == 200:
-                    return
-            except httpx.HTTPError:
-                time.sleep(0.2)
-        pytest.fail(f"launcher never became healthy:\n{self.log.read_text(errors='replace')}")
-
-    def wait_socket(self) -> None:
-        # A launcher whose web uid is not ours refuses every connection, so the
-        # socket file itself is the only observable "up" signal.
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline:
-            if self.proc.poll() is not None:
-                pytest.fail(f"launcher exited early:\n{self.log.read_text(errors='replace')}")
-            if self.socket_path.exists():
-                return
-            time.sleep(0.2)
-        pytest.fail(f"launcher socket never appeared:\n{self.log.read_text(errors='replace')}")
-
-    def close(self) -> None:
-        if self.proc.poll() is None:
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
-                self.proc.wait(timeout=10)
 
 
 @pytest.fixture()
@@ -215,14 +115,16 @@ def launcher(
     docker_client: docker.DockerClient, test_agent_image: str, jobs_root: Path
 ) -> Iterator[Launcher]:
     env = {
-        "AGENT_IMAGE_DIGESTS": _image_id(docker_client, test_agent_image),
-        "EXECUTOR_IMAGE_DIGESTS": _image_id(docker_client, EXECUTOR_IMAGE),
+        "AGENT_IMAGE": TEST_IMAGE,
+        "AGENT_IMAGE_DIGESTS": image_digest(docker_client, test_agent_image),
+        "EXECUTOR_IMAGE_DIGESTS": image_digest(docker_client, EXECUTOR_IMAGE),
     }
     started = Launcher.start(
         jobs_root,
         jobs_root,
         AGENT_IMAGE_DIGESTS=env["AGENT_IMAGE_DIGESTS"],
         EXECUTOR_IMAGE_DIGESTS=env["EXECUTOR_IMAGE_DIGESTS"],
+        AGENT_IMAGE=env["AGENT_IMAGE"],
     )
     try:
         yield started
@@ -396,8 +298,8 @@ class TestImageRefusals:
             jobs_root,
             jobs_root,
             AGENT_IMAGE="no-such-image:nope",
-            AGENT_IMAGE_DIGESTS=_image_id(docker_client, TEST_IMAGE),
-            EXECUTOR_IMAGE_DIGESTS=_image_id(docker_client, EXECUTOR_IMAGE),
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, TEST_IMAGE),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
         )
         try:
             with launcher.client() as client:
@@ -419,7 +321,7 @@ class TestImageRefusals:
             jobs_root,
             jobs_root,
             AGENT_IMAGE_DIGESTS="sha256:" + "0" * 64,
-            EXECUTOR_IMAGE_DIGESTS=_image_id(docker_client, EXECUTOR_IMAGE),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
         )
         try:
             with launcher.client() as client:
@@ -533,8 +435,8 @@ class TestPeerCred:
         launcher = Launcher.start(
             tmp_path,
             jobs_root,
-            AGENT_IMAGE_DIGESTS=_image_id(docker_client, TEST_IMAGE),
-            EXECUTOR_IMAGE_DIGESTS=_image_id(docker_client, EXECUTOR_IMAGE),
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, TEST_IMAGE),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
             LAUNCHER_WEB_UID=str(os.getuid() + 4096),
             wait_healthy=False,
         )
@@ -552,8 +454,8 @@ class TestPeerCred:
         launcher = Launcher.start(
             tmp_path,
             jobs_root,
-            AGENT_IMAGE_DIGESTS=_image_id(docker_client, TEST_IMAGE),
-            EXECUTOR_IMAGE_DIGESTS=_image_id(docker_client, EXECUTOR_IMAGE),
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, TEST_IMAGE),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
             LAUNCHER_WEB_GID=str(os.getgid() + 4096),
             wait_healthy=False,
         )
@@ -600,8 +502,15 @@ class TestExecutor:
             try:
                 deadline = time.monotonic() + 120
                 while time.monotonic() < deadline:
+                    # Other test launchers share the daemon, so the instance
+                    # marker keeps the watcher on this run's container.
                     containers = docker_client.containers.list(
-                        filters={"label": "openscientist.type=executor"}
+                        filters={
+                            "label": [
+                                "openscientist.type=executor",
+                                f"openscientist.launcher={LAUNCHER_INSTANCE_ID}",
+                            ]
+                        }
                     )
                     if containers:
                         inspected["attrs"] = containers[0].attrs
@@ -755,8 +664,15 @@ class TestExecutor:
             try:
                 deadline = time.monotonic() + 120
                 while time.monotonic() < deadline:
+                    # Other test launchers share the daemon, so the instance
+                    # marker keeps the watcher on this run's container.
                     containers = docker_client.containers.list(
-                        filters={"label": "openscientist.type=executor"}
+                        filters={
+                            "label": [
+                                "openscientist.type=executor",
+                                f"openscientist.launcher={LAUNCHER_INSTANCE_ID}",
+                            ]
+                        }
                     )
                     if containers:
                         inspected["attrs"] = containers[0].attrs

@@ -1,24 +1,40 @@
 """
 Tests for container_manager module.
 
-Contains both unit tests (mocked Docker) and integration tests (real Docker).
+The unit tests mock the launcher client; the integration tests run the real
+launcher process and the real executor image, the way the launcher tests do.
 """
 
 import asyncio
 import json
-import tempfile
-from collections.abc import AsyncGenerator
-from datetime import UTC
+from collections.abc import AsyncGenerator, Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import docker
+from openscientist import container_manager
+from openscientist.job_container.launcher_client import (
+    LauncherBadRequestError,
+    LauncherImageMissingError,
+    LauncherUnavailableError,
+)
+from openscientist.settings import clear_settings_cache
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import assert_names_a_build_command
+from tests.launcher import (
+    EXECUTOR_IMAGE,
+    LAUNCHER_INSTANCE_ID,
+    Launcher,
+    image_digest,
+)
+
+JOB_ID = "11111111-2222-3333-4444-555555555555"
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -31,8 +47,51 @@ async def admin_settings_row(test_engine: AsyncEngine) -> AsyncGenerator[None, N
         await reset_admin_settings_row(test_engine)
 
 
+def _result_json(**overrides: Any) -> str:
+    result: dict[str, Any] = {
+        "success": True,
+        "output": "Hello, World!",
+        "plots": [],
+        "error": None,
+        "execution_time": 0.5,
+    }
+    result.update(overrides)
+    return json.dumps(result)
+
+
+def _launcher_entry(name: str, created: str, **labels: str) -> dict[str, Any]:
+    return {
+        "id": name.replace("openscientist-", "")[:12],
+        "name": name,
+        "status": "exited",
+        "created": created,
+        "labels": {
+            "openscientist.job_id": JOB_ID,
+            "openscientist.type": "executor",
+            "openscientist.launcher": LAUNCHER_INSTANCE_ID,
+            **labels,
+        },
+    }
+
+
 class TestContainerManagerUnit:
-    """Unit tests with mocked Docker client."""
+    """Unit tests with a mocked launcher client."""
+
+    @pytest.fixture
+    def jobs_root(self, tmp_path: Path) -> Path:
+        jobs = tmp_path / "jobs"
+        (jobs / JOB_ID).mkdir(parents=True)
+        return jobs
+
+    @pytest.fixture
+    def manager(self, jobs_root: Path) -> tuple[Any, MagicMock]:
+        """A manager whose client is a mock, with a job dir for its runs."""
+        from openscientist.container_manager import ContainerManager
+
+        mgr = ContainerManager()
+        client = MagicMock()
+        mgr._client = client
+        return mgr, client
 
     def test_init_defaults(self):
         """The limits are not copied at init; the row supplies them at execution."""
@@ -40,7 +99,7 @@ class TestContainerManagerUnit:
 
         manager = ContainerManager()
         assert manager.image == "openscientist-executor:latest"
-        assert manager.memory_limit is None
+        assert manager.memory_mib is None
         assert manager.cpu_limit is None
         assert manager.timeout is None
 
@@ -50,348 +109,162 @@ class TestContainerManagerUnit:
 
         manager = ContainerManager(
             image="custom:latest",
-            memory_limit="4g",
+            memory_mib=4096,
             cpu_limit=1.0,
             timeout=300,
         )
         assert manager.image == "custom:latest"
-        assert manager.memory_limit == "4g"
+        assert manager.memory_mib == 4096
         assert manager.cpu_limit == 1.0
         assert manager.timeout == 300
 
-    def test_execute_code_success(self):
-        """Test successful code execution returns correct result."""
-        from openscientist.container_manager import ContainerManager
+    def test_execute_code_success(self, manager: tuple[Any, MagicMock], jobs_root: Path) -> None:
+        """The result JSON the launcher captured is parsed and returned."""
+        mgr, client = manager
+        client.run_exec.return_value = {"stdout": _result_json(), "exit_code": 0}
 
-        manager = ContainerManager()
-
-        # Mock Docker client
-        mock_client = MagicMock()
-        manager._client = mock_client
-
-        # Mock container run result
-        result_json = json.dumps(
-            {
-                "success": True,
-                "output": "Hello, World!",
-                "plots": [],
-                "error": None,
-                "execution_time": 0.5,
-            }
-        )
-        mock_client.containers.run.return_value = result_json.encode()
-
-        # Mock container get for cleanup
-        mock_container = MagicMock()
-        mock_client.containers.get.return_value = mock_container
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code='print("Hello, World!")',
-                job_id="test-job-123",
-                output_dir=tmpdir,
-            )
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = mgr.execute_code(code="print('hi')", job_id=JOB_ID, output_dir=out_dir)
 
         assert result["success"] is True
         assert result["output"] == "Hello, World!"
         assert result["error"] is None
-        mock_container.remove.assert_called_once_with(force=True)
 
-    def test_execute_code_failure(self):
-        """Test failed code execution returns error."""
-        from openscientist.container_manager import ContainerManager
+    def test_execute_code_failure(self, manager: tuple[Any, MagicMock], jobs_root: Path) -> None:
+        """A failed run passes the executor's error through."""
+        mgr, client = manager
+        client.run_exec.return_value = {
+            "stdout": _result_json(
+                success=False,
+                output="",
+                error="NameError: name 'undefined' is not defined",
+            ),
+            "exit_code": 0,
+        }
 
-        manager = ContainerManager()
-
-        mock_client = MagicMock()
-        manager._client = mock_client
-
-        result_json = json.dumps(
-            {
-                "success": False,
-                "output": "",
-                "plots": [],
-                "error": "NameError: name 'undefined' is not defined",
-                "execution_time": 0.1,
-            }
-        )
-        mock_client.containers.run.return_value = result_json.encode()
-
-        mock_container = MagicMock()
-        mock_client.containers.get.return_value = mock_container
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code="undefined",
-                job_id="test-job-456",
-                output_dir=tmpdir,
-            )
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = mgr.execute_code(code="undefined", job_id=JOB_ID, output_dir=out_dir)
 
         assert result["success"] is False
         assert "NameError" in result["error"]
 
-    def test_execute_code_image_not_found(self):
-        """Test handling of missing executor image."""
-        import docker.errors
+    def test_execute_code_image_not_found(
+        self, manager: tuple[Any, MagicMock], jobs_root: Path
+    ) -> None:
+        """A missing template image names the image and the build command."""
+        mgr, client = manager
+        client.run_exec.side_effect = LauncherImageMissingError(
+            "image_missing", f"image {mgr.image} is not available"
+        )
 
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager()
-
-        mock_client = MagicMock()
-        manager._client = mock_client
-        mock_client.containers.run.side_effect = docker.errors.ImageNotFound("not found")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code='print("test")',
-                job_id="test-job-789",
-                output_dir=tmpdir,
-            )
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = mgr.execute_code(code="print('test')", job_id=JOB_ID, output_dir=out_dir)
 
         assert result["success"] is False
-        assert manager.image in result["error"]
+        assert mgr.image in result["error"]
         assert_names_a_build_command(result["error"])
 
-    def test_cleanup_job_containers(self):
-        """Test cleanup of containers by job ID."""
-        from openscientist.container_manager import ContainerManager
+    def test_execute_code_launcher_unavailable(
+        self, manager: tuple[Any, MagicMock], jobs_root: Path
+    ) -> None:
+        """A launcher that cannot be reached surfaces a clean error result."""
+        mgr, client = manager
+        client.run_exec.side_effect = LauncherUnavailableError(
+            "unavailable", "the launcher could not be reached"
+        )
 
-        manager = ContainerManager()
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = mgr.execute_code(code="print('test')", job_id=JOB_ID, output_dir=out_dir)
 
-        mock_client = MagicMock()
-        manager._client = mock_client
+        assert result["success"] is False
+        assert "launcher" in result["error"].lower()
 
-        # Mock list of containers for the job
-        mock_container1 = MagicMock()
-        mock_container1.name = "openscientist-exec-job123-abc"
-        mock_container2 = MagicMock()
-        mock_container2.name = "openscientist-exec-job123-def"
-        mock_client.containers.list.return_value = [mock_container1, mock_container2]
+    def test_execute_code_refused_request(
+        self, manager: tuple[Any, MagicMock], jobs_root: Path
+    ) -> None:
+        """A request the launcher refuses surfaces its refusal."""
+        mgr, client = manager
+        client.run_exec.side_effect = LauncherBadRequestError(
+            "bad_request", "output_dir is outside the job directory"
+        )
 
-        removed = manager.cleanup_job_containers("job123")
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = mgr.execute_code(code="print('test')", job_id=JOB_ID, output_dir=out_dir)
+
+        assert result["success"] is False
+        assert "outside the job directory" in result["error"]
+
+    def test_cleanup_job_containers(self, manager: tuple[Any, MagicMock]) -> None:
+        """Each launcher-created container of the job is removed once."""
+        mgr, client = manager
+        old = _launcher_entry("openscientist-exec-job123-abc", "")
+        new = _launcher_entry("openscientist-exec-job123-def", "")
+        client.list_containers.return_value = [old, new]
+
+        removed = mgr.cleanup_job_containers(JOB_ID)
 
         assert removed == 2
-        mock_container1.remove.assert_called_once_with(force=True)
-        mock_container2.remove.assert_called_once_with(force=True)
+        client.remove.assert_any_call(old["id"])
+        client.remove.assert_any_call(new["id"])
 
-    def test_cleanup_orphaned_containers(self):
-        """Test cleanup of old orphaned containers."""
-        from datetime import datetime, timedelta
+    def test_cleanup_job_containers_survives_a_refused_remove(
+        self, manager: tuple[Any, MagicMock]
+    ) -> None:
+        mgr, client = manager
+        old = _launcher_entry("openscientist-exec-job123-abc", "")
+        other = _launcher_entry("openscientist-exec-job123-def", "")
+        client.list_containers.return_value = [old, other]
+        client.remove.side_effect = [
+            LauncherUnavailableError("unavailable", "down"),
+            None,
+        ]
 
-        from openscientist.container_manager import ContainerManager
+        assert mgr.cleanup_job_containers(JOB_ID) == 1
+        client.remove.assert_any_call(other["id"])
 
-        manager = ContainerManager()
-
-        mock_client = MagicMock()
-        manager._client = mock_client
-
-        # Create mock containers - one old, one recent
+    def test_cleanup_orphaned_containers(self, manager: tuple[Any, MagicMock]) -> None:
+        """Only executor containers older than the bound are removed."""
+        mgr, client = manager
         old_time = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
         recent_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        old = _launcher_entry("openscientist-exec-old", old_time)
+        recent = _launcher_entry("openscientist-exec-recent", recent_time)
+        client.list_containers.return_value = [old, recent]
 
-        old_container = MagicMock()
-        old_container.name = "openscientist-exec-old"
-        old_container.attrs = {"Created": old_time}
-
-        recent_container = MagicMock()
-        recent_container.name = "openscientist-exec-recent"
-        recent_container.attrs = {"Created": recent_time}
-
-        mock_client.containers.list.return_value = [old_container, recent_container]
-
-        removed = manager.cleanup_orphaned_containers(max_age_hours=24)
+        removed = mgr.cleanup_orphaned_containers(max_age_hours=24)
 
         assert removed == 1
-        old_container.remove.assert_called_once_with(force=True)
-        recent_container.remove.assert_not_called()
+        client.remove.assert_called_once_with(old["id"])
 
-    def test_check_image_available_true(self):
-        """Test image availability check when image exists."""
-        from openscientist.container_manager import ContainerManager
+    def test_check_image_available_true(self, manager: tuple[Any, MagicMock]) -> None:
+        mgr, client = manager
+        client.health.return_value = {"docker": True, "images": {"agent": True, "executor": True}}
+        assert mgr.check_image_available() is True
 
-        manager = ContainerManager()
+    def test_check_image_available_false(self, manager: tuple[Any, MagicMock]) -> None:
+        mgr, client = manager
+        client.health.return_value = {"docker": True, "images": {"agent": True, "executor": False}}
+        assert mgr.check_image_available() is False
 
-        mock_client = MagicMock()
-        manager._client = mock_client
-        mock_client.images.get.return_value = MagicMock()
+    def test_check_image_available_launcher_down(self, manager: tuple[Any, MagicMock]) -> None:
+        mgr, client = manager
+        client.health.side_effect = LauncherUnavailableError("unavailable", "down")
+        assert mgr.check_image_available() is False
 
-        assert manager.check_image_available() is True
+    def test_is_available_true(self, manager: tuple[Any, MagicMock]) -> None:
+        mgr, client = manager
+        client.health.return_value = {"docker": True, "images": {"agent": False, "executor": False}}
+        assert mgr.is_available() is True
 
-    def test_check_image_available_false(self):
-        """Test image availability check when image doesn't exist."""
-        import docker.errors
-
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager()
-
-        mock_client = MagicMock()
-        manager._client = mock_client
-        mock_client.images.get.side_effect = docker.errors.ImageNotFound("not found")
-
-        assert manager.check_image_available() is False
-
-    def test_is_available_true(self):
-        """Test Docker availability check when Docker is running."""
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager()
-
-        mock_client = MagicMock()
-        manager._client = mock_client
-        mock_client.ping.return_value = True
-
-        assert manager.is_available() is True
-
-    def test_is_available_false(self):
-        """Test Docker availability check when Docker is not running."""
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager()
-
-        mock_client = MagicMock()
-        manager._client = mock_client
-        mock_client.ping.side_effect = Exception("Docker not running")
-
-        assert manager.is_available() is False
-
-
-class TestBuildVolumes:
-    """Unit tests for _build_volumes and _remap_paths."""
-
-    def _make_manager(self):
-        from openscientist.container_manager import ContainerManager
-
-        return ContainerManager()
-
-    def test_no_data_files_returns_only_output_mount(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        volumes, host_to_container = mgr._build_volumes(output_dir=tmp_path, data_files=None)
-        assert str(tmp_path) in volumes
-        assert volumes[str(tmp_path)] == {"bind": "/output", "mode": "rw"}
-        assert host_to_container == {}
-
-    def test_single_file_mounted_as_data(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        f = data_dir / "study.csv"
-        f.write_text("a,b\n1,2\n")
-        volumes, host_to_container = mgr._build_volumes(
-            output_dir=tmp_path / "out",
-            data_files=[{"path": str(f), "name": "study.csv"}],
-        )
-        assert str(data_dir) in host_to_container
-        assert host_to_container[str(data_dir)] == "/data"
-        assert volumes[str(data_dir)] == {"bind": "/data", "mode": "ro"}
-
-    def test_two_files_same_dir_one_mount(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        f1 = data_dir / "a.csv"
-        f2 = data_dir / "b.csv"
-        f1.write_text("x\n1\n")
-        f2.write_text("x\n2\n")
-        volumes, host_to_container = mgr._build_volumes(
-            output_dir=tmp_path / "out",
-            data_files=[{"path": str(f1)}, {"path": str(f2)}],
-        )
-        # Both live in the same dir — only one mount
-        assert len(host_to_container) == 1
-        assert host_to_container[str(data_dir)] == "/data"
-
-    def test_two_files_different_dirs_two_mounts(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        dir_a = tmp_path / "mnt_a"
-        dir_b = tmp_path / "mnt_b"
-        dir_a.mkdir()
-        dir_b.mkdir()
-        fa = dir_a / "study.csv"
-        fb = dir_b / "labels.csv"
-        fa.write_text("x\n1\n")
-        fb.write_text("y\n2\n")
-        volumes, host_to_container = mgr._build_volumes(
-            output_dir=tmp_path / "out",
-            data_files=[{"path": str(fa)}, {"path": str(fb)}],
-        )
-        assert host_to_container[str(dir_a)] == "/data"
-        assert host_to_container[str(dir_b)] == "/data/1"
-        assert volumes[str(dir_a)] == {"bind": "/data", "mode": "ro"}
-        assert volumes[str(dir_b)] == {"bind": "/data/1", "mode": "ro"}
-
-    def test_missing_file_raises_value_error(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        missing = tmp_path / "ghost.csv"
-        with pytest.raises(ValueError, match="Data file not found"):
-            mgr._build_volumes(
-                output_dir=tmp_path / "out",
-                data_files=[{"path": str(missing)}],
-            )
-
-    def test_empty_path_raises_value_error(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        with pytest.raises(ValueError, match="empty 'path'"):
-            mgr._build_volumes(
-                output_dir=tmp_path / "out",
-                data_files=[{"path": ""}],
-            )
-
-    def test_remap_paths_single_dir(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        f = data_dir / "file.csv"
-        f.write_text("x\n")
-        host_to_container = {str(data_dir): "/data"}
-        remapped_data_path, remapped_files = mgr._remap_paths(
-            data_path=str(f),
-            data_files=[{"path": str(f), "name": "file.csv"}],
-            host_to_container=host_to_container,
-        )
-        assert remapped_data_path == "/data/file.csv"
-        assert remapped_files[0]["path"] == "/data/file.csv"
-        assert remapped_files[0]["name"] == "file.csv"  # non-path field preserved
-
-    def test_remap_paths_multi_dir(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        dir_a = tmp_path / "a"
-        dir_b = tmp_path / "b"
-        dir_a.mkdir()
-        dir_b.mkdir()
-        fa = dir_a / "study.csv"
-        fb = dir_b / "labels.csv"
-        fa.write_text("x\n")
-        fb.write_text("y\n")
-        host_to_container = {str(dir_a): "/data", str(dir_b): "/data/1"}
-        _, remapped_files = mgr._remap_paths(
-            data_path=str(fa),
-            data_files=[{"path": str(fa)}, {"path": str(fb)}],
-            host_to_container=host_to_container,
-        )
-        assert remapped_files[0]["path"] == "/data/study.csv"
-        assert remapped_files[1]["path"] == "/data/1/labels.csv"
-
-    def test_remap_paths_no_map_is_identity(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        data_files = [{"path": "/host/data/f.csv"}]
-        remapped_data_path, remapped_files = mgr._remap_paths(
-            data_path="/host/data/f.csv",
-            data_files=data_files,
-            host_to_container={},
-        )
-        assert remapped_data_path == "/host/data/f.csv"
-        assert remapped_files[0]["path"] == "/host/data/f.csv"
-
-    def test_remap_unmounted_path_raises(self, tmp_path: Path) -> None:
-        mgr = self._make_manager()
-        with pytest.raises(ValueError, match="not under any mounted"):
-            mgr._remap_paths(
-                data_path="/some/other/dir/file.csv",
-                data_files=[],
-                host_to_container={"/mounted/dir": "/data"},
-            )
+    def test_is_available_false(self, manager: tuple[Any, MagicMock]) -> None:
+        mgr, client = manager
+        client.health.side_effect = LauncherUnavailableError("unavailable", "down")
+        assert mgr.is_available() is False
 
 
 class TestToHostPath:
@@ -428,230 +301,110 @@ class TestToHostPath:
         assert result == Path("/app/jobs/123/data")
 
 
-class TestBuildVolumesHostTranslation:
-    """Tests for host path translation in _build_volumes via execute_code."""
+class TestExecuteCodeRequest:
+    """The launcher request carries the row's values and host paths."""
 
-    def _make_manager(self):
-        from openscientist.container_manager import ContainerManager
-
-        return ContainerManager()
-
-    def _setup_execute_code(self):
-        mgr = self._make_manager()
-        mock_client = MagicMock()
-        mgr._client = mock_client
-
-        mock_client.containers.run.return_value = json.dumps(
-            {
-                "success": True,
-                "output": "",
-                "plots": [],
-                "error": None,
-                "execution_time": 0.1,
-            }
-        ).encode()
-        mock_client.containers.get.return_value = MagicMock()
-
-        mock_settings = MagicMock()
-        mock_settings.container.container_app_dir = "/app"
-        mock_settings.container.executor_image = "test:latest"
-        mock_settings.container.agent_network = None
-        return mgr, mock_client, mock_settings
-
-    @staticmethod
-    def _get_run_volumes(mock_client: MagicMock) -> dict[str, dict[str, str]]:
-        call_kwargs = mock_client.containers.run.call_args
-        volumes = cast(dict[str, dict[str, str]] | None, call_kwargs.kwargs.get("volumes"))
-        if volumes is not None:
-            return volumes
-        return cast(dict[str, dict[str, str]], call_kwargs[1]["volumes"])
-
-    def test_build_volumes_translates_output_dir(self, tmp_path: Path) -> None:
-        """When host_project_dir is set, the output_dir volume source is the real
-        to_host_path translation of the container path."""
-        from unittest.mock import patch
-
-        mgr, mock_client, mock_settings = self._setup_execute_code()
-        # Real directories standing in for the container app dir and the host
-        # project dir, so the real to_host_path performs the mapping.
-        app_dir = tmp_path / "app"
-        host_dir = tmp_path / "host_project"
-        app_dir.mkdir()
-        mock_settings.container.container_app_dir = str(app_dir)
-        mock_settings.container.host_project_dir = str(host_dir)
-
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
-        ):
-            # An output_dir under the container app dir triggers translation
-            output_dir = app_dir / "jobs" / "123" / "provenance"
-            output_dir.mkdir(parents=True)
-            mgr.execute_code(
-                code='print("hi")',
-                job_id="test-translate",
-                output_dir=str(output_dir),
-            )
-
-        volumes = self._get_run_volumes(mock_client)
-        host_output_dir = str(host_dir / "jobs" / "123" / "provenance")
-        assert host_output_dir in volumes
-        # The mount still points at the container output path
-        assert volumes[host_output_dir] == {"bind": "/output", "mode": "rw"}
-
-    def test_build_volumes_translates_data_file_paths(self, tmp_path: Path) -> None:
-        """When host_project_dir is set, the data directory volume source is the real
-        to_host_path translation of the container path."""
-        from unittest.mock import patch
-
-        mgr, mock_client, mock_settings = self._setup_execute_code()
-        # Real directories standing in for the container app dir and the host
-        # project dir, so the real to_host_path performs the mapping.
-        app_dir = tmp_path / "app"
-        host_dir = tmp_path / "host_project"
-        data_dir = app_dir / "data"
-        data_dir.mkdir(parents=True)
-        data_file = data_dir / "file.csv"
-        data_file.write_text("a,b\n1,2\n")
-        mock_settings.container.container_app_dir = str(app_dir)
-        mock_settings.container.host_project_dir = str(host_dir)
-
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
-        ):
-            output_dir = app_dir / "out"
-            output_dir.mkdir()
-            mgr.execute_code(
-                code='print("hi")',
-                job_id="test-data-translate",
-                output_dir=str(output_dir),
-                data_files=[{"path": str(data_file), "name": "file.csv"}],
-            )
-
-        volumes = self._get_run_volumes(mock_client)
-        assert str(host_dir / "data") in volumes
-        # The mount still points at the container data path
-        assert volumes[str(host_dir / "data")] == {"bind": "/data", "mode": "ro"}
-
-    def test_build_volumes_no_translation_without_host_dir(self, tmp_path: Path) -> None:
-        """When host_project_dir is not set, paths pass through unchanged."""
-        from unittest.mock import patch
-
-        mgr, mock_client, mock_settings = self._setup_execute_code()
-        mock_settings.container.host_project_dir = None
-
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        data_file = data_dir / "file.csv"
-        data_file.write_text("a,b\n1,2\n")
-
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
-        ):
-            output_dir = tmp_path / "out"
-            output_dir.mkdir()
-            mgr.execute_code(
-                code='print("hi")',
-                job_id="test-no-translate",
-                output_dir=str(output_dir),
-                data_files=[{"path": str(data_file), "name": "file.csv"}],
-            )
-
-        assert str(data_dir) in self._get_run_volumes(mock_client)
-
-
-class TestExecuteCodeAirgapNetwork:
-    """Executor network selection under the air-gap flag."""
-
-    def _setup(self):
+    @pytest.fixture
+    def manager(self, tmp_path: Path) -> tuple[Any, MagicMock]:
         from openscientist.container_manager import ContainerManager
 
         mgr = ContainerManager()
-        mock_client = MagicMock()
-        mgr._client = mock_client
-        mock_client.containers.run.return_value = json.dumps(
-            {
-                "success": True,
-                "output": "",
-                "plots": [],
-                "error": None,
-                "execution_time": 0.1,
-            }
-        ).encode()
-        mock_client.containers.get.return_value = MagicMock()
+        client = MagicMock()
+        mgr._client = client
+        client.run_exec.return_value = {"stdout": _result_json(), "exit_code": 0}
+        return mgr, client
 
-        mock_settings = MagicMock()
-        mock_settings.container.container_app_dir = "/app"
-        mock_settings.container.host_project_dir = None
-        mock_settings.container.executor_image = "test:latest"
-        mock_settings.container.agent_network = "openscientist_default"
-        return mgr, mock_client, mock_settings
+    @pytest.fixture
+    def jobs_root(self, tmp_path: Path) -> Path:
+        jobs = tmp_path / "jobs"
+        (jobs / JOB_ID).mkdir(parents=True)
+        return jobs
 
-    @staticmethod
-    def _run_kwargs(mock_client: MagicMock) -> dict[str, object]:
-        return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
+    def _exec(self, mgr: Any, tmp_path: Path, **overrides: Any) -> None:
+        out_dir = tmp_path / "jobs" / JOB_ID / "out"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        kwargs: dict[str, Any] = {
+            "code": "print('hi')",
+            "job_id": JOB_ID,
+            "output_dir": str(out_dir),
+        }
+        kwargs.update(overrides)
+        mgr.execute_code(**kwargs)
 
     @pytest.mark.asyncio
-    async def test_airgap_enabled_uses_no_network(
-        self, test_engine: AsyncEngine, tmp_path: Path
+    async def test_row_limits_reach_the_launcher(
+        self, manager: tuple[Any, MagicMock], tmp_path: Path, test_engine: AsyncEngine
     ) -> None:
+        """The admin row's limits, timeout, and airgap reach the launcher request."""
+        mgr, client = manager
+        await set_admin_settings_row(test_engine)
+        # The execution reads the row on a worker thread, like the broker does.
+        await asyncio.to_thread(self._exec, mgr, tmp_path)
+        request = client.run_exec.call_args.args[0]
+        assert request["memory_mib"] == 512
+        assert request["cpu"] == 0.5
+        assert request["airgapped"] is False
+        # The executor's own alarm is the timeout; the launcher's bound clears it.
+        assert request["timeout_seconds"] == 150
+        assert request["input"]["timeout"] == 120
+
+        await set_admin_settings_row(
+            test_engine,
+            executor_cpu=0.75,
+            executor_memory_mib=1024,
+            executor_timeout_seconds=60,
+            airgapped=True,
+        )
+        await asyncio.to_thread(self._exec, mgr, tmp_path)
+        request = client.run_exec.call_args.args[0]
+        assert request["memory_mib"] == 1024
+        assert request["cpu"] == 0.75
+        assert request["airgapped"] is True
+        assert request["timeout_seconds"] == 90
+        assert request["input"]["timeout"] == 60
+
+    def test_host_paths_reach_the_launcher(
+        self, manager: tuple[Any, MagicMock], tmp_path: Path
+    ) -> None:
+        """Container-app paths are translated to host paths before the request."""
         from unittest.mock import patch
 
-        mgr, mock_client, mock_settings = self._setup()
-        await set_admin_settings_row(test_engine, airgapped=True)
+        mgr, client = manager
+        app_dir = tmp_path / "app"
+        host_dir = tmp_path / "host_project"
+        app_dir.mkdir()
+        data_dir = app_dir / "data"
+        data_dir.mkdir()
+        data_file = data_dir / "file.csv"
+        data_file.write_text("a,b\n1,2\n", encoding="utf-8")
+        fake_settings = MagicMock()
+        fake_settings.container.container_app_dir = str(app_dir)
+        fake_settings.container.host_project_dir = str(host_dir)
 
-        output_dir = tmp_path / "out"
-        output_dir.mkdir()
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch(
-                "openscientist.job_container.resolve_docker_network",
-                return_value="openscientist_default",
-            ) as mock_resolve,
-        ):
-            await asyncio.to_thread(
-                mgr.execute_code,
-                code='print("hi")',
-                job_id="airgap-on",
-                output_dir=str(output_dir),
-            )
+        with patch("openscientist.container_manager.get_settings", return_value=fake_settings):
+            self._exec(mgr, app_dir, data_files=[{"path": str(data_file), "name": "file.csv"}])
 
-        kwargs = self._run_kwargs(mock_client)
-        assert kwargs.get("network") == "none"
-        assert "network_mode" not in kwargs
-        mock_resolve.assert_not_called()
+        request = client.run_exec.call_args.args[0]
+        assert request["input"]["output_dir"] == str(host_dir / "jobs" / JOB_ID / "out")
+        assert request["input"]["data_files"][0]["path"] == str(host_dir / "data" / "file.csv")
 
-    @pytest.mark.asyncio
-    async def test_airgap_disabled_uses_resolved_network(
-        self, test_engine: AsyncEngine, tmp_path: Path
+    def test_missing_data_file_is_a_refused_request(
+        self, manager: tuple[Any, MagicMock], tmp_path: Path
     ) -> None:
-        from unittest.mock import patch
-
-        mgr, mock_client, mock_settings = self._setup()
-        await set_admin_settings_row(test_engine, airgapped=False)
-
-        output_dir = tmp_path / "out"
-        output_dir.mkdir()
-        with (
-            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
-            patch(
-                "openscientist.job_container.resolve_docker_network",
-                return_value="openscientist_default",
-            ) as mock_resolve,
-        ):
-            await asyncio.to_thread(
-                mgr.execute_code,
-                code='print("hi")',
-                job_id="airgap-off",
-                output_dir=str(output_dir),
-            )
-
-        kwargs = self._run_kwargs(mock_client)
-        assert kwargs.get("network") == "openscientist_default"
-        assert "network_mode" not in kwargs
-        mock_resolve.assert_called_once()
+        mgr, client = manager
+        client.run_exec.side_effect = LauncherBadRequestError(
+            "bad_request", "a data file is missing"
+        )
+        out_dir = tmp_path / "jobs" / JOB_ID / "out"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result = mgr.execute_code(
+            code="print('hi')",
+            job_id=JOB_ID,
+            output_dir=str(out_dir),
+            data_files=[{"path": str(tmp_path / "ghost.csv"), "name": "ghost.csv"}],
+        )
+        assert result["success"] is False
+        assert "data file is missing" in result["error"]
 
 
 class TestGetContainerManager:
@@ -674,116 +427,252 @@ class TestGetContainerManager:
 
 
 @pytest.mark.integration
-class TestContainerManagerIntegration:
-    """Integration tests that require Docker to be running.
+class TestContainerManagerLauncherIntegration:
+    """Integration tests against the real launcher process and Docker daemon.
 
     Run with: pytest tests/test_container_manager.py -v -m integration
     """
 
     @pytest.fixture(autouse=True)
     def check_docker(self):
-        """Skip if Docker is not available."""
-        from openscientist.container_manager import ContainerManager
+        try:
+            client = docker.from_env()
+            client.ping()
+            client.images.get(EXECUTOR_IMAGE)
+        except docker.errors.DockerException:
+            pytest.skip("Docker and the executor image are required")
 
-        manager = ContainerManager()
-        if not manager.is_available():
-            pytest.skip("Docker not available")
+    @pytest.fixture
+    def jobs_root(self, tmp_path: Path) -> Path:
+        jobs = tmp_path / "jobs"
+        (jobs / JOB_ID).mkdir(parents=True)
+        return jobs
 
-    @pytest.fixture(autouse=True)
-    def check_image(self):
-        """Skip if executor image is not built."""
-        from openscientist.container_manager import ContainerManager
+    @pytest.fixture
+    def launcher(self, tmp_path: Path, jobs_root: Path) -> Iterator[Launcher]:
+        client = docker.from_env()
+        digest = image_digest(client, EXECUTOR_IMAGE)
+        started = Launcher.start(
+            tmp_path,
+            jobs_root,
+            AGENT_IMAGE_DIGESTS=digest,
+            EXECUTOR_IMAGE_DIGESTS=digest,
+        )
+        try:
+            yield started
+        finally:
+            started.close()
 
-        manager = ContainerManager()
-        if not manager.check_image_available():
-            pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
+    @pytest.fixture
+    def manager(self, launcher: Launcher, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
+        monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
+        clear_settings_cache()
+        previous = container_manager._container_manager
+        container_manager._container_manager = None
+        try:
+            yield container_manager.ContainerManager()
+        finally:
+            container_manager._container_manager = previous
+            clear_settings_cache()
 
-    def test_execute_simple_code(self):
-        """Test executing simple Python code."""
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code='print("Hello from container!")',
-                job_id="integration-test-1",
-                output_dir=tmpdir,
-            )
+    def test_executor_run_end_to_end(self, manager: Any, jobs_root: Path) -> None:
+        """One executor run through the real launcher, container removed after."""
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = manager.execute_code(
+            code="import time\ntime.sleep(2)\nprint('hello from the launcher path')",
+            job_id=JOB_ID,
+            output_dir=out_dir,
+        )
 
         assert result["success"] is True
-        assert "Hello from container!" in result["output"]
+        assert "hello from the launcher path" in result["output"]
+        # The launcher removed its container on completion.
+        assert manager.cleanup_job_containers(JOB_ID) == 0
 
-    def test_execute_with_numpy(self):
-        """Test that numpy is available."""
-        from openscientist.container_manager import ContainerManager
+    def test_executor_run_reads_the_mounted_data_file(self, manager: Any, jobs_root: Path) -> None:
+        job_dir = jobs_root / JOB_ID
+        (job_dir / "study.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+        out_dir = job_dir / "out"
+        out_dir.mkdir()
+        result = manager.execute_code(
+            code="print(int(data['a'].sum()) + int(data['b'].sum()))",
+            job_id=JOB_ID,
+            output_dir=out_dir,
+            data_path=str(job_dir / "study.csv"),
+            data_files=[{"path": str(job_dir / "study.csv"), "name": "study.csv"}],
+        )
 
-        manager = ContainerManager()
+        assert result["success"] is True
+        assert "3" in result["output"]
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code="import numpy as np; print(np.array([1,2,3]).sum())",
-                job_id="integration-test-2",
-                output_dir=tmpdir,
-            )
+    def test_missing_executor_image_surfaces_the_build_command(
+        self, tmp_path: Path, jobs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        launcher = Launcher.start(
+            tmp_path,
+            jobs_root,
+            AGENT_IMAGE_DIGESTS=image_digest(docker.from_env(), EXECUTOR_IMAGE),
+            EXECUTOR_IMAGE_DIGESTS="sha256:" + "0" * 64,
+        )
+        try:
+            monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
+            clear_settings_cache()
+            manager = container_manager.ContainerManager()
+            out_dir = jobs_root / JOB_ID / "out"
+            out_dir.mkdir()
+            result = manager.execute_code(code="print(1)", job_id=JOB_ID, output_dir=out_dir)
+        finally:
+            launcher.close()
+            clear_settings_cache()
+
+        assert result["success"] is False
+        assert_names_a_build_command(result["error"])
+
+    def test_launcher_down_surfaces_a_clean_error(
+        self, jobs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(jobs_root.parent / "absent" / "launcher.sock")
+        )
+        clear_settings_cache()
+        try:
+            manager = container_manager.ContainerManager()
+            assert manager.is_available() is False
+            assert manager.check_image_available() is False
+            out_dir = jobs_root / JOB_ID / "out"
+            out_dir.mkdir()
+            result = manager.execute_code(code="print(1)", job_id=JOB_ID, output_dir=out_dir)
+        finally:
+            clear_settings_cache()
+
+        assert result["success"] is False
+        assert "launcher" in result["error"].lower()
+
+    def test_cleanup_job_containers_removes_the_launcher_containers(
+        self, manager: Any, jobs_root: Path
+    ) -> None:
+        client = docker.from_env()
+        labelled = client.containers.create(
+            EXECUTOR_IMAGE,
+            labels={
+                "openscientist.job_id": JOB_ID,
+                "openscientist.type": "executor",
+                "openscientist.launcher": LAUNCHER_INSTANCE_ID,
+            },
+        )
+        foreign = client.containers.create(
+            EXECUTOR_IMAGE,
+            labels={
+                "openscientist.job_id": JOB_ID,
+                "openscientist.type": "executor",
+            },
+        )
+        try:
+            assert manager.cleanup_job_containers(JOB_ID) == 1
+            # The foreign container is not the launcher's to remove.
+            assert manager.cleanup_job_containers(JOB_ID) == 0
+        finally:
+            # The cleanup removed the labelled container already.
+            try:
+                labelled.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+            foreign.remove(force=True)
+
+    def test_cleanup_orphaned_containers_reaps_the_old_one(
+        self, manager: Any, jobs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        client = docker.from_env()
+        fresh = client.containers.create(
+            EXECUTOR_IMAGE,
+            labels={
+                "openscientist.job_id": JOB_ID,
+                "openscientist.type": "executor",
+                "openscientist.launcher": LAUNCHER_INSTANCE_ID,
+            },
+        )
+
+        class _AgedNow(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.now(tz) + timedelta(hours=48)
+
+        try:
+            monkeypatch.setattr(container_manager, "datetime", _AgedNow)
+            assert manager.cleanup_orphaned_containers(max_age_hours=24) == 1
+        finally:
+            # The reaper may already have removed the container.
+            try:
+                fresh.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+
+    def test_fresh_container_is_not_reaped(self, manager: Any, jobs_root: Path) -> None:
+        client = docker.from_env()
+        fresh = client.containers.create(
+            EXECUTOR_IMAGE,
+            labels={
+                "openscientist.job_id": JOB_ID,
+                "openscientist.type": "executor",
+                "openscientist.launcher": LAUNCHER_INSTANCE_ID,
+            },
+        )
+        try:
+            assert manager.cleanup_orphaned_containers(max_age_hours=24) == 0
+        finally:
+            fresh.remove(force=True)
+
+    def test_execute_with_numpy(self, manager: Any, jobs_root: Path) -> None:
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = manager.execute_code(
+            code="import numpy as np; print(np.array([1,2,3]).sum())",
+            job_id=JOB_ID,
+            output_dir=out_dir,
+        )
 
         assert result["success"] is True
         assert "6" in result["output"]
 
-    def test_execute_with_pandas(self):
-        """Test that pandas is available."""
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code='import pandas as pd; df = pd.DataFrame({"a": [1,2,3]}); print(df.shape)',
-                job_id="integration-test-3",
-                output_dir=tmpdir,
-            )
+    def test_execute_with_pandas(self, manager: Any, jobs_root: Path) -> None:
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = manager.execute_code(
+            code='import pandas as pd; df = pd.DataFrame({"a": [1,2,3]}); print(df.shape)',
+            job_id=JOB_ID,
+            output_dir=out_dir,
+        )
 
         assert result["success"] is True
         assert "(3, 1)" in result["output"]
 
-    def test_network_enabled(self):
-        """Test that network access is available (needed for requests, SPARQL, cargo, etc.)."""
-        from openscientist.container_manager import ContainerManager
+    def test_timeout_enforcement(self, manager: Any, jobs_root: Path) -> None:
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = manager.execute_code(
+            code="import time; time.sleep(30)",
+            job_id=JOB_ID,
+            output_dir=out_dir,
+            timeout=5,
+        )
 
-        manager = ContainerManager()
+        assert result["success"] is False
+        assert "timed out" in result["error"].lower()
 
-        # Probe a purpose-built connectivity endpoint (Google's generate_204:
-        # tiny, no body, returns a fixed 204, and does not rate-limit or 503
-        # like httpbin.org). Any successful HTTP response proves egress works,
-        # so assert on a sentinel rather than a specific status code.
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code=(
-                    "import requests; "
-                    'r = requests.get("https://www.google.com/generate_204", timeout=10); '
-                    'print("NETWORK_OK", r.status_code)'
-                ),
-                job_id="integration-test-4",
-                output_dir=tmpdir,
-            )
+    def test_executor_network_enabled(self, manager: Any, jobs_root: Path) -> None:
+        """Network access works under the default (non-airgapped) row."""
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        result = manager.execute_code(
+            code=(
+                "import requests; "
+                'r = requests.get("https://www.google.com/generate_204", timeout=10); '
+                'print("NETWORK_OK", r.status_code)'
+            ),
+            job_id=JOB_ID,
+            output_dir=out_dir,
+        )
 
         assert result["success"] is True
         assert "NETWORK_OK" in result["output"]
-
-    def test_timeout_enforcement(self):
-        """Test that timeout is enforced."""
-        from openscientist.container_manager import ContainerManager
-
-        manager = ContainerManager(timeout=5)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code="import time; time.sleep(30)",
-                job_id="integration-test-5",
-                output_dir=tmpdir,
-                timeout=5,
-            )
-
-        # Should fail due to timeout
-        assert result["success"] is False
-        assert "timed out" in result["error"].lower()

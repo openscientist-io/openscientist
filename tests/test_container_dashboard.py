@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from docker import errors
+import docker
 from openscientist.database.models import Job, User
+from openscientist.job_container.launcher_client import LauncherUnavailableError
 from openscientist.webapp_components.components.common import format_uptime
 from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
 )
 from tests.helpers import fake_admin_session
+from tests.launcher import (
+    EXECUTOR_IMAGE,
+    LAUNCHER_INSTANCE_ID,
+    Launcher,
+    image_digest,
+)
+
+LAUNCHER_PATCH = "openscientist.webapp_components.utils.container_dashboard.LauncherClient"
 
 
 class TestFormatUptime:
@@ -85,7 +94,7 @@ class TestParseContainerStats:
                 "system_cpu_usage": 500,
             },
             "precpu_stats": {
-                "cpu_usage": {"total_usage": 100},
+                "cpu_usage": {"total_usage": 100, "percpu_usage": [100]},
                 "system_cpu_usage": 500,
             },
             "memory_stats": {"usage": 0, "stats": {}, "limit": 0},
@@ -108,7 +117,7 @@ class TestParseContainerStats:
                 "online_cpus": 4,
             },
             "precpu_stats": {
-                "cpu_usage": {"total_usage": 100},
+                "cpu_usage": {"total_usage": 100, "percpu_usage": [100]},
                 "system_cpu_usage": 500,
             },
             "memory_stats": {"usage": 0, "stats": {}, "limit": 0},
@@ -118,35 +127,36 @@ class TestParseContainerStats:
         assert cpu == pytest.approx(80.0)
 
 
-def _fake_docker_container(
-    short_id: str,
+def _launcher_entry(
+    container_id: str,
     name: str,
     labels: dict,
     status: str = "running",
-) -> SimpleNamespace:
-    """Stand in for a docker SDK container object (the daemon side of the boundary)."""
-    return SimpleNamespace(
-        short_id=short_id,
-        name=name,
-        labels=labels,
-        status=status,
-        attrs={"Created": "2026-01-15T10:00:00Z"},
-    )
+) -> dict:
+    """One entry the launcher's list endpoint returns."""
+    return {
+        "id": container_id,
+        "name": name,
+        "status": status,
+        "created": "2026-01-15T10:00:00Z",
+        "labels": labels,
+    }
 
 
-class TestCollectDashboardDockerDown:
+class TestCollectDashboardLauncherDown:
     @pytest.mark.asyncio
-    async def test_returns_unavailable_when_docker_down(self):
-        """With the Docker daemon unreachable the dashboard reports unavailability and no groups."""
-        down_client = MagicMock()
-        down_client.ping.side_effect = errors.DockerException("Cannot connect to the Docker daemon")
-
-        with patch("docker.from_env", return_value=down_client):
+    async def test_returns_unavailable_when_launcher_down(self):
+        """With the launcher unreachable the dashboard reports unavailability and no groups."""
+        client = MagicMock()
+        client.health.side_effect = LauncherUnavailableError(
+            "unavailable", "the launcher could not be reached"
+        )
+        with patch(LAUNCHER_PATCH, return_value=client):
             data = await collect_dashboard_data()
 
         assert data.docker_available is False
         assert data.error_message is not None
-        assert "Docker" in data.error_message
+        assert "launcher" in data.error_message.lower()
         assert data.job_groups == []
 
 
@@ -158,19 +168,20 @@ class TestCollectDashboardGrouping:
         """Containers with the same job label are grouped with the job's real database metadata."""
         job_id = str(test_job.id)
 
-        agent = _fake_docker_container(
+        agent = _launcher_entry(
             "abc123",
             "openscientist-agent-abc",
             {"openscientist.type": "agent", "openscientist.job_id": job_id},
         )
-        executor = _fake_docker_container(
+        executor = _launcher_entry(
             "def456",
             "openscientist-exec-def",
             {"openscientist.type": "executor", "openscientist.job_id": job_id},
         )
 
         client = MagicMock()
-        client.containers.list.return_value = [agent, executor]
+        client.health.return_value = {"docker": True, "images": {"agent": True, "executor": True}}
+        client.list_containers.return_value = [agent, executor]
 
         # _get_active_jobs_map imports get_admin_session at call time, so patch
         # the source module
@@ -179,16 +190,11 @@ class TestCollectDashboardGrouping:
                 "openscientist.database.session.get_admin_session",
                 fake_admin_session(db_session),
             ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
-                return_value=client,
-            ),
+            patch(LAUNCHER_PATCH, return_value=client),
         ):
             data = await collect_dashboard_data(include_stats=False)
 
-        client.containers.list.assert_called_once_with(
-            all=True, filters={"label": ["openscientist.type"]}
-        )
+        client.list_containers.assert_called_once_with(["openscientist.type"])
         assert data.docker_available is True
         assert len(data.job_groups) == 1
         group = data.job_groups[0]
@@ -210,30 +216,28 @@ class TestCollectDashboardGrouping:
         container of the real job is still grouped."""
         orphan_job_id = str(uuid4())
 
-        orphan = _fake_docker_container(
+        orphan = _launcher_entry(
             "xyz789",
             "openscientist-agent-xyz",
             {"openscientist.type": "agent", "openscientist.job_id": orphan_job_id},
             status="exited",
         )
-        grouped = _fake_docker_container(
+        grouped = _launcher_entry(
             "abc123",
             "openscientist-agent-abc",
             {"openscientist.type": "agent", "openscientist.job_id": str(test_job.id)},
         )
 
         client = MagicMock()
-        client.containers.list.return_value = [orphan, grouped]
+        client.health.return_value = {"docker": True, "images": {"agent": True, "executor": True}}
+        client.list_containers.return_value = [orphan, grouped]
 
         with (
             patch(
                 "openscientist.database.session.get_admin_session",
                 fake_admin_session(db_session),
             ),
-            patch(
-                "openscientist.webapp_components.utils.container_dashboard._get_docker_client",
-                return_value=client,
-            ),
+            patch(LAUNCHER_PATCH, return_value=client),
         ):
             data = await collect_dashboard_data(include_stats=False)
 
@@ -245,3 +249,92 @@ class TestCollectDashboardGrouping:
         # the real job's container groups, proving the job map came from the database
         assert len(data.job_groups) == 1
         assert data.job_groups[0].job_id == str(test_job.id)
+
+
+@pytest.mark.integration
+class TestCollectDashboardLauncherIntegration:
+    """The dashboard against the real launcher and Docker daemon."""
+
+    @pytest.fixture(autouse=True)
+    def check_docker(self):
+        try:
+            client = docker.from_env()
+            client.ping()
+            client.images.get(EXECUTOR_IMAGE)
+        except docker.errors.DockerException:
+            pytest.skip("Docker and the executor image are required")
+
+    @pytest.fixture
+    def jobs_root(self, tmp_path) -> Any:
+        from pathlib import Path
+
+        jobs = Path(tmp_path) / "jobs"
+        (jobs / "11111111-2222-3333-4444-555555555555").mkdir(parents=True)
+        return jobs
+
+    @pytest.fixture
+    def launcher(self, tmp_path, jobs_root: Any) -> Any:
+        client = docker.from_env()
+        digest = image_digest(client, EXECUTOR_IMAGE)
+        started = Launcher.start(
+            tmp_path,
+            jobs_root,
+            AGENT_IMAGE_DIGESTS=digest,
+            EXECUTOR_IMAGE_DIGESTS=digest,
+        )
+        try:
+            yield started
+        finally:
+            started.close()
+
+    @pytest.mark.asyncio
+    async def test_lists_only_launcher_labelled_containers(
+        self,
+        db_session: AsyncSession,
+        test_job: Job,
+        launcher: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A container the launcher never created never reaches the dashboard."""
+        from openscientist.settings import clear_settings_cache
+
+        client = docker.from_env()
+        foreign = client.containers.create(
+            EXECUTOR_IMAGE,
+            name="openscientist-agent-foreign",
+            labels={
+                "openscientist.type": "agent",
+                "openscientist.job_id": str(test_job.id),
+            },
+        )
+        labelled = client.containers.create(
+            EXECUTOR_IMAGE,
+            name="openscientist-agent-marked",
+            labels={
+                "openscientist.type": "agent",
+                "openscientist.job_id": str(test_job.id),
+                "openscientist.launcher": LAUNCHER_INSTANCE_ID,
+            },
+        )
+        try:
+            monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
+            clear_settings_cache()
+            with patch(
+                "openscientist.database.session.get_admin_session",
+                fake_admin_session(db_session),
+            ):
+                data = await collect_dashboard_data(include_stats=False)
+        finally:
+            clear_settings_cache()
+            foreign.remove(force=True)
+            labelled.remove(force=True)
+
+        assert data.docker_available is True
+        assert data.error_message is None
+        # both containers exist in the daemon; only the launcher-labelled one
+        # reaches the dashboard
+        assert len(data.job_groups) == 1
+        agent = data.job_groups[0].agent_container
+        assert agent is not None
+        assert agent.name == "openscientist-agent-marked"
+        assert data.orphan_containers == []

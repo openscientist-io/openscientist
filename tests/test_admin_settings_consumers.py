@@ -4,7 +4,6 @@ edit of the row applies at the consumer's next use, without a restart."""
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime, timedelta
@@ -89,14 +88,6 @@ def _executor_settings() -> SimpleNamespace:
     )
 
 
-def _decode_exec_timeout(run_kwargs: dict[str, object]) -> int:
-    """The timeout the execution payload carries, from the container command."""
-    command = cast(list[str], run_kwargs["command"])
-    b64 = command[2].split()[1]
-    payload = json.loads(base64.b64decode(b64).decode())
-    return cast(int, payload["timeout"])
-
-
 async def _status(test_engine: AsyncEngine, job_id: object) -> str:
     async with test_engine.connect() as conn:
         row = await conn.scalar(select(Job.status).where(Job.id == job_id))
@@ -156,27 +147,31 @@ async def test_a_launch_reads_the_rows_limits_timeout_and_airgap(
 async def test_an_execution_reads_the_rows_limits_and_airgap(
     test_engine: AsyncEngine, admin_row: None, no_floor: None, tmp_path: Path
 ) -> None:
-    """The next execution takes the limits, timeout, and network from the row."""
+    """The next execution takes the limits, timeout, and airgap flag from the row."""
     await set_admin_settings_row(test_engine)
     manager = ContainerManager()
     client = MagicMock()
     manager._client = client
-    client.containers.run.return_value = json.dumps(
-        {"success": True, "output": "ok", "plots": [], "error": None, "execution_time": 0.1}
-    ).encode()
-    client.containers.get.return_value = MagicMock()
+    client.run_exec.return_value = {
+        "stdout": json.dumps(
+            {"success": True, "output": "ok", "plots": [], "error": None, "execution_time": 0.1}
+        ),
+        "exit_code": 0,
+    }
     with (
         patch("openscientist.container_manager.get_settings", return_value=_executor_settings()),
-        patch("openscientist.job_container.resolve_docker_network", return_value="bridge"),
     ):
         await asyncio.to_thread(
-            manager.execute_code, code="print('hi')", job_id="exec-1", output_dir=str(tmp_path)
+            manager.execute_code,
+            code="print('hi')",
+            job_id="exec-1",
+            output_dir=str(tmp_path / "out-1"),
         )
-        kwargs = cast(dict[str, object], client.containers.run.call_args.kwargs)
-        assert kwargs["mem_limit"] == "512m"
-        assert kwargs["nano_cpus"] == 500_000_000
-        assert kwargs["network"] == "bridge"
-        assert _decode_exec_timeout(kwargs) == 120
+        request = cast(dict[str, object], client.run_exec.call_args.args[0])
+        assert request["memory_mib"] == 512
+        assert request["cpu"] == 0.5
+        assert request["airgapped"] is False
+        assert cast(dict[str, object], request["input"])["timeout"] == 120
 
         await set_admin_settings_row(
             test_engine,
@@ -186,13 +181,16 @@ async def test_an_execution_reads_the_rows_limits_and_airgap(
             airgapped=True,
         )
         await asyncio.to_thread(
-            manager.execute_code, code="print('hi')", job_id="exec-2", output_dir=str(tmp_path)
+            manager.execute_code,
+            code="print('hi')",
+            job_id="exec-2",
+            output_dir=str(tmp_path / "out-2"),
         )
-        kwargs = cast(dict[str, object], client.containers.run.call_args.kwargs)
-        assert kwargs["mem_limit"] == "1024m"
-        assert kwargs["nano_cpus"] == 750_000_000
-        assert kwargs["network"] == "none"
-        assert _decode_exec_timeout(kwargs) == 60
+        request = cast(dict[str, object], client.run_exec.call_args.args[0])
+        assert request["memory_mib"] == 1024
+        assert request["cpu"] == 0.75
+        assert request["airgapped"] is True
+        assert cast(dict[str, object], request["input"])["timeout"] == 60
 
 
 @pytest.mark.asyncio
