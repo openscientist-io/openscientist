@@ -145,6 +145,7 @@ def test_start_stops_when_up_fails(checkout: Path, monkeypatch):
         return 7 if "up" in argv else 0
 
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "a" * 64)
     assert stack.start(checkout, run) == 7
     assert len(calls) == 5
 
@@ -157,6 +158,7 @@ def test_start_fails_when_health_never_answers(checkout: Path, monkeypatch):
         return 0
 
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: False)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "b" * 64)
     assert stack.start(checkout, run) == 1
     assert len(calls) == 5
 
@@ -244,6 +246,7 @@ def _start_with(checkout: Path, monkeypatch, airgapped: str, count: int, accept:
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
     monkeypatch.setattr(stack, "pubmed_mirror_count", lambda root: count)
     monkeypatch.setattr(stack, "_confirm", confirm)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "c" * 64)
     assert stack.start(checkout, run) == 0
     return calls, prompts
 
@@ -343,6 +346,7 @@ def test_mirror_load_failure_is_not_fatal(checkout: Path, monkeypatch):
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
     monkeypatch.setattr(stack, "pubmed_mirror_count", lambda root: 0)
     monkeypatch.setattr(stack, "_confirm", lambda prompt: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "e" * 64)
     assert stack.start(checkout, run) == 0
     assert _loaded(calls)
 

@@ -89,6 +89,14 @@ def _clear_stale_agent(docker_client: docker.DockerClient) -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _require_executor_image(docker_client: docker.DockerClient) -> None:
+    try:
+        docker_client.images.get(EXECUTOR_IMAGE)
+    except docker.errors.ImageNotFound:
+        pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
+
+
 def _agent_body(**overrides: object) -> dict[str, object]:
     body: dict[str, object] = {
         "job_id": JOB_ID,
@@ -509,6 +517,7 @@ class TestExecutor:
                             "label": [
                                 "openscientist.type=executor",
                                 f"openscientist.launcher={LAUNCHER_INSTANCE_ID}",
+                                f"openscientist.job_id={JOB_ID}",
                             ]
                         }
                     )
@@ -671,6 +680,7 @@ class TestExecutor:
                             "label": [
                                 "openscientist.type=executor",
                                 f"openscientist.launcher={LAUNCHER_INSTANCE_ID}",
+                                f"openscientist.job_id={JOB_ID}",
                             ]
                         }
                     )

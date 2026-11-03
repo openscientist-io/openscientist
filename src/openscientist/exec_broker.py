@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.budget import check_budget
 from openscientist.container_manager import ContainerManager, get_container_manager
 from openscientist.database.models.job import Job as JobModel
@@ -32,6 +34,27 @@ from openscientist.settings import get_settings
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_LANGUAGES = frozenset({"python", "rust", "sparql"})
+
+# Rust execution is compile-bound, so its cap never undercuts the tool's window.
+_RUST_MIN_TIMEOUT_SECONDS = 300
+
+# The executor runs untrusted code, so the result it hands back stays small.
+_RESULT_FIELD_LIMIT = 10_000
+_TRUNCATED_NOTE = "\n[...truncated]"
+_PLOT_LIMIT = 50
+
+
+def _bounded_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Cap the untrusted result's string fields and plot list in place."""
+    for field in ("output", "error", "traceback"):
+        value = result.get(field)
+        if isinstance(value, str) and len(value) > _RESULT_FIELD_LIMIT:
+            keep = _RESULT_FIELD_LIMIT - len(_TRUNCATED_NOTE)
+            result[field] = value[:keep].rstrip() + _TRUNCATED_NOTE
+    plots = result.get("plots")
+    if isinstance(plots, list) and len(plots) > _PLOT_LIMIT:
+        result["plots"] = plots[:_PLOT_LIMIT]
+    return result
 
 
 class _PathConfinementError(ValueError):
@@ -85,12 +108,36 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
             return JSONResponse({"error": "missing output_dir"}, status_code=400)
         try:
             iteration = int(body.get("iteration", 0))
-            timeout_raw = body.get("timeout")
-            timeout = int(timeout_raw) if timeout_raw else None
         except (TypeError, ValueError):
+            return JSONResponse({"error": "iteration must be an integer"}, status_code=400)
+
+        raw_timeout = body.get("timeout")
+        if raw_timeout is None:
+            timeout: int | None = None
+        elif (
+            isinstance(raw_timeout, bool)
+            or not isinstance(raw_timeout, (int, float))
+            or (isinstance(raw_timeout, float) and not math.isfinite(raw_timeout))
+        ):
             return JSONResponse(
-                {"error": "iteration and timeout must be integers"}, status_code=400
+                {"error": "timeout must be a positive number of seconds"},
+                status_code=422,
             )
+        elif int(raw_timeout) <= 0:
+            return JSONResponse(
+                {"error": "timeout must be a positive number of seconds"},
+                status_code=422,
+            )
+        else:
+            try:
+                admin = await current_admin_settings()
+            except Exception:
+                logger.exception("Failed to read the admin settings for job %s", job_id)
+                return Response("the admin settings could not be read", status_code=500)
+            cap = admin.executor_timeout_seconds
+            if language == "rust":
+                cap = max(cap, _RUST_MIN_TIMEOUT_SECONDS)
+            timeout = min(int(raw_timeout), cap)
 
         data_path_raw = body.get("data_path")
         data_files_raw = body.get("data_files", [])
@@ -132,7 +179,7 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
             data_files=data_files,
             language=language,
         )
-        return JSONResponse(result)
+        return JSONResponse(_bounded_result(result))
 
     async def budget_handler(request: Request) -> Response:
         presented = request.headers.get(EXEC_TOKEN_HEADER, "")

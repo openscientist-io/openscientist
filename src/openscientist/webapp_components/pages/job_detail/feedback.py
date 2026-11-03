@@ -15,6 +15,7 @@ from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components.utils import (
     guard_client,
 )
+from openscientist.webapp_components.utils.permissions import current_job_access
 
 
 def _next_iteration_for_feedback(ks_data: dict[str, Any] | None) -> int:
@@ -26,6 +27,14 @@ def _next_iteration_for_feedback(ks_data: dict[str, Any] | None) -> int:
 async def _submit_feedback_and_continue(
     job_dir: Path, job_id: str, user_id: str, completed_iter: int, feedback_text: str
 ) -> None:
+    access = await current_job_access(job_id, user_id)
+    if access is None:
+        ui.notify("You no longer have access to this job.", type="negative")
+        return
+    if not access.can_edit:
+        ui.notify("You no longer have edit access to this job.", type="negative")
+        return
+
     as_user = partial(thread_safe_user_session, UUID(user_id))
     async with as_user() as session:
         ks = await KnowledgeState.load_from_database(job_id, session)

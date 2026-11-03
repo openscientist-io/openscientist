@@ -6,6 +6,7 @@ be read directly by Claude's Read tool without returning garbled content.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -187,9 +188,10 @@ def read_document(file_path: Path, max_chars: int = 100000) -> str:
             header = f"[XLSX: {file_path.name} | Sheets: {', '.join(metadata['sheets'])} | {file_size_kb:.1f} KB]"
 
         else:
-            # Try to read as plain text
+            # Try to read as plain text; O_NOFOLLOW refuses a leaf symlink
             try:
-                with open(file_path, encoding="utf-8") as f:
+                fd = os.open(file_path, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd, encoding="utf-8") as f:
                     text = f.read()
                 header = f"[TEXT: {file_path.name} | {file_size_kb:.1f} KB]"
             except UnicodeDecodeError:
