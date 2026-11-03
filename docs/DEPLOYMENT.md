@@ -45,6 +45,14 @@ The Docker setup mounts the following directories:
 - `./data`: Stores uploaded data files
 - `./.env`: Environment variables (read-only)
 
+The web runs as a non-root user in the jobs group (gid 1001), so the host's
+`./jobs` root must be group-owned by gid 1001 with the setgid bit, which job
+directories and run homes inherit; on a fresh checkout:
+
+```bash
+chgrp 1001 ./jobs && chmod 2770 ./jobs
+```
+
 ### Ports
 
 - `8080`: Web interface (NiceGUI)
@@ -53,24 +61,32 @@ The Docker setup mounts the following directories:
 
 `openscientist start` builds the agent and executor images and records each
 image's digest in `.env.owner` (`AGENT_IMAGE_DIGESTS`, `EXECUTOR_IMAGE_DIGESTS`).
-The compose stack starts a `launcher` service that is the intended holder of
-the Docker socket: it serves a small JSON API over a unix socket (a named
-compose volume, no published ports) and builds every container from one of two
+The compose stack starts a `launcher` service that is the only holder of the
+Docker socket: it serves a small JSON API over a unix socket (a named compose
+volume, no published ports) and builds every container from one of two
 server-side templates — agent and executor. The launcher accepts only the
 recorded image digests, only resource values within the `LAUNCHER_*` bounds in
 `.env`, and only a caller whose uid and gid are `LAUNCHER_WEB_UID` and
-`LAUNCHER_WEB_GID` from `.env.owner`. Every container it creates carries the
-marker label `openscientist.launcher=<LAUNCHER_INSTANCE_ID>`, and every
-container-scoped operation answers 404 for anything that does not carry it.
+`LAUNCHER_WEB_GID`, which the compose file pins to the web image's own user.
+Every container it creates carries the marker label
+`openscientist.launcher=<LAUNCHER_INSTANCE_ID>`, and every container-scoped
+operation answers 404 for anything that does not carry it.
 
 Its health check (`python -m openscientist_launcher.health`) verifies the
 socket file, the Docker daemon and both template images; the web service
 waits for it to be healthy before starting. The web speaks to the launcher
 through the socket volume mounted at `/run/launcher` (override the path with
-`OPENSCIENTIST_LAUNCHER_SOCKET_PATH`): every executor run and the admin
-container dashboard go through the launcher's API. The web service's own
-socket mount is still used by the agent container path, which moves to the
-launcher in a later change; the launcher runs alongside it.
+`OPENSCIENTIST_LAUNCHER_SOCKET_PATH`): every container operation the web makes
+goes through the launcher's API — agent launches, chat turns, executor runs,
+stops, cleanup, the reaper listings and the admin container dashboard. The web
+image therefore runs as its own non-root user (uid 1002) in the jobs group
+(gid 1001), and neither the web nor the migrate service carries a Docker
+socket mount or docker group membership.
+
+For development, `docker compose -f docker-compose.yml -f docker-compose.dev.yml up`
+restores the writable `./src` mount for live reload on the web and migrate
+services; the launcher runs in dev mode the same way, and the web never gets
+the socket back.
 
 ## Managing Jobs
 

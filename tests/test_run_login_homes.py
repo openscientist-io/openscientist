@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import itertools
 import logging
 import os
 import time
@@ -14,29 +15,35 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from docker import errors as docker_errors
 from openscientist import web_app
 from openscientist.agent.codex_agent import CodexAgent
 from openscientist.agent.omp_agent import OmpAgent
+from openscientist.exceptions import MissingImageError
 from openscientist.job_container.db_login import (
     AGENT_LOGIN_LABEL,
     AgentLogin,
     reap_leftover_agent_logins,
     run_agent_login_reaper,
 )
+from openscientist.job_container.launcher_client import (
+    LauncherClient,
+    LauncherError,
+    LauncherImageMissingError,
+)
 from openscientist.job_container.run_home import (
+    RUN_HOME_LABEL,
     RUN_HOMES_DIR,
     remove_legacy_job_homes,
     remove_run_home,
     remove_stale_run_homes,
 )
-from openscientist.job_container.runner import AGENT_APP_DIR, JobContainerRunner
+from openscientist.job_container.runner import JobContainerRunner
 from openscientist.providers.base import AirgapEgress, AirgapPosture
 from tests.admin_row import default_admin_settings_values
 
@@ -64,6 +71,31 @@ class _Provider:
         return AirgapPosture(AirgapEgress.PROXY)
 
 
+def _labels_of(request: dict[str, Any]) -> dict[str, str]:
+    """The labels the launcher sets on the container of this request."""
+    labels = {
+        "openscientist.job_id": str(request["job_id"]),
+        "openscientist.type": "chat" if request.get("mode") == "chat" else "agent",
+        AGENT_LOGIN_LABEL: str(request["db_login"]),
+    }
+    if "run_home" in request:
+        labels[RUN_HOME_LABEL] = str(request["run_home"]["path"])
+    return labels
+
+
+@dataclass
+class _Run:
+    """One container run: the request sent, the labels the launcher sets, the handle."""
+
+    request: dict[str, Any]
+    labels: dict[str, str]
+    handle: dict[str, str]
+
+    @property
+    def entry(self) -> dict[str, Any]:
+        return {"id": self.handle["id"], "labels": self.labels}
+
+
 @dataclass
 class _Launches:
     jobs_dir: Path
@@ -71,17 +103,13 @@ class _Launches:
     runner: JobContainerRunner
     closed: MagicMock
     roles: list[str]
+    runs: list[_Run]
 
-    def launch(self, job_id: str) -> tuple[str, dict[str, Any]]:
+    def launch(self, job_id: str) -> _Run:
         job_dir = self.jobs_dir / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
         self.runner.launch(job_id, job_dir)
-        return self.roles[-1], self.client.containers.run.call_args.kwargs
-
-    def container_of(self, run: dict[str, Any]) -> MagicMock:
-        container = MagicMock()
-        container.labels = run["labels"]
-        return container
+        return self.runs[-1]
 
 
 def _settings(*, omp: Path | None = None, codex: Path | None = None, provider_id: str) -> Any:
@@ -129,39 +157,55 @@ def harness(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[type, Any, 
 def launches(harness: tuple[type, Any, str, str], tmp_path: Path) -> Iterator[_Launches]:
     agent_class, settings, _, _ = harness
     roles: list[str] = []
+    runs: list[_Run] = []
 
     def open_login(job_id: str, *, lifetime_seconds: int) -> AgentLogin:
         roles.append(f"agent_{uuid4().hex}")
         return AgentLogin(role=roles[-1], database_url="postgresql+asyncpg://a:b@db:5432/db")
 
-    client = MagicMock()
+    client = MagicMock(spec=LauncherClient)
+    refs = itertools.count(1)
+
+    def create_agent(request: dict[str, object]) -> dict[str, str]:
+        request = cast(dict[str, Any], request)
+        ref = f"{'c' * 62}{next(refs)}"
+        handle = {
+            "id": ref,
+            "short_id": ref[:6],
+            "name": f"openscientist-agent-{str(request['job_id'])[:12]}",
+            "status": "running",
+        }
+        runs.append(_Run(request=request, labels=_labels_of(request), handle=handle))
+        return handle
+
+    client.create_agent.side_effect = create_agent
+    client.list_containers.return_value = []
+    client.wait.return_value = {"exit_code": 0, "timeout": False}
     with (
-        patch("openscientist.job_container.runner.docker.from_env", return_value=client),
+        # Every runner in these tests, fresh or fixture-owned, asks the same mock.
+        patch("openscientist.job_container.runner.LauncherClient", return_value=client),
         patch("openscientist.job_container.runner.get_settings", return_value=settings),
         patch("openscientist.job_container.runner.get_provider", return_value=_Provider()),
         patch("openscientist.job_container.runner.open_agent_login", side_effect=open_login),
         patch("openscientist.job_container.runner.close_agent_login") as closed,
-        patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
         patch("openscientist.agent.factory.agent_class_for_provider_id", return_value=agent_class),
     ):
-        yield _Launches(tmp_path / "jobs", client, JobContainerRunner(), closed, roles)
+        yield _Launches(tmp_path / "jobs", client, JobContainerRunner(), closed, roles, runs)
 
 
-def _home_of(run: dict[str, Any], job_id: str, home_name: str) -> Path:
-    """The host directory mounted as the harness's home in ``run``."""
-    target = f"{AGENT_APP_DIR}/jobs/{job_id}/{home_name}"
-    sources = [src for src, mount in run["volumes"].items() if mount["bind"] == target]
-    assert len(sources) == 1, run["volumes"]
-    assert run["volumes"][sources[0]]["mode"] == "rw"
-    return Path(sources[0])
+def _home_of(run: _Run, home_name: str) -> Path:
+    """The host directory the launcher mounts as the harness's home in ``run``."""
+    run_home = run.request["run_home"]
+    assert run_home["name"] == home_name, run.request
+    return Path(str(run_home["path"]))
 
 
 def test_a_runs_login_is_mounted_from_its_own_home_not_the_job_directory(
     launches: _Launches, harness: tuple[type, Any, str, str]
 ) -> None:
     _, _, home_name, login_file = harness
-    _, run = launches.launch("job-1")
-    home = _home_of(run, "job-1", home_name)
+    run = launches.launch("job-1")
+    home = _home_of(run, home_name)
     assert (home / login_file).read_text() == _MARKER
     assert not home.is_relative_to(launches.jobs_dir / "job-1")
     copied = [p for p in (launches.jobs_dir / "job-1").rglob("*") if p.is_file()]
@@ -172,14 +216,11 @@ def test_overlapping_runs_have_separate_homes_and_end_separately(
     launches: _Launches, harness: tuple[type, Any, str, str]
 ) -> None:
     _, _, home_name, login_file = harness
-    _, first = launches.launch("job-1")
-    _, second = launches.launch("job-1")
-    first_home, second_home = (
-        _home_of(first, "job-1", home_name),
-        _home_of(second, "job-1", home_name),
-    )
+    first = launches.launch("job-1")
+    second = launches.launch("job-1")
+    first_home, second_home = _home_of(first, home_name), _home_of(second, home_name)
     assert first_home != second_home
-    launches.client.containers.list.return_value = [launches.container_of(first)]
+    launches.client.list_containers.return_value = [first.entry]
     launches.runner.cleanup("job-1")
     assert not first_home.exists()
     assert (second_home / login_file).read_text() == _MARKER
@@ -190,9 +231,9 @@ def test_a_cleanup_by_a_fresh_runner_removes_the_runs_home(
 ) -> None:
     """Startup cleanup after a restart finds the home from the container alone."""
     _, _, home_name, _ = harness
-    _, run = launches.launch("job-1")
-    home = _home_of(run, "job-1", home_name)
-    launches.client.containers.list.return_value = [launches.container_of(run)]
+    run = launches.launch("job-1")
+    home = _home_of(run, home_name)
+    launches.client.list_containers.return_value = [run.entry]
     JobContainerRunner().cleanup("job-1")
     assert not home.exists()
 
@@ -200,8 +241,10 @@ def test_a_cleanup_by_a_fresh_runner_removes_the_runs_home(
 def test_a_launch_that_fails_removes_the_runs_home(
     launches: _Launches, harness: tuple[type, Any, str, str]
 ) -> None:
-    launches.client.containers.run.side_effect = docker_errors.APIError("no such image")
-    with pytest.raises(docker_errors.APIError):
+    launches.client.create_agent.side_effect = LauncherImageMissingError(
+        "image_missing", "no such image"
+    )
+    with pytest.raises(MissingImageError):
         launches.launch("job-1")
     homes = launches.jobs_dir / ".run-homes"
     assert not homes.exists() or not any(homes.iterdir())
@@ -214,17 +257,11 @@ def test_a_chat_turn_removes_its_home_when_it_ends(
     _, _, home_name, _ = harness
     job_dir = launches.jobs_dir / "job-1"
     job_dir.mkdir(parents=True)
-    chat = MagicMock()
-    chat.wait.return_value = {"StatusCode": 0}
-
-    def started(**kwargs: Any) -> MagicMock:
-        chat.labels = kwargs["labels"]
-        chat.run_kwargs = kwargs
-        return chat
-
-    launches.client.containers.run.side_effect = started
+    launches.client.wait.return_value = {"exit_code": 0, "timeout": False}
     launches.runner.run_chat_turn("job-1", job_dir, "t1")
-    assert not _home_of(chat.run_kwargs, "job-1", home_name).exists()
+    request = cast(dict[str, Any], launches.client.create_agent.call_args.args[0])
+    assert request["mode"] == "chat"
+    assert not Path(str(request["run_home"]["path"])).exists()
 
 
 def _aged(path: Path, age: timedelta) -> None:
@@ -402,20 +439,19 @@ def test_a_legacy_home_that_cannot_be_removed_is_reported_and_kept(tmp_path: Pat
     assert any("Could not remove" in record.message for record in caplog.records)
 
 
-def test_live_job_ids_lists_only_the_jobs_docker_still_carries() -> None:
-    client = MagicMock()
-    listed = [
-        MagicMock(labels={"openscientist.job_id": "job-a", AGENT_LOGIN_LABEL: "agent_a"}),
-        MagicMock(labels={"openscientist.job_id": "job-b", AGENT_LOGIN_LABEL: "agent_b"}),
-        MagicMock(labels={AGENT_LOGIN_LABEL: "agent_unlabeled"}),
+def test_live_job_ids_lists_only_the_jobs_the_launcher_still_carries() -> None:
+    client = MagicMock(spec=LauncherClient)
+    client.list_containers.return_value = [
+        {"id": "a" * 64, "labels": {"openscientist.job_id": "job-a", AGENT_LOGIN_LABEL: "agent_a"}},
+        {"id": "b" * 64, "labels": {"openscientist.job_id": "job-b", AGENT_LOGIN_LABEL: "agent_b"}},
+        {"id": "c" * 64, "labels": {AGENT_LOGIN_LABEL: "agent_unlabeled"}},
     ]
-    client.containers.list.return_value = listed
-    with patch("openscientist.job_container.runner.docker.from_env", return_value=client):
+    with patch("openscientist.job_container.runner.LauncherClient", return_value=client):
         runner = JobContainerRunner()
-    assert runner.live_job_ids() == {"job-a", "job-b"}
-    client.containers.list.assert_called_once_with(all=True, filters={"label": AGENT_LOGIN_LABEL})
-    client.containers.list.side_effect = docker_errors.DockerException("no docker daemon")
-    assert runner.live_job_ids() is None
+        assert runner.live_job_ids() == {"job-a", "job-b"}
+        client.list_containers.assert_called_once_with([AGENT_LOGIN_LABEL])
+        client.list_containers.side_effect = LauncherError("unavailable", "no docker daemon")
+        assert runner.live_job_ids() is None
 
 
 async def _noop(*args: object, **kwargs: object) -> None:

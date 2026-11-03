@@ -440,8 +440,8 @@ async def _ensure_default_skill_sources() -> None:
 
 
 def _missing_container_images() -> list[str] | None:
-    """The agent and executor images Docker does not have, or None when Docker
-    cannot be asked."""
+    """The agent and executor images the launcher lacks, or None when the
+    launcher cannot be asked."""
     manager = get_container_manager()
     if not manager.is_available():
         return None
@@ -454,15 +454,15 @@ def _missing_container_images() -> list[str] | None:
 
 
 async def _check_container_images() -> None:
-    """Name at startup each image a job would need and Docker lacks. Docker's
-    client blocks, so the check runs off the event loop."""
+    """Name at startup each image a job would need and the launcher lacks. The
+    launcher's socket blocks, so the check runs off the event loop."""
     try:
         missing = await asyncio.to_thread(_missing_container_images)
     except Exception as e:
         logger.warning("Could not check the container images: %s", e)
         return
     if missing is None:
-        logger.warning("Docker is not reachable, so the container images were not checked")
+        logger.warning("The launcher is not reachable, so the container images were not checked")
     elif missing:
         logger.error(
             "%s Jobs and chat turns fail until the images are built.",

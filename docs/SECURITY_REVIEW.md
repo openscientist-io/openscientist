@@ -9,7 +9,7 @@
 
 OpenScientist has a **solid security foundation**. User authentication relies on industry-standard OAuth (Google, GitHub), sessions are stored in the database with secure cookies, and every database table enforces row-level security so users can only see their own data. Agent jobs run inside isolated Docker containers with resource limits and privilege restrictions. Secrets are encrypted at rest, and API key verification uses constant-time comparison to prevent timing attacks.
 
-The main areas for improvement are **operational security gaps** rather than architectural flaws: there is no audit logging for admin actions, most API endpoints lack rate limiting, the web server container runs as root, and there are no per-iteration timeouts or token budgets to prevent runaway agents. None of these are exploitable in a default deployment, but addressing them would significantly strengthen the overall security posture.
+The main areas for improvement are **operational security gaps** rather than architectural flaws: there is no audit logging for admin actions, most API endpoints lack rate limiting, and there are no per-iteration timeouts or token budgets to prevent runaway agents. None of these are exploitable in a default deployment, but addressing them would significantly strengthen the overall security posture.
 
 ---
 
@@ -36,6 +36,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
 - **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only.
+- **Web server runs as a non-root user.** The web image runs as its own user (UID 1002) in the jobs group (GID 1001), so a compromised web process has no root inside its container.
+- **Only the launcher holds the Docker socket.** The web and migrate services have no socket mount and no docker group. Every container operation the web makes — agent launches, chat turns, executor runs, stops, cleanup and the dashboard — goes through the launcher service over a unix socket that the launcher guards with a peer-credential check. The launcher builds every container from one of two server-side templates, and answers a uniform 404 for any container it did not create, so a compromised web cannot reach the Docker API, alter a container's mounts, capabilities, image or network, or touch a foreign container.
 
 ### Input Validation
 
@@ -66,13 +68,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 ---
 
 ## What's Missing or Could Be Improved
-
-### Critical
-
-| Finding | Description | Recommended Next Step |
-|---------|-------------|----------------------|
-| **Web server runs as root** | The main application container does not set a non-root `USER` in its Dockerfile. If the web process is compromised, the attacker has root inside the container. | Add a non-root user to the Dockerfile and run the application as that user. |
-| **Docker socket mounted read-write** | The web server and agent containers mount `/var/run/docker.sock` with read-write access. A compromise of either container could spawn arbitrary sibling containers on the host. | Evaluate whether the web server truly needs socket access, or if a Docker API proxy with restricted permissions could be used instead. |
 
 ### High
 
@@ -127,6 +122,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 | Rate limiting | Needs Work | Only one endpoint protected; all others are unthrottled |
 | Audit logging | Needs Work | No persistent audit trail for admin or sensitive operations |
 | CSRF protection | Needs Work | Partial (`samesite=lax`); no explicit token validation |
-| Container privileges | Needs Work | Web server runs as root; Docker socket mounted read-write |
+| Container privileges | Good | Web runs as a dedicated non-root user in the jobs group; only the launcher holds the Docker socket |
 | Dependency scanning | Needs Work | No automated CVE monitoring |
 | Execution guardrails | Needs Work | No per-iteration timeout or token budget |

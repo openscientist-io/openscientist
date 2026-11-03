@@ -1,0 +1,10 @@
+# A stand-in for the agent image for the launcher end-to-end test: it exits
+# non-zero, so the job's terminal status comes from the exit-code path, without
+# running a real agent. The pause keeps the container up long enough for the
+# test to observe it before the web removes it.
+FROM python:3.12-slim-bookworm
+
+RUN useradd --uid 1001 --create-home agent
+
+USER agent
+ENTRYPOINT ["python", "-c", "import sys, time; time.sleep(5); sys.exit(1)"]

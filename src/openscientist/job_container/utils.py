@@ -1,17 +1,11 @@
 """
-Helpers for job container path translation and Docker network resolution.
+Helpers for job container path translation.
 """
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
-
-if TYPE_CHECKING:
-    import docker as _docker_module
-
-logger = logging.getLogger(__name__)
+from typing import Protocol
 
 
 class HostPathSettings(Protocol):
@@ -47,27 +41,3 @@ def to_container_path(path: Path, cs: HostPathSettings) -> Path:
         return Path(cs.container_app_dir) / relative
     except ValueError:
         return path
-
-
-def resolve_docker_network(
-    client: "_docker_module.DockerClient",
-    configured_network: str | None,
-) -> str:
-    """Resolve the Docker network for sibling containers."""
-    from docker import errors as docker_errors
-
-    if configured_network:
-        return configured_network
-
-    try:
-        hostname = Path("/etc/hostname").read_text(encoding="utf-8").strip()
-        container = client.containers.get(hostname)
-        networks_raw: Any = container.attrs.get("NetworkSettings", {}).get("Networks", {})
-        if isinstance(networks_raw, dict):
-            for name in networks_raw:
-                if isinstance(name, str) and name != "bridge":
-                    return name
-    except (docker_errors.DockerException, OSError) as error:  # pragma: no cover
-        logger.warning("Failed to auto-detect Docker network: %s", error)
-
-    return "bridge"

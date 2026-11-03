@@ -16,7 +16,6 @@ import pytest_asyncio
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from docker import errors as docker_errors
 from openscientist.agent.base import (
     AbstractAgent,
     AgentConfig,
@@ -27,6 +26,7 @@ from openscientist.agent.base import (
 from openscientist.database.models import CostRecord, Job
 from openscientist.job_chat import _chat_turn_files, run_chat_turn_async
 from openscientist.job_container.db_login import AGENT_LOGIN_LABEL
+from openscientist.job_container.launcher_client import LauncherClient, LauncherError
 from openscientist.job_container.runner import _STOP_GRACE_SECONDS, JobContainerRunner
 from openscientist.orchestrator.discovery import (
     regenerate_report_async,
@@ -282,19 +282,26 @@ def test_cleanup_takes_the_container_down_even_when_stop_fails(tmp_path: Path) -
     """A stop error must not strand the container: the agent got its grace to
     write the in-flight cost, and teardown still saves the log, removes the
     container and drops its database login."""
-    container = MagicMock()
-    container.labels = {AGENT_LOGIN_LABEL: "agent_test"}
-    container.stop.side_effect = docker_errors.APIError("stop failed")
-    container.logs.return_value = b"cost written"
-    client = MagicMock()
-    client.containers.list.return_value = [container]
+    ref = "c" * 64
+    entry = {
+        "id": ref,
+        "labels": {
+            "openscientist.job_id": "job-123",
+            "openscientist.type": "agent",
+            AGENT_LOGIN_LABEL: "agent_test",
+        },
+    }
+    client = MagicMock(spec=LauncherClient)
+    client.list_containers.return_value = [entry]
+    client.stop.side_effect = LauncherError("docker", "stop failed")
+    client.logs.return_value = "cost written"
     with (
-        patch("openscientist.job_container.runner.docker.from_env", return_value=client),
+        patch("openscientist.job_container.runner.LauncherClient", return_value=client),
         patch("openscientist.job_container.runner.close_agent_login") as closed,
     ):
         JobContainerRunner().cleanup("job-123", tmp_path)
-    container.stop.assert_called_once_with(timeout=_STOP_GRACE_SECONDS)
-    container.remove.assert_called_once_with(force=True)
+    client.stop.assert_called_once_with(ref, timeout_seconds=_STOP_GRACE_SECONDS)
+    client.remove.assert_called_once_with(ref)
     closed.assert_called_once_with("agent_test")
     assert (tmp_path / "agent-container.log").read_text() == "cost written"
 

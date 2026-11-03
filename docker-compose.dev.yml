@@ -1,0 +1,12 @@
+# Dev override for OpenScientist: restores the writable source mount for live
+# reload on the web and migrate services. The launcher runs in dev mode too;
+# the web never gets the Docker socket back.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  openscientist:
+    volumes:
+      - ./src:/app/src
+  migrate:
+    volumes:
+      - ./src:/app/src

@@ -156,7 +156,17 @@ class TestAgentRequestValidation:
             validate_agent_request(_agent_request(env={"JOB_ID": 7}), cfg)
 
     @pytest.mark.parametrize(
-        "key", ["JOB_ID", "DATABASE_URL", "OPENSCIENTIST_SECRET_KEY", "OPENSCIENTIST_CHAT_TURN"]
+        "key",
+        [
+            "JOB_ID",
+            "DATABASE_URL",
+            "OPENSCIENTIST_SECRET_KEY",
+            "OPENSCIENTIST_CHAT_TURN",
+            # The backend-agnostic provider identity keys every container env
+            # carries; the agent image needs them to pick its agent class.
+            "OPENSCIENTIST_PROVIDER",
+            "OPENSCIENTIST_HARNESS",
+        ],
     )
     def test_core_env_keys_allowed(self, tmp_path: Path, key: str) -> None:
         assert key in AGENT_ENV_ALLOWLIST
