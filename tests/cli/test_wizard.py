@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 from typer.testing import CliRunner
 
+from openscientist.cli import answers as answers_io
 from openscientist.cli import app as cli_app
 from openscientist.cli import envfiles, stack, wizard
 from openscientist.cli.step import Question
@@ -31,6 +32,7 @@ def test_setup_writes_env_files(checkout: Path):
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
     assert env_value(checkout, ".env", "ANTHROPIC_API_KEY") == "sk-test-123"
     assert env_value(checkout, ".env", "PORT") == "8080"
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BIND_ADDRESS") == "127.0.0.1"
     assert env_value(checkout, ".env", "POSTGRES_PORT") == "5434"
     # The PR 3 steps land their answers.
     assert env_value(checkout, ".env", "OPENSCIENTIST_DEV_MODE") == "true"
@@ -45,6 +47,82 @@ def test_setup_writes_env_files(checkout: Path):
     assert "# OpenScientist Environment Configuration" in (checkout / ".env").read_text(
         encoding="utf-8"
     )
+
+
+def _public_url_tail(base_url: str) -> list[str]:
+    """The tail for a public base URL: a GitHub login, since the wizard offers no
+    dev mode there."""
+    tail = wizard_tail()
+    tail[0] = base_url
+    tail[8], tail[9] = "gh-client", "gh-secret"  # GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+    del tail[12]  # OPENSCIENTIST_DEV_MODE is not asked for a public URL
+    return tail
+
+
+def test_setup_writes_app_url_from_the_base_url(checkout: Path):
+    input_lines = ["1", "sk-test-123", "", "", *_public_url_tail("https://prod.example")]
+    result = runner.invoke(cli_app.app, ["setup"], input="\n".join(input_lines) + "\n")
+    assert result.exit_code == 0, result.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BASE_URL") == "https://prod.example"
+    assert env_value(checkout, ".env", "APP_URL") == "https://prod.example"
+
+
+def test_setup_keeps_an_explicit_app_url(checkout: Path):
+    example = (checkout / ".env.example").read_text(encoding="utf-8")
+    (checkout / ".env").write_text(
+        example.replace("# APP_URL=<OPENSCIENTIST_BASE_URL>", "APP_URL=http://oauth.example"),
+        encoding="utf-8",
+    )
+    # The file pre-selects the provider, so the run starts at the provider's own
+    # questions, not the choice.
+    input_lines = ["sk-test-123", "", "", *_public_url_tail("https://prod.example")]
+    result = runner.invoke(cli_app.app, ["setup"], input="\n".join(input_lines) + "\n")
+    assert result.exit_code == 0, result.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BASE_URL") == "https://prod.example"
+    assert env_value(checkout, ".env", "APP_URL") == "http://oauth.example"
+
+
+def test_setup_from_answers_writes_app_url(checkout: Path):
+    tables: dict[str, dict[str, str | int | bool]] = {
+        "provider": {
+            "id": "anthropic",
+            "anthropic_api_key": "sk-test-123",
+            "claude_code_oauth_token": "",
+            "openscientist_model": "",
+        },
+        "address": {
+            "base_url": "https://prod.example",
+            "port": 8080,
+            "bind_address": "127.0.0.1",
+            "postgres_port": 5434,
+        },
+        "harness": {"id": "auto"},
+        "concurrency": {"jobs": 1},
+        "login": {
+            "google_client_id": "",
+            "google_client_secret": "",
+            "github_client_id": "gh-client",
+            "github_client_secret": "gh-secret",
+            "orcid_client_id": "",
+            "orcid_client_secret": "",
+            "dev_mode": "",
+            "bootstrap_admin_emails": "",
+        },
+        "airgap": {"enabled": ""},
+        "phenix": {"host_path": ""},
+    }
+    path = checkout / "answers.toml"
+    answers_io.write_answers(path, tables)
+    result = runner.invoke(cli_app.app, ["setup", "--answers", str(path)], input="")
+    assert result.exit_code == 0, result.output
+    assert env_value(checkout, ".env", "APP_URL") == "https://prod.example"
+
+
+def test_setup_writes_the_bind_address(checkout: Path):
+    lines = ["1", "sk-test-123", "", "", *wizard_tail(bind_address="10.0.0.5")]
+    result = runner.invoke(cli_app.app, ["setup"], input="\n".join(lines) + "\n")
+    assert result.exit_code == 0
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BIND_ADDRESS") == "10.0.0.5"
 
 
 def test_provider_step_asks_only_the_chosen_provider_questions(checkout: Path):
@@ -82,7 +160,7 @@ def test_second_setup_offers_current_values_and_keeps_secrets(checkout: Path):
     before = {name: (checkout / name).read_bytes() for name in (".env", ".env.db", ".env.owner")}
     # A re-run skips the provider choice (it is already set) and offers the current
     # values as defaults, so every prompt is answered with Enter.
-    second = runner.invoke(cli_app.app, ["setup"], input="\n" * 18)
+    second = runner.invoke(cli_app.app, ["setup"], input="\n" * 19)
     assert second.exit_code == 0
     for name, content in before.items():
         assert (checkout / name).read_bytes() == content, name

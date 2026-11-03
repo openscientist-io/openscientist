@@ -22,6 +22,7 @@ def test_airgap_offered_for_a_proxied_provider(checkout: Path):
         "qwen3-8b",  # OPENSCIENTIST_MODEL
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT
+        "",  # OPENSCIENTIST_BIND_ADDRESS
         "",  # POSTGRES_PORT
         "",  # OPENSCIENTIST_HARNESS
         "",  # OPENSCIENTIST_MAX_CONCURRENT_JOBS
@@ -45,6 +46,7 @@ def test_airgap_offered_for_a_chatgpt_login(checkout: Path):
         "",  # OPENSCIENTIST_MODEL
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT
+        "",  # OPENSCIENTIST_BIND_ADDRESS
         "",  # POSTGRES_PORT
         "",  # OPENSCIENTIST_HARNESS
         "",  # OPENSCIENTIST_MAX_CONCURRENT_JOBS

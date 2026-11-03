@@ -9,7 +9,6 @@ import threading
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Protocol, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -41,6 +40,7 @@ from openscientist.orchestrator.report import (
 )
 from openscientist.webapp_components.components import badges, common, dialogs
 from openscientist.webapp_components.pages.job_detail import feedback
+from openscientist.webapp_components.utils.permissions import JobAccess
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 
@@ -435,7 +435,14 @@ async def test_submitting_feedback_resumes_a_paused_job(
     job_id, owner_id = await owned_job(JobStatus.AWAITING_FEEDBACK)
     job_dir = tmp_path / str(job_id)
     job_dir.mkdir()
-    with patch.object(feedback, "ui") as mock_ui:
+    with (
+        patch.object(feedback, "ui") as mock_ui,
+        patch.object(
+            feedback,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
+    ):
         await feedback._submit_feedback_and_continue(
             job_dir, str(job_id), str(owner_id), 1, "check the PDB route"
         )
@@ -451,7 +458,14 @@ async def test_feedback_for_a_job_that_ended_while_paused_keeps_its_ending(
     job_id, owner_id = await owned_job(JobStatus.CANCELLED)
     job_dir = tmp_path / str(job_id)
     job_dir.mkdir()
-    with patch.object(feedback, "ui") as mock_ui:
+    with (
+        patch.object(feedback, "ui") as mock_ui,
+        patch.object(
+            feedback,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
+    ):
         await feedback._submit_feedback_and_continue(job_dir, str(job_id), str(owner_id), 1, "")
     assert await _status(test_engine, job_id) == "cancelled"
     mock_ui.notify.assert_called_once_with(
@@ -519,14 +533,14 @@ async def test_deleting_a_job_cancels_it_only_while_it_is_active(
         captured.append(cast("Callable[[], Awaitable[None]]", kwargs["on_confirm"]))
         return MagicMock()
 
-    @contextlib.asynccontextmanager
-    async def _admin_session():
-        yield SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(owner_id=owner)))
-
     with (
         patch.object(dialogs, "render_dialog_actions", _capture_actions),
         patch.object(dialogs, "get_current_user_id", return_value=str(owner)),
-        patch.object(dialogs, "get_admin_session", _admin_session),
+        patch.object(
+            dialogs,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
         patch.object(dialogs, "ui") as mock_ui,
     ):
         dialogs.render_delete_dialog(job_id, manager)
@@ -745,7 +759,14 @@ async def test_a_resumed_job_shows_no_label_from_before_its_pause(
     job_dir = tmp_path / str(job_id)
     job_dir.mkdir()
     assert await update_job_status(job_dir, "awaiting_feedback", allowed_from=("running",))
-    with patch.object(feedback, "ui"):
+    with (
+        patch.object(feedback, "ui"),
+        patch.object(
+            feedback,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
+    ):
         await feedback._submit_feedback_and_continue(
             job_dir, str(job_id), str(owner_id), 1, "try the other assay"
         )
