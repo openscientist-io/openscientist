@@ -18,7 +18,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Authentication and Sessions
 
 - **OAuth 2.0 with major providers.** Users sign in through Google or GitHub using the Authlib library. No passwords are stored or managed by the application.
-- **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
+- **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). The `Secure` flag follows the scheme of the deployment's base URL. The setup wizard writes `APP_URL` from the public base URL it asks for, and `APP_URL` falls back to `OPENSCIENTIST_BASE_URL` when unset, so both settings keep the real scheme. Sessions have a configurable expiry (default 30 days).
+- **Socket.io restricted to the app's origin.** The socket.io server accepts handshakes only from the origin of the configured base URL, not from arbitrary origins.
 - **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, not in browser-side storage. Logging out deletes the database record.
 - **User approval workflow.** New users must be explicitly approved by an admin before they can run jobs, preventing open access.
 
@@ -27,6 +28,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Row-Level Security (RLS).** PostgreSQL RLS policies are enabled on all sensitive tables (users, sessions, jobs, API keys, OAuth accounts). Even if application code has a bug, the database itself prevents users from seeing each other's data.
 - **Encrypted OAuth tokens.** Access and refresh tokens from OAuth providers are encrypted with Fernet (AES-128-CBC) before being stored in the database.
 - **Master secret derivation.** A single `OPENSCIENTIST_SECRET_KEY` is used to derive separate keys for different purposes (session storage, token encryption) via HMAC-SHA256, following key derivation best practices.
+- **Weak master secrets are refused at startup.** Settings construction raises when `OPENSCIENTIST_SECRET_KEY` is missing, the `.env.example` placeholder, or shorter than 64 characters (32 bytes of entropy), and the web refuses to start with an error naming the setting and how to generate a key.
+- **Error pages carry no exception text.** The 500 page for unhandled page exceptions renders a generic error, and the full traceback goes to the server log.
 - **API keys hashed with SHA-256.** API key secrets are hashed before storage. The full secret is shown only once at creation time and is never retrievable afterwards.
 - **Constant-time secret comparison.** API key verification uses `hmac.compare_digest()` to prevent timing side-channel attacks.
 
@@ -64,6 +67,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 - **No secrets in code.** All credentials come from environment variables or TOML configuration, never from hardcoded values.
 - **Credentials not logged.** A search for credential patterns in logging output found no evidence of API keys, tokens, or passwords being written to logs.
+- **Per-process secret in error mode.** When the web starts the configuration-error page, it signs browser storage with a random per-process secret.
 
 ---
 
