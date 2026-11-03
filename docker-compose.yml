@@ -77,6 +77,48 @@ services:
       - ./src:/app/src
     command: ["alembic", "upgrade", "head"]
 
+  # The only holder of the Docker socket. It serves the small JSON API the web
+  # needs over a unix socket (no published ports), builds every container from
+  # its own templates and accepts only a caller whose uid and gid are the web's.
+  launcher:
+    platform: ${OPENSCIENTIST_PLATFORM:-}
+    build:
+      context: .
+      dockerfile: Dockerfile.launcher
+    image: openscientist-launcher:latest
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    env_file:
+      - path: .env.owner
+        required: true
+      - path: .env
+        required: false
+    environment:
+      JOBS_ROOT: /jobs
+      AGENT_IMAGE: ${OPENSCIENTIST_AGENT_IMAGE:-openscientist-agent:latest}
+      EXECUTOR_IMAGE: ${OPENSCIENTIST_EXECUTOR_IMAGE:-openscientist-executor:latest}
+      LAUNCHER_NETWORK: ${OPENSCIENTIST_AGENT_NETWORK:-}
+      LAUNCHER_AGENT_PLATFORM: ${OPENSCIENTIST_AGENT_PLATFORM:-}
+      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
+      PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
+      AGENT_MAX_MEMORY_MIB: ${LAUNCHER_AGENT_MAX_MEMORY_MIB:-16384}
+      AGENT_MAX_CPU: ${LAUNCHER_AGENT_MAX_CPU:-8}
+      EXECUTOR_MAX_MEMORY_MIB: ${LAUNCHER_EXECUTOR_MAX_MEMORY_MIB:-8192}
+      EXECUTOR_MAX_CPU: ${LAUNCHER_EXECUTOR_MAX_CPU:-4}
+      MAX_LIFETIME_SECONDS: ${LAUNCHER_MAX_LIFETIME_SECONDS:-86400}
+      MAX_EGRESS_ENTRIES: ${LAUNCHER_MAX_EGRESS_ENTRIES:-64}
+    # Plain socket mount, no :ro: the launcher is the trusted holder that
+    # creates containers through it, and the only service to hold one.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jobs:/jobs:ro
+      - launcher_socket:/run/launcher
+    healthcheck:
+      test: ["CMD", "python", "-m", "openscientist_launcher.health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   openscientist:
     stdin_open: true # docker run -i
     tty: true        # docker run -t
@@ -85,6 +127,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      launcher:
+        condition: service_healthy
     # Loopback by default, because docker's own DNAT rule sits in front of host firewalls.
     ports:
       - "${OPENSCIENTIST_BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
@@ -188,3 +232,5 @@ services:
 
 volumes:
   postgres_data:
+  # The launcher's unix socket, shared with the web; no web ports in between.
+  launcher_socket:
