@@ -2,8 +2,10 @@
 
 import logging
 import os
+import threading
 from datetime import UTC, datetime, timedelta
 
+from openscientist.exceptions import ProviderError
 from openscientist.providers.base import (
     AirgapEgress,
     AirgapPosture,
@@ -13,6 +15,7 @@ from openscientist.providers.base import (
     LlmUpstream,
     SetupQuestion,
     StaticHeadersSigning,
+    UpstreamSigning,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -20,6 +23,85 @@ from openscientist.settings import ProviderSettings, get_settings
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_empty_env_vars
 
 logger = logging.getLogger(__name__)
+
+
+class SigV4Signing(UpstreamSigning):
+    """Signs each forwarded request with the web-side AWS credential (SigV4).
+
+    The credential is resolved through botocore's default chain and refreshed
+    as botocore does: each request reads its frozen value, renewing a
+    refreshable credential past its staleness window. Region and service come
+    from the provider settings, since the Bedrock host is fixed by them, not
+    named by the request path.
+    """
+
+    def __init__(
+        self, *, region: str, service: str = "bedrock-runtime", session: object = None
+    ) -> None:
+        if session is None:
+            import botocore.session  # type: ignore[import-untyped]
+
+            session = botocore.session.Session()
+        self._session = session
+        self._region = region
+        self._service = service
+        self._host = f"{service}.{region}.amazonaws.com"
+        self._lock = threading.Lock()
+
+    @property
+    def base_url(self) -> str:
+        return f"https://{self._host}"
+
+    def credential_headers(
+        self, *, method: str, path: str, query: str, body: bytes
+    ) -> dict[str, str]:
+        import botocore.auth  # type: ignore[import-untyped]
+        from botocore.awsrequest import AWSRequest  # type: ignore[import-untyped]
+
+        url = f"{self.base_url}{path}"
+        if query:
+            url = f"{url}?{query}"
+        request = AWSRequest(method=method.upper(), url=url)
+        if body:
+            request.data = body
+        botocore.auth.SigV4Auth(self._credentials(), self._service, self._region).add_auth(request)
+        # Lowercase the keys, matching the other signers, so the proxy's header
+        # filtering (which is case-insensitive) sees a uniform shape.
+        return {key.lower(): value for key, value in request.headers.items()}
+
+    def _credentials(self) -> object:
+        with self._lock:
+            credentials = self._session.get_credentials()  # type: ignore[attr-defined]
+            if credentials is None:
+                raise ProviderError(
+                    "AWS credentials are not available in the web process, so the LLM proxy "
+                    "cannot sign Bedrock SigV4 requests. Set AWS_ACCESS_KEY_ID and "
+                    "AWS_SECRET_ACCESS_KEY (or AWS_PROFILE) in the web environment."
+                )
+            # get_frozen_credentials renews a refreshable credential past its
+            # staleness window, the way botocore itself refreshes it.
+            return credentials.get_frozen_credentials()
+
+
+#: The web-side AWS SigV4 signing, cached per (service, region) for the
+#: process's life, so botocore's credential chain is resolved once.
+_sigv4_signings: dict[str, "SigV4Signing"] = {}
+_sigv4_signings_lock = threading.Lock()
+
+
+def sigv4_signing_for(region: str, *, service: str = "bedrock-runtime") -> "SigV4Signing":
+    """The web-side AWS SigV4 signing for ``region``, built once per process."""
+    key = f"{service}:{region}"
+    with _sigv4_signings_lock:
+        signing = _sigv4_signings.get(key)
+        if signing is None:
+            signing = SigV4Signing(region=region, service=service)
+            _sigv4_signings[key] = signing
+        return signing
+
+
+def _bedrock_base_url(region: str) -> str:
+    return f"https://bedrock-runtime.{region}.amazonaws.com"
 
 
 class BedrockProvider(ClaudeCompatible):
@@ -34,7 +116,7 @@ class BedrockProvider(ClaudeCompatible):
     mode_flag = "CLAUDE_CODE_USE_BEDROCK"
     default_claude_model = "us.anthropic.claude-sonnet-5-5"
 
-    # Bearer mode routes through the proxy, so any SigV4 credential is stripped.
+    # Defense in depth: both modes proxy, so no AWS credential survives into the container.
     proxied_env_condition_key = "ANTHROPIC_BEDROCK_BASE_URL"
     proxied_env_strip_keys = (
         "AWS_ACCESS_KEY_ID",
@@ -106,73 +188,72 @@ class BedrockProvider(ClaudeCompatible):
 
     @classmethod
     def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
+        """The container's Bedrock routing env. It carries no AWS credential, so
+        the web signs every request (SigV4) or injects the bearer, and the
+        container can hold none."""
         env = {"CLAUDE_CODE_USE_BEDROCK": "1"}
-        env.update(
-            env_from_pairs(
-                [
-                    ("AWS_REGION", provider.aws_region),
-                    ("AWS_ACCESS_KEY_ID", provider.aws_access_key_id),
-                    ("AWS_SECRET_ACCESS_KEY", provider.aws_secret_access_key),
-                    ("AWS_PROFILE", provider.aws_profile),
-                    ("AWS_BEARER_TOKEN_BEDROCK", provider.aws_bearer_token_bedrock),
-                ]
-            )
-        )
+        env.update(env_from_pairs([("AWS_REGION", provider.aws_region)]))
         return env
 
     def claude_sdk_env(self) -> dict[str, str]:
-        """Bedrock routing/auth env for the claude-agent-sdk CLI (its container env)."""
+        """Bedrock routing env for the claude-agent-sdk CLI (its container env)."""
         return type(self).container_env(get_settings().provider)
 
     def llm_upstream(self) -> LlmUpstream | None:
+        """The proxy's Bedrock upstream: the web signs (SigV4) or injects the
+        bearer, and the request goes to the region's bedrock-runtime host."""
         p = get_settings().provider
-        if p.aws_bearer_token_bedrock and p.aws_region:
-            base = f"https://bedrock-runtime.{p.aws_region}.amazonaws.com"
+        if not p.aws_region:
+            return None
+        if p.aws_bearer_token_bedrock:
             return LlmUpstream(
-                base,
+                _bedrock_base_url(p.aws_region),
                 StaticHeadersSigning({"authorization": f"Bearer {p.aws_bearer_token_bedrock}"}),
             )
-        return None
+        signing = sigv4_signing_for(p.aws_region)
+        return LlmUpstream(signing.base_url, signing)
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
+        """Route the container's Claude Code at the proxy's Bedrock gateway path.
+
+        Claude Code sends the placeholder as a bearer, and the proxy signs it
+        with the web's AWS credential (SigV4) or injects the real bearer."""
         p = get_settings().provider
-        if p.aws_bearer_token_bedrock and p.aws_region:
+        if not p.aws_region:
+            return {}
+        if p.aws_bearer_token_bedrock:
             return {
                 "CLAUDE_CODE_USE_BEDROCK": "1",
                 "ANTHROPIC_BEDROCK_BASE_URL": proxy_base_url,
                 "AWS_BEARER_TOKEN_BEDROCK": placeholder,
             }
-        return {}
+        return {
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "ANTHROPIC_BEDROCK_BASE_URL": proxy_base_url,
+            "CLAUDE_CODE_SKIP_BEDROCK_AUTH": "1",
+            "ANTHROPIC_AUTH_TOKEN": placeholder,
+        }
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
-        """Route omp at Bedrock.
+        """Refuse omp at Bedrock: there is no safe route.
 
-        omp drives Bedrock through the AWS SDK with the standard ``AWS_*``
-        names, so SigV4 needs no translation and no proxy. omp signs its own
-        requests and ``airgap_egress`` reports DIRECT.
-
-        Bearer mode is the gap. The proxy override sets
-        ``ANTHROPIC_BEDROCK_BASE_URL``, a Claude Code name omp does not read, and
-        omp exposes no Bedrock base-URL override, so a proxied bearer setup
-        cannot be expressed. Refuse rather than let omp reach AWS directly with
-        the real token.
+        omp signs Bedrock with SigV4 (the web's real credential) and exposes
+        no endpoint-override env, so the proxy cannot verify its request.
+        Refuse and fail fast at launch, rather than let omp reach AWS directly.
         """
-        if not proxy:
-            return {}
         raise ValueError(
-            "Bedrock bearer-token auth cannot be routed through the LLM proxy under "
-            "the omp harness: omp has no Bedrock base-URL override, so omp would "
-            "reach AWS directly with the real token. Use SigV4 credentials "
-            "(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE), which omp "
-            "signs itself, or run this provider under the claude_code harness."
+            "Bedrock cannot be routed under the omp harness: omp signs Bedrock with "
+            "SigV4 and exposes no proxy endpoint override, so omp would reach AWS "
+            "directly with the web's real credential. Run this provider under the "
+            "claude_code harness, which the LLM proxy signs."
         )
 
     @classmethod
     def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
-        if provider.aws_bearer_token_bedrock:
-            return AirgapPosture(AirgapEgress.PROXY)
-        host = f"bedrock-runtime.{provider.aws_region}.amazonaws.com"
-        return AirgapPosture(AirgapEgress.DIRECT, direct_endpoints=((host, 443),))
+        # Bedrock traffic routes through the proxy, which signs with the web's
+        # credential (SigV4) or injects the bearer, so an air-gapped job
+        # reaches nothing but the proxy.
+        return AirgapPosture(AirgapEgress.PROXY)
 
     def _validate_optional_config(self) -> list[str]:
         warnings = []
