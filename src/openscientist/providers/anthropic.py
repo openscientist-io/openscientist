@@ -15,6 +15,7 @@ from .base import (
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    StaticHeadersSigning,
     _listing_live_check,
 )
 
@@ -82,19 +83,20 @@ class AnthropicProvider(ClaudeCompatible):
         return {}
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         return anthropic_container_env(provider)
 
     def llm_upstream(self) -> LlmUpstream | None:
         p = get_settings().provider
         if p.anthropic_api_key:
-            return LlmUpstream("https://api.anthropic.com", {"x-api-key": p.anthropic_api_key})
+            return LlmUpstream(
+                "https://api.anthropic.com",
+                StaticHeadersSigning({"x-api-key": p.anthropic_api_key}),
+            )
         if p.claude_code_oauth_token:
             return LlmUpstream(
                 "https://api.anthropic.com",
-                {"authorization": f"Bearer {p.claude_code_oauth_token}"},
+                StaticHeadersSigning({"authorization": f"Bearer {p.claude_code_oauth_token}"}),
             )
         return None
 

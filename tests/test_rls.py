@@ -178,7 +178,7 @@ async def test_job_sharing_view_permission(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_job_sharing_edit_permission(db_session: AsyncSession):
-    """Test that edit permission grants full access."""
+    """Test that edit permission allows the changes the web makes for editors."""
     # Create two users and a job
     owner = User(email="owner2@example.com", name="Owner 2")
     editor = User(email="editor@example.com", name="Editor")
@@ -205,20 +205,28 @@ async def test_job_sharing_edit_permission(db_session: AsyncSession):
     # Enable RLS before setting user context (superuser bypasses RLS)
     await enable_rls(db_session)
 
-    # Editor should be able to read and update the job
+    # The web flips the job's status for an editor, so that stays open.
     await set_current_user(db_session, editor.id)
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     edited_job = result.scalar_one()
-
-    # Update the job
-    edited_job.research_question = "Updated by Editor"
+    edited_job.status = "running"
     db_session.add(edited_job)
     await db_session.commit()
 
-    # Verify the update persisted
+    # The owner's fields are fenced by the grant on the app role, so a change
+    # to one raises instead of persisting.
+    with pytest.raises(DBAPIError, match="permission denied for table"):
+        async with db_session.begin_nested():
+            await db_session.execute(
+                text("UPDATE jobs SET research_question = 'Updated by Editor' WHERE id = :id"),
+                {"id": job.id},
+            )
+
+    # The job stays owned and worded by the owner.
     result = await db_session.execute(select(Job).where(Job.id == job.id))
     job_check = result.scalar_one()
-    assert job_check.research_question == "Updated by Editor"
+    assert job_check.research_question == "Editable Job"
+    assert job_check.owner_id == owner.id
 
 
 @pytest.mark.asyncio

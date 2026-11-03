@@ -34,6 +34,7 @@ from openscientist.webapp_components.pages.job_detail import (
     report,
     timeline,
 )
+from openscientist.webapp_components.utils.permissions import JobAccess
 
 
 @dataclass(frozen=True)
@@ -145,7 +146,14 @@ async def _feedback(job_id: str) -> list[str]:
 async def test_the_owners_feedback_is_saved_and_continues_the_job(
     alices_job: _Fixture, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
-    with patch.object(feedback, "ui"):
+    with (
+        patch.object(feedback, "ui"),
+        patch.object(
+            feedback,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
+    ):
         await feedback._submit_feedback_and_continue(
             tmp_path / alices_job.job_id, alices_job.job_id, str(alices_job.owner), 1, "  Recheck  "
         )
@@ -157,7 +165,15 @@ async def test_the_owners_feedback_is_saved_and_continues_the_job(
 async def test_a_strangers_feedback_changes_nothing(
     alices_job: _Fixture, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
-    with patch.object(feedback, "ui"), pytest.raises(ValueError, match="not found"):
+    with (
+        patch.object(feedback, "ui"),
+        patch.object(
+            feedback,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
+        pytest.raises(ValueError, match="not found"),
+    ):
         await feedback._submit_feedback_and_continue(
             tmp_path / alices_job.job_id, alices_job.job_id, str(alices_job.stranger), 1, "Planted"
         )
@@ -317,6 +333,8 @@ async def test_the_job_page_follows_the_job_from_feedback_to_completion(
             patch.object(middleware, "_get_session_token", return_value="test-token"),
             patch.object(middleware, "ui", mock_ui),
             patch.object(middleware, "validate_session", _validated),
+            patch("openscientist.webapp_components.utils.permissions.app", fake_app),
+            patch("openscientist.webapp_components.utils.permissions.validate_session", _validated),
         ):
             stack.enter_context(patcher)
         # Alice opens her job's page: the page renders with the feedback panel.

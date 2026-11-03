@@ -16,6 +16,8 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+from openscientist.job_container.identity import RUN_HOME_DIR_MODE, apply_job_ownership
+
 logger = logging.getLogger(__name__)
 
 RUN_HOMES_DIR = ".run-homes"
@@ -34,11 +36,16 @@ def run_home_path(jobs_dir: Path, role: str) -> Path:
 
 
 def create_run_home(jobs_dir: Path, role: str) -> Path:
-    """Create the empty home of the run whose database login is ``role``,
-    writable by the agent, which runs as another user."""
+    """Create the empty home of the run whose database login is ``role``.
+
+    Owner-only for the agent user, which runs as another user, because the
+    home takes in the operator's login.
+    """
     home = run_home_path(jobs_dir, role)
-    home.mkdir(parents=True)
-    home.chmod(0o777)
+    home.parent.mkdir(parents=True, exist_ok=True)
+    apply_job_ownership(home.parent, dir_mode=RUN_HOME_DIR_MODE)
+    home.mkdir()
+    apply_job_ownership(home, dir_mode=RUN_HOME_DIR_MODE)
     return home
 
 

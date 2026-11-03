@@ -59,8 +59,9 @@ def _clear_settings_cache():
 
 # Set up required env vars for Settings validation at import time.
 # The real DATABASE_URL comes from the testcontainer later.
+# The settings gate needs a 64-character key.
 if "OPENSCIENTIST_SECRET_KEY" not in os.environ:
-    os.environ["OPENSCIENTIST_SECRET_KEY"] = "test-secret-key-for-pytest-do-not-use-in-production"
+    os.environ["OPENSCIENTIST_SECRET_KEY"] = "0123456789abcdef" * 4
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
 # There is no default provider, so tests that do not select one explicitly need a

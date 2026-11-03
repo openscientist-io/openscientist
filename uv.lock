@@ -2818,6 +2818,7 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
     { name = "weasyprint" },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -2913,6 +2914,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.21.1,<0.22" },
     { name = "umap-learn", marker = "extra == 'executor'", specifier = ">=0.5.0" },
     { name = "weasyprint", specifier = ">=62.0,<69" },
+    { name = "websockets", specifier = ">=14.0" },
 ]
 provides-extras = ["executor"]
 

@@ -1,12 +1,11 @@
 """Tests for UI components module."""
 
-import contextlib
 import html
 import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from openscientist.job_manager import JobManager, JobStatus
 from openscientist.webapp_components.components.badges import (
@@ -453,16 +452,16 @@ class TestRenderDeleteDialog:
         deleted = {"value": False}
         actions: dict[str, object] = {}
 
-        @contextlib.asynccontextmanager
-        async def _admin_session():
-            session = MagicMock()
-            session.get = AsyncMock(return_value=SimpleNamespace(owner_id=UUID(owner)))
-            yield session
+        from openscientist.webapp_components.utils.permissions import JobAccess
 
         with (
             patch.object(dialogs, "ui", mock_ui),
             patch.object(dialogs, "get_current_user_id", return_value=owner),
-            patch.object(dialogs, "get_admin_session", _admin_session),
+            patch.object(
+                dialogs,
+                "current_job_access",
+                AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+            ),
             patch.object(
                 dialogs,
                 "render_dialog_actions",

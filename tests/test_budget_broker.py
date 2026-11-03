@@ -55,7 +55,7 @@ def token_for() -> Iterator[Callable[[str], str]]:
     def issue(job_id: str) -> str:
         role = f"agent_{uuid4().hex}"
         roles.append(role)
-        return issue_run_credentials(job_id, role).exec_token
+        return issue_run_credentials(job_id, role, "discovery").exec_token
 
     yield issue
     for role in roles:

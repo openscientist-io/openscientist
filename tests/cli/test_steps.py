@@ -19,6 +19,17 @@ def test_address_accepts_a_valid_url_and_ports():
     assert AddressStep().validate(values) == []
 
 
+def test_address_refuses_a_bind_address_that_is_not_an_ip():
+    errors = AddressStep().validate({"OPENSCIENTIST_BIND_ADDRESS": "not-an-ip"})
+    assert len(errors) == 1
+    assert "OPENSCIENTIST_BIND_ADDRESS" in errors[0]
+
+
+def test_address_accepts_loopback_and_public_bind_addresses():
+    for value in ("127.0.0.1", "0.0.0.0", "::1", "localhost", ""):
+        assert AddressStep().validate({"OPENSCIENTIST_BIND_ADDRESS": value}) == []
+
+
 def test_address_reports_a_port_that_is_not_a_number():
     errors = AddressStep._valid_port("PORT", "abc")
     assert len(errors) == 1
