@@ -9,13 +9,8 @@ import pytest
 
 import docker
 from openscientist.cli import envfiles, stack
-from tests.test_launcher_api import (
-    EXECUTOR_IMAGE,
-    JOB_ID,
-    LOGIN_ROLE,
-    Launcher,
-    _image_id,
-)
+from tests.launcher import EXECUTOR_IMAGE, Launcher, image_digest
+from tests.test_launcher_api import JOB_ID, LOGIN_ROLE
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -115,8 +110,8 @@ def test_launcher_accepts_exactly_the_cli_recorded_digests(
     owner = envfiles.file_values(checkout, "owner")
     agent_digest = owner["AGENT_IMAGE_DIGESTS"]
     executor_digest = owner["EXECUTOR_IMAGE_DIGESTS"]
-    assert agent_digest == _image_id(docker_client, test_agent_image)
-    assert executor_digest == _image_id(docker_client, EXECUTOR_IMAGE)
+    assert agent_digest == image_digest(docker_client, test_agent_image)
+    assert executor_digest == image_digest(docker_client, EXECUTOR_IMAGE)
 
     jobs = checkout / "jobs"
     (jobs / JOB_ID).mkdir(parents=True)
@@ -133,7 +128,11 @@ def test_launcher_accepts_exactly_the_cli_recorded_digests(
         }
 
     launcher = Launcher.start(
-        checkout, jobs, AGENT_IMAGE_DIGESTS=agent_digest, EXECUTOR_IMAGE_DIGESTS=executor_digest
+        checkout,
+        jobs,
+        AGENT_IMAGE=test_agent_image,
+        AGENT_IMAGE_DIGESTS=agent_digest,
+        EXECUTOR_IMAGE_DIGESTS=executor_digest,
     )
     try:
         with launcher.client() as client:
@@ -147,6 +146,7 @@ def test_launcher_accepts_exactly_the_cli_recorded_digests(
     launcher = Launcher.start(
         checkout,
         jobs,
+        AGENT_IMAGE=test_agent_image,
         AGENT_IMAGE_DIGESTS="sha256:" + "0" * 64,
         EXECUTOR_IMAGE_DIGESTS=executor_digest,
     )

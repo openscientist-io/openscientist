@@ -62,8 +62,6 @@ def derive_egress_allowlist(settings: Settings, posture: AirgapPosture) -> list[
         from openscientist.llm_proxy import container_proxy_base_url
 
         entries.append(_host_port(container_proxy_base_url()))
-    else:
-        entries.extend(posture.direct_endpoints)
 
     return _unique(entries)
 

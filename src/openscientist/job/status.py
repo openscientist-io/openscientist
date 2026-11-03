@@ -36,10 +36,13 @@ def status_update_statement(
     cancellation_reason: str | None = None,
     stop_note: str | None = None,
     takes_slot: bool = False,
+    stamps_end: bool = False,
 ):
     """The guarded UPDATE moving the job to ``status`` if it is in one of
-    ``allowed_from``; ``takes_slot`` stamps the slot start, and each caller
-    adds its own ``.returning(...)``."""
+    ``allowed_from``; ``takes_slot`` stamps the slot start, ``stamps_end``
+    stamps the slot end, and each caller adds its own ``.returning(...)``.
+    The container's writer passes neither, so its writes never touch the
+    times the web owns."""
     values: dict[str, object] = {"status": _value(status)}
     if error_message:
         values["error_message"] = error_message
@@ -50,7 +53,7 @@ def status_update_statement(
     if takes_slot:
         values["started_at"] = func.now()
         values["ended_at"] = None
-    elif status in _ENDED_STATUSES:
+    elif stamps_end and status in _ENDED_STATUSES:
         values["ended_at"] = func.now()
     if status in _LABEL_ENDING_STATUSES:
         values["agent_status"] = None

@@ -116,15 +116,6 @@ class BedrockProvider(ClaudeCompatible):
     mode_flag = "CLAUDE_CODE_USE_BEDROCK"
     default_claude_model = "us.anthropic.claude-sonnet-5-5"
 
-    # Defense in depth: both modes proxy, so no AWS credential survives into the container.
-    proxied_env_condition_key = "ANTHROPIC_BEDROCK_BASE_URL"
-    proxied_env_strip_keys = (
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_PROFILE",
-        "AWS_SESSION_TOKEN",
-    )
-
     @classmethod
     def validate_model_format(cls, model: str | None) -> str | None:
         return cls.model_format_error(
@@ -281,8 +272,6 @@ class BedrockProvider(ClaudeCompatible):
         # Clear empty vars that interfere with Bedrock auth. docker-compose
         # passes VAR=${VAR} through when the var is unset.
         empty_vars_to_clear = [
-            "AWS_PROFILE",
-            "AWS_SESSION_TOKEN",
             "AWS_BEARER_TOKEN_BEDROCK",
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",

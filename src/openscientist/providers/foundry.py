@@ -259,8 +259,6 @@ class FoundryProvider(ClaudeCompatible):
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
             "ANTHROPIC_BASE_URL",
-            "AWS_PROFILE",
-            "AWS_SESSION_TOKEN",
         ]
         clear_empty_env_vars(logger, empty_vars_to_clear)
 

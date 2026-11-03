@@ -19,8 +19,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import requests
-
 from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
     AirgapEgress,
@@ -36,14 +34,25 @@ from openscientist.providers.base import (
     _listing_live_check,
     env_from_pairs,
 )
+from openscientist.providers.chatgpt import (
+    CLIENT_ID as _CHATGPT_CLIENT_ID,
+)
+from openscientist.providers.chatgpt import (
+    TOKEN_ENDPOINT as _CHATGPT_TOKEN_ENDPOINT,
+)
+from openscientist.providers.chatgpt import (
+    ChatgptRefreshRejectedError,
+    ChatgptRefreshTransientError,
+    ChatgptTokens,
+    refresh_chatgpt_tokens,
+)
+from openscientist.providers.vault import vault_llm_upstream
 from openscientist.settings import ProviderSettings, get_settings
 
 logger = logging.getLogger(__name__)
 
 _OPENAI_BASE_URL = "https://api.openai.com/v1"
 _CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
-_CHATGPT_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
-_CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
 #: The access token is a JWT; refresh it once it is this close to its ``exp``
 #: claim (the window the codex CLI itself uses).
@@ -52,7 +61,6 @@ _STALE_WINDOW = timedelta(minutes=5)
 #: codex CLI schedules its refreshes on.
 _SCHEDULED_INTERVAL = timedelta(days=8)
 _REFRESH_RETRY_AFTER = timedelta(seconds=30)
-_REFRESH_TIMEOUT = 10.0
 
 
 class ChatgptCredentialError(UpstreamCredentialError):
@@ -202,51 +210,36 @@ class ChatgptSigning(UpstreamSigning):
             logger.warning("ChatGPT login at %s carries no refresh token", self._auth_path)
             self._blocked = True
             return
-        grant = {
-            "grant_type": "refresh_token",
-            "client_id": self._client_id,
-            "refresh_token": login.refresh_token,
-        }
         try:
-            response = requests.post(self._token_endpoint, json=grant, timeout=_REFRESH_TIMEOUT)
-        except requests.RequestException as exc:
-            logger.warning("ChatGPT token refresh failed (%s); serving the stale token", exc)
-            self._next_retry_at = now + self._retry_after
-            return
-        if 200 <= response.status_code < 300:
-            try:
-                payload = response.json()
-            except ValueError:
-                payload = None
-            access = payload.get("access_token") if isinstance(payload, dict) else None
-            if not isinstance(access, str) or not access:
-                logger.warning("ChatGPT refresh grant returned no access token")
-                self._next_retry_at = now + self._retry_after
-                return
-            self._login = _ChatgptLogin(
-                access_token=access,
-                refresh_token=payload.get("refresh_token") or login.refresh_token,
-                expires_at=_jwt_expires_at(access),
-                last_refresh=now,
+            tokens = refresh_chatgpt_tokens(
+                login.refresh_token,
+                token_endpoint=self._token_endpoint,
+                client_id=self._client_id,
+                # The pinned codex CLI sends the ChatGPT grant as JSON.
+                encoding="json",
             )
-            self._next_retry_at = None
-            self._persist(payload)
-            return
-        if 400 <= response.status_code < 500:
+        except ChatgptRefreshRejectedError as exc:
             logger.warning(
-                "ChatGPT refresh grant rejected (HTTP %d); blocking the credential until "
+                "ChatGPT refresh grant rejected (%s); blocking the credential until "
                 "the login file changes",
-                response.status_code,
+                exc,
             )
             self._blocked = True
             return
-        logger.warning(
-            "ChatGPT token refresh failed (HTTP %d); retrying on the backoff",
-            response.status_code,
+        except ChatgptRefreshTransientError as exc:
+            logger.warning("ChatGPT token refresh failed (%s); serving the stale token", exc)
+            self._next_retry_at = now + self._retry_after
+            return
+        self._login = _ChatgptLogin(
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token or login.refresh_token,
+            expires_at=tokens.expires_at,
+            last_refresh=now,
         )
-        self._next_retry_at = now + self._retry_after
+        self._next_retry_at = None
+        self._persist(tokens)
 
-    def _persist(self, payload: dict) -> None:
+    def _persist(self, tokens: ChatgptTokens) -> None:
         """Write the refreshed login back so the host's own codex CLI stays
         current; the file is the source of truth."""
         try:
@@ -260,14 +253,14 @@ class ChatgptSigning(UpstreamSigning):
         login = self._login
         if login is None:
             return
-        tokens = data.get("tokens")
-        if not isinstance(tokens, dict):
-            tokens = {}
-            data["tokens"] = tokens
-        tokens["access_token"] = login.access_token
-        tokens["refresh_token"] = login.refresh_token
-        if isinstance(payload.get("id_token"), str) and payload["id_token"]:
-            tokens["id_token"] = payload["id_token"]
+        stored = data.get("tokens")
+        if not isinstance(stored, dict):
+            stored = {}
+            data["tokens"] = stored
+        stored["access_token"] = login.access_token
+        stored["refresh_token"] = login.refresh_token
+        if tokens.id_token:
+            stored["id_token"] = tokens.id_token
         last = login.last_refresh
         data["last_refresh"] = last.isoformat() if last is not None else None
         directory = self._auth_path.parent
@@ -326,13 +319,15 @@ class OpenAIDirectProvider(CodexCompatible):
         if (
             os.environ.get("OPENAI_API_KEY")
             or provider.codex_auth_host_path
+            or provider.omp_auth_host_path
             or _codex_auth_json().exists()
         ):
             return []
         return [
-            "OpenAI provider needs auth: set OPENAI_API_KEY, or set "
+            "OpenAI provider needs auth: set OPENAI_API_KEY, set "
             "CODEX_AUTH_HOST_PATH to the codex auth.json (`codex login`) the "
-            "web signs the ChatGPT calls with."
+            "web signs the ChatGPT calls with, or set OMP_AUTH_HOST_PATH to "
+            "the omp vault of an `omp login`."
         ]
 
     @classmethod
@@ -367,7 +362,8 @@ class OpenAIDirectProvider(CodexCompatible):
         )
 
     def llm_upstream(self) -> LlmUpstream | None:
-        key = get_settings().provider.openai_api_key
+        p = get_settings().provider
+        key = p.openai_api_key
         if key:
             return LlmUpstream(
                 _OPENAI_BASE_URL, StaticHeadersSigning({"authorization": f"Bearer {key}"})
@@ -375,7 +371,24 @@ class OpenAIDirectProvider(CodexCompatible):
         auth_path = get_settings().provider.codex_auth_host_path
         if auth_path:
             return LlmUpstream(_CHATGPT_CODEX_BASE_URL, chatgpt_signing_for(auth_path))
+        if p.omp_auth_host_path:
+            return vault_llm_upstream(p.omp_auth_host_path, "openai-codex")
         return None
+
+    def harness_routing_error(self) -> str | None:
+        # The pinned omp binary pins the codex backend to chatgpt.com and ignores base-URL settings.
+        p = get_settings().provider
+        if not (p.codex_auth_host_path or p.omp_auth_host_path):
+            return None
+        if p.harness != "omp":
+            return None
+        return (
+            "the omp harness cannot route the ChatGPT login: the pinned omp "
+            "binary pins the codex backend to chatgpt.com and ignores every "
+            "base-URL setting, so the container's requests would leave with a "
+            "placeholder the vendor rejects. Use OPENSCIENTIST_HARNESS=codex, "
+            "which routes the codex CLI through the proxy, or OPENAI_API_KEY."
+        )
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         # The container's codex runs its API-key mode against the proxy in both

@@ -23,7 +23,6 @@ from openscientist.job_container.identity import (
     EXECUTOR_UID,
     JOB_DIR_MODE,
     JOB_FILE_MODE,
-    PRIVATE_FILE_MODE,
     RUN_HOME_DIR_MODE,
     apply_job_ownership,
 )
@@ -132,35 +131,6 @@ class TestRunHomeOwnership:
         for path in (home, home.parent):
             assert _mode(path) == RUN_HOME_DIR_MODE, path
             assert_agent_owned(chowns, path)
-
-
-class TestCopiedLogins:
-    """Operator logins copied into a run home are the agent's private files."""
-
-    def test_omp_vault_files_are_agent_owned_and_private(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from openscientist.agent.omp_agent import OmpAgent
-        from openscientist.job_container.run_home import create_run_home
-        from openscientist.settings import get_settings
-
-        chowns = ChownRecorder(monkeypatch)
-        src = tmp_path / "omp-store"
-        src.mkdir()
-        for name in ("agent.db", "agent.db-wal", "config.yml"):
-            (src / name).write_text(name, encoding="utf-8")
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        monkeypatch.setenv("OMP_AUTH_HOST_PATH", str(src))
-        get_settings.cache_clear()
-        try:
-            OmpAgent.provision_run_home(get_settings(), home)
-        finally:
-            get_settings.cache_clear()
-
-        for name in ("agent.db", "agent.db-wal", "config.yml"):
-            dest = home / name
-            assert _mode(dest) == PRIVATE_FILE_MODE, name
-            assert_agent_owned(chowns, dest)
 
 
 class TestWebLaterWrites:

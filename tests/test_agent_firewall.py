@@ -23,6 +23,8 @@ from uuid import uuid4
 
 import pytest
 
+from tests.launcher import EXECUTOR_IMAGE, Launcher
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "docker" / "agent-firewall-entrypoint.sh"
 AGENT_DOCKERFILE = REPO_ROOT / "Dockerfile.agent"
@@ -980,3 +982,129 @@ class TestRestrictedResolverEgress:
 
     def test_every_other_port_on_the_resolver_is_blocked(self, probe: dict[str, Any]) -> None:
         assert probe["tcp_other_port"] == "TimeoutError"
+
+
+#: The launcher's exec endpoint runs the code through the executor's import
+#: sandbox, which allows requests but not socket or subprocess, so the probe
+#: reaches the same endpoints over HTTP and reads the capability drop from
+#: /proc instead of running nft.
+_LAUNCHER_RESTRICT_PROBE = dedent(
+    """
+    import json, os, requests
+
+    def http_probe(url):
+        try:
+            requests.get(url, timeout=5)
+            return "open"
+        except Exception as exc:
+            return type(exc).__name__
+
+    caps = ""
+    for line in open("/proc/self/status"):
+        if line.startswith("CapEff:"):
+            caps = line.split()[1]
+
+    target = __PROBE_TARGET__
+    print(json.dumps({
+        "uid": os.getuid(),
+        "cap_eff": caps,
+        "http_proxy": http_probe(f"http://{target}:8000/"),
+        "http_broker": http_probe(f"http://{target}:8001/"),
+        "http_postgres": http_probe(f"http://{target}:8002/"),
+        "http_unallowlisted": http_probe(f"http://{target}:9000/"),
+        "http_metadata": http_probe("http://169.254.169.254/"),
+        "http_public": http_probe("https://www.google.com/generate_204"),
+    }))
+    """
+)
+
+
+@pytest.mark.integration
+class TestLauncherRestrictedExecutor:
+    """The launcher creates the executor container and the same restrict
+    firewall the web's direct path installed holds through it: the web's
+    endpoints stay open, the private ranges do not, and the privilege drop
+    sticks. The probe runs as the executor's own code."""
+
+    @pytest.fixture(scope="class")
+    def probe(
+        self,
+        docker_client: Any,
+        firewall_image: str,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> Iterator[dict[str, Any]]:
+        import docker
+
+        try:
+            docker_client.images.get(EXECUTOR_IMAGE)
+        except docker.errors.ImageNotFound:
+            pytest.skip("Executor image not built")
+        with _lab(docker_client) as lab:
+            # The web's services on the shared network: proxy and broker are
+            # allowlisted for the executor, Postgres is not.
+            listener = lab.start_listener("web", [8000, 8001, 8002, 9000])
+            jobs_root = tmp_path_factory.mktemp("launcher-jobs")
+            job_id = str(uuid4())
+            (jobs_root / job_id / "out").mkdir(parents=True)
+            digest = str(docker_client.images.get(EXECUTOR_IMAGE).attrs["Id"])
+            launcher = Launcher.start(
+                tmp_path_factory.mktemp("launcher"),
+                jobs_root,
+                LAUNCHER_NETWORK=lab.network.name,
+                AGENT_IMAGE_DIGESTS=digest,
+                EXECUTOR_IMAGE_DIGESTS=digest,
+            )
+            try:
+                code = _LAUNCHER_RESTRICT_PROBE.replace("__PROBE_TARGET__", repr(listener))
+                body = {
+                    "job_id": job_id,
+                    "timeout_seconds": 120,
+                    "memory_mib": 512,
+                    "cpu": 0.25,
+                    "egress_allow": [f"{listener}:8000", f"{listener}:8001"],
+                    "input": {
+                        "code": code,
+                        "language": "python",
+                        "data_path": None,
+                        "output_dir": str(jobs_root / job_id / "out"),
+                        "timeout": 90,
+                        "description": "",
+                        "iteration": 0,
+                        "data_files": [],
+                    },
+                }
+                with launcher.client() as client:
+                    response = client.post("/v1/exec", json=body)
+                assert response.status_code == 200, response.text
+                payload = response.json()
+                assert payload["exit_code"] == 0, payload["stdout"]
+                result = json.loads(payload["stdout"])
+                assert result["success"] is True, result
+                line = next(
+                    line for line in result["output"].splitlines() if '"http_proxy"' in line
+                )
+                yield json.loads(line)
+            finally:
+                launcher.close()
+
+    def test_the_proxy_and_broker_stay_reachable(self, probe: dict[str, Any]) -> None:
+        assert probe["http_proxy"] == "open"
+        assert probe["http_broker"] == "open"
+
+    def test_postgres_is_not_allowlisted_for_the_executor(self, probe: dict[str, Any]) -> None:
+        assert probe["http_postgres"] == "ConnectTimeout"
+
+    def test_an_unallowlisted_port_on_a_private_host_is_blocked(
+        self, probe: dict[str, Any]
+    ) -> None:
+        assert probe["http_unallowlisted"] == "ConnectTimeout"
+
+    def test_the_metadata_endpoint_is_unreachable(self, probe: dict[str, Any]) -> None:
+        assert probe["http_metadata"] == "ConnectTimeout"
+
+    def test_public_internet_stays_reachable(self, probe: dict[str, Any]) -> None:
+        assert probe["http_public"] == "open"
+
+    def test_the_probe_ran_as_the_executor_user(self, probe: dict[str, Any]) -> None:
+        assert probe["uid"] != 0
+        assert probe["cap_eff"] == "0000000000000000"

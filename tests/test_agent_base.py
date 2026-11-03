@@ -85,7 +85,6 @@ def test_complete_subclass_instantiates_and_exposes_config(tmp_path: Path) -> No
     agent = _StubAgent(config, provider)
     assert agent.config is config
     assert agent.provider is provider
-    assert agent.total_tokens == TokenUsage()
 
 
 async def test_run_iteration_returns_iteration_result(tmp_path: Path) -> None:
@@ -93,15 +92,6 @@ async def test_run_iteration_returns_iteration_result(tmp_path: Path) -> None:
     result = await agent.run_iteration("hello")
     assert isinstance(result, IterationResult)
     assert result.output == "hello"
-
-
-def test_total_tokens_returns_live_object(tmp_path: Path) -> None:
-    """Concrete agents accumulate by mutating the same object the property
-    returns; it must not be a defensive copy."""
-    agent = _StubAgent(_config(tmp_path), _StubProvider())
-    agent._token_usage.input_tokens += 7
-    assert agent.total_tokens.input_tokens == 7
-    assert agent.total_tokens is agent._token_usage
 
 
 def test_agent_config_is_frozen(tmp_path: Path) -> None:

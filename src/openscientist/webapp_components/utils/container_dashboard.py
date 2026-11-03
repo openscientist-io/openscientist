@@ -1,7 +1,7 @@
 """Container dashboard data collection for the admin page.
 
-Queries Docker API and database to build a real-time view of all
-OpenScientist-managed containers (agent + executor) grouped by job.
+Queries the container launcher and the database to build a real-time view of
+every container the launcher has created (agent + executor) grouped by job.
 """
 
 from __future__ import annotations
@@ -13,17 +13,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from openscientist.job_container.launcher_client import (
+    ContainerEntry,
+    LauncherClient,
+    LauncherError,
+)
+
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
+_LAUNCHER_DOWN_MESSAGE = "The container launcher is not reachable."
 
 
 @dataclass
 class ContainerInfo:
-    """Information about a single Docker container."""
+    """Information about a single container the launcher created."""
 
     container_id: str
     name: str
@@ -73,40 +76,28 @@ class DashboardData:
     error_message: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Docker helpers (run in threads — Docker SDK is blocking)
-# ---------------------------------------------------------------------------
-
-
-def _get_docker_client() -> Any:
-    """Create a Docker client; returns None if Docker is unavailable."""
+def _get_launcher_client() -> LauncherClient | None:
+    """One launcher client; None when the launcher or its daemon is down."""
     try:
-        import docker
-
-        client = docker.from_env()
-        client.ping()
+        client = LauncherClient()
+        client.health()
         return client
-    except Exception:
-        logger.debug("Docker client unavailable", exc_info=True)
+    except LauncherError:
+        logger.debug("Container launcher unavailable", exc_info=True)
         return None
 
 
-def _list_openscientist_containers(client: Any) -> list[Any]:
-    """List all containers with a ``openscientist.type`` label."""
-    return list(
-        client.containers.list(
-            all=True,
-            filters={"label": ["openscientist.type"]},
-        )
-    )
+def _list_launcher_containers(client: LauncherClient) -> list[ContainerEntry]:
+    """Every launcher-created container carrying an openscientist.type label."""
+    return client.list_containers(["openscientist.type"])
 
 
-def _get_container_stats(container: Any) -> dict[str, Any]:
+def _get_container_stats(client: LauncherClient, container_id: str) -> dict[str, Any]:
     """Fetch one-shot stats for a container (blocks ~200ms)."""
     try:
-        return dict(container.stats(stream=False))
-    except Exception:
-        logger.debug("Failed to fetch stats for container %s", container.name, exc_info=True)
+        return dict(client.stats(container_id))
+    except LauncherError:
+        logger.debug("Failed to fetch stats for container %s", container_id, exc_info=True)
         return {}
 
 
@@ -149,19 +140,19 @@ def _parse_container_stats(stats: dict[str, Any]) -> tuple[float, float, float]:
 
 
 def _build_container_info(
-    container: Any,
+    entry: ContainerEntry,
     stats: dict[str, Any] | None = None,
 ) -> ContainerInfo:
-    """Build a ContainerInfo from a Docker container object."""
-    labels = container.labels or {}
+    """Build a ContainerInfo from one launcher list entry."""
+    labels = entry.get("labels") or {}
     created_at = None
     uptime_seconds = 0.0
 
-    created_str = container.attrs.get("Created", "")
+    created_str = entry.get("created") or ""
     if created_str:
         try:
             created_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
-            if container.status == "running":
+            if entry["status"] == "running":
                 uptime_seconds = (datetime.now(UTC) - created_at).total_seconds()
         except (ValueError, TypeError):
             pass
@@ -173,22 +164,17 @@ def _build_container_info(
         cpu_percent, memory_mb, memory_limit_mb = _parse_container_stats(stats)
 
     return ContainerInfo(
-        container_id=container.short_id,
-        name=container.name,
+        container_id=entry["id"],
+        name=entry["name"],
         container_type=labels.get("openscientist.type", "unknown"),
         job_id=labels.get("openscientist.job_id"),
-        status=container.status,
+        status=entry["status"],
         created_at=created_at,
         uptime_seconds=uptime_seconds,
         cpu_percent=cpu_percent,
         memory_mb=memory_mb,
         memory_limit_mb=memory_limit_mb,
     )
-
-
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
 
 
 async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
@@ -203,8 +189,8 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
     """
     data = DashboardData()
 
-    ready, client = await _prepare_dashboard_client(data)
-    if not ready:
+    client = await _prepare_dashboard_client(data)
+    if client is None:
         return data
 
     fetch_result = await _fetch_dashboard_sources(client)
@@ -213,29 +199,29 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
         return data
     containers_list, job_map = fetch_result
 
-    stats_map = await _collect_running_container_stats(containers_list, include_stats)
+    stats_map = await _collect_running_container_stats(client, containers_list, include_stats)
     container_infos = _build_container_infos(containers_list, stats_map)
     data.job_groups, data.orphan_containers = _group_containers_by_job(container_infos, job_map)
     data.totals = _compute_dashboard_totals(data.job_groups, data.orphan_containers)
     return data
 
 
-async def _prepare_dashboard_client(data: DashboardData) -> tuple[bool, Any | None]:
-    client = await asyncio.to_thread(_get_docker_client)
+async def _prepare_dashboard_client(data: DashboardData) -> LauncherClient | None:
+    client = await asyncio.to_thread(_get_launcher_client)
     if client is None:
-        data.error_message = "Docker daemon is not reachable."
-        return False, None
+        data.error_message = _LAUNCHER_DOWN_MESSAGE
+        return None
 
     data.docker_available = True
-    return True, client
+    return client
 
 
 async def _fetch_dashboard_sources(
-    client: Any,
-) -> tuple[list[Any], dict[str, dict[str, Any]]] | None:
+    client: LauncherClient,
+) -> tuple[list[ContainerEntry], dict[str, dict[str, Any]]] | None:
     try:
         containers_list, job_map = await asyncio.gather(
-            asyncio.to_thread(_list_openscientist_containers, client),
+            asyncio.to_thread(_list_launcher_containers, client),
             _get_active_jobs_map(),
         )
     except Exception as exc:
@@ -245,20 +231,24 @@ async def _fetch_dashboard_sources(
 
 
 async def _collect_running_container_stats(
-    containers_list: list[Any],
+    client: LauncherClient,
+    containers_list: list[ContainerEntry],
     include_stats: bool,
 ) -> dict[str, dict[str, Any]]:
     stats_map: dict[str, dict[str, Any]] = {}
     if not include_stats or not containers_list:
         return stats_map
 
-    running = [c for c in containers_list if c.status == "running"]
+    running = [c for c in containers_list if c["status"] == "running"]
     if not running:
         return stats_map
 
     with ThreadPoolExecutor(max_workers=min(len(running), 8)) as pool:
         loop = asyncio.get_running_loop()
-        futures = {c.short_id: loop.run_in_executor(pool, _get_container_stats, c) for c in running}
+        futures = {
+            c["id"]: loop.run_in_executor(pool, _get_container_stats, client, c["id"])
+            for c in running
+        }
         for cid, fut in futures.items():
             try:
                 stats_map[cid] = await fut
@@ -268,9 +258,10 @@ async def _collect_running_container_stats(
 
 
 def _build_container_infos(
-    containers_list: list[Any], stats_map: dict[str, dict[str, Any]]
+    containers_list: list[ContainerEntry],
+    stats_map: dict[str, dict[str, Any]],
 ) -> list[ContainerInfo]:
-    return [_build_container_info(c, stats_map.get(c.short_id)) for c in containers_list]
+    return [_build_container_info(c, stats_map.get(c["id"])) for c in containers_list]
 
 
 def _build_group(job_id: str, job_info: dict[str, Any]) -> JobContainerGroup:
