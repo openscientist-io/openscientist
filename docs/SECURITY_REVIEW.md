@@ -40,7 +40,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Input Validation
 
 - **Pydantic models for API input.** All API request bodies are validated through Pydantic V2 schemas with type checking and length constraints (e.g., job titles: 1--255 characters, max iterations: 1--20).
-- **File upload safety checks.** Uploaded files are validated by size, extension, and magic-number detection (using `python-magic`). Executable files (ELF, Mach-O, DOS) are blocked. Filenames are sanitized to prevent path traversal.
+- **File upload safety checks.** API uploads stream to temporary files in 1 MiB chunks and are refused with HTTP 413 when a file exceeds the `MAX_FILE_SIZE_MB` admin limit, when the request total does, or when a request holds more than 100 files. The multipart parser spools each part to disk past 1 MiB, so a part is never held in process memory whole. Accepted uploads are then validated by extension and magic-number detection of their leading bytes (using `python-magic`), and executable files (ELF, Mach-O, DOS) are blocked. Web uploads honour the same per-file limit and stream to disk in 1 MiB chunks. Filenames are sanitized to prevent path traversal.
 - **Parameterized SQL queries.** All database access uses SQLAlchemy ORM, which generates parameterized queries. No raw SQL string interpolation was found.
 - **Vulnerability scanner blocking.** A middleware layer blocks common scanner paths (`.git/`, `wp-admin/`, etc.) to reduce noise and exposure.
 
