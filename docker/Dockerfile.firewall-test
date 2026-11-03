@@ -11,4 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     mawk \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --uid 1001 --create-home --shell /bin/bash agent
+# The real entrypoint drops to agent with the shared jobs group (gid 1001), so
+# the stand-in carries the same group.
+RUN groupadd --gid 1001 jobs \
+    && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash agent

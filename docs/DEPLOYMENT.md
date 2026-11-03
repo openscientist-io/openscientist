@@ -11,7 +11,7 @@ This guide explains how to deploy OpenScientist using Docker.
 
 ### 1. Set up environment variables
 
-The setup wizard creates the `.env` files, generating the database passwords and the master secret.
+The setup wizard creates the `.env` files, generating the database passwords and the master secret. The web refuses to start when `OPENSCIENTIST_SECRET_KEY` is missing, the `.env.example` placeholder, or shorter than 64 characters, and names the setting and how to generate a key.
 
 ```bash
 uv run openscientist setup
@@ -47,7 +47,28 @@ The Docker setup mounts the following directories:
 
 ### Ports
 
-- `8080`: Web interface (NiceGUI)
+- `8080`: Web interface (NiceGUI), published on `127.0.0.1` by default
+  (`OPENSCIENTIST_BIND_ADDRESS` sets the host address)
+
+## The Container Launcher
+
+`openscientist start` builds the agent and executor images and records each
+image's digest in `.env.owner` (`AGENT_IMAGE_DIGESTS`, `EXECUTOR_IMAGE_DIGESTS`).
+The compose stack starts a `launcher` service that is the intended holder of
+the Docker socket: it serves a small JSON API over a unix socket (a named
+compose volume, no published ports) and builds every container from one of two
+server-side templates — agent and executor. The launcher accepts only the
+recorded image digests, only resource values within the `LAUNCHER_*` bounds in
+`.env`, and only a caller whose uid and gid are `LAUNCHER_WEB_UID` and
+`LAUNCHER_WEB_GID` from `.env.owner`. Every container it creates carries the
+marker label `openscientist.launcher=<LAUNCHER_INSTANCE_ID>`, and every
+container-scoped operation answers 404 for anything that does not carry it.
+
+Its health check (`python -m openscientist_launcher.health`) verifies the
+socket file, the Docker daemon and both template images; the web service
+waits for it to be healthy before starting. Until the web service's own socket
+mount is removed in a later change, the web still runs with the socket as
+today, and the launcher runs alongside it.
 
 ## Managing Jobs
 
@@ -191,6 +212,13 @@ docker-compose exec openscientist python -c "from openscientist.cost_tracker imp
        proxy_pass http://localhost:8080;
    }
    ```
+   The web port is published on `127.0.0.1` by default (`OPENSCIENTIST_BIND_ADDRESS`), so
+   other machines cannot reach it directly and the proxy above works against
+   `localhost`. Set `OPENSCIENTIST_BIND_ADDRESS` to a public address only if you
+   deliberately expose the port and protect it yourself. Development mode
+   (`OPENSCIENTIST_DEV_MODE=true`) is refused at startup unless `APP_URL` is a local
+   http address (localhost, 127.0.0.1 or ::1) and `OPENSCIENTIST_BIND_ADDRESS` is
+   loopback.
 
 3. **Use HTTPS**: Set up SSL/TLS certificates
    ```bash

@@ -39,7 +39,12 @@ def _vllm_tables() -> dict[str, dict[str, str | int | bool]]:
             "vllm_api_key": "",
             "openscientist_model": "qwen3.8-27b-nvfp4",
         },
-        "address": {"base_url": "", "port": 8080, "postgres_port": 5434},
+        "address": {
+            "base_url": "",
+            "port": 8080,
+            "bind_address": "127.0.0.1",
+            "postgres_port": 5434,
+        },
         "harness": {"id": "auto"},
         "concurrency": {"jobs": 4},
         "login": {
@@ -119,13 +124,14 @@ def test_a_vllm_file_sets_up_a_fresh_checkout(checkout: Path):
     assert env_value(checkout, ".env", "PORT") == "8080"
 
 
-def test_a_provider_the_airgap_step_cannot_serve_sets_up_without_it(checkout: Path):
+def test_a_chatgpt_login_sets_up_with_the_airgap_step(checkout: Path):
     tables = _vllm_tables()
     tables["provider"] = {
         "id": "openai",
         "codex_auth_host_path": str(checkout / "codex"),
         "openscientist_model": "gpt-5.2-codex",
     }
+    tables["airgap"] = {"enabled": "false"}
     path = checkout / "answers.toml"
     result = runner.invoke(
         cli_app.app,
@@ -140,9 +146,9 @@ def test_a_provider_the_airgap_step_cannot_serve_sets_up_without_it(checkout: Pa
     )
     assert result.exit_code == 0, result.output
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "openai"
-    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == ""
+    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == "false"
     written = tomllib.loads(path.read_text(encoding="utf-8"))
-    assert "airgap" not in written
+    assert written["airgap"]["enabled"] == "false"
     assert written["provider"]["id"] == "openai"
 
 
@@ -240,6 +246,15 @@ def test_a_wrongly_typed_answer_fails_and_writes_nothing(checkout: Path):
     )
     assert result.exit_code != 0
     assert "login.dev_mode" in result.output
+    _no_env_files(checkout)
+
+
+def test_dev_mode_with_a_public_base_url_fails_and_writes_nothing(checkout: Path):
+    tables = _vllm_tables()
+    tables["address"]["base_url"] = "https://example.com"
+    path = _write(checkout, tables)
+    result = runner.invoke(cli_app.app, ["setup", "--answers", str(path)])
+    assert result.exit_code != 0
     _no_env_files(checkout)
 
 

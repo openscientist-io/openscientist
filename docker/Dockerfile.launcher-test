@@ -1,0 +1,13 @@
+# Agent stand-in for the launcher tests: the real firewall entrypoint, a sleep entrypoint.
+FROM python:3.12-slim-bookworm
+
+RUN useradd --uid 1001 --create-home agent && \
+    useradd --create-home executor && \
+    printf '#!/usr/bin/env python3\nimport time\nwhile True:\n    time.sleep(600)\n' > /agent-test-entrypoint.py && \
+    chmod +x /agent-test-entrypoint.py
+
+COPY docker/agent-firewall-entrypoint.sh /agent-firewall-entrypoint.sh
+RUN chmod +x /agent-firewall-entrypoint.sh
+
+USER agent
+ENTRYPOINT ["/agent-test-entrypoint.py"]
