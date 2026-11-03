@@ -20,7 +20,7 @@ from tests.omp_vault import make_jwt, make_vault
 
 @pytest.fixture(autouse=True)
 def _settings_env(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", "test-master")
+    monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", "0123456789abcdef" * 4)
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@h:5432/db")
     clear_settings_cache()
     yield
