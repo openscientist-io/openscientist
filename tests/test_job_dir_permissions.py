@@ -31,6 +31,9 @@ from openscientist.job_container.identity import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 IS_ROOT = os.geteuid() == 0
 
+# Settings refuse master secrets under 64 characters.
+TEST_SECRET_KEY = "job-perms-test-secret-" * 3
+
 
 class ChownRecorder:
     """Observes the chowns the real setup code makes on a real tree.
@@ -286,9 +289,10 @@ class TestJobTreeAccessInContainers:
                 rm=True,
             )
         except docker.errors.BuildError as exc:
+            # build_log is a live stream, so read it before slicing.
             log_tail = "\n".join(
                 str(entry.get("stream", "")).rstrip()
-                for entry in exc.build_log[-20:]
+                for entry in list(exc.build_log)[-20:]
                 if isinstance(entry, dict)
             )
             pytest.fail(f"Failed to build test agent image {tag}:\n{log_tail}")
@@ -306,6 +310,14 @@ class TestJobTreeAccessInContainers:
         Dockerfile."""
         import docker
 
+        try:
+            docker_client.images.get("openscientist-base:latest")
+        except docker.errors.ImageNotFound:
+            pytest.skip(
+                "Base image 'openscientist-base:latest' not built. "
+                "Build it before running integration tests."
+            )
+
         tag = f"openscientist-executor-perms-test:{uuid4().hex[:12]}"
         try:
             docker_client.images.build(
@@ -315,9 +327,10 @@ class TestJobTreeAccessInContainers:
                 rm=True,
             )
         except docker.errors.BuildError as exc:
+            # build_log is a live stream, so read it before slicing.
             log_tail = "\n".join(
                 str(entry.get("stream", "")).rstrip()
-                for entry in exc.build_log[-20:]
+                for entry in list(exc.build_log)[-20:]
                 if isinstance(entry, dict)
             )
             pytest.fail(f"Failed to build test executor image {tag}:\n{log_tail}")
@@ -364,7 +377,7 @@ class TestJobTreeAccessInContainers:
                 "DATABASE_URL": test_database_url,
                 "ADMIN_DATABASE_URL": admin_url,
                 "OPENSCIENTIST_PROVIDER": "anthropic",
-                "OPENSCIENTIST_SECRET_KEY": "job-perms-test-secret",
+                "OPENSCIENTIST_SECRET_KEY": TEST_SECRET_KEY,
             },
             volumes={str(jobs_dir): {"bind": "/jobs", "mode": "rw"}},
             network_mode="host",
@@ -633,7 +646,7 @@ class TestJobTreeAccessInContainers:
             environment={
                 "DATABASE_URL": test_database_url,
                 "OPENSCIENTIST_PROVIDER": "anthropic",
-                "OPENSCIENTIST_SECRET_KEY": "job-perms-test-secret",
+                "OPENSCIENTIST_SECRET_KEY": TEST_SECRET_KEY,
                 "CODEX_AUTH_HOST_PATH": "/auth-src/auth.json",
             },
             volumes={
