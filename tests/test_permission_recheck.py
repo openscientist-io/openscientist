@@ -8,7 +8,7 @@ page's action handlers refuse and change nothing.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -16,6 +16,9 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from nicegui import core as nicegui_core
+from nicegui.client import Client as NiceguiClient
+from nicegui.slot import Slot as NiceguiSlot
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -108,11 +111,29 @@ async def _delete_session(db: AsyncSession, session_id) -> None:
 
 
 async def _purge(test_engine: AsyncEngine, *statements) -> None:
-    """Delete rows a test committed, so the database is unchanged after it ends."""
+    """Delete rows a test committed, so the database is unchanged when it ends."""
     async with _session(test_engine) as db:
         for statement in statements:
             await db.execute(statement)
         await db.commit()
+
+
+def _reset_nicegui_slot_state() -> None:
+    """Undo the global pseudo-client bootstrap so later test files start clean."""
+    script_client = nicegui_core.script_client
+    if script_client is not None:
+        NiceguiClient.instances.pop(script_client.id, None)
+    nicegui_core.script_client = None
+    nicegui_core.script_mode = False
+    NiceguiSlot.stacks.clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_nicegui_slot_state() -> Generator[None, None, None]:
+    """These tests never build a page, so no test may leave NiceGUI slot state behind."""
+    _reset_nicegui_slot_state()
+    yield
+    _reset_nicegui_slot_state()
 
 
 @pytest_asyncio.fixture
