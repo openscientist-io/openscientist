@@ -3,8 +3,13 @@
 
 FROM openscientist-base:latest
 
-# Create non-root user for security
-RUN useradd --create-home executor
+# Create non-root user for security. The GID is the job group the web chowns
+# the job tree to; keep it in sync with job_container.identity (checked by the
+# tests in tests/test_job_dir_permissions.py).
+ARG EXECUTOR_UID=1000
+ARG JOBS_GID=1001
+RUN groupadd --gid ${JOBS_GID} jobs \
+    && useradd --uid ${EXECUTOR_UID} --gid ${JOBS_GID} --create-home executor
 
 # The egress firewall entrypoint installs nftables rules and drops to the
 # executor user with setpriv from util-linux.
@@ -53,7 +58,7 @@ RUN uv export --locked --no-dev --extra executor --no-emit-project --format requ
     && rm /tmp/requirements.txt
 
 # Create directories for data and output
-RUN mkdir -p /data /output && chown executor:executor /data /output
+RUN mkdir -p /data /output && chown executor:jobs /data /output
 
 # Copy executor module
 COPY src/openscientist_executor /app/openscientist_executor

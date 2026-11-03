@@ -107,9 +107,13 @@ ${accept_rules}    }
 NFT
 fi
 
+# The harness and its children must not leave world-readable files in the job
+# tree, so set the umask here; setpriv drops it down to the run user.
+umask 0007
+
 # setpriv keeps Docker's HOME=/root (root entrypoint), unreadable by the run uid.
 export HOME=/home/${RUN_AS}
 if [ "$#" -eq 0 ]; then
     set -- python /agent-entrypoint.py
 fi
-exec setpriv --reuid=${RUN_AS} --regid=${RUN_AS} --init-groups --inh-caps=-all --bounding-set=-all "$@"
+exec setpriv --reuid=${RUN_AS} --regid=jobs --init-groups --inh-caps=-all --bounding-set=-all "$@"

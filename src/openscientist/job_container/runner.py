@@ -41,6 +41,7 @@ from openscientist.job_container.db_login import (
     close_agent_login,
     open_agent_login,
 )
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_container.run_home import (
     RUN_HOME_LABEL,
     create_run_home,
@@ -48,6 +49,7 @@ from openscientist.job_container.run_home import (
 )
 from openscientist.job_container.secrets import (
     RunCredentials,
+    RunKind,
     derive_job_secret,
     issue_run_credentials,
 )
@@ -64,7 +66,6 @@ logger = logging.getLogger(__name__)
 _STOP_GRACE_SECONDS = 10
 
 AGENT_APP_DIR = "/agent"
-AGENT_GCP_CREDENTIALS_PATH = f"{AGENT_APP_DIR}/gcp-credentials.json"
 
 
 class JobContainerRunner:
@@ -142,14 +143,6 @@ class JobContainerRunner:
         volumes: dict[str, dict[str, str]] = {
             str(job_dir_host): {"bind": job_mount, "mode": "rw"},
         }
-        # Mount only the operator-provided host creds. google_application_credentials
-        # is the container-internal path (Dockerfile ENV), not a valid host source.
-        gcp_host_path = settings.provider.gcp_credentials_host_path
-        if gcp_host_path:
-            volumes[str(gcp_host_path)] = {
-                "bind": AGENT_GCP_CREDENTIALS_PATH,
-                "mode": "ro",
-            }
         phenix_host = settings.phenix.phenix_host_path
         if phenix_host:
             volumes[str(Path(phenix_host).expanduser().resolve())] = {
@@ -196,15 +189,9 @@ class JobContainerRunner:
         )
         job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
         provider = get_provider()
-        # Mount and advertise the GCP creds only when the operator gives a host
-        # path, so the provider never emits a creds file that was not mounted.
-        gcp_credentials_container_path = (
-            AGENT_GCP_CREDENTIALS_PATH if settings.provider.gcp_credentials_host_path else None
-        )
         provider_env = provider.proxied_container_env(
             proxy_base_url=container_proxy_base_url(),
             placeholder=credentials.llm_placeholder,
-            gcp_credentials_container_path=gcp_credentials_container_path,
         )
         # Resolve a self-hosted model's window app-side and pass it in, since the
         # proxied container cannot probe a root path like llama.cpp's /props.
@@ -324,8 +311,16 @@ class JobContainerRunner:
             if agent_class.RUN_HOME:
                 run_home = create_run_home(job_dir_resolved.parent, login.role)
                 agent_class.provision_run_home(settings, run_home)
-            # Ended with the login, when the container goes.
-            credentials = issue_run_credentials(job_id, login.role)
+            # Ended with the login, when the container goes. The kind records
+            # the run's work so the proxy can attribute its forwarded calls.
+            run_kind: RunKind = (
+                "chat"
+                if run_mode == "chat"
+                else "report"
+                if run_mode == "report_only"
+                else "discovery"
+            )
+            credentials = issue_run_credentials(job_id, login.role, run_kind)
             return self._run_container(
                 settings,
                 admin,
@@ -500,11 +495,14 @@ class JobContainerRunner:
                     if not self._is_not_found_error(error):
                         logger.warning("Failed to stop container for job %s: %s", job_id, error)
                 if log_dir is not None:
+                    log_path = log_dir / "agent-container.log"
                     try:
                         logs = container.logs(stdout=True, stderr=True).decode(
                             "utf-8", errors="replace"
                         )
-                        (log_dir / "agent-container.log").write_text(logs)
+                        log_path.write_text(logs)
+                        # Saved into the job dir, which the agent user owns.
+                        apply_job_ownership(log_path)
                     except (docker_errors.APIError, OSError) as error:
                         if not self._is_not_found_error(error):
                             logger.warning(

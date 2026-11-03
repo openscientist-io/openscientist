@@ -384,7 +384,7 @@ class TestRestrictedRulesetRendering:
         rendered = _render(tmp_path, "postgres:5432", mode="restrict", run_as="executor")
         assert [arg for arg in rendered.setpriv_argv if arg.startswith(("--reuid", "--regid"))] == [
             "--reuid=executor",
-            "--regid=executor",
+            "--regid=jobs",
         ]
 
     def test_unset_mode_keeps_the_airgap_policy(self, tmp_path: Path) -> None:
@@ -409,7 +409,7 @@ class TestPrivilegeDrop:
         rendered = _render(tmp_path, "postgres:5432")
         assert [arg for arg in rendered.setpriv_argv if arg.startswith("--")] == [
             "--reuid=agent",
-            "--regid=agent",
+            "--regid=jobs",
             "--init-groups",
             "--inh-caps=-all",
             "--bounding-set=-all",

@@ -4,6 +4,7 @@ import re
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -14,14 +15,16 @@ from openscientist.auth.fastapi_routes import (
     _hash_token,
     generate_review_token,
     redeem_review_token,
+    review_confirmation_page,
 )
-from openscientist.database.models import ReviewToken, User
+from openscientist.database.models import ReviewToken, Session, User
 
 
 def _make_app() -> FastAPI:
-    """Create a minimal FastAPI app with the review route."""
+    """Create a minimal FastAPI app with the review routes."""
     test_app = FastAPI()
-    test_app.add_api_route("/review/{token}", redeem_review_token, methods=["GET"])
+    test_app.add_api_route("/review/{token}", review_confirmation_page, methods=["GET"])
+    test_app.add_api_route("/review/{token}", redeem_review_token, methods=["POST"])
     return test_app
 
 
@@ -76,7 +79,7 @@ async def test_redeem_review_token(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            response = await client.get(f"/review/{plaintext}")
+            response = await client.post(f"/review/{plaintext}", json={})
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
@@ -106,7 +109,7 @@ async def test_redeem_sets_redeemed_by(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            await client.get(f"/review/{plaintext}")
+            await client.post(f"/review/{plaintext}", json={})
 
     await db_session.refresh(token)
     assert token.redeemed_by_id is not None
@@ -137,10 +140,10 @@ async def test_re_redeem_logs_into_same_user(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            resp1 = await client.get(f"/review/{plaintext}")
+            resp1 = await client.post(f"/review/{plaintext}", json={})
             cookie1 = resp1.cookies.get("session_token")
 
-            resp2 = await client.get(f"/review/{plaintext}")
+            resp2 = await client.post(f"/review/{plaintext}", json={})
             cookie2 = resp2.cookies.get("session_token")
 
     assert resp2.status_code == 303
@@ -177,7 +180,7 @@ async def test_redeem_expired_token(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            response = await client.get(f"/review/{plaintext}")
+            response = await client.post(f"/review/{plaintext}", json={})
 
     assert response.status_code == 303
     assert "token_invalid" in response.headers["location"]
@@ -205,7 +208,7 @@ async def test_redeem_revoked_token(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            response = await client.get(f"/review/{plaintext}")
+            response = await client.post(f"/review/{plaintext}", json={})
 
     assert response.status_code == 303
     assert "token_invalid" in response.headers["location"]
@@ -227,7 +230,7 @@ async def test_redeem_invalid_token(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            response = await client.get("/review/nonexistent-token")
+            response = await client.post("/review/nonexistent-token", json={})
 
     assert response.status_code == 303
     assert "token_invalid" in response.headers["location"]
@@ -251,7 +254,7 @@ async def test_reviewer_is_approved(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            await client.get(f"/review/{plaintext}")
+            await client.post(f"/review/{plaintext}", json={})
 
     await db_session.refresh(token)
     from sqlalchemy import select
@@ -279,7 +282,7 @@ async def test_anonymous_email_format(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            await client.get(f"/review/{plaintext}")
+            await client.post(f"/review/{plaintext}", json={})
 
     await db_session.refresh(token)
     from sqlalchemy import select
@@ -308,8 +311,8 @@ async def test_multiple_tokens_create_distinct_users(
             base_url="http://test",
             follow_redirects=False,
         ) as client:
-            await client.get(f"/review/{plaintext1}")
-            await client.get(f"/review/{plaintext2}")
+            await client.post(f"/review/{plaintext1}", json={})
+            await client.post(f"/review/{plaintext2}", json={})
 
     await db_session.refresh(token1)
     await db_session.refresh(token2)
@@ -334,3 +337,230 @@ async def test_revoke_review_token(
 
     assert token.is_active is False
     assert token.status == "revoked"
+
+
+async def _reviewer_user_count(db_session: AsyncSession) -> int:
+    from sqlalchemy import select
+
+    result = await db_session.execute(
+        select(User).where(User.email.like("reviewer-%@review.local"))
+    )
+    return len(result.scalars().all())
+
+
+async def _reviewer_sessions(db_session: AsyncSession, reviewer_id: UUID) -> list[UUID]:
+    from sqlalchemy import select
+
+    result = await db_session.execute(select(Session.id).where(Session.user_id == reviewer_id))
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_get_link_shows_confirmation_without_signing_in(
+    db_session: AsyncSession,
+    test_admin_user: User,
+):
+    """A top-level GET to the review link only shows the sign-in page."""
+    plaintext, token = await _create_review_token(db_session, test_admin_user)
+    app = _make_app()
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(f"/review/{plaintext}")
+
+    assert response.status_code == 200
+    assert "Reviewer 1" in response.text
+    assert "session_token" not in response.cookies
+    await db_session.refresh(token)
+    assert token.redeemed_at is None
+    assert await _reviewer_user_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_link_refuses_revoked_token(
+    db_session: AsyncSession,
+    test_admin_user: User,
+):
+    """A revoked link is refused on the confirmation page too."""
+    plaintext, _ = await _create_review_token(db_session, test_admin_user, is_active=False)
+    app = _make_app()
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(f"/review/{plaintext}")
+
+    assert response.status_code == 303
+    assert "token_invalid" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_form_encoded_sign_in_is_refused(
+    db_session: AsyncSession,
+    test_admin_user: User,
+):
+    """A cross-site form can only post urlencoded, which the sign-in refuses."""
+    plaintext, _ = await _create_review_token(db_session, test_admin_user)
+    app = _make_app()
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", data={"csrf": "no"})
+
+    assert response.status_code == 422
+    assert await _reviewer_user_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_redeem_refuses_a_token_whose_reviewer_is_gone(
+    db_session: AsyncSession,
+    test_admin_user: User,
+):
+    """A redeemed token left without a reviewer must not mint a new account."""
+    plaintext, token = await _create_review_token(db_session, test_admin_user)
+    token.redeemed_at = datetime.now(UTC)
+    token.redeemed_by_id = None
+    await db_session.commit()
+    app = _make_app()
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+
+    assert response.status_code == 303
+    assert "token_invalid" in response.headers["location"]
+    assert await _reviewer_user_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_revoke_a_redeemed_token_ends_the_reviewer_session(
+    db_session: AsyncSession,
+    test_admin_user: User,
+):
+    """Revoking a redeemed token ends the reviewer's live session and the next use."""
+    from openscientist.webapp_components.pages.admin import revoke_review_token
+
+    plaintext, token = await _create_review_token(db_session, test_admin_user)
+    app = _make_app()
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+    assert response.status_code == 303
+
+    await db_session.refresh(token)
+    reviewer_id = token.redeemed_by_id
+    assert reviewer_id is not None
+    assert await _reviewer_sessions(db_session, reviewer_id) != []
+
+    with patch(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        success, _ = await revoke_review_token(token.id)
+    assert success is True
+
+    await db_session.refresh(token)
+    assert token.is_active is False
+    assert await _reviewer_sessions(db_session, reviewer_id) == []
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+    assert response.status_code == 303
+    assert "token_invalid" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_reviewer_refuses_the_next_use(
+    db_session: AsyncSession,
+    test_admin_user: User,
+):
+    """Deleting the redeemed reviewer revokes the token and creates no account."""
+    from sqlalchemy import select
+
+    from openscientist.webapp_components.pages.admin import delete_user
+
+    plaintext, token = await _create_review_token(db_session, test_admin_user)
+    app = _make_app()
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+    assert response.status_code == 303
+
+    await db_session.refresh(token)
+    reviewer_id = token.redeemed_by_id
+    assert reviewer_id is not None
+
+    with patch(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        success, _ = await delete_user(reviewer_id)
+    assert success is True
+
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session",
+        _mock_admin_session(db_session),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+    assert response.status_code == 303
+    assert "token_invalid" in response.headers["location"]
+
+    result = await db_session.execute(select(User).where(User.id == reviewer_id))
+    assert result.scalar_one_or_none() is None
+    assert await _reviewer_user_count(db_session) == 0
