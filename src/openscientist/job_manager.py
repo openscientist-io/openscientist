@@ -35,6 +35,7 @@ from openscientist.exceptions import BudgetExceededError, ProviderError
 from openscientist.job.agent_error import take_agent_error
 from openscientist.job.repository import (
     any_queued_job_held,
+    backfill_job_end_time,
     create_job_row,
     delete_job,
     get_job,
@@ -445,6 +446,9 @@ class JobManager:
                         last_status = job_info.status
                         self._notify_container_transition(job_info)
                     if job_info and job_info.status.value in terminal_statuses:
+                        # The container's ending write carries no time, so this
+                        # first observation stamps it before the job leaves the slot.
+                        run_sync(backfill_job_end_time(job_id))
                         logger.info(
                             "Container job %s reached terminal status: %s",
                             job_id,

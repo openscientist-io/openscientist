@@ -347,11 +347,15 @@ async def test_container_code_runs_as_the_job_login(
 
 
 @pytest.mark.asyncio
-async def test_the_job_login_records_when_its_job_ends(
-    jobs: _Jobs, test_engine: AsyncEngine, container_database: object, tmp_path: Path
+async def test_the_job_login_cannot_stamp_when_its_job_ends(
+    login: asyncpg.Connection,
+    jobs: _Jobs,
+    test_engine: AsyncEngine,
+    container_database: object,
+    tmp_path: Path,
 ) -> None:
-    """The scheduler weighs owners by slot-hours, so the container's final write
-    must also record the end of the run, and the job login may clear the label."""
+    """The web owns the slot end time, so the container's final write leaves the
+    column alone and the job login may clear the label but not stamp the time."""
     from openscientist.orchestrator.iteration import update_job_status
 
     async with test_engine.begin() as conn:
@@ -369,8 +373,11 @@ async def test_the_job_login_records_when_its_job_ends(
                 text("SELECT ended_at, agent_status FROM jobs WHERE id = :id"), {"id": jobs.own}
             )
         ).one()
-    assert row.ended_at is not None
+    assert row.ended_at is None
     assert row.agent_status is None
+    # The grant itself is gone, so a later write path that reaches for it fails.
+    with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+        await login.execute("UPDATE jobs SET ended_at = now() WHERE id = $1", jobs.own)
 
 
 @pytest.mark.asyncio
