@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -20,9 +21,6 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from starlette.middleware import Middleware
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.routing import Mount
 
 from openscientist import web_app
 from openscientist.auth import middleware
@@ -259,27 +257,16 @@ async def test_a_valid_login_cookie_still_signs_the_web_routes_in(
     assert shares.json() == []
 
 
-def _session_middleware(host_app: FastAPI) -> Middleware:
-    """The SessionMiddleware the built app uses for its session cookie."""
-    import nicegui.core
+def _session_cookie_flags(
+    monkeypatch: pytest.MonkeyPatch, app_url: str, tmp_path: Path
+) -> dict[str, object]:
+    """The session middleware flags ``create_app`` hands to ``run_with`` for
+    ``APP_URL``=``app_url``.
 
-    core = nicegui.core.app
-    assert any(
-        isinstance(route, Mount) and route.app is core for route in host_app.router.routes
-    ), "the host app does not mount NiceGUI"
-    for entry in core.user_middleware:
-        if entry.cls is SessionMiddleware:
-            return entry
-    raise AssertionError("the app built no SessionMiddleware for its session cookie")
-
-
-def _configured_app(monkeypatch: pytest.MonkeyPatch, app_url: str, tmp_path: Path) -> FastAPI:
-    """The real host app for ``APP_URL``=``app_url``, with NiceGUI's own
-    ``run_with`` building the middleware stack."""
-    import nicegui.core
-
-    # NiceGUI keeps one global app; each call below rebuilds its middleware.
-    nicegui.core.app.user_middleware.clear()
+    ``run_with`` is intercepted, not called for real. The real one mutates
+    NiceGUI's single global app, and once any earlier test has run a request
+    through it, its middleware stack is already built and the call raises.
+    """
     monkeypatch.setenv("APP_URL", app_url)
     clear_settings_cache()
     monkeypatch.setattr(web_app, "_state", web_app._AppState())
@@ -300,13 +287,14 @@ def _configured_app(monkeypatch: pytest.MonkeyPatch, app_url: str, tmp_path: Pat
             None if name == "openscientist.webapp_components.pages" else real(name, package)
         ),
     )
-    # NiceGUI's run_with deletes the global script client, so drop the stale
-    # per-task slot stacks first. They would keep pointing at its now-deleted
-    # slots and break the element tests that run later in the suite.
-    from nicegui.slot import Slot
+    captured: dict[str, dict[str, object]] = {}
 
-    Slot.stacks.clear()
-    return web_app.create_app(tmp_path / "jobs")
+    def _capture_run_with(_host_app: FastAPI, **kwargs: object) -> None:
+        captured["session"] = cast(dict[str, object], kwargs["session_middleware_kwargs"])
+
+    monkeypatch.setattr(web_app.ui, "run_with", _capture_run_with)
+    web_app.create_app(tmp_path / "jobs")
+    return captured["session"]
 
 
 def _noop(*_args: object, **_kwargs: object) -> None:
@@ -318,8 +306,7 @@ def test_the_session_cookie_is_https_only_for_an_https_app_url(
 ) -> None:
     """Behind https the app's session cookie must never travel over plain
     HTTP."""
-    host_app = _configured_app(monkeypatch, "https://os.example", tmp_path)
-    flags = _session_middleware(host_app).kwargs
+    flags = _session_cookie_flags(monkeypatch, "https://os.example", tmp_path)
     assert flags.get("https_only") is True
     assert flags.get("same_site") == "lax"
 
@@ -329,7 +316,6 @@ def test_the_session_cookie_stays_plain_for_an_http_app_url(
 ) -> None:
     """An http APP_URL serves a plaintext staging, so Secure must stay off or
     the interface breaks there."""
-    host_app = _configured_app(monkeypatch, "http://os.local:8080", tmp_path)
-    flags = _session_middleware(host_app).kwargs
+    flags = _session_cookie_flags(monkeypatch, "http://os.local:8080", tmp_path)
     assert flags.get("https_only") is False
     assert flags.get("same_site") == "lax"
