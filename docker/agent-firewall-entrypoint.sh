@@ -43,9 +43,13 @@ ${accept_rules}    }
 }
 NFT
 
+# The harness and its children must not leave world-readable files in the job
+# tree, so set the umask here; setpriv drops it down to the agent.
+umask 0007
+
 # setpriv keeps Docker's HOME=/root (root entrypoint), unreadable by the agent uid.
 export HOME=/home/agent
 if [ "$#" -eq 0 ]; then
     set -- python /agent-entrypoint.py
 fi
-exec setpriv --reuid=agent --regid=agent --init-groups --inh-caps=-all --bounding-set=-all "$@"
+exec setpriv --reuid=agent --regid=jobs --init-groups --inh-caps=-all --bounding-set=-all "$@"
