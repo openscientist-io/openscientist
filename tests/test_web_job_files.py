@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import io
+import zipfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,11 +15,12 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from openscientist.admin.orphan_jobs import assign_orphaned_job
 from openscientist.auth.middleware import get_current_user_id
-from openscientist.database.models import Job, JobShare, User
+from openscientist.database.models import Administrator, Job, JobShare, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.webapp_components.artifact_routes import router
@@ -294,3 +297,209 @@ async def test_a_job_without_a_report_frames_nothing_and_serves_nothing(
 
     response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/report.html")
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("who", ["owner", "viewer"])
+async def test_the_zip_holds_no_chat_turn_files(
+    shared_job: _SharedJob, request_as, who: str
+) -> None:
+    """A chat turn's exchange files leave the job directory mid-turn, so the
+    archive built then must skip them for everyone who may see the job."""
+    (shared_job.job_dir / ".chat_request_deadbeef.json").write_text('{"history": ["owner secret"]}')
+    (shared_job.job_dir / ".chat_response_deadbeef.json").write_text('{"output": "owner secret"}')
+    response = await request_as(
+        getattr(shared_job, who), f"/web/jobs/{shared_job.job_id}/artifacts.zip"
+    )
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+        names = zf.namelist()
+    assert "provenance/plot.png" in names
+    assert not any(n.startswith(".chat_") for n in names)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("who", "name"),
+    [
+        ("owner", ".chat_request_deadbeef.json"),
+        ("owner", ".chat_response_deadbeef.json"),
+        ("viewer", ".chat_request_deadbeef.json"),
+        ("viewer", ".chat_response_deadbeef.json"),
+    ],
+)
+async def test_chat_turn_files_404_for_the_owner_and_the_recipient(
+    shared_job: _SharedJob, request_as, who: str, name: str
+) -> None:
+    (shared_job.job_dir / name).write_text('{"history": ["owner secret"]}')
+    response = await request_as(
+        getattr(shared_job, who), f"/web/jobs/{shared_job.job_id}/files/{name}"
+    )
+    assert response.status_code == 404
+    assert b"owner secret" not in response.content
+
+
+@pytest_asyncio.fixture
+async def public_job(db_session: AsyncSession, test_user: User, tmp_path: Path) -> _SharedJob:
+    """A completed job of ``test_user`` made public, with a chat turn's exchange
+    and an uploaded input in its directory."""
+    reader = User(email=f"reader-{uuid4().hex}@files.test", name="Reader")
+    job = Job(
+        owner_id=test_user.id, research_question="Open to all?", status="completed", is_public=True
+    )
+    db_session.add_all([reader, job])
+    await db_session.commit()
+    await enable_rls(db_session)
+
+    job_dir = tmp_path / str(job.id)
+    (job_dir / "provenance").mkdir(parents=True)
+    (job_dir / "provenance" / "plot.png").write_bytes(_PLOT)
+    (job_dir / "data").mkdir()
+    (job_dir / "data" / "upload.csv").write_text("owner-input")
+    (job_dir / ".chat_request_ab12cd34.json").write_text('{"history": ["owner secret"]}')
+    (job_dir / ".chat_response_ab12cd34.json").write_text('{"output": "owner secret"}')
+    return _SharedJob(job.id, job_dir, test_user.id, test_user.id, reader.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("who", ["owner", "stranger"])
+async def test_the_public_zip_holds_no_chat_turn_files(
+    public_job: _SharedJob, db_session: AsyncSession, who: str
+) -> None:
+    """The reader who sees the job only because it is public gets the plot but
+    neither the chat turn's exchange nor the owner's uploads."""
+    user = getattr(public_job, who)
+
+    class _Manager:
+        jobs_dir = public_job.job_dir.parent
+
+    app = FastAPI()
+
+    async def session_as_user() -> AsyncIterator[AsyncSession]:
+        await set_current_user(db_session, user)
+        yield db_session
+
+    app.dependency_overrides[get_session] = session_as_user
+    app.dependency_overrides[get_current_user_id] = lambda: user
+    app.include_router(router)
+    with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            response = await c.get(f"/web/jobs/{public_job.job_id}/artifacts.zip")
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+        names = zf.namelist()
+    assert "provenance/plot.png" in names
+    assert not any(n.startswith(".chat_") for n in names)
+    if who == "stranger":
+        assert not any(n.startswith("data/") for n in names)
+
+
+@pytest_asyncio.fixture
+async def orphaned_job(db_session: AsyncSession, test_user2: User, tmp_path: Path) -> _SharedJob:
+    """A completed job whose owner an admin deleted, so only the user row is
+    gone; the job's files and a chat turn's exchange stay in its directory."""
+    owner = User(email=f"deleted-{uuid4().hex}@files.test", name="Deleted")
+    boss = User(email=f"boss-{uuid4().hex}@files.test", name="Boss")
+    db_session.add_all([owner, boss])
+    await db_session.flush()
+    db_session.add(Administrator(user_id=boss.id))
+    job = Job(owner_id=owner.id, research_question="Whose now?", status="completed")
+    db_session.add(job)
+    await db_session.commit()
+
+    # The admin "delete user" action runs through the RLS-bypassing session and
+    # jobs.owner_id is ON DELETE SET NULL, so the job survives without an owner.
+    await db_session.delete(owner)
+    await db_session.commit()
+
+    job_dir = tmp_path / str(job.id)
+    (job_dir / "provenance").mkdir(parents=True)
+    (job_dir / "provenance" / "plot.png").write_bytes(_PLOT)
+    (job_dir / ".chat_request_deadbeef.json").write_text('{"history": ["deleted owner secret"]}')
+    (job_dir / ".chat_response_deadbeef.json").write_text('{"output": "deleted owner secret"}')
+    return _SharedJob(job.id, job_dir, owner.id, boss.id, test_user2.id)
+
+
+@pytest_asyncio.fixture
+async def request_as_orphan(
+    db_session: AsyncSession, orphaned_job: _SharedJob
+) -> AsyncIterator[object]:
+    """``request_as_orphan(user_id, path)`` as in ``request_as``, for the job
+    whose owner is gone."""
+    await enable_rls(db_session)
+
+    class _Manager:
+        jobs_dir = orphaned_job.job_dir.parent
+
+    async def get(user_id: UUID | None, path: str) -> object:
+        app = FastAPI()
+
+        async def session_as_user() -> AsyncIterator[AsyncSession]:
+            if user_id is not None:
+                await set_current_user(db_session, user_id)
+            yield db_session
+
+        app.dependency_overrides[get_session] = session_as_user
+        app.dependency_overrides[get_current_user_id] = lambda: user_id
+        app.include_router(router)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            return await c.get(path)
+
+    with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
+        yield get
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "files/provenance/plot.png",
+        "artifacts.zip",
+        "files/.chat_request_deadbeef.json",
+        "files/.chat_response_deadbeef.json",
+    ],
+)
+async def test_an_ownerless_job_serves_nothing_to_a_non_admin(
+    orphaned_job: _SharedJob, request_as_orphan, path: str
+) -> None:
+    response = await request_as_orphan(
+        orphaned_job.stranger, f"/web/jobs/{orphaned_job.job_id}/{path}"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_signed_in_admin_still_reads_the_ownerless_job(
+    orphaned_job: _SharedJob, request_as_orphan
+) -> None:
+    response = await request_as_orphan(
+        orphaned_job.viewer, f"/web/jobs/{orphaned_job.job_id}/files/provenance/plot.png"
+    )
+    assert response.status_code == 200
+    assert response.content == _PLOT
+
+    response = await request_as_orphan(
+        orphaned_job.viewer, f"/web/jobs/{orphaned_job.job_id}/artifacts.zip"
+    )
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+        names = zf.namelist()
+    assert "provenance/plot.png" in names
+    assert not any(n.startswith(".chat_") for n in names)
+
+
+@pytest.mark.asyncio
+async def test_an_admin_assigns_the_ownerless_job_and_the_new_owner_reads_it(
+    orphaned_job: _SharedJob, db_session: AsyncSession
+) -> None:
+    result = await assign_orphaned_job(db_session, orphaned_job.job_id, orphaned_job.stranger)
+    assert result.ok
+    assert result.reason == "assigned"
+
+    await enable_rls(db_session)
+    await set_current_user(db_session, orphaned_job.stranger)
+    job = (
+        await db_session.execute(select(Job).where(Job.id == orphaned_job.job_id))
+    ).scalar_one_or_none()
+    assert job is not None
+    assert job.owner_id == orphaned_job.stranger

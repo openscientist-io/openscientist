@@ -33,6 +33,11 @@ _EXCLUDE_DIRS = {
 }
 _EXCLUDE_FILES = {"config.json", EXCLUDED_FILES_MANIFEST}
 
+# Chat turn files exchange one turn's conversation between the web and the chat
+# container, and the request holds the owner's prior messages, so no viewer may
+# download them.
+_EXCLUDE_FILE_PREFIXES = (".chat_request_", ".chat_response_")
+
 MAX_ARTIFACT_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
@@ -45,7 +50,12 @@ def _shown_dir(dir_path: Path) -> bool:
 def _shown_file(file_path: Path) -> bool:
     """Whether a file of a job is an artifact. Job directories are agent-writable,
     so a file link could smuggle credentials or files from elsewhere in."""
-    return file_path.name not in _EXCLUDE_FILES and not file_path.is_symlink()
+    name = file_path.name
+    if name in _EXCLUDE_FILES:
+        return False
+    if any(name.startswith(prefix) for prefix in _EXCLUDE_FILE_PREFIXES):
+        return False
+    return not file_path.is_symlink()
 
 
 def _iter_artifact_files(
