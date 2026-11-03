@@ -312,9 +312,9 @@ async def test_an_upload_honours_a_lowered_size_limit(
     path = tmp_path / "big.csv"
     path.write_text("a,b\n" + "1,2\n" * 300_000)
     with pytest.raises(FileTooBigError):
-        await asyncio.to_thread(validate_uploaded_file, path, path.read_bytes())
+        await asyncio.to_thread(validate_uploaded_file, path)
     await set_admin_settings_row(test_engine, max_file_size_mb=1000)
-    await asyncio.to_thread(validate_uploaded_file, path, path.read_bytes())
+    await asyncio.to_thread(validate_uploaded_file, path)
 
 
 @pytest.mark.asyncio

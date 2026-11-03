@@ -11,7 +11,7 @@ This guide explains how to deploy OpenScientist using Docker.
 
 ### 1. Set up environment variables
 
-The setup wizard creates the `.env` files, generating the database passwords and the master secret.
+The setup wizard creates the `.env` files, generating the database passwords and the master secret. The web refuses to start when `OPENSCIENTIST_SECRET_KEY` is missing, the `.env.example` placeholder, or shorter than 64 characters, and names the setting and how to generate a key.
 
 ```bash
 uv run openscientist setup
@@ -47,7 +47,8 @@ The Docker setup mounts the following directories:
 
 ### Ports
 
-- `8080`: Web interface (NiceGUI)
+- `8080`: Web interface (NiceGUI), published on `127.0.0.1` by default
+  (`OPENSCIENTIST_BIND_ADDRESS` sets the host address)
 
 ## The Container Launcher
 
@@ -211,6 +212,13 @@ docker-compose exec openscientist python -c "from openscientist.cost_tracker imp
        proxy_pass http://localhost:8080;
    }
    ```
+   The web port is published on `127.0.0.1` by default (`OPENSCIENTIST_BIND_ADDRESS`), so
+   other machines cannot reach it directly and the proxy above works against
+   `localhost`. Set `OPENSCIENTIST_BIND_ADDRESS` to a public address only if you
+   deliberately expose the port and protect it yourself. Development mode
+   (`OPENSCIENTIST_DEV_MODE=true`) is refused at startup unless `APP_URL` is a local
+   http address (localhost, 127.0.0.1 or ::1) and `OPENSCIENTIST_BIND_ADDRESS` is
+   loopback.
 
 3. **Use HTTPS**: Set up SSL/TLS certificates
    ```bash

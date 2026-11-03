@@ -2,10 +2,12 @@
 
 import hashlib
 import hmac
+import ipaddress
 import logging
 import os
 import re
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +16,10 @@ from sqlalchemy.engine import make_url
 logger = logging.getLogger(__name__)
 _SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 _VALID_HARNESSES = ("auto", "claude_code", "codex", "omp")
+#: The value .env.example ships, so a deployment still holding it runs on a published secret.
+_SECRET_KEY_PLACEHOLDER = "your-64-char-hex-master-secret-here"
+#: The length the setup wizard generates with secrets.token_hex(32), 32 bytes of entropy.
+_SECRET_KEY_MIN_LENGTH = 64
 
 
 class DevSettings(BaseSettings):
@@ -519,9 +525,9 @@ class AuthSettings(BaseSettings):
     )
 
     app_url: str = Field(
-        default="http://localhost:8080",
+        default="",
         alias="APP_URL",
-        description="Base URL used in OAuth callback URLs.",
+        description="Base URL used in OAuth callback URLs. Falls back to OPENSCIENTIST_BASE_URL.",
     )
     session_duration_days: int = Field(
         default=30,
@@ -949,9 +955,32 @@ class Settings(BaseSettings):
 
     # Master secret. All auth secrets derive from this via HMAC-SHA256.
     secret_key: str = Field(
+        default="",
         alias="OPENSCIENTIST_SECRET_KEY",
         description="Master secret from which the storage and token encryption secrets are derived.",
     )
+
+    @field_validator("secret_key")
+    @classmethod
+    def _check_secret_key(cls, value: str) -> str:
+        """Refuse a missing, placeholder or short master secret at every entry point."""
+        if not value:
+            raise ValueError(
+                "OPENSCIENTIST_SECRET_KEY is missing. Generate one with `openssl rand -hex 32` "
+                "and set it in .env, or run the setup wizard."
+            )
+        if value == _SECRET_KEY_PLACEHOLDER:
+            raise ValueError(
+                "OPENSCIENTIST_SECRET_KEY is the .env.example placeholder. Generate a real one "
+                "with `openssl rand -hex 32` and set it in .env, or run the setup wizard."
+            )
+        if len(value) < _SECRET_KEY_MIN_LENGTH:
+            raise ValueError(
+                f"OPENSCIENTIST_SECRET_KEY must be at least {_SECRET_KEY_MIN_LENGTH} characters "
+                f"(32 bytes of entropy). Generate one with `openssl rand -hex 32` and set it "
+                "in .env, or run the setup wizard."
+            )
+        return value
 
     max_concurrent_jobs: int = Field(
         default=1,
@@ -969,6 +998,14 @@ class Settings(BaseSettings):
         alias="OPENSCIENTIST_BASE_URL",
         description="Base URL for OpenScientist (used in notifications and share links)",
     )
+    bind_address: str = Field(
+        default="127.0.0.1",
+        alias="OPENSCIENTIST_BIND_ADDRESS",
+        description=(
+            "Host address the web port is published on, loopback by default. "
+            "A public address exposes the port directly."
+        ),
+    )
 
     dev: DevSettings = Field(default_factory=DevSettings)
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
@@ -982,6 +1019,20 @@ class Settings(BaseSettings):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)
 
+    @field_validator("bind_address", mode="before")
+    @classmethod
+    def _default_bind_address(cls, value: object) -> object:
+        # An empty value means unset, which composes to the loopback default.
+        return "127.0.0.1" if value in (None, "") else value
+
+    @model_validator(mode="after")
+    def default_app_url(self) -> "Settings":
+        """APP_URL follows OPENSCIENTIST_BASE_URL unless set explicitly, so the
+        session cookie's Secure flag and the OAuth callback keep the real scheme."""
+        if not self.auth.app_url:
+            self.auth.app_url = self.base_url
+        return self
+
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":
         """Derive auth secrets from the master OPENSCIENTIST_SECRET_KEY via HMAC-SHA256."""
@@ -991,6 +1042,38 @@ class Settings(BaseSettings):
             key, b"token_encryption_key", hashlib.sha256
         ).hexdigest()
         return self
+
+
+_LOCAL_URL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def is_local_http_url(url: str) -> bool:
+    """Whether a URL is plain http on this machine, the only safe home for the dev-mode mock login."""
+    parts = urlsplit(url)
+    return parts.scheme == "http" and parts.hostname in _LOCAL_URL_HOSTS
+
+
+def is_loopback_address(address: str) -> bool:
+    """Whether a host address only binds to the loopback interface."""
+    if address == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(address).is_loopback
+    except ValueError:
+        return False
+
+
+def dev_mode_problems(settings: Settings) -> list[str]:
+    """The startup problems with this deployment's dev mode, empty when it may run."""
+    if not settings.dev.dev_mode:
+        return []
+    if is_local_http_url(settings.auth.app_url) and is_loopback_address(settings.bind_address):
+        return []
+    return [
+        "OPENSCIENTIST_DEV_MODE=true allows anonymous logins, so it needs a local APP_URL "
+        "(http with host localhost, 127.0.0.1 or ::1) and a loopback OPENSCIENTIST_BIND_ADDRESS. "
+        f"Got APP_URL={settings.auth.app_url!r} and OPENSCIENTIST_BIND_ADDRESS={settings.bind_address!r}."
+    ]
 
 
 @lru_cache(maxsize=1)
