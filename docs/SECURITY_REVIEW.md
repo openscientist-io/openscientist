@@ -82,7 +82,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 | **No audit logging for admin actions** | Admin operations (user approvals, job reassignment, token creation/revocation) are logged to the application logger but not to a persistent, tamper-evident audit table. | Create an `audit_log` database table and record all admin actions with timestamps, actor, and details. |
 | **No CSRF token validation** | While `samesite=lax` cookies provide partial protection, there is no explicit CSRF token for state-changing form submissions. | Add CSRF token generation and validation for all POST/PUT/DELETE operations. |
 | **Credentials passed to agent containers via environment variables** | Provider API keys and the database URL (including password) are injected into agent containers as plain environment variables. If a container is compromised, all credentials are exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of long-lived credentials. |
-| **Base Docker image not pinned to digest** | Dockerfiles use `python:3.12-slim` without a SHA-256 digest pin, meaning a compromised or updated upstream image could silently change the build. | Pin to a specific image digest (e.g., `python:3.12-slim@sha256:abc...`). |
 
 ### Medium
 

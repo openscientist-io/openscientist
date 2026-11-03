@@ -8,7 +8,7 @@
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # The superuser password comes from .env.db, which the web never loads.
     env_file:
@@ -35,7 +35,7 @@ services:
   # As the superuser, creates or updates the database logins and hands the schema
   # to openscientist_owner. Runs on every `up`, before the migrations.
   db-bootstrap:
-    image: postgres:18
+    image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     restart: "no"
     depends_on:
       postgres:
