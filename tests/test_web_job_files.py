@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID, uuid4
@@ -16,8 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.auth.middleware import get_current_user_id
-from openscientist.database.models import Job, JobShare, User
+from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.webapp_components.artifact_routes import router
@@ -37,18 +37,22 @@ class _SharedJob:
 
 @pytest_asyncio.fixture
 async def shared_job(
-    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path: Path
-) -> _SharedJob:
-    """A completed job of ``test_user``, shared for viewing with ``test_user2``,
-    whose directory holds artifacts next to the agent's private files."""
-    stranger = User(email=f"stranger-{uuid4().hex}@files.test", name="Stranger")
-    job = Job(owner_id=test_user.id, research_question="Whose files?", status="completed")
-    db_session.add_all([stranger, job])
-    await db_session.flush()
-    db_session.add(
-        JobShare(job_id=job.id, shared_with_user_id=test_user2.id, permission_level="view")
-    )
-    await db_session.commit()
+    db_session: AsyncSession, test_engine: AsyncEngine, tmp_path: Path
+) -> AsyncIterator[_SharedJob]:
+    """A completed job of a committed owner, shared for viewing with a
+    committed viewer, whose directory holds artifacts next to the agent's
+    private files."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        owner = User(email=f"owner-{uuid4().hex}@files.test", name="Owner")
+        viewer = User(email=f"viewer-{uuid4().hex}@files.test", name="Viewer")
+        stranger = User(email=f"stranger-{uuid4().hex}@files.test", name="Stranger")
+        db.add_all([owner, viewer, stranger])
+        await db.flush()
+        job = Job(owner_id=owner.id, research_question="Whose files?", status="completed")
+        db.add(job)
+        await db.flush()
+        db.add(JobShare(job_id=job.id, shared_with_user_id=viewer.id, permission_level="view"))
+        await db.commit()
     await enable_rls(db_session)
 
     job_dir = tmp_path / str(job.id)
@@ -64,18 +68,37 @@ async def shared_job(
     (other / "secret.txt").write_text("operator-secret")
     (job_dir / "linked.txt").symlink_to(other / "secret.txt")
     (job_dir / "linked-dir").symlink_to(other, target_is_directory=True)
-    return _SharedJob(job.id, job_dir, test_user.id, test_user2.id, stranger.id)
+    yield _SharedJob(job.id, job_dir, owner.id, viewer.id, stranger.id)
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id.in_([owner.id, viewer.id, stranger.id])))
+        await db.commit()
 
 
 @pytest_asyncio.fixture
-async def request_as(db_session: AsyncSession, shared_job: _SharedJob) -> AsyncIterator[object]:
-    """``request_as(user_id, path)``: GET ``path`` with ``user_id``'s web
-    session, or with none when ``user_id`` is None."""
+async def request_as(
+    db_session: AsyncSession,
+    shared_job: _SharedJob,
+    test_engine: AsyncEngine,
+) -> AsyncIterator[object]:
+    """``request_as(user_id, path)``: GET ``path`` with ``user_id``'s login
+    cookie, or with none when ``user_id`` is None."""
 
     class _Manager:
         jobs_dir = shared_job.job_dir.parent
 
-    async def get(user_id: UUID | None, path: str):  # type: ignore[no-untyped-def]
+    tokens: dict[UUID, str] = {}
+
+    async def token_for(user_id: UUID) -> str:
+        if user_id not in tokens:
+            async with AsyncSession(test_engine, expire_on_commit=False) as db:
+                login = Session(user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1))
+                db.add(login)
+                await db.commit()
+            tokens[user_id] = str(login.id)
+        return tokens[user_id]
+
+    async def get(user_id: UUID | None, path: str):
         app = FastAPI()
 
         async def session_as_user() -> AsyncIterator[AsyncSession]:
@@ -84,10 +107,12 @@ async def request_as(db_session: AsyncSession, shared_job: _SharedJob) -> AsyncI
             yield db_session
 
         app.dependency_overrides[get_session] = session_as_user
-        app.dependency_overrides[get_current_user_id] = lambda: user_id
         app.include_router(router)
+        headers = (
+            {"cookie": f"session_token={await token_for(user_id)}"} if user_id is not None else {}
+        )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            return await c.get(path)
+            return await c.get(path, headers=headers)
 
     with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
         yield get
@@ -220,28 +245,37 @@ async def committed_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterat
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("who", "status"), [("owner", 200), ("stranger", 404)])
 async def test_a_signed_in_user_is_resolved_through_the_webs_own_login(
-    web_login: None, committed_job: _SharedJob, who: str, status: int
+    web_login: None,
+    committed_job: _SharedJob,
+    test_engine: AsyncEngine,
+    who: str,
+    status: int,
 ) -> None:
-    """The session's user id comes from the browser's storage, as a string, and
-    the web login reads users only under RLS, so resolving the user must not
-    depend on a test session that bypasses it."""
+    """The web login reads users only under RLS, so resolving the signed-in
+    user must not depend on a test session that bypasses it."""
 
     class _Manager:
         jobs_dir = committed_job.job_dir.parent
 
+    user_id = UUID(str(getattr(committed_job, who)))
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        login = Session(user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        db.add(login)
+        await db.commit()
+        token = str(login.id)
     app = FastAPI()
-    user_id = str(getattr(committed_job, who))
-    app.dependency_overrides[get_current_user_id] = lambda: user_id
     app.include_router(router)
     url = f"/web/jobs/{committed_job.job_id}/files/provenance/plot.png"
     with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            response = await c.get(url)
+            response = await c.get(url, headers={"cookie": f"session_token={token}"})
     assert response.status_code == status
 
 
 @pytest.mark.asyncio
-async def test_a_malformed_session_user_is_signed_out(shared_job: _SharedJob, db_session) -> None:
+async def test_a_malformed_login_cookie_is_signed_out(
+    shared_job: _SharedJob, db_session: AsyncSession
+) -> None:
     class _Manager:
         jobs_dir = shared_job.job_dir.parent
 
@@ -250,12 +284,11 @@ async def test_a_malformed_session_user_is_signed_out(shared_job: _SharedJob, db
 
     app = FastAPI()
     app.dependency_overrides[get_session] = session
-    app.dependency_overrides[get_current_user_id] = lambda: "not-a-user-id"
     app.include_router(router)
     url = f"/web/jobs/{shared_job.job_id}/files/provenance/plot.png"
     with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            response = await c.get(url)
+            response = await c.get(url, headers={"cookie": "session_token=not-a-uuid"})
     assert response.status_code == 401
 
 

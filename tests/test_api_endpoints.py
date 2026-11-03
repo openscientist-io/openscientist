@@ -10,7 +10,7 @@ import tempfile
 import tracemalloc
 import uuid
 import zipfile
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC
 from pathlib import Path
@@ -64,6 +64,31 @@ async def test_user_db(db_session: AsyncSession) -> User:
     await db_session.commit()
     await db_session.refresh(user)
     return user
+
+
+@pytest_asyncio.fixture
+async def committed_share_owner(
+    test_engine: AsyncEngine,
+) -> AsyncIterator[tuple[User, Job]]:
+    """A committed owner and a job they own, so the endpoint's real
+    per-request sessions read the rows the way the API's do."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        owner = User(
+            email=f"api-share-owner-{uuid.uuid4().hex}@share.test",
+            name="API Share Owner",
+            is_approved=True,
+        )
+        db.add(owner)
+        await db.flush()
+        job = Job(owner_id=owner.id, research_question="API Shared Job", status="pending")
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+    yield owner, job
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id == owner.id))
+        await db.commit()
 
 
 @pytest_asyncio.fixture
@@ -2098,12 +2123,7 @@ class TestJobSharingEndpoints:
 
     @pytest.mark.asyncio
     async def test_list_job_shares(
-        self,
-        db_session: AsyncSession,
-        test_user_db: User,
-        test_user2_db: User,
-        test_api_key_db: tuple[APIKey, str],
-        test_job_db: Job,
+        self, test_engine: AsyncEngine, committed_share_owner: tuple[User, Job]
     ):
         """List shares for a job."""
 
@@ -2112,49 +2132,52 @@ class TestJobSharingEndpoints:
         from openscientist.api.auth import get_current_user_from_api_key
         from openscientist.api.router import api_router as router
         from openscientist.database.models import JobShare
-        from openscientist.database.rls import set_current_user
-        from openscientist.database.session import get_session
 
-        _, full_key = test_api_key_db
+        owner, job = committed_share_owner
 
-        # Create a share first
-        share = JobShare(
-            job_id=test_job_db.id,
-            shared_with_user_id=test_user2_db.id,
-            permission_level="view",
-        )
-        db_session.add(share)
-        await db_session.commit()
+        # The endpoint resolves shared-with users through its own admin
+        # session, so the target must be committed, like a real user row.
+        async with AsyncSession(test_engine, expire_on_commit=False) as target_db:
+            target = User(email=f"share-list-{uuid.uuid4().hex}@share.test", name="Share Target")
+            target_db.add(target)
+            await target_db.commit()
+            await target_db.refresh(target)
 
-        app = FastAPI()
+        try:
+            async with AsyncSession(test_engine, expire_on_commit=False) as share_db:
+                share_db.add(
+                    JobShare(job_id=job.id, shared_with_user_id=target.id, permission_level="view")
+                )
+                await share_db.commit()
 
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
+            app = FastAPI()
 
-        async def override_get_user():
-            return test_user_db
+            async def override_get_user():
+                return owner
 
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
+            app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+            app.include_router(router)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.get(
-                f"/api/v1/shares/job/{test_job_db.id}",
-                headers={"Authorization": f"Bearer {full_key}"},
-            )
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/shares/job/{job.id}",
+                    headers={"Authorization": "Bearer test"},
+                )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert "shares" in data
-        assert data["total"] >= 1
-        # Verify the share we created is in the list
-        share_emails = [s["shared_with_email"] for s in data["shares"]]
-        assert test_user2_db.email in share_emails
+            assert response.status_code == 200
+            data = response.json()
+            assert "shares" in data
+            assert data["total"] >= 1
+            # Verify the share we created is in the list
+            share_emails = [s["shared_with_email"] for s in data["shares"]]
+            assert target.email in share_emails
+        finally:
+            async with AsyncSession(test_engine, expire_on_commit=False) as target_db:
+                await target_db.execute(delete(User).where(User.id == target.id))
+                await target_db.commit()
 
     @pytest.mark.asyncio
     async def test_list_job_shares_not_owner_forbidden(

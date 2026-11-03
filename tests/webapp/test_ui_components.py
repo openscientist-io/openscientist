@@ -125,6 +125,8 @@ class TestRenderErrorCard:
         """The card's labels carry the error details and job state, and the raw
         output is rendered as a code block."""
         from nicegui import ui
+        from nicegui.client import Client
+        from nicegui.page import page
 
         from openscientist.job.types import JobInfo
         from openscientist.webapp_components.components.banners import render_error_card
@@ -151,10 +153,15 @@ class TestRenderErrorCard:
 
         job_dir = Path("/nonexistent/job/dir")
 
-        # Render for real, then locate the card this call created in the page slot
-        before = {id(child) for child in ui.context.slot.children}
-        render_error_card(error_info, job_info, job_dir)
-        new_children = [c for c in ui.context.slot.children if id(c) not in before]
+        # Render in an explicit page context. The throwaway slot bootstrap that
+        # would create one only runs when no client instance is left behind by
+        # an earlier test, and the error-surface requests leave theirs behind.
+        client = Client(page(""))
+        with client:
+            # Render for real, then locate the card this call created in the page slot
+            before = {id(child) for child in ui.context.slot.children}
+            render_error_card(error_info, job_info, job_dir)
+            new_children = [c for c in ui.context.slot.children if id(c) not in before]
         assert len(new_children) == 1
         card = new_children[0]
 
@@ -172,6 +179,7 @@ class TestRenderErrorCard:
         code_blocks = [e for e in card.descendants() if type(e).__name__ == "Code"]
         assert len(code_blocks) == 1
         assert code_blocks[0]._props["content"] == "Raw error"
+        client.delete()
 
 
 class TestPmidLinkParsing:
@@ -351,13 +359,15 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
 
     def test_rendering_many_badges_never_touches_add_head_html(self):
         from nicegui.client import Client
+        from nicegui.page import page
 
         before = Client.shared_head_html
-        for i in range(50):
-            render_pmid_badge(str(12000000 + i))
-            render_job_id_badge(f"12345678-1234-1234-1234-{i:012d}")
-            render_text_with_pmid_links(f"See PMID: {12000000 + i}")
-
+        with Client(page("")) as client:
+            for i in range(50):
+                render_pmid_badge(str(12000000 + i))
+                render_job_id_badge(f"12345678-1234-1234-1234-{i:012d}")
+                render_text_with_pmid_links(f"See PMID: {12000000 + i}")
+        client.delete()
         assert Client.shared_head_html == before
 
     def test_inject_thinking_status_styles_adds_head_html(self):
@@ -376,11 +386,13 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
         actively-watched running job -- this is the call site that produced
         the original leak, so it must never call add_head_html itself."""
         from nicegui.client import Client
+        from nicegui.page import page
 
         before = Client.shared_head_html
-        for _ in range(50):
-            render_thinking_status("Searching PubMed...")
-
+        with Client(page("")) as client:
+            for _ in range(50):
+                render_thinking_status("Searching PubMed...")
+        client.delete()
         assert Client.shared_head_html == before
 
 

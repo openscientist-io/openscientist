@@ -4,12 +4,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.auth.middleware import get_current_user_id
+from openscientist.auth.middleware import validate_session
 from openscientist.database.models import JobShare, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session
@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Session-auth routes for the web UI. Excluded from the API docs.
 router = APIRouter(prefix="/web/shares", include_in_schema=False)
-CURRENT_USER_ID_DEP = Depends(get_current_user_id)
 SESSION_DEP = Depends(get_session)
 
 
@@ -77,20 +76,28 @@ def _share_to_response(share: JobShare, target_user: User) -> ShareResponse:
 
 
 async def get_current_user_from_session(
-    user_id: str | None = CURRENT_USER_ID_DEP,
+    request: Request,
     session: AsyncSession = SESSION_DEP,
 ) -> User:
-    """Resolve the signed-in user for web-session routes. 401 when signed out or missing."""
+    """Resolve the signed-in user for web-session routes from the login cookie,
+    validated against the database. 401 when missing, expired or deleted."""
+    token = request.cookies.get("session_token")
     try:
-        user_uuid = UUID(str(user_id)) if user_id is not None else None
+        token_uuid = UUID(token) if token is not None else None
     except ValueError:
-        user_uuid = None
-    if user_uuid is None:
+        token_uuid = None
+    if token_uuid is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
 
+    user_info = await validate_session(str(token_uuid))
+    if user_info is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
+
+    user_id = UUID(user_info["user_id"])
+
     # The web login reads users under RLS, which shows a user only their own row.
-    await set_current_user(session, user_uuid)
-    user = (await session.execute(select(User).where(User.id == user_uuid))).scalar_one_or_none()
+    await set_current_user(session, user_id)
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
