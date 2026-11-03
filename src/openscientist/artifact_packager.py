@@ -5,6 +5,7 @@ Provides utilities for packaging job artifacts (reports, plots, logs, data)
 into downloadable archives in various formats (ZIP, Markdown, JSON).
 """
 
+import json
 import logging
 import zipfile
 from collections.abc import Iterator
@@ -13,6 +14,11 @@ from pathlib import Path, PurePosixPath
 logger = logging.getLogger(__name__)
 
 EXCLUDED_FILES_MANIFEST = "EXCLUDED_FILES.txt"
+
+# The run's recorded environment, written from the database at the archive root.
+# The job directory is agent-writable, so a file there under this name is never
+# shipped in its place.
+PROVENANCE_FILE = "provenance.json"
 
 # Agent working directories are never artifacts, and they hold credentials: the
 # per-job MCP config, session transcripts, and the copied omp credential vault.
@@ -45,6 +51,7 @@ def _shown_file(file_path: Path) -> bool:
 def _iter_artifact_files(
     job_dir: Path,
     excluded_paths: set[Path] | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> Iterator[tuple[Path, Path]]:
     """Yield (absolute_path, archive_relative_path) pairs for artifact files."""
     excluded_paths = excluded_paths or set()
@@ -53,19 +60,31 @@ def _iter_artifact_files(
         dirnames[:] = [
             dirname
             for dirname in dirnames
-            if _shown_dir(root / dirname) and (root / dirname).resolve() not in excluded_paths
+            if _shown_dir(root / dirname)
+            and (root / dirname).resolve() not in excluded_paths
+            and not (root == job_dir and dirname in excluded_top_level_dirs)
         ]
         for filename in filenames:
             file_path = root / filename
+            if root == job_dir and filename == PROVENANCE_FILE:
+                continue
             if _shown_file(file_path) and file_path.resolve() not in excluded_paths:
                 yield file_path, file_path.relative_to(job_dir)
 
 
-def artifact_file(job_dir: Path, relative: str) -> Path | None:
+def artifact_file(
+    job_dir: Path,
+    relative: str,
+    excluded_top_level_dirs: tuple[str, ...] = (),
+) -> Path | None:
     """The file at ``relative`` in ``job_dir`` when the artifacts ZIP would
     include it, or None."""
     parts = PurePosixPath(relative).parts
     if not parts or any(part in ("", ".", "..", "/") or "\\" in part for part in parts):
+        return None
+    if parts == (PROVENANCE_FILE,):
+        return None
+    if parts[0] in excluded_top_level_dirs:
         return None
     path = job_dir
     for dirname in parts[:-1]:
@@ -115,10 +134,15 @@ def _write_artifacts_zip(
     zip_file: zipfile.ZipFile,
     job_dir: Path,
     excluded_paths: set[Path] | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> int:
     """Write job artifacts into an open zip file and return number of files written."""
     included, oversized = _partition_by_size(
-        _iter_artifact_files(job_dir, excluded_paths=excluded_paths)
+        _iter_artifact_files(
+            job_dir,
+            excluded_paths=excluded_paths,
+            excluded_top_level_dirs=excluded_top_level_dirs,
+        )
     )
 
     written = 0
@@ -141,15 +165,34 @@ def _write_artifacts_zip(
     return written
 
 
-def create_artifacts_zip_file(job_dir: Path, archive_path: Path, job_id: str) -> int:
-    """Create an artifacts ZIP archive on disk and return number of files written."""
+def create_artifacts_zip_file(
+    job_dir: Path,
+    archive_path: Path,
+    job_id: str,
+    version_info: dict[str, str] | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
+) -> int:
+    """Create an artifacts ZIP archive on disk and return number of files written.
+
+    ``version_info`` is the environment the run recorded, written as
+    ``provenance.json`` when the run recorded one."""
     excluded_paths: set[Path] = set()
     archive_path_resolved = archive_path.resolve()
     if archive_path_resolved.is_relative_to(job_dir.resolve()):
         excluded_paths.add(archive_path_resolved)
 
     with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        written = _write_artifacts_zip(zip_file, job_dir, excluded_paths=excluded_paths)
+        written = _write_artifacts_zip(
+            zip_file,
+            job_dir,
+            excluded_paths=excluded_paths,
+            excluded_top_level_dirs=excluded_top_level_dirs,
+        )
+        if version_info:
+            zip_file.writestr(
+                PROVENANCE_FILE, json.dumps(version_info, indent=2, sort_keys=True) + "\n"
+            )
+            written += 1
     logger.info(
         "Created artifacts ZIP file for job %s at %s (%d files)",
         job_id,

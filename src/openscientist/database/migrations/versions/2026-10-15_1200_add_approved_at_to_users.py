@@ -1,7 +1,7 @@
 """Add approved_at timestamp to users.
 
 Revision ID: add_approved_at
-Revises: job_slot_times
+Revises: job_is_public
 Create Date: 2026-10-15 12:00:00
 
 Lets the admin Users table sort by when a user was approved. Previously only
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "add_approved_at"
-down_revision: str | None = "job_slot_times"
+down_revision: str | None = "job_is_public"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -35,10 +35,9 @@ def upgrade() -> None:
             comment="When an administrator approved this user (None if pending or never approved)",
         ),
     )
-    # Best-effort backfill: updated_at is not guaranteed to be the exact
-    # approval moment (any later edit to the row would also bump it), but
-    # it's a far better default than leaving every already-approved user
-    # permanently stuck at "—" and unsortable against future approvals.
+    # Best-effort backfill: use updated_at as proxy for users approved
+    # prior to this column existing. (Otherwise, pre-existing users
+    # would not be sortable.)
     op.execute(
         "UPDATE users SET approved_at = updated_at WHERE is_approved = true AND approved_at IS NULL"
     )

@@ -21,12 +21,15 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+    # Over TCP, because the image's init server listens only on the socket and
+    # then restarts, which would let db-bootstrap connect into the gap. The
+    # start period covers a slow first boot, which only the TCP check waits for.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openscientist} -d ${POSTGRES_DB:-openscientist}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-openscientist} -d ${POSTGRES_DB:-openscientist}"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 120s
 
   # As the superuser, creates or updates the database logins and hands the schema
   # to openscientist_owner. Runs on every `up`, before the migrations.
@@ -99,7 +102,6 @@ services:
       # Database URLs use the 'postgres' service hostname — must override any .env value
       DATABASE_URL: postgresql+asyncpg://openscientist_web:${POSTGRES_WEB_PASSWORD:?set POSTGRES_WEB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
       ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
-      PORT: ${PORT:-8080}
 
       # Phenix: PHENIX_HOST_PATH points to a Linux x86_64 Phenix directory on the
       # host.  It is mounted read-only at /opt/phenix; PHENIX_PATH is the

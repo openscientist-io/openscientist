@@ -18,15 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, User
 from openscientist.database.session import thread_safe_admin_session
-from openscientist.job.types import JobStatus
-from openscientist.job_manager import (
-    _db_delete_job,
-    _db_get_job,
-    _db_get_notification_target,
-    _db_list_jobs,
-    _db_update_job_status,
-    _load_progress_from_knowledge_state,
+from openscientist.job.repository import (
+    delete_job,
+    get_job,
+    get_notification_target,
+    list_jobs,
+    set_job_status,
 )
+from openscientist.job.types import JobStatus
+from openscientist.job_manager import _load_progress_from_knowledge_state
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import ensure_user_has_topic, get_user_ntfy_settings
 
@@ -63,25 +63,25 @@ async def _status(test_engine: AsyncEngine, job_id: str) -> str | None:
 async def test_worker_paths_reach_a_users_job_without_the_web_login(
     web_login: None, owned_job: _OwnedJob, test_engine: AsyncEngine
 ) -> None:
-    queued = [job.id for job in await _db_list_jobs(status=JobStatus.QUEUED)]
+    queued = [job.id for job in await list_jobs(status=JobStatus.QUEUED)]
     assert UUID(owned_job.job_id) in queued
 
-    target = await _db_update_job_status(
+    target = await set_job_status(
         owned_job.job_id, JobStatus.RUNNING, allowed_from={JobStatus.QUEUED}
     )
     assert target.owner_id == str(owned_job.owner_id)
     assert await _status(test_engine, owned_job.job_id) == "running"
 
-    job = await _db_get_job(owned_job.job_id)
+    job = await get_job(owned_job.job_id)
     assert job is not None and job.status == "running"
-    assert (await _db_get_notification_target(owned_job.job_id)).owner_id == str(owned_job.owner_id)
+    assert (await get_notification_target(owned_job.job_id)).owner_id == str(owned_job.owner_id)
 
 
 @pytest.mark.asyncio
 async def test_a_job_is_deleted_without_a_user_or_the_web_login(
     web_login: None, owned_job: _OwnedJob, test_engine: AsyncEngine
 ) -> None:
-    await _db_delete_job(owned_job.job_id)
+    await delete_job(owned_job.job_id)
     assert await _status(test_engine, owned_job.job_id) is None
 
 

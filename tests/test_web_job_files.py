@@ -251,13 +251,13 @@ async def test_the_report_falls_back_to_its_saved_html(shared_job: _SharedJob, r
 async def test_the_plot_the_page_shows_reaches_its_owner(
     shared_job: _SharedJob, request_as
 ) -> None:
-    from openscientist.webapp_components.pages import job_detail
+    from openscientist.webapp_components.pages.job_detail import iterations
 
     provenance = shared_job.job_dir / "provenance"
     (provenance / "dose response #1.png").write_bytes(_PLOT)
     (provenance / "dose response #1.json").write_text('{"iteration": 1}')
-    with patch.object(job_detail, "ui") as ui:
-        job_detail._render_iteration_plots(provenance, 1)
+    with patch.object(iterations, "ui") as ui:
+        iterations._render_iteration_plots(provenance, 1)
     [url] = [c.args[0] for c in ui.image.call_args_list]
 
     response = await request_as(shared_job.owner, url)
@@ -269,10 +269,10 @@ async def test_the_plot_the_page_shows_reaches_its_owner(
 async def test_the_report_the_page_frames_reaches_its_owner(
     shared_job: _SharedJob, request_as
 ) -> None:
-    from openscientist.webapp_components.pages import job_detail
+    from openscientist.webapp_components.pages.job_detail import report
 
-    with patch.object(job_detail, "ui") as ui:
-        job_detail._render_report_html_iframe(shared_job.job_dir)
+    with patch.object(report, "ui") as ui:
+        report._render_report_html_iframe(shared_job.job_dir)
     [props] = [c.args[0] for c in ui.element.return_value.props.call_args_list]
     url = props.split('src="', 1)[1].split('"', 1)[0]
 
@@ -285,11 +285,11 @@ async def test_the_report_the_page_frames_reaches_its_owner(
 async def test_a_job_without_a_report_frames_nothing_and_serves_nothing(
     shared_job: _SharedJob, request_as
 ) -> None:
-    from openscientist.webapp_components.pages import job_detail
+    from openscientist.webapp_components.pages.job_detail import report
 
     (shared_job.job_dir / "final_report.html").unlink()
-    with patch.object(job_detail, "ui") as ui:
-        job_detail._render_report_html_iframe(shared_job.job_dir)
+    with patch.object(report, "ui") as ui:
+        report._render_report_html_iframe(shared_job.job_dir)
     ui.element.assert_not_called()
 
     response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/report.html")

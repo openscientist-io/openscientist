@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist.database import get_session_ctx
 from openscientist.database.models import User
 from openscientist.database.rls import set_current_user
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.notifications import (
     _fetch_notification_settings,
     _set_notifications_enabled,
 )
@@ -84,4 +84,14 @@ async def test_a_user_session_cannot_approve_itself(users: _Users) -> None:
             await set_current_user(session, users.alice)
             await session.execute(
                 update(User).where(User.id == users.alice).values(is_approved=True)
+            )
+
+
+@pytest.mark.asyncio
+async def test_a_user_session_cannot_make_itself_a_priority_user(users: _Users) -> None:
+    with pytest.raises(ProgrammingError, match="permission denied"):
+        async with get_session_ctx() as session:
+            await set_current_user(session, users.alice)
+            await session.execute(
+                update(User).where(User.id == users.alice).values(is_priority=True)
             )

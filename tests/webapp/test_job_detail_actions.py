@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from openscientist.job.types import JobStatus
-from openscientist.webapp_components.pages import job_detail
+from openscientist.webapp_components.pages.job_detail import iterations, report
 
 
 def _context(status: JobStatus) -> SimpleNamespace:
@@ -36,8 +36,8 @@ def _action_context() -> SimpleNamespace:
     ],
 )
 def test_can_regenerate_report_gating(is_admin: bool, status: JobStatus, expected: bool) -> None:
-    with patch.object(job_detail, "is_current_user_admin", return_value=is_admin):
-        assert job_detail._can_regenerate_report(_context(status)) is expected  # type: ignore[arg-type]
+    with patch.object(report, "is_current_user_admin", return_value=is_admin):
+        assert report._can_regenerate_report(_context(status)) is expected  # type: ignore[arg-type]
 
 
 async def test_regenerate_action_blocks_non_admin_server_side() -> None:
@@ -45,10 +45,10 @@ async def test_regenerate_action_blocks_non_admin_server_side() -> None:
     non-admin, even if the button were somehow triggered."""
     context = _action_context()
     with (
-        patch.object(job_detail, "is_current_user_admin", return_value=False),
-        patch.object(job_detail, "ui"),  # swallow notify/navigate
+        patch.object(report, "is_current_user_admin", return_value=False),
+        patch.object(report, "ui"),  # swallow notify/navigate
     ):
-        await job_detail._regenerate_report(context)  # type: ignore[arg-type]
+        await report._regenerate_report(context)  # type: ignore[arg-type]
     context.job_manager.regenerate_report.assert_not_called()
 
 
@@ -56,10 +56,10 @@ async def test_regenerate_action_calls_manager_for_admin() -> None:
     """An admin action reaches the manager with the job id."""
     context = _action_context()
     with (
-        patch.object(job_detail, "is_current_user_admin", return_value=True),
-        patch.object(job_detail, "ui"),  # swallow notify/navigate
+        patch.object(report, "is_current_user_admin", return_value=True),
+        patch.object(report, "ui"),  # swallow notify/navigate
     ):
-        await job_detail._regenerate_report(context)  # type: ignore[arg-type]
+        await report._regenerate_report(context)  # type: ignore[arg-type]
     context.job_manager.regenerate_report.assert_awaited_once_with("job-1")
 
 
@@ -68,36 +68,36 @@ class TestTimelineHeaderText:
     iteration as 'Completed' (which reads as the whole job being done)."""
 
     def test_strapline_wins(self) -> None:
-        assert job_detail._timeline_header_text("Found X", "long summary", False) == "Found X"
+        assert iterations._timeline_header_text("Found X", "long summary", False) == "Found X"
 
     def test_summary_used_when_no_strapline(self) -> None:
-        assert job_detail._timeline_header_text("", "Did Y", False) == "Did Y"
+        assert iterations._timeline_header_text("", "Did Y", False) == "Did Y"
 
     def test_in_progress_without_summary(self) -> None:
-        assert job_detail._timeline_header_text("", "", True) == "Investigation in progress..."
+        assert iterations._timeline_header_text("", "", True) == "Investigation in progress..."
 
     def test_no_summary_no_activity_is_not_labelled_completed(self) -> None:
         # The regression: a finished iteration with no summary used to say
         # "Completed". With no activity either, say so plainly.
-        out = job_detail._timeline_header_text("", "", False, has_activity=False)
+        out = iterations._timeline_header_text("", "", False, has_activity=False)
         assert out == "No activity or summary recorded"
         assert out != "Completed"
 
     def test_activity_without_summary_is_distinguished(self) -> None:
         # An iteration that did work but skipped save_iteration_summary must not
         # read as idle (and must not say "Completed").
-        out = job_detail._timeline_header_text("", "", False, has_activity=True)
+        out = iterations._timeline_header_text("", "", False, has_activity=True)
         assert out == "Activity logged, but no summary recorded"
         assert out != "Completed"
 
     def test_in_progress_suffix_on_strapline(self) -> None:
-        assert job_detail._timeline_header_text("Found X", "", True) == "Found X [in progress]"
+        assert iterations._timeline_header_text("Found X", "", True) == "Found X [in progress]"
 
 
 class TestDownloadArtifactsZipStreamsOverHttp:
     def test_triggers_http_download_of_session_route(self) -> None:
-        with patch.object(job_detail, "ui") as mock_ui:
-            job_detail._download_artifacts_zip("job-1")
+        with patch.object(report, "ui") as mock_ui:
+            report._download_artifacts_zip("job-1")
 
         mock_ui.download.assert_called_once_with("/web/jobs/job-1/artifacts.zip")
 
@@ -113,18 +113,24 @@ class TestDownloadPdfReport:
         loop_thread = threading.get_ident()
         render_threads: list[int] = []
 
-        def fake_markdown_to_pdf(source, target) -> None:
+        footers: list[str | None] = []
+
+        def fake_markdown_to_pdf(source, target, run_environment=None) -> None:
             render_threads.append(threading.get_ident())
+            footers.append(run_environment)
             target.write_bytes(b"PDF-CONTENT")
 
         with (
-            patch.object(job_detail, "ui") as mock_ui,
-            patch.object(job_detail, "markdown_to_pdf", side_effect=fake_markdown_to_pdf),
+            patch.object(report, "ui") as mock_ui,
+            patch.object(report, "markdown_to_pdf", side_effect=fake_markdown_to_pdf),
         ):
-            await job_detail._download_pdf_report(report_path, pdf_path, "job-9")
+            await report._download_pdf_report(
+                report_path, pdf_path, "job-9", "Run environment: OpenScientist abc123"
+            )
 
         mock_ui.download.assert_called_once_with(b"PDF-CONTENT", filename="job-9_report.pdf")
         assert not (tmp_path / "_final_report_stripped.md").exists()
+        assert footers == ["Run environment: OpenScientist abc123"]
         # Rendering a long report takes seconds of CPU, so it must not run on the loop thread.
         assert render_threads and render_threads[0] != loop_thread
 
@@ -151,10 +157,10 @@ class TestRegenerateConfirmDialog:
             setattr(mock_ui, name, _ctx_factory)
 
         with (
-            patch.object(job_detail, "ui", mock_ui),
-            patch.object(job_detail, "is_current_user_admin", return_value=True),
+            patch.object(report, "ui", mock_ui),
+            patch.object(report, "is_current_user_admin", return_value=True),
         ):
-            job_detail._confirm_regenerate_report(context)  # type: ignore[arg-type]
+            report._confirm_regenerate_report(context)  # type: ignore[arg-type]
             regenerate = [
                 c for c in mock_ui.button.call_args_list if c.args and c.args[0] == "Regenerate"
             ][0]

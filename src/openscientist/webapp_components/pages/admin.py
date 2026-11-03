@@ -15,20 +15,23 @@ from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_j
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
 from openscientist.database.models import Job, ReviewToken, Session, User
 from openscientist.database.session import get_admin_session
-from openscientist.webapp_components.pages.billing import render_billing_panel
-from openscientist.webapp_components.ui_components import (
+from openscientist.job.types import JobStatus
+from openscientist.webapp_components.components.badges import render_job_id_badge
+from openscientist.webapp_components.components.banners import render_alert_banner
+from openscientist.webapp_components.components.common import (
+    STATUS_COLORS,
     format_uptime,
     make_action_button_slot,
-    render_alert_banner,
     render_container_status_badge,
     render_dialog_actions,
     render_empty_state,
-    render_job_id_badge,
-    render_job_id_slot,
-    render_navigator,
     render_stat_badges,
     render_user_search,
 )
+from openscientist.webapp_components.components.job_table import render_job_id_slot
+from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.pages.billing import render_billing_panel
+from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import guard_client, setup_timer_cleanup
 
 if TYPE_CHECKING:
@@ -91,6 +94,27 @@ async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bo
     return True, "User approval removed successfully"
 
 
+async def set_user_priority_status(user_id: UUID, is_priority: bool) -> tuple[bool, str]:
+    """Mark a user's queued jobs as starting ahead of other users' jobs, or not.
+
+    Returns:
+        Tuple of (success, message)
+    """
+    async with get_admin_session() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not user:
+            return False, "User not found"
+        if bool(user.is_priority) == is_priority:
+            state = "already" if is_priority else "not"
+            return False, f"User is {state} a priority user"
+        user.is_priority = is_priority
+        await session.commit()
+
+    if is_priority:
+        return True, "User is now a priority user"
+    return True, "User is no longer a priority user"
+
+
 @ui.page("/admin")
 @require_auth
 @require_admin
@@ -108,6 +132,7 @@ async def admin_page() -> None:
             review_tokens_tab = ui.tab("Review Tokens", icon="rate_review")
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
+            settings_tab = ui.tab("Settings", icon="tune")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
             # Orphaned Jobs Panel (deferred — not the default tab)
@@ -129,6 +154,10 @@ async def admin_page() -> None:
             # Billing Panel (deferred)
             with ui.tab_panel(billing_tab):
                 ui.timer(0.1, render_billing_panel, once=True)
+
+            # Settings Panel (deferred)
+            with ui.tab_panel(settings_tab):
+                ui.timer(0.1, render_settings_panel, once=True)
 
 
 async def render_orphaned_jobs_panel() -> None:
@@ -385,6 +414,12 @@ def _admin_users_columns() -> list[dict[str, Any]]:
             "field": "approval_status",
             "align": "center",
         },
+        {
+            "name": "priority_status",
+            "label": "Priority",
+            "field": "priority_status",
+            "align": "center",
+        },
         {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
     ]
 
@@ -422,6 +457,8 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
             "job_count": job_counts.get(user.id, 0),
             "approval_status": "Approved" if user.is_approved else "Pending",
             "is_approved": bool(user.is_approved),
+            "priority_status": "Priority" if user.is_priority else "Normal",
+            "is_priority": bool(user.is_priority),
         }
         for user in users
     ]
@@ -468,6 +505,27 @@ async def _handle_approval_update(
         ui.notify(error_message, color="negative")
 
 
+async def _handle_priority_update(
+    e: Any, is_priority: bool, reload_users: Callable[[], Awaitable[None]]
+) -> None:
+    user_id = e.args.get("id")
+    if not user_id:
+        ui.notify("Invalid user selection", color="negative")
+        return
+    try:
+        success, message = await set_user_priority_status(UUID(user_id), is_priority=is_priority)
+    except ValueError:
+        ui.notify("Invalid user selection", color="negative")
+        return
+    except Exception as ex:
+        logger.error("Error setting priority of user %s: %s", user_id, ex, exc_info=True)
+        ui.notify("Failed to change the user's priority. Check server logs.", color="negative")
+        return
+    ui.notify(message, color="positive" if success else "info")
+    if success:
+        await reload_users()
+
+
 def _render_admin_users_table(
     users_container: ui.column,
     rows: list[dict[str, object]],
@@ -489,33 +547,75 @@ def _render_admin_users_table(
             """,
         )
         users_table.add_slot(
+            "body-cell-priority_status",
+            """
+            <q-td :props="props">
+                <q-badge
+                    :color="props.row.is_priority ? 'purple' : 'grey'"
+                    :label="props.row.priority_status"
+                />
+            </q-td>
+            """,
+        )
+        users_table.add_slot(
             "body-cell-actions",
             """
             <q-td :props="props">
-                <div class="q-gutter-xs">
+                <div class="row items-center gap-1 justify-center flex-wrap">
                     <q-btn
                         v-if="!props.row.is_approved"
+                        flat
+                        dense
                         size="sm"
                         color="positive"
                         icon="check"
-                        label="Approve"
                         @click="$parent.$emit('approve-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Approve user</q-tooltip>
+                    </q-btn>
                     <q-btn
                         v-else
+                        flat
+                        dense
                         size="sm"
                         color="warning"
                         icon="remove_circle"
-                        label="Unapprove"
                         @click="$parent.$emit('unapprove-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Remove approval</q-tooltip>
+                    </q-btn>
                     <q-btn
+                        v-if="!props.row.is_priority"
+                        flat
+                        dense
+                        size="sm"
+                        color="purple"
+                        icon="bolt"
+                        @click="$parent.$emit('prioritise-user', props.row)"
+                    >
+                        <q-tooltip>Make priority user</q-tooltip>
+                    </q-btn>
+                    <q-btn
+                        v-else
+                        flat
+                        dense
+                        size="sm"
+                        color="grey"
+                        icon="bolt"
+                        @click="$parent.$emit('deprioritise-user', props.row)"
+                    >
+                        <q-tooltip>Remove priority</q-tooltip>
+                    </q-btn>
+                    <q-btn
+                        flat
+                        dense
                         size="sm"
                         color="negative"
                         icon="delete"
-                        label="Delete"
                         @click="$parent.$emit('delete-user', props.row)"
-                    />
+                    >
+                        <q-tooltip>Delete user</q-tooltip>
+                    </q-btn>
                 </div>
             </q-td>
             """,
@@ -526,6 +626,12 @@ def _render_admin_users_table(
 
         async def unapprove_user(e: Any) -> None:
             await _handle_approval_update(e, is_approved=False, reload_users=reload_users)
+
+        async def prioritise_user(e: Any) -> None:
+            await _handle_priority_update(e, is_priority=True, reload_users=reload_users)
+
+        async def deprioritise_user(e: Any) -> None:
+            await _handle_priority_update(e, is_priority=False, reload_users=reload_users)
 
         async def handle_delete_user(e: Any) -> None:
             user_id = e.args.get("id")
@@ -541,6 +647,8 @@ def _render_admin_users_table(
 
         users_table.on("approve-user", approve_user)
         users_table.on("unapprove-user", unapprove_user)
+        users_table.on("prioritise-user", prioritise_user)
+        users_table.on("deprioritise-user", deprioritise_user)
         users_table.on("delete-user", handle_delete_user)
 
 
@@ -648,15 +756,11 @@ async def render_containers_panel() -> None:
 
 
 def _job_status_color(status: str) -> str:
-    """Map a job status string to a Quasar badge color."""
-    return {
-        "running": "yellow",
-        "queued": "blue",
-        "pending": "grey",
-        "completed": "green",
-        "failed": "red",
-        "cancelled": "grey",
-    }.get(status, "grey")
+    """The badge colour every other page uses for ``status``."""
+    try:
+        return STATUS_COLORS[JobStatus(status)]
+    except ValueError:
+        return "gray"
 
 
 def _render_dashboard_unavailable_state(data: DashboardData) -> bool:
@@ -792,11 +896,13 @@ _REVIEW_TOKEN_ACTIONS_SLOT = r"""
         v-if="props.row.can_revoke"
         flat
         dense
+        size="sm"
         color="negative"
         icon="block"
-        label="Revoke"
         @click="$parent.$emit('revoke', props.row)"
-    />
+    >
+        <q-tooltip>Revoke token</q-tooltip>
+    </q-btn>
     <span v-else class="text-grey">-</span>
 </q-td>
 """

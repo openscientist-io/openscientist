@@ -232,9 +232,8 @@ The agent is generally good at understanding data in many formats beyond those l
 OpenScientist runs as a Docker container:
 
 ```bash
-make build            # Build the Docker image
-make start            # Start the container
-make restart          # Restart without rebuilding
+uv run openscientist        # Build the images and start the stack
+uv run openscientist stop   # Stop the stack
 ```
 
 Access the web UI at `http://localhost:8080`.

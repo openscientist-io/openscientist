@@ -14,12 +14,12 @@ from openscientist.auth import get_current_user_id, is_current_user_admin, requi
 from openscientist.database.models import APIKey, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
-from openscientist.webapp_components.ui_components import (
+from openscientist.webapp_components.components.common import (
     format_relative_time,
     render_dialog_actions,
     render_empty_state,
-    render_navigator,
 )
+from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils import get_event_value, setup_timer_cleanup
 
 logger = logging.getLogger(__name__)

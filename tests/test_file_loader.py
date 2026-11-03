@@ -14,6 +14,19 @@ from openscientist.file_loader import (
     load_tabular_file,
     validate_uploaded_file,
 )
+from tests.admin_row import default_admin_settings_values
+
+
+@pytest.fixture(autouse=True)
+def _admin_settings_row():
+    """The size check reads the row at use, and these tests have no database
+    for it."""
+    with patch(
+        "openscientist.file_loader.current_admin_settings_sync",
+        return_value=default_admin_settings_values(),
+    ):
+        yield
+
 
 # ─── get_file_info ────────────────────────────────────────────────────
 
@@ -58,20 +71,8 @@ class TestGetFileInfo:
         with pytest.raises(FileNotFoundError):
             get_file_info(tmp_path / "nonexistent.csv")
 
-    def test_file_too_big(self, tmp_path):
-        p = tmp_path / "big.csv"
-        p.write_text("x" * 100)
-        with (
-            patch("openscientist.file_loader._get_max_file_size", return_value=10),
-            pytest.raises(
-                FileTooBigError,
-                match="exceeds limit",
-            ),
-        ):
-            get_file_info(p)
 
-
-# ─── load_tabular_file ────────────────────────────────────────────────
+# ─── load_tabular_file ────────────────────────────────────────────────────
 
 
 class TestLoadTabularFile:

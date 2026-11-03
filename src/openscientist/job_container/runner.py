@@ -22,12 +22,12 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import cast
 
 from docker.models.containers import Container
 
 import docker
 from docker import errors as docker_errors
+from openscientist.admin_settings import AdminSettingsValues, current_admin_settings_sync
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS
 from openscientist.exceptions import MissingImageError
 from openscientist.exec_broker_client import (
@@ -91,6 +91,7 @@ class JobContainerRunner:
         provider_env: dict[str, str],
         database_url: str,
         exec_token: str,
+        airgapped: bool,
         run_mode: str = "discovery",
     ) -> dict[str, str]:
         """Build the environment variables for the agent container."""
@@ -124,7 +125,7 @@ class JobContainerRunner:
             env["OPENSCIENTIST_HOST_PROJECT_DIR"] = cs.host_project_dir
             env["OPENSCIENTIST_CONTAINER_APP_DIR"] = AGENT_APP_DIR
         # Air-gapped mode routes the tools subprocess to the local PubMed corpus.
-        if settings.airgap.enabled:
+        if airgapped:
             env["OPENSCIENTIST_AIRGAPPED"] = "1"
         if settings.phenix.phenix_host_path:
             env["PHENIX_PATH"] = "/opt/phenix"
@@ -160,23 +161,21 @@ class JobContainerRunner:
     @staticmethod
     def _agent_runtime_settings(
         settings: Settings,
+        admin: AdminSettingsValues,
     ) -> tuple[str | None, str, float, str | None]:
         """Return network, memory, CPU, and platform settings for the agent."""
         container_settings = settings.container
-        if hasattr(container_settings, "model_dump"):
-            config = container_settings.model_dump()
-        else:
-            config = vars(container_settings)
         return (
-            cast(str | None, config["agent_network"]),
-            cast(str, config["agent_memory"]),
-            cast(float, config["agent_cpu"]),
-            cast(str | None, config["agent_platform"]),
+            container_settings.agent_network,
+            f"{admin.agent_memory_mib}m",
+            admin.agent_cpu,
+            container_settings.agent_platform,
         )
 
     @staticmethod
     def _build_launch_configuration(
         settings: Settings,
+        admin: AdminSettingsValues,
         *,
         job_id: str,
         job_dir_host: Path,
@@ -193,7 +192,7 @@ class JobContainerRunner:
     ]:
         """Build the environment, mounts, and runtime settings for launch()."""
         agent_network, agent_memory, agent_cpu, agent_platform = (
-            JobContainerRunner._agent_runtime_settings(settings)
+            JobContainerRunner._agent_runtime_settings(settings, admin)
         )
         job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
         provider = get_provider()
@@ -217,6 +216,7 @@ class JobContainerRunner:
             provider_env=provider_env,
             database_url=database_url,
             exec_token=credentials.exec_token,
+            airgapped=admin.airgapped,
             run_mode=run_mode,
         )
         volumes = JobContainerRunner._build_container_volumes(
@@ -227,10 +227,11 @@ class JobContainerRunner:
     @staticmethod
     def _airgap_firewall_config(
         settings: Settings,
+        airgapped: bool,
     ) -> tuple[list[str] | None, str | None, list[str] | None, dict[str, str]]:
         """Firewall launch overrides (cap_add, user, entrypoint, extra_env) for
         air-gapped mode, or neutral values when off."""
-        if not settings.airgap.enabled:
+        if not airgapped:
             return None, None, None, {}
         from openscientist.job_container.egress import (
             derive_egress_allowlist,
@@ -272,7 +273,7 @@ class JobContainerRunner:
             run_mode=run_mode,
             name=f"openscientist-agent-{job_id[:SHORT_COMMIT_LENGTH]}",
             container_type="agent",
-            lifetime_seconds=get_settings().container.agent_timeout,
+            lifetime_seconds=current_admin_settings_sync().agent_timeout_seconds,
         )
         logger.info("Launched agent container %s for job %s", container.short_id, job_id)
         return container
@@ -296,6 +297,7 @@ class JobContainerRunner:
         harness with a home gets one for this run alone, outside the job
         directory, named in the labels too, and removed with the login."""
         settings: Settings = get_settings()
+        admin = current_admin_settings_sync()
         cs = settings.container
 
         # Translate job_dir to a host-absolute path: resolve first so a relative
@@ -316,6 +318,7 @@ class JobContainerRunner:
             credentials = issue_run_credentials(job_id, login.role)
             return self._run_container(
                 settings,
+                admin,
                 job_id=job_id,
                 job_dir_host=job_dir_host,
                 run_mode=run_mode,
@@ -338,6 +341,7 @@ class JobContainerRunner:
     def _run_container(
         self,
         settings: Settings,
+        admin: AdminSettingsValues,
         *,
         job_id: str,
         job_dir_host: Path,
@@ -354,6 +358,7 @@ class JobContainerRunner:
         env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
             self._build_launch_configuration(
                 settings,
+                admin,
                 job_id=job_id,
                 job_dir_host=job_dir_host,
                 database_url=database_url,
@@ -362,7 +367,9 @@ class JobContainerRunner:
             )
         )
         network = self._get_network(agent_network)
-        cap_add, run_user, entrypoint, firewall_env = self._airgap_firewall_config(settings)
+        cap_add, run_user, entrypoint, firewall_env = self._airgap_firewall_config(
+            settings, admin.airgapped
+        )
         env.update(firewall_env)
         if chat_turn is not None:
             env[CHAT_TURN_ENV] = chat_turn

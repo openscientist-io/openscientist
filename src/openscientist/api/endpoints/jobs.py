@@ -1,9 +1,4 @@
-"""
-Job management endpoints.
-
-Provides REST API endpoints for creating, listing, monitoring, and managing
-OpenScientist scientific analysis jobs.
-"""
+"""Job management endpoints."""
 
 import asyncio
 import logging
@@ -40,6 +35,7 @@ from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job.types import JobStatus
 from openscientist.job_manager import JobManager
+from openscientist.share_service import set_job_public, withheld_artifact_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +46,6 @@ CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
 SESSION_DEP = Depends(get_session)
 
 
-# Pydantic models for request/response
 class JobCreate(BaseModel):
     """Request body for creating a new job."""
 
@@ -116,6 +111,13 @@ class JobResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration number")
     pdb_code: str | None = Field(None, description="PDB code")
     space_group: str | None = Field(None, description="Space group")
+    queue_reason: str | None = Field(
+        None, description="Why a queued job waits on a budget limit, if it is held"
+    )
+    stop_note: str | None = Field(
+        None, description="Why a completed job stopped early at a budget limit, if it did"
+    )
+    is_public: bool = Field(False, description="Whether any signed-in user can read this job")
 
 
 class JobListResponse(BaseModel):
@@ -133,6 +135,12 @@ class JobStatusResponse(BaseModel):
     current_iteration: int = Field(..., description="Current iteration")
     max_iterations: int = Field(..., description="Maximum iterations")
     error_message: str | None = Field(None, description="Error message if failed")
+    queue_reason: str | None = Field(
+        None, description="Why a queued job waits on a budget limit, if it is held"
+    )
+    stop_note: str | None = Field(
+        None, description="Why a completed job stopped early at a budget limit, if it did"
+    )
 
 
 class JobDetailResponse(JobResponse):
@@ -141,6 +149,13 @@ class JobDetailResponse(JobResponse):
     investigation_mode: str | None = Field(None, description="Investigation mode")
     result_summary: str | None = Field(None, description="Final result summary")
     error_message: str | None = Field(None, description="Error message if failed")
+    version_info: dict[str, str] | None = Field(
+        None,
+        description=(
+            "Environment the run recorded: OpenScientist commit and build time, agent "
+            "harness and its version, container id. Stamped once per run."
+        ),
+    )
 
 
 class _JobResponseFields(TypedDict):
@@ -155,6 +170,21 @@ class _JobResponseFields(TypedDict):
     current_iteration: int
     pdb_code: str | None
     space_group: str | None
+    queue_reason: str | None
+    stop_note: str | None
+    is_public: bool
+
+
+class JobVisibilityUpdate(BaseModel):
+    """Request to change who can read a job."""
+
+    is_public: bool = Field(
+        ...,
+        description=(
+            "True lets any signed-in user read the job, without its uploaded "
+            "input files; false restores owner/share-only access"
+        ),
+    )
 
 
 async def get_job_by_id(
@@ -162,15 +192,9 @@ async def get_job_by_id(
     user: User,
     session: AsyncSession,
 ) -> Job | None:
-    """
-    Get a job by ID, verifying the user has access.
-
-    Uses RLS to ensure users can only access their own jobs or shared jobs.
-    """
-    # Set RLS context
+    """Get a job by ID. RLS policies restrict the result to the user's own or shared jobs."""
     await set_current_user(session, user.id)
 
-    # Query job (RLS policies will filter access)
     job_uuid = parse_uuid(job_id, "job_id")
 
     stmt = select(Job).where(Job.id == job_uuid)
@@ -207,6 +231,9 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "current_iteration": job.current_iteration,
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
+        "queue_reason": job.queue_reason,
+        "stop_note": job.stop_note,
+        "is_public": job.is_public,
     }
 
 
@@ -222,6 +249,7 @@ def _job_to_detail_response(job: Job) -> JobDetailResponse:
         investigation_mode=job.investigation_mode,
         result_summary=job.result_summary,
         error_message=job.error_message,
+        version_info=job.version_info,
     )
 
 
@@ -306,7 +334,8 @@ async def _persist_uploaded_files(
         try:
             target_path = _build_unique_upload_path(temp_dir, upload.filename or "")
             content = await upload.read()
-            validate_uploaded_file(target_path, content)
+            # The size limit comes from the database, which must stay off the loop.
+            await asyncio.to_thread(validate_uploaded_file, target_path, content)
             target_path.write_bytes(content)
             persisted_files.append(target_path)
         finally:
@@ -360,17 +389,8 @@ async def create_job(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> JobResponse:
-    """
-    Create a new scientific analysis job.
-
-    The job will be queued and started automatically. Use the GET /jobs/{id}/status
-    endpoint to monitor progress.
-
-    Accepts either:
-    - JSON payload (`application/json`) without file uploads
-    - Multipart form-data with optional repeated `data_files` file fields
-    """
-    # The same rule the jobs INSERT policy enforces: approved users and administrators.
+    """Create a new scientific analysis job from a JSON or multipart ``data_files`` payload."""
+    # Same approval rule the jobs INSERT policy enforces.
     if not await session.scalar(text("SELECT user_can_start_jobs(:id)"), {"id": user.id}):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -381,7 +401,6 @@ async def create_job(
 
     job_data, upload_files = await _parse_job_create_request(request)
 
-    # Create job via JobManager (database + filesystem structure).
     job_uuid = uuid4()
     job_manager = _get_job_manager()
     try:
@@ -421,7 +440,7 @@ async def create_job(
             detail="Failed to create job",
         ) from e
 
-    # Load job via API session so response reflects RLS-visible persisted state.
+    # Re-read via this session so the response reflects RLS-visible persisted state.
     created_job = await get_job_by_id(str(job_uuid), user, session)
     if created_job is None:
         raise HTTPException(
@@ -454,34 +473,23 @@ async def list_jobs(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> JobListResponse:
-    """
-    List jobs owned by the authenticated user.
-
-    Returns only jobs where the user is the owner.
-    Shared jobs are available via the /shares endpoints.
-    Uses Row-Level Security as an additional access control layer.
-    """
-    # Set RLS context
+    """List jobs owned by the authenticated user. Shared jobs appear under the /shares endpoints."""
     await set_current_user(session, user.id)
 
-    # Build query — explicit owner filter so shared jobs don't leak in
+    # Explicit owner filter so shared jobs don't leak in.
     stmt = select(Job).where(Job.owner_id == user.id).order_by(Job.created_at.desc())
 
-    # Apply status filter
     if status_filter:
         stmt = stmt.where(Job.status == status_filter)
 
-    # Get total count (for pagination)
     count_stmt = select(func.count(Job.id)).where(Job.owner_id == user.id)
     if status_filter:
         count_stmt = count_stmt.where(Job.status == status_filter)
     count_result = await session.execute(count_stmt)
     total = count_result.scalar_one()
 
-    # Apply pagination
     stmt = stmt.limit(limit).offset(offset)
 
-    # Execute query
     result = await session.execute(stmt)
     jobs = result.scalars().all()
 
@@ -497,11 +505,7 @@ async def get_job(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> JobDetailResponse:
-    """
-    Get detailed information about a specific job.
-
-    Returns job metadata, status, and results if available.
-    """
+    """Get detailed information about a specific job."""
     job = await get_job_by_id(job_id, user, session)
 
     if not job:
@@ -519,11 +523,7 @@ async def get_job_status(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> JobStatusResponse:
-    """
-    Get the current status of a job.
-
-    Lightweight endpoint for polling job progress.
-    """
+    """Get the current status of a job."""
     job = await get_job_by_id(job_id, user, session)
 
     if not job:
@@ -538,6 +538,8 @@ async def get_job_status(
         current_iteration=job.current_iteration,
         max_iterations=job.max_iterations,
         error_message=job.error_message,
+        queue_reason=job.queue_reason,
+        stop_note=job.stop_note,
     )
 
 
@@ -547,11 +549,7 @@ async def cancel_job(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> None:
-    """
-    Cancel a pending, running, or queued job.
-
-    The job will stop at the next iteration checkpoint.
-    """
+    """Cancel an active job. It stops at the next iteration checkpoint."""
     job = await get_job_by_id(job_id, user, session)
 
     if not job:
@@ -560,7 +558,6 @@ async def cancel_job(
             detail="Job not found or access denied",
         )
 
-    # Cancel is owner-only
     if job.owner_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -573,7 +570,6 @@ async def cancel_job(
             detail=f"Cannot cancel job with status '{job.status}'",
         )
 
-    # Cancel via JobManager
     job_manager = _get_job_manager()
     try:
         await job_manager.cancel_job(str(job.id))
@@ -582,17 +578,38 @@ async def cancel_job(
     logger.info("Cancelled job %s for user %s", job.id, user.email)
 
 
+@router.put("/{job_id}/visibility", response_model=JobDetailResponse)
+async def update_job_visibility(
+    job_id: str,
+    update: JobVisibilityUpdate,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> JobDetailResponse:
+    """Make a job readable by any signed-in user, or private again (owner only).
+
+    A public job is reachable by ID or link but stays off other users' job
+    pages. A reader who is neither the owner nor a share recipient does not
+    receive the job's uploaded input files.
+    """
+    await set_current_user(session, user.id)
+    job = await set_job_public(
+        session,
+        user.id,
+        job_id=job_id,
+        is_public=update.is_public,
+        not_owned_detail="Only the job owner can change its visibility",
+    )
+    logger.info("Set job %s is_public=%s for user %s", job.id, job.is_public, user.email)
+    return _job_to_detail_response(job)
+
+
 @router.get("/{job_id}/report")
 async def download_report(
     job_id: str,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> FileResponse:
-    """
-    Download the final analysis report (PDF or Markdown).
-
-    Only available for completed jobs.
-    """
+    """Download the final analysis report."""
     job = await get_job_by_id(job_id, user, session)
 
     if not job:
@@ -607,10 +624,9 @@ async def download_report(
             detail="Report only available for completed jobs",
         )
 
-    # Look for report file
     job_dir = _get_jobs_dir() / str(job.id)
 
-    # Serve existing PDF if available (don't regenerate — avoids overwriting WeasyPrint PDF)
+    # Serve the existing PDF if available so the WeasyPrint PDF is not overwritten.
     pdf_path = job_dir / "final_report.pdf"
     if pdf_path.exists():
         return FileResponse(
@@ -619,7 +635,6 @@ async def download_report(
             filename=f"{(job.short_title or job.research_question[:50]).replace(' ', '_')}_final_report.pdf",
         )
 
-    # Fallback: generate PDF from markdown via fpdf2 if no PDF exists yet
     md_path = job_dir / "final_report.md"
     if md_path.exists() and not pdf_path.exists():
         try:
@@ -647,7 +662,6 @@ async def download_report(
                 "Failed to generate PDF from markdown for job %s: %s", job_id, exc, exc_info=True
             )
 
-    # Try HTML, then markdown as last resort
     report_files = [
         (job_dir / "final_report.html", "text/html"),
         (job_dir / "final_report.md", "text/markdown"),
@@ -677,11 +691,7 @@ async def download_artifacts(
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
 ) -> FileResponse:
-    """
-    Download all job artifacts as a ZIP archive.
-
-    Includes plots, data files, and reports.
-    """
+    """Download all job artifacts as a ZIP archive."""
     job = await get_job_by_id(job_id, user, session)
 
     if not job:
@@ -698,6 +708,9 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
+    # A job readable only because it is public comes without the owner's uploads.
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+
     # Build ZIP archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
@@ -712,6 +725,8 @@ async def download_artifacts(
             job_dir=job_dir,
             archive_path=archive_path,
             job_id=str(job.id),
+            version_info=job.version_info,
+            excluded_top_level_dirs=excluded_dirs,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)

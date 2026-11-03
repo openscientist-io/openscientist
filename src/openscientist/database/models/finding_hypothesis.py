@@ -1,16 +1,10 @@
-"""
-Finding-Hypothesis relationship table.
-
-Many-to-many association between findings and hypotheses.
-A finding can support or refute multiple hypotheses.
-"""
+"""Finding-Hypothesis relationship table."""
 
 from sqlalchemy import Column, ForeignKey, Table
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 from ..base import Base
 
-# Many-to-many association table between findings and hypotheses
 finding_hypotheses = Table(
     "finding_hypotheses",
     Base.metadata,

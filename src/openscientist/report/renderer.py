@@ -16,7 +16,7 @@ import markdown as md  # type: ignore[import-untyped]
 
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
-from openscientist.webapp_components.ui_components import transform_pmid_references
+from openscientist.webapp_components.components.badges import transform_pmid_references
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,8 @@ def render_report_html(
     job_dir: Path,
     *,
     embed_images: bool = False,
+    run_environment: str | None = None,
+    excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> str:
     """Convert markdown report to styled HTML with embedded figures.
 
@@ -49,6 +51,9 @@ def render_report_html(
         job_dir: Root job directory (parent of provenance/).
         embed_images: If False, use file:// paths (for WeasyPrint PDF).
             If True, use base64 data URIs (for web UI display).
+        run_environment: The run's recorded environment, shown in the footer.
+        excluded_top_level_dirs: Job-directory top-level entries whose files are
+            not embedded, so a public reader's report never inlines uploaded inputs.
 
     Returns:
         Complete HTML document as a string.
@@ -75,6 +80,7 @@ def render_report_html(
             FigureExtension(
                 provenance_dir=str(provenance_dir),
                 use_base64=embed_images,
+                excluded_top_level_dirs=excluded_top_level_dirs,
             ),
         ],
     )
@@ -85,4 +91,5 @@ def render_report_html(
     return template.render(
         body=body_html,
         css=css,
+        run_environment=run_environment,
     )
