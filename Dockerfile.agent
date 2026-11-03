@@ -20,8 +20,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd --uid 1001 --create-home --shell /bin/bash agent
+# The web chowns the job tree it creates to this uid:gid, so both must stay in
+# sync with job_container.identity (the tests in tests/test_job_dir_permissions.py
+# check it). The executor image pins the same GID so it can use the tree.
+ARG AGENT_UID=1001
+ARG AGENT_GID=1001
+RUN groupadd --gid ${AGENT_GID} jobs \
+    && useradd --uid ${AGENT_UID} --gid ${AGENT_GID} --create-home --shell /bin/bash agent
 
 WORKDIR /app
 

@@ -60,7 +60,10 @@ def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> 
     monkeypatch.setattr(
         "openscientist.settings.get_settings",
         lambda: SimpleNamespace(
-            dev=SimpleNamespace(dev_mode=True), database=SimpleNamespace(database_url="unused")
+            dev=SimpleNamespace(dev_mode=True),
+            database=SimpleNamespace(database_url="unused"),
+            auth=SimpleNamespace(app_url="http://localhost:8080"),
+            bind_address="127.0.0.1",
         ),
     )
     monkeypatch.setattr(web_app, "_refuse_unsafe_database_login", lambda _url: None)
@@ -87,7 +90,10 @@ def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(
         "openscientist.settings.get_settings",
         lambda: SimpleNamespace(
-            dev=SimpleNamespace(dev_mode=False), database=SimpleNamespace(database_url="unused")
+            dev=SimpleNamespace(dev_mode=False),
+            database=SimpleNamespace(database_url="unused"),
+            auth=SimpleNamespace(app_url="http://localhost:8080"),
+            bind_address="127.0.0.1",
         ),
     )
     monkeypatch.setattr(web_app, "_refuse_unsafe_database_login", lambda _url: None)

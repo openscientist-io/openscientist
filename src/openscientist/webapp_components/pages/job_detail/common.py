@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from nicegui import ui
+
 from openscientist.database.session import thread_safe_user_session
 from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.knowledge_state import KnowledgeState
@@ -59,6 +61,13 @@ async def _load_knowledge_state(
     except Exception as e:
         logger.warning("Failed to load knowledge state from database for %s: %s", job_id, e)
         return None, "Knowledge state is unavailable. Please refresh the page."
+
+
+def _render_access_lost() -> None:
+    """The page body once the caller can no longer view the job."""
+    with ui.column().classes("w-full items-center mt-16 gap-4"):
+        ui.label("Access to this job has been revoked.").classes("text-h5")
+        ui.button("Back to Jobs", on_click=lambda: ui.navigate.to("/jobs"))
 
 
 @dataclass
