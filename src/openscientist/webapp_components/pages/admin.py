@@ -12,10 +12,12 @@ from nicegui import app, ui
 from sqlalchemy import func, select
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
+from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
 from openscientist.database.models import Job, ReviewToken, User
 from openscientist.database.session import get_admin_session
 from openscientist.job.types import JobStatus
+from openscientist.settings import get_settings
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.components.common import (
@@ -33,6 +35,10 @@ from openscientist.webapp_components.components.navigation import render_navigat
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import guard_client, setup_timer_cleanup
+from openscientist.webapp_components.utils.permissions import (
+    refuse_stale_admin_session,
+    revalidate_admin_session,
+)
 
 if TYPE_CHECKING:
     from openscientist.webapp_components.utils.container_dashboard import (
@@ -295,38 +301,12 @@ async def show_assign_dialog(job_id: str) -> None:
             if not selected_user:
                 ui.notify("Please select a user", color="negative")
                 return
-
             try:
-                selected_user_id = UUID(str(selected_user["id"]))
-                async with get_admin_session() as session:
-                    result = await assign_orphaned_job(
-                        session=session,
-                        job_id=UUID(job_id),
-                        user_id=selected_user_id,
-                    )
-
-                if result.ok:
-                    ui.notify("Job assigned successfully", color="positive")
-                    dialog.close()
-                    ui.navigate.reload()
-                    return
-
-                if result.reason == "job_not_found":
-                    ui.notify("Job not found", color="negative")
-                    return
-                if result.reason == "already_owned":
-                    ui.notify("Job is no longer orphaned", color="warning")
-                    return
-                if result.reason == "user_not_found":
-                    ui.notify("Selected user was not found", color="negative")
-                    return
-
-                ui.notify("Failed to assign job", color="negative")
-            except (TypeError, KeyError, ValueError):
+                user_id = str(selected_user["id"])
+            except KeyError:
                 ui.notify("Invalid user selection", color="negative")
-            except Exception as e:
-                logger.error("Error assigning job: %s", e, exc_info=True)
-                ui.notify("Failed to assign job. Check server logs.", color="negative")
+                return
+            await _confirm_assign_orphaned_job(job_id, user_id, dialog=dialog)
 
         render_dialog_actions(
             on_confirm=do_assign,
@@ -335,6 +315,42 @@ async def show_assign_dialog(job_id: str) -> None:
         )
 
     dialog.open()
+
+
+async def _confirm_assign_orphaned_job(
+    job_id: str, selected_user_id: str, *, dialog: ui.dialog
+) -> None:
+    """Assign an orphaned job once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    try:
+        async with get_admin_session() as session:
+            result = await assign_orphaned_job(
+                session=session,
+                job_id=UUID(job_id),
+                user_id=UUID(selected_user_id),
+            )
+        if result.ok:
+            ui.notify("Job assigned successfully", color="positive")
+            dialog.close()
+            ui.navigate.reload()
+            return
+        if result.reason == "job_not_found":
+            ui.notify("Job not found", color="negative")
+            return
+        if result.reason == "already_owned":
+            ui.notify("Job is no longer orphaned", color="warning")
+            return
+        if result.reason == "user_not_found":
+            ui.notify("Selected user was not found", color="negative")
+            return
+        ui.notify("Failed to assign job", color="negative")
+    except (TypeError, KeyError, ValueError):
+        ui.notify("Invalid user selection", color="negative")
+    except Exception as e:
+        logger.error("Error assigning job: %s", e, exc_info=True)
+        ui.notify("Failed to assign job. Check server logs.", color="negative")
 
 
 async def delete_user(user_id: UUID) -> tuple[bool, str]:
@@ -433,6 +449,9 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
 async def _handle_approval_update(
     e: Any, is_approved: bool, reload_users: Callable[[], Awaitable[None]]
 ) -> None:
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
     user_id = e.args.get("id")
     if not user_id:
         ui.notify("Invalid user selection", color="negative")
@@ -468,6 +487,9 @@ async def _handle_approval_update(
 async def _handle_priority_update(
     e: Any, is_priority: bool, reload_users: Callable[[], Awaitable[None]]
 ) -> None:
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
     user_id = e.args.get("id")
     if not user_id:
         ui.notify("Invalid user selection", color="negative")
@@ -621,17 +643,7 @@ def _open_delete_user_dialog(
     """Open confirmation dialog for user deletion."""
 
     async def do_delete() -> None:
-        try:
-            success, message = await delete_user(UUID(user_id))
-            ui.notify(message, color="positive" if success else "negative")
-            dialog.close()
-            if success:
-                await on_deleted()
-        except ValueError:
-            ui.notify("Invalid user selection", color="negative")
-        except Exception as ex:
-            logger.error("Error deleting user %s: %s", user_id, ex, exc_info=True)
-            ui.notify("Failed to delete user. Check server logs.", color="negative")
+        await _confirm_delete_user(user_id, dialog=dialog, on_deleted=on_deleted)
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Delete User").classes("text-lg font-bold mb-2")
@@ -646,6 +658,29 @@ def _open_delete_user_dialog(
             confirm_props="color=negative",
         )
     dialog.open()
+
+
+async def _confirm_delete_user(
+    user_id: str,
+    *,
+    dialog: ui.dialog,
+    on_deleted: Callable[[], Awaitable[None]],
+) -> None:
+    """Delete a user once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    try:
+        success, message = await delete_user(UUID(user_id))
+        ui.notify(message, color="positive" if success else "negative")
+        dialog.close()
+        if success:
+            await on_deleted()
+    except ValueError:
+        ui.notify("Invalid user selection", color="negative")
+    except Exception as ex:
+        logger.error("Error deleting user %s: %s", user_id, ex, exc_info=True)
+        ui.notify("Failed to delete user. Check server logs.", color="negative")
 
 
 async def render_users_panel() -> None:
@@ -898,11 +933,42 @@ def _review_token_rows(tokens: list[ReviewToken]) -> list[dict[str, Any]]:
     return rows
 
 
+async def _create_review_token(label: str, expiry_days: int) -> None:
+    """Create a review token once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    current_user_id = get_current_user_id()
+    if not current_user_id:
+        ui.notify("You must be signed in", type="negative")
+        return
+
+    expires_at = datetime.now(UTC) + timedelta(days=expiry_days)
+    plaintext = generate_review_token()
+    token_hash = _hash_token(plaintext)
+
+    try:
+        async with get_admin_session() as session:
+            review_token = ReviewToken(
+                token_hash=token_hash,
+                label=label,
+                created_by_id=UUID(current_user_id),
+                expires_at=expires_at,
+            )
+            session.add(review_token)
+            await session.commit()
+    except Exception as exc:
+        logger.error("Failed to create review token: %s", exc, exc_info=True)
+        ui.notify("Failed to create token. Please try again.", type="negative")
+        return
+
+    settings = get_settings()
+    magic_link = f"{settings.auth.app_url}/review/{plaintext}"
+    await _show_token_created_dialog(magic_link)
+
+
 async def render_review_tokens_panel() -> None:
     """Render the review tokens management panel."""
-    from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
-    from openscientist.settings import get_settings
-
     with ui.column().classes("w-full gap-4"):
         ui.markdown("## Review Tokens")
         ui.markdown(
@@ -937,35 +1003,8 @@ async def render_review_tokens_panel() -> None:
                     if not label:
                         ui.notify("Reviewer label is required", type="negative")
                         return
-
-                    current_user_id = get_current_user_id()
-                    if not current_user_id:
-                        ui.notify("You must be signed in", type="negative")
-                        return
-
                     expiry_days = int(expiry_input.value or 30)
-                    expires_at = datetime.now(UTC) + timedelta(days=expiry_days)
-                    plaintext = generate_review_token()
-                    token_hash = _hash_token(plaintext)
-
-                    try:
-                        async with get_admin_session() as session:
-                            review_token = ReviewToken(
-                                token_hash=token_hash,
-                                label=label,
-                                created_by_id=UUID(current_user_id),
-                                expires_at=expires_at,
-                            )
-                            session.add(review_token)
-                            await session.commit()
-                    except Exception as exc:
-                        logger.error("Failed to create review token: %s", exc, exc_info=True)
-                        ui.notify("Failed to create token. Please try again.", type="negative")
-                        return
-
-                    settings = get_settings()
-                    magic_link = f"{settings.auth.app_url}/review/{plaintext}"
-                    await _show_token_created_dialog(magic_link)
+                    await _create_review_token(label, expiry_days)
                     label_input.value = ""
                     await load_tokens()
 
@@ -1051,6 +1090,36 @@ async def _show_token_created_dialog(magic_link: str) -> None:
     dialog.open()
 
 
+async def _confirm_revoke_review_token(
+    token_id: str,
+    *,
+    dialog: ui.dialog,
+    on_revoked: Callable[[], Awaitable[None]],
+) -> None:
+    """Revoke a review token once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return
+    try:
+        async with get_admin_session() as session:
+            result = await session.execute(
+                select(ReviewToken).where(ReviewToken.id == UUID(token_id))
+            )
+            review_token = result.scalar_one_or_none()
+            if not review_token:
+                ui.notify("Token not found", type="negative")
+                dialog.close()
+                return
+            review_token.is_active = False
+            await session.commit()
+        ui.notify("Token revoked", type="positive")
+        dialog.close()
+        await on_revoked()
+    except Exception as exc:
+        logger.error("Failed to revoke review token: %s", exc, exc_info=True)
+        ui.notify("Failed to revoke token. Please try again.", type="negative")
+
+
 def _open_revoke_token_dialog(
     *,
     token_id: str,
@@ -1060,24 +1129,7 @@ def _open_revoke_token_dialog(
     """Open confirmation dialog for token revocation."""
 
     async def do_revoke() -> None:
-        try:
-            async with get_admin_session() as session:
-                result = await session.execute(
-                    select(ReviewToken).where(ReviewToken.id == UUID(token_id))
-                )
-                review_token = result.scalar_one_or_none()
-                if not review_token:
-                    ui.notify("Token not found", type="negative")
-                    dialog.close()
-                    return
-                review_token.is_active = False
-                await session.commit()
-            ui.notify("Token revoked", type="positive")
-            dialog.close()
-            await on_revoked()
-        except Exception as exc:
-            logger.error("Failed to revoke review token: %s", exc, exc_info=True)
-            ui.notify("Failed to revoke token. Please try again.", type="negative")
+        await _confirm_revoke_review_token(token_id, dialog=dialog, on_revoked=on_revoked)
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Revoke Review Token").classes("text-lg font-bold mb-2")
