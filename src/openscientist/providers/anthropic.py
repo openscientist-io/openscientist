@@ -18,6 +18,7 @@ from .base import (
     StaticHeadersSigning,
     _listing_live_check,
 )
+from .vault import vault_llm_upstream
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +37,16 @@ class AnthropicProvider(ClaudeCompatible):
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
-        if not provider.anthropic_api_key and not provider.claude_code_oauth_token:
+        if (
+            not provider.anthropic_api_key
+            and not provider.claude_code_oauth_token
+            and not provider.omp_auth_host_path
+        ):
             return [
                 "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN not set. "
                 "Get your API key from https://console.anthropic.com "
-                "or run 'claude login' for OAuth."
+                "or run 'claude login' for OAuth. "
+                "Or set OMP_AUTH_HOST_PATH to the omp vault of an `omp login`."
             ]
         return []
 
@@ -98,19 +104,25 @@ class AnthropicProvider(ClaudeCompatible):
                 "https://api.anthropic.com",
                 StaticHeadersSigning({"authorization": f"Bearer {p.claude_code_oauth_token}"}),
             )
+        if p.omp_auth_host_path:
+            return vault_llm_upstream(p.omp_auth_host_path, "anthropic")
         return None
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         p = get_settings().provider
         if p.anthropic_api_key:
             return {"ANTHROPIC_BASE_URL": proxy_base_url, "ANTHROPIC_API_KEY": placeholder}
-        if p.claude_code_oauth_token:
+        if p.claude_code_oauth_token or p.omp_auth_host_path:
             return {"ANTHROPIC_BASE_URL": proxy_base_url, "CLAUDE_CODE_OAUTH_TOKEN": placeholder}
         return {}
 
     @classmethod
     def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
-        if provider.anthropic_api_key or provider.claude_code_oauth_token:
+        if (
+            provider.anthropic_api_key
+            or provider.claude_code_oauth_token
+            or provider.omp_auth_host_path
+        ):
             return AirgapPosture(AirgapEgress.PROXY)
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,

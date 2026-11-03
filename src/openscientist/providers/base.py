@@ -451,6 +451,26 @@ class Provider(abc.ABC):
         """Real endpoint and auth headers for the proxy, or None if not proxied."""
         return None
 
+    def harness_routing_error(self) -> str | None:
+        """A clear reason the active harness cannot route this provider's proxied traffic, or None."""
+        return None
+
+    def prelaunch_routing_error(self) -> str | None:
+        """A clear reason the container's LLM traffic cannot be served through the proxy, or None; checked at launch."""
+        if self.airgap_egress().mode is not AirgapEgress.PROXY:
+            return None
+        try:
+            upstream = self.llm_upstream()
+        except ValueError as exc:
+            return str(exc)
+        if upstream is None:
+            return (
+                f"{self.display_name} has no credential the LLM proxy can sign "
+                "with; set the provider's auth (an API key, a host login file, "
+                "or OMP_AUTH_HOST_PATH to a vault with a matching login)."
+            )
+        return self.harness_routing_error()
+
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         """Env that routes this provider's LLM calls through the proxy, or {}."""
         return {}

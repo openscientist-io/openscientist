@@ -15,6 +15,7 @@ class TestAnthropicProviderValidation:
         mock_settings = MagicMock()
         mock_settings.provider.anthropic_api_key = None
         mock_settings.provider.claude_code_oauth_token = None
+        mock_settings.provider.omp_auth_host_path = None
         mock_settings.provider.model = "claude-sonnet-4-6"
         with (
             patch("openscientist.providers.anthropic.get_settings", return_value=mock_settings),
@@ -102,11 +103,13 @@ def _mock_settings(
     *,
     api_key: str | None = "sk-ant-test-key",
     oauth: str | None = None,
+    vault: str | None = None,
     model: str | None = "claude-sonnet-4-6",
 ) -> MagicMock:
     mock_settings = MagicMock()
     mock_settings.provider.anthropic_api_key = api_key
     mock_settings.provider.claude_code_oauth_token = oauth
+    mock_settings.provider.omp_auth_host_path = vault
     mock_settings.provider.model = model
     return mock_settings
 
@@ -221,6 +224,10 @@ def test_airgap_posture_is_unsupported_without_credentials() -> None:
     from openscientist.providers.base import AirgapEgress
 
     posture = AnthropicProvider.airgap_posture(
-        SimpleNamespace(anthropic_api_key=None, claude_code_oauth_token=None)  # type: ignore[arg-type]
+        SimpleNamespace(
+            anthropic_api_key=None,
+            claude_code_oauth_token=None,
+            omp_auth_host_path=None,
+        )  # type: ignore[arg-type]
     )
     assert posture.mode is AirgapEgress.UNSUPPORTED
