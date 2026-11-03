@@ -6,11 +6,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from nicegui import ui
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
-from openscientist.auth import get_current_user_id
+from openscientist.auth import can_current_user_start_jobs, get_current_user_id
 from openscientist.database.models import Job, JobShare, User
 from openscientist.database.session import get_admin_session
+from openscientist.share_service import find_share_target_by_email
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.common import render_dialog_actions
 
@@ -72,45 +73,6 @@ async def _revoke_share(job_id: str, share_id: str, current_user_id: str) -> tup
         await session.delete(share)
         await session.commit()
     return True, "Share revoked successfully"
-
-
-async def _search_share_targets(search_query: str) -> list[User]:
-    """Search active users by email/name for share target picker."""
-    search_pattern = f"%{search_query}%"
-    async with get_admin_session() as session:
-        result = await session.execute(
-            select(User)
-            .where(or_(User.email.ilike(search_pattern), User.name.ilike(search_pattern)))
-            .where(User.is_active.is_(True))
-            .order_by(User.email)
-            .limit(10)
-        )
-    return list(result.scalars().all())
-
-
-def _render_share_search_results(
-    search_results: ui.element,
-    users: list[User],
-    on_select: Callable[[str, str], None],
-) -> None:
-    """Render selectable cards for searched users."""
-    search_results.clear()
-    with search_results:
-        if not users:
-            ui.label("No users found").classes("text-gray-500 italic")
-            return
-        for user in users:
-            with (
-                ui.card()
-                .classes("w-full p-2 cursor-pointer hover:bg-blue-50")
-                .on("click", lambda u=user: on_select(u.email, u.name or u.email)),
-                ui.row().classes("items-center gap-2"),
-            ):
-                ui.icon("person_outline", size="sm").classes("text-gray-400")
-                with ui.column().classes("gap-0"):
-                    ui.label(user.name or user.email).classes("font-bold text-sm")
-                    if user.name:
-                        ui.label(user.email).classes("text-xs text-gray-600")
 
 
 async def _share_with_user(
@@ -200,8 +162,7 @@ class _ShareDialogController:
         job_id: str,
         shares_container: ui.element,
         public_switch: ui.switch,
-        search_input: ui.input,
-        search_results: ui.element,
+        email_input: ui.input,
         selected_user_container: ui.element,
         share_action_row: ui.element,
         permission_select: ui.select,
@@ -210,13 +171,11 @@ class _ShareDialogController:
         self.shares_container = shares_container
         self.public_switch = public_switch
         self._syncing_public_switch = False
-        self.search_input = search_input
-        self.search_results = search_results
+        self.email_input = email_input
         self.selected_user_container = selected_user_container
         self.share_action_row = share_action_row
         self.permission_select = permission_select
         self.selected_user_state: dict[str, str | None] = {"email": None, "name": None}
-        self.search_counter = {"value": 0}
 
     async def refresh_public_switch(self) -> None:
         """Show the job's stored visibility to the owner, or hide it otherwise."""
@@ -252,20 +211,19 @@ class _ShareDialogController:
         await self.refresh_public_switch()
 
     def clear_selection(self) -> None:
-        """Clear selected share target and show search input again."""
+        """Clear selected share target and show the email input again."""
         self.selected_user_state["email"] = None
         self.selected_user_state["name"] = None
         self.selected_user_container.clear()
         self.share_action_row.classes(add="hidden")
-        self.search_input.visible = True
-        self.search_input.value = ""
+        self.email_input.visible = True
+        self.email_input.value = ""
 
     def select_user(self, email: str, name: str) -> None:
-        """Select user from search results and reveal share controls."""
+        """Select the looked-up user and reveal share controls."""
         self.selected_user_state["email"] = email
         self.selected_user_state["name"] = name
-        self.search_results.clear()
-        self.search_input.visible = False
+        self.email_input.visible = False
         _render_selected_share_user(self.selected_user_container, email, name, self.clear_selection)
         self.share_action_row.classes(remove="hidden")
 
@@ -296,21 +254,25 @@ class _ShareDialogController:
             logger.error("Failed to revoke share: %s", exc, exc_info=True)
             ui.notify("Error revoking share", type="negative")
 
-    async def search_users(self, search_query: str) -> None:
-        """Search users and render result cards with debounce guard."""
-        self.search_counter["value"] += 1
-        search_index = self.search_counter["value"]
-        self.search_results.clear()
-        if not search_query or len(search_query) < 2:
+    async def add_user(self) -> None:
+        """Look up the typed email exactly and reveal the share controls for a match."""
+        if not can_current_user_start_jobs():
+            ui.notify("Your account is pending administrator approval", type="negative")
             return
+        email = (self.email_input.value or "").strip()
         try:
-            users = await _search_share_targets(search_query)
-            if search_index == self.search_counter["value"]:
-                _render_share_search_results(self.search_results, users, self.select_user)
+            target = await find_share_target_by_email(
+                email,
+                admin_session_factory=get_admin_session,
+            )
         except Exception as exc:
-            logger.error("Failed to search users: %s", exc, exc_info=True)
-            with self.search_results:
-                ui.label("Search failed").classes("text-red-600")
+            logger.error("Failed to look up share target: %s", exc, exc_info=True)
+            ui.notify("Error looking up user", type="negative")
+            return
+        if target is None:
+            ui.notify("No account uses that email", type="warning")
+            return
+        self.select_user(target.email, target.name or target.email)
 
     async def do_share(self) -> None:
         """Create/update share for selected user and refresh list."""
@@ -337,10 +299,6 @@ class _ShareDialogController:
             logger.error("Failed to share job: %s", exc, exc_info=True)
             ui.notify("Error sharing job", type="negative")
 
-    async def on_search_change(self, event: Any) -> None:
-        """Handle search-input model updates."""
-        await self.search_users(event.value)
-
 
 def render_share_dialog(job_id: str) -> ui.dialog:
     """Create and return a share dialog for a job."""
@@ -359,10 +317,9 @@ def render_share_dialog(job_id: str) -> ui.dialog:
         shares_container = ui.column().classes("w-full mb-4")
         ui.separator()
         ui.label("Add New Share").classes("text-subtitle2 font-bold mb-2")
-        search_input = ui.input("Search by email or name", placeholder="user@example.com").classes(
-            "w-full"
-        )
-        search_results = ui.column().classes("w-full")
+        with ui.row().classes("w-full items-end gap-2"):
+            email_input = ui.input("Email", placeholder="user@example.com").classes("w-full")
+            add_button = ui.button("Add", icon="person_search").props("color=primary")
         selected_user_container = ui.column().classes("w-full")
         share_action_row = ui.row().classes("w-full gap-4 items-end hidden")
 
@@ -376,19 +333,17 @@ def render_share_dialog(job_id: str) -> ui.dialog:
             job_id=job_id,
             shares_container=shares_container,
             public_switch=public_switch,
-            search_input=search_input,
-            search_results=search_results,
+            email_input=email_input,
             selected_user_container=selected_user_container,
             share_action_row=share_action_row,
             permission_select=permission_select,
         )
+        add_button.on_click(controller.add_user)
         public_switch.on_value_change(controller.on_public_change)
         with share_action_row:
             ui.button("Share", icon="person_add", on_click=controller.do_share).props(
                 "color=primary"
             )
-
-        search_input.on_value_change(controller.on_search_change)
 
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
             ui.button("Close", on_click=dialog.close)
