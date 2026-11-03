@@ -7,7 +7,7 @@ open. The CHECK constraint is the second lock, because the agent keeps its
 row-scoped SELECT and a wrong negative row would move the budget totals.
 
 Revision ID: proxy_cost_metering
-Revises: job_is_public
+Revises: narrow_database_grants
 Create Date: 2026-11-03 12:00:00
 """
 
@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "proxy_cost_metering"
-down_revision: str | None = "job_is_public"
+down_revision: str | None = "narrow_database_grants"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
