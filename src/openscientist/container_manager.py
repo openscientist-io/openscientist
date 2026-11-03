@@ -318,13 +318,37 @@ class ContainerManager:
 
         from openscientist.job_container import resolve_docker_network
 
-        # Air-gapped executors run untrusted code and need no network, so use
-        # Docker's no-networking "none" network. Otherwise attach the resolved
-        # compose network, unchanged.
+        # Air-gapped executors run untrusted code and need no network. In
+        # restricted mode the executor keeps public egress but still installs
+        # the in-container firewall.
         if admin.airgapped:
             network = "none"
+            run_user = "executor"
+            cap_add: list[str] | None = None
+            entrypoint: list[str] = []
+            environment: dict[str, str] | None = None
         else:
-            network = resolve_docker_network(self.client, get_settings().container.agent_network)
+            from openscientist.job_container.egress import (
+                FIREWALL_ALLOW_ENV,
+                FIREWALL_MODE_ENV,
+                FIREWALL_RUN_AS_ENV,
+                MODE_RESTRICT,
+                derive_restricted_egress_allowlist,
+                format_egress_allowlist,
+            )
+
+            network = resolve_docker_network(self.client, cs.agent_network)
+            run_user = "root"
+            cap_add = ["NET_ADMIN"]
+            entrypoint = ["/agent-firewall-entrypoint.sh"]
+            # The executor never opens Postgres; only the agent logs in there.
+            environment = {
+                FIREWALL_ALLOW_ENV: format_egress_allowlist(
+                    derive_restricted_egress_allowlist(settings, include_postgres=False)
+                ),
+                FIREWALL_MODE_ENV: MODE_RESTRICT,
+                FIREWALL_RUN_AS_ENV: "executor",
+            }
 
         try:
             # Run container
@@ -341,7 +365,9 @@ class ContainerManager:
                 # Security settings
                 read_only=False,  # Need write access for plots
                 security_opt=["no-new-privileges:true"],
-                user="executor",
+                user=run_user,
+                cap_add=cap_add,
+                environment=environment,
                 # Labels for cleanup
                 labels={
                     "openscientist.job_id": job_id,
@@ -351,8 +377,7 @@ class ContainerManager:
                 volumes=volumes,
                 # Timeout
                 stop_signal="SIGKILL",
-                # Clear the entrypoint so we can use shell piping
-                entrypoint=[],
+                entrypoint=entrypoint,
                 # Input via base64-encoded stdin to avoid shell quoting issues
                 command=[
                     "sh",

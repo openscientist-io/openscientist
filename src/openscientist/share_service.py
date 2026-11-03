@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.api.utils import parse_uuid
@@ -201,28 +201,28 @@ async def revoke_share_for_owned_job(
     await session.commit()
 
 
-async def search_active_users(
-    query: str,
-    limit: int,
+async def find_share_target_by_email(
+    email: str,
     *,
     admin_session_factory: AdminSessionFactory = get_admin_session,
-) -> list[User]:
-    """Search active users by email or display name through an admin-scoped session."""
-    search_pattern = f"%{query}%"
+) -> User | None:
+    """Resolve at most one active user by exact, case-insensitive email.
+
+    Returns None when the email is empty or no active user uses it. The caller
+    enforces the approval gate, which needs the caller's RLS session.
+    """
+    needle = email.strip().lower()
+    if not needle:
+        return None
     async with admin_session_factory() as admin_session:
         result = await admin_session.execute(
-            select(User)
-            .where(
-                or_(
-                    User.email.ilike(search_pattern),
-                    User.name.ilike(search_pattern),
-                )
+            select(User).where(
+                func.lower(User.email) == needle,
+                User.is_active.is_(True),
             )
-            .where(User.is_active.is_(True))
-            .order_by(User.email)
-            .limit(limit)
         )
-        return list(result.scalars().all())
+        # Two accounts may differ only by case, which the unique email index allows.
+        return result.scalars().first()
 
 
 # Top-level job-directory entries withheld from a viewer who can see a job only

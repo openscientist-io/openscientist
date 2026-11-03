@@ -67,6 +67,14 @@ async def _set_target_active(test_engine: AsyncEngine, target: User, active: boo
         await db.commit()
 
 
+async def _set_owner_approved(test_engine: AsyncEngine, owner: User) -> None:
+    """Approve the caller, committed, so the route's real admin login sees it."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        row = (await db.execute(select(User).where(User.id == owner.id))).scalar_one()
+        row.is_approved = True
+        await db.commit()
+
+
 def _app() -> FastAPI:
     """The share router on the app's real per-request sessions."""
     app = FastAPI()
@@ -154,3 +162,63 @@ async def test_web_share_listing_shows_the_share_the_owner_just_created(
     assert [entry["shared_with_email"] for entry in entries] == [share_target.email]
     assert entries[0]["shared_with_name"] == share_target.name
     assert entries[0]["permission_level"] == "edit"
+
+
+@pytest.mark.asyncio
+async def test_web_lookup_refuses_unapproved_caller(
+    share_target: User,
+    signed_in_owner: tuple[User, str, Job],
+) -> None:
+    """A signed-in account without approval cannot look up share targets."""
+    _, token, _job = signed_in_owner
+
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+        response = await client.get(
+            "/web/shares/lookup",
+            params={"email": share_target.email},
+            headers={"cookie": f"session_token={token}"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_web_lookup_returns_exact_email_match_for_approved_caller(
+    share_target: User,
+    signed_in_owner: tuple[User, str, Job],
+    test_engine: AsyncEngine,
+) -> None:
+    """An approved caller gets the one user for an exact email, id and name only."""
+    owner, token, _job = signed_in_owner
+    await _set_owner_approved(test_engine, owner)
+
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+        response = await client.get(
+            "/web/shares/lookup",
+            params={"email": f" {share_target.email.upper()} "},
+            headers={"cookie": f"session_token={token}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"target": {"id": str(share_target.id), "name": share_target.name}}
+
+
+@pytest.mark.asyncio
+async def test_web_lookup_wildcards_and_missing_email_return_empty(
+    share_target: User,
+    signed_in_owner: tuple[User, str, Job],
+    test_engine: AsyncEngine,
+) -> None:
+    """Wildcards, partial strings and unknown emails all return the same empty result."""
+    owner, token, _job = signed_in_owner
+    await _set_owner_approved(test_engine, owner)
+
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+        for email in (share_target.email[:5], "%%", "_", "nobody@example.invalid"):
+            response = await client.get(
+                "/web/shares/lookup",
+                params={"email": email},
+                headers={"cookie": f"session_token={token}"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json() == {"target": None}

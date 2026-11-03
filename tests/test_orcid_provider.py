@@ -20,7 +20,7 @@ async def test_full_token_with_oidc_email():
         "access_token": "test-token",
         "orcid": "0000-0002-1234-5678",
         "name": "Jane Researcher",
-        "userinfo": {"email": "jane@university.edu"},
+        "userinfo": {"email": "jane@university.edu", "email_verified": True},
     }
 
     result = await OrcidProvider.get_user_info(token)
@@ -29,6 +29,22 @@ async def test_full_token_with_oidc_email():
     assert result["email"] == "jane@university.edu"
     assert result["name"] == "Jane Researcher"
     assert result["email_verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_oidc_email_unverified_claim_is_reported_unverified():
+    """An OIDC email with email_verified=false is reported unverified."""
+    token = {
+        "access_token": "test-token",
+        "orcid": "0000-0002-1234-5678",
+        "name": "Jane Researcher",
+        "userinfo": {"email": "jane@university.edu", "email_verified": False},
+    }
+
+    result = await OrcidProvider.get_user_info(token)
+
+    assert result["email"] == "jane@university.edu"
+    assert result["email_verified"] is False
 
 
 @pytest.mark.asyncio

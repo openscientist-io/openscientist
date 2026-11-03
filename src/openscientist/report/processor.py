@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
+
+from openscientist.job_files import JobFile
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +65,22 @@ def _parse_params(raw: str) -> dict[str, str]:
     return params
 
 
-def _resolve_image_src(image_path: Path, use_base64: bool) -> str:
-    """Return image src attribute — either file:// URI or base64 data URI."""
+def _resolve_image_src(image: JobFile, use_base64: bool) -> str:
+    """Return image src attribute — either a base64 data URI or a file:// URI.
+
+    The figure bytes are read from the fd the file was opened on, so a link
+    planted over the file afterwards cannot redirect the embed. Takes
+    ownership of the handle and closes it."""
     if use_base64:
         import base64
 
-        data = image_path.read_bytes()
+        data = image.read_all()
         b64 = base64.b64encode(data).decode("ascii")
-        return f"data:image/png;base64,{b64}"
-    return image_path.as_uri()
+        src = f"data:image/png;base64,{b64}"
+    else:
+        src = image.path.as_uri()
+    image.close()
+    return src
 
 
 def strip_figure_tags(markdown: str) -> str:

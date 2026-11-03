@@ -2,8 +2,9 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.api.auth import get_current_user_from_api_key
@@ -12,9 +13,9 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session
 from openscientist.share_service import (
     create_or_update_share,
+    find_share_target_by_email,
     list_shares_for_owned_job,
     revoke_share_for_owned_job,
-    search_active_users,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,19 +75,17 @@ class ShareListResponse(BaseModel):
     total: int = Field(..., description="Total number of shares")
 
 
-class UserSearchResult(BaseModel):
-    """Result for user search."""
+class ShareTarget(BaseModel):
+    """A resolved share target."""
 
     id: str = Field(..., description="User ID")
-    email: str = Field(..., description="Email address")
     name: str = Field(..., description="Display name")
 
 
-class UserSearchResponse(BaseModel):
-    """Response for user search."""
+class ShareTargetLookupResponse(BaseModel):
+    """A looked-up share target; ``target`` is null when no active user uses the email."""
 
-    users: list[UserSearchResult] = Field(..., description="Matching users")
-    total: int = Field(..., description="Total number of results")
+    target: ShareTarget | None = Field(None, description="The matched user, or null")
 
 
 @router.post(
@@ -163,40 +162,35 @@ async def revoke_share(
 
 
 @router.get(
-    "/search/users",
-    response_model=UserSearchResponse,
-    summary="Search for users by email or name",
+    "/lookup",
+    response_model=ShareTargetLookupResponse,
+    summary="Look up a share target by exact email",
 )
-async def search_users(
-    q: str = Query(
+async def lookup_share_target(
+    email: str = Query(
         ...,
-        min_length=2,
-        description="Search query (email or name)",
+        description="Exact email address of the user to share with",
         examples=["alice@example.com"],
     ),
-    limit: int = Query(
-        10,
-        ge=1,
-        le=100,
-        description="Maximum number of results",
-    ),
-    _user: User = CURRENT_USER_DEP,
-) -> UserSearchResponse:
-    """Search active users by email or name, for finding share targets."""
-    users = await search_active_users(
-        q,
-        limit,
+    user: User = CURRENT_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> ShareTargetLookupResponse:
+    """Resolve one active user by exact email. ``target`` is null when no active
+    user uses the email or the email is malformed."""
+    await set_current_user(session, user.id)
+
+    # Same approval gate the jobs INSERT policy enforces.
+    if not await session.scalar(text("SELECT user_can_start_jobs(:id)"), {"id": user.id}):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending administrator approval. You cannot look up share targets yet.",
+        )
+
+    target = await find_share_target_by_email(
+        email,
         admin_session_factory=get_admin_session,
     )
 
-    return UserSearchResponse(
-        users=[
-            UserSearchResult(
-                id=str(u.id),
-                email=u.email,
-                name=u.name,
-            )
-            for u in users
-        ],
-        total=len(users),
+    return ShareTargetLookupResponse(
+        target=ShareTarget(id=str(target.id), name=target.name) if target else None
     )

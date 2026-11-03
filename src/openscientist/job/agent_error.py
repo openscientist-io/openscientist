@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from openscientist.job_files import read_job_file_text
+
 _AGENT_ERROR_FILE = "agent-error.txt"
 
 
@@ -16,11 +18,9 @@ def write_agent_error(job_dir: Path, error: str) -> None:
 
 def take_agent_error(job_dir: Path) -> str | None:
     """The error the container left in ``job_dir``, removed so a later run
-    cannot report it again."""
-    path = job_dir / _AGENT_ERROR_FILE
-    try:
-        error = path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return None
-    path.unlink(missing_ok=True)
-    return error or None
+    cannot report it again. The job directory is agent-writable, so the error
+    is only read through the symlink-safe walk, and a link planted at the name
+    is removed and reported as no error."""
+    error = read_job_file_text(job_dir, _AGENT_ERROR_FILE)
+    (job_dir / _AGENT_ERROR_FILE).unlink(missing_ok=True)
+    return error.strip() if error is not None else None
