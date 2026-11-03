@@ -20,6 +20,10 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+class UnverifiedEmailError(Exception):
+    """Raised when a sign-in presents an email the provider has not verified."""
+
+
 async def _maybe_bootstrap_admin(
     db: AsyncSession,
     user: User,
@@ -105,6 +109,18 @@ async def create_or_update_user(
         user = oauth_account.user
         logger.info("Updated OAuth account for user %s (provider=%s)", user.id, provider)
     else:
+        # A new identity must be tied to an email the provider verified, so
+        # an unverified address can neither link to nor impersonate a user
+        if email_verified is not True:
+            logger.warning(
+                "Refused %s sign-in for %s: email not verified by the provider",
+                provider,
+                provider_user_id,
+            )
+            raise UnverifiedEmailError(
+                f"{provider} did not verify the email address for {provider_user_id}"
+            )
+
         user_stmt = select(User).where(User.email == email)
         user_result = await db.execute(user_stmt)
         existing_user = user_result.scalar_one_or_none()

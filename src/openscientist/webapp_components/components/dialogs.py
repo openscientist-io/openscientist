@@ -22,8 +22,32 @@ if TYPE_CHECKING:
     from openscientist.job_manager import JobManager
 
 
-async def _load_job_shares(job_id: str) -> list[tuple[JobShare, User]]:
-    """Load current share rows for the target job."""
+async def owned_job_for_caller(job_id: str, current_user_id: str | None) -> Job | None:
+    """The job if the caller owns it, checked against the database.
+
+    None when the job is missing, has no owner, or the caller is not it.
+    """
+    if not current_user_id:
+        return None
+    try:
+        job_uuid = UUID(job_id)
+    except ValueError:
+        return None
+    async with get_admin_session() as session:
+        job_obj = await session.get(Job, job_uuid)
+    if job_obj is None or job_obj.owner_id is None or str(job_obj.owner_id) != current_user_id:
+        return None
+    return job_obj
+
+
+async def _load_job_shares(job_id: str, current_user_id: str | None) -> list[tuple[JobShare, User]]:
+    """Load the share rows for a job the caller owns, nothing otherwise.
+
+    The recipient user rows are read through the admin session because RLS
+    hides other users' rows from the caller's own session.
+    """
+    if await owned_job_for_caller(job_id, current_user_id) is None:
+        return []
     async with get_admin_session() as session:
         result = await session.execute(
             select(JobShare, User)
@@ -236,7 +260,7 @@ class _ShareDialogController:
         """Reload current shares list and visibility from the database."""
         await self.refresh_public_switch()
         try:
-            shares = await _load_job_shares(self.job_id)
+            shares = await _load_job_shares(self.job_id, get_current_user_id())
             _render_share_rows(self.shares_container, shares, self.revoke_share)
         except Exception as exc:
             logger.error("Failed to load shares: %s", exc, exc_info=True)
@@ -360,7 +384,8 @@ def render_share_dialog(job_id: str) -> ui.dialog:
 
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
             ui.button("Close", on_click=dialog.close)
-        dialog.on("open", controller.refresh_shares)
+        # Reload on every open so the dialog shows the current share list
+        dialog.on("show", controller.refresh_shares)
 
     return dialog
 

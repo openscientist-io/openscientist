@@ -29,6 +29,7 @@ from openscientist.webapp_components.components.common import (
     render_stat_badges,
 )
 from openscientist.webapp_components.components.dialogs import (
+    owned_job_for_caller,
     render_delete_dialog,
     render_share_dialog,
 )
@@ -208,8 +209,10 @@ async def _refresh_shared_jobs(
         logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
 
 
-def _show_share_dialog(job_id: str) -> None:
-    """Open share dialog."""
+async def _show_share_dialog(job_id: str) -> None:
+    """Open the share dialog when the caller owns the job the event names."""
+    if await owned_job_for_caller(job_id, get_current_user_id()) is None:
+        return
     dialog = render_share_dialog(job_id)
     dialog.open()
 

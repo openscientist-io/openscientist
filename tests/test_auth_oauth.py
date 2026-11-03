@@ -13,7 +13,11 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.auth.routes import create_or_update_user, create_session
+from openscientist.auth.routes import (
+    UnverifiedEmailError,
+    create_or_update_user,
+    create_session,
+)
 from openscientist.database.models import Administrator, OAuthAccount, User
 from openscientist.database.models import Session as DBSession
 from openscientist.settings import clear_settings_cache
@@ -49,6 +53,7 @@ async def test_create_new_user_with_oauth(db_session: AsyncSession):
         name="New User",
         access_token="access_token_123",
         refresh_token="refresh_token_123",
+        email_verified=True,
     )
 
     # Verify user was created
@@ -84,6 +89,7 @@ async def test_update_existing_oauth_account(db_session: AsyncSession):
         name="Existing User",
         access_token="old_access_token",
         refresh_token="old_refresh_token",
+        email_verified=True,
     )
 
     original_user_id = user.id
@@ -126,6 +132,7 @@ async def test_link_multiple_oauth_providers(db_session: AsyncSession):
         email="multi@example.com",
         name="Multi Provider User",
         access_token="github_token",
+        email_verified=True,
     )
 
     # Link Google to the same user (same email)
@@ -136,6 +143,7 @@ async def test_link_multiple_oauth_providers(db_session: AsyncSession):
         email="multi@example.com",
         name="Multi Provider User",
         access_token="google_token",
+        email_verified=True,
     )
 
     # Verify only one user exists
@@ -186,27 +194,30 @@ async def test_bootstrap_admin_granted_for_verified_allowlisted_login(
 async def test_bootstrap_admin_denied_for_unverified_allowlisted_login(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ):
-    """Allowlisted login without verified email should not grant admin."""
+    """An allowlisted login without a verified email is refused outright, so
+    no user and no admin row can come from it."""
     monkeypatch.setenv("BOOTSTRAP_ADMIN_EMAILS", "pending@example.com")
     clear_settings_cache()
 
-    user = await create_or_update_user(
-        db_session,
-        provider="github",
-        provider_user_id="bootstrap_2",
-        email="pending@example.com",
-        name="Pending User",
-        access_token="token",
-        email_verified=False,
-        auth_provider="github",
-    )
+    with pytest.raises(UnverifiedEmailError):
+        await create_or_update_user(
+            db_session,
+            provider="github",
+            provider_user_id="bootstrap_2",
+            email="pending@example.com",
+            name="Pending User",
+            access_token="token",
+            email_verified=False,
+            auth_provider="github",
+        )
 
-    stmt = select(Administrator).where(Administrator.user_id == user.id)
+    user_stmt = select(User).where(User.email == "pending@example.com")
+    user_result = await db_session.execute(user_stmt)
+    assert user_result.scalar_one_or_none() is None
+
+    stmt = select(Administrator)
     result = await db_session.execute(stmt)
-    admin_record = result.scalar_one_or_none()
-
-    assert admin_record is None
-    assert user.is_approved is False
+    assert result.scalars().all() == []
 
 
 @pytest.mark.asyncio
@@ -421,6 +432,7 @@ async def test_oauth_account_cascade_delete(db_session: AsyncSession):
         email="delete_oauth@example.com",
         name="Delete OAuth",
         access_token="token",
+        email_verified=True,
     )
 
     user_id = user.id
@@ -473,6 +485,7 @@ async def test_oauth_provider_uniqueness(db_session: AsyncSession):
         email="user1@example.com",
         name="User 1",
         access_token="token1",
+        email_verified=True,
     )
 
     # Try to create second user with same provider+provider_user_id
