@@ -49,6 +49,26 @@ The Docker setup mounts the following directories:
 
 - `8080`: Web interface (NiceGUI)
 
+## The Container Launcher
+
+`openscientist start` builds the agent and executor images and records each
+image's digest in `.env.owner` (`AGENT_IMAGE_DIGESTS`, `EXECUTOR_IMAGE_DIGESTS`).
+The compose stack starts a `launcher` service that is the intended holder of
+the Docker socket: it serves a small JSON API over a unix socket (a named
+compose volume, no published ports) and builds every container from one of two
+server-side templates — agent and executor. The launcher accepts only the
+recorded image digests, only resource values within the `LAUNCHER_*` bounds in
+`.env`, and only a caller whose uid and gid are `LAUNCHER_WEB_UID` and
+`LAUNCHER_WEB_GID` from `.env.owner`. Every container it creates carries the
+marker label `openscientist.launcher=<LAUNCHER_INSTANCE_ID>`, and every
+container-scoped operation answers 404 for anything that does not carry it.
+
+Its health check (`python -m openscientist_launcher.health`) verifies the
+socket file, the Docker daemon and both template images; the web service
+waits for it to be healthy before starting. Until the web service's own socket
+mount is removed in a later change, the web still runs with the socket as
+today, and the launcher runs alongside it.
+
 ## Managing Jobs
 
 ### View jobs

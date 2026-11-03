@@ -24,6 +24,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         return 0
 
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
     assert stack.start(checkout, run) == 0
     argvs = [argv for argv, _ in calls]
     assert argvs[0] == (
@@ -71,7 +72,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
     )
 
 
-def test_image_tags_come_from_the_env_file(checkout: Path):
+def test_image_tags_come_from_the_env_file(checkout: Path, monkeypatch: pytest.MonkeyPatch):
     (checkout / ".env").write_text(
         "OPENSCIENTIST_BASE_IMAGE=openscientist-base:staging\n"
         "OPENSCIENTIST_EXECUTOR_IMAGE=openscientist-executor:staging\n"
@@ -84,6 +85,7 @@ def test_image_tags_come_from_the_env_file(checkout: Path):
         calls.append((argv, env))
         return 0
 
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "e" * 64)
     assert stack.build_images(run, checkout) == 0
     tags = [argv[argv.index("-t") + 1] for argv, _ in calls if "-t" in argv]
     assert tags == [
@@ -91,9 +93,14 @@ def test_image_tags_come_from_the_env_file(checkout: Path):
         "openscientist-executor:staging",
         "openscientist-agent:staging",
     ]
+    owner = stack.envfiles.file_values(checkout, "owner")
+    assert owner["AGENT_IMAGE_DIGESTS"] == "sha256:" + "e" * 64
+    assert owner["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "e" * 64
 
 
-def test_image_tags_fall_back_to_latest_when_unset_or_empty(checkout: Path):
+def test_image_tags_fall_back_to_latest_when_unset_or_empty(
+    checkout: Path, monkeypatch: pytest.MonkeyPatch
+):
     (checkout / ".env").write_text(
         "OPENSCIENTIST_BASE_IMAGE=\nOPENSCIENTIST_EXECUTOR_IMAGE=\nOPENSCIENTIST_AGENT_IMAGE=\n",
         encoding="utf-8",
@@ -104,6 +111,7 @@ def test_image_tags_fall_back_to_latest_when_unset_or_empty(checkout: Path):
         calls.append((argv, env))
         return 0
 
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "d" * 64)
     assert stack.build_images(run, checkout) == 0
     tags = [argv[argv.index("-t") + 1] for argv, _ in calls if "-t" in argv]
     assert tags == [
@@ -111,6 +119,9 @@ def test_image_tags_fall_back_to_latest_when_unset_or_empty(checkout: Path):
         "openscientist-executor:latest",
         "openscientist-agent:latest",
     ]
+    owner = stack.envfiles.file_values(checkout, "owner")
+    assert owner["AGENT_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
+    assert owner["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
 
 
 def test_start_stops_at_the_first_failing_build(checkout: Path, monkeypatch):
