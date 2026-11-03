@@ -7,9 +7,12 @@ into downloadable archives in various formats (ZIP, Markdown, JSON).
 
 import json
 import logging
+import time
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
+
+from openscientist.job_files import JobFile, JobFileError, open_job_file, try_open_job_file
 
 logger = logging.getLogger(__name__)
 
@@ -82,48 +85,71 @@ def _iter_artifact_files(
                 yield file_path, file_path.relative_to(job_dir)
 
 
+def _artifact_allowed(parts: tuple[str, ...], excluded_top_level_dirs: tuple[str, ...]) -> bool:
+    """Whether the parts name a file the artifacts ZIP may ship, before any
+    file is opened."""
+    if not parts or any(part in ("", ".", "..", "/") or "\\" in part for part in parts):
+        return False
+    if parts == (PROVENANCE_FILE,):
+        return False
+    if parts[0] in excluded_top_level_dirs:
+        return False
+    if (
+        any(part in _EXCLUDE_DIRS for part in parts[:-1])
+        or parts[-1] in _EXCLUDE_FILES
+        or any(parts[-1].startswith(prefix) for prefix in _EXCLUDE_FILE_PREFIXES)
+    ):
+        return False
+    return True
+
+
 def artifact_file(
     job_dir: Path,
     relative: str,
     excluded_top_level_dirs: tuple[str, ...] = (),
-) -> Path | None:
-    """The file at ``relative`` in ``job_dir`` when the artifacts ZIP would
-    include it, or None."""
+) -> JobFile | None:
+    """The opened file at ``relative`` in ``job_dir`` when the artifacts ZIP
+    would include it, or None. Every component is opened with O_NOFOLLOW, so
+    a link planted at any level is refused, and the returned handle is the
+    regular file it reads. Files over the size cap are refused here, since
+    the single-file route would not ship them."""
     parts = PurePosixPath(relative).parts
-    if not parts or any(part in ("", ".", "..", "/") or "\\" in part for part in parts):
+    if not _artifact_allowed(parts, excluded_top_level_dirs):
         return None
-    if parts == (PROVENANCE_FILE,):
-        return None
-    if parts[0] in excluded_top_level_dirs:
-        return None
-    path = job_dir
-    for dirname in parts[:-1]:
-        path = path / dirname
-        if not _shown_dir(path) or not path.is_dir():
-            return None
-    path = path / parts[-1]
-    if not _shown_file(path) or not path.is_file():
-        return None
-    if path.stat().st_size > MAX_ARTIFACT_FILE_SIZE_BYTES:
-        return None
-    return path
+    return try_open_job_file(job_dir, relative, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
+
+
+def _open_artifact_files(
+    job_dir: Path,
+    files: Iterator[tuple[Path, Path]],
+    excluded_top_level_dirs: tuple[str, ...],
+) -> Iterator[tuple[JobFile, Path]]:
+    """The walk's candidates, opened through the symlink-safe walk. A file
+    that a link replaced between the walk and the open is skipped. The size
+    cap is left to the partition, so an oversized file still lands in the
+    exclusion manifest."""
+    for _, arcname in files:
+        parts = PurePosixPath(arcname.as_posix()).parts
+        if not _artifact_allowed(parts, excluded_top_level_dirs):
+            continue
+        try:
+            job_file = open_job_file(job_dir, arcname)
+        except JobFileError:
+            continue
+        yield job_file, arcname
 
 
 def _partition_by_size(
-    files: Iterator[tuple[Path, Path]],
-) -> tuple[list[tuple[Path, Path]], list[tuple[Path, int]]]:
-    included: list[tuple[Path, Path]] = []
+    files: Iterator[tuple[JobFile, Path]],
+) -> tuple[list[tuple[JobFile, Path]], list[tuple[Path, int]]]:
+    included: list[tuple[JobFile, Path]] = []
     oversized: list[tuple[Path, int]] = []
-    for file_path, arcname in files:
-        try:
-            size = file_path.stat().st_size
-        except OSError:
-            included.append((file_path, arcname))
-            continue
-        if size > MAX_ARTIFACT_FILE_SIZE_BYTES:
-            oversized.append((arcname, size))
+    for job_file, arcname in files:
+        if job_file.size > MAX_ARTIFACT_FILE_SIZE_BYTES:
+            job_file.close()
+            oversized.append((arcname, job_file.size))
         else:
-            included.append((file_path, arcname))
+            included.append((job_file, arcname))
     return included, oversized
 
 
@@ -146,22 +172,36 @@ def _write_artifacts_zip(
     excluded_paths: set[Path] | None = None,
     excluded_top_level_dirs: tuple[str, ...] = (),
 ) -> int:
-    """Write job artifacts into an open zip file and return number of files written."""
+    """Write job artifacts into an open zip file and return number of files
+    written. Each file is read from the fd the walk opened, so a file the
+    agent links out between the walk and the write cannot land in the
+    archive."""
     included, oversized = _partition_by_size(
-        _iter_artifact_files(
+        _open_artifact_files(
             job_dir,
-            excluded_paths=excluded_paths,
-            excluded_top_level_dirs=excluded_top_level_dirs,
+            _iter_artifact_files(
+                job_dir,
+                excluded_paths=excluded_paths,
+                excluded_top_level_dirs=excluded_top_level_dirs,
+            ),
+            excluded_top_level_dirs,
         )
     )
 
     written = 0
-    for file_path, arcname in included:
+    for job_file, arcname in included:
         try:
-            zip_file.write(file_path, arcname)
+            zinfo = zipfile.ZipInfo(
+                filename=arcname.as_posix(),
+                date_time=time.localtime(job_file.stat.st_mtime)[:6],
+            )
+            zinfo.compress_type = zip_file.compression
+            zip_file.writestr(zinfo, job_file.read_all())
             written += 1
         except Exception as e:
             logger.warning("Failed to add %s to archive: %s", arcname, e)
+        finally:
+            job_file.close()
 
     if oversized:
         zip_file.writestr(EXCLUDED_FILES_MANIFEST, _format_excluded_manifest(oversized))

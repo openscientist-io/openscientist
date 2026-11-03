@@ -69,19 +69,19 @@ class FigureBlockProcessor(BlockProcessor):
 
         # The agent writes the report, so a figure resolves only to one of the
         # job's own artifacts, never to a path it climbs or links its way to.
-        image_path = artifact_file(
+        image = artifact_file(
             self.provenance_dir.parent,
             f"provenance/{filename}",
             excluded_top_level_dirs=self.excluded_top_level_dirs,
         )
-        if image_path is None:
+        if image is None:
             logger.warning("Figure not found: %s", filename)
             if caption:
                 p = etree.SubElement(parent, "p")
                 p.text = f"[Figure: {caption}]"
             return True
 
-        src = _resolve_image_src(image_path, self.use_base64)
+        src = _resolve_image_src(image, self.use_base64)
 
         figure = etree.SubElement(parent, "figure")
         if width:
@@ -127,17 +127,17 @@ class ImageSrcTreeProcessor(Treeprocessor):
                 # Try the provenance dir, then the path relative to the job dir,
                 # and only among the job's own artifacts.
                 job_dir = self.provenance_dir.parent
-                image_path = artifact_file(
+                image = artifact_file(
                     job_dir,
                     f"provenance/{Path(src).name}",
                     excluded_top_level_dirs=self.excluded_top_level_dirs,
                 ) or artifact_file(
                     job_dir, src, excluded_top_level_dirs=self.excluded_top_level_dirs
                 )
-                if image_path is None:
+                if image is None:
                     continue
 
-                resolved = _resolve_image_src(image_path, self.use_base64)
+                resolved = _resolve_image_src(image, self.use_base64)
                 alt = child.get("alt", "")
 
                 # Build <figure> wrapper

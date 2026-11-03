@@ -7,6 +7,7 @@ from typing import Any
 from nicegui import ui
 
 from openscientist.job.types import JobInfo
+from openscientist.job_files import job_file_exists
 
 
 def render_justified_text(
@@ -101,8 +102,9 @@ def render_error_card(error_info: dict[str, Any], job_info: JobInfo, job_dir: Pa
                     "text-xs max-h-[300px] overflow-y-auto p-2 bg-gray-50 rounded"
                 ).style("word-break: break-word; white-space: pre-wrap; max-width: 100%;")
 
-            log_file = job_dir / "orchestrator.log"
-            if log_file.exists():
+            # The job directory is agent-writable, so the hint only shows when
+            # a real (not a linked) log file is there.
+            if job_file_exists(job_dir, "orchestrator.log"):
                 ui.label("Check the orchestrator.log file for complete details.").classes(
                     "text-xs text-gray-600 mt-2"
                 )

@@ -165,6 +165,40 @@ async def test_what_the_agent_wrote_is_served_sandboxed(
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+def _csp_directives(policy: str) -> dict[str, str]:
+    directives: dict[str, str] = {}
+    for part in policy.split(";"):
+        part = part.strip()
+        if part:
+            name, _, sources = part.partition(" ")
+            directives[name] = sources.strip()
+    return directives
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["files/provenance/plot.png", "report.html"])
+async def test_agent_content_cannot_reach_other_hosts(
+    shared_job: _SharedJob, request_as, path: str
+) -> None:
+    response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/{path}")
+    assert response.status_code == 200
+    directives = _csp_directives(response.headers["content-security-policy"])
+
+    assert directives["connect-src"] == "'none'"
+    assert set(directives["img-src"].split()) == {"'self'", "data:"}
+
+
+@pytest.mark.asyncio
+async def test_the_report_allows_framing_only_from_the_app(
+    shared_job: _SharedJob, request_as
+) -> None:
+    response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/report.html")
+    assert response.status_code == 200
+    directives = _csp_directives(response.headers["content-security-policy"])
+
+    assert directives["frame-ancestors"] == "'self'"
+
+
 @pytest_asyncio.fixture
 async def committed_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[_SharedJob]:
     """A committed job with a plot, which the web's own login reads through RLS."""

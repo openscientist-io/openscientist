@@ -622,6 +622,11 @@ class TestExecuteCodeAirgapNetwork:
         assert kwargs.get("network") == "none"
         assert "network_mode" not in kwargs
         mock_resolve.assert_not_called()
+        # With no network there is nothing to filter, so the executor keeps
+        # its own user and entrypoint.
+        assert kwargs.get("user") == "executor"
+        assert kwargs.get("entrypoint") == []
+        assert kwargs.get("cap_add") is None
 
     @pytest.mark.asyncio
     async def test_airgap_disabled_uses_resolved_network(
@@ -652,6 +657,49 @@ class TestExecuteCodeAirgapNetwork:
         assert kwargs.get("network") == "openscientist_default"
         assert "network_mode" not in kwargs
         mock_resolve.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_restricted_executor_runs_behind_the_firewall(
+        self, test_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
+        """Without air-gap the executor keeps the compose network and installs
+        the same in-container firewall as the agent, dropping to its own user."""
+        from unittest.mock import patch
+
+        mgr, mock_client, mock_settings = self._setup()
+        await set_admin_settings_row(test_engine, airgapped=False)
+
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        with (
+            patch("openscientist.container_manager.get_settings", return_value=mock_settings),
+            patch(
+                "openscientist.job_container.resolve_docker_network",
+                return_value="openscientist_default",
+            ),
+        ):
+            await asyncio.to_thread(
+                mgr.execute_code,
+                code='print("hi")',
+                job_id="restrict-on",
+                output_dir=str(output_dir),
+            )
+
+        kwargs = self._run_kwargs(mock_client)
+        assert kwargs.get("network") == "openscientist_default"
+        assert kwargs.get("user") == "root"
+        assert kwargs.get("cap_add") == ["NET_ADMIN"]
+        assert kwargs.get("entrypoint") == ["/agent-firewall-entrypoint.sh"]
+        assert kwargs.get("security_opt") == ["no-new-privileges:true"]
+        environment = cast(dict[str, str], kwargs.get("environment"))
+        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert environment["OPENSCIENTIST_FIREWALL_RUN_AS"] == "executor"
+        # The executor never opens Postgres, so the allow-list is only the
+        # web's broker and LLM proxy.
+        assert set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(",")) == {
+            "openscientist:8081",
+            "openscientist:8082",
+        }
 
 
 class TestGetContainerManager:
@@ -748,24 +796,45 @@ class TestContainerManagerIntegration:
 
     def test_network_enabled(self):
         """Test that network access is available (needed for requests, SPARQL, cargo, etc.)."""
+        import uuid
+        from unittest.mock import patch
+
         from openscientist.container_manager import ContainerManager
 
         manager = ContainerManager()
 
-        # Probe a purpose-built connectivity endpoint (Google's generate_204:
-        # tiny, no body, returns a fixed 204, and does not rate-limit or 503
-        # like httpbin.org). Any successful HTTP response proves egress works,
-        # so assert on a sentinel rather than a specific status code.
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = manager.execute_code(
-                code=(
-                    "import requests; "
-                    'r = requests.get("https://www.google.com/generate_204", timeout=10); '
-                    'print("NETWORK_OK", r.status_code)'
+        # The executor resolves names through Docker's built-in DNS, which
+        # lives on loopback and only exists on user-defined networks, so the
+        # egress firewall allows it. The default bridge instead inherits the
+        # host's resolv.conf, whose resolvers sit in a private range the
+        # firewall refuses. Run on a throwaway user network, the way a
+        # compose deployment would.
+        network_name = f"openscientist-net-test-{uuid.uuid4().hex[:8]}"
+        network = manager.client.networks.create(network_name, driver="bridge")
+        try:
+            # Probe a purpose-built connectivity endpoint (Google's
+            # generate_204: tiny, no body, returns a fixed 204, and does not
+            # rate-limit or 503 like httpbin.org). Any successful HTTP
+            # response proves egress works, so assert on a sentinel rather
+            # than a specific status code.
+            with (
+                patch(
+                    "openscientist.job_container.resolve_docker_network",
+                    return_value=network_name,
                 ),
-                job_id="integration-test-4",
-                output_dir=tmpdir,
-            )
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                result = manager.execute_code(
+                    code=(
+                        "import requests; "
+                        'r = requests.get("https://www.google.com/generate_204", timeout=10); '
+                        'print("NETWORK_OK", r.status_code)'
+                    ),
+                    job_id="integration-test-4",
+                    output_dir=tmpdir,
+                )
+        finally:
+            network.remove()
 
         assert result["success"] is True
         assert "NETWORK_OK" in result["output"]
