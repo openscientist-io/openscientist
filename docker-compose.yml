@@ -1,13 +1,14 @@
 # Docker Compose for OpenScientist
 #
 # Usage:
-#   Development: Set OPENSCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth
+#   Development: Set OPENSCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth,
+#                which needs a local APP_URL and a loopback OPENSCIENTIST_BIND_ADDRESS
 #
 #   Production:  docker compose up  (OPENSCIENTIST_DEV_MODE unset or false)
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # The superuser password comes from .env.db, which the web never loads.
     env_file:
@@ -34,7 +35,7 @@ services:
   # As the superuser, creates or updates the database logins and hands the schema
   # to openscientist_owner. Runs on every `up`, before the migrations.
   db-bootstrap:
-    image: postgres:18
+    image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     restart: "no"
     depends_on:
       postgres:
@@ -84,8 +85,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # Loopback by default, because docker's own DNAT rule sits in front of host firewalls.
     ports:
-      - "${PORT:-8080}:8080"
+      - "${OPENSCIENTIST_BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # Map host.docker.internal to the host gateway so the web's LLM proxy and
@@ -102,6 +104,9 @@ services:
       # Database URLs use the 'postgres' service hostname — must override any .env value
       DATABASE_URL: postgresql+asyncpg://openscientist_web:${POSTGRES_WEB_PASSWORD:?set POSTGRES_WEB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
       ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
+
+      # Passed through so dev mode can refuse a non-loopback publish.
+      OPENSCIENTIST_BIND_ADDRESS: ${OPENSCIENTIST_BIND_ADDRESS:-127.0.0.1}
 
       # Phenix: PHENIX_HOST_PATH points to a Linux x86_64 Phenix directory on the
       # host.  It is mounted read-only at /opt/phenix; PHENIX_PATH is the
