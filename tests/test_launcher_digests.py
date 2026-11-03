@@ -123,6 +123,7 @@ def test_launcher_accepts_exactly_the_cli_recorded_digests(
             "lifetime_seconds": 60,
             "env": {"JOB_ID": JOB_ID},
             "db_login": LOGIN_ROLE,
+            "egress_allow": ["openscientist:8081", "openscientist:8082"],
             "memory_mib": 1024,
             "cpu": 0.5,
         }
