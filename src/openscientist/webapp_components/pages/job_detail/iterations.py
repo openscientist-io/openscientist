@@ -9,6 +9,7 @@ from urllib.parse import quote
 from nicegui import ui
 
 from openscientist.job.types import JobStatus
+from openscientist.job_files import list_job_files, read_job_file_bytes, read_job_file_text
 from openscientist.webapp_components.components.badges import (
     render_pmid_badge,
     render_text_with_pmid_links,
@@ -103,20 +104,25 @@ def _timeline_header_text(
 def _collect_iteration_plots(
     iter_provenance_dir: Path, iter_num: int
 ) -> list[tuple[Path, dict[str, Any]]]:
+    """This iteration's plots with metadata. The job directory is
+    agent-writable, so the plot listing and metadata reads go through the
+    symlink-safe walk and links the agent plants are invisible."""
+    job_dir = iter_provenance_dir.parent
     plots: list[tuple[Path, dict[str, Any]]] = []
-    if not iter_provenance_dir.exists():
-        return plots
-    for plot_file in sorted(iter_provenance_dir.glob("*.png")):
-        metadata_file = plot_file.with_suffix(".json")
-        if not metadata_file.exists():
+    for name in list_job_files(job_dir, iter_provenance_dir.name):
+        if not name.endswith(".png"):
+            continue
+        metadata_name = Path(name).with_suffix(".json").name
+        metadata_text = read_job_file_text(job_dir, f"{iter_provenance_dir.name}/{metadata_name}")
+        if metadata_text is None:
             continue
         try:
-            with open(metadata_file, encoding="utf-8") as metadata_handle:
-                metadata = json.load(metadata_handle)
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            metadata = json.loads(metadata_text)
+        except json.JSONDecodeError:
             continue
-        if metadata.get("iteration") == iter_num:
-            plots.append((plot_file, metadata))
+        if not isinstance(metadata, dict) or metadata.get("iteration") != iter_num:
+            continue
+        plots.append((iter_provenance_dir / name, metadata))
     return plots
 
 
@@ -124,6 +130,16 @@ def _job_file_url(job_dir: Path, path: Path) -> str:
     """The URL that serves ``path``, a file of the job in ``job_dir``, to users
     who may see the job."""
     return f"/web/jobs/{job_dir.name}/files/{quote(path.relative_to(job_dir).as_posix())}"
+
+
+def _download_plot(job_dir: Path, relative: str) -> None:
+    """Serve a plot at click time from the inode the walk opens, so a link the
+    agent plants between render and click cannot redirect the download."""
+    data = read_job_file_bytes(job_dir, relative)
+    if data is None:
+        ui.notify("The plot is no longer available.", type="warning")
+        return
+    ui.download(data, filename=Path(relative).name)
 
 
 def _render_iteration_plots(iter_provenance_dir: Path, iter_num: int) -> None:
@@ -148,7 +164,10 @@ def _render_iteration_plots(iter_provenance_dir: Path, iter_num: int) -> None:
                 ui.image(_job_file_url(iter_provenance_dir.parent, plot_file)).classes("w-full")
                 ui.button(
                     "Download",
-                    on_click=lambda p=plot_file: ui.download(p.read_bytes(), filename=p.name),
+                    on_click=lambda f=plot_file: _download_plot(
+                        iter_provenance_dir.parent,
+                        f"{iter_provenance_dir.name}/{f.name}",
+                    ),
                     icon="download",
                 ).props("size=sm flat dense").classes("mt-2")
                 plot_code = metadata.get("code")
