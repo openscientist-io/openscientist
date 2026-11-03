@@ -18,7 +18,6 @@ NOT_ASKED = {
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "model override, edited in .env",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "model override, edited in .env",
     "AZURE_OPENAI_API_VERSION": "optional API version, edited in .env",
-    "GCP_CREDENTIALS_HOST_PATH": "host mount path for agent containers, edited in .env",
     "OMP_AUTH_HOST_PATH": "omp vault path, set when the harness is omp",
     "VERTEX_REGION_CLAUDE_4_5_SONNET": "optional per-model region, edited in .env",
     "VERTEX_REGION_CLAUDE_4_5_HAIKU": "optional per-model region, edited in .env",

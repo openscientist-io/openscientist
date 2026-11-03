@@ -25,8 +25,10 @@ from openscientist.job_container.secrets import (
 )
 from openscientist.llm_proxy import container_proxy_base_url, create_llm_proxy_app
 from openscientist.providers import get_provider
-from openscientist.providers.base import AirgapEgress, LlmUpstream
+from openscientist.providers.base import AirgapEgress, LlmUpstream, StaticHeadersSigning
+from openscientist.providers.vertex import GoogleAdcSigning
 from openscientist.settings import Settings, get_settings
+from tests.test_provider_vertex import FakeVertexCredentials
 
 
 @pytest.fixture
@@ -59,6 +61,12 @@ def active_provider(monkeypatch):
         "AWS_BEARER_TOKEN_BEDROCK",
         "CLAUDE_CODE_USE_BEDROCK",
         "GITHUB_TOKEN",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GCP_BILLING_ACCOUNT_ID",
+        "CLOUD_ML_REGION",
+        "VERTEX_REGION_CLAUDE_4_5_SONNET",
+        "VERTEX_REGION_CLAUDE_4_5_HAIKU",
     )
 
     def _select(**env: str):
@@ -82,7 +90,7 @@ def placeholder_for() -> Iterator[Callable[[str], str]]:
     def issue(job_id: str) -> str:
         role = f"agent_{uuid4().hex}"
         roles.append(role)
-        return issue_run_credentials(job_id, role).llm_placeholder
+        return issue_run_credentials(job_id, role, "discovery").llm_placeholder
 
     yield issue
     for role in roles:
@@ -95,7 +103,8 @@ class TestClaudeUpstream:
     def test_anthropic_upstream(self, active_provider):
         provider = active_provider(OPENSCIENTIST_PROVIDER="anthropic", ANTHROPIC_API_KEY="real-key")
         assert provider.llm_upstream() == LlmUpstream(
-            "https://api.anthropic.com", {"x-api-key": "real-key"}
+            "https://api.anthropic.com",
+            StaticHeadersSigning({"x-api-key": "real-key"}),
         )
 
     def test_cborg_upstream_strips_trailing_slash(self, active_provider):
@@ -105,7 +114,8 @@ class TestClaudeUpstream:
             ANTHROPIC_BASE_URL="https://api.cborg.lbl.gov/",
         )
         assert provider.llm_upstream() == LlmUpstream(
-            "https://api.cborg.lbl.gov", {"authorization": "Bearer real-tok"}
+            "https://api.cborg.lbl.gov",
+            StaticHeadersSigning({"authorization": "Bearer real-tok"}),
         )
 
     def test_foundry_upstream(self, active_provider):
@@ -115,7 +125,8 @@ class TestClaudeUpstream:
             ANTHROPIC_FOUNDRY_API_KEY="fkey",
         )
         assert provider.llm_upstream() == LlmUpstream(
-            "https://myfoundry.services.ai.azure.com/anthropic", {"x-api-key": "fkey"}
+            "https://myfoundry.services.ai.azure.com/anthropic",
+            StaticHeadersSigning({"x-api-key": "fkey"}),
         )
 
     def test_anthropic_oauth_upstream(self, active_provider):
@@ -123,7 +134,8 @@ class TestClaudeUpstream:
             OPENSCIENTIST_PROVIDER="anthropic", CLAUDE_CODE_OAUTH_TOKEN="oauth-real"
         )
         assert provider.llm_upstream() == LlmUpstream(
-            "https://api.anthropic.com", {"authorization": "Bearer oauth-real"}
+            "https://api.anthropic.com",
+            StaticHeadersSigning({"authorization": "Bearer oauth-real"}),
         )
 
     def test_bedrock_bearer_upstream(self, active_provider):
@@ -134,7 +146,7 @@ class TestClaudeUpstream:
         )
         assert provider.llm_upstream() == LlmUpstream(
             "https://bedrock-runtime.us-east-1.amazonaws.com",
-            {"authorization": "Bearer bt-real"},
+            StaticHeadersSigning({"authorization": "Bearer bt-real"}),
         )
 
 
@@ -214,6 +226,30 @@ class TestProxiedContainerEnv:
         assert "ANTHROPIC_FOUNDRY_RESOURCE" not in env
         assert "fkey" not in env.values()
 
+    def test_vertex_routes_the_container_through_the_proxy(self, active_provider, tmp_path):
+        """The container reaches Vertex only through the proxy and holds no
+        GCP credential of its own."""
+        creds = tmp_path / "sa.json"
+        creds.write_text('{"type": "service_account"}')
+        provider = active_provider(
+            OPENSCIENTIST_PROVIDER="vertex",
+            ANTHROPIC_VERTEX_PROJECT_ID="proj-9",
+            GCP_BILLING_ACCOUNT_ID="BILL-9",
+            CLOUD_ML_REGION="us-east5",
+            GOOGLE_APPLICATION_CREDENTIALS=str(creds),
+        )
+        env = provider.proxied_container_env(
+            proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
+        )
+        assert env["CLAUDE_CODE_USE_VERTEX"] == "1"
+        assert env["ANTHROPIC_VERTEX_BASE_URL"] == "http://openscientist:8081"
+        assert env["CLAUDE_CODE_SKIP_VERTEX_AUTH"] == "1"
+        assert env["ANTHROPIC_AUTH_TOKEN"] == "job-1.tok"
+        assert env["ANTHROPIC_VERTEX_PROJECT_ID"] == "proj-9"
+        assert env["CLOUD_ML_REGION"] == "us-east5"
+        assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
+        assert str(creds) not in env.values()
+
 
 class TestCodexUpstream:
     """Codex backend upstream derivation on the Provider hierarchy."""
@@ -221,7 +257,8 @@ class TestCodexUpstream:
     def test_openai_upstream(self, active_provider):
         provider = active_provider(OPENSCIENTIST_PROVIDER="openai", OPENAI_API_KEY="sk-real")
         assert provider.llm_upstream() == LlmUpstream(
-            "https://api.openai.com/v1", {"authorization": "Bearer sk-real"}
+            "https://api.openai.com/v1",
+            StaticHeadersSigning({"authorization": "Bearer sk-real"}),
         )
 
     def test_azure_upstream(self, active_provider):
@@ -232,14 +269,18 @@ class TestCodexUpstream:
             OPENSCIENTIST_MODEL="gpt5",
         )
         assert provider.llm_upstream() == LlmUpstream(
-            "https://myres.openai.azure.com/openai/v1", {"authorization": "Bearer az-real"}
+            "https://myres.openai.azure.com/openai/v1",
+            StaticHeadersSigning({"authorization": "Bearer az-real"}),
         )
 
     def test_ollama_upstream_is_keyless(self, active_provider):
         provider = active_provider(
             OPENSCIENTIST_PROVIDER="ollama", OLLAMA_BASE_URL="http://ollama:11434/v1"
         )
-        assert provider.llm_upstream() == LlmUpstream("http://ollama:11434/v1", {})
+        assert provider.llm_upstream() == LlmUpstream(
+            "http://ollama:11434/v1",
+            StaticHeadersSigning({}),
+        )
 
     def test_vllm_upstream_is_keyless_without_api_key(self, active_provider):
         provider = active_provider(
@@ -247,7 +288,10 @@ class TestCodexUpstream:
             VLLM_BASE_URL="http://vllm:8000/v1",
             OPENSCIENTIST_MODEL="Qwen/Qwen3-32B",
         )
-        assert provider.llm_upstream() == LlmUpstream("http://vllm:8000/v1", {})
+        assert provider.llm_upstream() == LlmUpstream(
+            "http://vllm:8000/v1",
+            StaticHeadersSigning({}),
+        )
 
     def test_vllm_upstream_injects_bearer_when_keyed(self, active_provider):
         provider = active_provider(
@@ -257,7 +301,8 @@ class TestCodexUpstream:
             VLLM_API_KEY="vk-real",
         )
         assert provider.llm_upstream() == LlmUpstream(
-            "http://vllm:8000/v1", {"authorization": "Bearer vk-real"}
+            "http://vllm:8000/v1",
+            StaticHeadersSigning({"authorization": "Bearer vk-real"}),
         )
 
     def test_llamacpp_upstream_is_keyless_without_api_key(self, active_provider):
@@ -266,7 +311,10 @@ class TestCodexUpstream:
             LLAMACPP_BASE_URL="http://llamacpp:8080/v1",
             OPENSCIENTIST_MODEL="meta-llama/Llama-3.1-8B-Instruct",
         )
-        assert provider.llm_upstream() == LlmUpstream("http://llamacpp:8080/v1", {})
+        assert provider.llm_upstream() == LlmUpstream(
+            "http://llamacpp:8080/v1",
+            StaticHeadersSigning({}),
+        )
 
     def test_llamacpp_upstream_injects_bearer_when_keyed(self, active_provider):
         provider = active_provider(
@@ -276,7 +324,8 @@ class TestCodexUpstream:
             LLAMACPP_API_KEY="lk-real",
         )
         assert provider.llm_upstream() == LlmUpstream(
-            "http://llamacpp:8080/v1", {"authorization": "Bearer lk-real"}
+            "http://llamacpp:8080/v1",
+            StaticHeadersSigning({"authorization": "Bearer lk-real"}),
         )
 
 
@@ -430,6 +479,7 @@ def _recording_upstream(recorded: list[dict]) -> httpx.AsyncClient:
         recorded.append(
             {
                 "method": request.method,
+                "host": request.url.hostname,
                 "path": request.url.path,
                 "query": request.url.query,
                 "headers": dict(request.headers),
@@ -462,7 +512,10 @@ class TestProxyForwarding:
         placeholder = placeholder_for("job-1")
         recorded: list[dict] = []
         app = create_llm_proxy_app(
-            upstream=lambda: LlmUpstream("https://upstream.test", {"x-api-key": "REAL-KEY"}),
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test",
+                StaticHeadersSigning({"x-api-key": "REAL-KEY"}),
+            ),
             client=_recording_upstream(recorded),
         )
         with TestClient(app) as client:
@@ -490,7 +543,8 @@ class TestProxyForwarding:
         recorded: list[dict] = []
         app = create_llm_proxy_app(
             upstream=lambda: LlmUpstream(
-                "https://cborg.test", {"authorization": "Bearer REAL-TOK"}
+                "https://cborg.test",
+                StaticHeadersSigning({"authorization": "Bearer REAL-TOK"}),
             ),
             client=_recording_upstream(recorded),
         )
@@ -508,7 +562,8 @@ class TestProxyForwarding:
         recorded: list[dict] = []
         app = create_llm_proxy_app(
             upstream=lambda: LlmUpstream(
-                "https://api.openai.com/v1", {"authorization": "Bearer REAL"}
+                "https://api.openai.com/v1",
+                StaticHeadersSigning({"authorization": "Bearer REAL"}),
             ),
             client=_recording_upstream(recorded),
         )
@@ -527,7 +582,10 @@ class TestProxyForwarding:
     def test_rejects_invalid_token_without_forwarding(self):
         recorded: list[dict] = []
         app = create_llm_proxy_app(
-            upstream=lambda: LlmUpstream("https://upstream.test", {"x-api-key": "REAL-KEY"}),
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test",
+                StaticHeadersSigning({"x-api-key": "REAL-KEY"}),
+            ),
             client=_recording_upstream(recorded),
         )
         with TestClient(app) as client:
@@ -541,11 +599,14 @@ class TestProxyForwarding:
 
     def test_refuses_a_run_that_has_ended_without_forwarding(self):
         role = f"agent_{uuid4().hex}"
-        placeholder = issue_run_credentials("job-1", role).llm_placeholder
+        placeholder = issue_run_credentials("job-1", role, "discovery").llm_placeholder
         revoke_run_credentials(role)
         recorded: list[dict] = []
         app = create_llm_proxy_app(
-            upstream=lambda: LlmUpstream("https://upstream.test", {"x-api-key": "REAL-KEY"}),
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test",
+                StaticHeadersSigning({"x-api-key": "REAL-KEY"}),
+            ),
             client=_recording_upstream(recorded),
         )
         with TestClient(app) as client:
@@ -566,6 +627,100 @@ class TestProxyForwarding:
         with TestClient(app) as client:
             resp = client.post("/v1/messages", headers={"x-api-key": placeholder}, content=b"{}")
         assert resp.status_code == 502
+
+
+class TestVertexProxyForwarding:
+    """The proxy signs Vertex calls with the web's credential and forwards them
+    to the regional Vertex endpoint; the stub upstream stands in for it."""
+
+    _VERTEX_PATH = (
+        "/projects/proj-1/locations/europe-west1/publishers/anthropic/"
+        "models/claude-sonnet-4-5@20250929:rawPredict"
+    )
+
+    def _app(self, recorded: list[dict], credentials: FakeVertexCredentials) -> Starlette:
+        upstream = LlmUpstream(
+            "https://us-east5-aiplatform.googleapis.com/v1",
+            GoogleAdcSigning(credentials),
+        )
+        return create_llm_proxy_app(upstream=lambda: upstream, client=_recording_upstream(recorded))
+
+    def test_raw_predict_reaches_the_regional_vertex_endpoint(self, placeholder_for):
+        """The container's rawPredict reaches the regional Vertex endpoint with a
+        fresh Google bearer, the body unchanged, and the response byte-identical."""
+        placeholder = placeholder_for("job-1")
+        credentials = FakeVertexCredentials()
+        recorded: list[dict] = []
+        app = self._app(recorded, credentials)
+        with TestClient(app) as client:
+            resp = client.post(
+                self._VERTEX_PATH,
+                headers={
+                    "authorization": f"Bearer {placeholder}",
+                    "anthropic-version": "vertex-2023-10-16",
+                    "content-type": "application/json",
+                },
+                content=b'{"anthropic_version": "vertex-2023-10-16", "messages": []}',
+            )
+        assert resp.status_code == 200
+        assert resp.content == b"upstream-body"
+        assert len(recorded) == 1
+        forwarded = recorded[0]
+        # Localized to the region the request path names, not the default one.
+        assert forwarded["host"] == "europe-west1-aiplatform.googleapis.com"
+        assert forwarded["path"] == "/v1" + self._VERTEX_PATH
+        assert forwarded["headers"]["authorization"] == "Bearer tok-1"
+        assert forwarded["headers"]["anthropic-version"] == "vertex-2023-10-16"
+        assert placeholder not in forwarded["headers"].values()
+        assert forwarded["body"] == b'{"anthropic_version": "vertex-2023-10-16", "messages": []}'
+        # The bearer came from the credential's cached token, no mint needed.
+        assert credentials.refreshes == []
+
+    def test_stream_raw_predict_streams_through_byte_identical(self, placeholder_for):
+        """Streaming bytes pass through unchanged and the response stays streamed."""
+        placeholder = placeholder_for("job-2")
+        recorded: list[dict] = []
+        app = self._app(recorded, FakeVertexCredentials())
+        path = self._VERTEX_PATH[: -len(":rawPredict")] + ":streamRawPredict"
+        with TestClient(app) as client:
+            with client.stream(
+                "POST", path, headers={"authorization": f"Bearer {placeholder}"}, content=b"{}"
+            ) as resp:
+                chunks = list(resp.iter_raw())
+        assert resp.status_code == 200
+        assert b"".join(chunks) == b"upstream-body"
+        # A streamed response, not a buffered one: no content-length was set.
+        assert "content-length" not in resp.headers
+        assert resp.headers["content-type"] == "application/json"
+        assert recorded[0]["host"] == "europe-west1-aiplatform.googleapis.com"
+
+    def test_the_second_request_reuses_the_minted_token(self, placeholder_for):
+        placeholder = placeholder_for("job-3")
+        credentials = FakeVertexCredentials()
+        recorded: list[dict] = []
+        app = self._app(recorded, credentials)
+        with TestClient(app) as client:
+            for _ in range(2):
+                resp = client.post(
+                    self._VERTEX_PATH,
+                    headers={"authorization": f"Bearer {placeholder}"},
+                    content=b"{}",
+                )
+                assert resp.status_code == 200
+        assert [f["headers"]["authorization"] for f in recorded] == ["Bearer tok-1"] * 2
+        assert credentials.refreshes == []
+
+    def test_a_wrong_placeholder_is_refused_without_forwarding(self):
+        recorded: list[dict] = []
+        app = self._app(recorded, FakeVertexCredentials())
+        with TestClient(app) as client:
+            resp = client.post(
+                self._VERTEX_PATH,
+                headers={"authorization": f"Bearer job-1.{'0' * 64}"},
+                content=b"{}",
+            )
+        assert resp.status_code == 401
+        assert recorded == []
 
 
 class TestStartLlmProxy:
@@ -651,6 +806,53 @@ class TestStartLlmProxy:
         assert forwarded["headers"]["x-api-key"] == "real-key"
         assert forwarded["headers"]["anthropic-version"] == "2023-06-01"
         assert forwarded["body"] == b'{"m":1}'
+
+    async def test_the_listener_starts_for_a_direct_provider(
+        self, active_provider, placeholder_for, monkeypatch
+    ) -> None:
+        """The proxy listens for every provider; a direct one just 502s its traffic,
+        so nothing ever bypasses it with a real credential."""
+        from openscientist import llm_proxy
+
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        provider = active_provider(
+            OPENSCIENTIST_PROVIDER="bedrock",
+            AWS_REGION="us-east-1",
+            AWS_ACCESS_KEY_ID="ak",
+            AWS_SECRET_ACCESS_KEY="sk",
+            OPENSCIENTIST_LLM_PROXY_PORT=str(port),
+        )
+        assert provider.airgap_egress().mode is AirgapEgress.DIRECT
+
+        configs: list[Config] = []
+        served: list[socket.socket] = []
+
+        class _FakeServer:
+            def __init__(self, config: Config) -> None:
+                configs.append(config)
+
+            async def serve(self, sockets: list[socket.socket]) -> None:
+                served.extend(sockets)
+
+        monkeypatch.setattr(llm_proxy, "_NoSignalServer", _FakeServer)
+        monkeypatch.setattr(llm_proxy, "_proxy_server", None)
+        monkeypatch.setattr(llm_proxy, "_proxy_task", None)
+
+        await llm_proxy.start_llm_proxy()
+        await asyncio.sleep(0)
+
+        assert len(configs) == 1
+        assert [sock.getsockname()[1] for sock in served] == [port]
+        for sock in served:
+            sock.close()
+        app = cast("ASGIApp", configs[0].app)
+
+        placeholder = placeholder_for("job-1")
+        with TestClient(app) as client:
+            resp = client.post("/v1/messages", headers={"x-api-key": placeholder}, content=b"{}")
+        assert resp.status_code == 502
 
 
 class TestRunnerInjection:
@@ -752,6 +954,18 @@ class TestAirgapPosture:
         )
         assert p.airgap_egress().mode is AirgapEgress.PROXY
 
+    def test_vertex_proxies(self, active_provider, tmp_path):
+        creds = tmp_path / "sa.json"
+        creds.write_text('{"type": "service_account"}')
+        p = active_provider(
+            OPENSCIENTIST_PROVIDER="vertex",
+            ANTHROPIC_VERTEX_PROJECT_ID="proj-1",
+            GOOGLE_APPLICATION_CREDENTIALS=str(creds),
+            GCP_BILLING_ACCOUNT_ID="012345-ABCDEF",
+            CLOUD_ML_REGION="us-east5",
+        )
+        assert p.airgap_egress().mode is AirgapEgress.PROXY
+
     def test_bedrock_sigv4_is_direct(self, active_provider):
         p = active_provider(
             OPENSCIENTIST_PROVIDER="bedrock",
@@ -792,6 +1006,13 @@ class TestAirgapPosture:
                 "AWS_REGION": "us-east-1",
                 "AWS_ACCESS_KEY_ID": "ak",
                 "AWS_SECRET_ACCESS_KEY": "sk",
+            },
+            {
+                "OPENSCIENTIST_PROVIDER": "vertex",
+                "ANTHROPIC_VERTEX_PROJECT_ID": "proj-1",
+                "GOOGLE_APPLICATION_CREDENTIALS": "/dev/null",
+                "GCP_BILLING_ACCOUNT_ID": "012345-ABCDEF",
+                "CLOUD_ML_REGION": "us-east5",
             },
         ],
     )
@@ -908,10 +1129,12 @@ class TestHarnessRouting:
             f"turn reaches the proxy unauthenticated. Published: {sorted(published)}"
         )
 
-    def test_vertex_routes_the_harness_with_google_names(self, active_provider, tmp_path):
-        """Vertex signs its own requests, so it is direct. omp reads the standard
-        Google names rather than the Claude Code ones we publish, so without the
-        translation omp falls back to the public Anthropic endpoint."""
+    def test_vertex_routes_the_harness_with_the_run_placeholder(
+        self, active_provider, tmp_path, monkeypatch
+    ):
+        """omp signs Vertex calls with ``GOOGLE_CLOUD_ACCESS_TOKEN`` before it
+        would touch the default credentials, so the run's placeholder there is
+        exchanged by the proxy, and the harness never gets a GCP credential."""
         creds = tmp_path / "sa.json"
         creds.write_text('{"type": "service_account"}')
         p = active_provider(
@@ -921,10 +1144,27 @@ class TestHarnessRouting:
             GCP_BILLING_ACCOUNT_ID="012345-ABCDEF",
             CLOUD_ML_REGION="us-east5",
         )
-        env = p.harness_env(proxy=None)
-        assert env["GOOGLE_CLOUD_PROJECT"] == "proj-1"
-        assert env["GOOGLE_CLOUD_LOCATION"] == "us-east5"
-        assert env["GOOGLE_APPLICATION_CREDENTIALS"] == str(creds)
+        # Published by the container env once the proxy override applies.
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "job-1.tok")
+        env = p.harness_env(proxy="http://openscientist:8081")
+        assert env == {"GOOGLE_CLOUD_ACCESS_TOKEN": "job-1.tok"}
+        assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
+        assert str(creds) not in env.values()
+
+    def test_vertex_refuses_to_launch_without_the_proxy(self, active_provider, tmp_path):
+        """Without the proxy omp would reach Vertex directly, so there is no
+        harness route and the launch fails fast."""
+        creds = tmp_path / "sa.json"
+        creds.write_text('{"type": "service_account"}')
+        p = active_provider(
+            OPENSCIENTIST_PROVIDER="vertex",
+            ANTHROPIC_VERTEX_PROJECT_ID="proj-1",
+            GOOGLE_APPLICATION_CREDENTIALS=str(creds),
+            GCP_BILLING_ACCOUNT_ID="012345-ABCDEF",
+            CLOUD_ML_REGION="us-east5",
+        )
+        with pytest.raises(ValueError, match="proxy"):
+            p.harness_env(proxy=None)
 
     def test_bedrock_sigv4_needs_no_harness_routing(self, active_provider):
         """SigV4 signs its own requests and omp uses the same AWS names we do."""

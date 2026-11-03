@@ -36,6 +36,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
 - **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only.
+- **LLM provider credentials stay out of the agent container.** The container receives a per-run placeholder instead of the real LLM provider credential. A web-side LLM proxy verifies the placeholder, swaps in the real credential, and streams the response back. For Vertex AI the web signs each request with its own GCP service-account credential, so the container holds no GCP credential file and no Google token. A wrong or ended placeholder is refused without any upstream call.
 
 ### Input Validation
 
@@ -81,7 +82,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 | **No rate limiting on most endpoints** | Only the health-check endpoint has rate limiting (10/minute via slowapi). Login, job creation, file upload, and token redemption endpoints have no throttling. | Extend rate limiting to all public-facing and authentication-related endpoints. |
 | **No audit logging for admin actions** | Admin operations (user approvals, job reassignment, token creation/revocation) are logged to the application logger but not to a persistent, tamper-evident audit table. | Create an `audit_log` database table and record all admin actions with timestamps, actor, and details. |
 | **No CSRF token validation** | While `samesite=lax` cookies provide partial protection, there is no explicit CSRF token for state-changing form submissions. | Add CSRF token generation and validation for all POST/PUT/DELETE operations. |
-| **Credentials passed to agent containers via environment variables** | Provider API keys and the database URL (including password) are injected into agent containers as plain environment variables. If a container is compromised, all credentials are exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of long-lived credentials. |
+| **Database URL passed to agent containers via environment variables** | The database URL (including its password) is injected into agent containers as a plain environment variable. LLM provider credentials are not passed through; the web-side LLM proxy substitutes a per-run placeholder for them. If a container is compromised, the database URL is exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of a long-lived database password in the environment. |
 | **Base Docker image not pinned to digest** | Dockerfiles use `python:3.12-slim` without a SHA-256 digest pin, meaning a compromised or updated upstream image could silently change the build. | Pin to a specific image digest (e.g., `python:3.12-slim@sha256:abc...`). |
 
 ### Medium

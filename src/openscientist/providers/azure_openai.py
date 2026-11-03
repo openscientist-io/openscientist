@@ -17,6 +17,7 @@ from openscientist.providers.base import (
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    StaticHeadersSigning,
     _listing_live_check,
     env_from_pairs,
 )
@@ -33,9 +34,7 @@ class AzureOpenAIProvider(CodexCompatible):
     display_name = "Azure OpenAI Service"
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         return env_from_pairs(
             [
                 ("AZURE_OPENAI_API_KEY", provider.azure_openai_api_key),
@@ -108,7 +107,8 @@ class AzureOpenAIProvider(CodexCompatible):
         s = get_settings().provider
         if s.azure_openai_api_key and s.azure_openai_resource:
             return LlmUpstream(
-                self._base_url(), {"authorization": f"Bearer {s.azure_openai_api_key}"}
+                self._base_url(),
+                StaticHeadersSigning({"authorization": f"Bearer {s.azure_openai_api_key}"}),
             )
         return None
 
