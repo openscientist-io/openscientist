@@ -17,6 +17,7 @@ from typing import Any
 from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import MissingImageError
 from openscientist.job_container import to_host_path
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_container.launcher_client import (
     LauncherBadRequestError,
     LauncherClient,
@@ -152,6 +153,8 @@ class ContainerManager:
         else:
             output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
+        # The executor container writes here as its own uid, sharing the job group.
+        apply_job_ownership(output_dir)
 
         def _host(path_str: str) -> str:
             # The launcher runs on the host, so the web-container paths become host paths.
@@ -167,6 +170,19 @@ class ContainerManager:
 
         # The launcher's wall-clock bound must clear the executor's own
         # timeout alarm, which is what turns a slow run into a timeout result.
+        egress_allow: list[str] | None = None
+        if not admin.airgapped:
+            # The executor never opens Postgres, so its allow-list stops at
+            # the broker and the LLM proxy.
+            from openscientist.job_container.egress import derive_restricted_egress_allowlist
+
+            egress_allow = [
+                f"{host}:{port}"
+                for host, port in derive_restricted_egress_allowlist(
+                    get_settings(), include_postgres=False
+                )
+            ]
+
         request: dict[str, Any] = {
             "job_id": job_id,
             "timeout_seconds": timeout + 30,
@@ -187,6 +203,8 @@ class ContainerManager:
                 ],
             },
         }
+        if egress_allow is not None:
+            request["egress_allow"] = egress_allow
 
         try:
             # The launcher removes its container on every path.

@@ -27,7 +27,6 @@ from openscientist.job_container.run_home import create_run_home
 from openscientist.job_container.runner import (
     _STOP_GRACE_SECONDS,
     AGENT_APP_DIR,
-    AGENT_GCP_CREDENTIALS_PATH,
     JobContainerRunner,
 )
 from openscientist.job_container.secrets import (
@@ -73,13 +72,9 @@ class _FakeProvider:
         *,
         proxy_base_url: str,
         placeholder: str,
-        gcp_credentials_container_path: str | None = None,
     ) -> dict[str, str]:
         _FakeProvider.last_placeholder = placeholder
-        env = {"EXTRA_ENV": "1"}
-        if gcp_credentials_container_path:
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = gcp_credentials_container_path
-        return env
+        return {"EXTRA_ENV": "1"}
 
     def prelaunch_model_context_env(self) -> dict[str, str]:
         return {}
@@ -147,7 +142,6 @@ class TestContainerDatabaseLogin:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {}
         provider.codex_auth_host_path = None
-        provider.gcp_credentials_host_path = None
         provider.provider_id = "anthropic"
         return SimpleNamespace(
             container=SimpleNamespace(
@@ -297,7 +291,6 @@ class TestJobContainerRunner:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {"EXTRA_ENV": "1"}
         provider.codex_auth_host_path = None
-        provider.gcp_credentials_host_path = None
         return SimpleNamespace(
             container=SimpleNamespace(
                 host_project_dir=host_project_dir,
@@ -485,96 +478,6 @@ class TestPhenixMount:
         assert "PHENIX_PATH" not in cast(dict[str, str], request["env"])
 
 
-class TestGcpCredentialsMount:
-    """GCP creds are mounted and advertised only when the operator sets a host
-    path. google_application_credentials is the container-internal path baked
-    into the web image, so using it as a bind source broke launch for every
-    provider (#243)."""
-
-    @staticmethod
-    def _settings(*, host_path: str | None) -> SimpleNamespace:
-        provider = MagicMock()
-        provider.get_container_env_vars.return_value = {}
-        # Always set, exactly as the web image's Dockerfile ENV leaves it.
-        provider.google_application_credentials = "/app/gcp-credentials.json"
-        provider.gcp_credentials_host_path = host_path
-        return SimpleNamespace(
-            container=SimpleNamespace(host_project_dir=None, container_app_dir="/app"),
-            provider=provider,
-            database=SimpleNamespace(effective_database_url="postgresql://db"),
-            phenix=SimpleNamespace(phenix_host_path=None),
-            airgap=SimpleNamespace(enabled=False),
-            secret_key="master-key",
-        )
-
-    def _launch(self, *, host_path: str | None) -> dict[str, object]:
-        runner, client = _runner_with_client()
-        settings = self._settings(host_path=host_path)
-        with (
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch(
-                "openscientist.agent.factory.agent_class_for_provider_id",
-                return_value=MagicMock(RUN_HOME=None),
-            ),
-        ):
-            runner.launch("job-123", Path("/app/jobs/job-123"))
-        return _request(client)
-
-    def test_flag_is_set_only_with_a_host_path(self) -> None:
-        """No host path means no mount on the launcher side, and never the
-        container-internal path as one (#243)."""
-        assert self._launch(host_path=None)["gcp_credentials"] is False
-        assert self._launch(host_path="/host/creds.json")["gcp_credentials"] is True
-
-    def test_launch_advertises_the_creds_path_only_with_a_host_path(self) -> None:
-        """With a host path the runner threads the container path so the provider
-        emits GOOGLE_APPLICATION_CREDENTIALS; without it nothing is advertised."""
-        env = cast(dict[str, str], self._launch(host_path="/host/creds.json")["env"])
-        assert env["GOOGLE_APPLICATION_CREDENTIALS"] == AGENT_GCP_CREDENTIALS_PATH
-        env = cast(dict[str, str], self._launch(host_path=None)["env"])
-        assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
-
-
-class TestCodexAuthProvisioning:
-    """`CodexAgent.provision_run_home` copies the codex CLI auth into the run's
-    home, its CODEX_HOME (agent-readable), instead of mounting the host file,
-    which the non-root agent could not read across the uid/permission
-    boundary."""
-
-    def _settings(self, codex_auth_host_path: str | None) -> MagicMock:
-        settings = MagicMock()
-        settings.provider.codex_auth_host_path = codex_auth_host_path
-        return settings
-
-    def test_copies_auth_into_codex_home_agent_readable(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        src = tmp_path / "host-auth.json"
-        src.write_text('{"tokens": {}}')
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-
-        CodexAgent.provision_run_home(self._settings(str(src)), home)
-
-        dest = home / "auth.json"
-        assert dest.read_text() == '{"tokens": {}}'
-        assert (dest.stat().st_mode & 0o777) == 0o644  # agent (uid 1001) can read
-        assert (home.stat().st_mode & 0o777) == 0o777  # agent can write config.toml
-
-    def test_noop_when_unset(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        CodexAgent.provision_run_home(self._settings(None), home)
-        assert list(home.iterdir()) == []
-
-    def test_noop_when_source_missing(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        CodexAgent.provision_run_home(self._settings(str(tmp_path / "nope.json")), home)
-        assert list(home.iterdir()) == []
-
-
 class TestJobSecretInjection:
     """The job container receives a per-job derived secret, never the master."""
 
@@ -649,10 +552,11 @@ class TestJobSecretInjection:
         assert settings.auth.storage_secret == expected_storage
 
 
-class TestAirgapFirewallLaunch:
-    """The job container runs behind the nftables egress firewall when air-gapped:
-    the web sends the flag and the structured host:port entries, and the launcher
-    formats the allow list and applies the firewall trio itself."""
+class TestFirewallLaunch:
+    """The job container runs behind the nftables egress firewall in every
+    mode, air-gapped or not: the web sends the flag and the structured
+    host:port entries, and the launcher formats the allow list and applies
+    the firewall trio itself."""
 
     @staticmethod
     def _settings(*, provider_id: str = "ollama") -> SimpleNamespace:
@@ -724,13 +628,18 @@ class TestAirgapFirewallLaunch:
         assert "OPENSCIENTIST_FIREWALL_ALLOW" not in env
 
     @pytest.mark.asyncio
-    async def test_non_airgap_launch_sends_no_allowlist(self, test_engine: AsyncEngine) -> None:
+    async def test_restricted_launch_sends_the_web_allowlist(
+        self, test_engine: AsyncEngine
+    ) -> None:
+        """Without air-gap the firewall allowlists only the web's services, so
+        no provider posture is consulted."""
         request = await self._launch(test_engine, airgapped=False)
         assert request["airgapped"] is False
-        # The launcher refuses the key on an open network, so it is omitted.
-        assert "egress_allow" not in request
-        env = cast(dict[str, str], request["env"])
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in env
+        assert set(cast(list[str], request["egress_allow"])) == {
+            "postgres:5432",
+            "openscientist:8081",
+            "openscientist:8082",
+        }
 
     @pytest.mark.asyncio
     async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:

@@ -58,6 +58,7 @@ from openscientist.job_container.run_home import (
 )
 from openscientist.job_container.secrets import (
     RunCredentials,
+    RunKind,
     derive_job_secret,
     issue_run_credentials,
 )
@@ -73,7 +74,6 @@ logger = logging.getLogger(__name__)
 _STOP_GRACE_SECONDS = 10
 
 AGENT_APP_DIR = "/agent"
-AGENT_GCP_CREDENTIALS_PATH = f"{AGENT_APP_DIR}/gcp-credentials.json"
 
 
 class JobContainerRunner:
@@ -141,14 +141,10 @@ class JobContainerRunner:
     @staticmethod
     def _provider_environment(settings: Settings, credentials: RunCredentials) -> dict[str, str]:
         """The provider's env for the container, plus the self-hosted window."""
-        gcp_credentials_container_path = (
-            AGENT_GCP_CREDENTIALS_PATH if settings.provider.gcp_credentials_host_path else None
-        )
         provider = get_provider()
         env = provider.proxied_container_env(
             proxy_base_url=container_proxy_base_url(),
             placeholder=credentials.llm_placeholder,
-            gcp_credentials_container_path=gcp_credentials_container_path,
         )
         # Resolve a self-hosted model's window app-side and pass it in, since the
         # proxied container cannot probe a root path like llama.cpp's /props.
@@ -158,13 +154,18 @@ class JobContainerRunner:
     @staticmethod
     def _egress_allow(settings: Settings, airgapped: bool) -> list[str]:
         """The structured host:port entries the launcher formats into the
-        firewall allow list, or none when not air-gapped."""
-        if not airgapped:
-            return []
-        from openscientist.job_container.egress import derive_egress_allowlist
+        firewall allow list."""
+        from openscientist.job_container.egress import (
+            derive_egress_allowlist,
+            derive_restricted_egress_allowlist,
+        )
 
-        posture = get_provider().airgap_egress()
-        entries = derive_egress_allowlist(settings, posture)
+        if airgapped:
+            posture = get_provider().airgap_egress()
+            entries = derive_egress_allowlist(settings, posture)
+        else:
+            # The agent logs in to Postgres, so its allow-list keeps it.
+            entries = derive_restricted_egress_allowlist(settings)
         return [f"{host}:{port}" for host, port in entries]
 
     def launch(
@@ -230,8 +231,16 @@ class JobContainerRunner:
             if agent_class.RUN_HOME:
                 run_home = create_run_home(job_dir_resolved.parent, login.role)
                 agent_class.provision_run_home(settings, run_home)
-            # Ended with the login, when the container goes.
-            credentials = issue_run_credentials(job_id, login.role)
+            # Ended with the login, when the container goes. The kind records
+            # the run's work so the proxy can attribute its forwarded calls.
+            run_kind: RunKind = (
+                "chat"
+                if run_mode == "chat"
+                else "report"
+                if run_mode == "report_only"
+                else "discovery"
+            )
+            credentials = issue_run_credentials(job_id, login.role, run_kind)
             handle, labels = self._run_container(
                 settings,
                 admin,
@@ -292,16 +301,14 @@ class JobContainerRunner:
             "lifetime_seconds": lifetime_seconds,
             "env": env,
             "db_login": login_role,
-            "gcp_credentials": bool(settings.provider.gcp_credentials_host_path),
             "phenix": bool(settings.phenix.phenix_host_path),
             "memory_mib": admin.agent_memory_mib,
             "cpu": admin.agent_cpu,
             "airgapped": admin.airgapped,
         }
-        # The launcher refuses an egress list on an open network, so the list
-        # travels only with the airgapped flag it configures.
-        if admin.airgapped:
-            request["egress_allow"] = self._egress_allow(settings, True)
+        # The container starts behind the firewall in both postures, so the
+        # launcher always gets the endpoints to keep open.
+        request["egress_allow"] = self._egress_allow(settings, admin.airgapped)
         if chat_turn is not None:
             request["chat_turn"] = chat_turn
         if run_home is not None:
@@ -399,9 +406,10 @@ class JobContainerRunner:
                 except LauncherError as error:
                     logger.warning("Failed to stop container for job %s: %s", job_id, error)
                 if log_dir is not None:
+                    log_path = log_dir / "agent-container.log"
                     try:
                         logs = self.client.logs(entry["id"])
-                        (log_dir / "agent-container.log").write_text(logs)
+                        log_path.write_text(logs)
                     except (LauncherError, OSError) as error:
                         if not isinstance(error, LauncherNotFoundError):
                             logger.warning(

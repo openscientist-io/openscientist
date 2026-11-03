@@ -163,10 +163,6 @@ services:
       PHENIX_PATH: ${PHENIX_HOST_PATH:+/opt/phenix}
       PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
 
-      # GCP credentials: the host file path is passed separately so agent containers
-      # can mount it on the host side (GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile)
-      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
-
       # Codex (OpenAI) auth: CODEX_AUTH_FILE is the codex CLI auth.json on the host
       # (ChatGPT login). It is mounted read-only into this web container, which copies
       # it into each per-job CODEX_HOME for the agent. Unused when OPENAI_API_KEY is set.
@@ -193,11 +189,13 @@ services:
       - ./jobs:/app/jobs
       - ./data:/app/data
 
-      # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
+      # Mount the GCP service account for Vertex AI (set GCP_CREDENTIALS_FILE in .env);
+      # the web signs its calls with it, agent containers hold none.
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
 
-      # Mount codex CLI auth if using OpenAI/codex ChatGPT login (set CODEX_AUTH_FILE in .env)
-      - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json:ro
+      # Mount codex CLI auth if using OpenAI/codex ChatGPT login (set CODEX_AUTH_FILE in .env).
+      # Writable: the LLM proxy refreshes the access token through it and writes the file back.
+      - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json
 
       # Mount the omp credential vault dir if using the omp harness (set OMP_AUTH_DIR in .env)
       - ${OMP_AUTH_DIR:-/dev/null}:/app/omp-auth:ro

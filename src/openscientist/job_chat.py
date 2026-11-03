@@ -17,6 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage
+from openscientist.job_container.identity import apply_job_ownership
+from openscientist.job_files import read_job_file_text, write_job_file
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
@@ -364,15 +366,20 @@ async def _send_message_via_container(
     request = await _build_chat_request(session, job_id, message)
     chat_turn = uuid4().hex
     request_path, response_path = _chat_turn_files(job_dir, chat_turn)
-    request_path.write_text(json.dumps(request))
+    # The job directory is agent-writable, so the request is written and the
+    # reply is read through the symlink-safe walk.
+    write_job_file(job_dir, request_path.name, json.dumps(request))
+    # The container's agent user reads this turn's request, so hand it over.
+    apply_job_ownership(request_path)
 
     logger.info("Running chat turn for job %s in a hardened container", job_id)
     try:
         # run_chat_turn blocks on the container, so run it off the event loop.
         await asyncio.to_thread(JobContainerRunner().run_chat_turn, str(job_id), job_dir, chat_turn)
-        if not response_path.exists():
+        response_text = read_job_file_text(job_dir, response_path.name)
+        if response_text is None:
             raise RuntimeError("Chat container produced no response")
-        response = json.loads(response_path.read_text())
+        response = json.loads(response_text)
         error = response.get("error")
         if error:
             raise RuntimeError(error)

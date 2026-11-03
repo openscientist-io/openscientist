@@ -21,6 +21,7 @@ from openscientist.providers.base import (
     LlmUpstream,
     OpenAiWireCompatible,
     SelfHostedOpenAiWire,
+    StaticHeadersSigning,
 )
 from openscientist.providers.llamacpp import LlamaCppProvider
 from openscientist.providers.vllm import VllmProvider
@@ -131,13 +132,14 @@ def test_model_name_comes_from_openscientist_model(spec: Spec) -> None:
 
 def test_llm_upstream_is_keyless_without_api_key(spec: Spec) -> None:
     with _provider(spec) as p:
-        assert p.llm_upstream() == LlmUpstream(spec.default_base_url, {})
+        assert p.llm_upstream() == LlmUpstream(spec.default_base_url, StaticHeadersSigning({}))
 
 
 def test_llm_upstream_injects_bearer_when_keyed(spec: Spec) -> None:
     with _provider(spec, spec.settings(api_key="k-secret")) as p:
         assert p.llm_upstream() == LlmUpstream(
-            spec.default_base_url, {"authorization": "Bearer k-secret"}
+            spec.default_base_url,
+            StaticHeadersSigning({"authorization": "Bearer k-secret"}),
         )
 
 

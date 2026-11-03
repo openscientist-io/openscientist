@@ -108,6 +108,7 @@ def _agent_body(**overrides: object) -> dict[str, object]:
             "DATABASE_URL": "postgresql://w:p@db:5432/os",
         },
         "db_login": LOGIN_ROLE,
+        "egress_allow": ["openscientist:8081", "openscientist:8082"],
         "memory_mib": 4096,
         "cpu": 2.0,
     }
@@ -176,9 +177,13 @@ class TestAgentCreate:
         attrs = _inspect(docker_client, name)
         config = attrs["Config"]
         host = attrs["HostConfig"]
-        assert config["User"] == "agent"
+        # The open agent starts behind the restrict firewall, so the web sees
+        # root and NET_ADMIN at creation, and the entrypoint drops to the
+        # agent user.
+        assert config["User"] == "root"
+        assert config["Entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         assert host["Privileged"] is False
-        assert not (host.get("CapAdd") or [])
+        assert host["CapAdd"] == ["NET_ADMIN"]
         assert host["Binds"] == [f"{jobs_root / JOB_ID}:/agent/jobs/{JOB_ID}:rw"]
         assert host["NetworkMode"] == "bridge"
         assert host["SecurityOpt"] == ["no-new-privileges:true"]
@@ -193,7 +198,8 @@ class TestAgentCreate:
         }
         env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
         assert env["DATABASE_URL"] == "postgresql://w:p@db:5432/os"
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in env
+        assert env["OPENSCIENTIST_FIREWALL_ALLOW"] == "openscientist:8081,openscientist:8082"
+        assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
 
         with launcher.client() as client:
             assert client.get(f"/v1/containers/{name}").json() == {
@@ -223,7 +229,7 @@ class TestAgentCreate:
         with launcher.client() as client:
             client.post(f"/v1/containers/{name}/remove")
 
-    def test_firewall_trio_only_when_airgapped(
+    def test_airgapped_firewall_trio(
         self, launcher: Launcher, docker_client: docker.DockerClient
     ) -> None:
         body = _agent_body(airgapped=True, egress_allow=["postgres:5432", "api.openai.com:443"])
@@ -236,6 +242,7 @@ class TestAgentCreate:
         assert attrs["Config"]["Entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         env = dict(item.split("=", 1) for item in attrs["Config"]["Env"] if "=" in item)
         assert env["OPENSCIENTIST_FIREWALL_ALLOW"] == "postgres:5432,api.openai.com:443"
+        assert env["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
         with launcher.client() as client:
             client.post(f"/v1/containers/{response.json()['name']}/remove")
 
@@ -490,6 +497,7 @@ class TestExecutor:
             "timeout_seconds": 120,
             "memory_mib": 1024,
             "cpu": 0.5,
+            "egress_allow": ["openscientist:8081", "openscientist:8082"],
             "input": {
                 "code": code,
                 "language": "python",
@@ -544,17 +552,24 @@ class TestExecutor:
         attrs = inspected["attrs"]
         config = attrs["Config"]
         host = attrs["HostConfig"]
-        assert config["User"] == "executor"
+        # The open-network executor starts behind the restrict firewall, the
+        # same launch shape the web's direct path used to build.
+        assert config["User"] == "root"
+        assert config["Entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         assert config["StopSignal"] == "SIGKILL"
         assert host["SecurityOpt"] == ["no-new-privileges:true"]
         assert host["NetworkMode"] == "bridge"
+        assert host["CapAdd"] == ["NET_ADMIN"]
         assert host["Memory"] == 1024 * 1024**2
         assert host["NanoCpus"] == 500_000_000
         assert host["Binds"] == [
             f"{out_dir}:/output:rw",
             f"{job_dir}:/data:ro",
         ]
-        assert not (host.get("CapAdd") or [])
+        env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
+        assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert env["OPENSCIENTIST_FIREWALL_RUN_AS"] == "executor"
+        assert env["OPENSCIENTIST_FIREWALL_ALLOW"] == "openscientist:8081,openscientist:8082"
         assert config["Labels"]["openscientist.type"] == "executor"
         assert config["Labels"]["openscientist.launcher"] == INSTANCE_ID
         payload = {
@@ -598,6 +613,7 @@ class TestExecutor:
                 "timeout_seconds": 60,
                 "memory_mib": 1024,
                 "cpu": 0.5,
+                "egress_allow": ["openscientist:8081", "openscientist:8082"],
                 "input": {
                     "code": "print(1)",
                     "language": "python",
@@ -609,7 +625,10 @@ class TestExecutor:
                     "data_files": [],
                 },
             }
+            allow = overrides.pop("egress_allow", "keep")
             body.update(overrides)
+            if allow is None:
+                body.pop("egress_allow")
             return body
 
         with launcher.client() as client:
@@ -638,6 +657,17 @@ class TestExecutor:
             )
             assert mount.status_code == 400
             assert mount.json()["error"].startswith("bad_request")
+            # The open run needs its allow-list; the air-gapped run takes none.
+            missing_allow = client.post("/v1/exec", json=_exec(egress_allow=None))
+            assert missing_allow.status_code == 400
+            airgapped_with_allow = client.post("/v1/exec", json=_exec(airgapped=True))
+            assert airgapped_with_allow.status_code == 400
+            bad_entry = client.post("/v1/exec", json=_exec(egress_allow=["nft add table x"]))
+            assert bad_entry.status_code == 400
+            too_many = client.post(
+                "/v1/exec", json=_exec(egress_allow=[f"h:{i}" for i in range(9)])
+            )
+            assert too_many.status_code == 400
             ok = client.post("/v1/exec", json=_exec())
         assert ok.status_code == 200, ok.text
         assert ok.json()["exit_code"] == 0
@@ -699,4 +729,11 @@ class TestExecutor:
         assert not watch_errors, watch_errors
         assert response.status_code == 200, response.text
         assert response.json()["exit_code"] == 0
-        assert inspected["attrs"]["HostConfig"]["NetworkMode"] == "none"
+        attrs = inspected["attrs"]
+        assert attrs["HostConfig"]["NetworkMode"] == "none"
+        # With no network there is nothing to filter, so the executor keeps
+        # its own user and entrypoint and takes no firewall environment.
+        assert attrs["Config"]["User"] == "executor"
+        assert not (attrs["HostConfig"].get("CapAdd") or [])
+        env = {item.split("=", 1)[0] for item in attrs["Config"]["Env"]}
+        assert not any(name.startswith("OPENSCIENTIST_FIREWALL_") for name in env)

@@ -4,7 +4,20 @@
 # test to observe it before the web removes it.
 FROM python:3.12-slim-bookworm
 
-RUN useradd --uid 1001 --create-home agent
+# The launcher starts every agent behind the firewall entrypoint, so the stand-in
+# carries the same tooling and users as the real agent image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nftables \
+    util-linux \
+    mawk \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --gid 1001 jobs \
+    && useradd --uid 1001 --gid 1001 --create-home agent
+
+COPY docker/agent-firewall-entrypoint.sh /agent-firewall-entrypoint.sh
+RUN chmod +x /agent-firewall-entrypoint.sh
 
 USER agent
-ENTRYPOINT ["python", "-c", "import sys, time; time.sleep(5); sys.exit(1)"]
+# The firewall entrypoint execs the image's command as the run user.
+CMD ["python", "-c", "import sys, time; time.sleep(5); sys.exit(1)"]

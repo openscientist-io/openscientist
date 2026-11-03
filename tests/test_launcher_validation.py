@@ -61,6 +61,7 @@ def _agent_request(**overrides) -> dict[str, object]:
         "lifetime_seconds": 600,
         "env": {"JOB_ID": JOB_ID, "DATABASE_URL": "postgresql://w:p@db:5432/os"},
         "db_login": LOGIN_ROLE,
+        "egress_allow": ["openscientist:8081", "openscientist:8082"],
         "memory_mib": 4096,
         "cpu": 2.0,
     }
@@ -77,7 +78,7 @@ class TestAgentRequestValidation:
         assert launch.memory_mib == 4096
         assert launch.cpu == 2.0
         assert launch.airgapped is False
-        assert launch.egress_allow == ()
+        assert launch.egress_allow == ("openscientist:8081", "openscientist:8082")
 
     @pytest.mark.parametrize(
         "field",
@@ -233,10 +234,13 @@ class TestAgentRequestValidation:
         with pytest.raises(ValidationError):
             validate_agent_request(_agent_request(phenix=True), cfg)
 
-    def test_egress_refused_without_airgap(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("airgapped", [False, True])
+    def test_egress_required_in_every_mode(self, tmp_path: Path, airgapped: bool) -> None:
         cfg = _config(_jobs(tmp_path))
-        with pytest.raises(ValidationError):
-            validate_agent_request(_agent_request(egress_allow=["db:5432"]), cfg)
+        body = _agent_request(airgapped=airgapped)
+        body.pop("egress_allow")
+        with pytest.raises(ValidationError, match="egress_allow is required"):
+            validate_agent_request(body, cfg)
 
     @pytest.mark.parametrize(
         "entry",
@@ -281,6 +285,7 @@ class TestExecutorRequestValidation:
             "timeout_seconds": 60,
             "memory_mib": 1024,
             "cpu": 0.5,
+            "egress_allow": ["openscientist:8081", "openscientist:8082"],
             "input": input_body,
         }
 
@@ -377,6 +382,44 @@ class TestExecutorRequestValidation:
                 self._request(jobs, data_files=[{"name": "no-path.csv"}]), _config(jobs)
             )
 
+    def test_egress_allow_required_when_not_airgapped(self, tmp_path: Path) -> None:
+        jobs = self._jobs_with_data(tmp_path)
+        body = self._request(jobs)
+        body.pop("egress_allow")
+        with pytest.raises(ValidationError, match="required when not airgapped"):
+            validate_exec_request(body, _config(jobs))
+
+    def test_egress_allow_refused_when_airgapped(self, tmp_path: Path) -> None:
+        jobs = self._jobs_with_data(tmp_path)
+        body = self._request(jobs)
+        body["airgapped"] = True
+        with pytest.raises(ValidationError, match="not allowed when airgapped"):
+            validate_exec_request(body, _config(jobs))
+
+    def test_airgapped_request_without_egress_passes(self, tmp_path: Path) -> None:
+        jobs = self._jobs_with_data(tmp_path)
+        body = self._request(jobs)
+        body["airgapped"] = True
+        body.pop("egress_allow")
+        req = validate_exec_request(body, _config(jobs))
+        assert req.airgapped is True
+        assert req.egress_allow == ()
+
+    @pytest.mark.parametrize("entry", ["db :5432", "db\n:5432", "nft add table x", "db:5432:extra"])
+    def test_bad_egress_entry_refused(self, tmp_path: Path, entry: str) -> None:
+        jobs = self._jobs_with_data(tmp_path)
+        body = self._request(jobs)
+        body["egress_allow"] = [entry]
+        with pytest.raises(ValidationError, match="not a valid host:port"):
+            validate_exec_request(body, _config(jobs))
+
+    def test_egress_above_entry_cap_refused(self, tmp_path: Path) -> None:
+        jobs = self._jobs_with_data(tmp_path)
+        body = self._request(jobs)
+        body["egress_allow"] = [f"host:{i}" for i in range(9)]
+        with pytest.raises(ValidationError, match="entry bound"):
+            validate_exec_request(body, _config(jobs))
+
 
 class TestAgentTemplate:
     def test_non_airgap_template(self, tmp_path: Path) -> None:
@@ -398,10 +441,17 @@ class TestAgentTemplate:
         assert labels["openscientist.type"] == "agent"
         assert labels["openscientist.launcher"] == "test"
         assert labels["openscientist.db_login"] == LOGIN_ROLE
-        assert "cap_add" not in kwargs
-        assert "user" not in kwargs
-        assert "entrypoint" not in kwargs
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in kwargs["environment"]
+        # The open agent starts behind the restrict firewall with the web's
+        # allow-list.
+        assert kwargs["cap_add"] == ["NET_ADMIN"]
+        assert kwargs["user"] == "root"
+        assert kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
+        assert (
+            kwargs["environment"]["OPENSCIENTIST_FIREWALL_ALLOW"]
+            == "openscientist:8081,openscientist:8082"
+        )
+        assert kwargs["environment"]["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert "OPENSCIENTIST_FIREWALL_RUN_AS" not in kwargs["environment"]
 
     def test_chat_mode_template(self, tmp_path: Path) -> None:
         cfg = _config(_jobs(tmp_path))
@@ -425,6 +475,8 @@ class TestAgentTemplate:
             kwargs["environment"]["OPENSCIENTIST_FIREWALL_ALLOW"]
             == "postgres:5432,api.openai.com:443"
         )
+        assert kwargs["environment"]["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
+        assert "OPENSCIENTIST_FIREWALL_RUN_AS" not in kwargs["environment"]
 
     def test_operator_mounts(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)
@@ -462,6 +514,7 @@ def _executor_body(jobs: Path) -> dict[str, object]:
         "timeout_seconds": 60,
         "memory_mib": 1024,
         "cpu": 0.5,
+        "egress_allow": ["openscientist:8081", "openscientist:8082"],
         "input": {
             "code": "print(1)",
             "language": "python",
@@ -483,13 +536,20 @@ class TestExecutorTemplate:
         kwargs = executor_run_kwargs(cfg, req, network="bridge")
         assert kwargs["image"] == "executor:latest"
         assert kwargs["name"].startswith(f"openscientist-exec-{JOB_ID}")
-        assert kwargs["user"] == "executor"
+        # The open-network executor starts behind the restrict firewall.
+        assert kwargs["user"] == "root"
+        assert kwargs["cap_add"] == ["NET_ADMIN"]
+        assert kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
+        assert kwargs["environment"] == {
+            "OPENSCIENTIST_FIREWALL_ALLOW": "openscientist:8081,openscientist:8082",
+            "OPENSCIENTIST_FIREWALL_MODE": "restrict",
+            "OPENSCIENTIST_FIREWALL_RUN_AS": "executor",
+        }
         assert kwargs["stop_signal"] == "SIGKILL"
         assert kwargs["security_opt"] == ["no-new-privileges:true"]
         assert kwargs["network"] == "bridge"
         assert kwargs["mem_limit"] == "1024m"
         assert kwargs["nano_cpus"] == 500_000_000
-        assert kwargs["entrypoint"] == []
         assert kwargs["labels"]["openscientist.type"] == "executor"
         assert kwargs["volumes"][str(jobs / JOB_ID / "out")] == {"bind": "/output", "mode": "rw"}
         assert kwargs["volumes"][str(jobs / JOB_ID)] == {"bind": "/data", "mode": "ro"}
@@ -508,6 +568,13 @@ class TestExecutorTemplate:
         cfg = _config(jobs)
         body = _executor_body(jobs)
         body["airgapped"] = True
+        body.pop("egress_allow")
         req = validate_exec_request(body, cfg)
         kwargs = executor_run_kwargs(cfg, req, network="bridge")
         assert kwargs["network"] == "none"
+        # With no network there is nothing to filter, so the executor keeps
+        # its own user and entrypoint and takes no firewall environment.
+        assert kwargs["user"] == "executor"
+        assert "cap_add" not in kwargs
+        assert kwargs["entrypoint"] == []
+        assert "environment" not in kwargs

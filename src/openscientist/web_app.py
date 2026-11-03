@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from nicegui import app, core, ui
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
@@ -37,7 +38,10 @@ from openscientist.database.rls import APP_ROLE, tables_without_enforced_rls
 from openscientist.exceptions import MissingImageError
 from openscientist.job_manager import JobManager
 from openscientist.listener import ListenerBindError
-from openscientist.security import register_scanner_block_middleware
+from openscientist.security import (
+    register_scanner_block_middleware,
+    register_security_headers_middleware,
+)
 from openscientist.settings import Settings, dev_mode_problems, get_settings
 from openscientist.version import get_version_string
 from openscientist.webapp_components.components.badges import register_badge_head_html
@@ -48,6 +52,8 @@ from openscientist.webapp_components.components.common import (
 
 # Path to assets directory (favicon, icons, etc.)
 ASSETS_DIR = Path(__file__).parent / "assets"
+# Pinned Swagger UI and ReDoc bundles, served same-origin by the docs pages.
+DOCS_ASSETS_DIR = Path(__file__).parent / "docs_assets"
 # Path to built-in skills directory at project root
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 JOBS_DIR_ENV = "OPENSCIENTIST_JOBS_DIR"
@@ -294,27 +300,56 @@ _APP_VERSION = "1.0.0"
 _APP_DESCRIPTION = "REST API for Scientific Hypothesis Agent for Novel Discovery"
 
 
+# The docs pages render the vendored bundles and, for ReDoc, spawn a Web
+# Worker from a blob: URL, so they carry their own CSP that adds worker-src
+# blob: to the app's self-only policy. The security-headers middleware
+# leaves responses that already set a CSP untouched.
+_DOCS_CSP = (
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "font-src 'self' data:; "
+    "worker-src 'self' blob:; "
+    "object-src 'none'; "
+    "base-uri 'self'"
+)
+
+
 def _register_openapi_docs(host_app: FastAPI) -> None:
     """Register OpenAPI documentation routes (Swagger UI and ReDoc).
 
-    NiceGUI disables FastAPI's built-in docs, so we add them manually.
+    NiceGUI disables FastAPI's built-in docs, so we add them manually. The
+    Swagger/ReDoc bundles are served same-origin (no CDN) so the pages load
+    under the app's self-only CSP and work air-gapped.
     """
+    host_app.mount("/docs-assets", StaticFiles(directory=str(DOCS_ASSETS_DIR)))
 
     @host_app.get("/api-docs", include_in_schema=False)
     async def swagger_ui_html() -> HTMLResponse:
         """Swagger UI documentation."""
-        return get_swagger_ui_html(
+        response = get_swagger_ui_html(
             openapi_url="/openapi.json",
             title=f"{host_app.title} - Swagger UI",
+            swagger_js_url="/docs-assets/swagger-ui-bundle.js",
+            swagger_css_url="/docs-assets/swagger-ui.css",
+            swagger_favicon_url="/assets/favicon-32.png",
         )
+        response.headers["content-security-policy"] = _DOCS_CSP
+        return response
 
     @host_app.get("/api-redoc", include_in_schema=False)
     async def redoc_html() -> HTMLResponse:
         """ReDoc documentation."""
-        return get_redoc_html(
+        response = get_redoc_html(
             openapi_url="/openapi.json",
             title=f"{host_app.title} - ReDoc",
+            redoc_js_url="/docs-assets/redoc.standalone.js",
+            redoc_favicon_url="/assets/favicon-32.png",
+            with_google_fonts=False,
         )
+        response.headers["content-security-policy"] = _DOCS_CSP
+        return response
 
     @host_app.get("/openapi.json", include_in_schema=False)
     async def openapi_json() -> JSONResponse:
@@ -650,7 +685,9 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     if _state.app_configured:
         return
 
-    # Middleware and routes must be registered before startup.
+    # Middleware and routes must be registered before startup. The scanner
+    # middleware stays outermost so probe 404s carry no app headers.
+    register_security_headers_middleware(host_app)
     register_scanner_block_middleware(host_app)
     _register_openapi_docs(host_app)
     _register_health_endpoint(host_app)

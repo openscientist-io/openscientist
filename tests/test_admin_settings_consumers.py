@@ -57,7 +57,6 @@ def no_floor(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
 def _launcher_settings() -> SimpleNamespace:
     provider = MagicMock()
     provider.get_container_env_vars.return_value = {}
-    provider.gcp_credentials_host_path = None
     provider.provider_id = "anthropic"
     return SimpleNamespace(
         container=SimpleNamespace(
