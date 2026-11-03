@@ -9,17 +9,20 @@ import asyncio
 import importlib
 import logging
 import os
+import secrets
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from nicegui import app, ui
+from nicegui import app, core, ui
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -77,6 +80,27 @@ def _patch_nicegui_timer() -> None:
 _patch_nicegui_timer()
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _replace_nicegui_500() -> None:
+    """The internal app's 500 page without the exception text, the traceback going to the log."""
+    from nicegui.client import Client
+    from nicegui.error import error_content
+    from nicegui.page import page
+
+    async def _page_500(request: Request, exception: Exception) -> Response:
+        logger.error("Unhandled page exception", exc_info=exception)
+        if not request.scope.get("nicegui_page_path"):
+            raise exception
+        with Client(page(""), request=request) as client:
+            error_content(500)
+        return client.build_response(request, 500)
+
+    # Captured into the middleware stack at build time, so this must run before the first request.
+    app.add_exception_handler(Exception, _page_500)
+
+
+_replace_nicegui_500()
+
 # Load environment variables from .env file
 # Try Docker path first, fall back to local path
 # Use override=False so Docker/system env vars take precedence over .env
@@ -106,8 +130,24 @@ _settings_error = _validate_settings()
 if _settings_error is None:
     STORAGE_SECRET = get_settings().auth.storage_secret
 else:
-    # Fallback for import-time usage — app will show config error page
-    STORAGE_SECRET = "unconfigured-fallback"
+    # The error mode has no settings to derive a secret from, so it signs storage per process.
+    STORAGE_SECRET = secrets.token_hex(32)
+
+
+def _require_valid_secret_key() -> None:
+    """Exit when the master secret is missing, the published placeholder, or too short."""
+    try:
+        get_settings()
+    except ValidationError as error:
+        logger.error("Refusing to start: %s", error)
+        raise SystemExit(1) from error
+
+
+def _restrict_socket_io_origins() -> None:
+    """Socket.io handshakes come only from the app's own origin."""
+    parts = urlsplit(get_settings().base_url)
+    allowed = f"{parts.scheme}://{parts.netloc}"
+    core.sio.eio.cors_allowed_origins = lambda requested, _environ: requested == allowed
 
 
 def _create_config_error_page(error_message: str) -> None:
@@ -632,6 +672,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _inject_density_styles()
     _inject_thinking_status_styles()
 
+    _restrict_socket_io_origins()
     ui.run_with(
         host_app,
         mount_path="/",
@@ -647,6 +688,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
 
 def create_app(jobs_dir: Path | None = None) -> FastAPI:
     """Create a host FastAPI app and mount NiceGUI at root."""
+    _require_valid_secret_key()
     resolved_jobs_dir = Path(jobs_dir) if jobs_dir is not None else _jobs_dir_from_env()
 
     if _state.host_app is not None:
@@ -725,6 +767,8 @@ def main(
     logger.info(get_version_string())
     logger.info("=" * 60)
 
+    _require_valid_secret_key()
+
     # Check for configuration errors
     if _settings_error is not None:
         logger.error("Configuration error: %s", _settings_error)
@@ -732,6 +776,7 @@ def main(
 
         # Create the error page and run with minimal config
         _create_config_error_page(_settings_error)
+        _restrict_socket_io_origins()
 
         ui.run(
             host=host,

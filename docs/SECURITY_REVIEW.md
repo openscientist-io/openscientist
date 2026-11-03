@@ -18,7 +18,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Authentication and Sessions
 
 - **OAuth 2.0 with major providers.** Users sign in through Google or GitHub using the Authlib library. No passwords are stored or managed by the application.
-- **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
+- **Secure session cookies.** Session cookies are marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS), and `samesite=lax` (mitigates cross-site request forgery). The `Secure` flag follows the scheme of the deployment's base URL. The setup wizard writes `APP_URL` from the public base URL it asks for, and `APP_URL` falls back to `OPENSCIENTIST_BASE_URL` when unset, so both settings keep the real scheme. Sessions have a configurable expiry (default 30 days).
+- **Socket.io restricted to the app's origin.** The socket.io server accepts handshakes only from the origin of the configured base URL, not from arbitrary origins.
 - **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, not in browser-side storage. Logging out deletes the database record.
 - **User approval workflow.** New users must be explicitly approved by an admin before they can run jobs, preventing open access.
 
@@ -27,6 +28,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Row-Level Security (RLS).** PostgreSQL RLS policies are enabled on all sensitive tables (users, sessions, jobs, API keys, OAuth accounts). Even if application code has a bug, the database itself prevents users from seeing each other's data.
 - **Encrypted OAuth tokens.** Access and refresh tokens from OAuth providers are encrypted with Fernet (AES-128-CBC) before being stored in the database.
 - **Master secret derivation.** A single `OPENSCIENTIST_SECRET_KEY` is used to derive separate keys for different purposes (session storage, token encryption) via HMAC-SHA256, following key derivation best practices.
+- **Weak master secrets are refused at startup.** Settings construction raises when `OPENSCIENTIST_SECRET_KEY` is missing, the `.env.example` placeholder, or shorter than 64 characters (32 bytes of entropy), and the web refuses to start with an error naming the setting and how to generate a key.
+- **Error pages carry no exception text.** The 500 page for unhandled page exceptions renders a generic error, and the full traceback goes to the server log.
 - **API keys hashed with SHA-256.** API key secrets are hashed before storage. The full secret is shown only once at creation time and is never retrievable afterwards.
 - **Constant-time secret comparison.** API key verification uses `hmac.compare_digest()` to prevent timing side-channel attacks.
 
@@ -47,8 +50,9 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Access Control
 
 - **Job ownership enforced at every layer.** API endpoints verify that the requesting user owns (or has been explicitly shared on) a job. RLS provides a database-level safety net.
+- **Grants match the code's usage.** The app role's `UPDATE` on `jobs` is limited to the run columns the web writes, the status-move columns `started_at`, `ended_at`, `error_message`, `stop_note`, `cancellation_reason` and `queue_reason`, the provenance `version_info` stamp, the knowledge-state iteration columns, the owner's `is_public` toggle and the ORM's `updated_at` stamp, so the owner's definition fields such as `owner_id`, the research question and the configuration columns stay out of reach of a share or an injection running as the web role. The junction tables `finding_hypotheses` and `finding_literature` are read by any share of either parent job, and only the owner or an `edit` share may write them. The SECURITY DEFINER helpers `check_job_owner`, `is_admin` and `current_user_is_admin` are revoked from PUBLIC, with `openscientist_app` the only role granted the two its policies call. The `openscientist_app` and `openscientist_agent` roles hold no TRUNCATE, on the existing tables or on any table created after the grant.
 - **Explicit sharing model.** Jobs can be shared with specific users at "view" or "edit" permission levels through a dedicated `job_shares` table.
-- **Public jobs are opt-in and scope-limited.** The owner sets `jobs.is_public` and, from then on, any signed-in user with the job's link or ID can read the job and its analysis rows (hypotheses, findings, literature, analysis log, iteration summaries, feedback, plots, and the two junction tables). A `jobs_select_public` SELECT-only RLS policy scoped to `openscientist_app` is the only thing that admits them, so the agent login (which runs as its own role) still reaches only its own job. Uploaded input files (`job_data_files`, the job directory's `data/`), chat messages, cost records and the share list stay owner/share-only, and the artifact and report routes withhold `data/` from a reader who sees the job only because it is public. Public jobs stay off other users' job lists, which filter by owner. A database trigger keeps `is_public` owner-only even though an `edit` share may `UPDATE jobs`; sessions with no signed-in user (admin and agent) are unaffected.
+- **Public jobs are opt-in and scope-limited.** The owner sets `jobs.is_public` and, from then on, any signed-in user with the job's link or ID can read the job and its analysis rows (hypotheses, findings, literature, analysis log, iteration summaries, feedback, plots, and the two junction tables). A `jobs_select_public` SELECT-only RLS policy scoped to `openscientist_app` is the only thing that admits them, so the agent login (which runs as its own role) still reaches only its own job. Uploaded input files (`job_data_files`, the job directory's `data/`), chat messages, cost records and the share list stay owner/share-only, and the artifact and report routes withhold `data/` from a reader who sees the job only because it is public. Public jobs stay off other users' job lists, which filter by owner. A database trigger keeps `is_public` owner-only even though the app role may `UPDATE` the run columns of a shared job; sessions with no signed-in user (admin and agent) are unaffected.
 - **Admin access requires both authentication and admin status, re-validated at action time.** Admin pages are protected by stacked `@require_auth` and `@require_admin` decorators, and every admin action handler re-reads the caller's session and admin flag from the database before acting, so a logged-out, demoted or deleted admin loses the page's powers in an open tab. Admins cannot remove their own approval.
 
 ### Review Tokens
@@ -63,6 +67,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 - **No secrets in code.** All credentials come from environment variables or TOML configuration, never from hardcoded values.
 - **Credentials not logged.** A search for credential patterns in logging output found no evidence of API keys, tokens, or passwords being written to logs.
+- **Per-process secret in error mode.** When the web starts the configuration-error page, it signs browser storage with a random per-process secret.
 
 ---
 
