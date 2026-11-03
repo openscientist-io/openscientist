@@ -39,7 +39,7 @@ def env_value(checkout: Path, file: str, key: str) -> str:
     )
 
 
-def wizard_tail(dev_mode: str = "true") -> list[str]:
+def wizard_tail(dev_mode: str = "true", bind_address: str = "") -> list[str]:
     """The answers to every step after the provider's own questions.
 
     Address, harness and concurrency at their defaults, no OAuth client, the dev
@@ -48,6 +48,7 @@ def wizard_tail(dev_mode: str = "true") -> list[str]:
     return [
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT
+        bind_address,  # OPENSCIENTIST_BIND_ADDRESS
         "",  # POSTGRES_PORT
         "",  # OPENSCIENTIST_HARNESS
         "",  # OPENSCIENTIST_MAX_CONCURRENT_JOBS

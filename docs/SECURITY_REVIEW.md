@@ -35,12 +35,12 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
-- **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only.
+- **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only. The execution broker clamps each request's timeout to the admin settings' executor timeout (at least 300 s for Rust, which compiles before it runs), refusing zero, negative, non-numeric and non-finite values, and caps the size of the result string fields and plot list it returns.
 
 ### Input Validation
 
 - **Pydantic models for API input.** All API request bodies are validated through Pydantic V2 schemas with type checking and length constraints (e.g., job titles: 1--255 characters, max iterations: 1--20).
-- **File upload safety checks.** Uploaded files are validated by size, extension, and magic-number detection (using `python-magic`). Executable files (ELF, Mach-O, DOS) are blocked. Filenames are sanitized to prevent path traversal.
+- **File upload safety checks.** API uploads stream to temporary files in 1 MiB chunks and are refused with HTTP 413 when a file exceeds the `MAX_FILE_SIZE_MB` admin limit, when the request total does, or when a request holds more than 100 files. The multipart parser spools each part to disk past 1 MiB, so a part is never held in process memory whole. Accepted uploads are then validated by extension and magic-number detection of their leading bytes (using `python-magic`), and executable files (ELF, Mach-O, DOS) are blocked. Web uploads honour the same per-file limit and stream to disk in 1 MiB chunks. Filenames are sanitized to prevent path traversal.
 - **Parameterized SQL queries.** All database access uses SQLAlchemy ORM, which generates parameterized queries. No raw SQL string interpolation was found.
 - **Vulnerability scanner blocking.** A middleware layer blocks common scanner paths (`.git/`, `wp-admin/`, etc.) to reduce noise and exposure.
 
@@ -54,9 +54,10 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Review Tokens
 
 - **Tokens are hashed before storage.** Review tokens are generated with `secrets.token_urlsafe(32)` (128 bits of entropy) and stored as SHA-256 hashes. The database never holds the plaintext.
-- **Race-condition safe redemption.** Token lookup uses `SELECT ... FOR UPDATE` to prevent double-redemption.
-- **Referrer leakage prevention.** Redemption responses set `Referrer-Policy: no-referrer` so the token doesn't leak in HTTP headers.
-- **Revocation support.** Tokens can be deactivated by admins, immediately blocking further use.
+- **Redemption behind a confirmation page.** The review link only renders a sign-in page. Signing in is a same-origin JSON POST from that page, so a cross-site link can show the page but never signs the visitor in.
+- **Race-condition safe sign-in.** The sign-in lookup uses `SELECT ... FOR UPDATE` to prevent double-redemption, and a redeemed token whose reviewer account no longer exists is refused instead of minting a new one.
+- **Referrer leakage prevention.** Sign-in responses set `Referrer-Policy: no-referrer` so the token doesn't leak in HTTP headers.
+- **Revocation support.** Tokens can be revoked by admins at any time, redeemed or not. Revocation ends the reviewer's open sessions and blocks further use, and deleting the reviewer user revokes the token they redeemed.
 
 ### Secrets Management
 
@@ -82,7 +83,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 | **No audit logging for admin actions** | Admin operations (user approvals, job reassignment, token creation/revocation) are logged to the application logger but not to a persistent, tamper-evident audit table. | Create an `audit_log` database table and record all admin actions with timestamps, actor, and details. |
 | **No CSRF token validation** | While `samesite=lax` cookies provide partial protection, there is no explicit CSRF token for state-changing form submissions. | Add CSRF token generation and validation for all POST/PUT/DELETE operations. |
 | **Credentials passed to agent containers via environment variables** | Provider API keys and the database URL (including password) are injected into agent containers as plain environment variables. If a container is compromised, all credentials are exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of long-lived credentials. |
-| **Base Docker image not pinned to digest** | Dockerfiles use `python:3.12-slim` without a SHA-256 digest pin, meaning a compromised or updated upstream image could silently change the build. | Pin to a specific image digest (e.g., `python:3.12-slim@sha256:abc...`). |
 
 ### Medium
 

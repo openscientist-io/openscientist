@@ -31,6 +31,7 @@ def test_setup_writes_env_files(checkout: Path):
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
     assert env_value(checkout, ".env", "ANTHROPIC_API_KEY") == "sk-test-123"
     assert env_value(checkout, ".env", "PORT") == "8080"
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BIND_ADDRESS") == "127.0.0.1"
     assert env_value(checkout, ".env", "POSTGRES_PORT") == "5434"
     # The PR 3 steps land their answers.
     assert env_value(checkout, ".env", "OPENSCIENTIST_DEV_MODE") == "true"
@@ -45,6 +46,13 @@ def test_setup_writes_env_files(checkout: Path):
     assert "# OpenScientist Environment Configuration" in (checkout / ".env").read_text(
         encoding="utf-8"
     )
+
+
+def test_setup_writes_the_bind_address(checkout: Path):
+    lines = ["1", "sk-test-123", "", "", *wizard_tail(bind_address="10.0.0.5")]
+    result = runner.invoke(cli_app.app, ["setup"], input="\n".join(lines) + "\n")
+    assert result.exit_code == 0
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BIND_ADDRESS") == "10.0.0.5"
 
 
 def test_provider_step_asks_only_the_chosen_provider_questions(checkout: Path):
@@ -82,7 +90,7 @@ def test_second_setup_offers_current_values_and_keeps_secrets(checkout: Path):
     before = {name: (checkout / name).read_bytes() for name in (".env", ".env.db", ".env.owner")}
     # A re-run skips the provider choice (it is already set) and offers the current
     # values as defaults, so every prompt is answered with Enter.
-    second = runner.invoke(cli_app.app, ["setup"], input="\n" * 18)
+    second = runner.invoke(cli_app.app, ["setup"], input="\n" * 19)
     assert second.exit_code == 0
     for name, content in before.items():
         assert (checkout / name).read_bytes() == content, name

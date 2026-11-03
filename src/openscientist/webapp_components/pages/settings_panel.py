@@ -53,7 +53,7 @@ _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
     ("executor_memory_mib", "Executor memory", "MiB", "whole MiB, above 0", "int"),
     ("agent_timeout_seconds", "Agent timeout", "seconds", "above 0", "int"),
     ("executor_timeout_seconds", "Executor timeout", "seconds", "above 0", "int"),
-    ("max_file_size_mb", "Max file size", "MB", "above 0", "int"),
+    ("max_file_size_mb", "Max file size, per file and per request", "MB", "above 0", "int"),
     ("max_concurrent_jobs", "Max concurrent jobs", "", "0 or more, 0 pauses new starts", "int"),
     ("scheduler_window_hours", "Scheduler window", "hours", "above 0", "float"),
     ("session_duration_days", "Session length", "days", "1 or more", "int"),

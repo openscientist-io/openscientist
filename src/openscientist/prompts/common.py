@@ -221,7 +221,7 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
     parts.append("""
 **read_document** - Extract text from binary documents
 
-- `file_path`: Path to the document on the host job directory (relative to `data/`, or absolute). This is a host-side path, unrelated to the `/data` paths used inside `execute_code`.
+- `file_path`: Path to the document on the host job directory (a bare filename in `data/`, or an absolute path inside the job directory). Only files inside the job directory are readable. This is a host-side path, unrelated to the `/data` paths used inside `execute_code`.
 - Supports: PDF, Word (.docx), Excel (.xlsx)
 - Returns clean text suitable for analysis
 
@@ -292,7 +292,7 @@ Always use hypothesis tracking — even for literature-only investigations.""")
 There are two distinct path worlds. Do not mix them:
 
 - Inside `execute_code`: never open files by a path you typed. Use the pre-loaded `data` DataFrame for the primary file, and `pd.read_csv(data_files[i]["path"])` for any additional file. The `data_files[i]["path"]` values are in-container `/data` paths and are the only correct way to reach files from `execute_code`.
-- `read_document` and the Phenix tools run host-side and take job-directory paths (relative to `data/`, or absolute). Use them only for the file types noted below.
+- `read_document` and the Phenix tools run host-side and read only files inside the job directory (bare filenames in `data/`, or absolute paths inside it). Use them only for the file types noted below.
 
 Use the correct tool for each file type:
 

@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from nicegui import app, ui
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
-from openscientist.database.models import Job, ReviewToken, User
+from openscientist.database.models import Job, ReviewToken, Session, User
 from openscientist.database.session import get_admin_session
 from openscientist.job.types import JobStatus
 from openscientist.settings import get_settings
@@ -380,10 +380,29 @@ async def delete_user(user_id: UUID) -> tuple[bool, str]:
         if not user:
             return False, "User not found"
 
+        await session.execute(
+            update(ReviewToken).where(ReviewToken.redeemed_by_id == user_id).values(is_active=False)
+        )
         await session.delete(user)
         await session.commit()
 
     return True, "User deleted successfully"
+
+
+async def revoke_review_token(token_id: UUID) -> tuple[bool, str]:
+    """Revoke a review token and end the sessions of the reviewer it redeemed."""
+    async with get_admin_session() as session:
+        result = await session.execute(select(ReviewToken).where(ReviewToken.id == token_id))
+        review_token = result.scalar_one_or_none()
+        if not review_token:
+            return False, "Token not found"
+        review_token.is_active = False
+        if review_token.redeemed_by_id is not None:
+            await session.execute(
+                delete(Session).where(Session.user_id == review_token.redeemed_by_id)
+            )
+        await session.commit()
+    return True, "Token revoked"
 
 
 def _get_admin_current_user_id() -> str | None:
@@ -927,7 +946,7 @@ def _review_token_rows(tokens: list[ReviewToken]) -> list[dict[str, Any]]:
                 "expires_at": token.expires_at.strftime("%Y-%m-%d %H:%M")
                 if token.expires_at
                 else "Never",
-                "can_revoke": token.is_active and not token.is_redeemed,
+                "can_revoke": token.is_active,
             }
         )
     return rows
@@ -1081,10 +1100,9 @@ async def _show_token_created_dialog(magic_link: str) -> None:
             ui.button(icon="content_copy", on_click=copy_link).props("flat color=primary").tooltip(
                 "Copy to clipboard"
             )
-        ui.markdown(
-            "Send this link to the reviewer. They will be logged in automatically "
-            "when they click it."
-        ).classes("mt-4 text-sm text-gray-600")
+        ui.markdown("Send this link to the reviewer. It opens a sign-in page for them.").classes(
+            "mt-4 text-sm text-gray-600"
+        )
         with ui.row().classes("w-full justify-end mt-4"):
             ui.button("Done", on_click=dialog.close).props("color=primary")
     dialog.open()
@@ -1101,20 +1119,11 @@ async def _confirm_revoke_review_token(
         refuse_stale_admin_session()
         return
     try:
-        async with get_admin_session() as session:
-            result = await session.execute(
-                select(ReviewToken).where(ReviewToken.id == UUID(token_id))
-            )
-            review_token = result.scalar_one_or_none()
-            if not review_token:
-                ui.notify("Token not found", type="negative")
-                dialog.close()
-                return
-            review_token.is_active = False
-            await session.commit()
-        ui.notify("Token revoked", type="positive")
+        success, message = await revoke_review_token(UUID(token_id))
+        ui.notify(message, type="positive" if success else "negative")
         dialog.close()
-        await on_revoked()
+        if success:
+            await on_revoked()
     except Exception as exc:
         logger.error("Failed to revoke review token: %s", exc, exc_info=True)
         ui.notify("Failed to revoke token. Please try again.", type="negative")
@@ -1134,7 +1143,7 @@ def _open_revoke_token_dialog(
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         ui.label("Revoke Review Token").classes("text-lg font-bold mb-2")
         ui.label(f'Are you sure you want to revoke the token "{token_label}"?').classes("mb-2")
-        ui.label("The reviewer will no longer be able to use this link to log in.").classes(
+        ui.label("The link stops working and the reviewer's open sessions end.").classes(
             "text-sm text-gray-600 mb-4"
         )
         render_dialog_actions(
