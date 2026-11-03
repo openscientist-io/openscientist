@@ -332,7 +332,9 @@ class TestProviderContainerEnvVars:
         assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
         assert "CLAUDE_CODE_USE_BEDROCK" not in env
 
-    def test_bedrock_env_vars_include_flag_and_credentials(self):
+    def test_bedrock_env_vars_hold_no_aws_credential(self):
+        # The web signs every Bedrock request, so the container env carries the
+        # routing flag and region but never the AWS credential.
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="bedrock",
             AWS_REGION="us-east-1",
@@ -345,8 +347,10 @@ class TestProviderContainerEnvVars:
         assert env["OPENSCIENTIST_PROVIDER"] == "bedrock"
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
         assert env["AWS_REGION"] == "us-east-1"
-        assert env["AWS_ACCESS_KEY_ID"] == "AKIAIOSFODNN7EXAMPLE"
-        assert env["AWS_SECRET_ACCESS_KEY"] == "secret"
+        assert "AWS_ACCESS_KEY_ID" not in env
+        assert "AWS_SECRET_ACCESS_KEY" not in env
+        assert "AWS_PROFILE" not in env
+        assert "AWS_SESSION_TOKEN" not in env
         assert "CLAUDE_CODE_USE_VERTEX" not in env
 
     def test_openai_api_key_passed_for_codex_provider(self):
