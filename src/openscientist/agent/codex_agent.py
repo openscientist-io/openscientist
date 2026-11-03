@@ -107,7 +107,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     RUN_HOME: ClassVar[str | None] = ".codex"
 
-
     def _codex_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
 

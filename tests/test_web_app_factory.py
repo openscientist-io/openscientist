@@ -6,6 +6,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from openscientist import web_app
+from openscientist.security import ScannerBlockMiddleware, SecurityHeadersMiddleware
 
 
 def _noop(*_args, **_kwargs) -> None:
@@ -268,3 +269,66 @@ def test_initialize_job_manager_runtime_installs_the_manager(monkeypatch, tmp_pa
 
     web_app._initialize_job_manager_runtime(tmp_path / "other")
     assert web_app.get_job_manager() is manager
+
+
+def test_openapi_docs_load_their_assets_from_the_app() -> None:
+    host_app = FastAPI(title="OpenScientist API", version="1.0.0")
+    web_app._register_openapi_docs(host_app)
+    client = TestClient(host_app)
+
+    swagger = client.get("/api-docs")
+    assert "/docs-assets/swagger-ui-bundle.js" in swagger.text
+    assert "/docs-assets/swagger-ui.css" in swagger.text
+    assert "jsdelivr" not in swagger.text
+    assert "tiangolo" not in swagger.text
+
+    redoc = client.get("/api-redoc")
+    assert "/docs-assets/redoc.standalone.js" in redoc.text
+    assert "jsdelivr" not in redoc.text
+    assert "fonts.googleapis.com" not in redoc.text
+
+    # The docs pages carry their own CSP (ReDoc spawns a blob: worker), so the
+    # app's page policy must not be layered over them.
+    for response in (swagger, redoc):
+        csp = response.headers["content-security-policy"]
+        assert "worker-src 'self' blob:" in csp
+        assert "frame-ancestors 'none'" not in csp
+
+    for asset in ("swagger-ui-bundle.js", "swagger-ui.css", "redoc.standalone.js"):
+        response = client.get(f"/docs-assets/{asset}")
+        assert response.status_code == 200
+        assert len(response.content) > 100_000
+
+    logo = client.get("/docs-assets/redoc-logo-mini.svg")
+    assert logo.status_code == 200
+    assert "cdn.redoc.ly" not in client.get("/docs-assets/redoc.standalone.js").text
+
+
+def test_create_app_registers_the_security_headers_middleware(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(web_app, "_state", web_app._AppState())
+    monkeypatch.setattr(web_app, "_register_robots_txt", _noop)
+    monkeypatch.setattr(web_app, "_register_api_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_oauth_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_share_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_review_routes", _noop)
+    monkeypatch.setattr(web_app, "_register_download_routes", _noop)
+    monkeypatch.setattr(web_app, "_initialize_job_manager_runtime", _noop)
+    monkeypatch.setattr(web_app, "_register_nicegui_static_files", _noop)
+    monkeypatch.setattr(web_app, "_register_pwa_metadata", _noop)
+    monkeypatch.setattr(web_app, "register_badge_head_html", _noop)
+    monkeypatch.setattr(web_app, "_inject_density_styles", _noop)
+    monkeypatch.setattr(web_app, "_inject_thinking_status_styles", _noop)
+    monkeypatch.setattr(web_app.ui, "run_with", _noop)
+    _skip_page_module_import(monkeypatch)
+
+    host_app = web_app.create_app(tmp_path / "jobs")
+    classes = [middleware.cls for middleware in host_app.user_middleware]
+    assert SecurityHeadersMiddleware in classes
+    assert ScannerBlockMiddleware in classes
+
+    client = TestClient(host_app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "content-security-policy" in response.headers

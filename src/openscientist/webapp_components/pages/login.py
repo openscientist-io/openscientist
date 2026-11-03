@@ -15,6 +15,12 @@ _TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
         "Invalid Review Link",
         "This review link is invalid, expired, or has been revoked.",
     ),
+    "email_verification_required": (
+        "Email Not Verified",
+        "The provider has not verified the email address of your account, so "
+        "this sign-in was refused. Verify the address with the provider and "
+        "sign in again.",
+    ),
 }
 
 
