@@ -38,6 +38,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
+- **Job files owned by the container users.** Job directories are setgid and owned by the agent's fixed UID and shared jobs group, so every file created in them inherits the group. The agent and executor containers run under umask 0007, so files and directories the job processes create are group-only (0660/02770) with no world bits, and operator logins copied into a run's home are private to the agent, so no other local account can read or modify a job's data.
 - **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only. The execution broker clamps each request's timeout to the admin settings' executor timeout (at least 300 s for Rust, which compiles before it runs), refusing zero, negative, non-numeric and non-finite values, and caps the size of the result string fields and plot list it returns.
 
 ### Input Validation
@@ -101,7 +102,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 | **Job shares don't expire** | Once a job is shared with another user, access is permanent unless manually revoked. | Add optional expiry to job shares and a user-facing revocation interface. |
 | **Review tokens don't require expiry** | Token expiry is optional. A never-expiring token that leaks could be used indefinitely. | Make expiry mandatory with a reasonable default (e.g., 7 days, maximum 1 year). |
 | **No seccomp or AppArmor profiles** | Agent and executor containers rely only on `no-new-privileges`. No system-call filtering is applied. | Define seccomp profiles to restrict unnecessary syscalls in agent and executor containers. |
-| **World-writable job directories on the host** | Job directories are set to `chmod 0o777` to handle UID mismatches between containers. On a shared host, any local user could read or modify job data. | Use consistent UIDs across containers to allow more restrictive permissions (e.g., `0o750`). |
 
 ### Low
 
