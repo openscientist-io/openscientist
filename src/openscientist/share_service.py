@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.api.utils import parse_uuid
@@ -130,8 +130,13 @@ async def list_shares_for_owned_job(
     *,
     job_id: str,
     not_owned_detail: str,
+    admin_session_factory: AdminSessionFactory = get_admin_session,
 ) -> list[tuple[JobShare, User]]:
-    """List the shares of a job after verifying ownership."""
+    """List the shares of a job after verifying ownership.
+
+    The shared-with users are resolved through an admin-scoped session,
+    because the owner's RLS session shows only their own user row.
+    """
     job = await get_owned_job(
         session,
         owner_id,
@@ -139,13 +144,31 @@ async def list_shares_for_owned_job(
         not_owned_detail=not_owned_detail,
     )
 
-    result = await session.execute(
-        select(JobShare, User)
-        .join(User, JobShare.shared_with_user_id == User.id)
-        .where(JobShare.job_id == job.id)
-        .order_by(User.email)
-    )
-    return list(result.tuples().all())
+    result = await session.execute(select(JobShare).where(JobShare.job_id == job.id))
+    shares = list(result.scalars().all())
+
+    if not shares:
+        return []
+
+    async with admin_session_factory() as admin_session:
+        targets = (
+            (
+                await admin_session.execute(
+                    select(User).where(User.id.in_([share.shared_with_user_id for share in shares]))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    by_id = {target.id: target for target in targets}
+    resolved = [
+        (share, by_id[share.shared_with_user_id])
+        for share in shares
+        if share.shared_with_user_id in by_id
+    ]
+    resolved.sort(key=lambda pair: pair[1].email)
+    return resolved
 
 
 async def revoke_share_for_owned_job(
@@ -178,28 +201,28 @@ async def revoke_share_for_owned_job(
     await session.commit()
 
 
-async def search_active_users(
-    query: str,
-    limit: int,
+async def find_share_target_by_email(
+    email: str,
     *,
     admin_session_factory: AdminSessionFactory = get_admin_session,
-) -> list[User]:
-    """Search active users by email or display name through an admin-scoped session."""
-    search_pattern = f"%{query}%"
+) -> User | None:
+    """Resolve at most one active user by exact, case-insensitive email.
+
+    Returns None when the email is empty or no active user uses it. The caller
+    enforces the approval gate, which needs the caller's RLS session.
+    """
+    needle = email.strip().lower()
+    if not needle:
+        return None
     async with admin_session_factory() as admin_session:
         result = await admin_session.execute(
-            select(User)
-            .where(
-                or_(
-                    User.email.ilike(search_pattern),
-                    User.name.ilike(search_pattern),
-                )
+            select(User).where(
+                func.lower(User.email) == needle,
+                User.is_active.is_(True),
             )
-            .where(User.is_active.is_(True))
-            .order_by(User.email)
-            .limit(limit)
         )
-        return list(result.scalars().all())
+        # Two accounts may differ only by case, which the unique email index allows.
+        return result.scalars().first()
 
 
 # Top-level job-directory entries withheld from a viewer who can see a job only

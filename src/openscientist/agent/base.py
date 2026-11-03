@@ -54,13 +54,12 @@ class AgentBackend(enum.Enum):
 
 @dataclass
 class TokenUsage:
-    """Normalized token usage across all iterations.
+    """The token buckets of one model call, as the wire reported them.
 
-    The fields are non-overlapping and additive, so cost functions can rate
-    each field without double-counting. Hierarchical SDK counts, where one
-    field folds a sub-count into another (e.g. OpenAI's
-    ``cached_input_tokens`` inside ``input_tokens``), must be subtracted
-    before populating this.
+    The fields are non-overlapping, so the cost function can rate each field
+    without double-counting. Hierarchical wire counts, where one field folds
+    a sub-count into another (e.g. OpenAI's ``cached_input_tokens`` inside
+    ``input_tokens``), must be subtracted before populating this.
     """
 
     input_tokens: int = 0
@@ -83,35 +82,6 @@ class TokenUsage:
 
     reasoning_tokens: int = 0
     """Internal reasoning tokens (o-series; Anthropic extended thinking)."""
-
-    def __add__(self, other: TokenUsage) -> TokenUsage:
-        return TokenUsage(
-            input_tokens=self.input_tokens + other.input_tokens,
-            output_tokens=self.output_tokens + other.output_tokens,
-            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
-            cache_write_1h_tokens=self.cache_write_1h_tokens + other.cache_write_1h_tokens,
-            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
-            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
-        )
-
-    def __sub__(self, other: TokenUsage) -> TokenUsage:
-        return TokenUsage(
-            input_tokens=self.input_tokens - other.input_tokens,
-            output_tokens=self.output_tokens - other.output_tokens,
-            cache_write_tokens=self.cache_write_tokens - other.cache_write_tokens,
-            cache_write_1h_tokens=self.cache_write_1h_tokens - other.cache_write_1h_tokens,
-            cache_read_tokens=self.cache_read_tokens - other.cache_read_tokens,
-            reasoning_tokens=self.reasoning_tokens - other.reasoning_tokens,
-        )
-
-    def __iadd__(self, other: TokenUsage) -> TokenUsage:
-        self.input_tokens += other.input_tokens
-        self.output_tokens += other.output_tokens
-        self.cache_write_tokens += other.cache_write_tokens
-        self.cache_write_1h_tokens += other.cache_write_1h_tokens
-        self.cache_read_tokens += other.cache_read_tokens
-        self.reasoning_tokens += other.reasoning_tokens
-        return self
 
 
 class TurnOutcome(enum.Enum):
@@ -218,7 +188,6 @@ class AbstractAgent[P: Provider](abc.ABC):
     def __init__(self, config: AgentConfig, provider: P) -> None:
         self._config = config
         self._provider = provider
-        self._token_usage = TokenUsage()
         self._model_profile: ModelProfile | None = None
 
     async def warm_model_profile(self) -> None:
@@ -241,10 +210,6 @@ class AbstractAgent[P: Provider](abc.ABC):
     @property
     def provider(self) -> P:
         return self._provider
-
-    @property
-    def total_tokens(self) -> TokenUsage:
-        return self._token_usage
 
     @abc.abstractmethod
     async def run_iteration(

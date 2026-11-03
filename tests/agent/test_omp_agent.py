@@ -419,12 +419,6 @@ class TestRunIteration:
         assert result.tool_calls == 1
         # Session id captured for continuity, and passed on the next turn.
         assert agent._session_id == "SID-abc123"
-        # Usage summed across the two assistant messages, additive per field.
-        usage = agent.total_tokens
-        assert usage.input_tokens == 18
-        assert usage.output_tokens == 24
-        assert usage.cache_read_tokens == 6
-        assert usage.cache_write_tokens == 3
         # Transcript translated through the OMP deserializer, in order.
         types = [type(e) for e in result.transcript]
         assert types == [UserPrompt, Reasoning, ToolCall, ToolResult, AssistantText]
@@ -571,44 +565,6 @@ class TestRunIteration:
             pytest.fail(f"grandchild {child_pid} survived the turn timeout")
 
     @pytest.mark.asyncio
-    async def test_timeout_still_records_token_usage(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The model consumed those tokens even though the turn was cut short, so
-        the partial stream has to be parsed rather than discarded."""
-        bin_path = tmp_path / "fake_omp"
-        _write_stub(bin_path, _STREAM)
-        monkeypatch.setenv("OPENSCIENTIST_OMP_BIN", str(bin_path))
-        monkeypatch.setenv("OMP_STUB_EMIT_FIRST", "1")
-        monkeypatch.setenv("OMP_STUB_SLEEP", "120")
-        monkeypatch.setattr("openscientist.agent.omp_agent._TURN_TIMEOUT_SECONDS", 1)
-        agent = _agent(tmp_path, system_prompt="SYS")
-
-        result = await agent.run_iteration("go")
-        assert result.outcome is TurnOutcome.TIMED_OUT
-        assert agent._token_usage.input_tokens > 0
-
-    @pytest.mark.asyncio
-    async def test_cancel_still_records_token_usage(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Stopping a job cancels its turn, and the stop writes the cost of the
-        iteration in progress, so the partial stream counts here too."""
-        bin_path = tmp_path / "fake_omp"
-        _write_stub(bin_path, _STREAM)
-        monkeypatch.setenv("OPENSCIENTIST_OMP_BIN", str(bin_path))
-        monkeypatch.setenv("OMP_STUB_EMIT_FIRST", "1")
-        monkeypatch.setenv("OMP_STUB_SLEEP", "120")
-        agent = _agent(tmp_path, system_prompt="SYS")
-
-        turn = asyncio.create_task(agent.run_iteration("go"))
-        await asyncio.sleep(2)
-        turn.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(turn, timeout=30)
-        assert agent.total_tokens.input_tokens > 0
-
-    @pytest.mark.asyncio
     async def test_closed_pipes_without_exit_still_time_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -694,9 +650,10 @@ class TestRunIteration:
 
 
 class TestAuthProvisioning:
-    """OMP_AUTH_HOST_PATH provisioning and PI_CODING_AGENT_DIR wiring."""
+    """The run's home is omp's ``PI_CODING_AGENT_DIR``; the vault is web-held and
+    no longer copied into it."""
 
-    def test_provisions_store_and_points_agent_dir(
+    def test_the_vault_is_not_copied_into_the_run_home(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from openscientist.settings import get_settings
@@ -704,25 +661,27 @@ class TestAuthProvisioning:
         src = tmp_path / "omp-store"
         src.mkdir()
         (src / "agent.db").write_text("db", encoding="utf-8")
-        (src / "agent.db-wal").write_text("wal", encoding="utf-8")
         (src / "config.yml").write_text("cfg", encoding="utf-8")
 
         monkeypatch.setenv("OMP_AUTH_HOST_PATH", str(src))
-        get_settings.cache_clear()
         job_dir = tmp_path / "job"
         # Inside the container the run's home is mounted at the job's .omp-home.
         home = job_dir / ".omp-home"
         home.mkdir(parents=True)
+        env = {}
         try:
+            get_settings.cache_clear()
             OmpAgent.provision_run_home(get_settings(), home)
+            agent = _agent(job_dir)
+            env = agent._build_subprocess_env()
         finally:
+            # Do not leak the vault-bearing settings into later tests.
             get_settings.cache_clear()
 
-        assert (home / "agent.db").read_text() == "db"
-        assert (home / "config.yml").read_text() == "cfg"
-
-        agent = _agent(job_dir)
-        assert agent._build_subprocess_env()["PI_CODING_AGENT_DIR"] == str(home)
+        # The web holds the vault and signs for it; the home keeps no credential.
+        assert not (home / "agent.db").exists()
+        assert not (home / "config.yml").exists()
+        assert env["PI_CODING_AGENT_DIR"] == str(home)
 
     def test_no_provisioning_leaves_agent_dir_unset(self, tmp_path: Path) -> None:
         agent = _agent(tmp_path)

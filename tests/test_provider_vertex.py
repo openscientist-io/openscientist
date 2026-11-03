@@ -236,7 +236,6 @@ class TestVertexProviderValidation:
             posture = VertexProvider().airgap_egress()
         # An air-gapped Vertex job reaches only the proxy, which signs.
         assert posture.mode is AirgapEgress.PROXY
-        assert posture.direct_endpoints == ()
 
     def test_missing_creds_file_raises(self):
         with patch.dict(

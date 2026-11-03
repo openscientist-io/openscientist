@@ -8,7 +8,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import User
@@ -117,6 +117,7 @@ async def set_job_status(
         error_message=error_message,
         cancellation_reason=cancellation_reason,
         takes_slot=status == JobStatus.RUNNING,
+        stamps_end=status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
     ).returning(JobModel)
 
     async with _job_session(user_id) as session:
@@ -128,6 +129,35 @@ async def set_job_status(
         await _fill_notification_target(session, job, result)
 
     return result
+
+
+async def backfill_job_end_time(job_id: str) -> int:
+    """Stamp the slot end the web now knows is real.
+
+    The container's ending write carries no time, so the worker's poll
+    stamps it the first time it sees the end, and a web-side write that
+    got there first leaves the column untouched. Returns the number of
+    rows stamped."""
+    stmt = (
+        update(JobModel)
+        .where(
+            JobModel.id == UUID(job_id),
+            JobModel.status.in_(
+                [
+                    JobStatus.COMPLETED.value,
+                    JobStatus.FAILED.value,
+                    JobStatus.CANCELLED.value,
+                ]
+            ),
+            JobModel.ended_at.is_(None),
+        )
+        .values(ended_at=func.now())
+        .returning(JobModel.id)
+    )
+    async with _job_session(None) as session:
+        stamped = (await session.execute(stmt)).scalars().all()
+        await session.commit()
+        return len(stamped)
 
 
 async def _fill_notification_target(

@@ -186,7 +186,6 @@ class AirgapEgress(enum.Enum):
     """How the job container reaches the LLM under air-gap, deciding the firewall allowlist."""
 
     PROXY = "proxy"
-    DIRECT = "direct"
     UNSUPPORTED = "unsupported"
 
 
@@ -195,7 +194,6 @@ class AirgapPosture:
     """A provider's air-gapped egress posture for the active configuration."""
 
     mode: AirgapEgress
-    direct_endpoints: tuple[tuple[str, int], ...] = ()
     reason: str = ""
 
 
@@ -451,6 +449,26 @@ class Provider(abc.ABC):
         """Real endpoint and auth headers for the proxy, or None if not proxied."""
         return None
 
+    def harness_routing_error(self) -> str | None:
+        """A clear reason the active harness cannot route this provider's proxied traffic, or None."""
+        return None
+
+    def prelaunch_routing_error(self) -> str | None:
+        """A clear reason the container's LLM traffic cannot be served through the proxy, or None; checked at launch."""
+        if self.airgap_egress().mode is not AirgapEgress.PROXY:
+            return None
+        try:
+            upstream = self.llm_upstream()
+        except ValueError as exc:
+            return str(exc)
+        if upstream is None:
+            return (
+                f"{self.display_name} has no credential the LLM proxy can sign "
+                "with; set the provider's auth (an API key, a host login file, "
+                "or OMP_AUTH_HOST_PATH to a vault with a matching login)."
+            )
+        return self.harness_routing_error()
+
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         """Env that routes this provider's LLM calls through the proxy, or {}."""
         return {}
@@ -467,7 +485,7 @@ class Provider(abc.ABC):
         The setup wizard evaluates it from the provider's own settings before the
         database and other app settings exist, so it must not build the full
         settings. Pure, no network. The default is a provider that cannot be
-        air-gapped; providers that proxy (or egress directly) override it.
+        air-gapped; proxied providers override it.
         """
         return AirgapPosture(
             AirgapEgress.UNSUPPORTED,

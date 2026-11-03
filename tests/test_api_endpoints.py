@@ -10,7 +10,7 @@ import tempfile
 import tracemalloc
 import uuid
 import zipfile
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC
 from pathlib import Path
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.api.auth import hash_secret
@@ -64,6 +64,31 @@ async def test_user_db(db_session: AsyncSession) -> User:
     await db_session.commit()
     await db_session.refresh(user)
     return user
+
+
+@pytest_asyncio.fixture
+async def committed_share_owner(
+    test_engine: AsyncEngine,
+) -> AsyncIterator[tuple[User, Job]]:
+    """A committed owner and a job they own, so the endpoint's real
+    per-request sessions read the rows the way the API's do."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        owner = User(
+            email=f"api-share-owner-{uuid.uuid4().hex}@share.test",
+            name="API Share Owner",
+            is_approved=True,
+        )
+        db.add(owner)
+        await db.flush()
+        job = Job(owner_id=owner.id, research_question="API Shared Job", status="pending")
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+    yield owner, job
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id == owner.id))
+        await db.commit()
 
 
 @pytest_asyncio.fixture
@@ -1844,18 +1869,12 @@ class TestJobSharingEndpoints:
         assert data["job_id"] == str(test_job_db.id)
         assert data["permission_level"] == "view"
 
-    @pytest.mark.asyncio
-    async def test_search_users_for_sharing(
-        self,
+    @staticmethod
+    def _lookup_app(
         db_session: AsyncSession,
         test_user_db: User,
-        test_user2_db: User,
-        test_api_key_db: tuple[APIKey, str],
     ):
-        """Search for users to share with."""
-        from contextlib import asynccontextmanager
-        from unittest.mock import patch
-
+        """An app wired so the RLS session runs as openscientist_app for the owner."""
         from fastapi import FastAPI
 
         from openscientist.api.auth import get_current_user_from_api_key
@@ -1863,25 +1882,43 @@ class TestJobSharingEndpoints:
         from openscientist.database.rls import set_current_user
         from openscientist.database.session import get_session
 
-        _, full_key = test_api_key_db
-
         app = FastAPI()
 
         async def override_get_session():
+            await db_session.execute(text("SET ROLE openscientist_app"))
             await set_current_user(db_session, test_user_db.id)
-            yield db_session
+            try:
+                yield db_session
+            finally:
+                await db_session.execute(text("RESET ROLE"))
 
         async def override_get_user():
             return test_user_db
 
-        @asynccontextmanager
-        async def mock_get_admin_session():
-            """Mock admin session that uses test db_session."""
-            yield db_session
-
         app.dependency_overrides[get_session] = override_get_session
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_lookup_share_target_exact_email_returns_id_and_name_only(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """An exact email in any case, with surrounding spaces, returns that one user."""
+        _, full_key = test_api_key_db
+        app = self._lookup_app(db_session, test_user_db)
+
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            await db_session.execute(text("SET ROLE openscientist_admin"))
+            try:
+                yield db_session
+            finally:
+                await db_session.execute(text("RESET ROLE"))
 
         with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
             async with AsyncClient(
@@ -1889,13 +1926,132 @@ class TestJobSharingEndpoints:
                 base_url="http://test",
             ) as client:
                 response = await client.get(
-                    f"/api/v1/shares/search/users?q={test_user2_db.email[:5]}",
+                    "/api/v1/shares/lookup",
+                    params={"email": f"  {test_user2_db.email.upper()}  "},
                     headers={"Authorization": f"Bearer {full_key}"},
                 )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert "users" in data
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "target": {"id": str(test_user2_db.id), "name": test_user2_db.name}
+        }
+
+    @pytest.mark.asyncio
+    async def test_lookup_share_target_rejects_wildcards_and_partial_strings(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """LIKE wildcards and partial strings match nobody, in either order."""
+        _, full_key = test_api_key_db
+        app = self._lookup_app(db_session, test_user_db)
+
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            await db_session.execute(text("SET ROLE openscientist_admin"))
+            try:
+                yield db_session
+            finally:
+                await db_session.execute(text("RESET ROLE"))
+
+        emails = (
+            "%%",
+            "%",
+            "_",
+            "%_",
+            test_user2_db.email[:5],
+            f"%{test_user2_db.email}",
+            f"{test_user2_db.email}%",
+        )
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                for email in emails:
+                    response = await client.get(
+                        "/api/v1/shares/lookup",
+                        params={"email": email},
+                        headers={"Authorization": f"Bearer {full_key}"},
+                    )
+                    assert response.status_code == 200, response.text
+                    assert response.json() == {"target": None}
+
+    @pytest.mark.asyncio
+    async def test_lookup_share_target_no_match_looks_like_invalid_input(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """A missing email and a malformed one return the same empty result."""
+        _, full_key = test_api_key_db
+        app = self._lookup_app(db_session, test_user_db)
+
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            await db_session.execute(text("SET ROLE openscientist_admin"))
+            try:
+                yield db_session
+            finally:
+                await db_session.execute(text("RESET ROLE"))
+
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                missing = await client.get(
+                    "/api/v1/shares/lookup",
+                    params={"email": "nobody@example.invalid"},
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+                invalid = await client.get(
+                    "/api/v1/shares/lookup",
+                    params={"email": "%%"},
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert missing.status_code == invalid.status_code == 200
+        assert missing.json() == invalid.json() == {"target": None}
+
+    @pytest.mark.asyncio
+    async def test_lookup_share_target_refuses_unapproved_caller(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """A signed-in account without approval or admin status gets 403."""
+        _, full_key = test_api_key_db
+        test_user_db.is_approved = False
+        await db_session.commit()
+        app = self._lookup_app(db_session, test_user_db)
+
+        @asynccontextmanager
+        async def mock_get_admin_session():
+            await db_session.execute(text("SET ROLE openscientist_admin"))
+            try:
+                yield db_session
+            finally:
+                await db_session.execute(text("RESET ROLE"))
+
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    "/api/v1/shares/lookup",
+                    params={"email": test_user2_db.email},
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 403
 
     @pytest.mark.asyncio
     async def test_share_job_with_inactive_user_returns_404(
@@ -1967,12 +2123,7 @@ class TestJobSharingEndpoints:
 
     @pytest.mark.asyncio
     async def test_list_job_shares(
-        self,
-        db_session: AsyncSession,
-        test_user_db: User,
-        test_user2_db: User,
-        test_api_key_db: tuple[APIKey, str],
-        test_job_db: Job,
+        self, test_engine: AsyncEngine, committed_share_owner: tuple[User, Job]
     ):
         """List shares for a job."""
 
@@ -1981,49 +2132,52 @@ class TestJobSharingEndpoints:
         from openscientist.api.auth import get_current_user_from_api_key
         from openscientist.api.router import api_router as router
         from openscientist.database.models import JobShare
-        from openscientist.database.rls import set_current_user
-        from openscientist.database.session import get_session
 
-        _, full_key = test_api_key_db
+        owner, job = committed_share_owner
 
-        # Create a share first
-        share = JobShare(
-            job_id=test_job_db.id,
-            shared_with_user_id=test_user2_db.id,
-            permission_level="view",
-        )
-        db_session.add(share)
-        await db_session.commit()
+        # The endpoint resolves shared-with users through its own admin
+        # session, so the target must be committed, like a real user row.
+        async with AsyncSession(test_engine, expire_on_commit=False) as target_db:
+            target = User(email=f"share-list-{uuid.uuid4().hex}@share.test", name="Share Target")
+            target_db.add(target)
+            await target_db.commit()
+            await target_db.refresh(target)
 
-        app = FastAPI()
+        try:
+            async with AsyncSession(test_engine, expire_on_commit=False) as share_db:
+                share_db.add(
+                    JobShare(job_id=job.id, shared_with_user_id=target.id, permission_level="view")
+                )
+                await share_db.commit()
 
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
+            app = FastAPI()
 
-        async def override_get_user():
-            return test_user_db
+            async def override_get_user():
+                return owner
 
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
+            app.dependency_overrides[get_current_user_from_api_key] = override_get_user
+            app.include_router(router)
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-        ) as client:
-            response = await client.get(
-                f"/api/v1/shares/job/{test_job_db.id}",
-                headers={"Authorization": f"Bearer {full_key}"},
-            )
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.get(
+                    f"/api/v1/shares/job/{job.id}",
+                    headers={"Authorization": "Bearer test"},
+                )
 
-        assert response.status_code == 200
-        data = response.json()
-        assert "shares" in data
-        assert data["total"] >= 1
-        # Verify the share we created is in the list
-        share_emails = [s["shared_with_email"] for s in data["shares"]]
-        assert test_user2_db.email in share_emails
+            assert response.status_code == 200
+            data = response.json()
+            assert "shares" in data
+            assert data["total"] >= 1
+            # Verify the share we created is in the list
+            share_emails = [s["shared_with_email"] for s in data["shares"]]
+            assert target.email in share_emails
+        finally:
+            async with AsyncSession(test_engine, expire_on_commit=False) as target_db:
+                await target_db.execute(delete(User).where(User.id == target.id))
+                await target_db.commit()
 
     @pytest.mark.asyncio
     async def test_list_job_shares_not_owner_forbidden(

@@ -332,8 +332,7 @@ def _revoke_session_later(session_token: str) -> None:
 
 
 def _forget_stored_session() -> None:
-    """Pages fall back to the token NiceGUI stores per browser, so signing out
-    clears that copy too."""
+    """Clear the per-browser user info the page build stored."""
     try:
         storage = app.storage.user
     except RuntimeError:
@@ -362,6 +361,8 @@ async def logout(request: Request, _logout: LogoutRequest) -> RedirectResponse:
 
     response = RedirectResponse(url="/login")
     response.delete_cookie(key="session_token")
+    # The "session" cookie is NiceGUI's own; it keys the per-browser storage
+    response.delete_cookie(key="session")
     return response
 
 

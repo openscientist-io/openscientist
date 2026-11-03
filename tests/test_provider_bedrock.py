@@ -164,8 +164,7 @@ class TestBedrockSetupEnvironment:
             patch.dict(
                 os.environ,
                 {
-                    "AWS_PROFILE": "",
-                    "AWS_SESSION_TOKEN": "",
+                    "AWS_BEARER_TOKEN_BEDROCK": "",
                     "ANTHROPIC_AUTH_TOKEN": "",
                 },
             ),
@@ -173,8 +172,7 @@ class TestBedrockSetupEnvironment:
             provider = BedrockProvider()
             provider.setup_environment()
             # Empty string vars should be removed
-            assert "AWS_PROFILE" not in os.environ
-            assert "AWS_SESSION_TOKEN" not in os.environ
+            assert "AWS_BEARER_TOKEN_BEDROCK" not in os.environ
             assert "ANTHROPIC_AUTH_TOKEN" not in os.environ
 
     def test_clears_api_key(self):

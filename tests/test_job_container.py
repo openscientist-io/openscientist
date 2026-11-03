@@ -58,9 +58,6 @@ class _FakeProvider:
     #: The LLM placeholder of the latest launch.
     last_placeholder = ""
 
-    def __init__(self, posture: AirgapPosture | None = None) -> None:
-        self._posture = posture
-
     def proxied_container_env(
         self,
         *,
@@ -73,8 +70,11 @@ class _FakeProvider:
     def prelaunch_model_context_env(self) -> dict[str, str]:
         return {}
 
+    def prelaunch_routing_error(self) -> str | None:
+        return None
+
     def airgap_egress(self) -> AirgapPosture:
-        return self._posture or AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(AirgapEgress.PROXY)
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +175,30 @@ class TestContainerDatabaseLogin:
         mock_client = MagicMock()
         a, b, c, d = self._launch_patches()
         with a, b, c, d, pytest.raises(RuntimeError, match="cannot create role"):
+            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        mock_client.containers.run.assert_not_called()
+
+    def test_unroutable_provider_traffic_refuses_before_the_container_starts(
+        self, agent_login
+    ) -> None:
+        """Unroutable proxied traffic refuses at launch, before any container starts."""
+        unroutable = MagicMock()
+        unroutable.prelaunch_routing_error.return_value = (
+            "the omp harness cannot route the ChatGPT login"
+        )
+        mock_client = MagicMock()
+        a, b, c, d = self._launch_patches()
+        with (
+            a,
+            b,
+            c,
+            d,
+            patch(
+                "openscientist.job_container.runner.get_provider",
+                return_value=unroutable,
+            ),
+            pytest.raises(RuntimeError, match="cannot route the ChatGPT login"),
+        ):
             self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
         mock_client.containers.run.assert_not_called()
 
@@ -751,7 +775,6 @@ class TestFirewallLaunch:
         self,
         test_engine: AsyncEngine,
         airgapped: bool,
-        posture: AirgapPosture | None = None,
         provider_id: str = "ollama",
     ) -> dict[str, object]:
         """Launch with the row's airgap flag, and return the container run kwargs."""
@@ -768,7 +791,7 @@ class TestFirewallLaunch:
             ),
             patch(
                 "openscientist.job_container.runner.get_provider",
-                return_value=_FakeProvider(posture),
+                return_value=_FakeProvider(),
             ),
             patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
             patch(
@@ -824,20 +847,6 @@ class TestFirewallLaunch:
             "openscientist:8081",
             "openscientist:8082",
         }
-
-    @pytest.mark.asyncio
-    async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:
-        posture = AirgapPosture(
-            AirgapEgress.DIRECT,
-            direct_endpoints=(("bedrock-runtime.us-east-1.amazonaws.com", 443),),
-        )
-        run_kwargs = await self._launch(
-            test_engine, airgapped=True, provider_id="bedrock", posture=posture
-        )
-        environment = cast(dict[str, str], run_kwargs["environment"])
-        entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
-        assert "bedrock-runtime.us-east-1.amazonaws.com:443" in entries
-        assert "openscientist:8081" not in entries
 
 
 class TestChatTurnLaunch:

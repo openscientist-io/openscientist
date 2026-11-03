@@ -64,23 +64,20 @@ async def validate_session(session_token: str) -> dict[str, Any] | None:
 
 
 def _get_session_token() -> str | None:
-    """Get the session token from cookie or app storage."""
-    # The cookie is set by the OAuth flow
+    """Get the session token from the cookie the OAuth flow sets."""
     try:
         if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
-            session_token = ui.context.client.request.cookies.get("session_token")
-            if session_token:
-                return session_token
+            return ui.context.client.request.cookies.get("session_token")
     except Exception:
         logger.debug("Could not read session cookie", exc_info=True)
-
-    # Fall back to app.storage.user for authenticated UI flows.
-    return app.storage.user.get("session_token")
+    return None
 
 
-def _store_authenticated_user(session_token: str, user_info: dict[str, Any]) -> None:
-    """Store authenticated user info in NiceGUI storage."""
-    app.storage.user["session_token"] = session_token
+def _store_authenticated_user(user_info: dict[str, Any]) -> None:
+    """Store the validated user's info in NiceGUI storage for event handlers.
+
+    The token stays in the cookie, which every request re-validates, so it is
+    never copied into the per-browser storage."""
     app.storage.user["user_id"] = user_info["user_id"]
     app.storage.user["email"] = user_info["email"]
     app.storage.user["name"] = user_info["name"]
@@ -195,7 +192,7 @@ async def _build_signed_in(
             _redirect_to_login(clear_storage=True)
             return None
 
-        _store_authenticated_user(session_token, user_info)
+        _store_authenticated_user(user_info)
         return await func(*args, **kwargs)
 
 

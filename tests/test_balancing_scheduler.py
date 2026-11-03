@@ -17,7 +17,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, User
-from openscientist.job.repository import set_job_status
+from openscientist.job.repository import backfill_job_end_time, set_job_status
 from openscientist.job_manager import JobManager, JobStatus
 from openscientist.orchestrator.report import (
     _begin_report_phase,
@@ -242,7 +242,7 @@ async def _times(test_engine: AsyncEngine, job_id: UUID) -> tuple[datetime | Non
     return row.started_at, row.ended_at
 
 
-async def test_the_status_writers_record_when_a_job_holds_a_slot(
+async def test_the_web_writes_the_slot_times_of_a_held_slot(
     owners: _Owners, test_engine: AsyncEngine, tmp_path: Path
 ) -> None:
     job = await _job(test_engine, owners.alice, JobStatus.QUEUED, ended=_NOW - timedelta(days=1))
@@ -253,6 +253,12 @@ async def test_the_status_writers_record_when_a_job_holds_a_slot(
     await _begin_report_phase(tmp_path / str(job))
     assert (await _times(test_engine, job)) == (started, None)
     await _persist_final_status(tmp_path / str(job), _ReportOutcome(success=True, error=""))
+    started_after, ended = await _times(test_engine, job)
+    assert started_after == started
+    # The container's final write carries no end time, so the web's first
+    # observation of the end stamps it.
+    assert ended is None
+    assert await backfill_job_end_time(str(job)) == 1
     started_after, ended = await _times(test_engine, job)
     assert started_after == started
     assert ended is not None and ended >= started
