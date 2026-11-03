@@ -100,7 +100,6 @@ def _settings(*, omp: Path | None = None, codex: Path | None = None, provider_id
             provider_id=provider_id,
             omp_auth_host_path=str(omp) if omp else None,
             codex_auth_host_path=str(codex) if codex else None,
-            gcp_credentials_host_path=None,
             get_container_env_vars=dict,
         ),
         database=SimpleNamespace(effective_database_url="postgresql+asyncpg://w:p@db:5432/db"),

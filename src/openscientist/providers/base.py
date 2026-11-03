@@ -123,12 +123,46 @@ class CostInfo:
         )
 
 
+class UpstreamSigning(abc.ABC):
+    """How the LLM proxy signs the requests it forwards to the real upstream.
+
+    The signing owns the upstream credential (a fixed header set today, the
+    web's GCP credential for Vertex), which the job container must never see.
+    """
+
+    @abc.abstractmethod
+    def credential_headers(
+        self, *, method: str, path: str, query: str, body: bytes
+    ) -> dict[str, str]:
+        """The upstream auth headers to send, replacing any the container sent."""
+
+    def upstream_url(self, *, base_url: str, path: str, query: str) -> str:
+        """The full upstream URL for a forwarded request, ``base_url`` with the
+        path and query appended. A signing overrides it when the request's path
+        names a host other than ``base_url``'s (a per-region Vertex endpoint)."""
+        url = f"{base_url}{path}"
+        return f"{url}?{query}" if query else url
+
+
+@dataclass(frozen=True)
+class StaticHeadersSigning(UpstreamSigning):
+    """A fixed set of upstream headers, for a provider that authenticates with
+    a key rather than a per-request signature."""
+
+    headers: dict[str, str]
+
+    def credential_headers(
+        self, *, method: str, path: str, query: str, body: bytes
+    ) -> dict[str, str]:
+        return dict(self.headers)
+
+
 @dataclass(frozen=True)
 class LlmUpstream:
-    """Real endpoint and auth headers the LLM proxy forwards to."""
+    """The real endpoint and its signing, which the LLM proxy forwards to."""
 
     base_url: str
-    auth_headers: dict[str, str]
+    signing: UpstreamSigning
 
 
 class AirgapEgress(enum.Enum):
@@ -428,12 +462,9 @@ class Provider(abc.ABC):
         *,
         proxy_base_url: str,
         placeholder: str,
-        gcp_credentials_container_path: str | None = None,
     ) -> dict[str, str]:
         """Job-container provider env with LLM traffic routed through the proxy."""
-        env = get_settings().provider.get_container_env_vars(
-            gcp_credentials_container_path=gcp_credentials_container_path
-        )
+        env = get_settings().provider.get_container_env_vars()
         env.update(self.proxy_env_overrides(proxy_base_url=proxy_base_url, placeholder=placeholder))
         if (
             self.proxied_env_condition_key
@@ -444,12 +475,7 @@ class Provider(abc.ABC):
         return env
 
     @classmethod
-    def container_env(
-        cls,
-        provider: ProviderSettings,
-        *,
-        gcp_credentials_container_path: str | None = None,
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         """Agent-container env (auth + routing). Takes ``ProviderSettings`` so it
         composes without instantiating the provider. Base: none."""
         return {}
@@ -631,9 +657,7 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
         return self._api_key_of(get_settings().provider)
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         return env_from_pairs(
             [
                 (cls.base_url_env, cls._base_url_of(provider)),
@@ -670,7 +694,7 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
     def llm_upstream(self) -> LlmUpstream | None:
         key = self._api_key()
         headers = {"authorization": f"Bearer {key}"} if key else {}
-        return LlmUpstream(self._base_url(), headers)
+        return LlmUpstream(self._base_url(), StaticHeadersSigning(headers))
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         # omp reads OPENAI_API_KEY, which the proxy swaps for the real key.

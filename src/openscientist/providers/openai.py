@@ -18,6 +18,7 @@ from openscientist.providers.base import (
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    StaticHeadersSigning,
     _listing_live_check,
     env_from_pairs,
 )
@@ -41,9 +42,7 @@ class OpenAIDirectProvider(CodexCompatible):
     display_name = "OpenAI API"
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         return env_from_pairs(
             [
                 ("OPENAI_API_KEY", provider.openai_api_key),
@@ -105,7 +104,9 @@ class OpenAIDirectProvider(CodexCompatible):
     def llm_upstream(self) -> LlmUpstream | None:
         key = get_settings().provider.openai_api_key
         if key:
-            return LlmUpstream(_OPENAI_BASE_URL, {"authorization": f"Bearer {key}"})
+            return LlmUpstream(
+                _OPENAI_BASE_URL, StaticHeadersSigning({"authorization": f"Bearer {key}"})
+            )
         return None
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:

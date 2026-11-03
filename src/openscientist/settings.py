@@ -253,11 +253,6 @@ class ProviderSettings(BaseSettings):
         alias="GOOGLE_APPLICATION_CREDENTIALS",
         description="Path to the GCP service account credentials file.",
     )
-    gcp_credentials_host_path: str | None = Field(
-        default=None,
-        alias="GCP_CREDENTIALS_HOST_PATH",
-        description="Host path to the GCP credentials file, mounted into agent containers.",
-    )
     codex_auth_host_path: str | None = Field(
         default=None,
         alias="CODEX_AUTH_HOST_PATH",
@@ -393,10 +388,7 @@ class ProviderSettings(BaseSettings):
             env_vars, "ANTHROPIC_DEFAULT_OPUS_MODEL", self.anthropic_default_opus_model
         )
 
-    def get_container_env_vars(
-        self,
-        gcp_credentials_container_path: str | None = None,
-    ) -> dict[str, str]:
+    def get_container_env_vars(self) -> dict[str, str]:
         """Environment variables for the agent container. Backend-agnostic keys
         plus the active provider's own env (auth + routing flags).
 
@@ -416,11 +408,7 @@ class ProviderSettings(BaseSettings):
             provider_cls = provider_class(self.provider_id)
         except ValueError:
             return env_vars
-        env_vars.update(
-            provider_cls.container_env(
-                self, gcp_credentials_container_path=gcp_credentials_container_path
-            )
-        )
+        env_vars.update(provider_cls.container_env(self))
         return env_vars
 
 

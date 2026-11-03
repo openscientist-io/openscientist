@@ -19,10 +19,10 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
-from openscientist.job_container.secrets import proxy_accepts
+from openscientist.job_container.secrets import proxy_run
 from openscientist.listener import bind_listener
 from openscientist.providers import get_provider
-from openscientist.providers.base import AirgapEgress, LlmUpstream
+from openscientist.providers.base import LlmUpstream
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,10 @@ def create_llm_proxy_app(
 
     async def handler(request: Request) -> Response:
         credential = _presented_credential(request)
-        if credential is None or not proxy_accepts(credential):
+        # The run, not just the fact that it is live: attribution rides the
+        # forwarded request's log line.
+        run = proxy_run(credential) if credential else None
+        if run is None:
             return Response("unauthorized", status_code=401)
         try:
             target = upstream()
@@ -88,13 +91,24 @@ def create_llm_proxy_app(
             return Response("provider not supported", status_code=502)
 
         body = await request.body()
+        logger.debug(
+            "LLM proxy: %s %s for run %s (%s)",
+            request.method,
+            request.url.path,
+            run.job_id,
+            run.kind,
+        )
         headers = {
             k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS
         }
-        headers.update(target.auth_headers)
-        url = target.base_url + request.url.path
-        if request.url.query:
-            url = f"{url}?{request.url.query}"
+        headers.update(
+            target.signing.credential_headers(
+                method=request.method, path=request.url.path, query=request.url.query, body=body
+            )
+        )
+        url = target.signing.upstream_url(
+            base_url=target.base_url, path=request.url.path, query=request.url.query
+        )
 
         upstream_req = client.build_request(request.method, url, headers=headers, content=body)
         upstream_resp = await client.send(upstream_req, stream=True)
@@ -140,19 +154,16 @@ def _active_upstream() -> LlmUpstream:
 
 
 async def start_llm_proxy() -> None:
-    """Start the proxy listener as a loop task when the provider is proxied.
+    """Start the proxy listener as a loop task, for every provider. A provider
+    the active signing cannot serve (no upstream) still gets the listener, so
+    its container's traffic is refused by the proxy rather than reaching the
+    vendor with a real credential.
 
     Raises:
         ListenerBindError: Its port cannot be bound.
     """
     global _proxy_server, _proxy_task
     if _proxy_task is not None:
-        return
-    if get_provider().airgap_egress().mode is not AirgapEgress.PROXY:
-        logger.info(
-            "LLM proxy: provider %r not covered, not starting",
-            get_settings().provider.provider_id,
-        )
         return
 
     port = get_settings().container.llm_proxy_port
