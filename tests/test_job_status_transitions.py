@@ -837,10 +837,7 @@ def _report_runtime(job_id: UUID) -> dict[str, object]:
 
 
 def _report_executor() -> MagicMock:
-    from openscientist.agent.base import TokenUsage
-
     executor = MagicMock()
-    executor.total_tokens = TokenUsage()
     executor.shutdown = AsyncMock()
     executor.prepare_job_workspace = AsyncMock()
     executor.warm_model_profile = AsyncMock()

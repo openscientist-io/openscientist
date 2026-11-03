@@ -35,7 +35,7 @@ from openscientist.orchestrator.iteration import (
     update_job_status,
     wait_for_feedback_or_timeout,
 )
-from openscientist.orchestrator.provenance import _CostLedger, _sync_version_metadata
+from openscientist.orchestrator.provenance import _sync_version_metadata
 from openscientist.orchestrator.report import _persist_final_status, _run_report_generation_phase
 from openscientist.providers.base import Provider
 from openscientist.settings import get_settings
@@ -197,7 +197,6 @@ async def _run_primary_discovery_loop(
     runtime: dict[str, Any],
     provenance_dir: Path,
     log_file: Path,
-    ledger: _CostLedger,
 ) -> None:
     """Run initial and iterative discovery phases before report generation."""
     job_id = runtime["job_id"]
@@ -217,7 +216,6 @@ async def _run_primary_discovery_loop(
 
     logger.info("Iteration 1/%d: Starting session", max_iterations)
     await _check_budget_before_iteration(job_id)
-    ledger.begin("discovery", 1)
     result = await executor.run_iteration(initial_prompt, reset_session=True)
     _check_turn_outcome(result, 1)
 
@@ -230,7 +228,6 @@ async def _run_primary_discovery_loop(
         result=result,
         overwrite_log=True,
     )
-    await ledger.record()
     if max_iterations > 1:
         await increment_ks_iteration(job_id)
     await _assert_job_not_cancelled(job_id)
@@ -274,7 +271,6 @@ async def _run_primary_discovery_loop(
             "fresh session" if should_reset else "continuing",
         )
 
-        ledger.begin("discovery", iteration)
         result = await executor.run_iteration(iteration_prompt, reset_session=should_reset)
         _check_turn_outcome(result, iteration)
         _append_iteration_artifacts(
@@ -284,8 +280,6 @@ async def _run_primary_discovery_loop(
             prompt=iteration_prompt,
             result=result,
         )
-        await ledger.record()
-
         if iteration < max_iterations:
             await increment_ks_iteration(job_id)
         await _assert_job_not_cancelled(job_id)
@@ -341,24 +335,11 @@ async def _load_runtime_context(job_dir: Path) -> dict[str, Any]:
     }
 
 
-async def _finalize_executor(executor: AbstractAgent[Provider], ledger: _CostLedger) -> None:
-    """Log token usage, write the cost not yet recorded, and shut the executor down.
-
-    Shared ``finally`` handling for both the full discovery run and the
-    report-only regeneration run so neither leaks the executor or its cost.
-    """
-    tokens = executor.total_tokens
-    logger.info(
-        "Agent executor completed: %d input, %d output, %d cache read, "
-        "%d cache write (%d of them one-hour), %d reasoning tokens",
-        tokens.input_tokens,
-        tokens.output_tokens,
-        tokens.cache_read_tokens,
-        tokens.cache_write_tokens + tokens.cache_write_1h_tokens,
-        tokens.cache_write_1h_tokens,
-        tokens.reasoning_tokens,
-    )
-    await ledger.close()
+async def _finalize_executor(executor: AbstractAgent[Provider]) -> None:
+    """Shut the executor down. Shared ``finally`` handling for both the full
+    discovery run and the report-only regeneration run so neither leaks the
+    executor. The cost of what it spent goes to the rows the LLM proxy wrote,
+    one per model call."""
     await executor.shutdown()
 
 
@@ -404,16 +385,13 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
     logger.info("Regenerating report for job %s", job_id)
 
     executor = await _build_and_prepare_executor(job_dir, runtime)
-    ledger = _CostLedger.for_executor(executor, job_id)
     try:
-        ledger.begin("report", None)
         report_outcome = await _run_report_generation_phase(
             executor=executor,
             job_dir=job_dir,
             research_question=runtime["research_question"],
             description=runtime.get("description"),
         )
-        await ledger.record()
         final_status = await _persist_final_status(job_dir, report_outcome)
         ks = await KnowledgeState.load_from_database(job_id)
         return {
@@ -457,7 +435,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
             "error": str(e),
         }
     finally:
-        await _finalize_executor(executor, ledger)
+        await _finalize_executor(executor)
 
 
 async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
@@ -471,7 +449,6 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
     logger.info("Starting discovery for job %s (mode=%s)", job_id, runtime["investigation_mode"])
 
     executor = await _build_and_prepare_executor(job_dir, runtime)
-    ledger = _CostLedger.for_executor(executor, job_id)
     logger.info("Created agent executor for job %s", job_id)
 
     provenance_dir = job_dir / "provenance"
@@ -490,19 +467,16 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
                 runtime=runtime,
                 provenance_dir=provenance_dir,
                 log_file=log_file,
-                ledger=ledger,
             )
         except _BudgetStopError as stopped:
             stop_note = stopped.note
             logger.info("Discovery stopped at a budget limit for job %s: %s", job_id, stopped.note)
-        ledger.begin("report", None)
         report_outcome = await _run_report_generation_phase(
             executor=executor,
             job_dir=job_dir,
             research_question=runtime["research_question"],
             description=runtime.get("description"),
         )
-        await ledger.record()
         final_status = await _persist_final_status(job_dir, report_outcome, stop_note=stop_note)
         ks = await KnowledgeState.load_from_database(job_id)
         return {
@@ -549,7 +523,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
         }
 
     finally:
-        await _finalize_executor(executor, ledger)
+        await _finalize_executor(executor)
 
 
 def _save_transcript(path: Path, transcript: list[TranscriptEntry]) -> None:

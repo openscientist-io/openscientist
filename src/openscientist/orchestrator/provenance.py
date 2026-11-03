@@ -1,4 +1,4 @@
-"""Runtime version provenance and cost records for a discovery job."""
+"""Runtime version provenance for a discovery job."""
 
 from __future__ import annotations
 
@@ -7,22 +7,15 @@ import logging
 import os
 import re
 import subprocess
-from collections.abc import Callable
-from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
 from sqlalchemy import text, update
 
-from openscientist.agent.base import (
-    AbstractAgent,
-    AgentBackend,
-    TokenUsage,
-)
+from openscientist.agent.base import AgentBackend
 from openscientist.agent.factory import agent_class_for_provider_id
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
-from openscientist.providers.base import Provider
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -137,143 +130,3 @@ def get_version_metadata() -> dict[str, str]:
         metadata["agent_harness_version"] = version
 
     return metadata
-
-
-async def _persist_job_cost_record(
-    job_id: str,
-    tokens: TokenUsage,
-    provider_name: str,
-    model_name: str,
-    operation_type: str = "discovery",
-    iteration: int | None = None,
-) -> None:
-    """Write a CostRecord for ``tokens``, spent in ``operation_type`` at ``iteration``."""
-    from openscientist.database.models import CostRecord
-    from openscientist.providers.pricing import estimate_cost_usd
-
-    # The pricing buckets are keyword-only, since they are easy to transpose and each
-    # is priced differently.
-    cost_usd = estimate_cost_usd(
-        model_name,
-        input_tokens=tokens.input_tokens,
-        output_tokens=tokens.output_tokens,
-        cache_read_tokens=tokens.cache_read_tokens,
-        cache_write_tokens=tokens.cache_write_tokens,
-        cache_write_1h_tokens=tokens.cache_write_1h_tokens,
-        reasoning_tokens=tokens.reasoning_tokens,
-    )
-    async with async_session_local() as session:
-        record = CostRecord(
-            job_id=UUID(job_id),
-            iteration=iteration,
-            operation_type=operation_type,
-            provider=provider_name,
-            model=model_name,
-            input_tokens=tokens.input_tokens,
-            output_tokens=tokens.output_tokens,
-            cache_read_tokens=tokens.cache_read_tokens,
-            # The column holds every cache write. Only the price depends on how long
-            # the entry lives, and `cost_usd` already accounts for that.
-            cache_write_tokens=tokens.cache_write_tokens + tokens.cache_write_1h_tokens,
-            reasoning_tokens=tokens.reasoning_tokens,
-            cost_usd=cost_usd,
-        )
-        session.add(record)
-        await session.commit()
-
-
-class _CostLedger:
-    """A run's cost, written as it goes. Each record holds the tokens spent
-    since the last record that was written, so a failed write is carried into
-    the next one."""
-
-    def __init__(
-        self,
-        job_id: str,
-        *,
-        usage: Callable[[], TokenUsage],
-        provider_name: str,
-        model_name: str,
-    ) -> None:
-        self._job_id = job_id
-        self._usage = usage
-        self._provider_name = provider_name
-        self._model_name = model_name
-        self._written = TokenUsage()
-        self._operation_type = "discovery"
-        self._iteration: int | None = None
-
-    @classmethod
-    def for_executor(cls, executor: AbstractAgent[Provider], job_id: str) -> _CostLedger:
-        settings = get_settings()
-        provider = executor.provider
-        # A chat turn can run on its own model (model_override), which then
-        # sets the price.
-        model_name = (
-            executor.config.model_override
-            or settings.provider.model
-            or settings.provider.anthropic_default_sonnet_model
-            or provider.effective_model_name()
-            or "unknown"
-        )
-        return cls(
-            job_id,
-            usage=lambda: executor.total_tokens,
-            provider_name=provider.display_name,
-            model_name=model_name,
-        )
-
-    def begin(self, operation_type: str, iteration: int | None) -> None:
-        """Label the tokens spent from now on."""
-        self._operation_type = operation_type
-        self._iteration = iteration
-
-    def _unwritten(self) -> tuple[TokenUsage, TokenUsage]:
-        # A copy, since agents grow their running total in place.
-        total = replace(self._usage())
-        return total, total - self._written
-
-    async def record(self) -> bool:
-        """Write the tokens spent since the last written record. Returns whether
-        nothing is left unwritten."""
-        total, unwritten = self._unwritten()
-        if unwritten == TokenUsage():
-            return True
-        try:
-            await _persist_job_cost_record(
-                self._job_id,
-                unwritten,
-                self._provider_name,
-                self._model_name,
-                operation_type=self._operation_type,
-                iteration=self._iteration,
-            )
-        except Exception as e:
-            logger.warning(
-                "Could not write the cost of job %s, carrying it to the next record: %s",
-                self._job_id,
-                e,
-            )
-            return False
-        self._written = total
-        return True
-
-    async def close(self) -> None:
-        """Write what is left. If that fails too, log every count so the
-        tokens can still be billed."""
-        if await self.record():
-            return
-        _, unwritten = self._unwritten()
-        logger.error(
-            "Cost of job %s was not saved: provider=%s model=%s input=%d output=%d "
-            "cache_write=%d cache_write_1h=%d cache_read=%d reasoning=%d",
-            self._job_id,
-            self._provider_name,
-            self._model_name,
-            unwritten.input_tokens,
-            unwritten.output_tokens,
-            unwritten.cache_write_tokens,
-            unwritten.cache_write_1h_tokens,
-            unwritten.cache_read_tokens,
-            unwritten.reasoning_tokens,
-        )

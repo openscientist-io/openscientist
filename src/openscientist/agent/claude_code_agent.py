@@ -31,7 +31,6 @@ from openscientist.agent.base import (
     AgentBackend,
     AgentConfig,
     IterationResult,
-    TokenUsage,
     TurnOutcome,
 )
 from openscientist.agent.mcp_specs import StdioMcpServerSpec
@@ -100,26 +99,6 @@ class _IterationState:
     tool_call_count: int = 0
     transcript: list[dict[str, Any]] = field(default_factory=list)
     final_output: str = ""
-
-
-def _usage_field(payload: object, name: str) -> object:
-    """Read ``name`` off a usage payload that may be a dict or a typed object.
-
-    The SDK hands over model objects, while cached transcripts and tests hand over
-    the wire dicts, and both reach the usage mapper.
-    """
-    if isinstance(payload, dict):
-        return payload.get(name)
-    return getattr(payload, name, None)
-
-
-def _usage_int(payload: object, name: str) -> int:
-    value = _usage_field(payload, name)
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, (int, float)):
-        return int(value)
-    return 0
 
 
 _install_parse_message_patch()
@@ -298,36 +277,6 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             logger.info("Session reset — client disconnected")
 
     @staticmethod
-    def _usage_from_payload(usage: object) -> TokenUsage:
-        """Normalize Anthropic SDK usage payloads (object or dict) to TokenUsage.
-
-        Anthropic's buckets are already additive and independent.
-        ``cache_creation_input_tokens`` is the sum of the per-lifetime counts in
-        ``cache_creation``, and a one-hour write bills at a different rate, so the
-        one-hour portion is split off, clamped to the total so the buckets stay
-        disjoint. ``reasoning_tokens`` is always 0 because the API bills
-        extended-thinking tokens inside ``output_tokens`` with no separate count.
-        """
-        cache_write_total = _usage_int(usage, "cache_creation_input_tokens")
-        write_1h = min(
-            _usage_int(_usage_field(usage, "cache_creation"), "ephemeral_1h_input_tokens"),
-            cache_write_total,
-        )
-        return TokenUsage(
-            input_tokens=_usage_int(usage, "input_tokens"),
-            output_tokens=_usage_int(usage, "output_tokens"),
-            cache_write_tokens=cache_write_total - write_1h,
-            cache_write_1h_tokens=write_1h,
-            cache_read_tokens=_usage_int(usage, "cache_read_input_tokens"),
-        )
-
-    def _record_usage(self, message: object) -> None:
-        """Accumulate token usage from any SDK message carrying usage info."""
-        usage = getattr(message, "usage", None)
-        if usage:
-            self._token_usage += self._usage_from_payload(usage)
-
-    @staticmethod
     def _tool_use_item(block: ToolUseBlock, tool_call_count: int) -> dict[str, object]:
         """Build transcript entry for a single tool call."""
         return {
@@ -367,8 +316,6 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         """Process one streamed SDK message."""
         if isinstance(message, _Sentinel):
             return
-
-        self._record_usage(message)
 
         if isinstance(message, ResultMessage):
             if message.result:

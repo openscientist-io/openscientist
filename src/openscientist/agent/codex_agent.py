@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from openai_codex import ApprovalMode, AsyncCodex, AsyncThread, CodexConfig, Sandbox
 from openai_codex.generated.v2_all import (
@@ -20,7 +20,6 @@ from openai_codex.generated.v2_all import (
     ItemCompletedNotification,
     MessagePhase,
     ThreadItem,
-    ThreadTokenUsageUpdatedNotification,
     Turn,
     TurnCompletedNotification,
     TurnStatus,
@@ -31,7 +30,6 @@ from openscientist.agent.base import (
     AgentBackend,
     AgentConfig,
     IterationResult,
-    TokenUsage,
     TranscriptEntry,
     TurnOutcome,
 )
@@ -70,38 +68,6 @@ def _toml_str(value: str) -> str:
     return f'"{escaped}"'
 
 
-class _TokenBreakdown(Protocol):
-    """The nested counts read off the SDK's ``TokenUsageBreakdown``, structural
-    rather than nominal so tests can substitute stubs."""
-
-    @property
-    def input_tokens(self) -> int: ...
-    @property
-    def cached_input_tokens(self) -> int: ...
-    @property
-    def output_tokens(self) -> int: ...
-    @property
-    def reasoning_output_tokens(self) -> int: ...
-
-
-def _grown(before: TokenUsage, after: TokenUsage) -> TokenUsage | None:
-    """What a running total gained, or None when any count fell, which is how
-    codex restarts its total once the context window fills."""
-    grown = TokenUsage(
-        input_tokens=after.input_tokens - before.input_tokens,
-        output_tokens=after.output_tokens - before.output_tokens,
-        cache_read_tokens=after.cache_read_tokens - before.cache_read_tokens,
-        reasoning_tokens=after.reasoning_tokens - before.reasoning_tokens,
-    )
-    counts = (
-        grown.input_tokens,
-        grown.output_tokens,
-        grown.cache_read_tokens,
-        grown.reasoning_tokens,
-    )
-    return None if min(counts) < 0 else grown
-
-
 def _final_response(items: list[ThreadItem]) -> str | None:
     """The turn's answer, chosen as the SDK chooses ``TurnResult.final_response``:
     the last final-answer message, else the last message without a phase."""
@@ -124,9 +90,6 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         super().__init__(config, provider)
         self._codex: AsyncCodex | None = None
         self._thread: AsyncThread | None = None
-        # The thread's running total at its last usage report, which codex
-        # sends after every model request of a turn.
-        self._thread_total = TokenUsage()
 
     backend = AgentBackend.CODEX
     file_write_tool = "apply_patch"
@@ -226,48 +189,19 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
                 approval_mode=ApprovalMode.deny_all,
                 cwd=str(self._job_dir()),
             )
-            self._thread_total = TokenUsage()
             logger.info("Codex thread started")
         return self._thread
-
-    @staticmethod
-    def _usage_from_breakdown(counts: _TokenBreakdown) -> TokenUsage:
-        """Normalize the SDK's token counts to ``TokenUsage``, subtracting the nested
-        sub-counts (Responses-API shape) so the buckets stay non-overlapping and
-        still sum to the breakdown's ``total_tokens``."""
-        return TokenUsage(
-            input_tokens=counts.input_tokens - counts.cached_input_tokens,
-            output_tokens=max(counts.output_tokens - counts.reasoning_output_tokens, 0),
-            cache_read_tokens=counts.cached_input_tokens,
-            # The SDK exposes no cache-write count in either lifetime tier.
-            cache_write_tokens=0,
-            cache_write_1h_tokens=0,
-            reasoning_tokens=counts.reasoning_output_tokens,
-        )
-
-    def _count_usage(self, thread_total: _TokenBreakdown) -> None:
-        """Add what the thread spent since its last usage report, taking the growth of
-        the running ``total`` (a report's ``last`` covers only the latest request,
-        and reports repeat on rate-limit updates, which adds nothing)."""
-        total = self._usage_from_breakdown(thread_total)
-        grown = _grown(self._thread_total, total)
-        if grown is not None:
-            self._token_usage += grown
-        self._thread_total = total
 
     async def _run_turn(
         self, thread: AsyncThread, prompt: str
     ) -> tuple[list[ThreadItem], str | None]:
-        """Start a turn and read its notifications until it completes, counting
-        usage as it is reported, so a cut or cancelled turn keeps what it spent."""
+        """Start a turn and read its notifications until it completes."""
         turn = await thread.turn(prompt)
         items: list[ThreadItem] = []
         completed: Turn | None = None
         async for event in turn.stream():
             payload = event.payload
-            if isinstance(payload, ThreadTokenUsageUpdatedNotification):
-                self._count_usage(payload.token_usage.total)
-            elif isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
+            if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
                 items.append(payload.item)
             elif isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn.id:
                 completed = payload.turn

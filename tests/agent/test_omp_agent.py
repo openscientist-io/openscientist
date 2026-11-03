@@ -419,12 +419,6 @@ class TestRunIteration:
         assert result.tool_calls == 1
         # Session id captured for continuity, and passed on the next turn.
         assert agent._session_id == "SID-abc123"
-        # Usage summed across the two assistant messages, additive per field.
-        usage = agent.total_tokens
-        assert usage.input_tokens == 18
-        assert usage.output_tokens == 24
-        assert usage.cache_read_tokens == 6
-        assert usage.cache_write_tokens == 3
         # Transcript translated through the OMP deserializer, in order.
         types = [type(e) for e in result.transcript]
         assert types == [UserPrompt, Reasoning, ToolCall, ToolResult, AssistantText]
@@ -569,44 +563,6 @@ class TestRunIteration:
             await asyncio.sleep(0.05)
         else:
             pytest.fail(f"grandchild {child_pid} survived the turn timeout")
-
-    @pytest.mark.asyncio
-    async def test_timeout_still_records_token_usage(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The model consumed those tokens even though the turn was cut short, so
-        the partial stream has to be parsed rather than discarded."""
-        bin_path = tmp_path / "fake_omp"
-        _write_stub(bin_path, _STREAM)
-        monkeypatch.setenv("OPENSCIENTIST_OMP_BIN", str(bin_path))
-        monkeypatch.setenv("OMP_STUB_EMIT_FIRST", "1")
-        monkeypatch.setenv("OMP_STUB_SLEEP", "120")
-        monkeypatch.setattr("openscientist.agent.omp_agent._TURN_TIMEOUT_SECONDS", 1)
-        agent = _agent(tmp_path, system_prompt="SYS")
-
-        result = await agent.run_iteration("go")
-        assert result.outcome is TurnOutcome.TIMED_OUT
-        assert agent._token_usage.input_tokens > 0
-
-    @pytest.mark.asyncio
-    async def test_cancel_still_records_token_usage(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Stopping a job cancels its turn, and the stop writes the cost of the
-        iteration in progress, so the partial stream counts here too."""
-        bin_path = tmp_path / "fake_omp"
-        _write_stub(bin_path, _STREAM)
-        monkeypatch.setenv("OPENSCIENTIST_OMP_BIN", str(bin_path))
-        monkeypatch.setenv("OMP_STUB_EMIT_FIRST", "1")
-        monkeypatch.setenv("OMP_STUB_SLEEP", "120")
-        agent = _agent(tmp_path, system_prompt="SYS")
-
-        turn = asyncio.create_task(agent.run_iteration("go"))
-        await asyncio.sleep(2)
-        turn.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(turn, timeout=30)
-        assert agent.total_tokens.input_tokens > 0
 
     @pytest.mark.asyncio
     async def test_closed_pipes_without_exit_still_time_out(

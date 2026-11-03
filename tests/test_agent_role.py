@@ -18,7 +18,6 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.agent.base import TokenUsage
 from openscientist.database.models import CostRecord, Job, JobDataFile, User
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.settings import get_settings
@@ -283,10 +282,7 @@ async def test_container_code_runs_as_the_job_login(
     """The container's own reads and writes, run through the job login, so a
     grant the code needs and the migration lacks fails here."""
     from openscientist.orchestrator.iteration import update_job_status
-    from openscientist.orchestrator.provenance import (
-        _persist_job_cost_record,
-        _sync_version_metadata,
-    )
+    from openscientist.orchestrator.provenance import _sync_version_metadata
     from openscientist.orchestrator.report import _recorded_run_environment
 
     await _fill_knowledge(jobs.own, "Own")
@@ -301,7 +297,6 @@ async def test_container_code_runs_as_the_job_login(
     await ks.save_to_database(str(jobs.own))
 
     await update_job_status(tmp_path / str(jobs.own), "running", allowed_from=("pending",))
-    await _persist_job_cost_record(str(jobs.own), TokenUsage(input_tokens=5), "vllm", "m")
     with patch(
         "openscientist.orchestrator.provenance.get_version_metadata",
         return_value={"agent_harness": "omp"},
@@ -349,7 +344,6 @@ async def test_container_code_runs_as_the_job_login(
     assert row.short_title == "Own title"
     assert row.version_info == {"agent_harness": "omp"}
     assert row.agent_status == "Working"
-    assert await _owners_count(test_engine, "cost_records", jobs.own) == 1
 
 
 @pytest.mark.asyncio
