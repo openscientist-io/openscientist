@@ -45,7 +45,7 @@ async def test_regenerate_action_blocks_non_admin_server_side() -> None:
     non-admin, even if the button were somehow triggered."""
     context = _action_context()
     with (
-        patch.object(report, "is_current_user_admin", return_value=False),
+        patch.object(report, "revalidate_admin_session", AsyncMock(return_value=False)),
         patch.object(report, "ui"),  # swallow notify/navigate
     ):
         await report._regenerate_report(context)  # type: ignore[arg-type]
@@ -56,7 +56,7 @@ async def test_regenerate_action_calls_manager_for_admin() -> None:
     """An admin action reaches the manager with the job id."""
     context = _action_context()
     with (
-        patch.object(report, "is_current_user_admin", return_value=True),
+        patch.object(report, "revalidate_admin_session", AsyncMock(return_value=True)),
         patch.object(report, "ui"),  # swallow notify/navigate
     ):
         await report._regenerate_report(context)  # type: ignore[arg-type]
@@ -158,7 +158,7 @@ class TestRegenerateConfirmDialog:
 
         with (
             patch.object(report, "ui", mock_ui),
-            patch.object(report, "is_current_user_admin", return_value=True),
+            patch.object(report, "revalidate_admin_session", AsyncMock(return_value=True)),
         ):
             report._confirm_regenerate_report(context)  # type: ignore[arg-type]
             regenerate = [

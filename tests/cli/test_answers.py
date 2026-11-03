@@ -39,7 +39,12 @@ def _vllm_tables() -> dict[str, dict[str, str | int | bool]]:
             "vllm_api_key": "",
             "openscientist_model": "qwen3.8-27b-nvfp4",
         },
-        "address": {"base_url": "", "port": 8080, "postgres_port": 5434},
+        "address": {
+            "base_url": "",
+            "port": 8080,
+            "bind_address": "127.0.0.1",
+            "postgres_port": 5434,
+        },
         "harness": {"id": "auto"},
         "concurrency": {"jobs": 4},
         "login": {
@@ -240,6 +245,15 @@ def test_a_wrongly_typed_answer_fails_and_writes_nothing(checkout: Path):
     )
     assert result.exit_code != 0
     assert "login.dev_mode" in result.output
+    _no_env_files(checkout)
+
+
+def test_dev_mode_with_a_public_base_url_fails_and_writes_nothing(checkout: Path):
+    tables = _vllm_tables()
+    tables["address"]["base_url"] = "https://example.com"
+    path = _write(checkout, tables)
+    result = runner.invoke(cli_app.app, ["setup", "--answers", str(path)])
+    assert result.exit_code != 0
     _no_env_files(checkout)
 
 
