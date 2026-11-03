@@ -67,6 +67,15 @@ class ChownRecorder:
         )
 
 
+def assert_agent_owned(chowns: ChownRecorder, path: Path) -> None:
+    """The path is the agent's. A root run gets that for real, and a
+    non-root run holds it when the jobs group already reaches the path
+    (the CI runner's primary group is 1001) or the setup requested the
+    chown. The ownership itself is covered by the root-in-container
+    integration test below."""
+    assert chowns.owned(path) or chowns.in_jobs(path), path
+
+
 def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
@@ -119,7 +128,7 @@ class TestRunHomeOwnership:
 
         for path in (home, home.parent):
             assert _mode(path) == RUN_HOME_DIR_MODE, path
-            assert chowns.owned(path), path
+            assert_agent_owned(chowns, path)
 
 
 class TestCopiedLogins:
@@ -146,7 +155,7 @@ class TestCopiedLogins:
         dest = home / "auth.json"
         assert dest.read_text(encoding="utf-8") == '{"tokens": {}}'
         assert _mode(dest) == PRIVATE_FILE_MODE
-        assert chowns.owned(dest)
+        assert_agent_owned(chowns, dest)
 
     def test_omp_vault_files_are_agent_owned_and_private(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -171,7 +180,7 @@ class TestCopiedLogins:
         for name in ("agent.db", "agent.db-wal", "config.yml"):
             dest = home / name
             assert _mode(dest) == PRIVATE_FILE_MODE, name
-            assert chowns.owned(dest), name
+            assert_agent_owned(chowns, dest)
 
 
 class TestWebLaterWrites:
@@ -283,6 +292,35 @@ class TestJobTreeAccessInContainers:
                 if isinstance(entry, dict)
             )
             pytest.fail(f"Failed to build test agent image {tag}:\n{log_tail}")
+
+        try:
+            yield tag
+        finally:
+            with suppress(Exception):
+                docker_client.images.remove(tag, force=True)
+
+    @pytest.fixture(scope="class")
+    def executor_image(self, docker_client):
+        """Built from this worktree rather than a shared tag, because other
+        checkouts of this repository rebuild that tag with their own
+        Dockerfile."""
+        import docker
+
+        tag = f"openscientist-executor-perms-test:{uuid4().hex[:12]}"
+        try:
+            docker_client.images.build(
+                path=str(REPO_ROOT),
+                dockerfile="Dockerfile.executor",
+                tag=tag,
+                rm=True,
+            )
+        except docker.errors.BuildError as exc:
+            log_tail = "\n".join(
+                str(entry.get("stream", "")).rstrip()
+                for entry in exc.build_log[-20:]
+                if isinstance(entry, dict)
+            )
+            pytest.fail(f"Failed to build test executor image {tag}:\n{log_tail}")
 
         try:
             yield tag
@@ -474,7 +512,7 @@ class TestJobTreeAccessInContainers:
         assert "660 1001" in output.decode("utf-8"), output.decode("utf-8", errors="replace")
 
     def test_executor_entrypoint_umask_leaves_group_writable_provenance(
-        self, docker_client, job_tree: Path
+        self, docker_client, executor_image, job_tree: Path
     ) -> None:
         """A real run of the executor entrypoint writes its outputs under umask
         0007, so provenance files the agent user must read are not world
@@ -482,7 +520,6 @@ class TestJobTreeAccessInContainers:
         import base64
         import json
 
-        docker_client.images.get("openscientist-executor:latest")
         job_dir = self._job_dir(job_tree)
         output_dir = job_dir / "provenance"
         # The same launch form the container manager uses: the request is
@@ -499,7 +536,7 @@ class TestJobTreeAccessInContainers:
         }
         input_b64 = base64.b64encode(json.dumps(payload).encode()).decode()
         container = docker_client.containers.run(
-            image="openscientist-executor:latest",
+            image=executor_image,
             command=[
                 "sh",
                 "-c",
@@ -561,3 +598,83 @@ class TestJobTreeAccessInContainers:
         # The web's write carries no trailing newline, so the agent's append
         # lands on the same line.
         assert request.read_text(encoding="utf-8") == "{}more\n"
+
+    def test_run_home_and_copied_login_are_agent_private(
+        self,
+        docker_client,
+        agent_image,
+        job_tree: Path,
+        test_database_url: str,
+        tmp_path: Path,
+    ) -> None:
+        """A run home is owner-only, so agent access rests on real ownership,
+        which only the root setup inside the container can establish."""
+        auth_src = tmp_path / "auth-src"
+        auth_src.mkdir()
+        (auth_src / "auth.json").write_text('{"tokens": {}}', encoding="utf-8")
+        script = (
+            "from pathlib import Path\n"
+            "from openscientist.job_container.run_home import create_run_home\n"
+            "from openscientist.agent.codex_agent import CodexAgent\n"
+            "from openscientist.settings import get_settings\n"
+            "home = create_run_home(Path('/jobs'), 'agent_' + '1' * 32)\n"
+            "CodexAgent.provision_run_home(get_settings(), home)\n"
+            "st = home.stat()\n"
+            "print('home', format(st.st_mode & 0o777, 'o'), st.st_uid, st.st_gid)\n"
+            "st = (home / 'auth.json').stat()\n"
+            "print('auth', format(st.st_mode & 0o777, 'o'), st.st_uid, st.st_gid)\n"
+            "print((home / 'auth.json').read_text())\n"
+            "print('run home ok')\n"
+        )
+        output = docker_client.containers.run(
+            image=agent_image,
+            entrypoint=["python", "-c", script],
+            user="root",
+            environment={
+                "DATABASE_URL": test_database_url,
+                "OPENSCIENTIST_PROVIDER": "anthropic",
+                "OPENSCIENTIST_SECRET_KEY": "job-perms-test-secret",
+                "CODEX_AUTH_HOST_PATH": "/auth-src/auth.json",
+            },
+            volumes={
+                str(job_tree): {"bind": "/jobs", "mode": "rw"},
+                str(auth_src): {"bind": "/auth-src", "mode": "ro"},
+            },
+            network_mode="none",
+            remove=True,
+        )
+        # The ownership is read inside the root container, because the home
+        # is 700 agent-owned and a non-root host user cannot stat into it.
+        payload = output.decode("utf-8", errors="replace")
+        assert "run home ok" in payload, payload
+        assert f"home {0o700:o} {AGENT_UID} {AGENT_GID}" in payload, payload
+        assert f"auth {0o600:o} {AGENT_UID} {AGENT_GID}" in payload, payload
+        assert '{"tokens": {}}' in payload, payload
+
+        role = "agent_" + "1" * 32
+
+        output = docker_client.containers.run(
+            image=agent_image,
+            entrypoint=["sh", "-c", f"cat /jobs/.run-homes/{role}/auth.json && echo AGENT_OK"],
+            user="agent",
+            volumes={str(job_tree): {"bind": "/jobs", "mode": "rw"}},
+            network_mode="none",
+            remove=True,
+        )
+        payload = output.decode("utf-8")
+        assert "AGENT_OK" in payload
+        assert '{"tokens": {}}' in payload
+
+        container = docker_client.containers.run(
+            image=agent_image,
+            entrypoint=["sh", "-c", f"cat /jobs/.run-homes/{role}/auth.json"],
+            user="424242:424242",
+            volumes={str(job_tree): {"bind": "/jobs", "mode": "rw"}},
+            network_mode="none",
+            detach=True,
+        )
+        exit_code = int(container.wait(timeout=30)["StatusCode"])
+        logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+        container.remove(force=True)
+        assert exit_code != 0
+        assert '{"tokens": {}}' not in logs
