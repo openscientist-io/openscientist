@@ -559,6 +559,7 @@ async def test_a_successful_save_stores_the_values_and_writes_history(
         patch.object(settings_panel, "ui", mock_ui),
         patch.object(settings_panel, "render_empty_state", MagicMock()),
         patch.object(settings_panel, "render_alert_banner", MagicMock()),
+        patch.object(settings_panel, "revalidate_admin_session", AsyncMock(return_value=True)),
     ):
         await settings_panel.render_settings_panel()
         on_click = mock_ui.button.call_args.kwargs["on_click"]
@@ -630,6 +631,7 @@ async def test_a_rejected_save_changes_nothing(
         patch.object(settings_panel, "ui", mock_ui),
         patch.object(settings_panel, "render_empty_state", MagicMock()),
         patch.object(settings_panel, "render_alert_banner", MagicMock()),
+        patch.object(settings_panel, "revalidate_admin_session", AsyncMock(return_value=True)),
     ):
         await settings_panel.render_settings_panel()
         on_click = mock_ui.button.call_args.kwargs["on_click"]

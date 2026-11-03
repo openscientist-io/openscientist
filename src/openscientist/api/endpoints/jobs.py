@@ -26,6 +26,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from openscientist.admin_settings import current_admin_settings
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
 from openscientist.artifact_packager import create_artifacts_zip_file
@@ -41,6 +42,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
+
+# One Starlette spool size in flight at a time, so no part of an upload is
+# held in memory whole, matching the parser's 1 MiB spool threshold.
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+# The per-request file count cap. The total bytes per request is the
+# max_file_size_mb value from the admin settings row.
+MAX_UPLOAD_FILES_PER_REQUEST = 100
 
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
 SESSION_DEP = Depends(get_session)
@@ -324,19 +332,65 @@ def _build_unique_upload_path(temp_dir: Path, filename: str) -> Path:
     return candidate
 
 
+async def _stream_upload_to_file(
+    upload: StarletteUploadFile,
+    target_path: Path,
+    limit_bytes: int,
+    max_file_size_bytes: int,
+) -> int:
+    """Copy one upload to ``target_path`` in chunks and return the bytes written.
+
+    Past ``limit_bytes`` the partial file is deleted and FileTooBigError is raised.
+    """
+    written = 0
+    try:
+        with open(target_path, "wb") as out:
+            while chunk := await upload.read(UPLOAD_CHUNK_SIZE):
+                written += len(chunk)
+                if written > limit_bytes:
+                    if limit_bytes >= max_file_size_bytes:
+                        raise FileTooBigError(
+                            f"File is {written / 1024 / 1024:.1f}MB, "
+                            f"exceeds the limit of {max_file_size_bytes / 1024 / 1024:.0f}MB"
+                        )
+                    raise FileTooBigError(
+                        f"Uploaded files exceed the total limit of "
+                        f"{max_file_size_bytes / 1024 / 1024:.0f}MB"
+                    )
+                await run_in_threadpool(out.write, chunk)
+    except FileTooBigError:
+        target_path.unlink(missing_ok=True)
+        raise
+    return written
+
+
 async def _persist_uploaded_files(
     upload_files: list[StarletteUploadFile],
     temp_dir: Path,
+    max_file_size_bytes: int,
 ) -> list[Path]:
-    """Write uploaded files to temporary disk paths and return those paths."""
+    """Write uploads to temporary disk paths, one chunk in flight at a time.
+
+    Raises FileTooBigError when a part or the request total exceeds the limit.
+    """
     persisted_files: list[Path] = []
+    total_bytes = 0
     for upload in upload_files:
+        filename = upload.filename or ""
         try:
-            target_path = _build_unique_upload_path(temp_dir, upload.filename or "")
-            content = await upload.read()
+            target_path = _build_unique_upload_path(temp_dir, filename)
+            remaining = max_file_size_bytes - total_bytes
+            if remaining <= 0:
+                raise FileTooBigError(
+                    f"Uploaded files exceed the total limit of "
+                    f"{max_file_size_bytes / 1024 / 1024:.0f}MB"
+                )
+            written = await _stream_upload_to_file(
+                upload, target_path, remaining, max_file_size_bytes
+            )
+            total_bytes += written
             # The size limit comes from the database, which must stay off the loop.
-            await asyncio.to_thread(validate_uploaded_file, target_path, content)
-            target_path.write_bytes(content)
+            await asyncio.to_thread(validate_uploaded_file, target_path)
             persisted_files.append(target_path)
         finally:
             await upload.close()
@@ -350,7 +404,9 @@ async def _parse_job_create_request(
     """Parse job creation payload from JSON or multipart form-data."""
     content_type = request.headers.get("content-type", "").lower()
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
-        form = await request.form()
+        # One extra part past the cap, so a request with MAX+1 files reaches the
+        # endpoint's 413 instead of the parser's own 400.
+        form = await request.form(max_files=MAX_UPLOAD_FILES_PER_REQUEST + 1)
         payload = _extract_job_payload_from_form(form)
         return _validate_job_payload(payload), _extract_upload_files(form)
 
@@ -401,11 +457,24 @@ async def create_job(
 
     job_data, upload_files = await _parse_job_create_request(request)
 
+    if len(upload_files) > MAX_UPLOAD_FILES_PER_REQUEST:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Too many files. Maximum number of files is {MAX_UPLOAD_FILES_PER_REQUEST}.",
+        )
+
     job_uuid = uuid4()
     job_manager = _get_job_manager()
     try:
         with tempfile.TemporaryDirectory(prefix="openscientist_api_upload_") as upload_tmp:
-            data_files = await _persist_uploaded_files(upload_files, Path(upload_tmp))
+            max_file_size_bytes = (
+                (await current_admin_settings()).max_file_size_mb * 1024 * 1024
+                if upload_files
+                else 0
+            )
+            data_files = await _persist_uploaded_files(
+                upload_files, Path(upload_tmp), max_file_size_bytes
+            )
             await job_manager.create_job(
                 job_id=str(job_uuid),
                 research_question=job_data.research_question,
@@ -424,7 +493,7 @@ async def create_job(
     except FileTooBigError as e:
         logger.info("Rejected oversized file upload for user %s: %s", user.email, e)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=str(e),
         ) from e
     except ValueError as e:
