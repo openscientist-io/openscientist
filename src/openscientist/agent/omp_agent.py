@@ -90,7 +90,6 @@ class OmpAgent(AbstractAgent[Provider]):
 
     RUN_HOME: ClassVar[str | None] = ".omp-home"
 
-
     def _omp_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
 
