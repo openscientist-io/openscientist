@@ -18,7 +18,7 @@ from fastapi import (
     status,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,12 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job.types import JobStatus
+from openscientist.job_files import (
+    install_file,
+    read_job_file_text,
+    serve_job_file,
+    try_open_job_file,
+)
 from openscientist.job_manager import JobManager
 from openscientist.share_service import set_job_public, withheld_artifact_dirs
 
@@ -677,7 +683,7 @@ async def download_report(
     job_id: str,
     user: User = CURRENT_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-) -> FileResponse:
+) -> Response:
     """Download the final analysis report."""
     job = await get_job_by_id(job_id, user, session)
 
@@ -694,57 +700,60 @@ async def download_report(
         )
 
     job_dir = _get_jobs_dir() / str(job.id)
+    download_label = (job.short_title or job.research_question[:50]).replace(" ", "_")
 
+    # The job directory is agent-writable, so every report file is read
+    # through the symlink-safe walk and served from the fd it opened.
     # Serve the existing PDF if available so the WeasyPrint PDF is not overwritten.
-    pdf_path = job_dir / "final_report.pdf"
-    if pdf_path.exists():
-        return FileResponse(
-            path=pdf_path,
+    pdf_file = try_open_job_file(job_dir, "final_report.pdf")
+    if pdf_file is not None:
+        return serve_job_file(
+            pdf_file,
             media_type="application/pdf",
-            filename=f"{(job.short_title or job.research_question[:50]).replace(' ', '_')}_final_report.pdf",
+            filename=f"{download_label}_final_report.pdf",
         )
 
-    md_path = job_dir / "final_report.md"
-    if md_path.exists() and not pdf_path.exists():
+    raw_md = read_job_file_text(job_dir, "final_report.md")
+    if raw_md is not None:
         try:
             from openscientist.pdf_generator import markdown_to_pdf
             from openscientist.report.processor import strip_figure_tags
 
-            raw_md = md_path.read_text(encoding="utf-8")
-            stripped = strip_figure_tags(raw_md)
-            stripped_path = job_dir / "_final_report_stripped.md"
-            stripped_path.write_text(stripped, encoding="utf-8")
-            try:
+            # The generated PDF renders outside the job directory and is moved
+            # into place atomically, so a link planted at either name cannot
+            # redirect the write.
+            with tempfile.TemporaryDirectory(prefix=f"openscientist_{job.id}_") as tmp_dir:
+                stripped_path = Path(tmp_dir) / "_final_report_stripped.md"
+                stripped_path.write_text(strip_figure_tags(raw_md), encoding="utf-8")
+                generated_pdf = Path(tmp_dir) / "final_report.pdf"
                 # Rendering a long report takes seconds of CPU.
-                await asyncio.to_thread(markdown_to_pdf, stripped_path, pdf_path)
-            finally:
-                stripped_path.unlink(missing_ok=True)
+                await asyncio.to_thread(markdown_to_pdf, stripped_path, generated_pdf)
+                install_file(job_dir, "final_report.pdf", generated_pdf)
 
-            if pdf_path.exists():
-                return FileResponse(
-                    path=pdf_path,
+            pdf_file = try_open_job_file(job_dir, "final_report.pdf")
+            if pdf_file is not None:
+                return serve_job_file(
+                    pdf_file,
                     media_type="application/pdf",
-                    filename=f"{(job.short_title or job.research_question[:50]).replace(' ', '_')}_final_report.pdf",
+                    filename=f"{download_label}_final_report.pdf",
                 )
         except Exception as exc:
             logger.warning(
                 "Failed to generate PDF from markdown for job %s: %s", job_id, exc, exc_info=True
             )
 
-    report_files = [
-        (job_dir / "final_report.html", "text/html"),
-        (job_dir / "final_report.md", "text/markdown"),
-        (job_dir / "report.pdf", "application/pdf"),
-        (job_dir / "report.md", "text/markdown"),
-    ]
-
-    download_label = (job.short_title or job.research_question[:50]).replace(" ", "_")
-    for report_file, media_type in report_files:
-        if report_file.exists():
-            return FileResponse(
-                path=report_file,
+    for name, media_type in (
+        ("final_report.html", "text/html"),
+        ("final_report.md", "text/markdown"),
+        ("report.pdf", "application/pdf"),
+        ("report.md", "text/markdown"),
+    ):
+        job_file = try_open_job_file(job_dir, name)
+        if job_file is not None:
+            return serve_job_file(
+                job_file,
                 media_type=media_type,
-                filename=f"{download_label}_{report_file.name}",
+                filename=f"{download_label}_{name}",
             )
 
     raise HTTPException(

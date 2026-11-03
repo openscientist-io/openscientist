@@ -170,6 +170,19 @@ class ContainerManager:
 
         # The launcher's wall-clock bound must clear the executor's own
         # timeout alarm, which is what turns a slow run into a timeout result.
+        egress_allow: list[str] | None = None
+        if not admin.airgapped:
+            # The executor never opens Postgres, so its allow-list stops at
+            # the broker and the LLM proxy.
+            from openscientist.job_container.egress import derive_restricted_egress_allowlist
+
+            egress_allow = [
+                f"{host}:{port}"
+                for host, port in derive_restricted_egress_allowlist(
+                    get_settings(), include_postgres=False
+                )
+            ]
+
         request: dict[str, Any] = {
             "job_id": job_id,
             "timeout_seconds": timeout + 30,
@@ -190,6 +203,8 @@ class ContainerManager:
                 ],
             },
         }
+        if egress_allow is not None:
+            request["egress_allow"] = egress_allow
 
         try:
             # The launcher removes its container on every path.

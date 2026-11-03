@@ -14,6 +14,7 @@ from pathlib import Path
 import jinja2
 import markdown as md  # type: ignore[import-untyped]
 
+from openscientist.job_files import read_job_file_text
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
 from openscientist.webapp_components.components.badges import transform_pmid_references
@@ -58,7 +59,11 @@ def render_report_html(
     Returns:
         Complete HTML document as a string.
     """
-    raw_markdown = markdown_path.read_text(encoding="utf-8")
+    # The job directory is agent-writable, so the markdown is read through the
+    # symlink-safe walk; a planted link is a missing report.
+    raw_markdown = read_job_file_text(job_dir, markdown_path.relative_to(job_dir).as_posix())
+    if raw_markdown is None:
+        raise FileNotFoundError(f"Markdown report not found: {markdown_path}")
     provenance_dir = job_dir / "provenance"
 
     # 1. Apply PMID badge transforms (before markdown conversion,

@@ -651,3 +651,135 @@ async def test_oauth_callback_unknown_provider_refuses_login(db_session: AsyncSe
 
     assert response.status_code == 400
     assert await _session_total(db_session) == sessions_before
+
+
+def _google_info_unverified(provider_user_id: str, email: str):
+    """A provider user-info response whose email the provider did not verify."""
+
+    async def _stub(token: dict[str, str]) -> dict[str, object]:
+        return {
+            "provider_user_id": provider_user_id,
+            "email": email,
+            "name": "Route Google Unverified",
+            "email_verified": False,
+        }
+
+    return _stub
+
+
+async def _oauth_accounts_for(
+    db_session: AsyncSession, provider_user_id: str
+) -> list[OAuthAccount]:
+    """The OAuth rows for one provider identity, if any."""
+    result = await db_session.execute(
+        select(OAuthAccount).where(
+            OAuthAccount.provider == "google",
+            OAuthAccount.provider_user_id == provider_user_id,
+        )
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_unverified_email_with_existing_user_is_refused(
+    db_session: AsyncSession,
+) -> None:
+    """A new identity carrying an unverified email equal to an existing user's
+    is refused. The existing user gains no OAuth account and no session."""
+    app = _make_app()
+    existing = User(email="route-unverified@example.com", name="Existing User")
+    db_session.add(existing)
+    await db_session.commit()
+    await db_session.refresh(existing)
+
+    client = _StubOAuthClient(token={"access_token": "route-tok-uv-1"})
+    oauth = SimpleNamespace(google=client)
+    with patch.object(
+        GoogleProvider,
+        "get_user_info",
+        _google_info_unverified("google-route-uv-1", "route-unverified@example.com"),
+    ):
+        response = await _request(app, db_session, "GET", "/auth/google/callback", oauth=oauth)
+
+    assert response.is_redirect
+    location = urlparse(response.headers["location"])
+    assert location.path == "/login"
+    assert parse_qs(location.query)["error"] == ["email_verification_required"]
+    assert response.cookies.get("session_token") is None
+    assert await _oauth_accounts_for(db_session, "google-route-uv-1") == []
+    assert await _sessions_for(db_session, existing.id) == []
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_unverified_email_without_existing_user_creates_nothing(
+    db_session: AsyncSession,
+) -> None:
+    """An unverified email with no matching user is refused and leaves no
+    user, OAuth account or session behind."""
+    app = _make_app()
+    sessions_before = await _session_total(db_session)
+    client = _StubOAuthClient(token={"access_token": "route-tok-uv-2"})
+    oauth = SimpleNamespace(google=client)
+    with patch.object(
+        GoogleProvider,
+        "get_user_info",
+        _google_info_unverified("google-route-uv-2", "route-new-unverified@example.com"),
+    ):
+        response = await _request(app, db_session, "GET", "/auth/google/callback", oauth=oauth)
+
+    assert response.is_redirect
+    location = urlparse(response.headers["location"])
+    assert location.path == "/login"
+    assert parse_qs(location.query)["error"] == ["email_verification_required"]
+    assert response.cookies.get("session_token") is None
+    assert await _user_by_email(db_session, "route-new-unverified@example.com") is None
+    assert await _oauth_accounts_for(db_session, "google-route-uv-2") == []
+    assert await _session_total(db_session) == sessions_before
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_linked_identity_signs_in_despite_unverified_email(
+    db_session: AsyncSession,
+) -> None:
+    """An already-linked identity signs in as today even when the provider now
+    reports its email as unverified."""
+    app = _make_app()
+    user = User(email="route-linked@example.com", name="Linked User")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    db_session.add(
+        OAuthAccount(
+            user_id=user.id,
+            provider="google",
+            provider_user_id="google-route-uv-3",
+            email="route-linked@example.com",
+            name="Linked User",
+            access_token="old-token",
+        )
+    )
+    await db_session.commit()
+
+    sessions_before = len(await _sessions_for(db_session, user.id))
+    client = _StubOAuthClient(token={"access_token": "route-tok-uv-3"})
+    oauth = SimpleNamespace(google=client)
+    with patch.object(
+        GoogleProvider,
+        "get_user_info",
+        _google_info_unverified("google-route-uv-3", "route-linked@example.com"),
+    ):
+        response = await _request(app, db_session, "GET", "/auth/google/callback", oauth=oauth)
+
+    assert response.is_redirect
+    assert response.headers["location"] == "/"
+    cookie = response.cookies.get("session_token")
+    assert cookie is not None
+    session = (
+        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        .scalars()
+        .one()
+    )
+    assert session.user_id == user.id
+    assert len(await _sessions_for(db_session, user.id)) == sessions_before + 1
+    account = (await _oauth_accounts_for(db_session, "google-route-uv-3"))[0]
+    assert account.access_token == "route-tok-uv-3"

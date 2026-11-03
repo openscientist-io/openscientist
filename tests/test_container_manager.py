@@ -344,6 +344,7 @@ class TestExecuteCodeRequest:
         assert request["memory_mib"] == 512
         assert request["cpu"] == 0.5
         assert request["airgapped"] is False
+        assert set(request["egress_allow"]) == {"openscientist:8081", "openscientist:8082"}
         # The executor's own alarm is the timeout; the launcher's bound clears it.
         assert request["timeout_seconds"] == 150
         assert request["input"]["timeout"] == 120
@@ -360,6 +361,8 @@ class TestExecuteCodeRequest:
         assert request["memory_mib"] == 1024
         assert request["cpu"] == 0.75
         assert request["airgapped"] is True
+        # With no network there is nothing for the launcher to allow.
+        assert "egress_allow" not in request
         assert request["timeout_seconds"] == 90
         assert request["input"]["timeout"] == 60
 
@@ -387,6 +390,9 @@ class TestExecuteCodeRequest:
         request = client.run_exec.call_args.args[0]
         assert request["input"]["output_dir"] == str(host_dir / "jobs" / JOB_ID / "out")
         assert request["input"]["data_files"][0]["path"] == str(host_dir / "data" / "file.csv")
+        # The default row is not air-gapped, so the request carries the web's
+        # firewall allow-list for the launcher's restrict firewall.
+        assert set(request["egress_allow"]) == {"openscientist:8081", "openscientist:8082"}
 
     def test_missing_data_file_is_a_refused_request(
         self, manager: tuple[Any, MagicMock], tmp_path: Path
@@ -405,6 +411,19 @@ class TestExecuteCodeRequest:
         )
         assert result["success"] is False
         assert "data file is missing" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_restricted_executor_request_carries_the_web_allowlist(
+        self, manager: tuple[Any, MagicMock], tmp_path: Path, test_engine: AsyncEngine
+    ) -> None:
+        """Without air-gap the request carries the web's endpoints for the
+        launcher's restrict firewall; the executor never opens Postgres."""
+        mgr, client = manager
+        await set_admin_settings_row(test_engine, airgapped=False)
+        await asyncio.to_thread(self._exec, mgr, tmp_path)
+        request = client.run_exec.call_args.args[0]
+        assert request["airgapped"] is False
+        assert set(request["egress_allow"]) == {"openscientist:8081", "openscientist:8082"}
 
 
 class TestGetContainerManager:
@@ -660,19 +679,45 @@ class TestContainerManagerLauncherIntegration:
         assert result["success"] is False
         assert "timed out" in result["error"].lower()
 
-    def test_executor_network_enabled(self, manager: Any, jobs_root: Path) -> None:
-        """Network access works under the default (non-airgapped) row."""
+    def test_executor_network_enabled(
+        self, tmp_path: Path, jobs_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Network access works under the default (non-airgapped) row, behind the
+        restrict firewall. A user network puts the built-in DNS on loopback,
+        which the firewall allows; the default bridge inherits the host's
+        resolv.conf."""
+        import uuid
+
+        client = docker.from_env()
+        network_name = f"openscientist-net-test-{uuid.uuid4().hex[:8]}"
+        network = client.networks.create(network_name, driver="bridge")
         out_dir = jobs_root / JOB_ID / "out"
         out_dir.mkdir()
-        result = manager.execute_code(
-            code=(
-                "import requests; "
-                'r = requests.get("https://www.google.com/generate_204", timeout=10); '
-                'print("NETWORK_OK", r.status_code)'
-            ),
-            job_id=JOB_ID,
-            output_dir=out_dir,
+        launcher = Launcher.start(
+            tmp_path,
+            jobs_root,
+            LAUNCHER_NETWORK=network_name,
+            AGENT_IMAGE_DIGESTS=image_digest(client, EXECUTOR_IMAGE),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(client, EXECUTOR_IMAGE),
         )
+        try:
+            monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
+            clear_settings_cache()
+            manager = container_manager.ContainerManager()
+            # Google's generate_204: tiny, fixed 204, no rate-limiting.
+            result = manager.execute_code(
+                code=(
+                    "import requests; "
+                    'r = requests.get("https://www.google.com/generate_204", timeout=10); '
+                    'print("NETWORK_OK", r.status_code)'
+                ),
+                job_id=JOB_ID,
+                output_dir=out_dir,
+            )
+        finally:
+            launcher.close()
+            clear_settings_cache()
+            network.remove()
 
         assert result["success"] is True
         assert "NETWORK_OK" in result["output"]
