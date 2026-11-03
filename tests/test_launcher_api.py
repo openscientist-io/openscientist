@@ -622,6 +622,8 @@ class TestExecutor:
             body.update(overrides)
             if allow is None:
                 body.pop("egress_allow")
+            elif allow != "keep":
+                body["egress_allow"] = allow
             return body
 
         with launcher.client() as client:
