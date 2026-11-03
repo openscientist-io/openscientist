@@ -110,9 +110,11 @@ async def test_a_launch_reads_the_rows_limits_timeout_and_airgap(
         "status": "running",
     }
     runner._client = client
+    _provider = MagicMock()
+    _provider.prelaunch_routing_error.return_value = None
     with (
         patch("openscientist.job_container.runner.get_settings", return_value=_launcher_settings()),
-        patch("openscientist.job_container.runner.get_provider", return_value=MagicMock()),
+        patch("openscientist.job_container.runner.get_provider", return_value=_provider),
         patch("openscientist.job_container.runner.open_agent_login", return_value=_LOGIN) as opened,
         patch(
             "openscientist.agent.factory.agent_class_for_provider_id",

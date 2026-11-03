@@ -18,7 +18,6 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.agent.base import TokenUsage
 from openscientist.database.models import CostRecord, Job, JobDataFile, User
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.settings import get_settings
@@ -283,10 +282,7 @@ async def test_container_code_runs_as_the_job_login(
     """The container's own reads and writes, run through the job login, so a
     grant the code needs and the migration lacks fails here."""
     from openscientist.orchestrator.iteration import update_job_status
-    from openscientist.orchestrator.provenance import (
-        _persist_job_cost_record,
-        _sync_version_metadata,
-    )
+    from openscientist.orchestrator.provenance import _sync_version_metadata
     from openscientist.orchestrator.report import _recorded_run_environment
 
     await _fill_knowledge(jobs.own, "Own")
@@ -301,7 +297,6 @@ async def test_container_code_runs_as_the_job_login(
     await ks.save_to_database(str(jobs.own))
 
     await update_job_status(tmp_path / str(jobs.own), "running", allowed_from=("pending",))
-    await _persist_job_cost_record(str(jobs.own), TokenUsage(input_tokens=5), "vllm", "m")
     with patch(
         "openscientist.orchestrator.provenance.get_version_metadata",
         return_value={"agent_harness": "omp"},
@@ -349,15 +344,18 @@ async def test_container_code_runs_as_the_job_login(
     assert row.short_title == "Own title"
     assert row.version_info == {"agent_harness": "omp"}
     assert row.agent_status == "Working"
-    assert await _owners_count(test_engine, "cost_records", jobs.own) == 1
 
 
 @pytest.mark.asyncio
-async def test_the_job_login_records_when_its_job_ends(
-    jobs: _Jobs, test_engine: AsyncEngine, container_database: object, tmp_path: Path
+async def test_the_job_login_cannot_stamp_when_its_job_ends(
+    login: asyncpg.Connection,
+    jobs: _Jobs,
+    test_engine: AsyncEngine,
+    container_database: object,
+    tmp_path: Path,
 ) -> None:
-    """The scheduler weighs owners by slot-hours, so the container's final write
-    must also record the end of the run, and the job login may clear the label."""
+    """The web owns the slot end time, so the container's final write leaves the
+    column alone and the job login may clear the label but not stamp the time."""
     from openscientist.orchestrator.iteration import update_job_status
 
     async with test_engine.begin() as conn:
@@ -375,8 +373,11 @@ async def test_the_job_login_records_when_its_job_ends(
                 text("SELECT ended_at, agent_status FROM jobs WHERE id = :id"), {"id": jobs.own}
             )
         ).one()
-    assert row.ended_at is not None
+    assert row.ended_at is None
     assert row.agent_status is None
+    # The grant itself is gone, so a later write path that reaches for it fails.
+    with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+        await login.execute("UPDATE jobs SET ended_at = now() WHERE id = $1", jobs.own)
 
 
 @pytest.mark.asyncio

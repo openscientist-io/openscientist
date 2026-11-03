@@ -142,6 +142,9 @@ class JobContainerRunner:
     def _provider_environment(settings: Settings, credentials: RunCredentials) -> dict[str, str]:
         """The provider's env for the container, plus the self-hosted window."""
         provider = get_provider()
+        routing_error = provider.prelaunch_routing_error()
+        if routing_error is not None:
+            raise RuntimeError(routing_error)
         env = provider.proxied_container_env(
             proxy_base_url=container_proxy_base_url(),
             placeholder=credentials.llm_placeholder,

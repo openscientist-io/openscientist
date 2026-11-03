@@ -21,7 +21,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from openscientist import admin_settings as admin_settings_mod
-from openscientist.agent.base import AbstractAgent, IterationResult, TokenUsage, TurnOutcome
+from openscientist.agent.base import AbstractAgent, IterationResult, TurnOutcome
 from openscientist.database.models import CostRecord, Job, User
 from openscientist.database.session import get_admin_session
 from openscientist.exec_broker import create_exec_broker_app
@@ -162,11 +162,10 @@ def admin_settings_reader(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(admin_settings_mod, "get_session_ctx", _ctx)
 
 
-def _executor(growing: bool = False) -> MagicMock:
+def _executor(run: _Run, growing: bool = False) -> MagicMock:
     """A fake agent whose turns complete at once; with ``growing`` each turn
-    spends 100k input and 50k output tokens, written to the real ledger."""
+    writes the cost row the LLM proxy would have, so the next check sees it."""
     executor = MagicMock()
-    executor.total_tokens = TokenUsage()
     executor.shutdown = AsyncMock()
     executor.prepare_job_workspace = AsyncMock()
     executor.warm_model_profile = AsyncMock()
@@ -178,13 +177,30 @@ def _executor(growing: bool = False) -> MagicMock:
 
     async def run_iteration(prompt: str, reset_session: bool = False) -> IterationResult:
         if growing:
-            executor.total_tokens = TokenUsage(input_tokens=100_000, output_tokens=50_000)
+            await _proxy_row(run, input_tokens=100_000, output_tokens=50_000, cost=1.0)
         return IterationResult(
             outcome=TurnOutcome.COMPLETED, output="done", tool_calls=1, transcript=[]
         )
 
     executor.run_iteration = AsyncMock(side_effect=run_iteration)
     return executor
+
+
+async def _proxy_row(run: _Run, *, input_tokens: int, output_tokens: int, cost: float) -> None:
+    """The cost row the LLM proxy writes for a forwarded call, on the test engine."""
+    async with committed(run.engine) as session:
+        session.add(
+            CostRecord(
+                job_id=UUID(run.job_id),
+                operation_type="discovery",
+                provider="anthropic",
+                model=MODEL,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost,
+            )
+        )
+        await session.commit()
 
 
 def _report_phase() -> AsyncMock:
@@ -281,7 +297,7 @@ class TestDiscoveryBudgetGate:
     async def test_allowed_iterations_run_and_the_job_completes_without_a_note(
         self, run: _Run, ask_via_broker: None, admin_settings_reader: None
     ) -> None:
-        executor = _executor()
+        executor = _executor(run)
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
         assert executor.run_iteration.await_count == 2  # both iterations ran
@@ -294,7 +310,7 @@ class TestDiscoveryBudgetGate:
     ) -> None:
         await _cost_row(run, 10.0)
         await set_admin_settings_row(run.engine, max_job_cost_usd=5.0)
-        executor = _executor()
+        executor = _executor(run)
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
         assert executor.run_iteration.await_count == 0  # no iteration ran
@@ -310,7 +326,7 @@ class TestDiscoveryBudgetGate:
         check stops the run."""
         with patch("openscientist.budget.get_provider", return_value=_billing_zero()):
             await set_admin_settings_row(run.engine, max_project_spend_total_usd=0.5)
-            executor = _executor(growing=True)
+            executor = _executor(run, growing=True)
             result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
         assert executor.run_iteration.await_count == 1
@@ -324,7 +340,7 @@ class TestDiscoveryBudgetGate:
     ) -> None:
         with patch("openscientist.budget.get_provider", return_value=_billing_zero()):
             await set_admin_settings_row(run.engine, max_project_spend_24h_usd=0.5)
-            executor = _executor(growing=True)
+            executor = _executor(run, growing=True)
             result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
         assert executor.run_iteration.await_count == 1
@@ -338,9 +354,9 @@ class TestDiscoveryBudgetGate:
         # The job pauses between iterations for the user's feedback.
         await _set_column(run, "investigation_mode", "coinvestigate")
         with patch("openscientist.budget.get_provider", return_value=_billing_zero()):
-            executor = _executor(growing=True)
+            executor = _executor(run, growing=True)
             task = asyncio.create_task(_run_discovery(run, executor))
-            # The loop pauses after iteration 1, its ledger row already written.
+            # The loop pauses after iteration 1, its cost row already written.
             await _wait_for_status(run, "awaiting_feedback")
             await set_admin_settings_row(run.engine, max_project_spend_total_usd=0.5)
             # The user resumes the job, as the feedback panel would.
@@ -369,7 +385,7 @@ class TestDiscoveryBudgetGate:
             "ask_budget",
             partial(ask_budget, window=2.0, transport=httpx.ASGITransport(app=app)),
         )
-        executor = _executor()
+        executor = _executor(run)
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
         assert executor.run_iteration.await_count == 0
@@ -387,7 +403,7 @@ class TestDiscoveryBudgetGate:
     ) -> None:
         # A token the run no longer holds: the broker refuses it at once.
         monkeypatch.setenv("OPENSCIENTIST_EXEC_TOKEN", f"{run.job_id}.deadbeef")
-        executor = _executor()
+        executor = _executor(run)
         started = time.monotonic()
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
@@ -419,7 +435,7 @@ class TestDiscoveryBudgetGate:
             await _begin_report_phase(job_dir)
             return _ReportOutcome(success=True, error="")
 
-        executor = _executor()
+        executor = _executor(run)
         with (
             patch(
                 "openscientist.orchestrator.discovery._build_agent_executor", return_value=executor

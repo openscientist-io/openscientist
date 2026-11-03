@@ -64,9 +64,6 @@ class _FakeProvider:
     #: The LLM placeholder of the latest launch.
     last_placeholder = ""
 
-    def __init__(self, posture: AirgapPosture | None = None) -> None:
-        self._posture = posture
-
     def proxied_container_env(
         self,
         *,
@@ -79,8 +76,11 @@ class _FakeProvider:
     def prelaunch_model_context_env(self) -> dict[str, str]:
         return {}
 
+    def prelaunch_routing_error(self) -> str | None:
+        return None
+
     def airgap_egress(self) -> AirgapPosture:
-        return self._posture or AirgapPosture(AirgapEgress.PROXY)
+        return AirgapPosture(AirgapEgress.PROXY)
 
 
 @pytest.fixture(autouse=True)
@@ -199,6 +199,28 @@ class TestContainerDatabaseLogin:
             runner.launch("job-123", Path("/app/jobs/job-123"))
         client.create_agent.assert_not_called()
 
+    def test_unroutable_provider_traffic_refuses_before_the_container_starts(
+        self, agent_login
+    ) -> None:
+        """Unroutable proxied traffic refuses at launch, before any container starts."""
+        unroutable = MagicMock()
+        unroutable.prelaunch_routing_error.return_value = (
+            "the omp harness cannot route the ChatGPT login"
+        )
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches()
+        with (
+            a,
+            b,
+            patch(
+                "openscientist.job_container.runner.get_provider",
+                return_value=unroutable,
+            ),
+            pytest.raises(RuntimeError, match="cannot route the ChatGPT login"),
+        ):
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+        client.create_agent.assert_not_called()
+
     def test_a_container_that_fails_to_start_gives_its_login_back(self, agent_login) -> None:
         runner, client = _runner_with_client()
         client.create_agent.side_effect = LauncherDockerError(
@@ -229,6 +251,22 @@ class TestContainerDatabaseLogin:
         runner, client = _runner_with_client()
         client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
         runner.cleanup("job-123")
+        client.remove.assert_called_once_with("d" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_cleanup_takes_the_container_down_even_when_stop_fails(
+        self, tmp_path: Path, agent_login
+    ) -> None:
+        """A stop error must not strand the container: the agent got its grace
+        to finish in-flight work, and teardown still saves the log, removes the
+        container and drops its database login."""
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.stop.side_effect = LauncherDockerError("docker", "stop failed")
+        client.logs.return_value = "log saved"
+        runner.cleanup("job-123", tmp_path)
+        client.stop.assert_called_once_with("d" * 64, timeout_seconds=_STOP_GRACE_SECONDS)
+        assert (tmp_path / "agent-container.log").read_text() == "log saved"
         client.remove.assert_called_once_with("d" * 64)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
@@ -585,7 +623,6 @@ class TestFirewallLaunch:
         self,
         test_engine: AsyncEngine,
         airgapped: bool,
-        posture: AirgapPosture | None = None,
         provider_id: str = "ollama",
     ) -> dict[str, object]:
         """Launch with the row's airgap flag, and return the launcher request."""
@@ -598,7 +635,7 @@ class TestFirewallLaunch:
             ),
             patch(
                 "openscientist.job_container.runner.get_provider",
-                return_value=_FakeProvider(posture),
+                return_value=_FakeProvider(),
             ),
             patch(
                 "openscientist.agent.factory.agent_class_for_provider_id",
@@ -640,19 +677,6 @@ class TestFirewallLaunch:
             "openscientist:8081",
             "openscientist:8082",
         }
-
-    @pytest.mark.asyncio
-    async def test_airgap_launch_supports_bedrock(self, test_engine: AsyncEngine) -> None:
-        posture = AirgapPosture(
-            AirgapEgress.DIRECT,
-            direct_endpoints=(("bedrock-runtime.us-east-1.amazonaws.com", 443),),
-        )
-        request = await self._launch(
-            test_engine, airgapped=True, provider_id="bedrock", posture=posture
-        )
-        entries = set(cast(list[str], request["egress_allow"]))
-        assert "bedrock-runtime.us-east-1.amazonaws.com:443" in entries
-        assert "openscientist:8081" not in entries
 
 
 class TestChatTurnLaunch:

@@ -67,6 +67,9 @@ class _Provider:
     def prelaunch_model_context_env(self) -> dict[str, str]:
         return {}
 
+    def prelaunch_routing_error(self) -> str | None:
+        return None
+
     def airgap_egress(self) -> AirgapPosture:
         return AirgapPosture(AirgapEgress.PROXY)
 
@@ -139,21 +142,20 @@ def _settings(*, omp: Path | None = None, codex: Path | None = None, provider_id
 
 @pytest.fixture(params=["omp", "codex"])
 def harness(request: pytest.FixtureRequest, tmp_path: Path) -> tuple[type, Any, str, str | None]:
-    """A harness's agent class, settings, the name of its home inside a job,
-    and the file a login copy lands in, or None for a harness that keeps its
-    credential web-side (codex signs through the proxy)."""
+    """A harness configured with an operator login: its agent class, settings,
+    the name of its home inside a job, and the file of the copied login —
+    None for every harness, since the web holds the credential (the omp vault
+    or the codex auth.json) and signs through the proxy, so the run's home
+    stays credential-free."""
     if request.param == "omp":
         vault = tmp_path / "vault"
         vault.mkdir()
         (vault / "agent.db").write_text(_MARKER)
         (vault / "config.yml").write_text(_MARKER)
-        return OmpAgent, _settings(omp=vault, provider_id="vllm"), ".omp-home", "agent.db"
-    return (
-        CodexAgent,
-        _settings(codex=tmp_path / "auth.json", provider_id="openai"),
-        ".codex",
-        None,
-    )
+        return OmpAgent, _settings(omp=vault, provider_id="vllm"), ".omp-home", None
+    auth = tmp_path / "auth.json"
+    auth.write_text(_MARKER)
+    return CodexAgent, _settings(codex=auth, provider_id="openai"), ".codex", None
 
 
 @pytest.fixture
@@ -204,24 +206,25 @@ def _home_of(run: _Run, home_name: str) -> Path:
 
 
 def test_a_runs_login_is_mounted_from_its_own_home_not_the_job_directory(
-    launches: _Launches, harness: tuple[type, Any, str, str]
+    launches: _Launches, harness: tuple[type, Any, str, str | None]
 ) -> None:
     _, _, home_name, login_file = harness
     run = launches.launch("job-1")
     home = _home_of(run, home_name)
-    if login_file is None:
-        # The credential is held web-side and signed by the proxy, so the
-        # container's home carries no login file of its own.
-        assert not (home / "auth.json").exists()
-    else:
+    if login_file is not None:
         assert (home / login_file).read_text() == _MARKER
+    else:
+        # The web holds the credential and signs through the proxy, so the
+        # container's home carries no login file of its own.
+        assert not (home / "agent.db").exists()
+        assert not (home / "auth.json").exists()
     assert not home.is_relative_to(launches.jobs_dir / "job-1")
     copied = [p for p in (launches.jobs_dir / "job-1").rglob("*") if p.is_file()]
     assert copied == []
 
 
 def test_overlapping_runs_have_separate_homes_and_end_separately(
-    launches: _Launches, harness: tuple[type, Any, str, str]
+    launches: _Launches, harness: tuple[type, Any, str, str | None]
 ) -> None:
     _, _, home_name, login_file = harness
     first = launches.launch("job-1")
@@ -233,6 +236,9 @@ def test_overlapping_runs_have_separate_homes_and_end_separately(
     assert not first_home.exists()
     if login_file is not None:
         assert (second_home / login_file).read_text() == _MARKER
+    else:
+        assert not (second_home / "agent.db").exists()
+        assert not (second_home / "auth.json").exists()
 
 
 def test_a_cleanup_by_a_fresh_runner_removes_the_runs_home(

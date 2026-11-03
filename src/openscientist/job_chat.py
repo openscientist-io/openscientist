@@ -393,13 +393,13 @@ async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dic
     """Container entry point for one chat turn.
 
     Reads the turn's request the web side wrote into job_dir, runs one agent turn
-    with the full toolset (the container holds no secrets to protect), writes the
-    turn's cost through the container's own database login, and writes the reply
-    to the turn's response file. Returns a status dict for the entrypoint."""
+    with the full toolset (the container holds no secrets to protect), and writes
+    the reply to the turn's response file. The turn's cost goes to the rows the
+    LLM proxy writes, one per model call. Returns a status dict for the entrypoint.
+    """
     from openscientist.agent.base import AgentConfig
     from openscientist.agent.factory import build_agent
     from openscientist.orchestrator.discovery import _finalize_executor
-    from openscientist.orchestrator.provenance import _CostLedger
     from openscientist.providers import get_provider
 
     job_dir = Path(job_dir)
@@ -414,8 +414,6 @@ async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dic
     executor.apply_runtime_environment()
     executor.write_chat_context()
 
-    ledger = _CostLedger.for_executor(executor, job_id)
-    ledger.begin("chat", None)
     response: dict[str, str] = {}
     try:
         result = await executor.run_iteration(request["prompt"], reset_session=True)
@@ -427,7 +425,7 @@ async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dic
         logger.error("Chat turn failed: %s", e, exc_info=True)
         response = {"error": str(e)}
     finally:
-        await _finalize_executor(executor, ledger)
+        await _finalize_executor(executor)
 
     response_path.write_text(json.dumps(response))
     return {"status": "completed" if "output" in response else "failed"}

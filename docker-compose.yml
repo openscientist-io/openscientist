@@ -168,8 +168,9 @@ services:
       # it into each per-job CODEX_HOME for the agent. Unused when OPENAI_API_KEY is set.
       CODEX_AUTH_HOST_PATH: ${CODEX_AUTH_FILE:+/app/codex-auth.json}
 
-      # omp harness auth: host omp vault dir (OMP_AUTH_DIR), mounted read-only
-      # and copied into each job. Unused unless HARNESS=omp.
+      # omp harness auth: host omp vault dir (OMP_AUTH_DIR). The web holds it,
+      # signs the proxied requests for each vault provider and refreshes its
+      # credentials in place; the job container holds no vault.
       OMP_AUTH_HOST_PATH: ${OMP_AUTH_DIR:+/app/omp-auth}
 
       # Container isolation defaults
@@ -197,8 +198,9 @@ services:
       # Writable: the LLM proxy refreshes the access token through it and writes the file back.
       - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json
 
-      # Mount the omp credential vault dir if using the omp harness (set OMP_AUTH_DIR in .env)
-      - ${OMP_AUTH_DIR:-/dev/null}:/app/omp-auth:ro
+      # Mount the omp credential vault dir if using the omp harness (set OMP_AUTH_DIR in .env).
+      # Writable: the web refreshes the vault's credentials and writes them back.
+      - ${OMP_AUTH_DIR:-/dev/null}:/app/omp-auth
 
       # Mount Linux Phenix installation if available (set PHENIX_HOST_PATH in .env)
       - ${PHENIX_HOST_PATH:-/dev/null}:/opt/phenix:ro

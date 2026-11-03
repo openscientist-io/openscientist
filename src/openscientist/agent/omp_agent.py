@@ -11,7 +11,6 @@ import contextlib
 import json
 import logging
 import os
-import shutil
 import signal
 import sys
 from pathlib import Path
@@ -24,13 +23,11 @@ from openscientist.agent.base import (
     AgentBackend,
     AgentConfig,
     IterationResult,
-    TokenUsage,
     TurnOutcome,
     _resolve_bin,
 )
 from openscientist.exceptions import McpToolsUnavailableError
 from openscientist.job_container.identity import (
-    PRIVATE_FILE_MODE,
     RUN_HOME_DIR_MODE,
     apply_job_ownership,
 )
@@ -40,7 +37,6 @@ from openscientist.transcript import OMP, TranscriptEntry
 
 if TYPE_CHECKING:
     from openscientist.prompts.common import BackendFragments
-    from openscientist.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +48,6 @@ _MCP_NOT_READY = "MCP servers not ready"
 
 # Wall-clock bound on one turn; a stuck turn is cut and the loop advances.
 _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_OMP_TURN_TIMEOUT", "900"))
-
-
-def _as_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return 0
 
 
 class OmpAgent(AbstractAgent[Provider]):
@@ -91,40 +77,7 @@ class OmpAgent(AbstractAgent[Provider]):
     # The other backend hooks use the AbstractAgent defaults (env auth,
     # model_override, no chat file).
 
-    # Host omp store files copied to rebuild the vault in the run's home
-    # (WAL/SHM included so an un-checkpointed db stays readable).
-    _OMP_STORE_FILES: ClassVar[tuple[str, ...]] = (
-        "agent.db",
-        "agent.db-wal",
-        "agent.db-shm",
-        "config.yml",
-    )
-
     RUN_HOME: ClassVar[str | None] = ".omp-home"
-
-    @classmethod
-    def provision_run_home(cls, settings: Settings, home: Path) -> None:
-        """Copy the host omp credential vault into the run's home, agent-writable (mounting
-        fails on permissions), which the agent uses as ``PI_CODING_AGENT_DIR``. No-op
-        unless ``omp_auth_host_path`` is set (the API-key path needs no vault)."""
-        src = settings.provider.omp_auth_host_path
-        if not src:
-            return
-        src_path = Path(src).expanduser()
-        if not src_path.is_dir():
-            logger.warning("omp_auth_host_path %s is not a directory, skipping", src_path)
-            return
-        copied = 0
-        for name in cls._OMP_STORE_FILES:
-            f = src_path / name
-            if f.exists():
-                target = home / name
-                shutil.copy2(f, target)
-                # The agent opens the SQLite vault read-write as its owner, so
-                # the login is private to it, never world-readable.
-                apply_job_ownership(target, file_mode=PRIVATE_FILE_MODE)
-                copied += 1
-        logger.info("Provisioned omp auth (%d files) into %s", copied, home)
 
     def _omp_home(self) -> Path:
         return self._job_dir() / str(self.RUN_HOME)
@@ -311,32 +264,6 @@ class OmpAgent(AbstractAgent[Provider]):
         return args
 
     @staticmethod
-    def _usage_from_message(message: dict[str, Any]) -> TokenUsage:
-        # cacheWrite is a total that `cttl` breaks down by cache lifetime (omp's
-        # rendering of Anthropic's `cache_creation`), so the one-hour portion is
-        # split off the way omp's own cost function splits it.
-        usage = message.get("usage")
-        if not isinstance(usage, dict):
-            return TokenUsage()
-        cache_write_total = _as_int(usage.get("cacheWrite"))
-        cttl = usage.get("cttl")
-        # Clamped to the total so the two write buckets stay disjoint and sum to it,
-        # which the whole-payload accounting depends on.
-        write_1h = (
-            min(_as_int(cttl.get("ephemeral1h")), cache_write_total)
-            if isinstance(cttl, dict)
-            else 0
-        )
-        return TokenUsage(
-            input_tokens=_as_int(usage.get("input")),
-            output_tokens=_as_int(usage.get("output")),
-            cache_read_tokens=_as_int(usage.get("cacheRead")),
-            cache_write_tokens=cache_write_total - write_1h,
-            cache_write_1h_tokens=write_1h,
-            reasoning_tokens=_as_int(usage.get("reasoning")),
-        )
-
-    @staticmethod
     def _message_text(message: dict[str, Any]) -> str:
         content = message.get("content")
         if not isinstance(content, list):
@@ -475,7 +402,6 @@ class OmpAgent(AbstractAgent[Provider]):
         stderr_text = stderr_bytes.decode("utf-8", errors="replace")
 
         messages: list[dict[str, Any]] = []
-        usage = TokenUsage()
         final_output = ""
         stream_error = ""
         for line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
@@ -496,7 +422,6 @@ class OmpAgent(AbstractAgent[Provider]):
                 if isinstance(message, dict):
                     messages.append(message)
                     if message.get("role") == "assistant":
-                        usage += self._usage_from_message(message)
                         text = self._message_text(message)
                         if text:
                             final_output = text
@@ -513,10 +438,6 @@ class OmpAgent(AbstractAgent[Provider]):
                 if isinstance(msg, str):
                     stream_error = msg
 
-        # Account usage before any early return. The model consumed those tokens
-        # whether the turn completed, failed, or was cut short, and the partial
-        # stream is what makes a timed-out turn's usage recoverable.
-        self._token_usage += usage
         if cancelled is not None:
             raise cancelled
 
