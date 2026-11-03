@@ -663,8 +663,7 @@ def _share_controller(job_actors: dict, target_email: str) -> dialogs_module._Sh
         job_id=str(job_actors["job_id"]),
         shares_container=MagicMock(),
         public_switch=MagicMock(),
-        search_input=MagicMock(),
-        search_results=MagicMock(),
+        email_input=MagicMock(),
         selected_user_container=MagicMock(),
         share_action_row=MagicMock(),
         permission_select=SimpleNamespace(value="view"),  # type: ignore[arg-type]
@@ -744,8 +743,7 @@ async def test_owner_with_deleted_session_cannot_change_visibility(
         job_id=str(job_actors["job_id"]),
         shares_container=MagicMock(),
         public_switch=MagicMock(),
-        search_input=MagicMock(),
-        search_results=MagicMock(),
+        email_input=MagicMock(),
         selected_user_container=MagicMock(),
         share_action_row=MagicMock(),
         permission_select=SimpleNamespace(value="view"),  # type: ignore[arg-type]
@@ -772,8 +770,7 @@ async def test_live_owner_can_change_visibility(
         job_id=str(job_actors["job_id"]),
         shares_container=MagicMock(),
         public_switch=MagicMock(),
-        search_input=MagicMock(),
-        search_results=MagicMock(),
+        email_input=MagicMock(),
         selected_user_container=MagicMock(),
         share_action_row=MagicMock(),
         permission_select=SimpleNamespace(value="view"),  # type: ignore[arg-type]
