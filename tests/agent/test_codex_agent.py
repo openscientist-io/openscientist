@@ -25,7 +25,7 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import Notification
 
-from openscientist.agent.base import AbstractAgent, AgentConfig, TokenUsage, TurnOutcome
+from openscientist.agent.base import AbstractAgent, AgentConfig, TurnOutcome
 from openscientist.agent.codex_agent import CodexAgent
 from tests.helpers import StubCodexProvider
 
@@ -163,7 +163,6 @@ def test_construct_exposes_config_and_provider(tmp_path: Path) -> None:
     agent = CodexAgent(config, provider)
     assert agent.config is config
     assert agent.provider is provider
-    assert agent.total_tokens == TokenUsage()
 
 
 def test_mcp_env_merges_tool_server_env(tmp_path: Path) -> None:
@@ -210,8 +209,7 @@ async def test_run_iteration_cuts_runaway_turn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A turn that exceeds the wall-clock bound is cut so a looping model cannot
-    hang the job, the runaway client is torn down, and the tokens the turn
-    spent before the cut stay counted."""
+    hang the job, and the runaway client is torn down."""
     from openscientist.agent import codex_agent
 
     monkeypatch.setattr(codex_agent, "_TURN_TIMEOUT_SECONDS", 0.01)
@@ -230,63 +228,6 @@ async def test_run_iteration_cuts_runaway_turn(
     assert result.tool_calls == 0
     assert result.transcript == []
     mock_codex_cls.return_value.close.assert_awaited()  # runaway turn torn down
-    assert agent.total_tokens == TokenUsage(input_tokens=80, output_tokens=50, cache_read_tokens=20)
-
-
-async def test_a_turn_is_billed_for_every_model_request(tmp_path: Path) -> None:
-    """Codex reports usage after each model request of a turn, and its ``last``
-    covers only that request. The turn costs the growth of the thread's total,
-    and a report repeated on a rate-limit update adds nothing."""
-    agent = _agent(tmp_path)
-    reports = [
-        _usage(input_tokens=100, cached=20, output=50),
-        _usage(input_tokens=250, cached=120, output=90, reasoning=10),
-        _usage(input_tokens=250, cached=120, output=90, reasoning=10),
-        _usage(input_tokens=400, cached=200, output=130, reasoning=10),
-    ]
-    mock_codex_cls, _ = _patch_codex(_turn(usage=reports))
-
-    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
-        await agent.run_iteration("hi")
-
-    assert agent.total_tokens == TokenUsage(
-        input_tokens=200, output_tokens=120, cache_read_tokens=200, reasoning_tokens=10
-    )
-
-
-async def test_each_turn_is_billed_what_it_added_to_its_thread(tmp_path: Path) -> None:
-    """A thread's total runs across its turns, and a new thread starts at zero."""
-    agent = _agent(tmp_path)
-    mock_codex_cls, _ = _patch_codex(
-        _turn(usage=[_usage(input_tokens=100, cached=0, output=10)]),
-        _turn(usage=[_usage(input_tokens=300, cached=0, output=30)]),
-        _turn(usage=[_usage(input_tokens=50, cached=0, output=5)]),
-    )
-
-    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
-        await agent.run_iteration("one")
-        await agent.run_iteration("two")
-        assert agent.total_tokens == TokenUsage(input_tokens=300, output_tokens=30)
-        await agent.run_iteration("three", reset_session=True)
-
-    assert agent.total_tokens == TokenUsage(input_tokens=350, output_tokens=35)
-
-
-async def test_a_filled_context_window_restarts_the_count(tmp_path: Path) -> None:
-    """When the context window fills, codex sets its total to the window size
-    with every bucket zeroed, then counts on from there."""
-    agent = _agent(tmp_path)
-    reports = [
-        _usage(input_tokens=1000, cached=0, output=100),
-        _usage(input_tokens=0, cached=0, output=0),
-        _usage(input_tokens=200, cached=0, output=20),
-    ]
-    mock_codex_cls, _ = _patch_codex(_turn(usage=reports))
-
-    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
-        await agent.run_iteration("hi")
-
-    assert agent.total_tokens == TokenUsage(input_tokens=1200, output_tokens=120)
 
 
 async def test_a_failed_turn_reports_its_error(tmp_path: Path) -> None:
@@ -302,22 +243,6 @@ async def test_a_failed_turn_reports_its_error(tmp_path: Path) -> None:
 
     assert result.outcome is TurnOutcome.FAILED
     assert result.error == "context too long"
-    assert agent.total_tokens == TokenUsage(input_tokens=100, output_tokens=10)
-
-
-def test_usage_from_breakdown_math() -> None:
-    """Both nested sub-counts leave their parent, so the buckets are disjoint
-    and sum to the breakdown's own total of 37 rather than over-counting to 40."""
-    counts = SimpleNamespace(
-        input_tokens=30, cached_input_tokens=12, output_tokens=7, reasoning_output_tokens=3
-    )
-    assert CodexAgent._usage_from_breakdown(counts) == TokenUsage(
-        input_tokens=18,
-        output_tokens=4,
-        cache_read_tokens=12,
-        cache_write_tokens=0,
-        reasoning_tokens=3,
-    )
 
 
 async def test_run_iteration_writes_config_and_agents_md(

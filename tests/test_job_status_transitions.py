@@ -649,6 +649,12 @@ async def _set_label(test_engine: AsyncEngine, job_id: UUID, label: str) -> None
         )
 
 
+async def _ended_at(test_engine: AsyncEngine, job_id: UUID) -> object:
+    async with test_engine.connect() as conn:
+        row = (await conn.execute(select(Job.ended_at).where(Job.id == job_id))).scalar_one()
+    return row
+
+
 @pytest.mark.parametrize(
     ("start", "target"),
     [
@@ -667,6 +673,34 @@ async def test_the_web_ending_a_job_clears_its_label(
     result = await set_job_status(str(job), target, allowed_from=JobManager.ACTIVE_STATUSES)
     assert result.applied
     assert await _label(test_engine, job) == (None, None)
+
+
+async def test_the_web_stamps_ended_at_when_it_ends_a_job(
+    make_job: MakeJob, test_engine: AsyncEngine
+) -> None:
+    """The web owns the slot end time, so its ending write stamps the column
+    the fair-share sums read, and the container's ending write would not."""
+    job = await make_job(JobStatus.RUNNING)
+    result = await set_job_status(str(job), JobStatus.COMPLETED, allowed_from=(JobStatus.RUNNING,))
+    assert result.applied
+    assert await _ended_at(test_engine, job) is not None
+
+
+async def test_the_poll_backfill_stamps_the_end_the_container_wrote(
+    make_job: MakeJob, test_engine: AsyncEngine
+) -> None:
+    """The container's ending write carries no time anymore, so the web's first
+    poll that sees the end stamps it, once, and leaves the others alone."""
+    from openscientist.job.repository import backfill_job_end_time
+
+    ended = await make_job(JobStatus.COMPLETED)
+    assert await backfill_job_end_time(str(ended)) == 1
+    assert await _ended_at(test_engine, ended) is not None
+    # A second poll and a job that is not ended change nothing.
+    assert await backfill_job_end_time(str(ended)) == 0
+    running = await make_job(JobStatus.RUNNING)
+    assert await backfill_job_end_time(str(running)) == 0
+    assert await _ended_at(test_engine, running) is None
 
 
 @pytest.mark.parametrize(
@@ -858,10 +892,7 @@ def _report_runtime(job_id: UUID) -> dict[str, object]:
 
 
 def _report_executor() -> MagicMock:
-    from openscientist.agent.base import TokenUsage
-
     executor = MagicMock()
-    executor.total_tokens = TokenUsage()
     executor.shutdown = AsyncMock()
     executor.prepare_job_workspace = AsyncMock()
     executor.warm_model_profile = AsyncMock()

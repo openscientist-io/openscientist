@@ -23,7 +23,6 @@ from openscientist.agent.base import (
     AgentBackend,
     AgentConfig,
     IterationResult,
-    TokenUsage,
     TurnOutcome,
     _resolve_bin,
 )
@@ -49,16 +48,6 @@ _MCP_NOT_READY = "MCP servers not ready"
 
 # Wall-clock bound on one turn; a stuck turn is cut and the loop advances.
 _TURN_TIMEOUT_SECONDS = int(os.environ.get("OPENSCIENTIST_OMP_TURN_TIMEOUT", "900"))
-
-
-def _as_int(value: object) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return 0
 
 
 class OmpAgent(AbstractAgent[Provider]):
@@ -275,32 +264,6 @@ class OmpAgent(AbstractAgent[Provider]):
         return args
 
     @staticmethod
-    def _usage_from_message(message: dict[str, Any]) -> TokenUsage:
-        # cacheWrite is a total that `cttl` breaks down by cache lifetime (omp's
-        # rendering of Anthropic's `cache_creation`), so the one-hour portion is
-        # split off the way omp's own cost function splits it.
-        usage = message.get("usage")
-        if not isinstance(usage, dict):
-            return TokenUsage()
-        cache_write_total = _as_int(usage.get("cacheWrite"))
-        cttl = usage.get("cttl")
-        # Clamped to the total so the two write buckets stay disjoint and sum to it,
-        # which the whole-payload accounting depends on.
-        write_1h = (
-            min(_as_int(cttl.get("ephemeral1h")), cache_write_total)
-            if isinstance(cttl, dict)
-            else 0
-        )
-        return TokenUsage(
-            input_tokens=_as_int(usage.get("input")),
-            output_tokens=_as_int(usage.get("output")),
-            cache_read_tokens=_as_int(usage.get("cacheRead")),
-            cache_write_tokens=cache_write_total - write_1h,
-            cache_write_1h_tokens=write_1h,
-            reasoning_tokens=_as_int(usage.get("reasoning")),
-        )
-
-    @staticmethod
     def _message_text(message: dict[str, Any]) -> str:
         content = message.get("content")
         if not isinstance(content, list):
@@ -439,7 +402,6 @@ class OmpAgent(AbstractAgent[Provider]):
         stderr_text = stderr_bytes.decode("utf-8", errors="replace")
 
         messages: list[dict[str, Any]] = []
-        usage = TokenUsage()
         final_output = ""
         stream_error = ""
         for line in stdout_bytes.decode("utf-8", errors="replace").splitlines():
@@ -460,7 +422,6 @@ class OmpAgent(AbstractAgent[Provider]):
                 if isinstance(message, dict):
                     messages.append(message)
                     if message.get("role") == "assistant":
-                        usage += self._usage_from_message(message)
                         text = self._message_text(message)
                         if text:
                             final_output = text
@@ -477,10 +438,6 @@ class OmpAgent(AbstractAgent[Provider]):
                 if isinstance(msg, str):
                     stream_error = msg
 
-        # Account usage before any early return. The model consumed those tokens
-        # whether the turn completed, failed, or was cut short, and the partial
-        # stream is what makes a timed-out turn's usage recoverable.
-        self._token_usage += usage
         if cancelled is not None:
             raise cancelled
 

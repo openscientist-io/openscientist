@@ -40,7 +40,9 @@ async def _render_db_cost_section() -> None:
         cost_records = records.scalars().all()
 
     if not cost_records:
-        render_empty_state("No cost records yet. Costs are recorded when jobs complete.")
+        render_empty_state(
+            "No cost records yet. Costs are recorded per model call by the LLM proxy."
+        )
         return
 
     total_input = sum(r.input_tokens for r in cost_records)

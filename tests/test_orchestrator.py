@@ -255,7 +255,7 @@ class TestDiscoveryCancellationAndFailure:
 
     @pytest.mark.asyncio
     async def test_run_discovery_stops_when_cancelled_before_next_iteration(self, tmp_path):
-        from openscientist.agent.base import IterationResult, TokenUsage
+        from openscientist.agent.base import IterationResult
         from openscientist.orchestrator.discovery import run_discovery_async
 
         job_id = str(uuid4())
@@ -276,7 +276,6 @@ class TestDiscoveryCancellationAndFailure:
         }
 
         mock_executor = MagicMock()
-        mock_executor.total_tokens = TokenUsage()
         mock_executor.shutdown = AsyncMock()
         mock_executor.prepare_job_workspace = AsyncMock()
         mock_executor.warm_model_profile = AsyncMock()
@@ -334,7 +333,7 @@ class TestDiscoveryCancellationAndFailure:
 
     @pytest.mark.asyncio
     async def test_run_discovery_marks_failed_when_iteration_fails(self, tmp_path):
-        from openscientist.agent.base import IterationResult, TokenUsage
+        from openscientist.agent.base import IterationResult
         from openscientist.orchestrator.discovery import run_discovery_async
 
         job_id = str(uuid4())
@@ -355,7 +354,6 @@ class TestDiscoveryCancellationAndFailure:
         }
 
         mock_executor = MagicMock()
-        mock_executor.total_tokens = TokenUsage()
         mock_executor.shutdown = AsyncMock()
         mock_executor.prepare_job_workspace = AsyncMock()
         mock_executor.warm_model_profile = AsyncMock()
@@ -574,10 +572,7 @@ class TestDiscoveryCompletion:
 
     @staticmethod
     def _executor(outcomes: list) -> MagicMock:
-        from openscientist.agent.base import TokenUsage
-
         executor = MagicMock()
-        executor.total_tokens = TokenUsage()
         executor.shutdown = AsyncMock()
         executor.prepare_job_workspace = AsyncMock()
         executor.warm_model_profile = AsyncMock()
