@@ -44,6 +44,13 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Parameterized SQL queries.** All database access uses SQLAlchemy ORM, which generates parameterized queries. No raw SQL string interpolation was found.
 - **Vulnerability scanner blocking.** A middleware layer blocks common scanner paths (`.git/`, `wp-admin/`, etc.) to reduce noise and exposure.
 
+### Security Headers
+
+- **Strict Content-Security-Policy on every response.** The web application emits a CSP that confines scripts and styles to the app's own origin, limits network connections to the same origin (`connect-src 'self'`), and disallows plugins, foreign `<base>` tags, and framing (`object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`).
+- **Clickjacking and MIME-sniffing protection.** Responses also carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a `Referrer-Policy`, and a restrictive `Permissions-Policy` that disables camera, microphone, geolocation, and payment.
+- **HSTS over HTTPS.** When the configured app URL is served over HTTPS, a `Strict-Transport-Security` header is emitted.
+- **Sandboxed report and artifact frames.** The job report and artifact previews render in iframes that carry their own stricter CSP, including `sandbox` and `connect-src 'none'`, so agent-generated content cannot reach other hosts or exfiltrate data.
+
 ### Access Control
 
 - **Job ownership enforced at every layer.** API endpoints verify that the requesting user owns (or has been explicitly shared on) a job. RLS provides a database-level safety net.
@@ -89,7 +96,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 | Finding | Description | Recommended Next Step |
 |---------|-------------|----------------------|
 | **No per-iteration timeout or token budget** | An individual agent iteration can run indefinitely and consume unlimited tokens. The only safety limit is the total iteration count (max 20). | Add a wall-clock timeout (e.g., 15 minutes) and a maximum token spend per iteration. |
-| **No Content Security Policy (CSP) headers** | No CSP headers are set. While cookies are `httponly`, CSP would add defense-in-depth against cross-site scripting. | Configure CSP headers in the reverse proxy or application middleware. |
 | **OpenAPI docs exposed without authentication** | `/api-docs`, `/api-redoc`, and `/openapi.json` are accessible to anyone, revealing the full API surface to potential attackers. | Require authentication for API documentation, or disable it in production. |
 | **No automated dependency vulnerability scanning** | There is no evidence of Dependabot, Snyk, or similar tooling monitoring the 35+ direct dependencies for known CVEs. | Enable automated CVE scanning in CI (e.g., GitHub Dependabot, `pip-audit`, or Snyk). |
 | **No secret key rotation mechanism** | Changing `OPENSCIENTIST_SECRET_KEY` invalidates all sessions and encrypted data. There is no graceful rotation workflow. | Implement key rotation support that re-encrypts data with the new key while still accepting the old key during a transition window. |
@@ -130,3 +136,4 @@ The main areas for improvement are **operational security gaps** rather than arc
 | Container privileges | Needs Work | Web server runs as root; Docker socket mounted read-write |
 | Dependency scanning | Needs Work | No automated CVE monitoring |
 | Execution guardrails | Needs Work | No per-iteration timeout or token budget |
+| Security headers | Strong | CSP, `X-Frame-Options`, `nosniff`, restrictive `Permissions-Policy`, HSTS over HTTPS |

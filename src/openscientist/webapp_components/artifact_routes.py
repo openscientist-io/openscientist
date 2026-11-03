@@ -29,8 +29,13 @@ SESSION_DEP = Depends(get_session)
 # The agent writes every artifact and the report, raw HTML included, so the
 # browser renders them in an opaque origin, where the session cookie never
 # reaches the app. The report keeps its script, which opens links in new tabs.
-_SANDBOX = "sandbox"
-_REPORT_SANDBOX = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox"
+# connect/img are closed so rendered content cannot reach other hosts; the
+# report is framed only by the app page that embeds it.
+_SANDBOX = "sandbox; connect-src 'none'; img-src 'self' data:"
+_REPORT_SANDBOX = (
+    "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
+    "connect-src 'none'; img-src 'self' data:; frame-ancestors 'self'"
+)
 
 _OPEN_LINKS_IN_NEW_TABS = """<script>
 document.addEventListener('click', function(e) {
