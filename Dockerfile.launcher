@@ -1,0 +1,30 @@
+# The launcher image: the only holder of the Docker socket.
+#
+# Build:  docker build -f Dockerfile.launcher -t openscientist-launcher:latest .
+
+FROM openscientist-base:latest
+
+ARG OPENSCIENTIST_COMMIT=unknown
+ARG BUILD_TIME=unknown
+
+WORKDIR /app
+
+# Deps are already installed by the base image; copy the project and reinstall
+# so a dependency delta from the lock is picked up, the web Dockerfile's way.
+COPY pyproject.toml README.md uv.lock ./
+COPY src/ src/
+
+RUN uv export --locked --no-dev --no-emit-project --format requirements-txt \
+        -o /tmp/requirements.txt \
+    && uv pip install --system -r /tmp/requirements.txt \
+    && uv pip install --system --no-deps -e . \
+    && rm /tmp/requirements.txt
+
+# A named compose volume mounts here; the web mounts the same volume to reach the socket.
+RUN mkdir -p /run/launcher
+
+ENV PYTHONUNBUFFERED=1
+ENV OPENSCIENTIST_COMMIT=${OPENSCIENTIST_COMMIT}
+ENV OPENSCIENTIST_BUILD_TIME=${BUILD_TIME}
+
+CMD ["python", "-m", "openscientist_launcher"]

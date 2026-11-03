@@ -22,6 +22,7 @@ LOCAL_BUILT_IMAGES = {
     "openscientist-base",
     "openscientist-agent",
     "openscientist-executor",
+    "openscientist-launcher",
 }
 
 DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}\Z")
