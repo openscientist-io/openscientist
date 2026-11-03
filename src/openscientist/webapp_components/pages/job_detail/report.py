@@ -2,12 +2,19 @@
 
 import asyncio
 import logging
+import tempfile
 from pathlib import Path
 
 from nicegui import ui
 
 from openscientist.auth import is_current_user_admin
 from openscientist.job.types import JobStatus
+from openscientist.job_files import (
+    install_file,
+    job_file_exists,
+    read_job_file_bytes,
+    read_job_file_text,
+)
 from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.components.badges import transform_pmid_references
@@ -23,26 +30,38 @@ def _download_artifacts_zip(job_id: str) -> None:
 async def _download_pdf_report(
     report_path: Path, pdf_path: Path, job_id: str, run_environment: str | None
 ) -> None:
-    # Serve existing PDF if available (avoids overwriting WeasyPrint PDF with fpdf2)
-    if pdf_path.exists():
-        ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
+    job_dir = report_path.parent
+    # The job directory is agent-writable, so the report files are read and
+    # installed through the symlink-safe walk, and the PDF renders outside
+    # the job directory before it is moved into place.
+    existing = read_job_file_bytes(job_dir, pdf_path.name)
+    if existing is not None:
+        # Serve existing PDF if available (avoids overwriting WeasyPrint PDF
+        # with fpdf2)
+        ui.download(existing, filename=f"{job_id}_report.pdf")
         return
     # Fallback: generate via fpdf2
+    raw_md = read_job_file_text(job_dir, report_path.name)
+    if raw_md is None:
+        logger.error("PDF generation failed: %s", "no readable final_report.md")
+        ui.notify("Failed to generate PDF. Please try again.", type="negative")
+        return
     try:
         from openscientist.report.processor import strip_figure_tags
 
-        raw_md = report_path.read_text(encoding="utf-8")
-        stripped = strip_figure_tags(raw_md)
-        stripped_path = report_path.parent / "_final_report_stripped.md"
-        stripped_path.write_text(stripped, encoding="utf-8")
-        try:
+        with tempfile.TemporaryDirectory(prefix=f"openscientist_{job_id}_") as tmp_dir:
+            stripped_path = Path(tmp_dir) / "_final_report_stripped.md"
+            stripped_path.write_text(strip_figure_tags(raw_md), encoding="utf-8")
+            generated_pdf = Path(tmp_dir) / pdf_path.name
             # Rendering a long report takes seconds of CPU.
             await asyncio.to_thread(
-                markdown_to_pdf, stripped_path, pdf_path, run_environment=run_environment
+                markdown_to_pdf, stripped_path, generated_pdf, run_environment=run_environment
             )
-        finally:
-            stripped_path.unlink(missing_ok=True)
-        ui.download(pdf_path.read_bytes(), filename=f"{job_id}_report.pdf")
+            install_file(job_dir, pdf_path.name, generated_pdf)
+        generated = read_job_file_bytes(job_dir, pdf_path.name)
+        if generated is None:
+            raise OSError("final_report.pdf is not a readable regular file")
+        ui.download(generated, filename=f"{job_id}_report.pdf")
     except Exception as exc:
         logger.error("PDF generation failed: %s", exc, exc_info=True)
         ui.notify("Failed to generate PDF. Please try again.", type="negative")
@@ -107,7 +126,9 @@ def _confirm_regenerate_report(context: _JobDetailContext) -> None:
 
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
-        if pdf_path.exists() or report_path.exists():
+        if job_file_exists(context.job_dir, pdf_path.name) or job_file_exists(
+            context.job_dir, report_path.name
+        ):
             ui.button(
                 "Download PDF",
                 on_click=lambda: _download_pdf_report(
@@ -140,7 +161,7 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
 
 def _render_report_html_iframe(job_dir: Path) -> None:
     """Render HTML report in an iframe to avoid CSS leakage."""
-    if not (job_dir / "final_report.html").exists():
+    if not job_file_exists(job_dir, "final_report.html"):
         return
     ui.element("iframe").props(f'src="/web/jobs/{job_dir.name}/report.html" frameborder="0"').style(
         "width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px;"
@@ -148,8 +169,9 @@ def _render_report_html_iframe(job_dir: Path) -> None:
 
 
 def _render_report_markdown(report_path: Path) -> None:
-    with open(report_path, encoding="utf-8") as report_file:
-        report_content = report_file.read()
+    report_content = read_job_file_text(report_path.parent, report_path.name)
+    if report_content is None:
+        return
     ui.markdown(transform_pmid_references(report_content)).classes("w-full")
 
 
@@ -175,10 +197,10 @@ def _render_report_tab(context: _JobDetailContext) -> None:
         _render_missing_report_state(context)
         return
 
-    if report_path.exists():
+    if job_file_exists(context.job_dir, report_path.name):
         _render_report_actions(context, report_path, pdf_path)
         # Prefer HTML report (with embedded figures) over raw markdown
-        if html_path.exists():
+        if job_file_exists(context.job_dir, html_path.name):
             _render_report_html_iframe(context.job_dir)
         else:
             _render_report_markdown(report_path)

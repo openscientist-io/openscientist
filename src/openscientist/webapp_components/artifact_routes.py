@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
@@ -16,6 +16,7 @@ from openscientist.artifact_packager import artifact_file, create_artifacts_zip_
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
+from openscientist.job_files import job_file_exists, read_job_file_text, serve_job_file
 from openscientist.run_environment import run_environment_text
 from openscientist.share_service import withheld_artifact_dirs
 from openscientist.webapp_components.share_routes import get_current_user_from_session
@@ -116,15 +117,15 @@ async def job_artifact(
     path: str,
     user: User = CURRENT_SESSION_USER_DEP,
     session: AsyncSession = SESSION_DEP,
-) -> FileResponse:
+) -> Response:
     """One of the job's artifacts, as the artifacts ZIP would include it."""
     job, job_dir = await _visible_job(job_id, user, session)
     # A public-only reader gets no file the ZIP would withhold, so data/ 404s.
     excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
-    found = await run_in_threadpool(artifact_file, job_dir, path, excluded_dirs)
-    if found is None:
+    job_file = await run_in_threadpool(artifact_file, job_dir, path, excluded_dirs)
+    if job_file is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
-    return FileResponse(found, headers=_sandboxed(_SANDBOX))
+    return serve_job_file(job_file, headers=_sandboxed(_SANDBOX))
 
 
 def _report_html(
@@ -135,9 +136,10 @@ def _report_html(
     """The job's report for the browser, with its figures embedded, or None.
 
     ``excluded_top_level_dirs`` keeps a public reader's report from inlining
-    the owner's uploaded input files."""
-    html_path = job_dir / "final_report.html"
-    if not html_path.is_file():
+    the owner's uploaded input files. Both the on-disk HTML and the markdown
+    are read through the symlink-safe walk, so a link the agent plants at
+    either name is a missing report."""
+    if not job_file_exists(job_dir, "final_report.html"):
         return None
     try:
         from openscientist.report.renderer import render_report_html
@@ -151,7 +153,10 @@ def _report_html(
         )
     except Exception:
         logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
-        html = html_path.read_text(encoding="utf-8")
+        saved = read_job_file_text(job_dir, "final_report.html")
+        if saved is None:
+            return None
+        html = saved
     return html.replace("</body>", _OPEN_LINKS_IN_NEW_TABS, 1)
 
 
