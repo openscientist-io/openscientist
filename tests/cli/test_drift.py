@@ -32,6 +32,7 @@ NOT_ASKED = {
     "OPENSCIENTIST_HOST_PROJECT_DIR": "host project path, edited in .env",
     "DREMIO_USER": "Berkeley Lab lakehouse credentials, optional",
     "DREMIO_PASSWORD": "Berkeley Lab lakehouse credentials, optional",
+    "APP_URL": "derives from OPENSCIENTIST_BASE_URL, the wizard writes it",
 }
 
 
