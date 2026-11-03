@@ -35,7 +35,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
-- **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only.
+- **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only. The execution broker clamps each request's timeout to the admin settings' executor timeout (at least 300 s for Rust, which compiles before it runs), refusing zero, negative, non-numeric and non-finite values, and caps the size of the result string fields and plot list it returns.
 
 ### Input Validation
 
