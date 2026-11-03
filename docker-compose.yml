@@ -1,13 +1,14 @@
 # Docker Compose for OpenScientist
 #
 # Usage:
-#   Development: Set OPENSCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth
+#   Development: Set OPENSCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth,
+#                which needs a local APP_URL and a loopback OPENSCIENTIST_BIND_ADDRESS
 #
 #   Production:  docker compose up  (OPENSCIENTIST_DEV_MODE unset or false)
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # The superuser password comes from .env.db, which the web never loads.
     env_file:
@@ -34,7 +35,7 @@ services:
   # As the superuser, creates or updates the database logins and hands the schema
   # to openscientist_owner. Runs on every `up`, before the migrations.
   db-bootstrap:
-    image: postgres:18
+    image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
     restart: "no"
     depends_on:
       postgres:
@@ -76,6 +77,48 @@ services:
       - ./src:/app/src
     command: ["alembic", "upgrade", "head"]
 
+  # The only holder of the Docker socket. It serves the small JSON API the web
+  # needs over a unix socket (no published ports), builds every container from
+  # its own templates and accepts only a caller whose uid and gid are the web's.
+  launcher:
+    platform: ${OPENSCIENTIST_PLATFORM:-}
+    build:
+      context: .
+      dockerfile: Dockerfile.launcher
+    image: openscientist-launcher:latest
+    restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
+    env_file:
+      - path: .env.owner
+        required: true
+      - path: .env
+        required: false
+    environment:
+      JOBS_ROOT: /jobs
+      AGENT_IMAGE: ${OPENSCIENTIST_AGENT_IMAGE:-openscientist-agent:latest}
+      EXECUTOR_IMAGE: ${OPENSCIENTIST_EXECUTOR_IMAGE:-openscientist-executor:latest}
+      LAUNCHER_NETWORK: ${OPENSCIENTIST_AGENT_NETWORK:-}
+      LAUNCHER_AGENT_PLATFORM: ${OPENSCIENTIST_AGENT_PLATFORM:-}
+      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
+      PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
+      AGENT_MAX_MEMORY_MIB: ${LAUNCHER_AGENT_MAX_MEMORY_MIB:-16384}
+      AGENT_MAX_CPU: ${LAUNCHER_AGENT_MAX_CPU:-8}
+      EXECUTOR_MAX_MEMORY_MIB: ${LAUNCHER_EXECUTOR_MAX_MEMORY_MIB:-8192}
+      EXECUTOR_MAX_CPU: ${LAUNCHER_EXECUTOR_MAX_CPU:-4}
+      MAX_LIFETIME_SECONDS: ${LAUNCHER_MAX_LIFETIME_SECONDS:-86400}
+      MAX_EGRESS_ENTRIES: ${LAUNCHER_MAX_EGRESS_ENTRIES:-64}
+    # Plain socket mount, no :ro: the launcher is the trusted holder that
+    # creates containers through it, and the only service to hold one.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jobs:/jobs:ro
+      - launcher_socket:/run/launcher
+    healthcheck:
+      test: ["CMD", "python", "-m", "openscientist_launcher.health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
   openscientist:
     stdin_open: true # docker run -i
     tty: true        # docker run -t
@@ -84,8 +127,11 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      launcher:
+        condition: service_healthy
+    # Loopback by default, because docker's own DNAT rule sits in front of host firewalls.
     ports:
-      - "${PORT:-8080}:8080"
+      - "${OPENSCIENTIST_BIND_ADDRESS:-127.0.0.1}:${PORT:-8080}:8080"
     # In dev mode, restart=no; in production, restart=unless-stopped
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # Map host.docker.internal to the host gateway so the web's LLM proxy and
@@ -103,15 +149,14 @@ services:
       DATABASE_URL: postgresql+asyncpg://openscientist_web:${POSTGRES_WEB_PASSWORD:?set POSTGRES_WEB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
       ADMIN_DATABASE_URL: postgresql+asyncpg://openscientist_admin:${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-openscientist}
 
+      # Passed through so dev mode can refuse a non-loopback publish.
+      OPENSCIENTIST_BIND_ADDRESS: ${OPENSCIENTIST_BIND_ADDRESS:-127.0.0.1}
+
       # Phenix: PHENIX_HOST_PATH points to a Linux x86_64 Phenix directory on the
       # host.  It is mounted read-only at /opt/phenix; PHENIX_PATH is the
       # container-internal path used by phenix_setup.py and agent tools.
       PHENIX_PATH: ${PHENIX_HOST_PATH:+/opt/phenix}
       PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
-
-      # GCP credentials: the host file path is passed separately so agent containers
-      # can mount it on the host side (GOOGLE_APPLICATION_CREDENTIALS is set in Dockerfile)
-      GCP_CREDENTIALS_HOST_PATH: ${GCP_CREDENTIALS_FILE:-}
 
       # Codex (OpenAI) auth: CODEX_AUTH_FILE is the codex CLI auth.json on the host
       # (ChatGPT login). It is mounted read-only into this web container, which copies
@@ -140,11 +185,13 @@ services:
       - ./data:/app/data
       - ./src:/app/src  # Mount source for live reload in dev mode
 
-      # Mount GCP credentials if using Vertex AI (set GCP_CREDENTIALS_FILE in .env)
+      # Mount the GCP service account for Vertex AI (set GCP_CREDENTIALS_FILE in .env);
+      # the web signs its calls with it, agent containers hold none.
       - ${GCP_CREDENTIALS_FILE:-/dev/null}:/app/gcp-credentials.json:ro
 
-      # Mount codex CLI auth if using OpenAI/codex ChatGPT login (set CODEX_AUTH_FILE in .env)
-      - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json:ro
+      # Mount codex CLI auth if using OpenAI/codex ChatGPT login (set CODEX_AUTH_FILE in .env).
+      # Writable: the LLM proxy refreshes the access token through it and writes the file back.
+      - ${CODEX_AUTH_FILE:-/dev/null}:/app/codex-auth.json
 
       # Mount the omp credential vault dir if using the omp harness (set OMP_AUTH_DIR in .env)
       - ${OMP_AUTH_DIR:-/dev/null}:/app/omp-auth:ro
@@ -185,3 +232,5 @@ services:
 
 volumes:
   postgres_data:
+  # The launcher's unix socket, shared with the web; no web ports in between.
+  launcher_socket:

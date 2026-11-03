@@ -1,5 +1,7 @@
 """The public address and the published ports."""
 
+import ipaddress
+
 from openscientist.cli.step import Question, Step
 
 _PORTS = ("PORT", "POSTGRES_PORT")
@@ -23,6 +25,12 @@ class AddressStep(Step):
                 key="address.port", env="PORT", file="env", kind="port", default="8080"
             ),
             Question.for_env(
+                key="address.bind_address",
+                env="OPENSCIENTIST_BIND_ADDRESS",
+                file="env",
+                kind="text",
+            ),
+            Question.for_env(
                 key="address.postgres_port",
                 env="POSTGRES_PORT",
                 file="env",
@@ -36,9 +44,20 @@ class AddressStep(Step):
         base_url = values.get("OPENSCIENTIST_BASE_URL", "")
         if base_url and not base_url.startswith(("http://", "https://")):
             errors.append("OPENSCIENTIST_BASE_URL must be an http(s) URL.")
+        errors.extend(self._valid_bind(values.get("OPENSCIENTIST_BIND_ADDRESS", "")))
         for key in _PORTS:
             errors.extend(self._valid_port(key, values.get(key, "")))
         return errors
+
+    @staticmethod
+    def _valid_bind(raw: str) -> list[str]:
+        if not raw or raw == "localhost":
+            return []
+        try:
+            ipaddress.ip_address(raw)
+        except ValueError:
+            return [f"OPENSCIENTIST_BIND_ADDRESS must be an IP address or localhost, got {raw!r}."]
+        return []
 
     @staticmethod
     def _valid_port(key: str, raw: str) -> list[str]:
