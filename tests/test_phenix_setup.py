@@ -83,7 +83,7 @@ class TestSetupPhenixEnv:
             os.environ,
             {
                 "OPENSCIENTIST_PROVIDER": "anthropic",
-                "OPENSCIENTIST_SECRET_KEY": "test",
+                "OPENSCIENTIST_SECRET_KEY": "a" * 64,
                 "DATABASE_URL": "postgresql+asyncpg://x:x@localhost/x",
             },
             clear=True,

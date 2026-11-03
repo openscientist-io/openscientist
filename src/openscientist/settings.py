@@ -14,6 +14,10 @@ from sqlalchemy.engine import make_url
 logger = logging.getLogger(__name__)
 _SIMPLE_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 _VALID_HARNESSES = ("auto", "claude_code", "codex", "omp")
+#: The value .env.example ships, so a deployment still holding it runs on a published secret.
+_SECRET_KEY_PLACEHOLDER = "your-64-char-hex-master-secret-here"
+#: The length the setup wizard generates with secrets.token_hex(32), 32 bytes of entropy.
+_SECRET_KEY_MIN_LENGTH = 64
 
 
 class DevSettings(BaseSettings):
@@ -519,9 +523,9 @@ class AuthSettings(BaseSettings):
     )
 
     app_url: str = Field(
-        default="http://localhost:8080",
+        default="",
         alias="APP_URL",
-        description="Base URL used in OAuth callback URLs.",
+        description="Base URL used in OAuth callback URLs. Falls back to OPENSCIENTIST_BASE_URL.",
     )
     session_duration_days: int = Field(
         default=30,
@@ -949,9 +953,32 @@ class Settings(BaseSettings):
 
     # Master secret. All auth secrets derive from this via HMAC-SHA256.
     secret_key: str = Field(
+        default="",
         alias="OPENSCIENTIST_SECRET_KEY",
         description="Master secret from which the storage and token encryption secrets are derived.",
     )
+
+    @field_validator("secret_key")
+    @classmethod
+    def _check_secret_key(cls, value: str) -> str:
+        """Refuse a missing, placeholder or short master secret at every entry point."""
+        if not value:
+            raise ValueError(
+                "OPENSCIENTIST_SECRET_KEY is missing. Generate one with `openssl rand -hex 32` "
+                "and set it in .env, or run the setup wizard."
+            )
+        if value == _SECRET_KEY_PLACEHOLDER:
+            raise ValueError(
+                "OPENSCIENTIST_SECRET_KEY is the .env.example placeholder. Generate a real one "
+                "with `openssl rand -hex 32` and set it in .env, or run the setup wizard."
+            )
+        if len(value) < _SECRET_KEY_MIN_LENGTH:
+            raise ValueError(
+                f"OPENSCIENTIST_SECRET_KEY must be at least {_SECRET_KEY_MIN_LENGTH} characters "
+                f"(32 bytes of entropy). Generate one with `openssl rand -hex 32` and set it "
+                "in .env, or run the setup wizard."
+            )
+        return value
 
     max_concurrent_jobs: int = Field(
         default=1,
@@ -981,6 +1008,14 @@ class Settings(BaseSettings):
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)
+
+    @model_validator(mode="after")
+    def default_app_url(self) -> "Settings":
+        """APP_URL follows OPENSCIENTIST_BASE_URL unless set explicitly, so the
+        session cookie's Secure flag and the OAuth callback keep the real scheme."""
+        if not self.auth.app_url:
+            self.auth.app_url = self.base_url
+        return self
 
     @model_validator(mode="after")
     def derive_secrets(self) -> "Settings":

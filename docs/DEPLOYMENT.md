@@ -11,7 +11,7 @@ This guide explains how to deploy OpenScientist using Docker.
 
 ### 1. Set up environment variables
 
-The setup wizard creates the `.env` files, generating the database passwords and the master secret.
+The setup wizard creates the `.env` files, generating the database passwords and the master secret. The web refuses to start when `OPENSCIENTIST_SECRET_KEY` is missing, the `.env.example` placeholder, or shorter than 64 characters, and names the setting and how to generate a key.
 
 ```bash
 uv run openscientist setup
