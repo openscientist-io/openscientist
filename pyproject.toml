@@ -79,6 +79,9 @@ dependencies = [
     # the codex binary its protocol is pinned to (openai-codex-cli-bin).
     "openai-codex>=0.163.0",
 
+    # The LLM proxy terminates the codex Responses websocket with this client.
+    "websockets>=14.0",
+
     # SPARQL queries against remote endpoints
     "SPARQLWrapper>=2.0.0",
 

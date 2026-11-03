@@ -17,6 +17,7 @@ from typing import Any
 from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import MissingImageError
 from openscientist.job_container import to_host_path
+from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_container.launcher_client import (
     LauncherBadRequestError,
     LauncherClient,
@@ -152,6 +153,8 @@ class ContainerManager:
         else:
             output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
+        # The executor container writes here as its own uid, sharing the job group.
+        apply_job_ownership(output_dir)
 
         def _host(path_str: str) -> str:
             # The launcher runs on the host, so the web-container paths become host paths.

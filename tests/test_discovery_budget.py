@@ -121,7 +121,9 @@ async def run(
     monkeypatch.setenv(
         "ADMIN_DATABASE_URL", login_url(test_database_url, "openscientist_admin", ADMIN_PASSWORD)
     )
-    monkeypatch.setenv("OPENSCIENTIST_EXEC_TOKEN", issue_run_credentials(job_id, role).exec_token)
+    monkeypatch.setenv(
+        "OPENSCIENTIST_EXEC_TOKEN", issue_run_credentials(job_id, role, "discovery").exec_token
+    )
     monkeypatch.setenv("OPENSCIENTIST_MODEL", MODEL)
     clear_settings_cache()
     try:

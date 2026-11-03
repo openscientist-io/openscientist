@@ -119,7 +119,9 @@ def _broker_env(job_id: UUID, broker_url: str) -> dict[str, str]:
     _issued_roles.append(role)
     return {
         "OPENSCIENTIST_EXEC_BROKER_URL": broker_url,
-        "OPENSCIENTIST_EXEC_TOKEN": issue_run_credentials(str(job_id), role).exec_token,
+        "OPENSCIENTIST_EXEC_TOKEN": issue_run_credentials(
+            str(job_id), role, "discovery"
+        ).exec_token,
     }
 
 

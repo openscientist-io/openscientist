@@ -38,7 +38,9 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
+- **Job files owned by the container users.** Job directories are setgid and owned by the agent's fixed UID and shared jobs group, so every file created in them inherits the group. The agent and executor containers run under umask 0007, so files and directories the job processes create are group-only (0660/02770) with no world bits, and operator logins copied into a run's home are private to the agent, so no other local account can read or modify a job's data.
 - **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only. The execution broker clamps each request's timeout to the admin settings' executor timeout (at least 300 s for Rust, which compiles before it runs), refusing zero, negative, non-numeric and non-finite values, and caps the size of the result string fields and plot list it returns.
+- **LLM provider credentials stay out of the agent container.** The container receives a per-run placeholder instead of the real LLM provider credential. A web-side LLM proxy verifies the placeholder, swaps in the real credential, and streams the response back. For Vertex AI the web signs each request with its own GCP service-account credential, and for AWS Bedrock it signs each request with SigV4 using its own AWS credential, so the container holds no GCP credential file, no Google token, and no AWS key. For OpenAI's ChatGPT login the web holds the codex `auth.json`, refreshing its access token single-flight and writing the refreshed file back, and signs the Codex Responses calls upstream with it. The proxy terminates the Codex websocket and the REST fallback, and the container's Codex runs API-key mode against the proxy with the placeholder. A wrong or ended placeholder is refused without any upstream call.
 
 ### Input Validation
 
@@ -87,7 +89,8 @@ The main areas for improvement are **operational security gaps** rather than arc
 | **No rate limiting on most endpoints** | Only the health-check endpoint has rate limiting (10/minute via slowapi). Login, job creation, file upload, and token redemption endpoints have no throttling. | Extend rate limiting to all public-facing and authentication-related endpoints. |
 | **No audit logging for admin actions** | Admin operations (user approvals, job reassignment, token creation/revocation) are logged to the application logger but not to a persistent, tamper-evident audit table. | Create an `audit_log` database table and record all admin actions with timestamps, actor, and details. |
 | **No CSRF token validation** | While `samesite=lax` cookies provide partial protection, there is no explicit CSRF token for state-changing form submissions. | Add CSRF token generation and validation for all POST/PUT/DELETE operations. |
-| **Credentials passed to agent containers via environment variables** | Provider API keys and the database URL (including password) are injected into agent containers as plain environment variables. If a container is compromised, all credentials are exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of long-lived credentials. |
+| **Database URL passed to agent containers via environment variables** | The database URL (including its password) is injected into agent containers as a plain environment variable. LLM provider credentials are not passed through; the web-side LLM proxy substitutes a per-run placeholder for them. If a container is compromised, the database URL is exposed. | Consider a secrets manager (e.g., HashiCorp Vault) or short-lived, scoped tokens instead of a long-lived database password in the environment. |
+| **Base Docker image not pinned to digest** | Dockerfiles use `python:3.12-slim` without a SHA-256 digest pin, meaning a compromised or updated upstream image could silently change the build. | Pin to a specific image digest (e.g., `python:3.12-slim@sha256:abc...`). |
 
 ### Medium
 
@@ -101,7 +104,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 | **Job shares don't expire** | Once a job is shared with another user, access is permanent unless manually revoked. | Add optional expiry to job shares and a user-facing revocation interface. |
 | **Review tokens don't require expiry** | Token expiry is optional. A never-expiring token that leaks could be used indefinitely. | Make expiry mandatory with a reasonable default (e.g., 7 days, maximum 1 year). |
 | **No seccomp or AppArmor profiles** | Agent and executor containers rely only on `no-new-privileges`. No system-call filtering is applied. | Define seccomp profiles to restrict unnecessary syscalls in agent and executor containers. |
-| **World-writable job directories on the host** | Job directories are set to `chmod 0o777` to handle UID mismatches between containers. On a shared host, any local user could read or modify job data. | Use consistent UIDs across containers to allow more restrictive permissions (e.g., `0o750`). |
 
 ### Low
 
