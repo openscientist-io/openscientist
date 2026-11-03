@@ -6,11 +6,14 @@ Tests actual HTTP requests to API endpoints with mocked authentication.
 
 import io
 import json
+import tempfile
+import tracemalloc
 import uuid
 import zipfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist.api.auth import hash_secret
 from openscientist.database.models import Administrator, APIKey, Job, User
 from openscientist.database.rls import use_app_role
+from openscientist.exceptions import FileTooBigError
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import enable_rls
 
 
@@ -117,6 +122,15 @@ async def test_api_key_db(
     await db_session.commit()
     await db_session.refresh(api_key)
     return api_key, f"test-api-key:{secret}"
+
+
+@pytest_asyncio.fixture
+async def admin_row_reset(test_engine: AsyncEngine) -> AsyncGenerator[None, None]:
+    """Restore the default admin settings row after the test."""
+    try:
+        yield
+    finally:
+        await reset_admin_settings_row(test_engine)
 
 
 @pytest_asyncio.fixture
@@ -1123,6 +1137,137 @@ class TestJobEndpoints:
 
         assert response.status_code == 201
         assert captured_names == ["duplicate.csv", "duplicate_1.csv"]
+
+    @pytest.mark.asyncio
+    async def test_create_job_rejects_file_one_chunk_over_the_limit(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_engine: AsyncEngine,
+        admin_row_reset: None,
+    ):
+        """A file one chunk over the limit stops with 413 and creates no job."""
+        _, full_key = test_api_key_db
+        await set_admin_settings_row(test_engine, max_file_size_mb=1)
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = AsyncMock()
+
+        with patch(
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                # 1 MiB limit plus one more row of four bytes.
+                content = b"a,b\n" + b"1,2\n" * 262144
+                response = await client.post(
+                    "/api/v1/jobs",
+                    data={
+                        "research_question": "Question",
+                        "max_iterations": "5",
+                        "investigation_mode": "autonomous",
+                    },
+                    files=[("data_files", ("big.csv", content, "text/csv"))],
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 413
+        mock_job_manager.create_job.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_job_rejects_files_over_the_total_limit(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_engine: AsyncEngine,
+        admin_row_reset: None,
+    ):
+        """Files whose total exceeds the limit stop with 413 before any more is written."""
+        _, full_key = test_api_key_db
+        await set_admin_settings_row(test_engine, max_file_size_mb=1)
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = AsyncMock()
+
+        with patch(
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                # Two files under the per-file limit, over it in total.
+                response = await client.post(
+                    "/api/v1/jobs",
+                    data={
+                        "research_question": "Question",
+                        "max_iterations": "5",
+                        "investigation_mode": "autonomous",
+                    },
+                    files=[
+                        (
+                            "data_files",
+                            ("part1.csv", b"a,b\n1,2\n" * 87_500, "text/csv"),
+                        ),
+                        (
+                            "data_files",
+                            ("part2.csv", b"c,d\n3,4\n" * 62_500, "text/csv"),
+                        ),
+                    ],
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 413
+        mock_job_manager.create_job.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_job_rejects_too_many_files(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_api_key_db: tuple[APIKey, str],
+    ):
+        """More files than the per-request cap stop with 413 and create no job."""
+        from openscientist.api.endpoints.jobs import MAX_UPLOAD_FILES_PER_REQUEST
+
+        _, full_key = test_api_key_db
+        app = _build_authenticated_app(db_session, test_user_db)
+
+        mock_job_manager = MagicMock()
+        mock_job_manager.create_job = AsyncMock()
+
+        with patch(
+            "openscientist.api.endpoints.jobs._get_job_manager", return_value=mock_job_manager
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/v1/jobs",
+                    data={
+                        "research_question": "Question",
+                        "max_iterations": "5",
+                        "investigation_mode": "autonomous",
+                    },
+                    files=[
+                        (
+                            "data_files",
+                            (f"file_{index:03d}.csv", b"a,b\n1,2\n", "text/csv"),
+                        )
+                        for index in range(MAX_UPLOAD_FILES_PER_REQUEST + 1)
+                    ],
+                    headers={"Authorization": f"Bearer {full_key}"},
+                )
+
+        assert response.status_code == 413
+        mock_job_manager.create_job.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_job_returns_400_for_job_manager_value_error(
@@ -2189,3 +2334,44 @@ class TestAuthenticationFlow:
                 )
 
         assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_persist_uploaded_files_stays_at_chunk_size_in_memory(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """A large upload under the cap holds at most its chunks in memory and lands byte-identical."""
+    from starlette.datastructures import UploadFile
+
+    from openscientist.api.endpoints.jobs import _persist_uploaded_files
+
+    source = tmp_path / "source.csv"
+    source.write_bytes(b"a,b\n" + b"1,2\n" * 8 * 1024 * 1024)
+    upload = UploadFile(file=source.open("rb"), filename="source.csv")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        tracemalloc.start()
+        persisted = await _persist_uploaded_files([upload], Path(temp_dir), 1000 * 1024 * 1024)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        assert len(persisted) == 1
+        assert persisted[0].read_bytes() == source.read_bytes()
+    assert peak < source.stat().st_size // 2
+
+
+@pytest.mark.asyncio
+async def test_persist_uploaded_files_deletes_the_partial_file(
+    db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """An upload that stops over its limit raises FileTooBigError and leaves no file behind."""
+    from starlette.datastructures import UploadFile
+
+    from openscientist.api.endpoints.jobs import _persist_uploaded_files
+
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"x" * (1024 * 1024 + 16))
+    upload = UploadFile(file=source.open("rb"), filename="big.csv")
+    with pytest.raises(FileTooBigError):
+        await _persist_uploaded_files([upload], tmp_path, 1024 * 1024)
+
+    assert not (tmp_path / "big.csv").exists()
+    assert source.exists()

@@ -1,6 +1,7 @@
 """Research Log tab: stats badges, timeline content and polling."""
 
 from typing import Any
+from uuid import UUID
 
 from nicegui import ui
 
@@ -18,6 +19,7 @@ from openscientist.webapp_components.pages.job_detail.common import (
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
+    _render_access_lost,
 )
 from openscientist.webapp_components.pages.job_detail.feedback import _refresh_feedback_panel
 from openscientist.webapp_components.pages.job_detail.iterations import (
@@ -224,10 +226,22 @@ def _polling_statuses() -> list[JobStatus]:
     ]
 
 
-def _handle_missing_job_during_poll(stats_timer_holder: dict[str, Any]) -> None:
+def _stop_status_poll(stats_timer_holder: dict[str, Any]) -> None:
+    """Deactivate the status poll's timer if it is running."""
     timer = stats_timer_holder.get("timer")
     if timer:
         timer.deactivate()
+
+
+def _handle_access_lost_during_poll(
+    context: _JobDetailContext, stats_timer_holder: dict[str, Any]
+) -> None:
+    """Stop the poll and replace the page with the access-lost notice."""
+    _stop_status_poll(stats_timer_holder)
+    if not is_client_connected():
+        return
+    ui.context.client.content.clear()
+    _render_access_lost()
 
 
 def _handle_status_transition(
@@ -240,7 +254,7 @@ def _handle_status_transition(
         return
     context.state["status"] = latest_job.status
     if latest_job.status in _reload_required_statuses():
-        _handle_missing_job_during_poll(stats_timer_holder)
+        _stop_status_poll(stats_timer_holder)
         ui.navigate.to(f"/job/{context.job_id}")
         return
     render_job_stats.refresh()
@@ -252,9 +266,9 @@ async def _check_and_refresh(
     render_timeline: Any,
     stats_timer_holder: dict[str, Any],
 ) -> None:
-    db_job = await get_job(context.job_id)
+    db_job = await get_job(context.job_id, user_id=UUID(context.user_id))
     if db_job is None:
-        _handle_missing_job_during_poll(stats_timer_holder)
+        _handle_access_lost_during_poll(context, stats_timer_holder)
         return
 
     latest_ks, _ = await _load_knowledge_state(context.job_id, context.user_id)

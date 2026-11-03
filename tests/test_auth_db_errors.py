@@ -229,7 +229,7 @@ async def test_logout_during_an_outage_signs_out_now_and_revokes_later(
         base_url="http://test",
         cookies={"session_token": str(session_token)},
     ) as client:
-        response = await client.get("/auth/logout")
+        response = await client.post("/auth/logout", json={})
     assert response.headers["location"] == "/login"
     assert 'session_token=""' in response.headers["set-cookie"]
     assert await _session_exists(test_engine, session_token)
@@ -263,7 +263,7 @@ async def test_sign_out_fails_loudly_when_the_session_delete_is_rejected(
         cookies={"session_token": str(session_token)},
     ) as client:
         with pytest.raises(ValueError, match="constraint violation"):
-            await client.get("/auth/logout")
+            await client.post("/auth/logout", json={})
     assert await _session_exists(test_engine, session_token)
 
 
@@ -285,9 +285,28 @@ async def test_sign_out_without_a_browser_still_works(monkeypatch: pytest.Monkey
     app = FastAPI()
     app.include_router(router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.get("/auth/logout")
+        response = await client.post("/auth/logout", json={})
     assert response.headers["location"] == "/login"
     assert 'session_token=""' in response.headers["set-cookie"]
+
+
+async def test_a_cross_site_get_to_logout_changes_nothing(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    session_token: UUID,
+) -> None:
+    """A top-level GET from another site can no longer sign a visitor out."""
+    app = FastAPI()
+    app.include_router(router)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        cookies={"session_token": str(session_token)},
+    ) as client:
+        response = await client.get("/auth/logout")
+    assert response.status_code == 405
+    assert "set-cookie" not in response.headers
+    assert await _session_exists(test_engine, session_token)
 
 
 async def test_a_failed_deferred_revoke_leaves_the_session_and_reports_it(

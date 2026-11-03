@@ -13,6 +13,7 @@ from openscientist.providers.base import (
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    StaticHeadersSigning,
     _completion_live_check,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -153,9 +154,7 @@ class FoundryProvider(ClaudeCompatible):
         return _completion_live_check(url, headers, body, cls.display_name)
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         env = {"CLAUDE_CODE_USE_FOUNDRY": "1"}
         # Claude Code treats resource and base_url as mutually exclusive.
         if provider.anthropic_foundry_resource:
@@ -175,7 +174,10 @@ class FoundryProvider(ClaudeCompatible):
         p = get_settings().provider
         if not (p.anthropic_foundry_base_url or p.anthropic_foundry_resource):
             return None
-        return LlmUpstream(self._resolve_base_url(), {"x-api-key": self._resolve_api_key()})
+        return LlmUpstream(
+            self._resolve_base_url(),
+            StaticHeadersSigning({"x-api-key": self._resolve_api_key()}),
+        )
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         p = get_settings().provider

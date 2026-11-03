@@ -465,12 +465,19 @@ async def test_switch_loads_the_stored_flag_for_owner_and_hides_it_from_viewers(
 
 @pytest.mark.asyncio
 async def test_switch_change_persists_and_refreshes(db_session: AsyncSession, test_user: User):
+    from openscientist.webapp_components.utils.permissions import JobAccess
+
     job = await _job(db_session, test_user, is_public=False)
     controller = _switch_controller(str(job.id))
     with (
         patch.object(dialog_module, "ui") as mock_ui,
         patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
         patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
+        patch.object(
+            dialog_module,
+            "current_job_access",
+            AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
+        ),
     ):
         await controller.on_public_change(SimpleNamespace(value=True))
     # The owner's toggle reached the database and a confirmation was shown.

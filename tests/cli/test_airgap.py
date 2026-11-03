@@ -22,6 +22,7 @@ def test_airgap_offered_for_a_proxied_provider(checkout: Path):
         "qwen3-8b",  # OPENSCIENTIST_MODEL
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT
+        "",  # OPENSCIENTIST_BIND_ADDRESS
         "",  # POSTGRES_PORT
         "",  # OPENSCIENTIST_HARNESS
         "",  # OPENSCIENTIST_MAX_CONCURRENT_JOBS
@@ -35,8 +36,9 @@ def test_airgap_offered_for_a_proxied_provider(checkout: Path):
     assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == "False"
 
 
-def test_airgap_not_offered_for_an_unsupported_posture(checkout: Path):
-    # OpenAI with a ChatGPT login (no API key) cannot be air-gapped.
+def test_airgap_offered_for_a_chatgpt_login(checkout: Path):
+    # The web signs the ChatGPT calls upstream, so the container can be
+    # cut off from the internet like any other proxied provider.
     lines = [
         "6",  # OpenAI API
         "",  # OPENAI_API_KEY
@@ -44,16 +46,18 @@ def test_airgap_not_offered_for_an_unsupported_posture(checkout: Path):
         "",  # OPENSCIENTIST_MODEL
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT
+        "",  # OPENSCIENTIST_BIND_ADDRESS
         "",  # POSTGRES_PORT
         "",  # OPENSCIENTIST_HARNESS
         "",  # OPENSCIENTIST_MAX_CONCURRENT_JOBS
         *_LOGIN,  # login: dev mock
+        "",  # OPENSCIENTIST_AIRGAPPED
         "",  # PHENIX_HOST_PATH
     ]
     result = runner.invoke(cli_app.app, ["setup"], input="\n".join(lines) + "\n")
     assert result.exit_code == 0
-    assert "OPENSCIENTIST_AIRGAPPED" not in result.output
-    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == ""
+    assert "OPENSCIENTIST_AIRGAPPED" in result.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == "False"
 
 
 def test_incomplete_configuration_reports_unsupported_posture():
