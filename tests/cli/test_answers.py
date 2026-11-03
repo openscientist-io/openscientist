@@ -119,13 +119,14 @@ def test_a_vllm_file_sets_up_a_fresh_checkout(checkout: Path):
     assert env_value(checkout, ".env", "PORT") == "8080"
 
 
-def test_a_provider_the_airgap_step_cannot_serve_sets_up_without_it(checkout: Path):
+def test_a_chatgpt_login_sets_up_with_the_airgap_step(checkout: Path):
     tables = _vllm_tables()
     tables["provider"] = {
         "id": "openai",
         "codex_auth_host_path": str(checkout / "codex"),
         "openscientist_model": "gpt-5.2-codex",
     }
+    tables["airgap"] = {"enabled": "false"}
     path = checkout / "answers.toml"
     result = runner.invoke(
         cli_app.app,
@@ -140,9 +141,9 @@ def test_a_provider_the_airgap_step_cannot_serve_sets_up_without_it(checkout: Pa
     )
     assert result.exit_code == 0, result.output
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "openai"
-    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == ""
+    assert env_value(checkout, ".env", "OPENSCIENTIST_AIRGAPPED") == "false"
     written = tomllib.loads(path.read_text(encoding="utf-8"))
-    assert "airgap" not in written
+    assert written["airgap"]["enabled"] == "false"
     assert written["provider"]["id"] == "openai"
 
 

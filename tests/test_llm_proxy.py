@@ -1,8 +1,12 @@
 """Tests for the LLM key-replacement proxy (Claude backend)."""
 
 import asyncio
+import base64
+import json
 import socket
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from uuid import uuid4
@@ -16,6 +20,9 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 from starlette.types import ASGIApp
 from uvicorn.config import Config
+from websockets.asyncio.client import connect
+from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from openscientist.job_container.runner import JobContainerRunner
 from openscientist.job_container.secrets import (
@@ -23,10 +30,15 @@ from openscientist.job_container.secrets import (
     issue_run_credentials,
     revoke_run_credentials,
 )
-from openscientist.llm_proxy import container_proxy_base_url, create_llm_proxy_app
+from openscientist.llm_proxy import (
+    _NoSignalServer,
+    container_proxy_base_url,
+    create_llm_proxy_app,
+)
 from openscientist.providers import get_provider
 from openscientist.providers.base import AirgapEgress, LlmUpstream, StaticHeadersSigning
 from openscientist.providers.bedrock import SigV4Signing
+from openscientist.providers.openai import ChatgptSigning
 from openscientist.providers.vertex import GoogleAdcSigning
 from openscientist.settings import Settings, get_settings
 from tests.test_provider_bedrock import verify_sigv4
@@ -301,6 +313,18 @@ class TestCodexUpstream:
             StaticHeadersSigning({"authorization": "Bearer sk-real"}),
         )
 
+    def test_openai_chatgpt_upstream_signs_with_the_web_held_login(self, active_provider, tmp_path):
+        login = _write_chatgpt_login(tmp_path / "auth.json")
+        provider = active_provider(OPENSCIENTIST_PROVIDER="openai", CODEX_AUTH_HOST_PATH=str(login))
+        upstream = provider.llm_upstream()
+        assert upstream.base_url == "https://chatgpt.com/backend-api/codex"
+        assert isinstance(upstream.signing, ChatgptSigning)
+        assert provider.llm_upstream().signing is upstream.signing
+
+    def test_openai_without_any_credential_has_no_upstream(self, active_provider):
+        provider = active_provider(OPENSCIENTIST_PROVIDER="openai")
+        assert provider.llm_upstream() is None
+
     def test_azure_upstream(self, active_provider):
         provider = active_provider(
             OPENSCIENTIST_PROVIDER="azure-openai",
@@ -380,9 +404,22 @@ class TestCodexProxiedEnv:
             proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
         )
         assert env["OPENAI_API_KEY"] == "job-1.tok"
+        assert env["CODEX_API_KEY"] == "job-1.tok"
         assert env["OPENSCIENTIST_LLM_PROXY_URL"] == "http://openscientist:8081"
         assert "sk-real" not in env.values()
         assert "GITHUB_TOKEN" not in env
+
+    def test_chatgpt_login_redirects_without_leaking_the_login(self, active_provider, tmp_path):
+        login = _write_chatgpt_login(tmp_path / "auth.json")
+        provider = active_provider(OPENSCIENTIST_PROVIDER="openai", CODEX_AUTH_HOST_PATH=str(login))
+        env = provider.proxied_container_env(
+            proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
+        )
+        assert env["OPENAI_API_KEY"] == "job-1.tok"
+        assert env["CODEX_API_KEY"] == "job-1.tok"
+        assert env["OPENSCIENTIST_LLM_PROXY_URL"] == "http://openscientist:8081"
+        assert "CODEX_AUTH_HOST_PATH" not in env
+        assert "sk-host-real" not in env.values()
 
     def test_azure_redirects(self, active_provider):
         provider = active_provider(
@@ -473,9 +510,21 @@ class TestCodexConfigRedirect:
             OPENSCIENTIST_LLM_PROXY_URL="http://openscientist:8081",
         )
         toml = provider.codex_config_overrides()
-        assert "[model_providers.openai]" in toml
-        assert 'base_url = "http://openscientist:8081"' in toml
-        assert 'env_key = "OPENAI_API_KEY"' in toml
+        joined = "\n".join(toml)
+        assert 'openai_base_url = "http://openscientist:8081"' in joined
+        assert 'chatgpt_base_url = "http://openscientist:8081"' in joined
+        assert "model_providers" not in joined
+
+    def test_chatgpt_login_config_points_at_proxy(self, active_provider, tmp_path):
+        login = _write_chatgpt_login(tmp_path / "auth.json")
+        provider = active_provider(
+            OPENSCIENTIST_PROVIDER="openai",
+            CODEX_AUTH_HOST_PATH=str(login),
+            OPENSCIENTIST_LLM_PROXY_URL="http://openscientist:8081",
+        )
+        joined = "\n".join(provider.codex_config_overrides())
+        assert 'openai_base_url = "http://openscientist:8081"' in joined
+        assert 'chatgpt_base_url = "http://openscientist:8081"' in joined
 
     def test_openai_config_empty_without_proxy(self, active_provider):
         provider = active_provider(OPENSCIENTIST_PROVIDER="openai", OPENAI_API_KEY="sk-real")
@@ -975,52 +1024,6 @@ class TestStartLlmProxy:
         assert forwarded["headers"]["anthropic-version"] == "2023-06-01"
         assert forwarded["body"] == b'{"m":1}'
 
-    async def test_the_listener_starts_for_a_provider_without_an_upstream(
-        self, active_provider, placeholder_for, monkeypatch
-    ) -> None:
-        """The proxy listens for every provider; one without an upstream just 502s
-        its traffic, so nothing ever bypasses it with a real credential."""
-        from openscientist import llm_proxy
-
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        # The ChatGPT-login provider has no API key, hence no upstream.
-        provider = active_provider(
-            OPENSCIENTIST_PROVIDER="openai",
-            CODEX_AUTH_HOST_PATH="/tmp/auth.json",
-            OPENSCIENTIST_LLM_PROXY_PORT=str(port),
-        )
-        assert provider.airgap_egress().mode is AirgapEgress.UNSUPPORTED
-
-        configs: list[Config] = []
-        served: list[socket.socket] = []
-
-        class _FakeServer:
-            def __init__(self, config: Config) -> None:
-                configs.append(config)
-
-            async def serve(self, sockets: list[socket.socket]) -> None:
-                served.extend(sockets)
-
-        monkeypatch.setattr(llm_proxy, "_NoSignalServer", _FakeServer)
-        monkeypatch.setattr(llm_proxy, "_proxy_server", None)
-        monkeypatch.setattr(llm_proxy, "_proxy_task", None)
-
-        await llm_proxy.start_llm_proxy()
-        await asyncio.sleep(0)
-
-        assert len(configs) == 1
-        assert [sock.getsockname()[1] for sock in served] == [port]
-        for sock in served:
-            sock.close()
-        app = cast("ASGIApp", configs[0].app)
-
-        placeholder = placeholder_for("job-1")
-        with TestClient(app) as client:
-            resp = client.post("/v1/messages", headers={"x-api-key": placeholder}, content=b"{}")
-        assert resp.status_code == 502
-
 
 class TestRunnerInjection:
     """The runner merges the provider env and injects the per-job secret."""
@@ -1067,11 +1070,10 @@ class TestAirgapPosture:
         p = active_provider(OPENSCIENTIST_PROVIDER="openai", OPENAI_API_KEY="sk")
         assert p.airgap_egress().mode is AirgapEgress.PROXY
 
-    def test_openai_chatgpt_login_unsupported(self, active_provider):
-        p = active_provider(OPENSCIENTIST_PROVIDER="openai", CODEX_AUTH_HOST_PATH="/tmp/auth.json")
-        posture = p.airgap_egress()
-        assert posture.mode is AirgapEgress.UNSUPPORTED
-        assert "chatgpt.com" in posture.reason
+    def test_openai_chatgpt_login_proxies(self, active_provider, tmp_path):
+        login = _write_chatgpt_login(tmp_path / "auth.json")
+        p = active_provider(OPENSCIENTIST_PROVIDER="openai", CODEX_AUTH_HOST_PATH=str(login))
+        assert p.airgap_egress().mode is AirgapEgress.PROXY
 
     def test_azure_proxies(self, active_provider):
         p = active_provider(
@@ -1356,3 +1358,218 @@ class TestHarnessRouting:
         )
         with pytest.raises(ValueError, match="omp harness"):
             p.harness_env(proxy="http://openscientist:8081")
+
+
+def _write_chatgpt_login(path: Path) -> Path:
+    """A valid auth.json with a fresh access token and a refresh token, for the
+    web-side ChatGPT signing."""
+    exp = int((datetime.now(UTC) + timedelta(minutes=10)).timestamp())
+    header = base64.urlsafe_b64encode(b'{"alg":"RS256","typ":"JWT"}').rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).rstrip(b"=").decode()
+    path.write_text(
+        json.dumps(
+            {
+                "AUTH_MODE": "chatgpt",
+                "OPENAI_API_KEY": "sk-host-real",
+                "tokens": {
+                    "id_token": "id.jwt.s",
+                    "access_token": f"{header}.{payload}.sig",
+                    "refresh_token": "rt-real",
+                    "account_id": "acct-1",
+                },
+            }
+        )
+    )
+    return path
+
+
+class _WebsocketStub:
+    """A websocket upstream that records the handshake and the frames it
+    receives, replies to each frame with a scripted message, and can close the
+    connection with a scripted close frame."""
+
+    def __init__(self) -> None:
+        self.port = 0
+        self.handshakes: list[dict] = []
+        self.frames: list[bytes | str] = []
+        self.close_from_client: tuple[int, str] | None = None
+        self.reply: str = "stub-reply"
+        self.close_after_reply: tuple[int, str] | None = None
+
+    async def _handler(self, connection) -> None:
+        self.handshakes.append(
+            {
+                "path": connection.request.path,
+                "headers": dict(connection.request.headers),
+            }
+        )
+        while True:
+            try:
+                message = await connection.recv()
+            except ConnectionClosed as closed:
+                if closed.rcvd is not None:
+                    self.close_from_client = (closed.rcvd.code, closed.rcvd.reason)
+                break
+            self.frames.append(message)
+            await connection.send(self.reply)
+            if self.close_after_reply is not None:
+                code, reason = self.close_after_reply
+                await connection.close(code, reason)
+                break
+
+
+class TestChatgptResponsesWebsocket:
+    """The proxy terminates Codex's Responses websocket: it authenticates the
+    placeholder, opens the upstream socket with the web-held credential, and
+    pumps frames unchanged in both directions."""
+
+    @pytest.fixture
+    async def stub_upstream(self):
+        stub = _WebsocketStub()
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            stub.port = probe.getsockname()[1]
+        async with serve(stub._handler, "127.0.0.1", stub.port):
+            yield stub
+
+    @pytest.fixture
+    async def live_proxy(self, stub_upstream):
+        """The real proxy app on a real local port, serving the stub upstream."""
+        client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                f"http://127.0.0.1:{stub_upstream.port}",
+                StaticHeadersSigning({"authorization": "Bearer REAL-TOK"}),
+            ),
+            client=client,
+        )
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", port))
+        server = _NoSignalServer(Config(app, log_level="warning"))
+        task = asyncio.get_running_loop().create_task(server.serve(sockets=[sock]))
+        for _ in range(200):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.05):
+                    break
+            except OSError:
+                await asyncio.sleep(0.01)
+        try:
+            yield port
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            sock.close()
+            await client.aclose()
+
+    async def test_frames_are_pumped_unchanged_and_the_stub_sees_the_real_bearer(
+        self, stub_upstream, live_proxy, placeholder_for
+    ):
+        stub_upstream.reply = "stub-reply"
+        placeholder = placeholder_for("job-1")
+        async with connect(
+            f"ws://127.0.0.1:{live_proxy}/responses",
+            additional_headers={"authorization": f"Bearer {placeholder}"},
+            proxy=None,
+        ) as connection:
+            text_frame = json.dumps({"type": "response.create", "model": "gpt-5.2"})
+            await connection.send(text_frame)
+            assert await connection.recv() == "stub-reply"
+            binary_frame = bytes(range(256))
+            await connection.send(binary_frame)
+            assert await connection.recv() == "stub-reply"
+            await connection.close(1000, "done")
+        for _ in range(200):
+            if stub_upstream.close_from_client is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert len(stub_upstream.handshakes) == 1
+        handshake = stub_upstream.handshakes[0]
+        assert handshake["path"] == "/responses"
+        assert handshake["headers"]["authorization"] == "Bearer REAL-TOK"
+        assert placeholder not in handshake["headers"]["authorization"]
+        assert stub_upstream.frames == [text_frame, binary_frame]
+        assert stub_upstream.close_from_client == (1000, "done")
+
+    async def test_an_upstream_close_is_propagated_to_the_container(
+        self, stub_upstream, live_proxy, placeholder_for
+    ):
+        stub_upstream.reply = "last-reply"
+        stub_upstream.close_after_reply = (1011, "upstream done")
+        placeholder = placeholder_for("job-1")
+        async with connect(
+            f"ws://127.0.0.1:{live_proxy}/responses",
+            additional_headers={"authorization": f"Bearer {placeholder}"},
+            proxy=None,
+        ) as connection:
+            await connection.send("one")
+            assert await connection.recv() == "last-reply"
+            with pytest.raises(ConnectionClosed) as raised:
+                await connection.recv()
+        assert raised.value.rcvd is not None
+        assert raised.value.rcvd.code == 1011
+        assert raised.value.rcvd.reason == "upstream done"
+
+    async def test_a_wrong_placeholder_is_refused_without_touching_the_upstream(
+        self, stub_upstream, live_proxy
+    ):
+        with pytest.raises(InvalidStatus) as raised:
+            await connect(
+                f"ws://127.0.0.1:{live_proxy}/responses",
+                additional_headers={"authorization": "Bearer not-the-placeholder"},
+                proxy=None,
+            )
+        assert raised.value.response.status_code == 401
+        assert stub_upstream.handshakes == []
+
+    def test_the_rest_fallback_is_signed_with_the_login_token(self, tmp_path, placeholder_for):
+        login = _write_chatgpt_login(tmp_path / "auth.json")
+        token = json.loads(login.read_text())["tokens"]["access_token"]
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://chatgpt.com/backend-api/codex",
+                ChatgptSigning(str(login)),
+            ),
+            client=_recording_upstream(recorded),
+        )
+        with TestClient(app) as client:
+            resp = client.post(
+                "/responses",
+                headers={
+                    "authorization": f"Bearer {placeholder_for('job-1')}",
+                    "session-id": "s-1",
+                },
+                content=b'{"model":"gpt-5.2"}',
+            )
+        assert resp.status_code == 200
+        assert len(recorded) == 1
+        forwarded = recorded[0]
+        assert forwarded["path"] == "/backend-api/codex/responses"
+        assert forwarded["headers"]["authorization"] == f"Bearer {token}"
+        assert forwarded["headers"]["session-id"] == "s-1"
+        assert forwarded["body"] == b'{"model":"gpt-5.2"}'
+
+    def test_the_rest_fallback_refuses_when_the_login_is_unusable(self, tmp_path, placeholder_for):
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://chatgpt.com/backend-api/codex",
+                ChatgptSigning(str(tmp_path / "missing.json")),
+            ),
+            client=_recording_upstream(recorded),
+        )
+        with TestClient(app) as client:
+            resp = client.post(
+                "/responses",
+                headers={"authorization": f"Bearer {placeholder_for('job-1')}"},
+                content=b'{"model":"gpt-5.2"}',
+            )
+        assert resp.status_code == 401
+        assert recorded == []

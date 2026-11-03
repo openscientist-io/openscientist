@@ -18,7 +18,6 @@ from openscientist.exceptions import MissingImageError
 from openscientist.exec_broker_client import EXEC_TOKEN_ENV
 from openscientist.job_chat import CHAT_TURN_ENV
 from openscientist.job_container.db_login import AGENT_LOGIN_LABEL, AgentLogin
-from openscientist.job_container.run_home import create_run_home
 from openscientist.job_container.runner import (
     _STOP_GRACE_SECONDS,
     AGENT_APP_DIR,
@@ -642,46 +641,6 @@ class TestPhenixMount:
         for key in volumes:
             assert "phenix" not in key.lower()
         assert "PHENIX_PATH" not in env
-
-
-class TestCodexAuthProvisioning:
-    """`CodexAgent.provision_run_home` copies the codex CLI auth into the run's
-    home, its CODEX_HOME (agent-readable), instead of mounting the host file,
-    which the non-root agent could not read across the uid/permission
-    boundary."""
-
-    def _settings(self, codex_auth_host_path: str | None) -> MagicMock:
-        settings = MagicMock()
-        settings.provider.codex_auth_host_path = codex_auth_host_path
-        return settings
-
-    def test_copies_auth_into_codex_home_agent_readable(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        src = tmp_path / "host-auth.json"
-        src.write_text('{"tokens": {}}')
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-
-        CodexAgent.provision_run_home(self._settings(str(src)), home)
-
-        dest = home / "auth.json"
-        assert dest.read_text() == '{"tokens": {}}'
-        assert (dest.stat().st_mode & 0o777) == 0o644  # agent (uid 1001) can read
-        assert (home.stat().st_mode & 0o777) == 0o777  # agent can write config.toml
-
-    def test_noop_when_unset(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        CodexAgent.provision_run_home(self._settings(None), home)
-        assert list(home.iterdir()) == []
-
-    def test_noop_when_source_missing(self, tmp_path: Path) -> None:
-        from openscientist.agent.codex_agent import CodexAgent
-
-        home = create_run_home(tmp_path / "jobs", "agent_" + "1" * 32)
-        CodexAgent.provision_run_home(self._settings(str(tmp_path / "nope.json")), home)
-        assert list(home.iterdir()) == []
 
 
 class TestJobSecretInjection:

@@ -1,13 +1,25 @@
 """Direct OpenAI API provider (drives the Codex agent).
 
-Auth is ``OPENAI_API_KEY`` or the ChatGPT OAuth login the codex CLI stores
-in ``~/.codex/auth.json``.
+Auth is ``OPENAI_API_KEY`` or the ChatGPT login the codex CLI stores in
+``auth.json``. For the ChatGPT login the web process holds the file
+(``CODEX_AUTH_HOST_PATH``): the LLM proxy signs the Responses calls upstream
+with the refreshed ChatGPT access token, and the container's codex runs its
+API-key mode against the proxy with a per-run placeholder.
 """
 
 from __future__ import annotations
 
+import base64
+import json
+import logging
 import os
+import tempfile
+import threading
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import requests
 
 from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
@@ -19,17 +31,276 @@ from openscientist.providers.base import (
     LlmUpstream,
     SetupQuestion,
     StaticHeadersSigning,
+    UpstreamCredentialError,
+    UpstreamSigning,
     _listing_live_check,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
 
+logger = logging.getLogger(__name__)
+
 _OPENAI_BASE_URL = "https://api.openai.com/v1"
+_CHATGPT_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
+_CHATGPT_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
+_CHATGPT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+#: The access token is a JWT; refresh it once it is this close to its ``exp``
+#: claim (the window the codex CLI itself uses).
+_STALE_WINDOW = timedelta(minutes=5)
+#: When the token carries no readable ``exp``, fall back to the cadence the
+#: codex CLI schedules its refreshes on.
+_SCHEDULED_INTERVAL = timedelta(days=8)
+_REFRESH_RETRY_AFTER = timedelta(seconds=30)
+_REFRESH_TIMEOUT = 10.0
+
+
+class ChatgptCredentialError(UpstreamCredentialError):
+    """The web-held ChatGPT login (``auth.json``) is missing or unusable."""
+
+
+@dataclass
+class _ChatgptLogin:
+    """The ChatGPT tokens of one generation of the web-held ``auth.json``."""
+
+    access_token: str
+    refresh_token: str
+    expires_at: datetime | None
+    last_refresh: datetime | None
+
+
+def _jwt_expires_at(token: str) -> datetime | None:
+    """The ``exp`` claim of a JWT access token, or None when it is not a
+    readable JWT."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode()))
+        exp = payload.get("exp")
+        return datetime.fromtimestamp(exp, UTC) if isinstance(exp, (int, float)) else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _codex_auth_json() -> Path:
     """Path to the codex CLI's stored OAuth login (default codex home)."""
     return Path.home() / ".codex" / "auth.json"
+
+
+class ChatgptSigning(UpstreamSigning):
+    """Signs each forwarded request with the web-held ChatGPT login.
+
+    The file is a read-only input: the access token is refreshed through the
+    refresh token once it leaves the fresh window, single-flight under a lock
+    so concurrent requests share one grant. A refreshed token is written back
+    atomically so the host's own codex CLI stays current, and in memory for
+    the proxy. A rejected grant blocks the credential until the login file
+    changes; a transient failure serves the stale token (the upstream 401s and
+    the harness retries) and retries the refresh on a backoff.
+    """
+
+    def __init__(
+        self,
+        auth_path: str,
+        *,
+        token_endpoint: str = _CHATGPT_TOKEN_ENDPOINT,
+        client_id: str = _CHATGPT_CLIENT_ID,
+        retry_after: timedelta = _REFRESH_RETRY_AFTER,
+    ) -> None:
+        self._auth_path = Path(auth_path).expanduser()
+        self._token_endpoint = token_endpoint
+        self._client_id = client_id
+        self._retry_after = retry_after
+        self._lock = threading.Lock()
+        self._login: _ChatgptLogin | None = None
+        self._generation: tuple[int, int] | None = None
+        self._blocked = False
+        self._next_retry_at: datetime | None = None
+
+    def credential_headers(
+        self, *, method: str, path: str, query: str, body: bytes
+    ) -> dict[str, str]:
+        return {"authorization": f"Bearer {self._access_token()}"}
+
+    def _access_token(self) -> str:
+        with self._lock:
+            self._reload_if_changed()
+            now = datetime.now(UTC)
+            if self._login is not None and not self._blocked and self._is_stale(now):
+                if self._next_retry_at is None or now >= self._next_retry_at:
+                    self._refresh(now)
+            if self._blocked or self._login is None:
+                raise ChatgptCredentialError(
+                    f"ChatGPT login at {self._auth_path} is unusable; re-authenticate on the host"
+                )
+            return self._login.access_token
+
+    def _reload_if_changed(self) -> None:
+        try:
+            stat = self._auth_path.stat()
+        except OSError:
+            if self._generation is not None:
+                self._generation = None
+                self._login = None
+                self._blocked = False
+                self._next_retry_at = None
+            return
+        generation = (stat.st_mtime_ns, stat.st_size)
+        if generation == self._generation:
+            return
+        self._generation = generation
+        self._login = self._read_login()
+        self._blocked = False
+        self._next_retry_at = None
+
+    def _read_login(self) -> _ChatgptLogin | None:
+        try:
+            data = json.loads(self._auth_path.read_text())
+            tokens = data.get("tokens")
+            if not isinstance(tokens, dict):
+                return None
+            access = tokens.get("access_token")
+            if not isinstance(access, str) or not access:
+                return None
+            refresh = tokens.get("refresh_token")
+            refresh = refresh if isinstance(refresh, str) else ""
+        except (OSError, ValueError, AttributeError):
+            return None
+        return _ChatgptLogin(
+            access_token=access,
+            refresh_token=refresh,
+            expires_at=_jwt_expires_at(access),
+            last_refresh=_parse_timestamp(data.get("last_refresh")),
+        )
+
+    def _is_stale(self, now: datetime) -> bool:
+        login = self._login
+        if login is None:
+            return False
+        if login.expires_at is not None:
+            return login.expires_at <= now + _STALE_WINDOW
+        if login.last_refresh is not None:
+            return now - login.last_refresh >= _SCHEDULED_INTERVAL
+        return False
+
+    def _refresh(self, now: datetime) -> None:
+        login = self._login
+        if login is None:
+            return
+        if not login.refresh_token:
+            logger.warning("ChatGPT login at %s carries no refresh token", self._auth_path)
+            self._blocked = True
+            return
+        grant = {
+            "grant_type": "refresh_token",
+            "client_id": self._client_id,
+            "refresh_token": login.refresh_token,
+        }
+        try:
+            response = requests.post(self._token_endpoint, json=grant, timeout=_REFRESH_TIMEOUT)
+        except requests.RequestException as exc:
+            logger.warning("ChatGPT token refresh failed (%s); serving the stale token", exc)
+            self._next_retry_at = now + self._retry_after
+            return
+        if 200 <= response.status_code < 300:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            access = payload.get("access_token") if isinstance(payload, dict) else None
+            if not isinstance(access, str) or not access:
+                logger.warning("ChatGPT refresh grant returned no access token")
+                self._next_retry_at = now + self._retry_after
+                return
+            self._login = _ChatgptLogin(
+                access_token=access,
+                refresh_token=payload.get("refresh_token") or login.refresh_token,
+                expires_at=_jwt_expires_at(access),
+                last_refresh=now,
+            )
+            self._next_retry_at = None
+            self._persist(payload)
+            return
+        if 400 <= response.status_code < 500:
+            logger.warning(
+                "ChatGPT refresh grant rejected (HTTP %d); blocking the credential until "
+                "the login file changes",
+                response.status_code,
+            )
+            self._blocked = True
+            return
+        logger.warning(
+            "ChatGPT token refresh failed (HTTP %d); retrying on the backoff",
+            response.status_code,
+        )
+        self._next_retry_at = now + self._retry_after
+
+    def _persist(self, payload: dict) -> None:
+        """Write the refreshed login back so the host's own codex CLI stays
+        current; the file is the source of truth."""
+        try:
+            data = json.loads(self._auth_path.read_text())
+        except (OSError, ValueError):
+            logger.warning(
+                "Could not read back %s after the ChatGPT refresh; keeping the token in memory",
+                self._auth_path,
+            )
+            return
+        login = self._login
+        if login is None:
+            return
+        tokens = data.get("tokens")
+        if not isinstance(tokens, dict):
+            tokens = {}
+            data["tokens"] = tokens
+        tokens["access_token"] = login.access_token
+        tokens["refresh_token"] = login.refresh_token
+        if isinstance(payload.get("id_token"), str) and payload["id_token"]:
+            tokens["id_token"] = payload["id_token"]
+        last = login.last_refresh
+        data["last_refresh"] = last.isoformat() if last is not None else None
+        directory = self._auth_path.parent
+        try:
+            fd, name = tempfile.mkstemp(dir=directory, prefix=".auth-", suffix=".tmp")
+            with os.fdopen(fd, "w") as handle:
+                json.dump(data, handle, indent=2)
+            os.chmod(name, 0o600)
+            os.replace(name, self._auth_path)
+        except OSError as exc:
+            logger.warning(
+                "Could not write the refreshed ChatGPT login back to %s (%s); keeping it in memory",
+                self._auth_path,
+                exc,
+            )
+
+
+#: The web-side signing per auth file, cached for the process's life like the
+#: Vertex ADC signing, so the refreshed tokens are shared by every request.
+_chatgpt_signings: dict[str, ChatgptSigning] = {}
+_chatgpt_signings_lock = threading.Lock()
+
+
+def chatgpt_signing_for(auth_path: str) -> ChatgptSigning:
+    """The web-side ChatGPT signing for the login file at ``auth_path``, built
+    once per process and path."""
+    path = os.path.abspath(os.path.expanduser(auth_path))
+    with _chatgpt_signings_lock:
+        signing = _chatgpt_signings.get(path)
+        if signing is None:
+            signing = ChatgptSigning(path)
+            _chatgpt_signings[path] = signing
+        return signing
 
 
 class OpenAIDirectProvider(CodexCompatible):
@@ -43,21 +314,15 @@ class OpenAIDirectProvider(CodexCompatible):
 
     @classmethod
     def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
-        return env_from_pairs(
-            [
-                ("OPENAI_API_KEY", provider.openai_api_key),
-                ("CODEX_AUTH_HOST_PATH", provider.codex_auth_host_path),
-            ]
-        )
+        return env_from_pairs([("OPENAI_API_KEY", provider.openai_api_key)])
 
     def validate_required_config(self) -> list[str]:
         return self.required_config_errors(get_settings().provider)
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
-        # Auth is satisfied by an API key, a configured codex auth file (which
-        # the container runner provisions into the per-job CODEX_HOME), or a
-        # local codex CLI login.
+        # Auth is satisfied by an API key or the web-held ChatGPT login file;
+        # a host-side codex CLI login counts when the web runs on the host.
         if (
             os.environ.get("OPENAI_API_KEY")
             or provider.codex_auth_host_path
@@ -65,9 +330,9 @@ class OpenAIDirectProvider(CodexCompatible):
         ):
             return []
         return [
-            "OpenAI provider needs auth: set OPENAI_API_KEY, set "
-            "CODEX_AUTH_HOST_PATH, or log in with the codex CLI ('codex login') "
-            "so ~/.codex/auth.json exists."
+            "OpenAI provider needs auth: set OPENAI_API_KEY, or set "
+            "CODEX_AUTH_HOST_PATH to the codex auth.json (`codex login`) the "
+            "web signs the ChatGPT calls with."
         ]
 
     @classmethod
@@ -77,7 +342,7 @@ class OpenAIDirectProvider(CodexCompatible):
             SetupQuestion(
                 "CODEX_AUTH_HOST_PATH",
                 kind="path",
-                help="or the codex auth.json from `codex login`",
+                help="or the host path of the codex auth.json from `codex login`",
             ),
             SetupQuestion(
                 "OPENSCIENTIST_MODEL", help="model id, or leave empty for the codex account default"
@@ -107,38 +372,35 @@ class OpenAIDirectProvider(CodexCompatible):
             return LlmUpstream(
                 _OPENAI_BASE_URL, StaticHeadersSigning({"authorization": f"Bearer {key}"})
             )
+        auth_path = get_settings().provider.codex_auth_host_path
+        if auth_path:
+            return LlmUpstream(_CHATGPT_CODEX_BASE_URL, chatgpt_signing_for(auth_path))
         return None
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
-        if get_settings().provider.openai_api_key:
-            return {"OPENAI_API_KEY": placeholder, LLM_PROXY_URL_ENV: proxy_base_url}
-        return {}
+        # The container's codex runs its API-key mode against the proxy in both
+        # auth setups; the pinned CLI reads CODEX_API_KEY, and omp's OpenAI
+        # client reads OPENAI_API_KEY.
+        return {
+            "OPENAI_API_KEY": placeholder,
+            "CODEX_API_KEY": placeholder,
+            LLM_PROXY_URL_ENV: proxy_base_url,
+        }
 
     @classmethod
     def airgap_posture(cls, provider: ProviderSettings) -> AirgapPosture:
-        if provider.openai_api_key:
-            return AirgapPosture(AirgapEgress.PROXY)
-        return AirgapPosture(
-            AirgapEgress.UNSUPPORTED,
-            reason=(
-                "OpenAI codex ChatGPT-login cannot be air-gapped: its model turn "
-                "targets chatgpt.com over a websocket that no base-url config "
-                "redirects. Set OPENAI_API_KEY for a proxied, air-gappable setup."
-            ),
-        )
+        return AirgapPosture(AirgapEgress.PROXY)
 
     def codex_config_overrides(self) -> list[str]:
-        # Codex ships a built-in "openai" entry at the default endpoint. When the
-        # proxy is active, override base_url so codex routes through it.
+        # The pinned codex CLI refuses to override the built-in "openai"
+        # provider entry, so the base URL rides the top-level keys it reads
+        # for the built-in one (inference) and the ChatGPT auxiliary calls.
         proxy = os.environ.get(LLM_PROXY_URL_ENV)
         if not proxy:
             return []
         return [
-            "[model_providers.openai]",
-            'name = "OpenAI"',
-            f'base_url = "{proxy}"',
-            'env_key = "OPENAI_API_KEY"',
-            'wire_api = "responses"',
+            f'openai_base_url = "{proxy}"',
+            f'chatgpt_base_url = "{proxy}"',
         ]
 
     def codex_model_name(self) -> str | None:
@@ -150,5 +412,5 @@ class OpenAIDirectProvider(CodexCompatible):
         return "openai"
 
     def codex_sdk_env(self) -> dict[str, str]:
-        key = os.environ.get("OPENAI_API_KEY")
-        return {"OPENAI_API_KEY": key} if key else {}
+        key = os.environ.get("CODEX_API_KEY")
+        return {"CODEX_API_KEY": key} if key else {}

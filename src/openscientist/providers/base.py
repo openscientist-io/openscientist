@@ -143,6 +143,23 @@ class UpstreamSigning(abc.ABC):
         url = f"{base_url}{path}"
         return f"{url}?{query}" if query else url
 
+    def upstream_websocket_url(self, *, base_url: str, path: str, query: str) -> str:
+        """The websocket form of the upstream URL for an upgraded request: the
+        same URL with the scheme switched to ``wss``/``ws``, as the codex client
+        builds it for its Responses websocket."""
+        url = self.upstream_url(base_url=base_url, path=path, query=query)
+        if url.startswith("https://"):
+            return "wss://" + url.removeprefix("https://")
+        if url.startswith("http://"):
+            return "ws://" + url.removeprefix("http://")
+        return url
+
+
+class UpstreamCredentialError(RuntimeError):
+    """The upstream credential a signing owns is unusable (a rejected refresh
+    grant, an unreadable file). The proxy refuses the request instead of
+    forwarding it, and the harness surfaces the failure through its own path."""
+
 
 @dataclass(frozen=True)
 class StaticHeadersSigning(UpstreamSigning):
