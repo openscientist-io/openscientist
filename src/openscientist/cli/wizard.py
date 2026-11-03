@@ -64,6 +64,11 @@ def _write_env_files(root: Path, answers: dict[str, str], env_file: dict[str, st
     for env, value in answers.items():
         if value and env in env_file:
             by_file.setdefault(env_file[env], {})[env] = value
+    # The cookie's Secure flag follows APP_URL, so the wizard writes it from the asked address.
+    base_url = answers.get("OPENSCIENTIST_BASE_URL", "")
+    base_file = env_file.get("OPENSCIENTIST_BASE_URL")
+    if base_url and base_file and not envfiles.file_values(root, base_file).get("APP_URL"):
+        by_file.setdefault(base_file, {})["APP_URL"] = base_url
     envfiles.write_env_files(root, by_file)
 
 

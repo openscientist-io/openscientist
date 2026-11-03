@@ -28,6 +28,10 @@ from openscientist.settings import (
 )
 from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.components.common import render_empty_state
+from openscientist.webapp_components.utils.permissions import (
+    refuse_stale_admin_session,
+    revalidate_admin_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +53,7 @@ _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
     ("executor_memory_mib", "Executor memory", "MiB", "whole MiB, above 0", "int"),
     ("agent_timeout_seconds", "Agent timeout", "seconds", "above 0", "int"),
     ("executor_timeout_seconds", "Executor timeout", "seconds", "above 0", "int"),
-    ("max_file_size_mb", "Max file size", "MB", "above 0", "int"),
+    ("max_file_size_mb", "Max file size, per file and per request", "MB", "above 0", "int"),
     ("max_concurrent_jobs", "Max concurrent jobs", "", "0 or more, 0 pauses new starts", "int"),
     ("scheduler_window_hours", "Scheduler window", "hours", "above 0", "float"),
     ("session_duration_days", "Session length", "days", "1 or more", "int"),
@@ -165,6 +169,14 @@ def _rejected_setting(exc: IntegrityError) -> str:
     if match is None:
         return "A setting"
     return _LABELS.get(match[1], "A setting")
+
+
+async def _save_settings(values: dict[str, object]) -> tuple[bool, str]:
+    """Save the settings once the caller's admin session survives a re-check."""
+    if not await revalidate_admin_session():
+        refuse_stale_admin_session()
+        return False, "Your admin session is no longer valid. Please refresh the page."
+    return await save_admin_settings(values)
 
 
 async def save_admin_settings(values: dict[str, object]) -> tuple[bool, str]:
@@ -304,7 +316,7 @@ async def _render_settings(container: ui.column) -> None:
                 except ValueError as exc:
                     ui.notify(str(exc), type="negative")
                     return
-                success, message = await save_admin_settings(values)
+                success, message = await _save_settings(values)
                 ui.notify(message, type="positive" if success else "negative")
                 if success:
                     container.clear()

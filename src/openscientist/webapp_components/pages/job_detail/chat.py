@@ -17,6 +17,7 @@ from openscientist.webapp_components.utils import (
     ClientGuard,
     safe_run_javascript,
 )
+from openscientist.webapp_components.utils.permissions import current_job_access
 
 logger = logging.getLogger(__name__)
 
@@ -340,6 +341,14 @@ class _ChatTabController:
         self.chat_input.run_method("focus")
 
     async def _send_message(self) -> None:
+        access = await current_job_access(self.context.job_id, self.context.user_id)
+        if access is None:
+            ui.notify("You no longer have access to this job.", type="negative")
+            return
+        if not access.can_edit:
+            ui.notify("You no longer have edit access to this job.", type="negative")
+            return
+
         guard = ClientGuard()
         if not guard.is_connected or self.chat_scroll is None:
             return

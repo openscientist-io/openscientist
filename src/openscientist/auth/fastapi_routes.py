@@ -2,16 +2,20 @@
 
 import asyncio
 import hashlib
+import html
 import logging
 import secrets
 import threading
 import uuid
 from datetime import UTC, datetime
+from string import Template
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from nicegui import app
+from pydantic import BaseModel
 from sqlalchemy import select
+from starlette.responses import Response
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.auth.oauth import get_oauth_client
@@ -324,8 +328,12 @@ def _forget_stored_session() -> None:
     storage.clear()
 
 
-@router.get("/logout")
-async def logout(request: Request) -> RedirectResponse:
+class LogoutRequest(BaseModel):
+    """JSON-only body that keeps cross-site forms from forcing a sign-out."""
+
+
+@router.post("/logout")
+async def logout(request: Request, _logout: LogoutRequest) -> RedirectResponse:
     """Handle logout by invalidating session."""
     session_token = request.cookies.get("session_token")
 
@@ -354,7 +362,103 @@ def generate_review_token() -> str:
     return secrets.token_urlsafe(32)
 
 
-async def redeem_review_token(token: str) -> RedirectResponse:
+class RedeemRequest(BaseModel):
+    """JSON-only body that keeps cross-site forms from minting a reviewer."""
+
+
+_REVIEW_CONFIRMATION_PAGE = Template(
+    """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenScientist - Reviewer sign-in</title>
+<style>
+body {
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    background: #f5f6fa;
+    color: #333;
+}
+.card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+    padding: 2.5rem;
+    max-width: 24rem;
+    text-align: center;
+}
+h1 { font-size: 1.25rem; margin: 0 0 0.75rem; }
+p { margin: 0 0 1.5rem; color: #666; }
+button {
+    background: #1976d2;
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 0.6rem 1.8rem;
+    font-size: 1rem;
+    cursor: pointer;
+}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Sign in as $label?</h1>
+<p>This link signs you in to an OpenScientist review account.</p>
+<button id="sign-in">Sign in</button>
+<noscript><p>JavaScript is required to sign in from this link.</p></noscript>
+</div>
+<script>
+document.getElementById("sign-in").addEventListener("click", async () => {
+    const response = await fetch(window.location.pathname, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: "{}",
+    });
+    window.location.href = response.url.includes("/login") ? "/login?error=token_invalid" : "/";
+});
+</script>
+</body>
+</html>
+"""
+)
+
+
+async def review_confirmation_page(token: str) -> Response:
+    """Show the sign-in page for a review link.
+
+    The link only shows the page. Signing in posts back from it, so a
+    cross-site link can never sign the visitor in by itself.
+    """
+    token_hash = _hash_token(token)
+
+    async with get_admin_session() as db:
+        stmt = select(ReviewToken).where(ReviewToken.token_hash == token_hash)
+        result = await db.execute(stmt)
+        review_token = result.scalar_one_or_none()
+
+        if review_token is None:
+            logger.warning("Review token page refused: unknown token")
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        if not review_token.is_active:
+            logger.warning("Review token page refused: token revoked (id=%s)", review_token.id)
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        if review_token.is_expired:
+            logger.warning("Review token page refused: token expired (id=%s)", review_token.id)
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        label = review_token.label
+
+    return HTMLResponse(_REVIEW_CONFIRMATION_PAGE.substitute(label=html.escape(label)))
+
+
+async def redeem_review_token(token: str, _redeem: RedeemRequest) -> RedirectResponse:
     """Redeem a review token to create or re-login an anonymous reviewer."""
     token_hash = _hash_token(token)
 
@@ -373,6 +477,13 @@ async def redeem_review_token(token: str) -> RedirectResponse:
 
         if review_token.is_expired:
             logger.warning("Review token redemption failed: token expired (id=%s)", review_token.id)
+            return RedirectResponse(url="/login?error=token_invalid", status_code=303)
+
+        if review_token.redeemed_at is not None and review_token.redeemed_by_id is None:
+            logger.error(
+                "Review token is marked redeemed but its reviewer is gone (id=%s)",
+                review_token.id,
+            )
             return RedirectResponse(url="/login?error=token_invalid", status_code=303)
 
         if review_token.redeemed_by_id is not None:
