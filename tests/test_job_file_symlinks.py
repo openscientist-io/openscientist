@@ -14,24 +14,26 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 import openscientist.job_chat as job_chat
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.router import api_router
-from openscientist.auth.middleware import get_current_user_id
-from openscientist.database.models import Job, User
+from openscientist.database.models import Job, Session, User
 from openscientist.database.rls import set_current_user, use_app_role
 from openscientist.database.session import get_session
 from openscientist.job import agent_error
@@ -108,36 +110,37 @@ def _api_app(db_session: AsyncSession, user: User) -> FastAPI:
 
 
 @pytest_asyncio.fixture
-async def web_job(db_session: AsyncSession, test_user: User, tmp_path: Path) -> Job:
-    job = Job(
-        owner_id=test_user.id,
-        research_question="Web symlink probe",
-        status="completed",
-    )
-    db_session.add(job)
-    await db_session.commit()
-    await db_session.refresh(job)
-    await enable_rls(db_session)
+async def web_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[tuple[User, str, Job]]:
+    """A committed owner, the id of their live session (which the route's own
+    admin login must see) and a completed job of theirs, so the route's real
+    per-request sessions read the same rows the web's do."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        owner = User(email=f"symlink-owner-{uuid4().hex}@symlink.test", name="Symlink Owner")
+        db.add(owner)
+        await db.flush()
+        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        db.add(login)
+        job = Job(owner_id=owner.id, research_question="Web symlink probe", status="completed")
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
     job_dir = tmp_path / "jobs" / str(job.id)
     (job_dir / "provenance").mkdir(parents=True)
-    return job
+    yield owner, str(login.id), job
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id == owner.id))
+        await db.commit()
 
 
 def _web_client(app: FastAPI) -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-def _web_app(db_session: AsyncSession, user: User, jobs_dir: Path) -> tuple[FastAPI, object]:
+def _web_app(jobs_dir: Path) -> tuple[FastAPI, object]:
+    """The artifact router on the app's real per-request sessions."""
     app = FastAPI()
-
-    async def session_as_user():
-        await set_current_user(db_session, user.id)
-        yield db_session
-
-    app.dependency_overrides[get_session] = session_as_user
-    app.dependency_overrides[get_current_user_id] = lambda: user.id
     app.include_router(web_router)
-
     return app, SimpleNamespace(jobs_dir=jobs_dir)
 
 
@@ -560,26 +563,29 @@ class TestWebArtifactRoutes:
 
     @pytest.mark.asyncio
     async def test_a_symlinked_figure_is_not_served(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         secret = _plant_secret(tmp_path)
         _replace_with_symlink(job_dir / "provenance" / "plot.png", secret)
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/files/provenance/plot.png")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/files/provenance/plot.png")
 
         assert response.status_code == 404
         assert _SECRET not in response.content
 
     @pytest.mark.asyncio
     async def test_a_symlinked_intermediate_directory_is_not_traversed(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         outside = tmp_path / "outside"
         outside.mkdir(parents=True)
         (outside / "secret.txt").write_bytes(_SECRET)
@@ -587,8 +593,9 @@ class TestWebArtifactRoutes:
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
+                client.cookies.set("session_token", token)
                 response = await client.get(
-                    f"/web/jobs/{web_job.id}/files/provenance/linked-sub/secret.txt"
+                    f"/web/jobs/{job.id}/files/provenance/linked-sub/secret.txt"
                 )
 
         assert response.status_code == 404
@@ -596,12 +603,13 @@ class TestWebArtifactRoutes:
 
     @pytest.mark.asyncio
     async def test_a_fifo_at_a_served_name_404s_without_hanging(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
         """The agent can mkfifo a served name; the route must answer 404
         promptly instead of hanging a worker until a writer appears."""
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         os.mkfifo(job_dir / "provenance" / "plot.png")
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
@@ -610,21 +618,24 @@ class TestWebArtifactRoutes:
                 base_url="http://test",
                 timeout=httpx.Timeout(5),
             ) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/files/provenance/plot.png")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/files/provenance/plot.png")
 
         assert response.status_code == 404
 
     @pytest.mark.asyncio
     async def test_a_regular_file_is_served_with_sandbox_headers(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         (job_dir / "provenance" / "plot.png").write_bytes(b"PNG-BYTES")
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/files/provenance/plot.png")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/files/provenance/plot.png")
 
         assert response.status_code == 200
         assert response.content == b"PNG-BYTES"
@@ -633,34 +644,38 @@ class TestWebArtifactRoutes:
 
     @pytest.mark.asyncio
     async def test_a_symlinked_report_html_is_not_read_back(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         secret = _plant_secret(tmp_path)
         _replace_with_symlink(job_dir / "final_report.html", secret)
         # no final_report.md, so the route has nothing else to fall back on
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/report.html")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
 
         assert response.status_code == 404
         assert _SECRET not in response.content
 
     @pytest.mark.asyncio
     async def test_a_symlinked_markdown_falls_back_to_the_saved_html(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         secret = _plant_secret(tmp_path)
         _replace_with_symlink(job_dir / "final_report.md", secret)
         (job_dir / "final_report.html").write_text("<html><body>Saved HTML</body></html>")
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/report.html")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
 
         assert response.status_code == 200
         assert "Saved HTML" in response.text
@@ -668,10 +683,11 @@ class TestWebArtifactRoutes:
 
     @pytest.mark.asyncio
     async def test_a_symlinked_figure_is_never_embedded(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         secret = _plant_secret(tmp_path, name="secret.png")
         _replace_with_symlink(job_dir / "provenance" / "plot.png", secret)
         (job_dir / "final_report.md").write_text(
@@ -681,7 +697,8 @@ class TestWebArtifactRoutes:
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/report.html")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
 
         import base64
 
@@ -691,10 +708,11 @@ class TestWebArtifactRoutes:
 
     @pytest.mark.asyncio
     async def test_a_symlinked_provenance_directory_embeds_nothing(
-        self, db_session: AsyncSession, test_user: User, web_job: Job, tmp_path: Path
+        self, web_job: tuple[User, str, Job], tmp_path: Path
     ) -> None:
-        app, manager = _web_app(db_session, test_user, tmp_path / "jobs")
-        job_dir = tmp_path / "jobs" / str(web_job.id)
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
         outside = tmp_path / "outside"
         outside.mkdir(parents=True)
         (outside / "plot.png").write_bytes(_SECRET)
@@ -707,7 +725,8 @@ class TestWebArtifactRoutes:
 
         with patch("openscientist.web_app.get_job_manager", return_value=manager):
             async with _web_client(app) as client:
-                response = await client.get(f"/web/jobs/{web_job.id}/report.html")
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
 
         assert response.status_code == 200
         assert _SECRET not in response.content
