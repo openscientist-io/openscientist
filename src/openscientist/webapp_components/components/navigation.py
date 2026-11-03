@@ -64,6 +64,14 @@ def _drawer_route_handler(drawer: ui.element, route: str) -> Callable[[], None]:
     return handler
 
 
+async def _sign_out() -> None:
+    """Sign out with a same-origin POST, then land on the login page."""
+    await ui.run_javascript(
+        "fetch('/auth/logout', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+        "body: '{}'}).then(() => { window.location.assign('/login'); });"
+    )
+
+
 def _render_mobile_drawer(
     drawer: ui.element,
     nav_items: list[tuple[str, str, str, bool]],
@@ -92,7 +100,7 @@ def _render_mobile_drawer(
         ui.separator().classes("bg-white/30 my-2")
         ui.button(
             "Logout",
-            on_click=lambda: ui.navigate.to("/auth/logout"),
+            on_click=_sign_out,
             icon="logout",
         ).props("flat color=white align=left").classes("w-full justify-start")
 
@@ -135,7 +143,7 @@ def _render_desktop_navigation(
             ).props(style)
         ui.button(
             "Logout",
-            on_click=lambda: ui.navigate.to("/auth/logout"),
+            on_click=_sign_out,
             icon="logout",
         ).props(inactive_style)
 

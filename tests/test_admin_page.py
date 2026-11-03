@@ -5,7 +5,7 @@ Tests orphaned job management, user assignment, and job claiming.
 """
 
 from collections.abc import Callable
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,7 +15,8 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.database.models import Job, User
+from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
+from openscientist.database.models import Job, ReviewToken, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.components.common import STATUS_COLORS
@@ -26,6 +27,7 @@ from openscientist.webapp_components.pages.admin import (
     _render_dashboard_job_groups,
     admin_page,
     delete_user,
+    revoke_review_token,
     set_user_approval_status,
     set_user_priority_status,
 )
@@ -752,6 +754,83 @@ async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: p
     result = await db_session.execute(select(Job).where(Job.id == job_id))
     orphaned_job = result.scalar_one()
     assert orphaned_job.owner_id is None
+
+
+async def _create_redeemed_reviewer(
+    db_session: AsyncSession, test_admin_user: User
+) -> tuple[User, ReviewToken]:
+    """A redeemed review token with a live reviewer session."""
+    reviewer = User(
+        email="reviewer-0000000000000000@review.local",
+        name="Reviewer 1",
+        is_approved=True,
+    )
+    db_session.add(reviewer)
+    await db_session.commit()
+    await db_session.refresh(reviewer)
+
+    token = ReviewToken(
+        token_hash=_hash_token(generate_review_token()),
+        label="Reviewer 1",
+        created_by_id=test_admin_user.id,
+        redeemed_at=datetime.now(UTC),
+        redeemed_by_id=reviewer.id,
+    )
+    db_session.add(token)
+    session = Session(
+        user_id=reviewer.id,
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    db_session.add(session)
+    await db_session.commit()
+    await db_session.refresh(token)
+    return reviewer, token
+
+
+@pytest.mark.asyncio
+async def test_revoke_review_token_ends_the_reviewer_sessions(
+    db_session: AsyncSession,
+    test_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revoking a redeemed token deletes the reviewer's live sessions."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    reviewer, token = await _create_redeemed_reviewer(db_session, test_admin_user)
+
+    success, _ = await revoke_review_token(token.id)
+
+    assert success is True
+    await db_session.refresh(token)
+    assert token.is_active is False
+    result = await db_session.execute(select(Session.id).where(Session.user_id == reviewer.id))
+    assert result.scalars().all() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_user_revokes_their_review_token(
+    db_session: AsyncSession,
+    test_admin_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting a redeemed reviewer revokes the token, so it cannot mint a new account."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+    reviewer, token = await _create_redeemed_reviewer(db_session, test_admin_user)
+
+    success, _ = await delete_user(reviewer.id)
+
+    assert success is True
+    await db_session.refresh(token)
+    assert token.is_active is False
+    result = await db_session.execute(select(User).where(User.id == reviewer.id))
+    assert result.scalar_one_or_none() is None
+    result = await db_session.execute(select(Session.id).where(Session.user_id == reviewer.id))
+    assert result.scalars().all() == []
 
 
 def _dashboard_badge_color(status: str) -> str:
