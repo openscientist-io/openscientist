@@ -62,7 +62,7 @@ def token_for() -> Iterator[Callable[[str], str]]:
     def issue(job_id: str) -> str:
         role = f"agent_{uuid4().hex}"
         roles.append(role)
-        return issue_run_credentials(job_id, role).exec_token
+        return issue_run_credentials(job_id, role, "discovery").exec_token
 
     yield issue
     for role in roles:
@@ -128,7 +128,7 @@ class TestExecBrokerServer:
     def test_refuses_a_run_that_has_ended(self) -> None:
         manager = _manager({})
         role = f"agent_{uuid4().hex}"
-        token = issue_run_credentials("job-1", role).exec_token
+        token = issue_run_credentials("job-1", role, "discovery").exec_token
         revoke_run_credentials(role)
         resp = _client(manager).post("/execute", json=_body(), headers={EXEC_TOKEN_HEADER: token})
         assert resp.status_code == 401

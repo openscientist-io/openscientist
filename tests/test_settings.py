@@ -314,7 +314,7 @@ class TestModelFormatValidation:
 class TestProviderContainerEnvVars:
     """Tests for ProviderSettings.get_container_env_vars()."""
 
-    def test_vertex_env_vars_use_container_credentials_path_override(self):
+    def test_vertex_env_vars_carry_no_gcp_credential(self):
         settings = ProviderSettings(
             OPENSCIENTIST_PROVIDER="vertex",
             ANTHROPIC_VERTEX_PROJECT_ID="vertex-proj",
@@ -323,11 +323,13 @@ class TestProviderContainerEnvVars:
             CLOUD_ML_REGION="us-east5",
         )
 
-        env = settings.get_container_env_vars(gcp_credentials_container_path="/agent/gcp.json")
+        env = settings.get_container_env_vars()
 
         assert env["OPENSCIENTIST_PROVIDER"] == "vertex"
         assert env["CLAUDE_CODE_USE_VERTEX"] == "1"
-        assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/agent/gcp.json"
+        assert env["ANTHROPIC_VERTEX_PROJECT_ID"] == "vertex-proj"
+        # The web's credential is never published into the container env.
+        assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
         assert "CLAUDE_CODE_USE_BEDROCK" not in env
 
     def test_bedrock_env_vars_include_flag_and_credentials(self):

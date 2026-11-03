@@ -29,6 +29,11 @@ from openscientist.agent.base import (
     _resolve_bin,
 )
 from openscientist.exceptions import McpToolsUnavailableError
+from openscientist.job_container.identity import (
+    PRIVATE_FILE_MODE,
+    RUN_HOME_DIR_MODE,
+    apply_job_ownership,
+)
 from openscientist.providers.base import LLM_PROXY_URL_ENV, Provider
 from openscientist.settings import get_settings
 from openscientist.transcript import OMP, TranscriptEntry
@@ -115,8 +120,9 @@ class OmpAgent(AbstractAgent[Provider]):
             if f.exists():
                 target = home / name
                 shutil.copy2(f, target)
-                # Agent opens the SQLite vault read-write, so it must be writable.
-                target.chmod(0o666)
+                # The agent opens the SQLite vault read-write as its owner, so
+                # the login is private to it, never world-readable.
+                apply_job_ownership(target, file_mode=PRIVATE_FILE_MODE)
                 copied += 1
         logger.info("Provisioned omp auth (%d files) into %s", copied, home)
 
@@ -221,9 +227,9 @@ class OmpAgent(AbstractAgent[Provider]):
         home = self._omp_home()
         if not home.exists():
             # Only on creation, because the home of an existing container run is already
-            # agent-writable and chmod on a root-owned dir fails for the agent.
+            # agent-owned and chmod on a root-owned dir fails for the agent.
             home.mkdir(parents=True, exist_ok=True)
-            home.chmod(0o777)
+            apply_job_ownership(home, dir_mode=RUN_HOME_DIR_MODE)
         path = home / "models.yml"
         path.write_text(yaml.safe_dump(dict(catalog), sort_keys=False), encoding="utf-8")
         logger.info("Wrote omp model catalog to %s", path)

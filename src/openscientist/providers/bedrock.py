@@ -12,6 +12,7 @@ from openscientist.providers.base import (
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
+    StaticHeadersSigning,
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
@@ -104,9 +105,7 @@ class BedrockProvider(ClaudeCompatible):
         return LiveCheckResult(ok=True, detail="Reached AWS Bedrock (ListFoundationModels).")
 
     @classmethod
-    def container_env(
-        cls, provider: ProviderSettings, *, gcp_credentials_container_path: str | None = None
-    ) -> dict[str, str]:
+    def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
         env = {"CLAUDE_CODE_USE_BEDROCK": "1"}
         env.update(
             env_from_pairs(
@@ -129,7 +128,10 @@ class BedrockProvider(ClaudeCompatible):
         p = get_settings().provider
         if p.aws_bearer_token_bedrock and p.aws_region:
             base = f"https://bedrock-runtime.{p.aws_region}.amazonaws.com"
-            return LlmUpstream(base, {"authorization": f"Bearer {p.aws_bearer_token_bedrock}"})
+            return LlmUpstream(
+                base,
+                StaticHeadersSigning({"authorization": f"Bearer {p.aws_bearer_token_bedrock}"}),
+            )
         return None
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
