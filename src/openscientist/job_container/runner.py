@@ -212,26 +212,36 @@ class JobContainerRunner:
         return env, volumes, agent_network, agent_memory, agent_cpu, agent_platform
 
     @staticmethod
-    def _airgap_firewall_config(
+    def _firewall_config(
         settings: Settings,
         airgapped: bool,
-    ) -> tuple[list[str] | None, str | None, list[str] | None, dict[str, str]]:
-        """Firewall launch overrides (cap_add, user, entrypoint, extra_env) for
-        air-gapped mode, or neutral values when off."""
-        if not airgapped:
-            return None, None, None, {}
+    ) -> tuple[list[str], str, list[str], dict[str, str]]:
+        """Firewall launch overrides (cap_add, user, entrypoint, extra_env).
+
+        The restricted mode allowlists only the web's services and never
+        consults the provider's air-gap posture."""
         from openscientist.job_container.egress import (
+            FIREWALL_ALLOW_ENV,
+            FIREWALL_MODE_ENV,
+            MODE_AIRGAP,
+            MODE_RESTRICT,
             derive_egress_allowlist,
+            derive_restricted_egress_allowlist,
             format_egress_allowlist,
         )
 
-        posture = get_provider().airgap_egress()
-        allow = format_egress_allowlist(derive_egress_allowlist(settings, posture))
+        if airgapped:
+            posture = get_provider().airgap_egress()
+            allow = format_egress_allowlist(derive_egress_allowlist(settings, posture))
+            mode = MODE_AIRGAP
+        else:
+            allow = format_egress_allowlist(derive_restricted_egress_allowlist(settings))
+            mode = MODE_RESTRICT
         return (
             ["NET_ADMIN"],
             "root",
             ["/agent-firewall-entrypoint.sh"],
-            {"OPENSCIENTIST_FIREWALL_ALLOW": allow},
+            {FIREWALL_ALLOW_ENV: allow, FIREWALL_MODE_ENV: mode},
         )
 
     def launch(self, job_id: str, job_dir: Path, *, run_mode: str = "discovery") -> Container:
@@ -362,7 +372,7 @@ class JobContainerRunner:
             )
         )
         network = self._get_network(agent_network)
-        cap_add, run_user, entrypoint, firewall_env = self._airgap_firewall_config(
+        cap_add, run_user, entrypoint, firewall_env = self._firewall_config(
             settings, admin.airgapped
         )
         env.update(firewall_env)
