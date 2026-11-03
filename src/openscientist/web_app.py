@@ -224,14 +224,23 @@ def _register_download_routes() -> None:
 
 
 def _register_review_routes() -> None:
-    """Register review token redemption route on the NiceGUI app."""
+    """Register review token routes on the NiceGUI app."""
     try:
-        from openscientist.auth.fastapi_routes import redeem_review_token
+        from openscientist.auth.fastapi_routes import (
+            redeem_review_token,
+            review_confirmation_page,
+        )
 
         app.add_api_route(
             "/review/{token}",
-            redeem_review_token,
+            review_confirmation_page,
             methods=["GET"],
+            include_in_schema=False,
+        )
+        app.add_api_route(
+            "/review/{token}",
+            redeem_review_token,
+            methods=["POST"],
             include_in_schema=False,
         )
         logger.info("Review token route registered at /review/{token}")
