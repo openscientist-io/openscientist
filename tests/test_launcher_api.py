@@ -134,6 +134,7 @@ def launcher(
         AGENT_IMAGE_DIGESTS=env["AGENT_IMAGE_DIGESTS"],
         EXECUTOR_IMAGE_DIGESTS=env["EXECUTOR_IMAGE_DIGESTS"],
         AGENT_IMAGE=env["AGENT_IMAGE"],
+        MAX_EGRESS_ENTRIES="8",
     )
     try:
         yield started
@@ -629,6 +630,8 @@ class TestExecutor:
             body.update(overrides)
             if allow is None:
                 body.pop("egress_allow")
+            elif allow != "keep":
+                body["egress_allow"] = allow
             return body
 
         with launcher.client() as client:
