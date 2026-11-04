@@ -17,6 +17,7 @@ from openscientist.webapp_components.components.banners import (
     render_pending_approval_notice,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.utils.permissions import revalidate_session
 from openscientist.webapp_components.utils.session import (
     add_uploaded_file,
     clear_uploaded_files,
@@ -56,7 +57,6 @@ def _notify_creation_error(error: Exception) -> None:
 async def _submit_job(
     *,
     job_manager: Any,
-    user_can_start_jobs: bool,
     session_id: str,
     research_question: ui.textarea,
     max_iterations: ui.number,
@@ -64,7 +64,12 @@ async def _submit_job(
     coinvestigate_mode: ui.switch,
 ) -> None:
     """Validate input and create a new discovery job."""
-    if not user_can_start_jobs:
+    user_info = await revalidate_session()
+    if user_info is None:
+        ui.notify("Authentication required. Please log in again.", type="negative")
+        ui.navigate.to("/login")
+        return
+    if not user_info["can_start_jobs"]:
         ui.notify("Your account is pending administrator approval.", type="warning")
         return
 
@@ -73,11 +78,7 @@ async def _submit_job(
         ui.notify("Please enter a research question", type="negative")
         return
 
-    current_user_id = get_current_user_id()
-    if not current_user_id:
-        ui.notify("Authentication required. Please log in again.", type="negative")
-        ui.navigate.to("/login")
-        return
+    current_user_id = user_info["user_id"]
 
     job_id = str(uuid.uuid4())
     data_files = _persist_uploaded_files(session_id)
@@ -219,7 +220,6 @@ async def new_job_page() -> None:
                 "Start Discovery",
                 on_click=lambda: _submit_job(
                     job_manager=job_manager,
-                    user_can_start_jobs=user_can_start_jobs,
                     session_id=session_id,
                     research_question=research_question,
                     max_iterations=max_iterations,

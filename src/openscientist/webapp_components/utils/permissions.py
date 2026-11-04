@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from nicegui import ui
@@ -40,6 +41,21 @@ def refuse_stale_admin_session() -> None:
     """Refuse an admin action with a notification, changing nothing."""
     logger.warning("Admin action refused for a session without current admin rights")
     ui.notify("Your admin session is no longer valid. Please refresh the page.", type="warning")
+
+
+async def revalidate_session() -> dict[str, Any] | None:
+    """The caller's current user info, re-read from the login cookie and the
+    database, or None once the session is gone or the user is deleted.
+
+    Page handlers call it at action time, so a caller whose session was
+    revoked or expired while the page stayed open loses the page's powers.
+    The caller checks the returned flags, such as ``can_start_jobs``, for the
+    current state of the user.
+    """
+    token = get_session_token()
+    if not token:
+        return None
+    return await validate_session(token)
 
 
 async def current_job_access(job_id: str, expected_user_id: str) -> JobAccess | None:
