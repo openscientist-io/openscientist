@@ -1,8 +1,9 @@
 """Ownership and modes of the job tree the web creates for the job containers.
 
-The web process runs as root and hands every file it creates in the job tree
-to the containers' fixed users, stripping the world bits. Non-root tests
-observe the chown on a real temp dir; root tests verify the real ownership.
+The web process runs as its own non-root uid in the jobs group and hands every
+file it creates in the job tree to the containers' fixed users, stripping the
+world bits. Non-root tests observe the chown on a real temp dir; root tests
+verify the real ownership.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+import sys
 from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +28,7 @@ from openscientist.job_container.identity import (
     RUN_HOME_DIR_MODE,
     apply_job_ownership,
 )
+from tests.launcher import VENV_PYTHON
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 IS_ROOT = os.geteuid() == 0
@@ -118,7 +121,8 @@ class TestJobSetupOwnership:
 
 
 class TestRunHomeOwnership:
-    """Run homes hold operator logins, so they are owner-only for the agent."""
+    """Run homes hold operator logins, so root hands them to the agent
+    owner-only, and a non-root web opens them to the agent's group instead."""
 
     def test_run_home_is_agent_owned_and_owner_only(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -626,3 +630,193 @@ class TestJobTreeAccessInContainers:
         container.remove(force=True)
         assert exit_code != 0
         assert "secret" not in logs
+
+
+#: Userland for the non-root deploy tests, pinned the way
+#: tests/test_launcher_jobs_mount.py pins its runtime image.
+DEPLOY_TEST_IMAGE = (
+    "python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30"
+)
+
+
+@pytest.fixture(scope="module")
+def deploy_docker():
+    """The Docker client for the non-root deploy tests, or a skip."""
+    import docker
+
+    try:
+        client = docker.from_env()
+        client.ping()
+    except Exception:
+        pytest.skip("Docker not available")
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture(scope="module")
+def deploy_test_image(deploy_docker):
+    import docker
+
+    tag = f"openscientist-deploy-test-{uuid4().hex[:12]}"
+    try:
+        deploy_docker.images.build(
+            path=str(REPO_ROOT),
+            dockerfile="docker/Dockerfile.deploy-test",
+            tag=tag,
+            rm=True,
+        )
+    except docker.errors.BuildError as exc:
+        log_tail = "\n".join(
+            str(entry.get("stream", "")).rstrip()
+            for entry in list(exc.build_log)[-20:]
+            if isinstance(entry, dict)
+        )
+        pytest.fail(f"Failed to build the deploy test image {tag}:\n{log_tail}")
+    try:
+        yield tag
+    finally:
+        with suppress(Exception):
+            deploy_docker.images.remove(tag, force=True)
+
+
+def _deploy_volumes(jobs: Path) -> dict:
+    """This checkout's interpreter and sources at their own paths, read-only,
+    with the jobs tree read-write at /jobs."""
+    base_prefix = str(Path(sys.base_prefix))
+    return {
+        str(REPO_ROOT): {"bind": str(REPO_ROOT), "mode": "ro"},
+        base_prefix: {"bind": base_prefix, "mode": "ro"},
+        str(jobs): {"bind": "/jobs", "mode": "rw"},
+    }
+
+
+def _run_deploy_snippet(
+    deploy_docker,
+    image: str,
+    jobs: Path,
+    *,
+    user: str,
+    snippet: str,
+    environment: dict[str, str] | None = None,
+) -> str:
+    """A python snippet under uv's interpreter, as the given uid:gid."""
+    output = deploy_docker.containers.run(
+        image,
+        [str(VENV_PYTHON), "-c", snippet],
+        user=user,
+        entrypoint=[],
+        working_dir=str(REPO_ROOT),
+        environment=environment or {},
+        volumes=_deploy_volumes(jobs),
+        network_mode="none",
+        remove=True,
+    )
+    return output.decode("utf-8")
+
+
+def _group_jobs_root(jobs: Path, deploy_docker, image: str) -> Path:
+    """The deployed ./jobs, a group-1001 setgid tree only root can chgrp."""
+    deploy_docker.containers.run(
+        image,
+        [
+            "sh",
+            "-c",
+            f"chown {os.getuid()}:{AGENT_GID} /jobs"
+            f" && chmod {JOB_DIR_MODE:o} /jobs"
+            f" && mkdir -p /jobs/.agent-home"
+            f" && chown {AGENT_UID}:{AGENT_GID} /jobs/.agent-home"
+            f" && chmod 700 /jobs/.agent-home",
+        ],
+        user="root",
+        entrypoint=[],
+        volumes={str(jobs): {"bind": "/jobs", "mode": "rw"}},
+        network_mode="none",
+        remove=True,
+    )
+    return jobs
+
+
+@pytest.mark.integration
+class TestNonRootWebRunHome:
+    """The deployed web is uid 1002 in the jobs group and cannot chown, so its
+    run homes take the agent's access from the group."""
+
+    @pytest.fixture()
+    def jobs(self, deploy_test_image, deploy_docker, tmp_path_factory) -> Path:
+        jobs = tmp_path_factory.mktemp("deploy-jobs")
+        return _group_jobs_root(jobs, deploy_docker, deploy_test_image)
+
+    def test_agent_writes_a_web_created_run_home(
+        self, deploy_test_image, deploy_docker, jobs: Path
+    ) -> None:
+        """The E2E failure in one place. The web creates the homes as 1002, the
+        agent writes into them as 1001 of the jobs group, and outsiders read
+        nothing."""
+        role_omp = "agent_" + "1" * 32
+        role_codex = "agent_" + "2" * 32
+        snippet = (
+            "import os\n"
+            "from pathlib import Path\n"
+            "from openscientist.job_container.run_home import create_run_home\n"
+            "roles = [os.environ['ROLE_OMP'], os.environ['ROLE_CODEX']]\n"
+            "for role in roles:\n"
+            "    home = create_run_home(Path('/jobs'), role)\n"
+            "    st = home.stat()\n"
+            "    print('home', role, format(st.st_mode & 0o777, 'o'), st.st_uid, st.st_gid)\n"
+        )
+        output = _run_deploy_snippet(
+            deploy_docker,
+            deploy_test_image,
+            jobs,
+            user="1002:1001",
+            snippet=snippet,
+            environment={"ROLE_OMP": role_omp, "ROLE_CODEX": role_codex},
+        )
+        # The non-root web keeps ownership, so the homes hand the agent their
+        # access through the jobs group at 0770, owner-only 0700 being the
+        # root-web mode.
+        assert f"home {role_omp} 770 1002 1001" in output, output
+        assert f"home {role_codex} 770 1002 1001" in output, output
+
+        command = (
+            f"echo omp-secret > /jobs/.run-homes/{role_omp}/models.yml"
+            f" && mkdir -p /jobs/.run-homes/{role_codex}/.config"
+            f" && echo codex-secret > /jobs/.run-homes/{role_codex}/.config/auth.json"
+            f" && echo AGENT_OK"
+        )
+        output = deploy_docker.containers.run(
+            deploy_test_image,
+            ["sh", "-c", command],
+            user=f"{AGENT_UID}:{AGENT_GID}",
+            entrypoint=[],
+            volumes=_deploy_volumes(jobs),
+            network_mode="none",
+            remove=True,
+        ).decode("utf-8")
+        assert "AGENT_OK" in output, output
+        omp_file = jobs / ".run-homes" / role_omp / "models.yml"
+        assert omp_file.read_text(encoding="utf-8").strip() == "omp-secret"
+        assert omp_file.stat().st_gid == AGENT_GID
+
+        container = deploy_docker.containers.run(
+            deploy_test_image,
+            [
+                "sh",
+                "-c",
+                f"cat /jobs/.run-homes/{role_omp}/models.yml"
+                f" && cat /jobs/.run-homes/{role_codex}/.config/auth.json",
+            ],
+            user="424242:424242",
+            entrypoint=[],
+            volumes=_deploy_volumes(jobs),
+            network_mode="none",
+            detach=True,
+        )
+        exit_code = int(container.wait(timeout=30)["StatusCode"])
+        logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+        container.remove(force=True)
+        assert exit_code != 0
+        assert "omp-secret" not in logs
+        assert "codex-secret" not in logs
