@@ -716,7 +716,8 @@ def _run_deploy_snippet(
         network_mode="none",
         remove=True,
     )
-    return output.decode("utf-8")
+    payload: str = output.decode("utf-8")
+    return payload
 
 
 def _group_jobs_root(jobs: Path, deploy_docker, image: str) -> Path:
@@ -832,7 +833,7 @@ class TestNonRootWebGit:
 
     @pytest.fixture()
     def job_dir(self, deploy_test_image, deploy_docker, tmp_path) -> Path:
-        jobs = tmp_path / "jobs"
+        jobs: Path = tmp_path / "jobs"
         jobs.mkdir()
         _group_jobs_root(jobs, deploy_docker, deploy_test_image)
         job_id = str(uuid4())
@@ -860,7 +861,7 @@ class TestNonRootWebGit:
         )
         assert "web setup ok" in output, output
         job = jobs / job_id
-        # The non-root web keeps the ownership the ownership guard then trips on.
+        # The non-root web keeps the ownership git's guard then trips on.
         assert (job / ".git").stat().st_uid == 1002
         assert (job / ".git").stat().st_gid == AGENT_GID
         return job
