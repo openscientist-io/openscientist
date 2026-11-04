@@ -77,9 +77,12 @@ Docker resolves every bind source on the host, so the launcher reads the jobs
 directory at its host path. `openscientist setup` and `openscientist start`
 record the checkout's absolute path in `.env` as
 `OPENSCIENTIST_HOST_PROJECT_DIR`, and compose mounts `<that path>/jobs` into the
-launcher at the same path and sets `JOBS_ROOT` to it. Compose refuses to start
-the launcher when that directory is missing on the host, and the launcher
-refuses to start when its `JOBS_ROOT` comes from another host path. Every
+launcher at the same path and sets `JOBS_ROOT` to it. Before compose starts the
+stack, `openscientist start` creates `jobs` and gives it to the jobs group
+(gid 1001) as a setgid 2770 directory, through a short root container. Compose
+refuses to start the launcher when that directory is missing on the host, and
+the launcher refuses to start when its `JOBS_ROOT` comes from another host
+path. Every
 container it creates binds its directories with bind mounts, which the daemon
 refuses for a source missing on the host.
 

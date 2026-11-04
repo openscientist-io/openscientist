@@ -212,11 +212,11 @@ def test_default_command_runs_wizard_then_starts(checkout: Path, monkeypatch):
     result = runner.invoke(cli_app.app, [], input=ANTHROPIC_SETUP_ANSWERS)
     assert result.exit_code == 0
     # The checkout starts unconfigured, so the env file's values prove the
-    # wizard ran first. The four builds plus the compose up prove the start
-    # then ran.
+    # wizard ran first. The four builds, the jobs directory one-shot and the
+    # compose up prove the start then ran.
     assert (checkout / ".env").is_file()
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
-    assert len(calls) == 5
+    assert len(calls) == 6
     assert calls[-1][0][-1] == "openscientist"
 
 

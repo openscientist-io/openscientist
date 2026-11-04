@@ -68,7 +68,7 @@ def build_images(run: CommandRunner, root: Path) -> int:
     """The four image builds, the tags from .env with their :latest fallbacks and the
     default platform on every build; 0 on success."""
     values = envfiles.file_values(root, "env")
-    base_image = values.get("OPENSCIENTIST_BASE_IMAGE") or "openscientist-base:latest"
+    base_image = _base_image(values)
     executor_image = values.get("OPENSCIENTIST_EXECUTOR_IMAGE") or "openscientist-executor:latest"
     agent_image = values.get("OPENSCIENTIST_AGENT_IMAGE") or "openscientist-agent:latest"
     platform_env = {"DOCKER_DEFAULT_PLATFORM": BUILD_PLATFORM}
@@ -106,14 +106,54 @@ def build_images(run: CommandRunner, root: Path) -> int:
     return 0
 
 
+def _base_image(values: Mapping[str, str]) -> str:
+    return values.get("OPENSCIENTIST_BASE_IMAGE") or "openscientist-base:latest"
+
+
+#: The jobs group every image shares (gid 1001), and the setgid mode of the tree it owns.
+JOBS_GROUP = 1001
+JOBS_DIR_MODE = "2770"
+
+
+def prepare_jobs_dir(root: Path, run: CommandRunner, image: str) -> int:
+    """Create ``<root>/jobs`` and give it to the jobs group as a setgid tree.
+
+    Compose refuses the launcher's jobs mount for a missing directory, and the
+    non-root web creates job directories in it through the group. A root
+    one-shot in ``image`` sets the group, so this works for an operator outside
+    the jobs group and on a tree an older root web created."""
+    jobs = root.resolve() / "jobs"
+    jobs.mkdir(exist_ok=True)
+    return run(
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            "root",
+            "-v",
+            f"{jobs}:/jobs",
+            image,
+            "sh",
+            "-c",
+            f"chgrp {JOBS_GROUP} /jobs && chmod {JOBS_DIR_MODE} /jobs",
+        ),
+        None,
+    )
+
+
 def start(
     root: Path, run: CommandRunner = run_command, health_timeout: float = HEALTH_TIMEOUT
 ) -> int:
-    """Record the checkout path, build the four images, start the stack, wait for
-    /health, print the base URL."""
+    """Record the checkout path, build the four images, prepare the jobs
+    directory, start the stack, wait for /health, print the base URL."""
     envfiles.record_host_project_dir(root)
     code = build_images(run, root)
     if code:
+        return code
+    code = prepare_jobs_dir(root, run, _base_image(envfiles.file_values(root, "env")))
+    if code:
+        console.print(f"[red]Preparing the jobs directory failed (exit {code}).[/red]")
         return code
     code = run(
         ("docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "--remove-orphans", WEB_SERVICE), None
