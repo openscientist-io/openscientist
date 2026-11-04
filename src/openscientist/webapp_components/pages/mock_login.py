@@ -6,6 +6,37 @@ from nicegui import ui
 
 from openscientist.settings import get_settings
 
+_FORM_FIELD_STYLE = (
+    "width: 100%; padding: 8px; margin-top: 4px; "
+    "border: 1px solid #a5f3fc; border-radius: 8px; box-sizing: border-box;"
+)
+
+
+def _login_form_html(email: str, name: str, username: str) -> str:
+    """A plain HTML form the browser posts to the mock callback itself, so
+    the session cookie lands in the visitor's jar."""
+    return f"""
+        <form method="post" action="/auth/mock/callback" style="display: grid; gap: 12px;">
+            <label>
+                Email
+                <input type="text" name="email" value="{email}" required style="{_FORM_FIELD_STYLE}">
+            </label>
+            <label>
+                Name
+                <input type="text" name="name" value="{name}" required style="{_FORM_FIELD_STYLE}">
+            </label>
+            <label>
+                Username
+                <input type="text" name="username" value="{username}" required style="{_FORM_FIELD_STYLE}">
+            </label>
+            <button type="submit"
+                    style="padding: 8px 16px; background: #0891b2; color: white;
+                           border: none; border-radius: 8px; cursor: pointer;">
+                Sign In
+            </button>
+        </form>
+    """
+
 
 @ui.page("/mock-login-form")
 def mock_login_form() -> None:
@@ -32,54 +63,14 @@ def mock_login_form() -> None:
 
         # Create form with random defaults
         with ui.card().classes("w-96 p-4"):
-            email_input = ui.input(
-                "Email", placeholder="dev@example.com", value=default_email
-            ).classes("w-full")
-
-            name_input = ui.input("Name", placeholder="Dev User", value=default_name).classes(
-                "w-full mt-2"
+            ui.html(
+                _login_form_html(default_email, default_name, default_username),
+                sanitize=False,
             )
-
-            username_input = ui.input(
-                "Username", placeholder="devuser", value=default_username
-            ).classes("w-full mt-2")
 
             ui.markdown(
                 "**Note:** This creates a test user without real authentication. "
                 "Never enable this in production!"
             ).classes("text-xs text-orange-600 mt-4")
 
-            async def submit_mock_login() -> None:
-                """Submit mock login form."""
-                # Create form data
-                import httpx
-
-                form_data = {
-                    "email": email_input.value,
-                    "name": name_input.value,
-                    "username": username_input.value,
-                }
-
-                # Submit to mock callback endpoint
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        f"{settings.auth.app_url}/auth/mock/callback",
-                        data=form_data,
-                        follow_redirects=False,
-                    )
-
-                    if response.status_code in (303, 302):
-                        # Get the session cookie from response
-                        if "set-cookie" in response.headers:
-                            # Navigate to home page
-                            ui.navigate.to("/")
-                        else:
-                            ui.notify("Login failed - no session cookie", color="negative")
-                    else:
-                        ui.notify("Login failed", color="negative")
-
-            # Buttons
-            with ui.row().classes("w-full justify-between mt-4"):
-                ui.button("Cancel", on_click=lambda: ui.navigate.to("/login")).props("flat")
-
-                ui.button("Sign In", on_click=submit_mock_login).props("color=primary")
+            ui.button("Cancel", on_click=lambda: ui.navigate.to("/login")).props("flat w-full")
