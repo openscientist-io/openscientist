@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import tarfile
 import time
 from collections.abc import Iterator
@@ -24,7 +25,13 @@ import pytest
 from docker.models.containers import Container
 
 import docker
-from tests.launcher import EXECUTOR_IMAGE, LAUNCHER_INSTANCE_ID, Launcher, image_digest
+from tests.launcher import (
+    EXECUTOR_IMAGE,
+    LAUNCHER_INSTANCE_ID,
+    VENV_PYTHON,
+    Launcher,
+    image_digest,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEST_IMAGE = "openscientist-launcher-test:latest"
@@ -512,6 +519,30 @@ class TestPeerCred:
                     client.get("/v1/health")
         finally:
             launcher.close()
+
+
+class TestHealthCheck:
+    @staticmethod
+    def _health(launcher: Launcher) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(VENV_PYTHON), "-m", "openscientist_launcher.health"],
+            cwd=REPO_ROOT,
+            env=launcher.env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_passes_when_the_web_reaches_the_socket(self, launcher: Launcher) -> None:
+        result = self._health(launcher)
+        assert result.returncode == 0, result.stderr
+
+    def test_fails_when_the_web_cannot_open_the_socket(self, launcher: Launcher) -> None:
+        """A socket file the web's uid may not open fails the check, though the file exists."""
+        launcher.socket_path.chmod(0)
+        result = self._health(launcher)
+        assert result.returncode == 1
+        assert "cannot use the socket" in result.stderr
 
 
 class TestExecutor:

@@ -73,9 +73,12 @@ Every container it creates carries the marker label
 `openscientist.launcher=<LAUNCHER_INSTANCE_ID>`, and every container-scoped
 operation answers 404 for anything that does not carry it.
 
-Its health check (`python -m openscientist_launcher.health`) verifies the
-socket file, the Docker daemon and both template images; the web service
-waits for it to be healthy before starting. The web speaks to the launcher
+The launcher binds its socket owner-only and then gives the file to the web's
+uid and gid with mode 0660. Its health check
+(`python -m openscientist_launcher.health`) calls the launcher's API through
+the socket from a process holding the web's uid and gid, then checks the
+Docker daemon and both template images. The web service waits for it to be
+healthy before starting. The web speaks to the launcher
 through the socket volume mounted at `/run/launcher` (override the path with
 `OPENSCIENTIST_LAUNCHER_SOCKET_PATH`): every container operation the web makes
 goes through the launcher's API — agent launches, chat turns, executor runs,
