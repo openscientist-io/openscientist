@@ -260,16 +260,46 @@ class TestAgentCreate:
         "overrides",
         [
             {"run_home": {"path": "/tmp/outside-jobs", "name": ".codex"}},
-            {"gcp_credentials": True},
             {"phenix": True},
         ],
-        ids=["run-home-outside", "gcp-creds-unconfigured", "phenix-unconfigured"],
+        ids=["run-home-outside", "phenix-unconfigured"],
     )
     def test_host_mounts_refused(self, launcher: Launcher, overrides: dict[str, object]) -> None:
         with launcher.client() as client:
             response = client.post("/v1/containers/agent", json=_agent_body(**overrides))
         assert response.status_code == 400, response.text
         assert response.json()["error"].startswith("bad_request")
+
+    def test_gcp_credentials_never_mounted_into_an_agent(
+        self,
+        docker_client: docker.DockerClient,
+        test_agent_image: str,
+        jobs_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        """An operator's GCP service account never enters an agent container."""
+        creds = tmp_path / "service-account.json"
+        creds.write_text("{}", encoding="utf-8")
+        started = Launcher.start(
+            jobs_root,
+            jobs_root,
+            AGENT_IMAGE=TEST_IMAGE,
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, test_agent_image),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
+            GCP_CREDENTIALS_HOST_PATH=str(creds),
+        )
+        try:
+            with started.client() as client:
+                response = client.post(
+                    "/v1/containers/agent", json=_agent_body(gcp_credentials=True)
+                )
+        finally:
+            started.close()
+        assert response.status_code == 400, response.text
+        assert response.json()["error"].startswith("bad_request")
+        assert not docker_client.containers.list(
+            all=True, filters={"name": f"openscientist-agent-{JOB_ID[:12]}"}
+        )
 
     @pytest.mark.parametrize("entry", ["db :5432", "db\n:5432", "nft add table x", "db:5432:extra"])
     def test_bad_egress_entry_refused(self, launcher: Launcher, entry: str) -> None:

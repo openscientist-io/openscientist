@@ -101,7 +101,6 @@ class AgentLaunch:
     env: dict[str, str]
     db_login: str | None
     run_home: tuple[Path, str] | None
-    gcp_credentials: bool
     phenix: bool
     memory_mib: int
     cpu: float
@@ -251,7 +250,6 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
             "env",
             "db_login",
             "run_home",
-            "gcp_credentials",
             "phenix",
             "memory_mib",
             "cpu",
@@ -292,9 +290,6 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
     if db_login is not None and not LOGIN_ROLE.match(db_login):
         raise ValidationError("db_login is not a database login role")
 
-    gcp_credentials = _as_bool(body, "gcp_credentials")
-    if gcp_credentials and not cfg.gcp_credentials_host_path:
-        raise ValidationError("gcp_credentials is not configured on the launcher")
     phenix = _as_bool(body, "phenix")
     if phenix and not cfg.phenix_host_path:
         raise ValidationError("phenix is not configured on the launcher")
@@ -326,7 +321,6 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
         env=env,
         db_login=db_login,
         run_home=_run_home(body, cfg),
-        gcp_credentials=gcp_credentials,
         phenix=phenix,
         memory_mib=memory_mib,
         cpu=cpu,

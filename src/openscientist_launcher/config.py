@@ -65,7 +65,6 @@ class LauncherConfig:
     socket_path: Path
     network: str | None
     agent_platform: str | None
-    gcp_credentials_host_path: str | None
     phenix_host_path: str | None
     agent_max_memory_mib: int
     agent_max_cpu: float
@@ -105,7 +104,6 @@ class LauncherConfig:
             socket_path=Path(env.get("LAUNCHER_SOCKET_PATH", "/run/launcher/launcher.sock")),
             network=env.get("LAUNCHER_NETWORK") or None,
             agent_platform=env.get("LAUNCHER_AGENT_PLATFORM") or None,
-            gcp_credentials_host_path=env.get("GCP_CREDENTIALS_HOST_PATH") or None,
             phenix_host_path=env.get("PHENIX_HOST_PATH") or None,
             agent_max_memory_mib=agent_max_memory_mib,
             agent_max_cpu=agent_max_cpu,
