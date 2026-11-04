@@ -18,6 +18,7 @@ from openscientist.webapp_components.components.badges import (
     transform_pmid_references,
 )
 from openscientist.webapp_components.components.common import (
+    OPENSCIENTIST_DOCS_URL,
     OPENSCIENTIST_GITHUB_URL,
     OPENSCIENTIST_PAPER_URL,
     OPENSCIENTIST_RELEASE_URL,
@@ -29,6 +30,10 @@ from openscientist.webapp_components.components.common import (
 from openscientist.webapp_components.components.job_table import (
     render_job_id_slot,
     render_status_cell_slot,
+)
+from openscientist.webapp_components.components.navigation import (
+    _build_navigation_items,
+    navigate_to_route,
 )
 
 
@@ -45,14 +50,36 @@ class TestStatusConstants:
 class TestProjectResourceLinks:
     """Tests for shared public resource links."""
 
-    def test_links_expose_repo_paper_and_release(self):
+    def test_links_expose_repo_docs_paper_and_release(self):
         """Resource strip should expose only links reachable without auth."""
         assert OPENSCIENTIST_PAPER_URL is not None
         assert get_project_resource_links() == [
             ("GitHub", OPENSCIENTIST_GITHUB_URL),
+            ("Docs", OPENSCIENTIST_DOCS_URL),
             ("Paper", OPENSCIENTIST_PAPER_URL),
             ("Latest Release", OPENSCIENTIST_RELEASE_URL),
         ]
+
+
+class TestNavigation:
+    """Tests for the top navigation entries and route handling."""
+
+    def test_docs_entry_points_at_docs_site(self):
+        """The Docs nav item targets the external documentation site."""
+        items = _build_navigation_items(
+            active_page=None, show_new_job=False, can_start_jobs=False, show_admin=False
+        )
+        assert ("Docs", "description", OPENSCIENTIST_DOCS_URL, False) in items
+
+    def test_external_route_opens_in_new_tab(self):
+        """External URLs open in a new tab; in-app routes navigate in place."""
+        target = "openscientist.webapp_components.components.navigation.ui.navigate.to"
+        with patch(target) as to:
+            navigate_to_route(OPENSCIENTIST_DOCS_URL)
+            to.assert_called_once_with(OPENSCIENTIST_DOCS_URL, new_tab=True)
+        with patch(target) as to:
+            navigate_to_route("/skills")
+            to.assert_called_once_with("/skills", new_tab=False)
 
 
 class TestRenderStatusCellSlot:
