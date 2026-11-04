@@ -18,11 +18,14 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 import docker
 from openscientist.database.models import Job as JobModel
+from openscientist.job_container.db_login import AGENT_LOGIN_LABEL
+from openscientist.job_container.launcher_client import LauncherDockerError
+from openscientist.job_container.run_home import RUN_HOME_LABEL
 from openscientist.job_container.runner import JobContainerRunner
 from openscientist.job_manager import JobStatus
 from openscientist.settings import clear_settings_cache
@@ -117,6 +120,33 @@ class TestAgentPathThroughLauncher:
             yield JobContainerRunner()
         finally:
             clear_settings_cache()
+
+    @pytest.fixture
+    def omp_runner(
+        self, launcher: Launcher, monkeypatch: pytest.MonkeyPatch
+    ) -> Generator[JobContainerRunner, None, None]:
+        # The omp harness gives the run a home, so a relaunch must give the
+        # stale home back too. The key is never used: the fake agent exits
+        # before any model call.
+        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "anthropic")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-e2e")
+        monkeypatch.setenv("OPENSCIENTIST_HARNESS", "omp")
+        monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
+        monkeypatch.setenv("OPENSCIENTIST_HOST_PROJECT_DIR", "")
+        clear_settings_cache()
+        try:
+            yield JobContainerRunner()
+        finally:
+            clear_settings_cache()
+
+    async def _login_exists(self, test_engine: AsyncEngine, role: str) -> bool:
+        async with test_engine.connect() as conn:
+            value = (
+                await conn.execute(
+                    text("SELECT 1 FROM pg_roles WHERE rolname = :role"), {"role": role}
+                )
+            ).scalar_one_or_none()
+        return value is not None
 
     @pytest_asyncio.fixture
     async def job(self, test_engine: AsyncEngine, jobs_root: Path) -> AsyncGenerator[str, None]:
@@ -268,5 +298,80 @@ class TestAgentPathThroughLauncher:
                 return not listed
 
             await _wait_for("the chat container to be removed", removed, 30)
+        finally:
+            docker_client.close()
+
+    @pytest.mark.asyncio
+    async def test_a_relaunch_removes_the_stale_exited_agent_container(
+        self,
+        test_engine: AsyncEngine,
+        launcher: Launcher,
+        omp_runner: JobContainerRunner,
+        jobs_root: Path,
+        job: str,
+    ) -> None:
+        """A relaunch of a job whose agent container exited with its teardown
+        missed removes the stale container and gives back its login and run
+        home, instead of failing on the daemon's name conflict."""
+        docker_client = docker.from_env()
+        try:
+            first = await asyncio.to_thread(omp_runner.launch, job, jobs_root / job)
+            first_id = first["id"]
+            first_entry = await asyncio.to_thread(omp_runner._find_container, job)
+            assert first_entry is not None
+            first_login = first_entry["labels"][AGENT_LOGIN_LABEL]
+            first_home = Path(first_entry["labels"][RUN_HOME_LABEL])
+
+            async def exited() -> bool:
+                return await asyncio.to_thread(omp_runner.get_exit_code, job) is not None
+
+            await _wait_for("the first agent container to exit", exited, 60)
+
+            second = await asyncio.to_thread(omp_runner.launch, job, jobs_root / job)
+            assert second["id"] != first_id
+            assert second["name"] == f"openscientist-agent-{job[:12]}"
+
+            async def stale_gone() -> bool:
+                listed = await asyncio.to_thread(
+                    lambda: docker_client.containers.list(
+                        all=True, filters={"label": f"openscientist.job_id={job}"}
+                    )
+                )
+                return [container.id for container in listed] == [second["id"]]
+
+            await _wait_for("the stale container to be removed", stale_gone, 30)
+            assert not first_home.exists()
+            assert not await self._login_exists(test_engine, first_login)
+        finally:
+            await asyncio.to_thread(omp_runner.cleanup, job)
+            docker_client.close()
+
+    @pytest.mark.asyncio
+    async def test_a_relaunch_leaves_a_running_agent_alone(
+        self,
+        test_engine: AsyncEngine,
+        launcher: Launcher,
+        omp_runner: JobContainerRunner,
+        jobs_root: Path,
+        job: str,
+    ) -> None:
+        """A relaunch that finds the agent still running surfaces the daemon's
+        name conflict and leaves the container and its login in place."""
+        docker_client = docker.from_env()
+        try:
+            first = await asyncio.to_thread(omp_runner.launch, job, jobs_root / job)
+            first_entry = await asyncio.to_thread(omp_runner._find_container, job)
+            assert first_entry is not None
+            assert first_entry["id"] == first["id"]
+            try:
+                with pytest.raises(LauncherDockerError):
+                    await asyncio.to_thread(omp_runner.launch, job, jobs_root / job)
+                entry = await asyncio.to_thread(omp_runner._find_container, job)
+                assert entry is not None
+                assert entry["id"] == first["id"]
+                assert entry["status"] in ("created", "running")
+                assert await self._login_exists(test_engine, entry["labels"][AGENT_LOGIN_LABEL])
+            finally:
+                await asyncio.to_thread(omp_runner.cleanup, job)
         finally:
             docker_client.close()

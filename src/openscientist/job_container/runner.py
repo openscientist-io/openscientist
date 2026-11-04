@@ -320,6 +320,7 @@ class JobContainerRunner:
             labels[RUN_HOME_LABEL] = str(host_home)
             request["run_home"] = {"path": str(host_home), "name": name_in_job}
         try:
+            self._remove_stale_agent(job_id, cs)
             return self.client.create_agent(request), labels
         except LauncherImageMissingError as error:
             raise MissingImageError(cs.agent_image) from error
@@ -381,6 +382,29 @@ class JobContainerRunner:
         role = labels.get(AGENT_LOGIN_LABEL)
         if role:
             close_agent_login(role)
+
+    def _remove_stale_agent(self, job_id: str, cs: HostPathSettings) -> None:
+        """Remove the exited agent container a missed teardown left holding the
+        job's deterministic name, before the relaunch's container takes it.
+
+        The daemon answers a conflict to the relaunch while the name is in use.
+        The login and run home named in the container's labels are given back
+        with it. A running container is left alone, and the launcher lists only
+        the containers of its own instance."""
+        entry = self._find_container(job_id)
+        if entry is None or entry["status"] not in ("exited", "dead"):
+            return
+        try:
+            self.client.remove(entry["id"])
+        except LauncherNotFoundError:
+            return
+        except LauncherError as error:
+            logger.warning(
+                "Failed to remove the stale agent container of job %s: %s", job_id, error
+            )
+            return
+        logger.info("Removed the stale agent container of job %s", job_id)
+        self._end_run_of(entry["labels"], cs)
 
     def stop(self, job_id: str, timeout: int = _STOP_GRACE_SECONDS) -> None:
         """Stop the container for a job (graceful, then a kill)."""
