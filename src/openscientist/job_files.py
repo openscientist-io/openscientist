@@ -27,6 +27,8 @@ import anyio
 from starlette.responses import Response, StreamingResponse
 from starlette.types import Receive, Scope, Send
 
+from openscientist.job_container.identity import JOB_FILE_MODE
+
 _CHUNK_BYTES = 64 * 1024
 _WRITE_ATTEMPTS = 8
 
@@ -238,7 +240,8 @@ def _staged_write(job_dir: Path, parts: tuple[str, ...], payload: bytes, label: 
     """Stage a file in the walked parent directory and rename it over the
     leaf. Both operations address the pinned parent fd, so no path component
     of the destination is ever resolved and a symlinked parent cannot
-    redirect the write."""
+    redirect the write. The staged file is chmodded before the rename, so
+    the umask never leaves a job file unreadable to the agent's group."""
     parent_fd, _ = _open_walk(job_dir, parts[:-1], leaf_is_dir=True)
     try:
         for _ in range(_WRITE_ATTEMPTS):
@@ -247,6 +250,7 @@ def _staged_write(job_dir: Path, parts: tuple[str, ...], payload: bytes, label: 
                 _create_and_write_fd(parent_fd, staged, payload)
             except OSError as exc:
                 raise JobFileError(f"cannot stage write for {label}: {exc}") from exc
+            os.chmod(staged, JOB_FILE_MODE, dir_fd=parent_fd)
             try:
                 os.replace(staged, parts[-1], src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
                 return
