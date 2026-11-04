@@ -5,6 +5,8 @@ the provider's, and the vault is a real SQLite database in a temp dir."""
 from __future__ import annotations
 
 import json
+import logging
+import os
 import socket
 import threading
 from datetime import UTC, datetime, timedelta
@@ -15,6 +17,7 @@ from typing import cast
 
 import pytest
 
+from openscientist.providers.base import UpstreamCredentialError
 from openscientist.providers.vault import (
     OmpVault,
     VaultCredentialError,
@@ -468,6 +471,70 @@ class TestLease:
         assert vault.lease_holder(credential_id) == "openscientist-web"
         vault.release_lease(credential_id)
         assert vault.lease_holder(credential_id) is None
+
+
+class TestUnwritableVault:
+    """The vault's ``agent.db`` is not writable by the web (the host dir is not
+    group-owned by the web's gid). The web signs with the stale token until a
+    refresh is due, and the storage failure must surface as the credential
+    error the proxy refuses cleanly, never as an unhandled 500."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses read-only file permissions")
+    def test_a_refresh_on_an_unwritable_vault_raises_the_credential_error(
+        self, tmp_path: Path
+    ) -> None:
+        make_vault(tmp_path, {"anthropic": _anthropic_credential()})
+        (tmp_path / "agent.db").chmod(0o444)
+        signing = vault_signing_for(tmp_path, "anthropic")
+        with pytest.raises(VaultCredentialError, match="not usable by the web"):
+            signing.credential_headers(method="POST", path="/v1/messages", query="", body=b"{}")
+        # The error type the LLM proxy already turns into a clean refusal.
+        with pytest.raises(UpstreamCredentialError):
+            signing.credential_headers(method="POST", path="/v1/messages", query="", body=b"{}")
+
+    @pytest.mark.parametrize("provider_id", ["openai", "anthropic"])
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses read-only file permissions")
+    def test_an_unwritable_vault_is_reported_when_the_provider_is_built(
+        self,
+        provider_id: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        make_vault(vault_dir, {})
+        for key in (
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CODEX_AUTH_HOST_PATH",
+            "AGENT",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
+        monkeypatch.setenv("OMP_AUTH_HOST_PATH", str(vault_dir))
+        from openscientist.providers import provider_class
+        from openscientist.settings import clear_settings_cache
+
+        clear_settings_cache()
+        try:
+            vault_dir.chmod(0o500)
+            with caplog.at_level(logging.WARNING):
+                provider_class(provider_id)()
+            assert "the omp vault dir" in caplog.text
+            assert "not writable by the web" in caplog.text
+            caplog.clear()
+            vault_dir.chmod(0o755)
+            (vault_dir / "agent.db").chmod(0o444)
+            with caplog.at_level(logging.WARNING):
+                provider_class(provider_id)()
+            assert "agent.db" in caplog.text
+            assert "not writable by the web" in caplog.text
+        finally:
+            vault_dir.chmod(0o755)
+            (vault_dir / "agent.db").chmod(0o644)
+            clear_settings_cache()
 
 
 class TestUpstream:

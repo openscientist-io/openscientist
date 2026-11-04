@@ -45,7 +45,7 @@ from openscientist.providers.chatgpt import (
     ChatgptTokens,
     refresh_chatgpt_tokens,
 )
-from openscientist.providers.vault import vault_llm_upstream
+from openscientist.providers.vault import vault_llm_upstream, vault_writability_warnings
 from openscientist.settings import ProviderSettings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -310,6 +310,14 @@ class OpenAIDirectProvider(CodexCompatible):
 
     def validate_required_config(self) -> list[str]:
         return self.required_config_errors(get_settings().provider)
+
+    def _validate_optional_config(self) -> list[str]:
+        warnings = super()._validate_optional_config()
+        p = get_settings().provider
+        # The vault signs the LLM only when it is the active auth source.
+        if p.omp_auth_host_path and not p.openai_api_key and not p.codex_auth_host_path:
+            warnings.extend(vault_writability_warnings(Path(p.omp_auth_host_path).expanduser()))
+        return warnings
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:

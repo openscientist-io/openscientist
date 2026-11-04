@@ -12,16 +12,23 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import requests
 
-from openscientist.providers.base import LlmUpstream, UpstreamSigning
+from openscientist.providers.base import (
+    LlmUpstream,
+    UpstreamCredentialError,
+    UpstreamSigning,
+)
 from openscientist.providers.chatgpt import (
     CLIENT_ID as _CODEX_CLIENT_ID,
 )
@@ -63,7 +70,7 @@ _ANTHROPIC_BETA_HEADER = "anthropic-beta"
 _ANTHROPIC_BETA_VALUE = "oauth-2025-04-20"
 
 
-class VaultCredentialError(RuntimeError):
+class VaultCredentialError(UpstreamCredentialError):
     """The web-held vault credential is missing or unusable; the proxy refuses
     the forwarded request with it."""
 
@@ -93,22 +100,33 @@ class OmpVault:
         self._db = vault_dir / "agent.db"
         self._lock = threading.Lock()
 
-    def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db)
+    @contextmanager
+    def _session(self) -> Iterator[sqlite3.Connection]:
+        """One vault connection, closed on exit. An OperationalError is a
+        vault the web cannot use (typically not writable), reported as a
+        credential error the proxy refuses cleanly instead of a 500."""
+        con = sqlite3.connect(self._db)
+        try:
+            yield con
+        except sqlite3.OperationalError as exc:
+            raise VaultCredentialError(
+                f"the omp vault at {self._db.parent} is not usable by the web "
+                f"(uid {os.getuid()}, gid {os.getgid()}). sqlite said {exc}. Make the "
+                "vault dir and agent.db writable by the web's uid or the jobs group."
+            ) from exc
+        finally:
+            con.close()
 
     def credential(self, provider: str) -> VaultCredential | None:
         """The newest oauth credential for ``provider``, or None."""
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 row = con.execute(
                     "SELECT id, provider, data, updated_at FROM auth_credentials "
                     "WHERE provider = ? AND credential_type = 'oauth' "
                     "ORDER BY updated_at DESC, id DESC LIMIT 1",
                     (provider,),
                 ).fetchone()
-            finally:
-                con.close()
         if row is None:
             return None
         credential_id, provider, data_text, updated_at = row
@@ -128,23 +146,19 @@ class OmpVault:
         The row's UPDATE bumps ``auth_change_revision``, which host omp watches."""
         now_s = int(time.time())
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 con.execute(
                     "UPDATE auth_credentials SET data = ?, updated_at = ? WHERE id = ?",
                     (json.dumps(data), now_s, credential_id),
                 )
                 con.commit()
-            finally:
-                con.close()
 
     def claim_lease(self, credential_id: int) -> bool:
         """Claim the refresh lease. False when another owner holds an unexpired
         lease, so the web and a running host omp never refresh at once."""
         now_ms = _now_ms()
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 con.execute(
                     "INSERT INTO auth_credential_refresh_leases "
                     "(credential_id, owner, expires_at_ms, updated_at) "
@@ -164,46 +178,37 @@ class OmpVault:
                     ),
                 )
                 con.commit()
-            finally:
-                con.close()
         return self.lease_holder(credential_id) == _LEASE_OWNER
 
     def lease_holder(self, credential_id: int) -> str | None:
         """The owner of an unexpired refresh lease, or None."""
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 row = con.execute(
                     "SELECT owner, expires_at_ms FROM auth_credential_refresh_leases "
                     "WHERE credential_id = ?",
                     (credential_id,),
                 ).fetchone()
-            finally:
-                con.close()
         if row is None or row[1] < _now_ms():
             return None
         return str(row[0])
 
     def release_lease(self, credential_id: int) -> None:
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 con.execute(
                     "DELETE FROM auth_credential_refresh_leases "
                     "WHERE credential_id = ? AND owner = ?",
                     (credential_id, _LEASE_OWNER),
                 )
                 con.commit()
-            finally:
-                con.close()
 
     def block(self, credential_id: int, provider_key: str) -> None:
         """Block a credential whose refresh grant is rejected, so the broker
         stops hammering a dead login until the operator re-authenticates."""
         now_ms = _now_ms()
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 con.execute(
                     "INSERT INTO auth_credential_blocks "
                     "(credential_id, provider_key, block_scope, blocked_until_ms, updated_at) "
@@ -214,20 +219,15 @@ class OmpVault:
                     (credential_id, provider_key, now_ms + _BLOCK_TTL_MS, now_ms),
                 )
                 con.commit()
-            finally:
-                con.close()
 
     def is_blocked(self, credential_id: int) -> bool:
         with self._lock:
-            con = self._connect()
-            try:
+            with self._session() as con:
                 row = con.execute(
                     "SELECT 1 FROM auth_credential_blocks "
                     "WHERE credential_id = ? AND blocked_until_ms > ? LIMIT 1",
                     (credential_id, _now_ms()),
                 ).fetchone()
-            finally:
-                con.close()
         return row is not None
 
     def signing_for(
@@ -524,3 +524,31 @@ def vault_llm_upstream(vault_dir: str | Path, provider: str) -> LlmUpstream | No
     else:
         base_url = str(credential.data.get("apiEndpoint") or _COPILOT_DEFAULT_BASE_URL)
     return LlmUpstream(base_url, vault_signing_for(vault_dir, provider))
+
+
+def vault_writability_warnings(vault_dir: Path) -> list[str]:
+    """Warnings for a vault the web cannot refresh.
+
+    The web rewrites ``agent.db`` and its ``-wal``/``-shm`` sidecars on a
+    refresh, which needs the vault dir and the database writable by the web's
+    uid. Each warning names the host command that fixes its case.
+    """
+    if not vault_dir.is_dir():
+        return [
+            f"the omp vault at {vault_dir} does not exist. Point OMP_AUTH_DIR at the "
+            "omp agent dir of a host `omp login`"
+        ]
+    uid_gid = f"uid {os.getuid()}, gid {os.getgid()}"
+    warnings: list[str] = []
+    if not os.access(vault_dir, os.W_OK):
+        warnings.append(
+            f"the omp vault dir {vault_dir} is not writable by the web ({uid_gid}), so the "
+            f"token refresh cannot persist. chgrp 1001 {vault_dir} && chmod 2770 {vault_dir}"
+        )
+    db = vault_dir / "agent.db"
+    if db.exists() and not os.access(db, os.W_OK):
+        warnings.append(
+            f"the omp vault database {db} is not writable by the web ({uid_gid}), so the "
+            f"token refresh cannot persist. chgrp 1001 {db} && chmod 0660 {db}"
+        )
+    return warnings
