@@ -8,7 +8,7 @@ policy admits an ownerless job only through current_user_is_admin, which
 reads app.current_user_id like the other user-scoped policies.
 
 Revision ID: orphaned_jobs_admin_only
-Revises: narrow_database_grants
+Revises: slot_times_web_only
 Create Date: 2026-11-03 12:00:00
 """
 
@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "orphaned_jobs_admin_only"
-down_revision: str | None = "narrow_database_grants"
+down_revision: str | None = "slot_times_web_only"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
