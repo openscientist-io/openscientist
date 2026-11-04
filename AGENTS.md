@@ -187,5 +187,5 @@ When you need a new UI pattern used in multiple places:
 
 ## Related Documentation
 
-- `docs/DESIGN.md` - Architecture and design decisions
-- `docs/DEPLOYMENT.md` - Production deployment guide
+- [docs.openscientist.io](https://docs.openscientist.io) - Installation, deployment, air-gapped mode, REST API and architecture
+- `docs/SECURITY_REVIEW.md` - Security review, kept current with security changes

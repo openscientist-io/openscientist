@@ -216,7 +216,7 @@ def _configuration_steps(error_lower: str) -> list[str]:
         return [
             "Contact your system administrator to configure Google Cloud authentication",
             "Ensure GCP credentials file is mounted at /app/gcp-credentials.json",
-            "Check the DEPLOYMENT.md documentation for setup instructions",
+            "See https://docs.openscientist.io/getting-started/#option-4-google-vertex-ai for setup instructions",
         ]
     if ".env" in error_lower:
         return [
