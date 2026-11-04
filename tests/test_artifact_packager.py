@@ -80,6 +80,20 @@ class TestCreateArtifactsZipFile:
         assert not any(n == ".omp" or n.startswith(".omp/") for n in names)
         assert not any(n == ".omp-home" or n.startswith(".omp-home/") for n in names)
 
+    def test_chat_turn_files_never_reach_the_archive(self, tmp_path):
+        """A chat turn's request and response carry the owner's conversation, so
+        neither the archive nor the single-file route may ship them."""
+        (tmp_path / ".chat_request_ab12cd34.json").write_text('{"history": ["secret"]}')
+        (tmp_path / ".chat_response_ab12cd34.json").write_text('{"output": "secret"}')
+        (tmp_path / "report.md").write_text("# Report")
+
+        with _open_zip(tmp_path) as zf:
+            names = zf.namelist()
+        assert "report.md" in names
+        assert not any(n.startswith(".chat_") for n in names)
+        assert artifact_file(tmp_path, ".chat_request_ab12cd34.json") is None
+        assert artifact_file(tmp_path, ".chat_response_ab12cd34.json") is None
+
     def test_no_excluded_directory_ever_reaches_the_archive(self, tmp_path):
         """Guards the denylist itself: every entry must actually be pruned, so a
         future harness cannot add a directory here and leave it unenforced."""

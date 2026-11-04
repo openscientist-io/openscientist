@@ -254,26 +254,39 @@ async def test_admin_session_access(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_orphaned_jobs_visible(db_session: AsyncSession):
-    """Test that orphaned jobs (owner_id=NULL) are visible to all users."""
-    # Create orphaned job
-    orphaned = Job(owner_id=None, research_question="Orphaned Job")
+async def test_orphaned_jobs_visible_to_admins_only(db_session: AsyncSession):
+    """A job left ownerless when its user is deleted stays hidden from
+    signed-in users who are not admins."""
+    owner = User(email="orphan-owner@example.com", name="Orphan Owner")
+    admin = User(email="orphan-admin@example.com", name="Orphan Admin")
+    viewer = User(email="orphan-viewer@example.com", name="Orphan Viewer")
+    db_session.add_all([owner, admin, viewer])
+    await db_session.commit()
+    db_session.add(Administrator(user_id=admin.id))
+    orphaned = Job(owner_id=owner.id, research_question="Orphaned Job")
     db_session.add(orphaned)
     await db_session.commit()
 
-    user = User(email="viewer@example.com", name="Viewer")
-    db_session.add(user)
+    # The admin "delete user" action runs through the RLS-bypassing session and
+    # jobs.owner_id is ON DELETE SET NULL, so the job survives without an owner.
+    await db_session.delete(owner)
     await db_session.commit()
 
     # Enable RLS before setting user context (superuser bypasses RLS)
     await enable_rls(db_session)
 
-    # User should be able to see orphaned job
-    await set_current_user(db_session, user.id)
+    await set_current_user(db_session, viewer.id)
     result = await db_session.execute(select(Job))
-    jobs = result.scalars().all()
-    assert len(jobs) == 1
-    assert jobs[0].research_question == "Orphaned Job"
+    assert [job.research_question for job in result.scalars().all()] == []
+    result = await db_session.execute(select(Job).where(Job.id == orphaned.id))
+    assert result.scalar_one_or_none() is None
+
+    # The signed-in admin still sees the job, which the admin page then assigns.
+    await set_current_user(db_session, admin.id)
+    result = await db_session.execute(select(Job).where(Job.id == orphaned.id))
+    visible = result.scalar_one_or_none()
+    assert visible is not None
+    assert visible.owner_id is None
 
 
 @pytest.mark.asyncio
