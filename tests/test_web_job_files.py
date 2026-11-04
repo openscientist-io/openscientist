@@ -20,7 +20,6 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job
-from openscientist.auth.middleware import get_current_user_id
 from openscientist.database.models import Administrator, Job, JobShare, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
@@ -408,15 +407,21 @@ async def test_chat_turn_files_404_for_the_owner_and_the_recipient(
 
 
 @pytest_asyncio.fixture
-async def public_job(db_session: AsyncSession, test_user: User, tmp_path: Path) -> _SharedJob:
-    """A completed job of ``test_user`` made public, with a chat turn's exchange
-    and an uploaded input in its directory."""
+async def public_job(
+    db_session: AsyncSession, tmp_path: Path, test_engine: AsyncEngine
+) -> AsyncIterator[_SharedJob]:
+    """A completed public job of a committed owner, with a committed reader, a
+    chat turn's exchange and an uploaded input in its directory."""
+    owner = User(email=f"public-owner-{uuid4().hex}@files.test", name="Public Owner")
     reader = User(email=f"reader-{uuid4().hex}@files.test", name="Reader")
     job = Job(
-        owner_id=test_user.id, research_question="Open to all?", status="completed", is_public=True
+        owner_id=owner.id, research_question="Open to all?", status="completed", is_public=True
     )
-    db_session.add_all([reader, job])
-    await db_session.commit()
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        db.add_all([owner, reader])
+        await db.flush()
+        db.add(job)
+        await db.commit()
     await enable_rls(db_session)
 
     job_dir = tmp_path / str(job.id)
@@ -426,13 +431,24 @@ async def public_job(db_session: AsyncSession, test_user: User, tmp_path: Path) 
     (job_dir / "data" / "upload.csv").write_text("owner-input")
     (job_dir / ".chat_request_ab12cd34.json").write_text('{"history": ["owner secret"]}')
     (job_dir / ".chat_response_ab12cd34.json").write_text('{"output": "owner secret"}')
-    return _SharedJob(job.id, job_dir, test_user.id, test_user.id, reader.id)
+    yield _SharedJob(job.id, job_dir, owner.id, owner.id, reader.id)
+    # End the db_session's open transaction before deleting the committed rows:
+    # the foreign-key checks of the deletes would wait for it to finish, and it
+    # only finishes with the db_session fixture, which tears down after this one.
+    await db_session.rollback()
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id.in_([owner.id, reader.id])))
+        await db.commit()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("who", ["owner", "stranger"])
 async def test_the_public_zip_holds_no_chat_turn_files(
-    public_job: _SharedJob, db_session: AsyncSession, who: str
+    public_job: _SharedJob,
+    db_session: AsyncSession,
+    test_engine: AsyncEngine,
+    who: str,
 ) -> None:
     """The reader who sees the job only because it is public gets the plot but
     neither the chat turn's exchange nor the owner's uploads."""
@@ -441,17 +457,23 @@ async def test_the_public_zip_holds_no_chat_turn_files(
     class _Manager:
         jobs_dir = public_job.job_dir.parent
 
-    app = FastAPI()
-
     async def session_as_user() -> AsyncIterator[AsyncSession]:
         await set_current_user(db_session, user)
         yield db_session
 
+    async def token_for() -> str:
+        async with AsyncSession(test_engine, expire_on_commit=False) as db:
+            login = Session(user_id=user, expires_at=datetime.now(UTC) + timedelta(days=1))
+            db.add(login)
+            await db.commit()
+        return str(login.id)
+
+    app = FastAPI()
     app.dependency_overrides[get_session] = session_as_user
-    app.dependency_overrides[get_current_user_id] = lambda: user
     app.include_router(router)
     with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+            c.headers["cookie"] = f"session_token={await token_for()}"
             response = await c.get(f"/web/jobs/{public_job.job_id}/artifacts.zip")
     assert response.status_code == 200
     with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
@@ -463,34 +485,50 @@ async def test_the_public_zip_holds_no_chat_turn_files(
 
 
 @pytest_asyncio.fixture
-async def orphaned_job(db_session: AsyncSession, test_user2: User, tmp_path: Path) -> _SharedJob:
+async def orphaned_job(
+    db_session: AsyncSession, tmp_path: Path, test_engine: AsyncEngine
+) -> AsyncIterator[_SharedJob]:
     """A completed job whose owner an admin deleted, so only the user row is
-    gone; the job's files and a chat turn's exchange stay in its directory."""
+    gone; the job's files and a chat turn's exchange stay in its directory.
+    The boss and the stranger are committed, so the web's own login sees them."""
     owner = User(email=f"deleted-{uuid4().hex}@files.test", name="Deleted")
     boss = User(email=f"boss-{uuid4().hex}@files.test", name="Boss")
-    db_session.add_all([owner, boss])
-    await db_session.flush()
-    db_session.add(Administrator(user_id=boss.id))
+    stranger = User(email=f"orphan-stranger-{uuid4().hex}@files.test", name="Stranger")
     job = Job(owner_id=owner.id, research_question="Whose now?", status="completed")
-    db_session.add(job)
-    await db_session.commit()
-
-    # The admin "delete user" action runs through the RLS-bypassing session and
-    # jobs.owner_id is ON DELETE SET NULL, so the job survives without an owner.
-    await db_session.delete(owner)
-    await db_session.commit()
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        db.add_all([owner, boss, stranger])
+        await db.flush()
+        db.add(Administrator(user_id=boss.id))
+        db.add(job)
+        await db.commit()
+        # The admin "delete user" action runs through the RLS-bypassing session
+        # and jobs.owner_id is ON DELETE SET NULL, so the job survives without an
+        # owner.
+        await db.delete(owner)
+        await db.commit()
 
     job_dir = tmp_path / str(job.id)
     (job_dir / "provenance").mkdir(parents=True)
     (job_dir / "provenance" / "plot.png").write_bytes(_PLOT)
     (job_dir / ".chat_request_deadbeef.json").write_text('{"history": ["deleted owner secret"]}')
     (job_dir / ".chat_response_deadbeef.json").write_text('{"output": "deleted owner secret"}')
-    return _SharedJob(job.id, job_dir, owner.id, boss.id, test_user2.id)
+    yield _SharedJob(job.id, job_dir, owner.id, boss.id, stranger.id)
+    # End the db_session's open transaction before deleting the committed rows:
+    # the foreign-key checks of the deletes would wait for it to finish, and it
+    # only finishes with the db_session fixture, which tears down after this one.
+    await db_session.rollback()
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Administrator).where(Administrator.user_id == boss.id))
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id.in_([boss.id, stranger.id])))
+        await db.commit()
 
 
 @pytest_asyncio.fixture
 async def request_as_orphan(
-    db_session: AsyncSession, orphaned_job: _SharedJob
+    db_session: AsyncSession,
+    orphaned_job: _SharedJob,
+    test_engine: AsyncEngine,
 ) -> AsyncIterator[object]:
     """``request_as_orphan(user_id, path)`` as in ``request_as``, for the job
     whose owner is gone."""
@@ -498,6 +536,17 @@ async def request_as_orphan(
 
     class _Manager:
         jobs_dir = orphaned_job.job_dir.parent
+
+    tokens: dict[UUID, str] = {}
+
+    async def token_for(user_id: UUID) -> str:
+        if user_id not in tokens:
+            async with AsyncSession(test_engine, expire_on_commit=False) as db:
+                login = Session(user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1))
+                db.add(login)
+                await db.commit()
+            tokens[user_id] = str(login.id)
+        return tokens[user_id]
 
     async def get(user_id: UUID | None, path: str) -> object:
         app = FastAPI()
@@ -508,10 +557,12 @@ async def request_as_orphan(
             yield db_session
 
         app.dependency_overrides[get_session] = session_as_user
-        app.dependency_overrides[get_current_user_id] = lambda: user_id
         app.include_router(router)
+        headers = (
+            {"cookie": f"session_token={await token_for(user_id)}"} if user_id is not None else {}
+        )
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            return await c.get(path)
+            return await c.get(path, headers=headers)
 
     with patch("openscientist.web_app.get_job_manager", return_value=_Manager()):
         yield get
