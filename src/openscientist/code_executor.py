@@ -5,6 +5,7 @@ Code execution with sandboxing for OpenScientist.
 import ast
 import io
 import json
+import os
 import signal
 import time
 import traceback
@@ -288,7 +289,9 @@ def execute_code(
     """Execute Python code in a sandboxed environment.
 
     Runs inside the executor Docker container for isolation. plt.show() and
-    plt.savefig() are hooked so plots land in plots_dir with metadata JSON files.
+    plt.savefig() are hooked so plots land in plots_dir with metadata JSON
+    files. The code runs against plots_dir as its working directory, so
+    relative file writes land in the container's mounted output dir.
     """
     try:
         validate_imports(code, ALLOWED_IMPORTS)
@@ -312,9 +315,13 @@ def execute_code(
     )
 
     start_time = time.time()
+    # The container workdir is root-owned, so relative writes must land in
+    # the mounted output dir instead.
+    original_cwd = os.getcwd()
 
     try:
         _set_timeout_alarm(timeout)
+        os.chdir(plots_dir)
 
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             exec(code, namespace)
@@ -343,6 +350,7 @@ def execute_code(
             trace=traceback.format_exc(),
         )
     finally:
+        os.chdir(original_cwd)
         _clear_timeout_alarm()
         _restore_plot_hooks(original_show, original_savefig)
 
