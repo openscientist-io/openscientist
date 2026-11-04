@@ -1,7 +1,6 @@
 """The share dialog: exact-email lookup and sharing against the real database."""
 
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -9,9 +8,9 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from openscientist.auth import middleware
 from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.webapp_components.components import dialogs as dialog_module
-from openscientist.webapp_components.utils import permissions
 from tests.helpers import fake_admin_session
 
 
@@ -68,23 +67,14 @@ async def test_dialog_shares_with_the_looked_up_user(
 
     try:
         controller = _controller(job, owner, f" {target.email.upper()} ")
+        page_ui = MagicMock()
+        page_ui.context.client.request.cookies = {"session_token": str(login.id)}
 
         with (
             patch.object(dialog_module, "ui"),
             patch.object(dialog_module, "get_current_user_id", return_value=str(owner.id)),
             patch.object(dialog_module, "can_current_user_start_jobs", return_value=True),
-            patch.object(
-                permissions,
-                "app",
-                SimpleNamespace(
-                    storage=SimpleNamespace(
-                        user={
-                            "session_token": str(login.id),
-                            "user_id": str(owner.id),
-                        }
-                    )
-                ),
-            ),
+            patch.object(middleware, "ui", page_ui),
         ):
             await controller.add_user()
             assert controller.selected_user_state["email"] == target.email

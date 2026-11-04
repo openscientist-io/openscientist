@@ -11,9 +11,9 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from nicegui import app, ui
+from nicegui import ui
 
-from openscientist.auth.middleware import validate_session
+from openscientist.auth.middleware import get_session_token, validate_session
 from openscientist.job.repository import get_job, get_share_permission
 
 logger = logging.getLogger(__name__)
@@ -27,18 +27,10 @@ class JobAccess:
     can_edit: bool
 
 
-def _page_session_token() -> str | None:
-    """The session token the page validated at build time, or None outside a client."""
-    try:
-        return app.storage.user.get("session_token")
-    except (RuntimeError, AssertionError, AttributeError):
-        return None
-
-
 async def revalidate_admin_session() -> bool:
     """Whether the caller's session still exists and still belongs to an admin."""
-    token = _page_session_token()
-    if token is None:
+    token = get_session_token()
+    if not token:
         return False
     user_info = await validate_session(token)
     return user_info is not None and bool(user_info.get("is_admin"))
@@ -57,8 +49,8 @@ async def current_job_access(job_id: str, expected_user_id: str) -> JobAccess | 
     ``expected_user_id`` (the caller the page was built for), and the job must
     still be visible to that caller under row-level security.
     """
-    token = _page_session_token()
-    if token is None:
+    token = get_session_token()
+    if not token:
         return None
     user_info = await validate_session(token)
     if user_info is None or user_info.get("user_id") != expected_user_id:

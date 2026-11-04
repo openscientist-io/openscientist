@@ -289,7 +289,6 @@ async def test_the_job_page_follows_the_job_from_feedback_to_completion(
         ACTIVE_STATUSES=JobManager.ACTIVE_STATUSES,
     )
     storage: dict[str, object] = {
-        "session_token": "test-token",
         "user_id": str(alices_job.owner),
         "email": "alice@scoped.test",
         "name": "Alice",
@@ -330,10 +329,9 @@ async def test_the_job_page_follows_the_job_from_feedback_to_completion(
             patch.object(client_guard, "is_client_connected", return_value=True),
             patch.object(client_guard, "ui", mock_ui),
             patch.object(middleware, "app", fake_app),
-            patch.object(middleware, "_get_session_token", return_value="test-token"),
+            patch.object(middleware, "get_session_token", return_value="test-token"),
             patch.object(middleware, "ui", mock_ui),
             patch.object(middleware, "validate_session", _validated),
-            patch("openscientist.webapp_components.utils.permissions.app", fake_app),
             patch("openscientist.webapp_components.utils.permissions.validate_session", _validated),
         ):
             stack.enter_context(patcher)
