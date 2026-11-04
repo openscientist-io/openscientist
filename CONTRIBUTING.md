@@ -22,7 +22,7 @@ docker compose -f docker-compose.yml run --rm db-bootstrap
 uv run alembic upgrade head
 ```
 
-See the README for provider-specific settings if you need to configure Claude API access.
+See [Model providers](https://docs.openscientist.io/getting-started/#model-providers) for provider-specific settings if you need to configure Claude API access.
 
 ## Local Development
 

@@ -222,7 +222,7 @@ def _configuration_steps(error_lower: str) -> list[str]:
         return [
             "Check that the .env file exists and contains required configuration",
             "Verify environment variables are properly set",
-            "See README.md for required environment variables",
+            "See https://docs.openscientist.io/deployment/#environment-variables for required environment variables",
         ]
     if "permission denied" in error_lower:
         return [
