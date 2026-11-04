@@ -866,7 +866,6 @@ class TestNewJobPageStructure:
         sig = inspect.signature(_submit_job)
         required_params = {
             "job_manager",
-            "user_can_start_jobs",
             "session_id",
             "research_question",
             "max_iterations",
