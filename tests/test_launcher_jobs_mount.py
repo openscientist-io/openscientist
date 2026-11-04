@@ -28,6 +28,12 @@ from tests.test_launcher_validation import _config
 
 _LAUNCHER_NAME = f"openscientist-launcher-mount-test-{os.getpid()}"
 
+#: The base image's pinned Python, whose Debian trixie glibc is new enough for
+#: both uv's interpreter and the CI runner's, which this test mounts and runs.
+_LAUNCHER_RUNTIME_IMAGE = (
+    "python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30"
+)
+
 
 @pytest.fixture(scope="module")
 def docker_client() -> Iterator[docker.DockerClient]:
@@ -62,7 +68,7 @@ def _run_launcher(
     container_jobs: str,
     socket_dir: Path,
 ) -> Container:
-    """The launcher module in the agent stand-in image, with this checkout's
+    """The launcher module in a plain Python userland, with this checkout's
     interpreter and sources mounted read-only at their own paths."""
     digest = image_digest(client, agent_image)
     env = {
@@ -84,7 +90,7 @@ def _run_launcher(
     }
     interpreter_home = Path(sys.base_prefix)
     return client.containers.run(
-        agent_image,
+        _LAUNCHER_RUNTIME_IMAGE,
         [str(VENV_PYTHON), "-m", "openscientist_launcher"],
         name=_LAUNCHER_NAME,
         user="root",
