@@ -12,7 +12,6 @@ from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.validation import AgentLaunch, ExecRequest, ValidationError
 
 AGENT_APP_DIR = "/agent"
-AGENT_GCP_CREDENTIALS_PATH = f"{AGENT_APP_DIR}/gcp-credentials.json"
 PHENIX_PATH = "/opt/phenix"
 MARKER_LABEL = "openscientist.launcher"
 FIREWALL_ENTRYPOINT = ["/agent-firewall-entrypoint.sh"]
@@ -53,8 +52,6 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
     volumes: dict[str, dict[str, str]] = {
         str(cfg.jobs_root / launch.job_id): {"bind": job_mount, "mode": "rw"}
     }
-    if launch.gcp_credentials and cfg.gcp_credentials_host_path:
-        volumes[cfg.gcp_credentials_host_path] = {"bind": AGENT_GCP_CREDENTIALS_PATH, "mode": "ro"}
     if launch.phenix and cfg.phenix_host_path:
         phenix = Path(cfg.phenix_host_path).expanduser().resolve()
         volumes[str(phenix)] = {"bind": PHENIX_PATH, "mode": "ro"}

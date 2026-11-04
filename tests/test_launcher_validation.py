@@ -36,7 +36,6 @@ def _config(jobs_root: Path, **overrides: object) -> LauncherConfig:
         socket_path=jobs_root / "launcher.sock",
         network="bridge",
         agent_platform=None,
-        gcp_credentials_host_path=None,
         phenix_host_path=None,
         agent_max_memory_mib=8192,
         agent_max_cpu=4.0,
@@ -218,16 +217,6 @@ class TestAgentRequestValidation:
             _agent_request(run_home={"path": str(home), "name": ".codex"}), cfg
         )
         assert launch.run_home == (home, ".codex")
-
-    def test_gcp_credentials_flag_without_configured_path_refused(self, tmp_path: Path) -> None:
-        cfg = _config(_jobs(tmp_path))
-        with pytest.raises(ValidationError):
-            validate_agent_request(_agent_request(gcp_credentials=True), cfg)
-
-    def test_gcp_credentials_flag_with_configured_path(self, tmp_path: Path) -> None:
-        cfg = _config(_jobs(tmp_path), gcp_credentials_host_path="/srv/creds.json")
-        launch = validate_agent_request(_agent_request(gcp_credentials=True), cfg)
-        assert launch.gcp_credentials is True
 
     def test_phenix_flag_without_configured_path_refused(self, tmp_path: Path) -> None:
         cfg = _config(_jobs(tmp_path))
@@ -480,24 +469,17 @@ class TestAgentTemplate:
 
     def test_operator_mounts(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)
-        cfg = _config(
-            jobs, gcp_credentials_host_path="/srv/creds.json", phenix_host_path="/srv/phenix"
-        )
+        cfg = _config(jobs, phenix_host_path="/srv/phenix")
         home = jobs / ".run-homes" / LOGIN_ROLE
         home.mkdir(parents=True)
         launch = validate_agent_request(
             _agent_request(
-                gcp_credentials=True,
                 phenix=True,
                 run_home={"path": str(home), "name": ".codex"},
             ),
             cfg,
         )
         kwargs = agent_run_kwargs(cfg, launch, network="bridge")
-        assert kwargs["volumes"]["/srv/creds.json"] == {
-            "bind": "/agent/gcp-credentials.json",
-            "mode": "ro",
-        }
         assert kwargs["volumes"]["/srv/phenix"] == {"bind": "/opt/phenix", "mode": "ro"}
         assert kwargs["volumes"][str(home)] == {
             "bind": f"/agent/jobs/{JOB_ID}/.codex",
