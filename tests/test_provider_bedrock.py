@@ -1,6 +1,7 @@
 """Tests for AWS Bedrock provider."""
 
 import os
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,8 +14,11 @@ def verify_sigv4(
 ) -> None:
     """Recompute the SigV4 signature over the stub's received request and check
     the ``Authorization`` header the proxy sent. A match means the forwarded
-    request verifies against the web's credential."""
-    from botocore.auth import SigV4Auth  # type: ignore[import-untyped]
+    request verifies against the web's credential.
+
+    botocore stamps a request with the current time as it signs, so the clock
+    is set to the recorded ``X-Amz-Date`` and the check signs at that instant."""
+    from botocore.auth import SIGV4_TIMESTAMP, SigV4Auth  # type: ignore[import-untyped]
     from botocore.awsrequest import AWSRequest  # type: ignore[import-untyped]
     from botocore.credentials import Credentials  # type: ignore[import-untyped]
 
@@ -24,8 +28,9 @@ def verify_sigv4(
     request = AWSRequest(method=recorded["method"], url=url)
     if recorded["body"]:
         request.data = recorded["body"]
-    request.headers["X-Amz-Date"] = recorded["headers"]["x-amz-date"]
-    SigV4Auth(Credentials(access_key, secret), service, region).add_auth(request)
+    signed_at = datetime.strptime(recorded["headers"]["x-amz-date"], SIGV4_TIMESTAMP)
+    with patch("botocore.auth.get_current_datetime", return_value=signed_at):
+        SigV4Auth(Credentials(access_key, secret), service, region).add_auth(request)
     assert request.headers["Authorization"] == recorded["headers"]["authorization"]
 
 
@@ -316,6 +321,34 @@ class TestSigV4Signing:
             access_key="TESTAKID",
             secret="TESTSECRET",
             region="eu-west-2",
+        )
+
+    def test_a_signature_made_in_an_earlier_second_still_verifies(self, monkeypatch) -> None:
+        """The check uses the date the request was signed with, so a signature
+        made a second before the check still verifies."""
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        signing = SigV4Signing(region="us-east-1")
+        path = "/model/m/invoke"
+        with patch("botocore.auth.get_current_datetime", return_value=datetime(2020, 1, 1)):
+            headers = signing.credential_headers(method="POST", path=path, query="", body=b"{}")
+        verify_sigv4(
+            {
+                "method": "POST",
+                "host": "bedrock-runtime.us-east-1.amazonaws.com",
+                "path": path,
+                "query": "",
+                "headers": {
+                    "authorization": headers["authorization"],
+                    "x-amz-date": headers["x-amz-date"],
+                },
+                "body": b"{}",
+            },
+            access_key="TESTAKID",
+            secret="TESTSECRET",
+            region="us-east-1",
         )
 
     def test_a_wrong_credential_fails_verification(self, monkeypatch) -> None:
