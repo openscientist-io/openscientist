@@ -106,9 +106,17 @@ def test_a_complete_file_sets_up_without_prompting_the_same_files_interactive_wr
         cli_app.app, ["setup", "--answers", str(checkout / "answers.toml")], input=""
     )
     assert result.exit_code == 0
-    # The replay asked nothing and kept the secrets, so the files are byte-identical.
+    # The replay asked nothing and kept the secrets, so the files are identical,
+    # each recording its own checkout's path.
     for name in ENV_FILE_NAMES:
-        assert (second_checkout / name).read_bytes() == before[name], name
+        replayed = (second_checkout / name).read_bytes()
+        expected = before[name].replace(
+            str(checkout.resolve()).encode(), str(second_checkout.resolve()).encode()
+        )
+        assert replayed == expected, name
+    assert env_value(second_checkout, ".env", "OPENSCIENTIST_HOST_PROJECT_DIR") == str(
+        second_checkout.resolve()
+    )
     assert "required" not in result.output
     assert env_value(second_checkout, ".env", "OPENSCIENTIST_PROVIDER") == "anthropic"
 

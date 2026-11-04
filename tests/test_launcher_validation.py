@@ -410,6 +410,14 @@ class TestExecutorRequestValidation:
             validate_exec_request(body, _config(jobs))
 
 
+def _binds(kwargs: dict[str, Any]) -> dict[str, tuple[str, bool]]:
+    """Each mount's source with its target and read-only flag; every one is a
+    bind mount, which the daemon refuses for a source missing on the host."""
+    assert "volumes" not in kwargs
+    assert all(mount["Type"] == "bind" for mount in kwargs["mounts"])
+    return {mount["Source"]: (mount["Target"], mount["ReadOnly"]) for mount in kwargs["mounts"]}
+
+
 class TestAgentTemplate:
     def test_non_airgap_template(self, tmp_path: Path) -> None:
         cfg = _config(_jobs(tmp_path))
@@ -422,9 +430,7 @@ class TestAgentTemplate:
         assert kwargs["nano_cpus"] == 2_000_000_000
         assert kwargs["security_opt"] == ["no-new-privileges:true"]
         assert kwargs["extra_hosts"] == {"host.docker.internal": "host-gateway"}
-        assert kwargs["volumes"] == {
-            str(cfg.jobs_root / JOB_ID): {"bind": f"/agent/jobs/{JOB_ID}", "mode": "rw"}
-        }
+        assert _binds(kwargs) == {str(cfg.jobs_root / JOB_ID): (f"/agent/jobs/{JOB_ID}", False)}
         labels = kwargs["labels"]
         assert labels["openscientist.job_id"] == JOB_ID
         assert labels["openscientist.type"] == "agent"
@@ -480,11 +486,9 @@ class TestAgentTemplate:
             cfg,
         )
         kwargs = agent_run_kwargs(cfg, launch, network="bridge")
-        assert kwargs["volumes"]["/srv/phenix"] == {"bind": "/opt/phenix", "mode": "ro"}
-        assert kwargs["volumes"][str(home)] == {
-            "bind": f"/agent/jobs/{JOB_ID}/.codex",
-            "mode": "rw",
-        }
+        binds = _binds(kwargs)
+        assert binds["/srv/phenix"] == ("/opt/phenix", True)
+        assert binds[str(home)] == (f"/agent/jobs/{JOB_ID}/.codex", False)
         assert kwargs["labels"]["openscientist.run_home"] == str(home)
 
 
@@ -533,8 +537,10 @@ class TestExecutorTemplate:
         assert kwargs["mem_limit"] == "1024m"
         assert kwargs["nano_cpus"] == 500_000_000
         assert kwargs["labels"]["openscientist.type"] == "executor"
-        assert kwargs["volumes"][str(jobs / JOB_ID / "out")] == {"bind": "/output", "mode": "rw"}
-        assert kwargs["volumes"][str(jobs / JOB_ID)] == {"bind": "/data", "mode": "ro"}
+        assert _binds(kwargs) == {
+            str(jobs / JOB_ID / "out"): ("/output", False),
+            str(jobs / JOB_ID): ("/data", True),
+        }
         command = kwargs["command"]
         assert command[:2] == ["sh", "-c"]
         assert command[2].startswith("echo ")

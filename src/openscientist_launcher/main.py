@@ -12,8 +12,10 @@ from contextlib import suppress
 
 import uvicorn
 
+import docker
 from openscientist_launcher.api import create_app
 from openscientist_launcher.config import ConfigError, LauncherConfig
+from openscientist_launcher.host_paths import check_jobs_root
 from openscientist_launcher.socket_auth import create_listening_socket
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,11 @@ def main() -> None:
         cfg = LauncherConfig.from_env(os.environ)
     except ConfigError as exc:
         print(f"launcher configuration error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    problem = check_jobs_root(cfg, docker.from_env())
+    if problem is not None:
+        print(f"launcher configuration error: {problem}", file=sys.stderr)
         sys.exit(2)
 
     app = create_app(cfg)

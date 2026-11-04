@@ -112,6 +112,32 @@ def test_web_runs_as_its_own_non_root_user_in_the_jobs_group() -> None:
     assert str(launcher_env["LAUNCHER_WEB_GID"]) == str(gid)
 
 
+def _uninterpolated(value: object) -> str:
+    """``value`` with each ``${VAR:?message}`` or ``${VAR:-default}`` reduced to ``${VAR}``."""
+    return re.sub(r"\$\{(\w+)(?::[?-][^}]*)?\}", r"${\1}", str(value))
+
+
+def test_launcher_sees_the_jobs_directory_at_its_host_path() -> None:
+    """Docker resolves bind sources on the host, so the launcher mounts the jobs
+    directory at its own host path, reads it as JOBS_ROOT, and compose refuses
+    to start it when that host path is missing."""
+    launcher = _compose_services(PRODUCTION_COMPOSE)["launcher"]
+    env = launcher["environment"]
+    assert isinstance(env, dict)
+    jobs_root = _uninterpolated(env["JOBS_ROOT"])
+    volumes = launcher["volumes"]
+    assert isinstance(volumes, list)
+    jobs_mounts = [
+        v for v in volumes if isinstance(v, dict) and _uninterpolated(v.get("target")) == jobs_root
+    ]
+    assert len(jobs_mounts) == 1, "the launcher mounts the jobs directory at JOBS_ROOT"
+    mount = jobs_mounts[0]
+    assert mount["type"] == "bind"
+    assert _uninterpolated(mount["source"]) == jobs_root
+    assert mount["read_only"] is True
+    assert mount["bind"]["create_host_path"] is False
+
+
 def test_dev_override_restores_only_the_source_mount() -> None:
     """Dev mode gives the web and migrate back ./src and nothing else: the
     socket and the docker group stay gone in every view."""

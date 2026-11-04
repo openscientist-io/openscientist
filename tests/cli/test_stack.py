@@ -60,7 +60,8 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         "openscientist-agent:latest",
         ".",
     )
-    assert argvs[4] == (
+    assert argvs[4] == _jobs_group_command(checkout)
+    assert argvs[5] == (
         "docker",
         "compose",
         "-f",
@@ -70,6 +71,79 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         "--remove-orphans",
         "openscientist",
     )
+
+
+def test_start_records_the_checkout_path_before_any_compose_call(checkout: Path, monkeypatch):
+    """Compose interpolates the launcher's jobs mount from the recorded path, so
+    a moved checkout is recorded again before the first build."""
+    (checkout / ".env").write_text("OPENSCIENTIST_HOST_PROJECT_DIR=/old/place\n", encoding="utf-8")
+    recorded_at_first_call: list[str | None] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        if not recorded_at_first_call:
+            values = stack.envfiles.file_values(checkout, "env")
+            recorded_at_first_call.append(values.get("OPENSCIENTIST_HOST_PROJECT_DIR"))
+        return 0
+
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
+    assert stack.start(checkout, run) == 0
+    assert recorded_at_first_call == [str(checkout.resolve())]
+
+
+def _jobs_group_command(
+    checkout: Path, image: str = "openscientist-base:latest"
+) -> tuple[str, ...]:
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--user",
+        "root",
+        "-v",
+        f"{checkout.resolve() / 'jobs'}:/jobs",
+        image,
+        "sh",
+        "-c",
+        "chgrp 1001 /jobs && chmod 2770 /jobs",
+    )
+
+
+def test_start_gives_a_fresh_jobs_directory_to_the_jobs_group_before_up(
+    checkout: Path, monkeypatch
+):
+    """Compose refuses the launcher's jobs mount when the directory is missing,
+    and the non-root web needs the jobs group's setgid tree, so start makes it
+    before up."""
+    argvs: list[tuple[str, ...]] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        argvs.append(argv)
+        return 0
+
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
+    assert stack.start(checkout, run) == 0
+    assert (checkout / "jobs").is_dir()
+    up = next(i for i, argv in enumerate(argvs) if "up" in argv)
+    assert argvs.index(_jobs_group_command(checkout)) < up
+
+
+def test_the_jobs_group_command_leaves_a_setgid_jobs_group_directory(tmp_path: Path):
+    """The one-shot runs as root in a container, so it works for an operator
+    outside the jobs group and on a tree an older root web left behind."""
+    docker = pytest.importorskip("docker")
+    try:
+        docker.from_env().ping()
+    except docker.errors.DockerException as exc:
+        pytest.skip(f"Docker not available: {exc}")
+    image = (
+        "python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30"
+    )
+    assert stack.prepare_jobs_dir(tmp_path, stack.run_command, image) == 0
+    st = (tmp_path / "jobs").stat()
+    assert st.st_gid == 1001
+    assert st.st_mode & 0o7777 == 0o2770
 
 
 def test_image_tags_come_from_the_env_file(checkout: Path, monkeypatch: pytest.MonkeyPatch):
@@ -147,7 +221,7 @@ def test_start_stops_when_up_fails(checkout: Path, monkeypatch):
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
     monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "a" * 64)
     assert stack.start(checkout, run) == 7
-    assert len(calls) == 5
+    assert len(calls) == 6
 
 
 def test_start_fails_when_health_never_answers(checkout: Path, monkeypatch):
@@ -160,7 +234,7 @@ def test_start_fails_when_health_never_answers(checkout: Path, monkeypatch):
     monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: False)
     monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "b" * 64)
     assert stack.start(checkout, run) == 1
-    assert len(calls) == 5
+    assert len(calls) == 6
 
 
 def test_stop_runs_compose_down_and_propagates_the_exit_code(checkout: Path):
