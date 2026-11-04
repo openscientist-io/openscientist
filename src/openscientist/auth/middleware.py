@@ -63,8 +63,10 @@ async def validate_session(session_token: str) -> dict[str, Any] | None:
         }
 
 
-def _get_session_token() -> str | None:
-    """Get the session token from the cookie the OAuth flow sets."""
+def get_session_token() -> str | None:
+    """The login cookie's session token on the current page's request, or None outside a page.
+
+    Event handlers run in the page's client, so they read the cookie the page was built with."""
     try:
         if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
             return ui.context.client.request.cookies.get("session_token")
@@ -128,7 +130,7 @@ def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
 
     @wraps(func)
     async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-        session_token = _get_session_token()
+        session_token = get_session_token()
         if not session_token:
             logger.debug("No session token, redirecting to login")
             _redirect_to_login()

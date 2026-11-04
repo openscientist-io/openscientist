@@ -1,7 +1,7 @@
 """Action-time permission rechecks on open pages (findings F2 and F8).
 
 A page's authorization runs once while the page is built. These tests sign an
-actor in, keep the storage the built page holds for them, then demote the
+actor in, give the page's request the actor's login cookie, then demote the
 actor or delete their session in the database, and require that the open
 page's action handlers refuse and change nothing.
 """
@@ -20,6 +20,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.admin_settings import current_admin_settings
+from openscientist.auth import middleware
 from openscientist.database.models import (
     Administrator,
     FeedbackHistory,
@@ -42,20 +43,6 @@ from openscientist.webapp_components.pages.job_detail import timeline as timelin
 from openscientist.webapp_components.utils import client_guard, permissions
 
 
-def _storage_for(user: User, login: Session, is_admin: bool) -> dict[str, object]:
-    """The storage a built page holds for a signed-in actor."""
-    return {
-        "session_token": str(login.id),
-        "user_id": str(user.id),
-        "email": user.email,
-        "name": user.name or "",
-        "is_admin": is_admin,
-        "is_approved": True,
-        "can_start_jobs": True,
-        "authenticated": True,
-    }
-
-
 async def _create_user(db: AsyncSession, name: str) -> User:
     user = User(email=f"{name.lower().replace(' ', '')}-{uuid4().hex}@recheck.test", name=name)
     db.add(user)
@@ -76,9 +63,11 @@ async def _create_job(db: AsyncSession, owner: User | None, status: str = "runni
     return job
 
 
-def _page_storage(monkeypatch: pytest.MonkeyPatch, storage: dict[str, object]) -> None:
-    """Point the recheck helper at the storage a built page holds."""
-    monkeypatch.setattr(permissions, "app", SimpleNamespace(storage=SimpleNamespace(user=storage)))
+def _page_cookie(monkeypatch: pytest.MonkeyPatch, session_id: object) -> None:
+    """Give the page's request the login cookie the actor signed in with."""
+    page_ui = MagicMock()
+    page_ui.context.client.request.cookies = {"session_token": str(session_id)}
+    monkeypatch.setattr(middleware, "ui", page_ui)
 
 
 def _refusal_ui(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
@@ -126,15 +115,14 @@ def _no_real_nicegui(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest_asyncio.fixture
 async def admin_actor(test_engine: AsyncEngine):
-    """A committed admin user with a live session and their page storage."""
+    """A committed admin user with a live session."""
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         user = await _create_user(db, "Recheck Admin")
         db.add(Administrator(user_id=user.id))
         login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
         db.add(login)
         await db.commit()
-        storage = _storage_for(user, login, is_admin=True)
-        yield {"storage": storage, "user_id": user.id, "session_id": login.id}
+        yield {"user_id": user.id, "session_id": login.id}
     async with _session(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
@@ -159,17 +147,14 @@ async def job_actors(test_engine: AsyncEngine):
         await db.commit()
         actors = {
             "owner": {
-                "storage": _storage_for(owner, owner_login, is_admin=False),
                 "user_id": owner.id,
                 "session_id": owner_login.id,
             },
             "editor": {
-                "storage": _storage_for(editor, editor_login, is_admin=False),
                 "user_id": editor.id,
                 "session_id": editor_login.id,
             },
             "viewer": {
-                "storage": _storage_for(viewer, viewer_login, is_admin=False),
                 "user_id": viewer.id,
                 "session_id": viewer_login.id,
             },
@@ -243,7 +228,7 @@ async def test_demoted_admin_cannot_toggle_user_approval(
     victim_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
     refusal = _refusal_ui(monkeypatch)
@@ -271,7 +256,7 @@ async def test_admin_with_deleted_session_cannot_toggle_priority(
     victim_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
     refusal = _refusal_ui(monkeypatch)
@@ -299,7 +284,7 @@ async def test_admin_with_deleted_session_cannot_delete_user(
     victim_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
     refusal = _refusal_ui(monkeypatch)
@@ -325,7 +310,7 @@ async def test_live_admin_can_delete_user(
     victim_user: User,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
 
@@ -341,7 +326,7 @@ async def test_demoted_admin_cannot_assign_orphaned_job(
     orphan_pair: tuple[User, Job],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
     refusal = _refusal_ui(monkeypatch)
@@ -367,7 +352,7 @@ async def test_live_admin_can_assign_orphaned_job(
     orphan_pair: tuple[User, Job],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
     recipient, orphan = orphan_pair
@@ -388,7 +373,7 @@ async def test_demoted_admin_cannot_revoke_review_token(
     review_token_row: ReviewToken,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
     refusal = _refusal_ui(monkeypatch)
@@ -411,7 +396,7 @@ async def test_demoted_admin_cannot_revoke_review_token(
 async def test_admin_with_deleted_session_cannot_create_review_token(
     test_engine: AsyncEngine, admin_actor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     monkeypatch.setattr(admin_page, "get_current_user_id", lambda: str(admin_actor["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(admin_page, "ui", mock_ui)
@@ -432,7 +417,7 @@ async def test_admin_with_deleted_session_cannot_create_review_token(
 async def test_admin_with_deleted_session_cannot_save_settings(
     test_engine: AsyncEngine, admin_actor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     monkeypatch.setattr(settings_panel, "get_current_user_id", lambda: str(admin_actor["user_id"]))
     monkeypatch.setattr(settings_panel, "is_current_user_admin", lambda: True)
     mock_ui = MagicMock()
@@ -479,7 +464,7 @@ async def test_demoted_editor_cannot_send_a_chat_turn(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     editor = job_actors["editor"]
-    _page_storage(monkeypatch, editor["storage"])
+    _page_cookie(monkeypatch, editor["session_id"])
     monkeypatch.setattr(chat_module, "ClientGuard", _fake_guard())
     turn = AsyncMock()
     monkeypatch.setattr(chat_module, "send_chat_message", turn)
@@ -512,7 +497,7 @@ async def test_editor_with_edit_share_can_send_a_chat_turn(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     editor = job_actors["editor"]
-    _page_storage(monkeypatch, editor["storage"])
+    _page_cookie(monkeypatch, editor["session_id"])
     monkeypatch.setattr(chat_module, "ClientGuard", _fake_guard())
     turn = AsyncMock(return_value="Here is what we found.")
     monkeypatch.setattr(chat_module, "send_chat_message", turn)
@@ -540,7 +525,7 @@ async def test_demoted_editor_cannot_submit_feedback(
     tmp_path,
 ) -> None:
     editor = job_actors["editor"]
-    _page_storage(monkeypatch, editor["storage"])
+    _page_cookie(monkeypatch, editor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(feedback_module, "ui", mock_ui)
 
@@ -576,7 +561,7 @@ async def test_editor_with_edit_share_can_submit_feedback(
     tmp_path,
 ) -> None:
     editor = job_actors["editor"]
-    _page_storage(monkeypatch, editor["storage"])
+    _page_cookie(monkeypatch, editor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(feedback_module, "ui", mock_ui)
 
@@ -625,7 +610,7 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     viewer = job_actors["viewer"]
-    _page_storage(monkeypatch, viewer["storage"])
+    _page_cookie(monkeypatch, viewer["session_id"])
     context = _poll_context(job_actors, viewer)
     timer = MagicMock()
     holder: dict[str, object] = {"timer": timer}
@@ -677,7 +662,7 @@ async def test_owner_with_deleted_session_cannot_share(
 ) -> None:
     owner = job_actors["owner"]
     target = job_actors["target"]
-    _page_storage(monkeypatch, owner["storage"])
+    _page_cookie(monkeypatch, owner["session_id"])
     monkeypatch.setattr(dialogs_module, "get_current_user_id", lambda: str(owner["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(dialogs_module, "ui", mock_ui)
@@ -706,7 +691,7 @@ async def test_editor_with_edit_share_cannot_share(
 ) -> None:
     editor = job_actors["editor"]
     target = job_actors["target"]
-    _page_storage(monkeypatch, editor["storage"])
+    _page_cookie(monkeypatch, editor["session_id"])
     monkeypatch.setattr(dialogs_module, "get_current_user_id", lambda: str(editor["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(dialogs_module, "ui", mock_ui)
@@ -731,7 +716,7 @@ async def test_owner_with_deleted_session_cannot_change_visibility(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = job_actors["owner"]
-    _page_storage(monkeypatch, owner["storage"])
+    _page_cookie(monkeypatch, owner["session_id"])
     monkeypatch.setattr(dialogs_module, "get_current_user_id", lambda: str(owner["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(dialogs_module, "ui", mock_ui)
@@ -761,7 +746,7 @@ async def test_live_owner_can_change_visibility(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = job_actors["owner"]
-    _page_storage(monkeypatch, owner["storage"])
+    _page_cookie(monkeypatch, owner["session_id"])
     monkeypatch.setattr(dialogs_module, "get_current_user_id", lambda: str(owner["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(dialogs_module, "ui", mock_ui)
@@ -801,7 +786,7 @@ async def test_owner_with_deleted_session_cannot_delete_or_cancel(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = job_actors["owner"]
-    _page_storage(monkeypatch, owner["storage"])
+    _page_cookie(monkeypatch, owner["session_id"])
     monkeypatch.setattr(dialogs_module, "get_current_user_id", lambda: str(owner["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(dialogs_module, "ui", mock_ui)
@@ -825,7 +810,7 @@ async def test_live_owner_can_delete_and_cancel(
     test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     owner = job_actors["owner"]
-    _page_storage(monkeypatch, owner["storage"])
+    _page_cookie(monkeypatch, owner["session_id"])
     monkeypatch.setattr(dialogs_module, "get_current_user_id", lambda: str(owner["user_id"]))
     mock_ui = MagicMock()
     monkeypatch.setattr(dialogs_module, "ui", mock_ui)
@@ -842,7 +827,7 @@ async def test_live_owner_can_delete_and_cancel(
 async def test_demoted_admin_cannot_regenerate_report(
     test_engine: AsyncEngine, admin_actor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(report_module, "ui", mock_ui)
 
@@ -862,7 +847,7 @@ async def test_demoted_admin_cannot_regenerate_report(
 async def test_live_admin_can_regenerate_report(
     test_engine: AsyncEngine, admin_actor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _page_storage(monkeypatch, admin_actor["storage"])
+    _page_cookie(monkeypatch, admin_actor["session_id"])
     mock_ui = MagicMock()
     monkeypatch.setattr(report_module, "ui", mock_ui)
 
