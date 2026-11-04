@@ -53,6 +53,27 @@ directories and run homes inherit; on a fresh checkout:
 chgrp 1001 ./jobs && chmod 2770 ./jobs
 ```
 
+The provider credential mounts the web rewrites on a token refresh need the
+same ownership, or the refresh is dropped and the next web restart finds the
+stale credential. `CODEX_AUTH_FILE` is one bind-mounted file, so the web
+writes it in place (a rename cannot replace the mount point); make it
+group-owned by gid 1001 with the group-writable bit:
+
+```bash
+chgrp 1001 "$CODEX_AUTH_FILE" && chmod 0660 "$CODEX_AUTH_FILE"
+```
+
+`OMP_AUTH_DIR` is mounted as a dir, and the vault rewrites `agent.db` and its
+`-wal`/`-shm` sidecars on a refresh; make both group-owned and group-writable:
+
+```bash
+chgrp 1001 "$OMP_AUTH_DIR" && chmod 2770 "$OMP_AUTH_DIR"
+chgrp 1001 "$OMP_AUTH_DIR/agent.db" && chmod 0660 "$OMP_AUTH_DIR/agent.db"
+```
+
+The web logs a warning at startup and on every provider configuration check
+when the vault is set as the auth source but is not writable.
+
 ### Ports
 
 - `8080`: Web interface (NiceGUI), published on `127.0.0.1` by default

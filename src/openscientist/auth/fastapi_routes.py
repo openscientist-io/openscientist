@@ -359,7 +359,7 @@ async def logout(request: Request, _logout: LogoutRequest) -> RedirectResponse:
             _revoke_session_later(session_token)
     _forget_stored_session()
 
-    response = RedirectResponse(url="/login")
+    response = RedirectResponse(url="/login", status_code=303)
     response.delete_cookie(key="session_token")
     # The "session" cookie is NiceGUI's own; it keys the per-browser storage
     response.delete_cookie(key="session")

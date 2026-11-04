@@ -1,8 +1,8 @@
 """The web process must not follow symlinks the agent plants in its job
 directory. The agent container mounts the job directory read-write, so any
 file in it can be replaced by a link pointing outside, and the web process
-runs as root with the admin database password and provider keys in its
-environment. Every web-side read, existence check and write of a job file
+holds the admin database password and provider keys in its environment.
+Every web-side read, existence check and write of a job file
 goes through openscientist.job_files, which refuses links at every path
 component and serves and reads only the inode it opened.
 
@@ -358,6 +358,26 @@ class TestJobFilePrimitives:
         assert secret.read_bytes() == _SECRET
         assert not (job_dir / "final_report.pdf").is_symlink()
         assert (job_dir / "final_report.pdf").read_bytes() == b"GENERATED-PDF"
+
+    def test_written_files_land_group_writable_without_world_bits(self, tmp_path: Path) -> None:
+        """The web's umask must not decide the mode of the agent-writable job
+        files, which the agent rewrites in place."""
+        from openscientist.job_files import install_file, write_job_file
+
+        job_dir = tmp_path / "jobs" / "j1"
+        job_dir.mkdir(parents=True)
+        source = tmp_path / "source.pdf"
+        source.write_bytes(b"GENERATED-PDF")
+
+        old_umask = os.umask(0o022)
+        try:
+            install_file(job_dir, "final_report.pdf", source)
+            write_job_file(job_dir, "agent-error.txt", "fresh")
+        finally:
+            os.umask(old_umask)
+
+        for name in ("final_report.pdf", "agent-error.txt"):
+            assert (job_dir / name).stat().st_mode & 0o777 == 0o660, name
 
     def test_a_write_into_a_symlinked_parent_dir_is_refused(self, tmp_path: Path) -> None:
         """A link at an intermediate component must not redirect the write:

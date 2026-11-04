@@ -3,11 +3,14 @@
 The web builds the launch env from the provider settings and the per-run
 values, and the launcher refuses the whole launch on the first key outside
 its allow-list. These tests build that env for every provider and harness
-with every provider setting filled in, with and without the host login files.
+with every provider setting filled in, with and without the host login files,
+and again with each provider in every one of its auth variants, so a branch
+that only shows up when one credential is missing cannot hide a key.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -22,6 +25,7 @@ from openscientist.settings import (
     get_settings,
 )
 from openscientist_launcher.validation import AGENT_ENV_ALLOWLIST
+from tests.omp_vault import make_jwt, make_vault, now_ms
 from tests.test_provider_vertex import write_service_account
 
 JOB_ID = "11111111-2222-3333-4444-555555555555"
@@ -59,6 +63,8 @@ def _filled_value(name: str, annotation: object, tmp_path: Path) -> str:
 @pytest.fixture
 def every_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every provider setting, and every optional launch input, set in the env."""
+    # A harness export the Settings model would parse as its agent section.
+    monkeypatch.delenv("AGENT", raising=False)
     for name, field in ProviderSettings.model_fields.items():
         if field.alias and name not in {"provider_id", "harness"}:
             monkeypatch.setenv(field.alias, _filled_value(name, field.annotation, tmp_path))
@@ -113,3 +119,203 @@ def test_launch_env_keys_are_all_allowed(
     finally:
         clear_settings_cache()
     assert sorted(set(env) - AGENT_ENV_ALLOWLIST) == []
+
+
+#: The OMP_AUTH_HOST_PATH override that points the setting at a real omp
+#: vault the test builds, instead of the placeholder file the fixture writes.
+_VAULT = "<vault>"
+
+#: The vault provider name the two vault-signed providers store in agent.db.
+_VAULT_PROVIDER = {"anthropic": "anthropic", "openai": "openai-codex"}
+
+#: One auth variant per provider, mirrored from the auth-choice branches in
+#: src/openscientist/providers/<provider>.py. An override unsets a setting
+#: (None) or pins the vault sentinel, so each variant exercises one branch on
+#: top of the all-filled-in config. Foundry's API-key vs Entra auth and the
+#: single-method providers emit the same container env in every branch, so a
+#: variant with no overrides is their whole table.
+_VARIANTS: dict[str, tuple[tuple[str, dict[str, str | None]], ...]] = {
+    # The api key beats the OAuth token, which beats the vault (llm_upstream).
+    "anthropic": (
+        (
+            "api_key",
+            {
+                "anthropic_auth_token": None,
+                "anthropic_base_url": None,
+                "claude_code_oauth_token": None,
+                "omp_auth_host_path": None,
+            },
+        ),
+        (
+            "oauth",
+            {
+                "anthropic_api_key": None,
+                "anthropic_auth_token": None,
+                "anthropic_base_url": None,
+                "omp_auth_host_path": None,
+            },
+        ),
+        (
+            "vault",
+            {
+                "anthropic_api_key": None,
+                "anthropic_auth_token": None,
+                "anthropic_base_url": None,
+                "claude_code_oauth_token": None,
+                "omp_auth_host_path": _VAULT,
+            },
+        ),
+    ),
+    # The gateway token and URL are required, so the variants toggle only the
+    # Anthropic-side fields the shared container env reads.
+    "cborg": (("gateway", {"anthropic_api_key": None, "claude_code_oauth_token": None}),),
+    "vertex": (("service_account", {}),),
+    # The bearer token takes the static-header branch, and the access keys the
+    # SigV4 branch (proxy_env_overrides).
+    "bedrock": (
+        ("sigv4_access_key", {"aws_bearer_token_bedrock": None}),
+        ("bearer_token", {}),
+    ),
+    # Resource and base URL are mutually exclusive endpoint alternatives
+    # (container_env and proxy_env_overrides).
+    "foundry": (
+        ("resource_api_key", {"anthropic_foundry_base_url": None}),
+        ("base_url_api_key", {"anthropic_foundry_resource": None}),
+    ),
+    # The api key beats the host codex login, which beats the vault.
+    "openai": (
+        ("api_key", {"codex_auth_host_path": None, "omp_auth_host_path": None}),
+        ("codex_login", {"openai_api_key": None, "omp_auth_host_path": None}),
+        (
+            "omp_vault",
+            {
+                "openai_api_key": None,
+                "codex_auth_host_path": None,
+                "omp_auth_host_path": _VAULT,
+            },
+        ),
+    ),
+    "azure-openai": (("api_key", {}),),
+    "ollama": (("keyless", {}),),
+    # The container carries the API-key placeholder only when the server has
+    # a key (proxy_env_overrides).
+    "vllm": (
+        ("api_key", {}),
+        ("keyless", {"vllm_api_key": None}),
+    ),
+    "llamacpp": (
+        ("api_key", {}),
+        ("keyless", {"llamacpp_api_key": None}),
+    ),
+}
+
+#: The settings fields each provider's auth-choice logic reads that change the
+#: launch env, mirrored from the same provider files. Every field must be
+#: unset by at least one variant of its provider, so a branch cannot stay
+#: covered only by the all-filled-in config.
+_AUTH_FIELDS: dict[str, tuple[str, ...]] = {
+    "anthropic": (
+        "anthropic_api_key",
+        "anthropic_auth_token",
+        "anthropic_base_url",
+        "claude_code_oauth_token",
+        "omp_auth_host_path",
+    ),
+    "cborg": ("anthropic_api_key", "claude_code_oauth_token"),
+    "vertex": (),
+    "bedrock": ("aws_bearer_token_bedrock",),
+    "foundry": ("anthropic_foundry_base_url", "anthropic_foundry_resource"),
+    "openai": ("openai_api_key", "codex_auth_host_path", "omp_auth_host_path"),
+    "azure-openai": (),
+    "ollama": (),
+    "vllm": ("vllm_api_key",),
+    "llamacpp": ("llamacpp_api_key",),
+}
+
+
+def _env_name(field: str) -> str:
+    """The env alias of a ProviderSettings field."""
+    return ProviderSettings.model_fields[field].alias or field
+
+
+def _vault_credential(provider_id: str) -> dict[str, object]:
+    """A fresh fake credential row for the provider's vault login."""
+    if provider_id == "openai":
+        access = make_jwt(datetime.now(UTC) + timedelta(minutes=30))
+    else:
+        access = "sk-ant-oat01-vault-access"
+    return {"access": access, "refresh": "vault-refresh", "expires": now_ms() + 3_600_000}
+
+
+def test_the_auth_variant_table_covers_every_provider() -> None:
+    assert set(_VARIANTS) == set(provider_ids()), "a provider is missing its auth variants"
+    assert set(_AUTH_FIELDS) == set(provider_ids()), "a provider is missing its auth fields"
+    for provider_id, fields in _AUTH_FIELDS.items():
+        unset = {
+            name
+            for _, overrides in _VARIANTS[provider_id]
+            for name, value in overrides.items()
+            if value is None
+        }
+        missing = [name for name in fields if name not in unset]
+        assert missing == [], f"{provider_id}: no variant unsets {missing}"
+
+
+_VARIANT_CASES = [
+    (provider_id, name, overrides)
+    for provider_id, variants in _VARIANTS.items()
+    for name, overrides in variants
+]
+
+
+@pytest.mark.usefixtures("every_setting")
+@pytest.mark.parametrize(
+    ("provider_id", "variant_name", "overrides"),
+    _VARIANT_CASES,
+    ids=[f"{provider_id}/{name}" for provider_id, name, _ in _VARIANT_CASES],
+)
+def test_auth_variant_launch_env_keys_are_all_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider_id: str,
+    variant_name: str,
+    overrides: dict[str, str | None],
+) -> None:
+    monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
+    monkeypatch.setenv("OPENSCIENTIST_HARNESS", "auto")
+    monkeypatch.setenv("OPENSCIENTIST_MODEL", _MODEL_IDS.get(provider_id, "filled-model"))
+    for field, value in overrides.items():
+        alias = _env_name(field)
+        if value is None:
+            monkeypatch.delenv(alias, raising=False)
+        elif value == _VAULT:
+            vault = tmp_path / f"vault-{variant_name}"
+            make_vault(vault, {_VAULT_PROVIDER[provider_id]: _vault_credential(provider_id)})
+            monkeypatch.setenv(alias, str(vault))
+        else:
+            monkeypatch.setenv(alias, value)
+    clear_settings_cache()
+    try:
+        refusal = get_provider().prelaunch_routing_error()
+        assert refusal is None, f"{provider_id} {variant_name} is refused at launch: {refusal}"
+        settings = get_settings()
+        credentials = RunCredentials(
+            job_id=JOB_ID,
+            kind="discovery",
+            llm_placeholder=f"{JOB_ID}.placeholder",
+            exec_token=f"{JOB_ID}.exec",
+        )
+        env = JobContainerRunner._build_container_environment(
+            settings,
+            job_id=JOB_ID,
+            job_mount=f"/app/jobs/{JOB_ID}",
+            provider_env=JobContainerRunner._provider_environment(settings, credentials),
+            database_url="postgresql://agent@db/openscientist",
+            exec_token=credentials.exec_token,
+            airgapped=False,
+            run_mode="discovery",
+        )
+    finally:
+        clear_settings_cache()
+    extra = sorted(set(env) - AGENT_ENV_ALLOWLIST)
+    assert extra == [], f"{provider_id} {variant_name}: env keys the launcher refuses: {extra}"

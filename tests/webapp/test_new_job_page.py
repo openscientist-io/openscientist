@@ -1,15 +1,40 @@
 """Tests for new job page helpers."""
 
 import inspect
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine
+import pytest_asyncio
+from nicegui import ui
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from openscientist.database.models import Session, User
 from openscientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
 from openscientist.webapp_components.utils.session import clear_uploaded_files, get_uploaded_files
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+from tests.db_outage import Forwarder
+from tests.webapp.conftest import OpenPage
+
+
+@pytest_asyncio.fixture
+async def signed_in_job_user(test_engine: AsyncEngine) -> AsyncIterator[tuple[User, str]]:
+    """An approved non-admin with a live session, committed."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        user = User(email=f"submit-{uuid4().hex}@page.test", name="Submitter", is_approved=True)
+        db.add(user)
+        await db.flush()
+        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        db.add(login)
+        await db.commit()
+    yield user, str(login.id)
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(User).where(User.id == user.id))
+        await db.commit()
 
 
 def _upload_event(name: str, size_bytes: int) -> SimpleNamespace:
@@ -48,47 +73,65 @@ def test_submit_job_has_coinvestigate_mode_at_top_level():
     assert "coinvestigate_mode" in sig.parameters
 
 
-async def test_submit_job_creates_the_job_and_opens_its_page() -> None:
-    """Submitting a question creates the job for the signed-in user and
-    navigates them to the job's page."""
-    from openscientist.webapp_components.pages import new_job
+class _RecordingJobManager:
+    """A job manager that records its create_job calls without creating jobs."""
 
-    job_manager = SimpleNamespace(create_job=AsyncMock())
-    form = SimpleNamespace(
-        research_question=SimpleNamespace(value="  Why do corals bleach?  "),
-        max_iterations=SimpleNamespace(value=12),
-        use_hypotheses=SimpleNamespace(value=True),
-        coinvestigate_mode=SimpleNamespace(value=False),
-    )
-    with (
-        patch.object(new_job, "ui") as mock_ui,
-        patch.object(new_job, "get_current_user_id", return_value="user-123"),
-        patch.object(new_job, "get_uploaded_files", return_value=[]),
-        patch.object(new_job, "uuid") as mock_uuid,
-    ):
-        mock_uuid.uuid4.return_value = "00000000-1111-2222-3333-444444444444"
-        await new_job._submit_job(
-            job_manager=job_manager,
-            user_can_start_jobs=True,
-            session_id="user-123:client-1",
-            research_question=form.research_question,
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def create_job(self, **kwargs: object) -> None:
+        self.calls.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_submit_job_creates_the_job_and_opens_its_page(
+    database: Forwarder,
+    signed_in_job_user: tuple[User, str],
+    signed_in_page: OpenPage,
+) -> None:
+    """Submitting a question creates the job for the user the session still
+    belongs to and navigates them to the job's page."""
+    user, token = signed_in_job_user
+    recorder = _RecordingJobManager()
+
+    class _Form:
+        question: ui.textarea
+        max_iterations: ui.number
+        use_hypotheses: ui.switch
+        coinvestigate_mode: ui.switch
+
+    form = _Form()
+
+    async def build() -> None:
+        question = ui.textarea()
+        question.value = "  Why do corals bleach?  "
+        form.question = question
+        form.max_iterations = ui.number(value=12)
+        form.use_hypotheses = ui.switch(value=True)
+        form.coinvestigate_mode = ui.switch(value=False)
+
+    client = await signed_in_page(token, build)
+    with client:
+        await _submit_job(
+            job_manager=recorder,
+            session_id=f"{user.id}:success-test",
+            research_question=form.question,
             max_iterations=form.max_iterations,
             use_hypotheses=form.use_hypotheses,
             coinvestigate_mode=form.coinvestigate_mode,
         )
 
-    job_manager.create_job.assert_awaited_once()
-    assert job_manager.create_job.await_args.kwargs == {
-        "job_id": "00000000-1111-2222-3333-444444444444",
-        "research_question": "Why do corals bleach?",
-        "data_files": [],
-        "max_iterations": 12,
-        "use_hypotheses": True,
-        "auto_start": True,
-        "investigation_mode": "autonomous",
-        "owner_id": "user-123",
-    }
-    mock_ui.navigate.to.assert_called_with("/job/00000000-1111-2222-3333-444444444444")
+    assert len(recorder.calls) == 1
+    call = recorder.calls[0]
+    assert call["research_question"] == "Why do corals bleach?"
+    assert call["data_files"] == []
+    assert call["max_iterations"] == 12
+    assert call["use_hypotheses"] is True
+    assert call["auto_start"] is True
+    assert call["investigation_mode"] == "autonomous"
+    assert call["owner_id"] == str(user.id)
+    opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
+    assert opened == [{"path": f"/job/{call['job_id']}", "new_tab": False}]
 
 
 async def test_an_upload_over_the_rows_size_limit_is_rejected(

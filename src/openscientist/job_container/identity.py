@@ -1,14 +1,14 @@
 """Fixed container identities and the ownership of the job tree they write.
 
-The web process runs as root and creates the job tree, which the agent and
-executor containers read and write as their fixed non-root users. The
-constants below are the single source of truth for those ids, and the
-Dockerfile.agent and Dockerfile.executor build args must match them (the
-tests in tests/test_job_dir_permissions.py keep them in sync).
+The web process runs as its own non-root uid in the jobs group and creates the
+job tree, which the agent and executor containers read and write as their
+fixed non-root users. The constants below are the single source of truth for
+those ids, and the Dockerfile.agent and Dockerfile.executor build args must
+match them (the tests in tests/test_job_dir_permissions.py keep them in sync).
 
 Job dirs are setgid, so every file created inside one inherits the jobs
-group no matter which process creates it. A non-root web in the jobs group
-therefore needs no chown for anything it writes later.
+group no matter which process creates it. A web in the jobs group needs no
+chown for anything it writes, and the chown below only runs as root.
 """
 
 from __future__ import annotations
@@ -27,8 +27,11 @@ EXECUTOR_UID = 1000
 #: Job tree, setgid so created files inherit the jobs group, no world bits.
 JOB_DIR_MODE = 0o2770
 JOB_FILE_MODE = 0o660
-#: Run homes hold operator logins that only the agent writes.
+#: Root hands run homes to the agent owner-only, holding the operator's login.
 RUN_HOME_DIR_MODE = 0o700
+#: A non-root web cannot chown the home to the agent, so the home takes the
+#: agent's access from the jobs group instead. No world bits.
+RUN_HOME_GROUP_MODE = 0o770
 PRIVATE_FILE_MODE = 0o600
 
 
@@ -38,8 +41,8 @@ def apply_job_ownership(
     """Hand one file or directory the web just created to the containers.
 
     Inside a setgid job dir the path already carries the jobs group, which
-    makes the chown redundant. Non-root runs, which are local development,
-    cannot chown at all and rely on their own group membership instead.
+    makes the chown redundant. The deployed web is non-root, so it relies on
+    that group membership and only the chmod runs for it.
     """
     if os.geteuid() == 0 and path.stat().st_gid != AGENT_GID:
         with suppress(OSError):

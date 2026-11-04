@@ -11,12 +11,17 @@ copy outlives its run.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import time
 from datetime import timedelta
 from pathlib import Path
 
-from openscientist.job_container.identity import RUN_HOME_DIR_MODE, apply_job_ownership
+from openscientist.job_container.identity import (
+    RUN_HOME_DIR_MODE,
+    RUN_HOME_GROUP_MODE,
+    apply_job_ownership,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +43,16 @@ def run_home_path(jobs_dir: Path, role: str) -> Path:
 def create_run_home(jobs_dir: Path, role: str) -> Path:
     """Create the empty home of the run whose database login is ``role``.
 
-    Owner-only for the agent user, which runs as another user, because the
-    home takes in the operator's login.
+    Root hands the home to the agent user owner-only. A non-root web
+    cannot chown, so home and parent open their group bits to the jobs
+    group, which the setgid tree already carries.
     """
     home = run_home_path(jobs_dir, role)
+    home_mode = RUN_HOME_DIR_MODE if os.geteuid() == 0 else RUN_HOME_GROUP_MODE
     home.parent.mkdir(parents=True, exist_ok=True)
-    apply_job_ownership(home.parent, dir_mode=RUN_HOME_DIR_MODE)
+    apply_job_ownership(home.parent, dir_mode=home_mode)
     home.mkdir()
-    apply_job_ownership(home, dir_mode=RUN_HOME_DIR_MODE)
+    apply_job_ownership(home, dir_mode=home_mode)
     return home
 
 

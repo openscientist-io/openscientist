@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import os
 import socket
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
@@ -1060,6 +1061,49 @@ class TestVaultProxyForwarding:
                 content=b"{}",
             )
         assert resp.status_code == 401
+        assert recorded == []
+
+
+class TestVaultProxyRefusal:
+    """The vault the web signs from, once its storage is out of reach."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses read-only file permissions")
+    def test_an_unwritable_vault_refuses_with_the_credential_error(
+        self, placeholder_for, tmp_path: Path
+    ) -> None:
+        from openscientist.providers.vault import vault_llm_upstream
+        from tests.omp_vault import make_vault, now_ms
+
+        vault_dir = tmp_path / "vault"
+        make_vault(
+            vault_dir,
+            {
+                "anthropic": {
+                    "access": "stale-access",
+                    "refresh": "rt",
+                    "expires": now_ms() - 600_000,
+                }
+            },
+        )
+        # The host dir the compose stack would bind at /app/omp-auth, out of
+        # reach of the web's uid. The SELECT still answers; the refresh write
+        # cannot.
+        (vault_dir / "agent.db").chmod(0o444)
+        upstream = vault_llm_upstream(vault_dir, "anthropic")
+        assert upstream is not None
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: upstream,
+            client=_recording_upstream(recorded),
+        )
+        with TestClient(app) as client:
+            resp = client.post(
+                "/v1/messages",
+                headers={"x-api-key": placeholder_for("job-1")},
+                content=b"{}",
+            )
+        assert resp.status_code == 401
+        assert resp.text == "upstream credential unavailable"
         assert recorded == []
 
 

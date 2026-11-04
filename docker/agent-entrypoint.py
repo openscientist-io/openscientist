@@ -24,6 +24,7 @@ import asyncio
 import logging
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,6 +39,17 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger("agent-entrypoint")
+
+
+def trust_job_repository(job_dir: Path) -> None:
+    """Mark the job's repository as safe for the run user's git, since the web
+    inits it as its own uid and git refuses a repository the current user does
+    not own."""
+    subprocess.run(
+        ["git", "config", "--global", "--add", "safe.directory", str(job_dir)],
+        check=False,
+        capture_output=True,
+    )
 
 
 async def main() -> int:
@@ -57,6 +69,9 @@ async def main() -> int:
     if not job_dir.exists():
         logger.error("Job directory does not exist: %s", job_dir)
         return 1
+
+    # git would otherwise treat the web-owned repository as dubious ownership.
+    trust_job_repository(job_dir)
 
     logger.info("Starting agent for job %s in %s (mode=%s)", job_id, job_dir, run_mode)
 

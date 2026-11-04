@@ -1,6 +1,7 @@
 """Tests for code_executor module."""
 
 import json
+import os
 import shutil
 import urllib.request
 from pathlib import Path
@@ -74,6 +75,19 @@ class TestExecuteCode:
         result = execute_code("print('hello')", data=None, plots_dir=plots_dir)
         assert result["success"] is True
         assert "hello" in result["output"]
+
+    def test_relative_writes_land_in_the_plots_dir(self, plots_dir):
+        """The executor's own workdir is root-owned, so the chdir to the
+        output dir is the only relative write path."""
+        before = os.getcwd()
+        result = execute_code(
+            "open('rel-out.txt', 'w').write('x')",
+            data=None,
+            plots_dir=plots_dir,
+        )
+        assert result["success"] is True
+        assert (plots_dir / "rel-out.txt").read_text() == "x"
+        assert os.getcwd() == before
 
     def test_data_available_in_namespace(self, plots_dir):
         df = pd.DataFrame({"x": [1, 2, 3]})

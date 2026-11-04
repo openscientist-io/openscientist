@@ -290,6 +290,27 @@ async def test_sign_out_without_a_browser_still_works(monkeypatch: pytest.Monkey
     assert 'session_token=""' in response.headers["set-cookie"]
 
 
+async def test_logout_answers_see_other_so_the_follow_up_is_a_get(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    session_token: UUID,
+) -> None:
+    """The sign-out redirect is 303 See Other, so a conforming client
+    follows it with a GET and the GET-only login page does not get the
+    sign-out's POST replayed at it."""
+    app = FastAPI()
+    app.include_router(router)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        cookies={"session_token": str(session_token)},
+    ) as client:
+        response = await client.post("/auth/logout", json={})
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+    assert not await _session_exists(test_engine, session_token)
+
+
 async def test_a_cross_site_get_to_logout_changes_nothing(
     database: Forwarder,
     test_engine: AsyncEngine,

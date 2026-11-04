@@ -1,14 +1,24 @@
 """Login page with OAuth authentication."""
 
+import logging
+
 from nicegui import app, ui
 
+from openscientist.auth.middleware import (
+    _store_authenticated_user,
+    get_session_token,
+    validate_session,
+)
 from openscientist.auth.oauth import is_mock_auth_enabled, is_oauth_configured
+from openscientist.database.retry import is_connection_error
 from openscientist.settings import get_settings
 from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.components.common import (
     OPENSCIENTIST_THINKING_SVG,
     render_project_resource_links,
 )
+
+logger = logging.getLogger(__name__)
 
 _TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
     "token_invalid": (
@@ -25,8 +35,31 @@ _TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
 
 
 @ui.page("/login")
-def login_page(error: str | None = None) -> None:
+async def login_page(error: str | None = None) -> None:
     """Login page with OAuth support."""
+
+    # Check if already authenticated (from return redirect)
+    if app.storage.user.get("authenticated"):
+        return_to = app.storage.user.pop("return_to", "/")
+        ui.navigate.to(return_to)
+        return
+
+    # A web restart wipes the per-browser storage but not the login cookie,
+    # so the cookie alone proves the visitor is still signed in.
+    session_token = get_session_token()
+    if session_token:
+        try:
+            user_info = await validate_session(session_token)
+        except Exception as e:
+            if not is_connection_error(e):
+                raise
+            logger.warning("Could not verify the login cookie while building /login: %s", e)
+            user_info = None
+        if user_info is not None:
+            _store_authenticated_user(user_info)
+            return_to = app.storage.user.pop("return_to", "/")
+            ui.navigate.to(return_to)
+            return
 
     # Check if OAuth is configured
     settings = get_settings()
@@ -35,12 +68,6 @@ def login_page(error: str | None = None) -> None:
     github_enabled = bool(settings.auth.github_client_id)
     orcid_enabled = bool(settings.auth.orcid_client_id)
     mock_enabled = is_mock_auth_enabled()
-
-    # Check if already authenticated (from return redirect)
-    if app.storage.user.get("authenticated"):
-        return_to = app.storage.user.pop("return_to", "/")
-        ui.navigate.to(return_to)
-        return
 
     # Show token error banner if present
     if error and error in _TOKEN_ERROR_MESSAGES:

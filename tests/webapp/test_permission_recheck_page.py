@@ -8,26 +8,23 @@ fire there, so the recheck reads the token the way a deployed page does.
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import app, core, events, storage, ui
+from nicegui import background_tasks, events, storage, ui
 from nicegui.client import Client
-from nicegui.page import page
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from starlette.requests import Request
 
-from openscientist.auth.middleware import require_auth
 from openscientist.database.models import Administrator, Job, Session, User
 from openscientist.webapp_components.components.dialogs import render_share_dialog
 from openscientist.webapp_components.pages import admin as admin_page
 from tests.db_outage import Forwarder
+from tests.webapp.conftest import OpenPage
 
 
 @pytest_asyncio.fixture
@@ -51,49 +48,10 @@ async def signed_in_admin(test_engine: AsyncEngine) -> AsyncIterator[tuple[User,
         await db.commit()
 
 
-OpenPage = Callable[[str, Callable[[], Awaitable[None]]], Awaitable[Client]]
+EventHandler = Callable[..., Awaitable[None] | None]
 
 
-@pytest.fixture
-def signed_in_page(monkeypatch: pytest.MonkeyPatch) -> Iterator[OpenPage]:
-    """Open pages whose request carries only the login cookie, each a NiceGUI
-    client of its own with ``build`` run behind ``require_auth``, removed with
-    their user storage when the test ends.
-
-    A deployed page never runs in NiceGUI's script mode, which an earlier test
-    may have left on and which swaps the user storage for a blank one."""
-    monkeypatch.setattr(core, "script_mode", False)
-    opened: list[tuple[Client, str]] = []
-
-    async def open_page(token: str, build: Callable[[], Awaitable[None]]) -> Client:
-        browser_id = str(uuid4())
-        request = Request(
-            {
-                "type": "http",
-                "method": "GET",
-                "path": "/",
-                "query_string": b"",
-                "headers": [(b"cookie", f"session_token={token}".encode())],
-                "session": {"id": browser_id},
-                "client": ("127.0.0.1", 50000),
-                "server": ("127.0.0.1", 8080),
-            }
-        )
-        await app.storage._create_user_storage(browser_id)
-        storage.request_contextvar.set(request)
-        client = Client(page("/"), request=request)
-        opened.append((client, browser_id))
-        with client:
-            await require_auth(build)()
-        return client
-
-    yield open_page
-    for client, browser_id in opened:
-        client.delete()
-        app.storage._users.pop(browser_id, None)
-
-
-async def _fire(handler: Callable[..., Any], arguments: events.UiEventArguments) -> None:
+async def _fire(handler: EventHandler, arguments: events.UiEventArguments) -> None:
     """Run a page handler the way NiceGUI does, in its sender's slot, and await it to the end."""
     with arguments.sender.parent_slot or nullcontext():
         result = handler(arguments)
@@ -162,3 +120,90 @@ async def test_admin_approves_a_user_from_a_signed_in_page(
         row = await db.get(User, pending.id)
         assert row is not None
         assert row.is_approved is True
+
+
+class _RecordingJobManager:
+    """A job manager that records its create_job calls without creating jobs."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def create_job(self, **kwargs: object) -> None:
+        self.calls.append(kwargs)
+
+
+async def _fire_click(button: ui.button, client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fire the button's click the way NiceGUI's socket handler does and await it.
+
+    A deployment schedules page handlers on the app's background tasks, which
+    only exist while ui.run owns the loop, so the test captures the scheduled
+    coroutine and awaits it here."""
+    scheduled: list[Awaitable[None]] = []
+
+    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
+        scheduled.append(awaitable)
+
+    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
+    listener = next(iter(button._event_listeners.values()))
+    assert listener.handler is not None
+    handler = listener.handler
+    storage.request_contextvar.set(listener.request)
+    with client:
+        with button.parent_slot or nullcontext():
+            handler(None)
+    assert len(scheduled) == 1
+    await scheduled[0]
+
+
+@pytest.mark.asyncio
+async def test_submit_job_is_refused_once_the_user_is_demoted(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    signed_in_page: OpenPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user demoted while their /new tab stays open is refused at submit
+    time, and no job is created."""
+    from openscientist import web_app
+    from openscientist.webapp_components.pages import new_job
+
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        user = User(email=f"demoted-{uuid4().hex}@page.test", name="Demoted", is_approved=True)
+        db.add(user)
+        await db.flush()
+        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        db.add(login)
+        await db.commit()
+        token = str(login.id)
+
+    try:
+        recorder = _RecordingJobManager()
+        monkeypatch.setattr(web_app, "get_job_manager", lambda: recorder)
+        monkeypatch.setattr(new_job, "check_provider_config", lambda: (True, "Mock", None))
+
+        client = await signed_in_page(token, new_job.new_job_page)
+        question = next(e for e in client.layout.descendants() if isinstance(e, ui.textarea))
+        button = next(
+            e
+            for e in client.layout.descendants()
+            if isinstance(e, ui.button) and e.text == "Start Discovery"
+        )
+
+        # An admin demotes the user while the tab stays open.
+        storage.request_contextvar.set(None)
+        ok, message = await admin_page.set_user_approval_status(user.id, False)
+        assert ok, message
+
+        question.value = "Why do corals bleach when the water warms?"
+        await _fire_click(button, client, monkeypatch)
+
+        assert recorder.calls == []
+        messages = [data for _target, kind, data in client.outbox.messages if kind == "notify"]
+        assert any(
+            data.get("message") == "Your account is pending administrator approval."
+            for data in messages
+        )
+    finally:
+        async with AsyncSession(test_engine) as db:
+            await db.execute(delete(User).where(User.id == user.id))
+            await db.commit()
