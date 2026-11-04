@@ -7,17 +7,23 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import MagicMock, PropertyMock, call, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from docker import errors as docker_errors
 from openscientist.exceptions import MissingImageError
 from openscientist.exec_broker_client import EXEC_TOKEN_ENV
-from openscientist.job_chat import CHAT_TURN_ENV
 from openscientist.job_container.db_login import AGENT_LOGIN_LABEL, AgentLogin
+from openscientist.job_container.launcher_client import (
+    LauncherClient,
+    LauncherDockerError,
+    LauncherImageMissingError,
+    LauncherNotFoundError,
+    LauncherUnavailableError,
+)
+from openscientist.job_container.run_home import create_run_home
 from openscientist.job_container.runner import (
     _STOP_GRACE_SECONDS,
     AGENT_APP_DIR,
@@ -99,6 +105,34 @@ def agent_login():
         yield SimpleNamespace(opened=opened, closed=closed)
 
 
+def _runner_with_client() -> tuple[JobContainerRunner, MagicMock]:
+    """A runner whose launcher client is a mock; the created handle is fixed."""
+    runner = JobContainerRunner()
+    client = MagicMock(spec=LauncherClient)
+    client.create_agent.return_value = {
+        "id": "c" * 64,
+        "short_id": "abc123",
+        "name": "openscientist-agent-job1",
+        "status": "running",
+    }
+    runner._client = client
+    return runner, client
+
+
+def _request(client: MagicMock) -> dict[str, object]:
+    return cast(dict[str, object], client.create_agent.call_args.args[0])
+
+
+def _listed_entry(labels: dict[str, str], container_id: str = "d" * 64) -> dict[str, object]:
+    return {
+        "id": container_id,
+        "name": "openscientist-agent-job1",
+        "status": "running",
+        "created": "2026-11-03T00:00:00Z",
+        "labels": labels,
+    }
+
+
 class TestContainerDatabaseLogin:
     """Each agent container reaches the database through its own login, which
     is given back when that container ends."""
@@ -113,12 +147,7 @@ class TestContainerDatabaseLogin:
             container=SimpleNamespace(
                 host_project_dir=None,
                 container_app_dir="/app",
-                agent_network=None,
-                agent_memory="8g",
-                agent_cpu=2.0,
-                agent_platform=None,
                 agent_image="openscientist-agent:latest",
-                agent_timeout=14400,
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -129,18 +158,9 @@ class TestContainerDatabaseLogin:
             airgap=SimpleNamespace(enabled=False),
         )
 
-    def _runner(self, mock_client: MagicMock) -> JobContainerRunner:
-        with patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client):
-            return JobContainerRunner()
-
     def _launch_patches(self):
         return (
             patch("openscientist.job_container.runner.get_settings", return_value=self._settings()),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
             patch(
                 "openscientist.agent.factory.agent_class_for_provider_id",
                 return_value=MagicMock(RUN_HOME=None),
@@ -148,23 +168,24 @@ class TestContainerDatabaseLogin:
         )
 
     def test_the_container_gets_its_own_login_and_never_the_web_one(self, agent_login) -> None:
-        mock_client = MagicMock()
-        a, b, c, d = self._launch_patches()
-        with a, b, c, d:
-            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
-        kwargs = mock_client.containers.run.call_args.kwargs
-        assert kwargs["environment"]["DATABASE_URL"] == _LOGIN.database_url
-        assert not any("web-pw" in value for value in kwargs["environment"].values())
-        assert kwargs["labels"][AGENT_LOGIN_LABEL] == _LOGIN.role
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches()
+        with a, b:
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+        request = _request(client)
+        env = cast(dict[str, str], request["env"])
+        assert env["DATABASE_URL"] == _LOGIN.database_url
+        assert not any("web-pw" in value for value in env.values())
+        assert request["db_login"] == _LOGIN.role
         agent_login.opened.assert_called_once_with("job-123", lifetime_seconds=14400)
 
     def test_the_container_gets_live_credentials_of_its_own_run(self, agent_login) -> None:
-        mock_client = MagicMock()
-        a, b, c, d = self._launch_patches()
-        with a, b, c, d:
-            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches()
+        with a, b:
+            runner.launch("job-123", Path("/app/jobs/job-123"))
         try:
-            env = mock_client.containers.run.call_args.kwargs["environment"]
+            env = cast(dict[str, str], _request(client)["env"])
             assert broker_accepts("job-123", env[EXEC_TOKEN_ENV])
             assert proxy_accepts(_FakeProvider.last_placeholder)
         finally:
@@ -172,11 +193,11 @@ class TestContainerDatabaseLogin:
 
     def test_no_container_starts_without_its_login(self, agent_login) -> None:
         agent_login.opened.side_effect = RuntimeError("cannot create role")
-        mock_client = MagicMock()
-        a, b, c, d = self._launch_patches()
-        with a, b, c, d, pytest.raises(RuntimeError, match="cannot create role"):
-            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
-        mock_client.containers.run.assert_not_called()
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches()
+        with a, b, pytest.raises(RuntimeError, match="cannot create role"):
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+        client.create_agent.assert_not_called()
 
     def test_unroutable_provider_traffic_refuses_before_the_container_starts(
         self, agent_login
@@ -186,40 +207,40 @@ class TestContainerDatabaseLogin:
         unroutable.prelaunch_routing_error.return_value = (
             "the omp harness cannot route the ChatGPT login"
         )
-        mock_client = MagicMock()
-        a, b, c, d = self._launch_patches()
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches()
         with (
             a,
             b,
-            c,
-            d,
             patch(
                 "openscientist.job_container.runner.get_provider",
                 return_value=unroutable,
             ),
             pytest.raises(RuntimeError, match="cannot route the ChatGPT login"),
         ):
-            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
-        mock_client.containers.run.assert_not_called()
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+        client.create_agent.assert_not_called()
 
     def test_a_container_that_fails_to_start_gives_its_login_back(self, agent_login) -> None:
-        mock_client = MagicMock()
-        mock_client.containers.run.side_effect = docker_errors.APIError("no such image")
-        a, b, c, d = self._launch_patches()
-        with a, b, c, d, pytest.raises(docker_errors.APIError):
-            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        runner, client = _runner_with_client()
+        client.create_agent.side_effect = LauncherDockerError(
+            "docker_error", "the daemon refused the run"
+        )
+        a, b = self._launch_patches()
+        with a, b, pytest.raises(LauncherDockerError):
+            runner.launch("job-123", Path("/app/jobs/job-123"))
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
     def test_a_missing_agent_image_fails_with_how_to_build_it(self, agent_login) -> None:
         """The job's error names the image and a real target that builds it,
         and the run still gives its login back."""
-        mock_client = MagicMock()
-        mock_client.containers.run.side_effect = docker_errors.ImageNotFound(
-            "No such image: openscientist-agent:latest"
+        runner, client = _runner_with_client()
+        client.create_agent.side_effect = LauncherImageMissingError(
+            "image_missing", "the agent image is not available"
         )
-        a, b, c, d = self._launch_patches()
-        with a, b, c, d, pytest.raises(MissingImageError) as raised:
-            self._runner(mock_client).launch("job-123", Path("/app/jobs/job-123"))
+        a, b = self._launch_patches()
+        with a, b, pytest.raises(MissingImageError) as raised:
+            runner.launch("job-123", Path("/app/jobs/job-123"))
         assert "openscientist-agent:latest" in str(raised.value)
         assert_names_a_build_command(str(raised.value))
         agent_login.closed.assert_called_once_with(_LOGIN.role)
@@ -227,55 +248,84 @@ class TestContainerDatabaseLogin:
     def test_cleanup_gives_back_the_login_of_the_removed_container(self, agent_login) -> None:
         """Startup cleanup uses a fresh runner, so the login name comes from the
         container's label and not from runner state."""
-        container = MagicMock()
-        container.labels = {AGENT_LOGIN_LABEL: _LOGIN.role}
-        mock_client = MagicMock()
-        mock_client.containers.list.return_value = [container]
-        self._runner(mock_client).cleanup("job-123")
-        container.remove.assert_called_once_with(force=True)
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        runner.cleanup("job-123")
+        client.remove.assert_called_once_with("d" * 64)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
+    def test_cleanup_takes_the_container_down_even_when_stop_fails(
+        self, tmp_path: Path, agent_login
+    ) -> None:
+        """A stop error must not strand the container: the agent got its grace
+        to finish in-flight work, and teardown still saves the log, removes the
+        container and drops its database login."""
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.stop.side_effect = LauncherDockerError("docker", "stop failed")
+        client.logs.return_value = "log saved"
+        runner.cleanup("job-123", tmp_path)
+        client.stop.assert_called_once_with("d" * 64, timeout_seconds=_STOP_GRACE_SECONDS)
+        assert (tmp_path / "agent-container.log").read_text() == "log saved"
+        client.remove.assert_called_once_with("d" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_cleanup_removes_the_run_home_named_in_the_labels(self, tmp_path: Path) -> None:
+        """The home the launcher reports on the label comes back to the web's side
+        (host -> container path) before removal."""
+        home = create_run_home(tmp_path / "jobs", _LOGIN.role)
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [
+            _listed_entry(
+                {
+                    AGENT_LOGIN_LABEL: _LOGIN.role,
+                    "openscientist.run_home": str(home),
+                }
+            )
+        ]
+        with patch("openscientist.job_container.runner.get_settings") as mock_settings:
+            # No host project dir: the host path is the web's path unchanged.
+            mock_settings.return_value = self._settings()
+            runner.cleanup("job-123")
+        assert not home.exists()
+        client.remove.assert_called_once_with("d" * 64)
+
     def test_a_failed_chat_turn_gives_its_login_back(self, agent_login) -> None:
-        container = MagicMock()
-        container.labels = {AGENT_LOGIN_LABEL: _LOGIN.role}
-        container.wait.return_value = {"StatusCode": 1}
-        container.logs.return_value = b"boom"
-        mock_client = MagicMock()
-        mock_client.containers.run.return_value = container
-        a, b, c, d = self._launch_patches()
-        with a, b, c, d, pytest.raises(RuntimeError, match="exited with code 1"):
-            self._runner(mock_client).run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
+        runner, client = _runner_with_client()
+        client.wait.return_value = {"exit_code": 1, "timeout": False}
+        client.logs.return_value = "boom"
+        a, b = self._launch_patches()
+        with a, b, pytest.raises(RuntimeError, match="exited with code 1"):
+            runner.run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
         agent_login.opened.assert_called_once_with("job-123", lifetime_seconds=300)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
     def test_live_logins_are_the_labels_of_every_listed_container(self) -> None:
         """Exited containers count too, since their teardown has yet to run."""
-        running, exited = MagicMock(), MagicMock()
-        running.labels = {AGENT_LOGIN_LABEL: "agent_" + "1" * 32}
-        exited.labels = {AGENT_LOGIN_LABEL: "agent_" + "2" * 32}
-        mock_client = MagicMock()
-        mock_client.containers.list.return_value = [running, exited]
-        assert self._runner(mock_client).live_login_roles() == {
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [
+            _listed_entry({AGENT_LOGIN_LABEL: "agent_" + "1" * 32}),
+            _listed_entry({AGENT_LOGIN_LABEL: "agent_" + "2" * 32}),
+        ]
+        assert runner.live_login_roles() == {
             "agent_" + "1" * 32,
             "agent_" + "2" * 32,
         }
-        assert mock_client.containers.list.call_args.kwargs["all"] is True
+        client.list_containers.assert_called_once_with([AGENT_LOGIN_LABEL])
 
-    def test_live_logins_are_unknown_when_docker_fails(self) -> None:
-        mock_client = MagicMock()
-        mock_client.containers.list.side_effect = docker_errors.DockerException("down")
-        assert self._runner(mock_client).live_login_roles() is None
+    def test_live_logins_are_unknown_when_the_launcher_fails(self) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = LauncherUnavailableError(
+            "unavailable", "the launcher could not be reached"
+        )
+        assert runner.live_login_roles() is None
 
 
 class TestJobContainerRunner:
     """Tests for JobContainerRunner."""
 
     @staticmethod
-    def _make_settings(
-        *,
-        host_project_dir: str | None,
-        agent_image: str = "openscientist-agent:latest",
-    ) -> SimpleNamespace:
+    def _make_settings(*, host_project_dir: str | None) -> SimpleNamespace:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {"EXTRA_ENV": "1"}
         provider.codex_auth_host_path = None
@@ -283,12 +333,6 @@ class TestJobContainerRunner:
             container=SimpleNamespace(
                 host_project_dir=host_project_dir,
                 container_app_dir="/app",
-                agent_network=None,
-                agent_memory="8g",
-                agent_cpu=2.0,
-                agent_platform=None,
-                agent_image=agent_image,
-                agent_timeout=14400,
             ),
             provider=provider,
             database=SimpleNamespace(effective_database_url="postgresql://db"),
@@ -297,216 +341,95 @@ class TestJobContainerRunner:
             secret_key="secret",
         )
 
-    def test_docker_unavailable_raises(self):
-        """Runner construction surfaces Docker startup failures."""
-        with patch(
-            "openscientist.job_container.runner.docker.from_env",
-            side_effect=Exception("Docker not running"),
-        ):
-            with pytest.raises(Exception, match="Docker not running"):
-                JobContainerRunner()
-
-    def test_docker_available(self):
-        """Runner construction stores the Docker client from ``from_env``."""
-        mock_client = MagicMock()
-
-        with patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client):
-            runner = JobContainerRunner()
-            assert vars(runner)["_docker"] is mock_client
-
-    def test_launch_passes_host_path_mapping_to_agent_container(self):
-        """Launch passes the translated job mount and host mapping to the agent."""
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
-        settings = self._make_settings(host_project_dir="/host/project")
-
-        original_exists = Path.exists
-
-        def fake_exists(path: Path) -> bool:
-            if path == Path("/var/run/docker.sock"):
-                return False
-            return cast(bool, original_exists(path))
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
+    def _launch_patches(self, settings: SimpleNamespace):
+        return (
             patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
             patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/host/project/jobs/job-123"),
+                "openscientist.agent.factory.agent_class_for_provider_id",
+                return_value=MagicMock(RUN_HOME=None),
             ),
-            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
-        ):
-            runner = JobContainerRunner()
-            runner.launch("job-123", Path("/app/jobs/job-123"))
-
-        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
-        environment = run_kwargs["environment"]
-        assert environment["JOB_DIR"] == f"{AGENT_APP_DIR}/jobs/job-123"
-        assert environment["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
-        assert environment["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
-        assert run_kwargs["volumes"]["/host/project/jobs/job-123"]["bind"] == environment["JOB_DIR"]
-
-    def test_launch_omits_docker_socket_and_group_add(self):
-        """The job container no longer mounts the Docker socket or joins its group."""
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
-        settings = self._make_settings(host_project_dir="/host/project")
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/host/project/jobs/job-123"),
-            ),
-        ):
-            runner = JobContainerRunner()
-            runner.launch("job-123", Path("/app/jobs/job-123"))
-
-        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
-        assert "/var/run/docker.sock" not in run_kwargs["volumes"]
-        assert "group_add" not in run_kwargs
-
-    def test_launch_uses_agent_image_from_settings(self):
-        """Launch passes the configured agent_image to containers.run.
-
-        Regression test for #132: hardcoded :latest tag prevented staging
-        deployments from isolating their agent image from prod's :latest.
-        """
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
-        settings = self._make_settings(
-            host_project_dir=None,
-            agent_image="openscientist-agent:staging",
         )
 
-        original_exists = Path.exists
+    def test_client_is_built_lazily_and_reused(self, tmp_path: Path) -> None:
+        """Construction stays cheap; the socket is only reached on a request."""
+        import os
 
-        def fake_exists(path: Path) -> bool:
-            if path == Path("/var/run/docker.sock"):
-                return False
-            return cast(bool, original_exists(path))
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
-            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
-        ):
+        old = os.environ.get("OPENSCIENTIST_LAUNCHER_SOCKET_PATH")
+        os.environ["OPENSCIENTIST_LAUNCHER_SOCKET_PATH"] = str(tmp_path / "launcher.sock")
+        clear_settings_cache()
+        try:
             runner = JobContainerRunner()
+            assert isinstance(runner.client, LauncherClient)
+            assert runner.client is runner.client
+        finally:
+            if old is None:
+                del os.environ["OPENSCIENTIST_LAUNCHER_SOCKET_PATH"]
+            else:
+                os.environ["OPENSCIENTIST_LAUNCHER_SOCKET_PATH"] = old
+            clear_settings_cache()
+
+    def test_launch_passes_host_path_mapping_to_agent_container(self):
+        """Launch passes the host project mapping the launcher's env allow-list
+        admits, and the job dir the agent sees inside its container."""
+        runner, client = _runner_with_client()
+        settings = self._make_settings(host_project_dir="/host/project")
+        a, b = self._launch_patches(settings)
+        with a, b:
             runner.launch("job-123", Path("/app/jobs/job-123"))
 
-        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
-        assert run_kwargs["image"] == "openscientist-agent:staging"
+        env = cast(dict[str, str], _request(client)["env"])
+        assert env["JOB_DIR"] == f"{AGENT_APP_DIR}/jobs/job-123"
+        assert env["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
+        assert env["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
 
-    def test_launch_maps_host_docker_internal_to_gateway(self):
-        """The agent container maps host.docker.internal to the host gateway so a
-        job can reach a model server running on the host (e.g. a local Ollama)."""
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
-        settings = self._make_settings(host_project_dir=None)
-
-        original_exists = Path.exists
-
-        def fake_exists(path: Path) -> bool:
-            if path == Path("/var/run/docker.sock"):
-                return False
-            return cast(bool, original_exists(path))
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
-            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
-        ):
-            runner = JobContainerRunner()
+    def test_launch_sends_no_fields_the_launcher_chooses(self):
+        """The web may choose the job, the mode, the allowed env and resources;
+        the image, mounts, network, labels, user and capabilities are the
+        launcher's, and never appear in the request."""
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches(self._make_settings(host_project_dir=None))
+        with a, b:
             runner.launch("job-123", Path("/app/jobs/job-123"))
 
-        run_kwargs = cast(MagicMock, mock_client.containers.run).call_args.kwargs
-        assert run_kwargs["extra_hosts"] == {"host.docker.internal": "host-gateway"}
+        request = _request(client)
+        for field in (
+            "image",
+            "volumes",
+            "network",
+            "labels",
+            "user",
+            "cap_add",
+            "entrypoint",
+            "extra_hosts",
+            "platform",
+            "privileged",
+            "security_opt",
+            "stop_signal",
+            "name",
+        ):
+            assert field not in request, f"the request carries {field}"
 
     def test_launch_omits_host_path_mapping_without_host_project_dir(self):
         """Launch omits host-path env vars when the host project path is unset."""
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
-        settings = self._make_settings(host_project_dir=None)
-
-        original_exists = Path.exists
-
-        def fake_exists(path: Path) -> bool:
-            if path == Path("/var/run/docker.sock"):
-                return False
-            return cast(bool, original_exists(path))
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
-            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
-        ):
-            runner = JobContainerRunner()
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches(self._make_settings(host_project_dir=None))
+        with a, b:
             runner.launch("job-123", Path("/app/jobs/job-123"))
 
-        environment = cast(MagicMock, mock_client.containers.run).call_args.kwargs["environment"]
-        assert "OPENSCIENTIST_HOST_PROJECT_DIR" not in environment
-        assert "OPENSCIENTIST_CONTAINER_APP_DIR" not in environment
+        env = cast(dict[str, str], _request(client)["env"])
+        assert "OPENSCIENTIST_HOST_PROJECT_DIR" not in env
+        assert "OPENSCIENTIST_CONTAINER_APP_DIR" not in env
 
     def _launch_and_get_env(self, *, run_mode: str | None) -> dict[str, str]:
-        """Run launch() (optionally with run_mode) and return the container env."""
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
-        settings = self._make_settings(host_project_dir=None)
-
-        original_exists = Path.exists
-
-        def fake_exists(path: Path) -> bool:
-            if path == Path("/var/run/docker.sock"):
-                return False
-            return cast(bool, original_exists(path))
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
-            patch.object(Path, "exists", autospec=True, side_effect=fake_exists),
-        ):
-            runner = JobContainerRunner()
+        """Run launch() (optionally with run_mode) and return the request env."""
+        runner, client = _runner_with_client()
+        a, b = self._launch_patches(self._make_settings(host_project_dir=None))
+        with a, b:
             if run_mode is None:
                 runner.launch("job-123", Path("/app/jobs/job-123"))
             else:
                 runner.launch("job-123", Path("/app/jobs/job-123"), run_mode=run_mode)
-
-        return cast(dict[str, str], mock_client.containers.run.call_args.kwargs["environment"])
+        return cast(dict[str, str], _request(client)["env"])
 
     def test_launch_sets_run_mode_env_for_report_only(self):
         """report_only launches carry OPENSCIENTIST_RUN_MODE so the entrypoint
@@ -521,150 +444,76 @@ class TestJobContainerRunner:
 
     def test_get_exit_code_looks_up_agent_container_by_labels(self):
         """Exit-code polling filters to the agent container, not job executors."""
-        mock_client = MagicMock()
-        mock_agent = MagicMock()
-        mock_agent.status = "running"
-        mock_client.containers.list.return_value = [mock_agent]
-
-        with patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client):
-            runner = JobContainerRunner()
-            assert runner.get_exit_code("job-123") is None
-
-        mock_client.containers.list.assert_called_once_with(
-            all=True,
-            filters={
-                "label": [
-                    "openscientist.job_id=job-123",
-                    "openscientist.type=agent",
-                ]
-            },
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({})]
+        client.inspect.return_value = {"status": "running", "exit_code": None}
+        assert runner.get_exit_code("job-123") is None
+        client.list_containers.assert_called_once_with(
+            ["openscientist.job_id=job-123", "openscientist.type=agent"]
         )
+
+    def test_get_exit_code_returns_the_code_of_an_exited_container(self):
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({})]
+        client.inspect.return_value = {"status": "exited", "exit_code": 3}
+        assert runner.get_exit_code("job-123") == 3
 
     def test_get_exit_code_returns_none_when_container_disappears(self):
         """Exit-code polling treats a vanished container as a benign miss."""
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.reload.side_effect = docker_errors.NotFound("gone")
-        mock_client.containers.list.return_value = [mock_container]
-
-        with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.logger.warning") as mock_warning,
-        ):
-            runner = JobContainerRunner()
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({})]
+        client.inspect.side_effect = LauncherNotFoundError("not_found", "gone")
+        with patch("openscientist.job_container.runner.logger.warning") as mock_warning:
             exit_code = runner.get_exit_code("job-123")
-
         assert exit_code is None
         mock_warning.assert_not_called()
 
 
 class TestPhenixMount:
-    """Tests for Phenix volume mount in agent containers."""
+    """Phenix is advertised and mounted through the launcher's fixed path, only
+    when the operator gives the launcher a host path."""
 
-    def _make_runner(self) -> tuple[JobContainerRunner, MagicMock]:
-        """Construct a runner with a mocked Docker client."""
-        mock_client = MagicMock()
-        with patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client):
-            return JobContainerRunner(), mock_client
-
-    def _mock_settings(
-        self,
-        *,
-        phenix_available: bool,
-        phenix_path: str | None = None,
-        phenix_host_path: str | None = None,
-    ) -> MagicMock:
-        settings = MagicMock()
-        settings.container.host_project_dir = None
-        settings.container.container_app_dir = "/app"
-        settings.container.agent_network = None
-        settings.container.agent_memory = "8g"
-        settings.container.agent_cpu = 2.0
-        settings.secret_key = "test-secret"
-        settings.database.effective_database_url = "postgresql+asyncpg://test"
-        settings.provider.get_container_env_vars.return_value = {}
-        settings.provider.google_application_credentials = None
-        settings.provider.codex_auth_host_path = None
-        settings.airgap.enabled = False
-
-        phenix = MagicMock()
-        type(phenix).is_available = PropertyMock(return_value=phenix_available)
-        phenix.phenix_path = phenix_path
-        phenix.phenix_host_path = phenix_host_path
-        settings.phenix = phenix
-
-        return settings
-
-    @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
-    @patch("openscientist.job_container.runner.get_settings")
-    def test_phenix_mounted_when_available(self, mock_get_settings, _net):
-        """The configured Linux Phenix path is mounted into the agent container."""
-        settings = self._mock_settings(
-            phenix_available=True,
-            phenix_path="/opt/phenix",
-            phenix_host_path="/Applications/phenix-1.21.2",
+    @staticmethod
+    def _settings(*, phenix_host_path: str | None) -> SimpleNamespace:
+        provider = MagicMock()
+        provider.get_container_env_vars.return_value = {}
+        provider.codex_auth_host_path = None
+        provider.gcp_credentials_host_path = None
+        return SimpleNamespace(
+            container=SimpleNamespace(host_project_dir=None, container_app_dir="/app"),
+            provider=provider,
+            database=SimpleNamespace(effective_database_url="postgresql://db"),
+            phenix=SimpleNamespace(phenix_host_path=phenix_host_path),
+            airgap=SimpleNamespace(enabled=False),
+            secret_key="master-key",
         )
-        mock_get_settings.return_value = settings
 
-        runner, mock_client = self._make_runner()
-        job_dir = Path("/app/jobs/test-job-id")
+    def _launch(self, *, phenix_host_path: str | None) -> dict[str, object]:
+        runner, client = _runner_with_client()
+        settings = self._settings(phenix_host_path=phenix_host_path)
+        with (
+            patch("openscientist.job_container.runner.get_settings", return_value=settings),
+            patch(
+                "openscientist.agent.factory.agent_class_for_provider_id",
+                return_value=MagicMock(RUN_HOME=None),
+            ),
+        ):
+            runner.launch("job-123", Path("/app/jobs/job-123"))
+        return _request(client)
 
-        with patch.object(Path, "exists", return_value=True):
-            runner.launch("test-job-id", job_dir)
-
-        call_kwargs = cast(MagicMock, mock_client.containers.run).call_args
-        volumes = call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
-        env = call_kwargs.kwargs.get("environment") or call_kwargs[1].get("environment")
-
-        assert "/Applications/phenix-1.21.2" in volumes
-        assert volumes["/Applications/phenix-1.21.2"] == {"bind": "/opt/phenix", "mode": "ro"}
+    def test_phenix_mounted_when_available(self):
+        """The configured Linux Phenix path is mounted into the agent container
+        by the launcher, which the web enables with the flag and the env."""
+        request = self._launch(phenix_host_path="/Applications/phenix-1.21.2")
+        assert request["phenix"] is True
+        env = cast(dict[str, str], request["env"])
         assert env["PHENIX_PATH"] == "/opt/phenix"
 
-    @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
-    @patch("openscientist.job_container.runner.get_settings")
-    def test_phenix_not_mounted_without_host_path(self, mock_get_settings, _net):
+    def test_phenix_not_mounted_without_host_path(self):
         """Phenix is not mounted when phenix_host_path is unset."""
-        settings = self._mock_settings(
-            phenix_available=True,
-            phenix_path="/Applications/phenix-1.21.2",
-            phenix_host_path=None,
-        )
-        mock_get_settings.return_value = settings
-
-        runner, mock_client = self._make_runner()
-        job_dir = Path("/app/jobs/test-job-id")
-
-        with patch.object(Path, "exists", return_value=True):
-            runner.launch("test-job-id", job_dir)
-
-        call_kwargs = cast(MagicMock, mock_client.containers.run).call_args
-        volumes = call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
-        env = call_kwargs.kwargs.get("environment") or call_kwargs[1].get("environment")
-
-        for key in volumes:
-            assert "phenix" not in key.lower()
-        assert "PHENIX_PATH" not in env
-
-    @patch("openscientist.job_container.runner.resolve_docker_network", return_value="bridge")
-    @patch("openscientist.job_container.runner.get_settings")
-    def test_phenix_not_mounted_when_unavailable(self, mock_get_settings, _net):
-        """Phenix mounts are omitted when the feature is unavailable."""
-        settings = self._mock_settings(phenix_available=False)
-        mock_get_settings.return_value = settings
-
-        runner, mock_client = self._make_runner()
-        job_dir = Path("/app/jobs/test-job-id")
-
-        with patch.object(Path, "exists", return_value=True):
-            runner.launch("test-job-id", job_dir)
-
-        call_kwargs = cast(MagicMock, mock_client.containers.run).call_args
-        volumes = call_kwargs.kwargs.get("volumes") or call_kwargs[1].get("volumes")
-        env = call_kwargs.kwargs.get("environment") or call_kwargs[1].get("environment")
-
-        for key in volumes:
-            assert "phenix" not in key.lower()
-        assert "PHENIX_PATH" not in env
+        request = self._launch(phenix_host_path=None)
+        assert request["phenix"] is False
+        assert "PHENIX_PATH" not in cast(dict[str, str], request["env"])
 
 
 class TestJobSecretInjection:
@@ -742,8 +591,10 @@ class TestJobSecretInjection:
 
 
 class TestFirewallLaunch:
-    """The job container runs behind the in-container nftables egress firewall
-    in every mode, air-gapped or not."""
+    """The job container runs behind the nftables egress firewall in every
+    mode, air-gapped or not: the web sends the flag and the structured
+    host:port entries, and the launcher formats the allow list and applies
+    the firewall trio itself."""
 
     @staticmethod
     def _settings(*, provider_id: str = "ollama") -> SimpleNamespace:
@@ -759,9 +610,6 @@ class TestFirewallLaunch:
             container=SimpleNamespace(
                 host_project_dir=None,
                 container_app_dir="/app",
-                agent_network=None,
-                agent_platform=None,
-                agent_image="openscientist-agent:latest",
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -777,14 +625,10 @@ class TestFirewallLaunch:
         airgapped: bool,
         provider_id: str = "ollama",
     ) -> dict[str, object]:
-        """Launch with the row's airgap flag, and return the container run kwargs."""
+        """Launch with the row's airgap flag, and return the launcher request."""
         await set_admin_settings_row(test_engine, airgapped=airgapped)
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_client.containers.run.return_value = mock_container
+        runner, client = _runner_with_client()
         with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
             patch(
                 "openscientist.job_container.runner.get_settings",
                 return_value=self._settings(provider_id=provider_id),
@@ -793,56 +637,42 @@ class TestFirewallLaunch:
                 "openscientist.job_container.runner.get_provider",
                 return_value=_FakeProvider(),
             ),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
             patch(
                 "openscientist.agent.factory.agent_class_for_provider_id",
                 return_value=MagicMock(RUN_HOME=None),
             ),
-            patch.object(Path, "exists", return_value=True),
         ):
             runner = JobContainerRunner()
+            runner._client = client
             await asyncio.to_thread(runner.launch, "job-123", Path("/app/jobs/job-123"))
-        return cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
+        return cast(dict[str, object], client.create_agent.call_args.args[0])
 
     @pytest.mark.asyncio
-    async def test_airgap_launch_applies_firewall(self, test_engine: AsyncEngine) -> None:
-        run_kwargs = await self._launch(test_engine, airgapped=True)
-        assert run_kwargs["cap_add"] == ["NET_ADMIN"]
-        assert run_kwargs["user"] == "root"
-        assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
-        environment = cast(dict[str, str], run_kwargs["environment"])
-        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
-        entries = set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(","))
+    async def test_airgap_launch_sends_the_structured_allowlist(
+        self, test_engine: AsyncEngine
+    ) -> None:
+        request = await self._launch(test_engine, airgapped=True)
+        assert request["airgapped"] is True
+        entries = set(cast(list[str], request["egress_allow"]))
         assert "postgres:5432" in entries
         assert "openscientist:8082" in entries
         # Ollama is a proxied provider now, so the container reaches the proxy,
         # not the model server directly.
         assert "openscientist:8081" in entries
         assert "host.docker.internal:11434" not in entries
+        env = cast(dict[str, str], request["env"])
+        # The launcher formats the allow list; the web never sends it.
+        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in env
 
     @pytest.mark.asyncio
-    async def test_airgap_launch_passes_no_command(self, test_engine: AsyncEngine) -> None:
-        """The firewall entrypoint execs its arguments and falls back to the agent
-        entrypoint only when it gets none, so a command here would silently replace
-        the agent with whatever was passed."""
-        run_kwargs = await self._launch(test_engine, airgapped=True)
-        assert "command" not in run_kwargs or run_kwargs["command"] is None
-
-    @pytest.mark.asyncio
-    async def test_restricted_launch_applies_firewall(self, test_engine: AsyncEngine) -> None:
-        """Without air-gap the firewall keeps public egress and allowlists only
-        the web's services, so no provider posture is consulted."""
-        run_kwargs = await self._launch(test_engine, airgapped=False)
-        assert run_kwargs["cap_add"] == ["NET_ADMIN"]
-        assert run_kwargs["user"] == "root"
-        assert run_kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
-        environment = cast(dict[str, str], run_kwargs["environment"])
-        assert environment["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
-        assert set(environment["OPENSCIENTIST_FIREWALL_ALLOW"].split(",")) == {
+    async def test_restricted_launch_sends_the_web_allowlist(
+        self, test_engine: AsyncEngine
+    ) -> None:
+        """Without air-gap the firewall allowlists only the web's services, so
+        no provider posture is consulted."""
+        request = await self._launch(test_engine, airgapped=False)
+        assert request["airgapped"] is False
+        assert set(cast(list[str], request["egress_allow"])) == {
             "postgres:5432",
             "openscientist:8081",
             "openscientist:8082",
@@ -858,17 +688,12 @@ class TestChatTurnLaunch:
         provider.get_container_env_vars.return_value = {}
         provider.codex_auth_host_path = None
         provider.google_application_credentials = None
+        provider.gcp_credentials_host_path = None
         provider.provider_id = "anthropic"
         return SimpleNamespace(
             container=SimpleNamespace(
                 host_project_dir=None,
                 container_app_dir="/app",
-                agent_network=None,
-                agent_memory="8g",
-                agent_cpu=2.0,
-                agent_platform=None,
-                agent_image="openscientist-agent:latest",
-                agent_timeout=14400,
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -881,77 +706,68 @@ class TestChatTurnLaunch:
 
     def _run_chat(
         self,
-        settings: SimpleNamespace,
         *,
-        exit_code: int = 0,
+        exit_code: int | None = 0,
+        timed_out: bool = False,
         stop_error: Exception | None = None,
-    ):
-        mock_client = MagicMock()
-        mock_container = MagicMock()
-        mock_container.short_id = "abc123"
-        mock_container.wait.return_value = {"StatusCode": exit_code}
-        mock_container.logs.return_value = b"container log"
-        mock_container.labels = {AGENT_LOGIN_LABEL: _LOGIN.role}
+    ) -> tuple[JobContainerRunner, MagicMock]:
+        runner, client = _runner_with_client()
+        client.wait.return_value = {"exit_code": exit_code, "timeout": timed_out}
+        client.logs.return_value = "container log"
         if stop_error is not None:
-            mock_container.stop.side_effect = stop_error
-        mock_client.containers.run.return_value = mock_container
+            client.stop.side_effect = stop_error
         with (
-            patch("openscientist.job_container.runner.docker.from_env", return_value=mock_client),
-            patch("openscientist.job_container.runner.get_settings", return_value=settings),
-            patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-            patch(
-                "openscientist.job_container.runner.to_host_path",
-                return_value=Path("/app/jobs/job-123"),
-            ),
+            patch("openscientist.job_container.runner.get_settings", return_value=self._settings()),
             patch(
                 "openscientist.agent.factory.agent_class_for_provider_id",
                 return_value=MagicMock(RUN_HOME=None),
             ),
-            patch.object(Path, "exists", return_value=True),
         ):
-            JobContainerRunner().run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
-        return mock_client, mock_container
+            runner.run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
+        return runner, client
 
     def test_chat_turn_launches_hardened_container(self) -> None:
-        mock_client, mock_container = self._run_chat(self._settings())
-        run_kwargs = cast(dict[str, object], mock_client.containers.run.call_args.kwargs)
-        labels = cast(dict[str, str], run_kwargs["labels"])
-        assert labels["openscientist.type"] == "chat"
-        assert cast(str, run_kwargs["name"]).startswith("openscientist-chat-")
-        env = cast(dict[str, str], run_kwargs["environment"])
+        _, client = self._run_chat()
+        request = _request(client)
+        assert request["mode"] == "chat"
+        assert request["chat_turn"] == "t1"
+        env = cast(dict[str, str], request["env"])
         # The chat container carries the per-job derived secret, never the master.
         assert env["OPENSCIENTIST_SECRET_KEY"] != "master-key"
         assert env["OPENSCIENTIST_RUN_MODE"] == "chat"
-        assert env[CHAT_TURN_ENV] == "t1"
-        mock_container.wait.assert_called_once()
+        client.wait.assert_called_once_with("c" * 64, timeout_seconds=300)
         # Stopped with the grace a turn needs to write its cost, then removed.
-        calls = [c for c in mock_container.method_calls if c[0] in ("stop", "remove")]
-        assert calls == [call.stop(timeout=_STOP_GRACE_SECONDS), call.remove(force=True)]
+        calls = [c for c in client.method_calls if c[0] in ("stop", "remove")]
+        assert calls == [
+            call.stop("c" * 64, timeout_seconds=_STOP_GRACE_SECONDS),
+            call.remove("c" * 64),
+        ]
 
     def test_chat_turn_raises_on_nonzero_exit(self) -> None:
         with pytest.raises(RuntimeError, match="exited with code 1"):
-            self._run_chat(self._settings(), exit_code=1)
+            self._run_chat(exit_code=1)
+
+    def test_chat_turn_raises_when_the_wait_times_out(self) -> None:
+        """A turn cut at its bound still gets its cost written by the stop."""
+        with pytest.raises(RuntimeError, match="did not finish"):
+            self._run_chat(timed_out=True)
 
     def test_chat_turn_removes_container_and_drops_login_when_stop_fails(
         self,
         agent_login: SimpleNamespace,
     ) -> None:
-        _, mock_container = self._run_chat(
-            self._settings(),
-            stop_error=docker_errors.APIError("stop failed"),
+        _, client = self._run_chat(
+            stop_error=LauncherDockerError("docker_error", "stop failed"),
         )
         # A failed stop must not lose the cleanup either.
-        mock_container.remove.assert_called_once_with(force=True)
+        client.remove.assert_called_once_with("c" * 64)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 
     def test_chat_turn_tolerates_stop_when_container_is_gone(
         self,
         agent_login: SimpleNamespace,
     ) -> None:
-        _, mock_container = self._run_chat(
-            self._settings(),
-            stop_error=docker_errors.NotFound("no such container"),
-        )
+        _, client = self._run_chat(stop_error=LauncherNotFoundError("not_found", "gone"))
         # A container already gone is swallowed silently, cleanup still runs.
-        mock_container.remove.assert_called_once_with(force=True)
+        client.remove.assert_called_once_with("c" * 64)
         agent_login.closed.assert_called_once_with(_LOGIN.role)

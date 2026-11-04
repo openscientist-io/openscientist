@@ -108,6 +108,7 @@ def _agent_body(**overrides: object) -> dict[str, object]:
             "DATABASE_URL": "postgresql://w:p@db:5432/os",
         },
         "db_login": LOGIN_ROLE,
+        "egress_allow": ["openscientist:8081", "openscientist:8082"],
         "memory_mib": 4096,
         "cpu": 2.0,
     }
@@ -133,6 +134,7 @@ def launcher(
         AGENT_IMAGE_DIGESTS=env["AGENT_IMAGE_DIGESTS"],
         EXECUTOR_IMAGE_DIGESTS=env["EXECUTOR_IMAGE_DIGESTS"],
         AGENT_IMAGE=env["AGENT_IMAGE"],
+        MAX_EGRESS_ENTRIES="8",
     )
     try:
         yield started
@@ -176,9 +178,13 @@ class TestAgentCreate:
         attrs = _inspect(docker_client, name)
         config = attrs["Config"]
         host = attrs["HostConfig"]
-        assert config["User"] == "agent"
+        # The open agent starts behind the restrict firewall, so the web sees
+        # root and NET_ADMIN at creation, and the entrypoint drops to the
+        # agent user.
+        assert config["User"] == "root"
+        assert config["Entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         assert host["Privileged"] is False
-        assert not (host.get("CapAdd") or [])
+        assert host["CapAdd"] == ["NET_ADMIN"]
         assert host["Binds"] == [f"{jobs_root / JOB_ID}:/agent/jobs/{JOB_ID}:rw"]
         assert host["NetworkMode"] == "bridge"
         assert host["SecurityOpt"] == ["no-new-privileges:true"]
@@ -193,7 +199,8 @@ class TestAgentCreate:
         }
         env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
         assert env["DATABASE_URL"] == "postgresql://w:p@db:5432/os"
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in env
+        assert env["OPENSCIENTIST_FIREWALL_ALLOW"] == "openscientist:8081,openscientist:8082"
+        assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
 
         with launcher.client() as client:
             assert client.get(f"/v1/containers/{name}").json() == {
@@ -223,7 +230,7 @@ class TestAgentCreate:
         with launcher.client() as client:
             client.post(f"/v1/containers/{name}/remove")
 
-    def test_firewall_trio_only_when_airgapped(
+    def test_airgapped_firewall_trio(
         self, launcher: Launcher, docker_client: docker.DockerClient
     ) -> None:
         body = _agent_body(airgapped=True, egress_allow=["postgres:5432", "api.openai.com:443"])
@@ -236,6 +243,7 @@ class TestAgentCreate:
         assert attrs["Config"]["Entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         env = dict(item.split("=", 1) for item in attrs["Config"]["Env"] if "=" in item)
         assert env["OPENSCIENTIST_FIREWALL_ALLOW"] == "postgres:5432,api.openai.com:443"
+        assert env["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
         with launcher.client() as client:
             client.post(f"/v1/containers/{response.json()['name']}/remove")
 

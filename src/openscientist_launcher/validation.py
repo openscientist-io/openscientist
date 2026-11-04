@@ -57,10 +57,12 @@ AGENT_ENV_ALLOWLIST: frozenset[str] = frozenset(
         "OPENSCIENTIST_DB_CONNECT_RETRY_SECONDS",
         "OPENSCIENTIST_EXEC_BROKER_URL",
         "OPENSCIENTIST_EXEC_TOKEN",
+        "OPENSCIENTIST_HARNESS",
         "OPENSCIENTIST_HOST_PROJECT_DIR",
         "OPENSCIENTIST_LLM_PROXY_URL",
         "OPENSCIENTIST_MODEL",
         "OPENSCIENTIST_MODEL_CONTEXT_TOKENS",
+        "OPENSCIENTIST_PROVIDER",
         "OPENSCIENTIST_RUN_MODE",
         "OPENSCIENTIST_SECRET_KEY",
         "PHENIX_PATH",
@@ -303,19 +305,18 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
     cpu = _as_number(body, "cpu", maximum=cfg.agent_max_cpu)
 
     airgapped = _as_bool(body, "airgapped")
-    egress_allow: tuple[str, ...] = ()
+    # The container starts behind the firewall in every mode, so the allow
+    # list is required, air-gapped or not.
     raw_egress = body.get("egress_allow")
-    if raw_egress is not None:
-        if not airgapped:
-            raise ValidationError("egress_allow is only allowed when airgapped")
-        if not isinstance(raw_egress, list) or not raw_egress:
-            raise ValidationError("egress_allow must be a list of host:port entries")
-        if len(raw_egress) > cfg.max_egress_entries:
-            raise ValidationError("egress_allow exceeds the launcher's entry bound")
-        for entry in raw_egress:
-            if not isinstance(entry, str) or not EGRESS_ENTRY.match(entry):
-                raise ValidationError("egress_allow entry is not a valid host:port")
-        egress_allow = tuple(raw_egress)
+    if raw_egress is None or not isinstance(raw_egress, list) or not raw_egress:
+        raise ValidationError("egress_allow is required")
+    if len(raw_egress) > cfg.max_egress_entries:
+        raise ValidationError("egress_allow exceeds the launcher's entry bound")
+    egress_allow: tuple[str, ...]
+    for entry in raw_egress:
+        if not isinstance(entry, str) or not EGRESS_ENTRY.match(entry):
+            raise ValidationError("egress_allow entry is not a valid host:port")
+    egress_allow = tuple(raw_egress)
 
     return AgentLaunch(
         job_id=job_id,

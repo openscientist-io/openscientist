@@ -20,6 +20,7 @@ NET_ADMIN = "NET_ADMIN"
 FIREWALL_ALLOW_ENV = "OPENSCIENTIST_FIREWALL_ALLOW"
 FIREWALL_MODE_ENV = "OPENSCIENTIST_FIREWALL_MODE"
 FIREWALL_RUN_AS_ENV = "OPENSCIENTIST_FIREWALL_RUN_AS"
+FIREWALL_MODE_AIRGAP = "airgap"
 FIREWALL_MODE_RESTRICT = "restrict"
 
 
@@ -43,8 +44,10 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
     env = dict(launch.env)
     if launch.mode == "chat" and launch.chat_turn is not None:
         env["OPENSCIENTIST_CHAT_TURN"] = launch.chat_turn
-    if launch.airgapped:
-        env[FIREWALL_ALLOW_ENV] = ",".join(launch.egress_allow)
+    # The container starts behind the firewall in every mode, so the allow
+    # list and its mode ride on every launch.
+    env[FIREWALL_ALLOW_ENV] = ",".join(launch.egress_allow)
+    env[FIREWALL_MODE_ENV] = FIREWALL_MODE_AIRGAP if launch.airgapped else FIREWALL_MODE_RESTRICT
 
     job_mount = f"{AGENT_APP_DIR}/jobs/{launch.job_id}"
     volumes: dict[str, dict[str, str]] = {
@@ -80,11 +83,11 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
         "extra_hosts": {"host.docker.internal": "host-gateway"},
         "labels": labels,
     }
-    if launch.airgapped:
-        # NET_ADMIN installs the firewall rules, then the entrypoint drops to the agent user with it gone.
-        kwargs["cap_add"] = [NET_ADMIN]
-        kwargs["user"] = "root"
-        kwargs["entrypoint"] = FIREWALL_ENTRYPOINT
+    # NET_ADMIN installs the firewall rules, then the entrypoint drops to the
+    # agent user with it gone.
+    kwargs["cap_add"] = [NET_ADMIN]
+    kwargs["user"] = "root"
+    kwargs["entrypoint"] = FIREWALL_ENTRYPOINT
     return kwargs
 
 

@@ -61,6 +61,7 @@ def _agent_request(**overrides) -> dict[str, object]:
         "lifetime_seconds": 600,
         "env": {"JOB_ID": JOB_ID, "DATABASE_URL": "postgresql://w:p@db:5432/os"},
         "db_login": LOGIN_ROLE,
+        "egress_allow": ["openscientist:8081", "openscientist:8082"],
         "memory_mib": 4096,
         "cpu": 2.0,
     }
@@ -77,7 +78,7 @@ class TestAgentRequestValidation:
         assert launch.memory_mib == 4096
         assert launch.cpu == 2.0
         assert launch.airgapped is False
-        assert launch.egress_allow == ()
+        assert launch.egress_allow == ("openscientist:8081", "openscientist:8082")
 
     @pytest.mark.parametrize(
         "field",
@@ -156,7 +157,17 @@ class TestAgentRequestValidation:
             validate_agent_request(_agent_request(env={"JOB_ID": 7}), cfg)
 
     @pytest.mark.parametrize(
-        "key", ["JOB_ID", "DATABASE_URL", "OPENSCIENTIST_SECRET_KEY", "OPENSCIENTIST_CHAT_TURN"]
+        "key",
+        [
+            "JOB_ID",
+            "DATABASE_URL",
+            "OPENSCIENTIST_SECRET_KEY",
+            "OPENSCIENTIST_CHAT_TURN",
+            # The backend-agnostic provider identity keys every container env
+            # carries; the agent image needs them to pick its agent class.
+            "OPENSCIENTIST_PROVIDER",
+            "OPENSCIENTIST_HARNESS",
+        ],
     )
     def test_core_env_keys_allowed(self, tmp_path: Path, key: str) -> None:
         assert key in AGENT_ENV_ALLOWLIST
@@ -223,10 +234,13 @@ class TestAgentRequestValidation:
         with pytest.raises(ValidationError):
             validate_agent_request(_agent_request(phenix=True), cfg)
 
-    def test_egress_refused_without_airgap(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("airgapped", [False, True])
+    def test_egress_required_in_every_mode(self, tmp_path: Path, airgapped: bool) -> None:
         cfg = _config(_jobs(tmp_path))
-        with pytest.raises(ValidationError):
-            validate_agent_request(_agent_request(egress_allow=["db:5432"]), cfg)
+        body = _agent_request(airgapped=airgapped)
+        body.pop("egress_allow")
+        with pytest.raises(ValidationError, match="egress_allow is required"):
+            validate_agent_request(body, cfg)
 
     @pytest.mark.parametrize(
         "entry",
@@ -427,10 +441,17 @@ class TestAgentTemplate:
         assert labels["openscientist.type"] == "agent"
         assert labels["openscientist.launcher"] == "test"
         assert labels["openscientist.db_login"] == LOGIN_ROLE
-        assert "cap_add" not in kwargs
-        assert "user" not in kwargs
-        assert "entrypoint" not in kwargs
-        assert "OPENSCIENTIST_FIREWALL_ALLOW" not in kwargs["environment"]
+        # The open agent starts behind the restrict firewall with the web's
+        # allow-list.
+        assert kwargs["cap_add"] == ["NET_ADMIN"]
+        assert kwargs["user"] == "root"
+        assert kwargs["entrypoint"] == ["/agent-firewall-entrypoint.sh"]
+        assert (
+            kwargs["environment"]["OPENSCIENTIST_FIREWALL_ALLOW"]
+            == "openscientist:8081,openscientist:8082"
+        )
+        assert kwargs["environment"]["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
+        assert "OPENSCIENTIST_FIREWALL_RUN_AS" not in kwargs["environment"]
 
     def test_chat_mode_template(self, tmp_path: Path) -> None:
         cfg = _config(_jobs(tmp_path))
@@ -454,6 +475,8 @@ class TestAgentTemplate:
             kwargs["environment"]["OPENSCIENTIST_FIREWALL_ALLOW"]
             == "postgres:5432,api.openai.com:443"
         )
+        assert kwargs["environment"]["OPENSCIENTIST_FIREWALL_MODE"] == "airgap"
+        assert "OPENSCIENTIST_FIREWALL_RUN_AS" not in kwargs["environment"]
 
     def test_operator_mounts(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)

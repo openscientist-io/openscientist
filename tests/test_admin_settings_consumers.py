@@ -98,35 +98,35 @@ async def test_a_launch_reads_the_rows_limits_timeout_and_airgap(
     test_engine: AsyncEngine, admin_row: None, no_floor: None
 ) -> None:
     """The next launch takes the limits and lifetime from the row, airgap included."""
+    from openscientist.job_container.launcher_client import LauncherClient
+
     await set_admin_settings_row(test_engine)
-    runner = JobContainerRunner.__new__(JobContainerRunner)
+    runner = JobContainerRunner()
+    client = MagicMock(spec=LauncherClient)
+    client.create_agent.return_value = {
+        "id": "c" * 64,
+        "short_id": "abc123",
+        "name": "openscientist-agent-job1",
+        "status": "running",
+    }
+    runner._client = client
     _provider = MagicMock()
     _provider.prelaunch_routing_error.return_value = None
     with (
-        patch("openscientist.job_container.runner.docker.from_env", return_value=MagicMock()),
         patch("openscientist.job_container.runner.get_settings", return_value=_launcher_settings()),
         patch("openscientist.job_container.runner.get_provider", return_value=_provider),
         patch("openscientist.job_container.runner.open_agent_login", return_value=_LOGIN) as opened,
-        patch.object(JobContainerRunner, "_get_network", return_value="bridge"),
-        patch(
-            "openscientist.job_container.runner.to_host_path",
-            return_value=Path("/app/jobs/job-123"),
-        ),
         patch(
             "openscientist.agent.factory.agent_class_for_provider_id",
             return_value=MagicMock(RUN_HOME=None),
         ),
     ):
-        # Bypass docker.from_env() at construction, which the patches stand in for.
-        runner._docker = MagicMock()
-        mock_client = cast(MagicMock, runner._docker)
-
         await asyncio.to_thread(runner.launch, "job-123", Path("/app/jobs/job-123"))
-        kwargs = mock_client.containers.run.call_args.kwargs
-        assert kwargs["mem_limit"] == "8192m"
-        assert kwargs["nano_cpus"] == 2_000_000_000
+        request = cast(dict[str, object], client.create_agent.call_args.args[0])
+        assert request["memory_mib"] == 8192
+        assert request["cpu"] == 2.0
         opened.assert_called_once_with("job-123", lifetime_seconds=14400)
-        assert "OPENSCIENTIST_AIRGAPPED" not in kwargs["environment"]
+        assert "OPENSCIENTIST_AIRGAPPED" not in cast(dict[str, str], request["env"])
 
         await set_admin_settings_row(
             test_engine,
@@ -136,10 +136,11 @@ async def test_a_launch_reads_the_rows_limits_timeout_and_airgap(
             airgapped=True,
         )
         await asyncio.to_thread(runner.launch, "job-456", Path("/app/jobs/job-456"))
-        kwargs = mock_client.containers.run.call_args.kwargs
-        assert kwargs["mem_limit"] == "4096m"
-        assert kwargs["nano_cpus"] == 1_500_000_000
-        assert kwargs["environment"]["OPENSCIENTIST_AIRGAPPED"] == "1"
+        request = cast(dict[str, object], client.create_agent.call_args.args[0])
+        assert request["memory_mib"] == 4096
+        assert request["cpu"] == 1.5
+        assert request["airgapped"] is True
+        assert cast(dict[str, str], request["env"])["OPENSCIENTIST_AIRGAPPED"] == "1"
         assert opened.call_args.args[0] == "job-456"
         assert opened.call_args.kwargs["lifetime_seconds"] == 900
 

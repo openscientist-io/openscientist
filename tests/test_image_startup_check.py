@@ -46,7 +46,7 @@ async def test_present_images_log_no_error(
     assert _errors(caplog) == []
 
 
-async def test_an_unreachable_docker_is_not_reported_as_missing_images(
+async def test_an_unreachable_launcher_is_not_reported_as_missing_images(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     container = get_settings().container
@@ -54,5 +54,6 @@ async def test_an_unreachable_docker_is_not_reported_as_missing_images(
     with caplog.at_level(logging.INFO):
         await web_app._check_container_images()
     logged = " ".join(r.getMessage() for r in caplog.records)
-    assert "Docker" in logged
+    assert logged
     assert container.agent_image not in logged
+    assert container.executor_image not in logged

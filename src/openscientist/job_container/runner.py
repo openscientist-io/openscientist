@@ -1,18 +1,24 @@
 """
-JobContainerRunner — launches and manages per-job Docker containers.
+JobContainerRunner — launches and manages per-job agent containers through the
+container launcher.
 
 Each agent job runs in its own ephemeral Docker container for security
-isolation.  The container:
+isolation. The container:
 - Runs the openscientist-agent image (contains claude-agent-sdk + Node.js)
 - Mounts the job directory as /agent/jobs/<job_id>
 - Receives provider credentials via env vars
 - Communicates status back to the web server via PostgreSQL only, through its
   own database login (see ``db_login``)
 
+The web holds no Docker client: every container operation goes through the
+launcher, the only holder of the Docker socket, which builds the container
+from its agent template and answers a uniform 404 for anything it did not
+create itself.
+
 Usage::
 
     runner = JobContainerRunner()
-    container = runner.launch(job_id, job_dir)
+    handle = runner.launch(job_id, job_dir)
     # ... later ...
     runner.cleanup(job_id)
 """
@@ -21,12 +27,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
-from docker.models.containers import Container
-
-import docker
-from docker import errors as docker_errors
 from openscientist.admin_settings import AdminSettingsValues, current_admin_settings_sync
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS
 from openscientist.exceptions import MissingImageError
@@ -35,13 +38,19 @@ from openscientist.exec_broker_client import (
     EXEC_TOKEN_ENV,
     container_broker_base_url,
 )
-from openscientist.job_chat import CHAT_TURN_ENV
 from openscientist.job_container.db_login import (
     AGENT_LOGIN_LABEL,
     close_agent_login,
     open_agent_login,
 )
-from openscientist.job_container.identity import apply_job_ownership
+from openscientist.job_container.launcher_client import (
+    ContainerEntry,
+    CreateAgentResponse,
+    LauncherClient,
+    LauncherError,
+    LauncherImageMissingError,
+    LauncherNotFoundError,
+)
 from openscientist.job_container.run_home import (
     RUN_HOME_LABEL,
     create_run_home,
@@ -53,35 +62,32 @@ from openscientist.job_container.secrets import (
     derive_job_secret,
     issue_run_credentials,
 )
-from openscientist.job_container.utils import resolve_docker_network, to_host_path
+from openscientist.job_container.utils import HostPathSettings, to_container_path, to_host_path
 from openscientist.llm_proxy import container_proxy_base_url
 from openscientist.providers import get_provider
 from openscientist.settings import Settings, get_settings
-from openscientist.version import SHORT_COMMIT_LENGTH
 
 logger = logging.getLogger(__name__)
 
 #: Seconds a stopped agent gets, after SIGTERM, to write the cost of the
-#: iteration in progress before docker sends SIGKILL.
+#: iteration in progress before the launcher's stop turns into a kill.
 _STOP_GRACE_SECONDS = 10
 
 AGENT_APP_DIR = "/agent"
 
 
 class JobContainerRunner:
-    """Launches and stops per-job agent containers."""
+    """Launches and stops per-job agent containers through the launcher."""
 
     def __init__(self) -> None:
-        self._docker: docker.DockerClient = docker.from_env()
+        self._client: LauncherClient | None = None
 
-    @staticmethod
-    def _is_not_found_error(error: Exception) -> bool:
-        """Return True when Docker reports that a container no longer exists."""
-        return isinstance(error, docker_errors.NotFound)
-
-    def _get_network(self, configured_network: str | None) -> str:
-        """Resolve the Docker network for agent containers."""
-        return resolve_docker_network(self._docker, configured_network)
+    @property
+    def client(self) -> LauncherClient:
+        """The launcher client, built on first use."""
+        if self._client is None:
+            self._client = LauncherClient()
+        return self._client
 
     @staticmethod
     def _build_container_environment(
@@ -133,121 +139,41 @@ class JobContainerRunner:
         return env
 
     @staticmethod
-    def _build_container_volumes(
-        settings: Settings,
-        *,
-        job_dir_host: Path,
-        job_mount: str,
-    ) -> dict[str, dict[str, str]]:
-        """Build the bind mounts for the agent container."""
-        volumes: dict[str, dict[str, str]] = {
-            str(job_dir_host): {"bind": job_mount, "mode": "rw"},
-        }
-        phenix_host = settings.phenix.phenix_host_path
-        if phenix_host:
-            volumes[str(Path(phenix_host).expanduser().resolve())] = {
-                "bind": "/opt/phenix",
-                "mode": "ro",
-            }
-        return volumes
-
-    @staticmethod
-    def _agent_runtime_settings(
-        settings: Settings,
-        admin: AdminSettingsValues,
-    ) -> tuple[str | None, str, float, str | None]:
-        """Return network, memory, CPU, and platform settings for the agent."""
-        container_settings = settings.container
-        return (
-            container_settings.agent_network,
-            f"{admin.agent_memory_mib}m",
-            admin.agent_cpu,
-            container_settings.agent_platform,
-        )
-
-    @staticmethod
-    def _build_launch_configuration(
-        settings: Settings,
-        admin: AdminSettingsValues,
-        *,
-        job_id: str,
-        job_dir_host: Path,
-        database_url: str,
-        credentials: RunCredentials,
-        run_mode: str = "discovery",
-    ) -> tuple[
-        dict[str, str],
-        dict[str, dict[str, str]],
-        str | None,
-        str,
-        float,
-        str | None,
-    ]:
-        """Build the environment, mounts, and runtime settings for launch()."""
-        agent_network, agent_memory, agent_cpu, agent_platform = (
-            JobContainerRunner._agent_runtime_settings(settings, admin)
-        )
-        job_mount = f"{AGENT_APP_DIR}/jobs/{job_id}"
+    def _provider_environment(settings: Settings, credentials: RunCredentials) -> dict[str, str]:
+        """The provider's env for the container, plus the self-hosted window."""
         provider = get_provider()
         routing_error = provider.prelaunch_routing_error()
         if routing_error is not None:
             raise RuntimeError(routing_error)
-        provider_env = provider.proxied_container_env(
+        env = provider.proxied_container_env(
             proxy_base_url=container_proxy_base_url(),
             placeholder=credentials.llm_placeholder,
         )
         # Resolve a self-hosted model's window app-side and pass it in, since the
         # proxied container cannot probe a root path like llama.cpp's /props.
-        provider_env.update(provider.prelaunch_model_context_env())
-        env = JobContainerRunner._build_container_environment(
-            settings,
-            job_id=job_id,
-            job_mount=job_mount,
-            provider_env=provider_env,
-            database_url=database_url,
-            exec_token=credentials.exec_token,
-            airgapped=admin.airgapped,
-            run_mode=run_mode,
-        )
-        volumes = JobContainerRunner._build_container_volumes(
-            settings, job_dir_host=job_dir_host, job_mount=job_mount
-        )
-        return env, volumes, agent_network, agent_memory, agent_cpu, agent_platform
+        env.update(provider.prelaunch_model_context_env())
+        return env
 
     @staticmethod
-    def _firewall_config(
-        settings: Settings,
-        airgapped: bool,
-    ) -> tuple[list[str], str, list[str], dict[str, str]]:
-        """Firewall launch overrides (cap_add, user, entrypoint, extra_env).
-
-        The restricted mode allowlists only the web's services and never
-        consults the provider's air-gap posture."""
+    def _egress_allow(settings: Settings, airgapped: bool) -> list[str]:
+        """The structured host:port entries the launcher formats into the
+        firewall allow list."""
         from openscientist.job_container.egress import (
-            FIREWALL_ALLOW_ENV,
-            FIREWALL_MODE_ENV,
-            MODE_AIRGAP,
-            MODE_RESTRICT,
             derive_egress_allowlist,
             derive_restricted_egress_allowlist,
-            format_egress_allowlist,
         )
 
         if airgapped:
             posture = get_provider().airgap_egress()
-            allow = format_egress_allowlist(derive_egress_allowlist(settings, posture))
-            mode = MODE_AIRGAP
+            entries = derive_egress_allowlist(settings, posture)
         else:
-            allow = format_egress_allowlist(derive_restricted_egress_allowlist(settings))
-            mode = MODE_RESTRICT
-        return (
-            ["NET_ADMIN"],
-            "root",
-            ["/agent-firewall-entrypoint.sh"],
-            {FIREWALL_ALLOW_ENV: allow, FIREWALL_MODE_ENV: mode},
-        )
+            # The agent logs in to Postgres, so its allow-list keeps it.
+            entries = derive_restricted_egress_allowlist(settings)
+        return [f"{host}:{port}" for host, port in entries]
 
-    def launch(self, job_id: str, job_dir: Path, *, run_mode: str = "discovery") -> Container:
+    def launch(
+        self, job_id: str, job_dir: Path, *, run_mode: str = "discovery"
+    ) -> CreateAgentResponse:
         """
         Launch an agent container for the given job.
 
@@ -256,27 +182,26 @@ class JobContainerRunner:
         run_mode is "report_only".
 
         Args:
-            job_id: Job UUID string (used for container name + labels)
-            job_dir: Absolute host path to the job directory
+            job_id: Job UUID string
+            job_dir: Absolute path to the job directory on the web's side
             run_mode: "discovery" (full loop) or "report_only" (report phase
                 only, against the already-persisted findings)
 
         Returns:
-            docker.models.containers.Container object
+            The launcher's handle of the created container: id, short_id,
+            name and status
 
         Raises:
-            RuntimeError: If Docker is unavailable or launch fails
+            MissingImageError: If the launcher's agent image is not on the host
         """
-        container = self._start_agent_container(
+        handle, _ = self._start_agent_container(
             job_id=job_id,
             job_dir=job_dir,
             run_mode=run_mode,
-            name=f"openscientist-agent-{job_id[:SHORT_COMMIT_LENGTH]}",
-            container_type="agent",
             lifetime_seconds=current_admin_settings_sync().agent_timeout_seconds,
         )
-        logger.info("Launched agent container %s for job %s", container.short_id, job_id)
-        return container
+        logger.info("Launched agent container %s for job %s", handle["short_id"], job_id)
+        return handle
 
     def _start_agent_container(
         self,
@@ -284,13 +209,11 @@ class JobContainerRunner:
         job_id: str,
         job_dir: Path,
         run_mode: str,
-        name: str,
-        container_type: str,
         lifetime_seconds: int,
         chat_turn: str | None = None,
-    ) -> Container:
-        """Build the hardened launch config and start a detached agent container.
-        Shared by discovery/report launches and one-off chat turns.
+    ) -> tuple[CreateAgentResponse, dict[str, str]]:
+        """Create one agent or chat container through the launcher, and return
+        its handle with the labels the launcher will set on it.
 
         The container gets a database login of its own, created here and named
         in its labels, so whoever removes the container can drop the login. A
@@ -298,16 +221,13 @@ class JobContainerRunner:
         directory, named in the labels too, and removed with the login."""
         settings: Settings = get_settings()
         admin = current_admin_settings_sync()
-        cs = settings.container
 
-        # Translate job_dir to a host-absolute path: resolve first so a relative
-        # path becomes container-absolute, then map to the host (Docker bind
-        # mounts require host-absolute paths).
+        # The launcher derives the job mount from the job id alone and
+        # validates it against the host's jobs root.
         job_dir_resolved = job_dir.resolve()
         from openscientist.agent.factory import agent_class_for_provider_id
 
         agent_class = agent_class_for_provider_id(settings.provider.provider_id)
-        job_dir_host = to_host_path(job_dir_resolved, cs)
         login = open_agent_login(job_id, lifetime_seconds=lifetime_seconds)
         run_home: Path | None = None
         try:
@@ -324,22 +244,21 @@ class JobContainerRunner:
                 else "discovery"
             )
             credentials = issue_run_credentials(job_id, login.role, run_kind)
-            return self._run_container(
+            handle, labels = self._run_container(
                 settings,
                 admin,
                 job_id=job_id,
-                job_dir_host=job_dir_host,
                 run_mode=run_mode,
-                name=name,
-                container_type=container_type,
+                lifetime_seconds=lifetime_seconds,
+                chat_turn=chat_turn,
                 database_url=login.database_url,
                 login_role=login.role,
-                chat_turn=chat_turn,
                 credentials=credentials,
                 run_home=(run_home, agent_class.RUN_HOME)
                 if run_home and agent_class.RUN_HOME
                 else None,
             )
+            return handle, labels
         except BaseException:
             if run_home is not None:
                 remove_run_home(run_home)
@@ -352,71 +271,57 @@ class JobContainerRunner:
         admin: AdminSettingsValues,
         *,
         job_id: str,
-        job_dir_host: Path,
         run_mode: str,
-        name: str,
-        container_type: str,
+        lifetime_seconds: int,
+        chat_turn: str | None,
         database_url: str,
         login_role: str,
-        chat_turn: str | None,
         credentials: RunCredentials,
         run_home: tuple[Path, str] | None,
-    ) -> Container:
+    ) -> tuple[CreateAgentResponse, dict[str, str]]:
+        """Build the agent request the launcher validates, and create the
+        container from its template. The name, mounts, network and firewall
+        overrides are the launcher's to choose."""
         cs = settings.container
-        env, volumes, agent_network, agent_memory, agent_cpu, agent_platform = (
-            self._build_launch_configuration(
-                settings,
-                admin,
-                job_id=job_id,
-                job_dir_host=job_dir_host,
-                database_url=database_url,
-                credentials=credentials,
-                run_mode=run_mode,
-            )
+        env = self._build_container_environment(
+            settings,
+            job_id=job_id,
+            job_mount=f"{AGENT_APP_DIR}/jobs/{job_id}",
+            provider_env=self._provider_environment(settings, credentials),
+            database_url=database_url,
+            exec_token=credentials.exec_token,
+            airgapped=admin.airgapped,
+            run_mode=run_mode,
         )
-        network = self._get_network(agent_network)
-        cap_add, run_user, entrypoint, firewall_env = self._firewall_config(
-            settings, admin.airgapped
-        )
-        env.update(firewall_env)
-        if chat_turn is not None:
-            env[CHAT_TURN_ENV] = chat_turn
-        labels = {
+        labels: dict[str, str] = {
             "openscientist.job_id": job_id,
-            "openscientist.type": container_type,
+            "openscientist.type": "chat" if run_mode == "chat" else "agent",
             AGENT_LOGIN_LABEL: login_role,
         }
+        request: dict[str, object] = {
+            "job_id": job_id,
+            "mode": run_mode,
+            "lifetime_seconds": lifetime_seconds,
+            "env": env,
+            "db_login": login_role,
+            "phenix": bool(settings.phenix.phenix_host_path),
+            "memory_mib": admin.agent_memory_mib,
+            "cpu": admin.agent_cpu,
+            "airgapped": admin.airgapped,
+        }
+        # The container starts behind the firewall in both postures, so the
+        # launcher always gets the endpoints to keep open.
+        request["egress_allow"] = self._egress_allow(settings, admin.airgapped)
+        if chat_turn is not None:
+            request["chat_turn"] = chat_turn
         if run_home is not None:
             home, name_in_job = run_home
-            volumes[str(to_host_path(home, cs))] = {
-                "bind": f"{AGENT_APP_DIR}/jobs/{job_id}/{name_in_job}",
-                "mode": "rw",
-            }
-            labels[RUN_HOME_LABEL] = str(home)
-
+            host_home = to_host_path(home, cs)
+            labels[RUN_HOME_LABEL] = str(host_home)
+            request["run_home"] = {"path": str(host_home), "name": name_in_job}
         try:
-            return self._docker.containers.run(
-                image=cs.agent_image,
-                name=name,
-                detach=True,
-                remove=False,
-                environment=env,
-                volumes=volumes,
-                network=network,
-                mem_limit=agent_memory,
-                nano_cpus=int(agent_cpu * 1e9),
-                platform=agent_platform or None,
-                security_opt=["no-new-privileges:true"],
-                cap_add=cap_add,
-                user=run_user,
-                entrypoint=entrypoint,
-                # Map host.docker.internal to the host gateway so the container can
-                # reach a model server on the host (e.g. a local Ollama). Harmless
-                # otherwise. On Linux this is not provided by default.
-                extra_hosts={"host.docker.internal": "host-gateway"},
-                labels=labels,
-            )
-        except docker_errors.ImageNotFound as error:
+            return self.client.create_agent(request), labels
+        except LauncherImageMissingError as error:
             raise MissingImageError(cs.agent_image) from error
 
     def run_chat_turn(
@@ -427,100 +332,103 @@ class JobContainerRunner:
         Inherits the job launch posture. Prompt and reply cross through the
         turn's files in job_dir, not the database. Raises on timeout or non-zero
         exit, and the container is always removed."""
-        name = f"openscientist-chat-{job_id[:SHORT_COMMIT_LENGTH]}-{os.urandom(4).hex()}"
-        container = self._start_agent_container(
+        handle, labels = self._start_agent_container(
             job_id=job_id,
             job_dir=job_dir,
             run_mode="chat",
-            name=name,
-            container_type="chat",
             lifetime_seconds=timeout,
             chat_turn=chat_turn,
         )
+        ref = handle["id"]
         try:
             try:
-                outcome = container.wait(timeout=timeout)
-            except Exception as error:
+                outcome = self.client.wait(ref, timeout_seconds=timeout)
+            except LauncherError as error:
                 raise RuntimeError(f"Chat turn did not finish within {timeout}s") from error
-            exit_code = int(outcome.get("StatusCode", 1)) if isinstance(outcome, dict) else 1
+            if outcome["timeout"]:
+                raise RuntimeError(f"Chat turn did not finish within {timeout}s")
+            exit_code = outcome["exit_code"]
+            if exit_code is None:
+                exit_code = 1
             if exit_code != 0:
-                logs = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace")
+                logs = self.client.logs(ref)
                 raise RuntimeError(f"Chat container exited with code {exit_code}: {logs[-2000:]}")
         finally:
             try:
                 # A turn cut at the time limit writes its cost when stopped, so
                 # a forced removal would lose it.
-                container.stop(timeout=_STOP_GRACE_SECONDS)
-            except docker_errors.APIError as error:
-                if not self._is_not_found_error(error):
-                    logger.warning("Failed to stop chat container %s: %s", name, error)
+                self.client.stop(ref, timeout_seconds=_STOP_GRACE_SECONDS)
+            except LauncherNotFoundError:
+                pass
+            except LauncherError as error:
+                logger.warning("Failed to stop chat container %s: %s", handle["name"], error)
             try:
-                container.remove(force=True)
-            except docker_errors.APIError as error:
-                if not self._is_not_found_error(error):
-                    logger.warning("Failed to remove chat container %s: %s", name, error)
-            self._end_run_of(container)
+                self.client.remove(ref)
+            except LauncherNotFoundError:
+                pass
+            except LauncherError as error:
+                logger.warning("Failed to remove chat container %s: %s", handle["name"], error)
+            self._end_run_of(labels, get_settings().container)
 
     @staticmethod
-    def _end_run_of(container: Container) -> None:
+    def _end_run_of(labels: Mapping[str, str], cs: HostPathSettings) -> None:
         """Remove the run's home and drop its database login, both named in the
-        container's labels."""
-        home = container.labels.get(RUN_HOME_LABEL)
+        container's labels. The home is the launcher's host path, so it comes
+        back to the web's side before removal."""
+        home = labels.get(RUN_HOME_LABEL)
         if home:
-            remove_run_home(Path(home))
-        role = container.labels.get(AGENT_LOGIN_LABEL)
+            remove_run_home(to_container_path(Path(home), cs))
+        role = labels.get(AGENT_LOGIN_LABEL)
         if role:
             close_agent_login(role)
 
     def stop(self, job_id: str, timeout: int = _STOP_GRACE_SECONDS) -> None:
-        """Stop the container for a job (graceful → SIGKILL)."""
-        container = self._find_container(job_id)
-        if container:
+        """Stop the container for a job (graceful, then a kill)."""
+        entry = self._find_container(job_id)
+        if entry:
             try:
-                container.stop(timeout=timeout)
+                self.client.stop(entry["id"], timeout_seconds=timeout)
                 logger.info("Stopped container for job %s", job_id)
-            except docker_errors.APIError as error:
-                if self._is_not_found_error(error):
-                    return
+            except LauncherNotFoundError:
+                return
+            except LauncherError as error:
                 logger.warning("Failed to stop container for job %s: %s", job_id, error)
 
     def cleanup(self, job_id: str, log_dir: Path | None = None) -> None:
         """Stop the container for a job, giving it the same grace as :meth:`stop`,
         then save its logs if asked, remove it and drop its database login."""
-        container = self._find_container(job_id)
-        if container:
+        entry = self._find_container(job_id)
+        if entry:
             try:
                 # The agent writes the cost of the iteration in progress when it
                 # is stopped, so a forced removal would lose it.
                 try:
-                    container.stop(timeout=_STOP_GRACE_SECONDS)
-                except docker_errors.APIError as error:
-                    if not self._is_not_found_error(error):
-                        logger.warning("Failed to stop container for job %s: %s", job_id, error)
+                    self.client.stop(entry["id"], timeout_seconds=_STOP_GRACE_SECONDS)
+                except LauncherNotFoundError:
+                    pass
+                except LauncherError as error:
+                    logger.warning("Failed to stop container for job %s: %s", job_id, error)
                 if log_dir is not None:
                     log_path = log_dir / "agent-container.log"
                     try:
-                        logs = container.logs(stdout=True, stderr=True).decode(
-                            "utf-8", errors="replace"
-                        )
+                        logs = self.client.logs(entry["id"])
                         log_path.write_text(logs)
-                        # Saved into the job dir, which the agent user owns.
-                        apply_job_ownership(log_path)
-                    except (docker_errors.APIError, OSError) as error:
-                        if not self._is_not_found_error(error):
+                    except (LauncherError, OSError) as error:
+                        if not isinstance(error, LauncherNotFoundError):
                             logger.warning(
                                 "Failed to save container logs for job %s: %s",
                                 job_id,
                                 error,
                             )
-                container.remove(force=True)
+                self.client.remove(entry["id"])
                 logger.info("Removed container for job %s", job_id)
-            except docker_errors.APIError as error:
-                if not self._is_not_found_error(error):
-                    logger.warning("Failed to remove container for job %s: %s", job_id, error)
+            except LauncherNotFoundError:
+                pass
+            except LauncherError as error:
+                logger.warning("Failed to remove container for job %s: %s", job_id, error)
             # Done even when removal failed, so a container that lingers loses
             # its database access and its copy of the operator's login.
-            self._end_run_of(container)
+            self._end_run_of(entry["labels"], get_settings().container)
 
     def get_exit_code(self, job_id: str) -> int | None:
         """
@@ -528,71 +436,64 @@ class JobContainerRunner:
 
         Returns None if the container is still running or cannot be found.
         """
-        container = self._find_container(job_id)
-        if container is None:
+        entry = self._find_container(job_id)
+        if entry is None:
             return None
         try:
-            container.reload()
-            if container.status in ("exited", "dead"):
-                exit_code = container.attrs.get("State", {}).get("ExitCode")
-                if isinstance(exit_code, int):
-                    return exit_code
-                if exit_code is not None:
-                    try:
-                        return int(exit_code)
-                    except (TypeError, ValueError):
-                        logger.warning(
-                            "Unexpected non-integer exit code for job %s: %r",
-                            job_id,
-                            exit_code,
-                        )
-        except docker_errors.APIError as error:
-            if self._is_not_found_error(error):
-                return None
+            result = self.client.inspect(entry["id"])
+        except LauncherNotFoundError:
+            return None
+        except LauncherError as error:
             logger.warning("Failed to get exit code for job %s: %s", job_id, error)
+            return None
+        if result["status"] in ("exited", "dead"):
+            exit_code = result["exit_code"]
+            if isinstance(exit_code, int):
+                return exit_code
+            if exit_code is not None:
+                try:
+                    return int(exit_code)
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Unexpected non-integer exit code for job %s: %r",
+                        job_id,
+                        exit_code,
+                    )
         return None
 
     def _listed_labels(self) -> list[dict[str, str]] | None:
-        """Labels of every agent and chat container Docker lists, running or
-        exited, or None when Docker cannot be asked."""
+        """Labels of every agent and chat container the launcher lists, running
+        or exited, or None when the launcher cannot be asked."""
         try:
-            containers = self._docker.containers.list(
-                all=True, filters={"label": AGENT_LOGIN_LABEL}
-            )
-        except docker_errors.DockerException as error:
+            entries = self.client.list_containers([AGENT_LOGIN_LABEL])
+        except LauncherError as error:
             logger.warning("Failed to list agent containers: %s", error)
             return None
-        return [container.labels for container in containers]
+        return [entry["labels"] for entry in entries]
 
     def live_login_roles(self) -> set[str] | None:
-        """Database logins of every agent and chat container Docker lists,
-        running or exited, or None when Docker cannot be asked."""
+        """Database logins of every agent and chat container the launcher lists,
+        running or exited, or None when the launcher cannot be asked."""
         listed = self._listed_labels()
         if listed is None:
             return None
         return {role for labels in listed if (role := labels.get(AGENT_LOGIN_LABEL))}
 
     def live_job_ids(self) -> set[str] | None:
-        """Jobs of every agent and chat container Docker lists, running or
-        exited, or None when Docker cannot be asked."""
+        """Jobs of every agent and chat container the launcher lists, running or
+        exited, or None when the launcher cannot be asked."""
         listed = self._listed_labels()
         if listed is None:
             return None
         return {job for labels in listed if (job := labels.get("openscientist.job_id"))}
 
-    def _find_container(self, job_id: str) -> Container | None:
-        """Find the agent container for a job by labels."""
+    def _find_container(self, job_id: str) -> ContainerEntry | None:
+        """The launcher's entry of the agent container for a job, or None."""
         try:
-            containers = self._docker.containers.list(
-                all=True,
-                filters={
-                    "label": [
-                        f"openscientist.job_id={job_id}",
-                        "openscientist.type=agent",
-                    ]
-                },
+            entries = self.client.list_containers(
+                [f"openscientist.job_id={job_id}", "openscientist.type=agent"]
             )
-            return containers[0] if containers else None
-        except docker_errors.DockerException as error:
+            return entries[0] if entries else None
+        except LauncherError as error:
             logger.warning("Failed to find container for job %s: %s", job_id, error)
             return None

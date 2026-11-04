@@ -2,7 +2,9 @@
 #
 # Usage:
 #   Development: Set OPENSCIENTIST_DEV_MODE=true in .env for auto-reload & mock auth,
-#                which needs a local APP_URL and a loopback OPENSCIENTIST_BIND_ADDRESS
+#                which needs a local APP_URL and a loopback OPENSCIENTIST_BIND_ADDRESS,
+#                and add the dev override for the writable source mount:
+#                docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 #
 #   Production:  docker compose up  (OPENSCIENTIST_DEV_MODE unset or false)
 
@@ -63,6 +65,8 @@ services:
   migrate:
     platform: ${OPENSCIENTIST_PLATFORM:-}
     build: .
+    # The one-shot migration stages the PubMed baseline into /app, which the web user cannot write.
+    user: root
     restart: "no"
     depends_on:
       db-bootstrap:
@@ -73,8 +77,6 @@ services:
     environment:
       OWNER_DATABASE_URL: postgresql+asyncpg://openscientist_owner@postgres:5432/${POSTGRES_DB:-openscientist}
       POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD in .env}
-    volumes:
-      - ./src:/app/src
     command: ["alembic", "upgrade", "head"]
 
   # The only holder of the Docker socket. It serves the small JSON API the web
@@ -106,6 +108,9 @@ services:
       EXECUTOR_MAX_CPU: ${LAUNCHER_EXECUTOR_MAX_CPU:-4}
       MAX_LIFETIME_SECONDS: ${LAUNCHER_MAX_LIFETIME_SECONDS:-86400}
       MAX_EGRESS_ENTRIES: ${LAUNCHER_MAX_EGRESS_ENTRIES:-64}
+      # Must match USER web in the web Dockerfile, which the launcher checks with SO_PEERCRED.
+      LAUNCHER_WEB_UID: "1002"
+      LAUNCHER_WEB_GID: "1001"
     # Plain socket mount, no :ro: the launcher is the trusted holder that
     # creates containers through it, and the only service to hold one.
     volumes:
@@ -184,7 +189,6 @@ services:
     volumes:
       - ./jobs:/app/jobs
       - ./data:/app/data
-      - ./src:/app/src  # Mount source for live reload in dev mode
 
       # Mount the GCP service account for Vertex AI (set GCP_CREDENTIALS_FILE in .env);
       # the web signs its calls with it, agent containers hold none.
@@ -204,15 +208,7 @@ services:
       # Mount built-in skills directory
       - ./skills:/app/skills:ro
 
-      # Mount Docker socket for sibling container execution
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-
-      # The launcher's unix socket, which the web's executor and dashboard
-      # paths speak to
       - launcher_socket:/run/launcher
-
-    group_add:
-      - "${DOCKER_GID:-999}"
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

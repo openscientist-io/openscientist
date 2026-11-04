@@ -34,8 +34,17 @@ RUN uv export --locked --no-dev --no-emit-project --format requirements-txt \
     && uv pip install --system --no-deps -e . \
     && rm /tmp/requirements.txt
 
-# Create jobs directory
-RUN mkdir -p jobs
+# The web runs non-root, in the jobs group that owns the job trees it creates.
+# uid 1002 is distinct from the agent's 1001; the launcher's compose service
+# pins LAUNCHER_WEB_UID/GID to this identity (it checks the socket peer and
+# owns the socket file to it).
+RUN groupadd --gid 1001 jobs \
+    && useradd --uid 1002 --gid 1001 --create-home web \
+    && mkdir -p /app/jobs \
+    && chown -R web:jobs /app/jobs \
+    && chmod 2770 /app/jobs
+
+USER web
 
 # Expose port for NiceGUI
 EXPOSE 8080

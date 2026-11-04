@@ -759,7 +759,10 @@ class ContainerSettings(BaseSettings):
     agent_network: str | None = Field(
         default=None,
         alias="OPENSCIENTIST_AGENT_NETWORK",
-        description="Docker network for agent containers. Auto-detected from the web server container if not set.",
+        description=(
+            "Docker network for job containers, handed to the launcher, which "
+            "auto-detects its own network if not set."
+        ),
     )
     agent_platform: str | None = Field(
         default=None,
@@ -801,7 +804,7 @@ class ContainerSettings(BaseSettings):
         alias="OPENSCIENTIST_LAUNCHER_SOCKET_PATH",
         description=(
             "Unix socket of the launcher service, which the web shares through the "
-            "launcher_socket volume. Executor runs and the container dashboard go "
+            "launcher_socket volume. Every container operation the web makes goes "
             "through it."
         ),
     )
