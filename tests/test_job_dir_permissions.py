@@ -700,14 +700,17 @@ def _run_deploy_snippet(
     user: str,
     snippet: str,
     environment: dict[str, str] | None = None,
+    workdir: str = "",
 ) -> str:
-    """A python snippet under uv's interpreter, as the given uid:gid."""
+    """A python snippet under uv's interpreter, as the given uid:gid. A job
+    tree workdir keeps the snippet out of the checkout's dangling worktree
+    gitdir, which git refuses to resolve."""
     output = deploy_docker.containers.run(
         image,
         [str(VENV_PYTHON), "-c", snippet],
         user=user,
         entrypoint=[],
-        working_dir=str(REPO_ROOT),
+        working_dir=workdir or str(REPO_ROOT),
         environment=environment or {},
         volumes=_deploy_volumes(jobs),
         network_mode="none",
@@ -820,3 +823,114 @@ class TestNonRootWebRunHome:
         assert exit_code != 0
         assert "omp-secret" not in logs
         assert "codex-secret" not in logs
+
+
+@pytest.mark.integration
+class TestNonRootWebGit:
+    """The web inits the job's git repository as uid 1002, so the agent's git
+    meets the ownership guard without the entrypoint's trust."""
+
+    @pytest.fixture()
+    def job_dir(self, deploy_test_image, deploy_docker, tmp_path) -> Path:
+        jobs = tmp_path / "jobs"
+        jobs.mkdir()
+        _group_jobs_root(jobs, deploy_docker, deploy_test_image)
+        job_id = str(uuid4())
+        # The git block of create_job's setup, as the non-root web.
+        snippet = (
+            "import os\n"
+            "import subprocess\n"
+            "from pathlib import Path\n"
+            "from openscientist.job_container.identity import ("
+            "apply_job_ownership, apply_job_ownership_tree)\n"
+            "job = Path('/jobs/' + os.environ['JOB_ID'])\n"
+            "job.mkdir()\n"
+            "apply_job_ownership(job)\n"
+            "subprocess.run(['git', 'init'], cwd=str(job), capture_output=True, check=True)\n"
+            "apply_job_ownership_tree(job / '.git')\n"
+            "print('web setup ok')\n"
+        )
+        output = _run_deploy_snippet(
+            deploy_docker,
+            deploy_test_image,
+            jobs,
+            user="1002:1001",
+            snippet=snippet,
+            environment={"JOB_ID": job_id},
+        )
+        assert "web setup ok" in output, output
+        job = jobs / job_id
+        # The non-root web keeps the ownership the ownership guard then trips on.
+        assert (job / ".git").stat().st_uid == 1002
+        assert (job / ".git").stat().st_gid == AGENT_GID
+        return job
+
+    def test_agent_git_runs_in_the_web_repo(
+        self, deploy_test_image, deploy_docker, job_dir: Path
+    ) -> None:
+        jobs = job_dir.parent
+        snippet = (
+            "import os\n"
+            "import runpy\n"
+            "import subprocess\n"
+            "from pathlib import Path\n"
+            f"m = runpy.run_path({str(REPO_ROOT / 'docker' / 'agent-entrypoint.py')!r}, run_name='not-main')\n"
+            "trust = m.get('trust_job_repository')\n"
+            "job = '/jobs/' + os.environ['JOB_ID']\n"
+            "if trust is not None:\n"
+            "    trust(Path(job))\n"
+            "r = subprocess.run(['git', '-C', job, 'status'], capture_output=True, text=True)\n"
+            "print('git exit', r.returncode)\n"
+            "print(r.stderr)\n"
+        )
+        output = _run_deploy_snippet(
+            deploy_docker,
+            deploy_test_image,
+            jobs,
+            user=f"{AGENT_UID}:{AGENT_GID}",
+            snippet=snippet,
+            environment={"JOB_ID": job_dir.name, "HOME": "/jobs/.agent-home"},
+            workdir="/jobs",
+        )
+        assert "git exit 0" in output, output
+        assert "dubious ownership" not in output, output
+
+
+class TestAgentEntrypointGitTrust:
+    """The entrypoint's main wires the git trust in, where production reaches it."""
+
+    def test_main_trusts_the_job_repository(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        import runpy
+
+        from openscientist.orchestrator import discovery
+
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        home = tmp_path / "home"
+        home.mkdir()
+        seen: dict[str, Path] = {}
+
+        async def fake_discovery(job: Path) -> dict:
+            seen["job"] = job
+            return {"status": "completed", "iterations": 0, "findings": 0}
+
+        monkeypatch.setattr(discovery, "run_discovery_async", fake_discovery)
+        monkeypatch.setenv("JOB_ID", "1" * 32)
+        monkeypatch.setenv("JOB_DIR", str(job_dir))
+        monkeypatch.delenv("OPENSCIENTIST_RUN_MODE", raising=False)
+        monkeypatch.setenv("HOME", str(home))
+
+        old_umask = os.umask(0o022)
+        try:
+            entrypoint = runpy.run_path(
+                str(REPO_ROOT / "docker" / "agent-entrypoint.py"), run_name="not-main"
+            )
+            assert asyncio.run(entrypoint["main"]()) == 0
+        finally:
+            os.umask(old_umask)
+
+        assert seen["job"] == job_dir
+        assert str(job_dir) in (home / ".gitconfig").read_text(encoding="utf-8")
