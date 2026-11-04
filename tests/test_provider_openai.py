@@ -252,6 +252,30 @@ class TestChatgptSigning:
         finally:
             endpoint.stop()
 
+    def test_a_refresh_writes_the_auth_file_in_place(self, tmp_path: Path) -> None:
+        # The auth file is one bind-mounted file, so the write-back must go
+        # in place. A temp file plus rename would swap the inode and re-chmod
+        # the host file to 0600.
+        endpoint = _TokenEndpoint()
+        try:
+            stale = _jwt(datetime.now(UTC) + timedelta(seconds=60))
+            fresh = _jwt(datetime.now(UTC) + timedelta(hours=1))
+            auth = tmp_path / "auth.json"
+            _write_auth(auth, stale, "rt-1")
+            auth.chmod(0o660)
+            before = auth.stat().st_ino
+            endpoint.queue(200, {"access_token": fresh, "refresh_token": "rt-2"})
+            signing = ChatgptSigning(str(auth), token_endpoint=endpoint.url)
+            signing.credential_headers(method="GET", path="/responses", query="", body=b"")
+            after = auth.stat()
+            assert after.st_ino == before
+            assert after.st_mode & 0o777 == 0o660
+            data = json.loads(auth.read_text())
+            assert data["tokens"]["access_token"] == fresh
+            assert data["tokens"]["refresh_token"] == "rt-2"
+        finally:
+            endpoint.stop()
+
     def test_concurrent_reads_refresh_the_token_once(self, tmp_path: Path) -> None:
         endpoint = _TokenEndpoint()
         try:

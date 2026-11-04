@@ -53,6 +53,16 @@ directories and run homes inherit; on a fresh checkout:
 chgrp 1001 ./jobs && chmod 2770 ./jobs
 ```
 
+The provider credential mounts the web rewrites on a token refresh need the
+same ownership, or the refresh is dropped and the next web restart finds the
+stale credential. `CODEX_AUTH_FILE` is one bind-mounted file, so the web
+writes it in place (a rename cannot replace the mount point); make it
+group-owned by gid 1001 with the group-writable bit:
+
+```bash
+chgrp 1001 "$CODEX_AUTH_FILE" && chmod 0660 "$CODEX_AUTH_FILE"
+```
+
 ### Ports
 
 - `8080`: Web interface (NiceGUI), published on `127.0.0.1` by default

@@ -13,7 +13,6 @@ import base64
 import json
 import logging
 import os
-import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -109,11 +108,11 @@ def _codex_auth_json() -> Path:
 class ChatgptSigning(UpstreamSigning):
     """Signs each forwarded request with the web-held ChatGPT login.
 
-    The file is a read-only input: the access token is refreshed through the
-    refresh token once it leaves the fresh window, single-flight under a lock
-    so concurrent requests share one grant. A refreshed token is written back
-    atomically so the host's own codex CLI stays current, and in memory for
-    the proxy. A rejected grant blocks the credential until the login file
+    The file is the host's codex login, mounted read-write into the web: the
+    access token is refreshed through the refresh token once it leaves the
+    fresh window, single-flight under a lock so concurrent requests share one
+    grant. A refreshed token is written back in place so the host's own codex
+    CLI stays current, and in memory for the proxy. A rejected grant blocks the credential until the login file
     changes; a transient failure serves the stale token (the upstream 401s and
     the harness retries) and retries the refresh on a backoff.
     """
@@ -263,13 +262,13 @@ class ChatgptSigning(UpstreamSigning):
             stored["id_token"] = tokens.id_token
         last = login.last_refresh
         data["last_refresh"] = last.isoformat() if last is not None else None
-        directory = self._auth_path.parent
+        # The auth file is a single bind mount, so a temp file plus rename
+        # cannot replace it. The write goes in place and keeps the file's
+        # ownership and mode, which the operator sets for the web.
         try:
-            fd, name = tempfile.mkstemp(dir=directory, prefix=".auth-", suffix=".tmp")
-            with os.fdopen(fd, "w") as handle:
+            with self._auth_path.open("r+", encoding="utf-8") as handle:
                 json.dump(data, handle, indent=2)
-            os.chmod(name, 0o600)
-            os.replace(name, self._auth_path)
+                handle.truncate()
         except OSError as exc:
             logger.warning(
                 "Could not write the refreshed ChatGPT login back to %s (%s); keeping it in memory",
