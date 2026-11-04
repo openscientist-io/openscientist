@@ -70,6 +70,7 @@ def _write_env_files(root: Path, answers: dict[str, str], env_file: dict[str, st
     if base_url and base_file and not envfiles.file_values(root, base_file).get("APP_URL"):
         by_file.setdefault(base_file, {})["APP_URL"] = base_url
     envfiles.write_env_files(root, by_file)
+    envfiles.record_host_project_dir(root)
 
 
 def run_steps(

@@ -95,7 +95,9 @@ services:
       - path: .env
         required: false
     environment:
-      JOBS_ROOT: /jobs
+      # Docker resolves bind sources on the host, so the launcher sees the jobs
+      # directory at its host path. `uv run openscientist` records that path in .env.
+      JOBS_ROOT: ${OPENSCIENTIST_HOST_PROJECT_DIR:?run uv run openscientist to set OPENSCIENTIST_HOST_PROJECT_DIR in .env}/jobs
       AGENT_IMAGE: ${OPENSCIENTIST_AGENT_IMAGE:-openscientist-agent:latest}
       EXECUTOR_IMAGE: ${OPENSCIENTIST_EXECUTOR_IMAGE:-openscientist-executor:latest}
       LAUNCHER_NETWORK: ${OPENSCIENTIST_AGENT_NETWORK:-}
@@ -114,7 +116,12 @@ services:
     # creates containers through it, and the only service to hold one.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./jobs:/jobs:ro
+      - type: bind
+        source: ${OPENSCIENTIST_HOST_PROJECT_DIR:?run uv run openscientist to set OPENSCIENTIST_HOST_PROJECT_DIR in .env}/jobs
+        target: ${OPENSCIENTIST_HOST_PROJECT_DIR}/jobs
+        read_only: true
+        bind:
+          create_host_path: false
       - launcher_socket:/run/launcher
     healthcheck:
       test: ["CMD", "python", "-m", "openscientist_launcher.health"]
@@ -180,7 +187,7 @@ services:
       OPENSCIENTIST_AGENT_MEMORY: ${OPENSCIENTIST_AGENT_MEMORY:-8g}
       OPENSCIENTIST_AGENT_CPU: ${OPENSCIENTIST_AGENT_CPU:-2.0}
       OPENSCIENTIST_AGENT_PLATFORM: ${OPENSCIENTIST_AGENT_PLATFORM:-}
-      OPENSCIENTIST_HOST_PROJECT_DIR: ${OPENSCIENTIST_HOST_PROJECT_DIR:-}
+      OPENSCIENTIST_HOST_PROJECT_DIR: ${OPENSCIENTIST_HOST_PROJECT_DIR:?run uv run openscientist to set OPENSCIENTIST_HOST_PROJECT_DIR in .env}
 
       # Derived settings not expressible in .env
       PYTHONDONTWRITEBYTECODE: ${OPENSCIENTIST_DEV_MODE:+1}

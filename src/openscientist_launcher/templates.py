@@ -8,6 +8,8 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+from docker.types import Mount
+
 from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.validation import AgentLaunch, ExecRequest, ValidationError
 
@@ -21,6 +23,12 @@ FIREWALL_MODE_ENV = "OPENSCIENTIST_FIREWALL_MODE"
 FIREWALL_RUN_AS_ENV = "OPENSCIENTIST_FIREWALL_RUN_AS"
 FIREWALL_MODE_AIRGAP = "airgap"
 FIREWALL_MODE_RESTRICT = "restrict"
+
+
+def _bind(source: str, target: str, *, read_only: bool) -> Mount:
+    """A bind mount the daemon refuses when ``source`` is missing on the host,
+    where a ``volumes`` entry would have it create an empty root-owned directory."""
+    return Mount(target=target, source=source, type="bind", read_only=read_only)
 
 
 def _labels(cfg: LauncherConfig, job_id: str, container_type: str) -> dict[str, str]:
@@ -49,15 +57,13 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
     env[FIREWALL_MODE_ENV] = FIREWALL_MODE_AIRGAP if launch.airgapped else FIREWALL_MODE_RESTRICT
 
     job_mount = f"{AGENT_APP_DIR}/jobs/{launch.job_id}"
-    volumes: dict[str, dict[str, str]] = {
-        str(cfg.jobs_root / launch.job_id): {"bind": job_mount, "mode": "rw"}
-    }
+    mounts = [_bind(str(cfg.jobs_root / launch.job_id), job_mount, read_only=False)]
     if launch.phenix and cfg.phenix_host_path:
         phenix = Path(cfg.phenix_host_path).expanduser().resolve()
-        volumes[str(phenix)] = {"bind": PHENIX_PATH, "mode": "ro"}
+        mounts.append(_bind(str(phenix), PHENIX_PATH, read_only=True))
     if launch.run_home is not None:
         home, name_in_job = launch.run_home
-        volumes[str(home)] = {"bind": f"{job_mount}/{name_in_job}", "mode": "rw"}
+        mounts.append(_bind(str(home), f"{job_mount}/{name_in_job}", read_only=False))
 
     labels = _labels(cfg, launch.job_id, container_type)
     if launch.db_login:
@@ -70,7 +76,7 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
         "name": name,
         "detach": True,
         "environment": env,
-        "volumes": volumes,
+        "mounts": mounts,
         "network": network,
         "mem_limit": f"{launch.memory_mib}m",
         "nano_cpus": int(launch.cpu * 1e9),
@@ -92,13 +98,13 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
     """The docker run kwargs of one executor container, and its remapped payload."""
     name = f"openscientist-exec-{req.job_id}-{secrets.token_hex(4)}"
 
-    volumes: dict[str, dict[str, str]] = {str(req.output_dir): {"bind": "/output", "mode": "rw"}}
+    mounts = [_bind(str(req.output_dir), "/output", read_only=False)]
     host_to_container: dict[str, str] = {}
     for index, entry in enumerate(req.data_files):
         parent = str(Path(str(entry["path"])).resolve().parent)
         if parent not in host_to_container:
             host_to_container[parent] = "/data" if index == 0 else f"/data/{index}"
-            volumes[parent] = {"bind": host_to_container[parent], "mode": "ro"}
+            mounts.append(_bind(parent, host_to_container[parent], read_only=True))
 
     def remap(path_str: str) -> str:
         resolved = Path(path_str).resolve()
@@ -130,7 +136,7 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
         "security_opt": ["no-new-privileges:true"],
         "user": "executor",
         "labels": _labels(cfg, req.job_id, "executor"),
-        "volumes": volumes,
+        "mounts": mounts,
         "stop_signal": "SIGKILL",
         # The image entrypoint is cleared so the shell pipe is the whole command.
         "entrypoint": [],

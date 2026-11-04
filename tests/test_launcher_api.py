@@ -154,6 +154,14 @@ def _inspect(docker_client: docker.DockerClient, name: str) -> dict[str, Any]:
     return docker_client.containers.get(name).attrs
 
 
+def _host_binds(host_config: dict[str, Any]) -> list[tuple[str, str, bool]]:
+    """(source, target, read-only) of each mount, all of them bind mounts, which
+    the daemon refuses for a source missing on the host."""
+    mounts = host_config.get("Mounts") or []
+    assert all(mount["Type"] == "bind" for mount in mounts)
+    return [(mount["Source"], mount["Target"], bool(mount.get("ReadOnly"))) for mount in mounts]
+
+
 class TestHealth:
     def test_health_reports_daemon_and_images(self, launcher: Launcher) -> None:
         with launcher.client() as client:
@@ -192,7 +200,8 @@ class TestAgentCreate:
         assert config["Entrypoint"] == ["/agent-firewall-entrypoint.sh"]
         assert host["Privileged"] is False
         assert host["CapAdd"] == ["NET_ADMIN"]
-        assert host["Binds"] == [f"{jobs_root / JOB_ID}:/agent/jobs/{JOB_ID}:rw"]
+        assert host.get("Binds") is None
+        assert _host_binds(host) == [(str(jobs_root / JOB_ID), f"/agent/jobs/{JOB_ID}", False)]
         assert host["NetworkMode"] == "bridge"
         assert host["SecurityOpt"] == ["no-new-privileges:true"]
         assert host["Memory"] == 4096 * 1024**2
@@ -304,6 +313,36 @@ class TestAgentCreate:
             started.close()
         assert response.status_code == 400, response.text
         assert response.json()["error"].startswith("bad_request")
+        assert not docker_client.containers.list(
+            all=True, filters={"name": f"openscientist-agent-{JOB_ID[:12]}"}
+        )
+
+    def test_a_bind_source_missing_on_the_host_is_refused_and_never_created(
+        self,
+        docker_client: docker.DockerClient,
+        test_agent_image: str,
+        jobs_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Docker refuses the launch rather than creating the missing source as
+        an empty root-owned directory."""
+        missing = tmp_path / "no-phenix-here"
+        started = Launcher.start(
+            jobs_root,
+            jobs_root,
+            AGENT_IMAGE=TEST_IMAGE,
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, test_agent_image),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
+            PHENIX_HOST_PATH=str(missing),
+        )
+        try:
+            with started.client() as client:
+                response = client.post("/v1/containers/agent", json=_agent_body(phenix=True))
+        finally:
+            started.close()
+        assert response.status_code == 502, response.text
+        assert response.json()["error"].startswith("docker_error")
+        assert not missing.exists()
         assert not docker_client.containers.list(
             all=True, filters={"name": f"openscientist-agent-{JOB_ID[:12]}"}
         )
@@ -624,9 +663,10 @@ class TestExecutor:
         assert host["CapAdd"] == ["NET_ADMIN"]
         assert host["Memory"] == 1024 * 1024**2
         assert host["NanoCpus"] == 500_000_000
-        assert host["Binds"] == [
-            f"{out_dir}:/output:rw",
-            f"{job_dir}:/data:ro",
+        assert host.get("Binds") is None
+        assert _host_binds(host) == [
+            (str(out_dir), "/output", False),
+            (str(job_dir), "/data", True),
         ]
         env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
         assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"

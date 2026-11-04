@@ -67,6 +67,13 @@ def test_setup_writes_app_url_from_the_base_url(checkout: Path):
     assert env_value(checkout, ".env", "APP_URL") == "https://prod.example"
 
 
+def test_setup_records_the_checkout_path_the_launcher_binds_jobs_from(checkout: Path):
+    input_lines = ["1", "sk-test-123", "", "", *_public_url_tail("https://prod.example")]
+    result = runner.invoke(cli_app.app, ["setup"], input="\n".join(input_lines) + "\n")
+    assert result.exit_code == 0, result.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_HOST_PROJECT_DIR") == str(checkout.resolve())
+
+
 def test_setup_keeps_an_explicit_app_url(checkout: Path):
     example = (checkout / ".env.example").read_text(encoding="utf-8")
     (checkout / ".env").write_text(

@@ -109,7 +109,9 @@ def build_images(run: CommandRunner, root: Path) -> int:
 def start(
     root: Path, run: CommandRunner = run_command, health_timeout: float = HEALTH_TIMEOUT
 ) -> int:
-    """Build the four images, start the stack, wait for /health, print the base URL."""
+    """Record the checkout path, build the four images, start the stack, wait for
+    /health, print the base URL."""
+    envfiles.record_host_project_dir(root)
     code = build_images(run, root)
     if code:
         return code

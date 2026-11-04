@@ -29,7 +29,7 @@ NOT_ASKED = {
     "PHENIX_PATH": "container path, derived from PHENIX_HOST_PATH by compose, never asked",
     "OPENSCIENTIST_AGENT_NETWORK": "container plumbing, edited in .env",
     "OPENSCIENTIST_AGENT_PLATFORM": "container plumbing, edited in .env",
-    "OPENSCIENTIST_HOST_PROJECT_DIR": "host project path, edited in .env",
+    "OPENSCIENTIST_HOST_PROJECT_DIR": "checkout path, recorded by setup and start, never asked",
     "DREMIO_USER": "Berkeley Lab lakehouse credentials, optional",
     "DREMIO_PASSWORD": "Berkeley Lab lakehouse credentials, optional",
     "APP_URL": "derives from OPENSCIENTIST_BASE_URL, the wizard writes it",

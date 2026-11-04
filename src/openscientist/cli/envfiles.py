@@ -57,6 +57,10 @@ def _rewritten_line(line: str, key: str, value: str) -> str:
     return f"{key}={value}{trailing}"
 
 
+#: The .env key holding the checkout's absolute host path.
+HOST_PROJECT_DIR = "OPENSCIENTIST_HOST_PROJECT_DIR"
+
+
 def set_value(lines: list[str], key: str, value: str) -> list[str]:
     """Replace ``key``'s line, un-commenting it, or append it when absent."""
     replaced = False
@@ -76,6 +80,15 @@ def set_file_value(root: Path, file: str, key: str, value: str) -> None:
     """Rewrite one key of one env file on top of the baseline, atomically."""
     lines = set_value(_baseline_lines(root, file), key, value)
     write_file(_file_path(root, file), lines)
+
+
+def record_host_project_dir(root: Path) -> None:
+    """Record the checkout's absolute path in .env. Compose mounts the launcher's
+    jobs directory from it at the same path, since Docker resolves bind sources
+    on the host."""
+    path = str(root.resolve())
+    if file_values(root, "env").get(HOST_PROJECT_DIR) != path:
+        set_file_value(root, "env", HOST_PROJECT_DIR, path)
 
 
 def parse_values(lines: Iterable[str]) -> dict[str, str]:

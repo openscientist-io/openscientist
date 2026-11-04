@@ -72,6 +72,24 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
     )
 
 
+def test_start_records_the_checkout_path_before_any_compose_call(checkout: Path, monkeypatch):
+    """Compose interpolates the launcher's jobs mount from the recorded path, so
+    a moved checkout is recorded again before the first build."""
+    (checkout / ".env").write_text("OPENSCIENTIST_HOST_PROJECT_DIR=/old/place\n", encoding="utf-8")
+    recorded_at_first_call: list[str | None] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+        if not recorded_at_first_call:
+            values = stack.envfiles.file_values(checkout, "env")
+            recorded_at_first_call.append(values.get("OPENSCIENTIST_HOST_PROJECT_DIR"))
+        return 0
+
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
+    assert stack.start(checkout, run) == 0
+    assert recorded_at_first_call == [str(checkout.resolve())]
+
+
 def test_image_tags_come_from_the_env_file(checkout: Path, monkeypatch: pytest.MonkeyPatch):
     (checkout / ".env").write_text(
         "OPENSCIENTIST_BASE_IMAGE=openscientist-base:staging\n"

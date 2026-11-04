@@ -73,6 +73,7 @@ def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generato
     # at a real launcher whose job root is the same tmp_path the broker confines.
     docker_client = docker.from_env()
     digest = image_digest(docker_client, EXECUTOR_IMAGE)
+    (tmp_path / "jobs").mkdir(exist_ok=True)
     launcher = Launcher.start(
         tmp_path,
         tmp_path / "jobs",
