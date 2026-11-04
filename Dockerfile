@@ -37,12 +37,15 @@ RUN uv export --locked --no-dev --no-emit-project --format requirements-txt \
 # The web runs non-root, in the jobs group that owns the job trees it creates.
 # uid 1002 is distinct from the agent's 1001; the launcher's compose service
 # pins LAUNCHER_WEB_UID/GID to this identity (it checks the socket peer and
-# owns the socket file to it).
+# owns the socket file to it). NiceGUI persists app.storage in .nicegui under
+# the working directory, which only the web reads and writes.
 RUN groupadd --gid 1001 jobs \
     && useradd --uid 1002 --gid 1001 --create-home web \
-    && mkdir -p /app/jobs \
+    && mkdir -p /app/jobs /app/.nicegui \
     && chown -R web:jobs /app/jobs \
-    && chmod 2770 /app/jobs
+    && chmod 2770 /app/jobs \
+    && chown web:jobs /app/.nicegui \
+    && chmod 0700 /app/.nicegui
 
 USER web
 

@@ -54,12 +54,19 @@ def create_listening_socket(cfg: LauncherConfig) -> GuardedUnixSocket:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         path.unlink()
-    sock.bind(str(path))
-    sock.listen(128)
-    os.fchmod(sock.fileno(), 0o660)
+    # bind() creates the file as 0777 minus the umask, and fchmod on a socket
+    # changes the sockfs inode, not this path. The 0o177 umask keeps the file
+    # owner-only until it belongs to the web.
+    previous_umask = os.umask(0o177)
     try:
-        os.fchown(sock.fileno(), cfg.web_uid, cfg.web_gid)
+        sock.bind(str(path))
+    finally:
+        os.umask(previous_umask)
+    try:
+        os.chown(path, cfg.web_uid, cfg.web_gid)
     except PermissionError:
         # A non-root launcher cannot chown; the peer check is the real gate.
         pass
+    os.chmod(path, 0o660)
+    sock.listen(128)
     return sock
