@@ -1,9 +1,7 @@
 """FastAPI router for OAuth authentication callbacks."""
 
 import asyncio
-import base64
 import hashlib
-import hmac
 import html
 import logging
 import secrets
@@ -65,43 +63,10 @@ _NEXT_COOKIE = "return_to"
 _NEXT_COOKIE_MAX_AGE = 15 * 60
 
 
-def _next_cookie_key() -> bytes:
-    """The HMAC key a page target rides the provider's round trip under."""
-    key = get_settings().auth.token_encryption_key
-    if key is None:
-        raise RuntimeError(
-            "The token encryption key is missing, so the page target can't be signed"
-        )
-    return key.encode()
-
-
-def _sign_next(value: str) -> str:
-    """A page target signed so the cookie the provider's round trip returns
-    can't be forged."""
-    payload = base64.urlsafe_b64encode(value.encode()).decode()
-    signature = hmac.new(_next_cookie_key(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}.{signature}"
-
-
-def _verify_next(cookie: str) -> str | None:
-    """The page a signed cookie carries, or None when the signature is wrong
-    or the payload is not a string."""
-    payload, separator, signature = cookie.partition(".")
-    if not separator:
-        return None
-    expected = hmac.new(_next_cookie_key(), payload.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, signature):
-        return None
-    try:
-        return base64.urlsafe_b64decode(payload.encode()).decode()
-    except (ValueError, UnicodeDecodeError):
-        return None
-
-
 def _next_cookie_target(request: Request) -> str:
     """The page a visitor asked for before the provider's round trip, or the
-    home page when the signed cookie is missing or forged."""
-    return safe_next(_verify_next(request.cookies.get(_NEXT_COOKIE) or ""))
+    home page when the cookie is missing or off-site."""
+    return safe_next(request.cookies.get(_NEXT_COOKIE))
 
 
 def _carry_next(request: Request, response: RedirectResponse) -> None:
@@ -112,7 +77,7 @@ def _carry_next(request: Request, response: RedirectResponse) -> None:
         settings = get_settings()
         response.set_cookie(
             key=_NEXT_COOKIE,
-            value=_sign_next(next_path),
+            value=next_path,
             max_age=_NEXT_COOKIE_MAX_AGE,
             httponly=True,
             secure=settings.auth.app_url.startswith("https"),
