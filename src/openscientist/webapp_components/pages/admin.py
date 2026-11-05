@@ -764,7 +764,11 @@ async def render_containers_panel() -> None:
 
     @guard_client
     async def guarded_refresh() -> None:
+        nonlocal data
         new_data = await collect_dashboard_data()
+        if new_data == data:
+            return
+        data = new_data
         render_dashboard.refresh(new_data)
 
     ui.timer(3.0, guarded_refresh)
