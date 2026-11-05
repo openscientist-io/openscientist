@@ -40,7 +40,6 @@ from openscientist.webapp_components.components.job_table import (
     render_status_cell_slot,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
-from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +289,6 @@ async def jobs_page() -> None:
 
     job_manager = web_app.get_job_manager()
     is_configured, provider_name, config_errors = check_provider_config()
-    _active_timers = setup_timer_cleanup()
     current_user_is_admin = is_current_user_admin()
     current_user_id = get_current_user_id()
     assert current_user_id is not None
@@ -393,5 +391,5 @@ async def jobs_page() -> None:
     # hung database.
     await refresh_my_jobs_table()
     await refresh_shared_jobs_table()
-    _active_timers.append(ui.timer(5.0, refresh_my_jobs_table))
-    _active_timers.append(ui.timer(5.0, refresh_shared_jobs_table))
+    ui.timer(5.0, refresh_my_jobs_table)
+    ui.timer(5.0, refresh_shared_jobs_table)

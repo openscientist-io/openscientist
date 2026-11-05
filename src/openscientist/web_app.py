@@ -59,14 +59,9 @@ BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 JOBS_DIR_ENV = "OPENSCIENTIST_JOBS_DIR"
 
 
-# ── NiceGUI patch: silence "parent slot deleted" timer errors ──────────────
-# When a container (e.g. feedback_container) is .clear()-ed, child timers
-# lose their parent slot but keep firing until on_disconnect cleanup runs.
-# The base timer's inner try/except only covers the *callback*, not the
-# `with self._get_context():` call at line 90 of timer.py, so the error
-# propagates to the background task handler and fills the log.
-# Patch: return nullcontext() and deactivate the timer instead of raising.
 def _patch_nicegui_timer() -> None:
+    """Tolerate a deleted parent slot when a timer's loop reads its context."""
+    # The base timer guards only the callback, not `with self._get_context():` in timer.py.
     from contextlib import nullcontext
 
     from nicegui.elements.timer import Timer as _NiceGUITimer
@@ -84,7 +79,6 @@ def _patch_nicegui_timer() -> None:
 
 
 _patch_nicegui_timer()
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _replace_nicegui_500() -> None:

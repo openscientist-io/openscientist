@@ -84,7 +84,6 @@ class _JobDetailContext:
     ks_data: dict[str, Any] | None
     ks_load_error: str | None
     state: dict[str, Any]
-    active_timers: list[Any]
     share_dialog: Any
     delete_dialog: Any
     notifications_dialog: Any

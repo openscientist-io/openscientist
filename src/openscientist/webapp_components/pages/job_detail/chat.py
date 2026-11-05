@@ -200,7 +200,7 @@ class _ChatTabController:
 
         ui.add_head_html(_CHAT_STYLES)
         self._render_shell()
-        self.context.active_timers.append(ui.timer(0.1, self._render_messages, once=True))
+        ui.timer(0.1, self._render_messages, once=True)
 
         if self.context.can_edit:
             self._render_input_area()

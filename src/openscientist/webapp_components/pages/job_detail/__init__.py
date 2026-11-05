@@ -30,7 +30,6 @@ from openscientist.webapp_components.pages.job_detail.common import (
 )
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
 from openscientist.webapp_components.pages.job_detail.timeline import _render_timeline_tab
-from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +135,6 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         ks_data, db_job.status, db_job.current_iteration
     )
     job_info = JobInfo.from_db_model(db_job, iterations_completed, findings_count)
-    active_timers = setup_timer_cleanup()
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
         job_id,
         job_manager,
@@ -157,7 +155,6 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         ks_data=ks_data,
         ks_load_error=ks_load_error,
         state=_initial_job_state(job_info, ks_data),
-        active_timers=active_timers,
         share_dialog=share_dialog,
         delete_dialog=delete_dialog,
         notifications_dialog=notifications_dialog,

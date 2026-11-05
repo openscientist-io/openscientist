@@ -85,18 +85,3 @@ def safe_run_javascript(code: str) -> None:
             ui.run_javascript(code)
         except Exception:
             logger.debug("JS execution failed (client likely disconnected)", exc_info=True)
-
-
-def setup_timer_cleanup() -> list[ui.timer]:
-    """Deactivate the returned timers when the client disconnects."""
-    active_timers: list[ui.timer] = []
-
-    def cleanup() -> None:
-        for timer in active_timers:
-            try:
-                timer.deactivate()
-            except Exception:
-                logger.debug("Timer deactivation failed (may already be inactive)", exc_info=True)
-
-    ui.context.client.on_disconnect(cleanup)
-    return active_timers

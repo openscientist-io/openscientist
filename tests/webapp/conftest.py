@@ -107,7 +107,8 @@ def browser_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[OpenBrowser]:
 
     yield open_browser
     for client, browser_id in opened:
-        client.delete()
+        if not client.is_deleted:
+            client.delete()
         app.storage._users.pop(browser_id, None)
 
 
