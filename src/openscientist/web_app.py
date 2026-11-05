@@ -170,7 +170,7 @@ def _create_config_error_page(error_message: str) -> None:
     @ui.page("/{path:path}")
     def config_error_page(_path: str = "") -> None:
         """Display generic server error with 500 status."""
-        app.storage.user["_error_shown"] = True
+        ui.context.client.status_code = 500
 
         with ui.column().classes("absolute-center items-center gap-6 max-w-lg p-8"):
             # Error icon
