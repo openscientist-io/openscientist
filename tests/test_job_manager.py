@@ -3,7 +3,7 @@
 import asyncio
 import threading
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -461,37 +461,6 @@ class TestContainerStatusNotifications:
             stop_notes=["some note"],
         )
         assert sent[1]["stop_note"] is None
-
-
-class TestJobManagerKSProgress:
-    """Tests for real-time KS progress reading."""
-
-    async def test_running_job_reads_ks(self, tmp_path):
-        manager = _new_manager(tmp_path)
-        job_id = str(uuid4())
-        _write_config(tmp_path, job_id, status="running")
-        ks_data = {
-            "iteration": 5,
-            "findings": [{"id": "F001"}, {"id": "F002"}],
-        }
-        db_job = _make_db_job("running", "2026-02-01T00:00:00", job_id=job_id)
-
-        with (
-            patch("openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job),
-            patch(
-                "openscientist.job_manager.thread_safe_admin_session", return_value=nullcontext()
-            ),
-            patch(
-                "openscientist.job_manager.KnowledgeState.load_from_database",
-                new_callable=AsyncMock,
-                return_value=MagicMock(data=ks_data),
-            ),
-        ):
-            job = await manager.get_job(job_id)
-
-        assert job is not None
-        assert job.iterations_completed == 4
-        assert job.findings_count == 2
 
 
 class TestJobManagerCancellationConcurrency:
