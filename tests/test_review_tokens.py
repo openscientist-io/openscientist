@@ -82,7 +82,7 @@ async def test_redeem_review_token(
             response = await client.post(f"/review/{plaintext}", json={})
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     assert "session_token" in response.cookies
 
     # Verify token is marked redeemed
@@ -147,7 +147,7 @@ async def test_re_redeem_logs_into_same_user(
             cookie2 = resp2.cookies.get("session_token")
 
     assert resp2.status_code == 303
-    assert resp2.headers["location"] == "/"
+    assert resp2.headers["location"] == "/jobs"
     assert cookie1 is not None
     assert cookie2 is not None
     # Different sessions

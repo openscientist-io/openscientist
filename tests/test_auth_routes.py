@@ -164,7 +164,7 @@ async def test_mock_login_creates_user_session_and_cookie(db_session: AsyncSessi
     response = await _request(app, db_session, "GET", "/auth/mock/login")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     cookie = response.cookies.get("session_token")
     assert cookie is not None
 
@@ -204,7 +204,7 @@ async def test_mock_admin_login_marks_user_as_administrator(
     response = await _request(app, db_session, "GET", "/auth/mock/admin-login")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
 
     user = await _user_by_email(db_session, ADMIN_EMAIL)
     assert user is not None
@@ -278,7 +278,7 @@ async def test_mock_callback_uses_posted_form_data(db_session: AsyncSession) -> 
     )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
 
     user = await _user_by_email(db_session, "route-mock@example.com")
     assert user is not None
@@ -318,7 +318,7 @@ async def test_mock_callback_defaults_for_missing_form_fields(
     response = await _request(app, db_session, "POST", "/auth/mock/callback")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
 
     cookie = response.cookies.get("session_token")
     assert cookie is not None
@@ -458,7 +458,7 @@ async def test_oauth_callback_creates_user_link_and_session(
         response = await _request(app, db_session, "GET", "/auth/google/callback", oauth=oauth)
 
     assert response.is_redirect
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
 
     user = await _user_by_email(db_session, GOOGLE_EMAIL)
     assert user is not None
@@ -563,7 +563,7 @@ async def test_oauth_callback_links_to_user_with_same_email(db_session: AsyncSes
         response = await _request(app, db_session, "GET", "/auth/google/callback", oauth=oauth)
 
     assert response.is_redirect
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
 
     users = (
         (await db_session.execute(select(User).where(User.email == "route-existing@example.com")))
@@ -771,7 +771,7 @@ async def test_oauth_callback_linked_identity_signs_in_despite_unverified_email(
         response = await _request(app, db_session, "GET", "/auth/google/callback", oauth=oauth)
 
     assert response.is_redirect
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     cookie = response.cookies.get("session_token")
     assert cookie is not None
     session = (

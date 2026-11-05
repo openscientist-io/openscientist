@@ -75,7 +75,7 @@ async def test_mock_login_sets_the_session_cookie_from_the_rows_length(
         await reset_admin_settings_row(test_engine)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     cookie_header = response.headers["set-cookie"].lower()
     assert cookie_header.startswith("session_token=")
     assert "max-age=604800" in cookie_header
@@ -95,7 +95,7 @@ async def test_mock_admin_login_creates_the_admin_and_sets_the_cookie(
             response = await client.get("/auth/mock/admin-login")
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     user = await _user_of_token(db_session, response.cookies["session_token"])
     assert user.email == "admin@mock.local"
     assert user.is_approved is True
@@ -123,7 +123,7 @@ async def test_mock_callback_creates_the_user_and_sets_the_cookie(
             )
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     user = await _user_of_token(db_session, response.cookies["session_token"])
     assert user.email == "dev-form@example.com"
     assert user.name == "Dev Form"
@@ -167,7 +167,7 @@ async def test_oauth_callback_creates_the_user_and_sets_the_cookie(
             response = await client.get("/auth/github/callback", params={"code": "abc"})
 
     assert response.status_code == 307
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     user = await _user_of_token(db_session, response.cookies["session_token"])
     assert user.email == "gh@example.com"
     assert user.name == "GitHub User"

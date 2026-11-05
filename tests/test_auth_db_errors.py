@@ -166,14 +166,16 @@ async def test_a_visitor_with_a_garbage_token_is_sent_to_login(
     storage: dict[str, object] = {"session_token": token, "authenticated": True}
     ui = MagicMock()
     ui.context.client.request.cookies = {"session_token": token}
-    ui.context.client.page.path = "/jobs"
+    ui.context.client.request.url.path = "/jobs"
+    ui.context.client.request.url.query = ""
     ui.context.client.page.response_timeout = _RESPONSE_TIMEOUT
     monkeypatch.setattr(middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage)))
     monkeypatch.setattr(middleware, "ui", ui)
-    await middleware.require_auth(page)()
+    result = await middleware.require_auth(page)()
     assert not ran
     assert storage == {"return_to": "/jobs"}
-    ui.navigate.to.assert_called_once_with("/login")  # type: ignore[attr-defined]
+    assert result.status_code == 303
+    assert result.headers["location"] == "/login"
 
 
 async def test_an_unexpected_validation_error_is_not_treated_as_an_outage(

@@ -116,7 +116,7 @@ async def test_a_browser_signing_in_through_the_form_keeps_the_cookie(
                 },
             )
     assert response.status_code == 303
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/jobs"
     token = browser.cookies.get("session_token")
     assert token is not None
     user = await db_session.scalar(select(User).join(Session).where(Session.id == token))
