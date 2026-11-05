@@ -5,7 +5,10 @@ values, and the launcher refuses the whole launch on the first key outside
 its allow-list. These tests build that env for every provider and harness
 with every provider setting filled in, with and without the host login files,
 and again with each provider in every one of its auth variants, so a branch
-that only shows up when one credential is missing cannot hide a key.
+that only shows up when one credential is missing cannot hide a key. The
+drift test takes the union of every key those combinations emit and refuses
+an allow-list key that no combination sends, so the list cannot widen past
+what the web actually puts into a container.
 """
 
 from __future__ import annotations
@@ -60,8 +63,7 @@ def _filled_value(name: str, annotation: object, tmp_path: Path) -> str:
     return f"filled-{name}"
 
 
-@pytest.fixture
-def every_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _fill_every_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Every provider setting, and every optional launch input, set in the env."""
     # A harness export the Settings model would parse as its agent section.
     monkeypatch.delenv("AGENT", raising=False)
@@ -73,32 +75,49 @@ def every_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("PHENIX_HOST_PATH", str(tmp_path / "phenix"))
 
 
-@pytest.mark.usefixtures("every_setting")
-@pytest.mark.parametrize("host_logins", [True, False])
-@pytest.mark.parametrize("harness", _VALID_HARNESSES)
-@pytest.mark.parametrize("provider_id", provider_ids())
-@pytest.mark.parametrize("run_mode", ["discovery", "report_only", "chat"])
-@pytest.mark.parametrize("airgapped", [False, True])
-def test_launch_env_keys_are_all_allowed(
+def _launch_env(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
     provider_id: str,
-    harness: str,
-    host_logins: bool,
-    run_mode: str,
-    airgapped: bool,
-) -> None:
+    harness: str = "auto",
+    host_logins: bool = True,
+    run_mode: str = "discovery",
+    airgapped: bool = False,
+    overrides: dict[str, str | None] | None = None,
+    variant_name: str = "",
+) -> dict[str, str] | str:
+    """The agent launch env one web combination builds through the web's own
+    path, or the refusal when the web refuses the launch before it asks the
+    launcher. Every call starts from the all-filled-in config, so a
+    combination is never shaped by the one that ran before it."""
+    _fill_every_setting(monkeypatch, tmp_path)
     monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
     monkeypatch.setenv("OPENSCIENTIST_HARNESS", harness)
     monkeypatch.setenv("OPENSCIENTIST_MODEL", _MODEL_IDS.get(provider_id, "filled-model"))
-    if not host_logins:
-        for key in _HOST_LOGINS:
+    for key in _HOST_LOGINS:
+        if host_logins:
+            path = tmp_path / key.lower()
+            if not path.exists():
+                path.write_text("{}", encoding="utf-8")
+            monkeypatch.setenv(key, str(path))
+        else:
             monkeypatch.delenv(key)
+    for field, value in (overrides or {}).items():
+        alias = _env_name(field)
+        if value is None:
+            monkeypatch.delenv(alias, raising=False)
+        elif value == _VAULT:
+            vault = tmp_path / f"vault-{provider_id}-{variant_name}"
+            make_vault(vault, {_VAULT_PROVIDER[provider_id]: _vault_credential(provider_id)})
+            monkeypatch.setenv(alias, str(vault))
+        else:
+            monkeypatch.setenv(alias, value)
     clear_settings_cache()
     try:
         refusal = get_provider().prelaunch_routing_error()
         if refusal is not None:
-            assert (provider_id, harness, host_logins) in _REFUSED, refusal
-            return
+            return refusal
         settings = get_settings()
         credentials = RunCredentials(
             job_id=JOB_ID,
@@ -106,7 +125,7 @@ def test_launch_env_keys_are_all_allowed(
             llm_placeholder=f"{JOB_ID}.placeholder",
             exec_token=f"{JOB_ID}.exec",
         )
-        env = JobContainerRunner._build_container_environment(
+        return JobContainerRunner._build_container_environment(
             settings,
             job_id=JOB_ID,
             job_mount=f"/app/jobs/{JOB_ID}",
@@ -118,7 +137,35 @@ def test_launch_env_keys_are_all_allowed(
         )
     finally:
         clear_settings_cache()
-    assert sorted(set(env) - AGENT_ENV_ALLOWLIST) == []
+
+
+@pytest.mark.parametrize("host_logins", [True, False])
+@pytest.mark.parametrize("harness", _VALID_HARNESSES)
+@pytest.mark.parametrize("provider_id", provider_ids())
+@pytest.mark.parametrize("run_mode", ["discovery", "report_only", "chat"])
+@pytest.mark.parametrize("airgapped", [False, True])
+def test_launch_env_keys_are_all_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provider_id: str,
+    harness: str,
+    host_logins: bool,
+    run_mode: str,
+    airgapped: bool,
+) -> None:
+    result = _launch_env(
+        monkeypatch,
+        tmp_path,
+        provider_id=provider_id,
+        harness=harness,
+        host_logins=host_logins,
+        run_mode=run_mode,
+        airgapped=airgapped,
+    )
+    if isinstance(result, str):
+        assert (provider_id, harness, host_logins) in _REFUSED, result
+        return
+    assert sorted(set(result) - AGENT_ENV_ALLOWLIST) == []
 
 
 #: The OMP_AUTH_HOST_PATH override that points the setting at a real omp
@@ -268,7 +315,6 @@ _VARIANT_CASES = [
 ]
 
 
-@pytest.mark.usefixtures("every_setting")
 @pytest.mark.parametrize(
     ("provider_id", "variant_name", "overrides"),
     _VARIANT_CASES,
@@ -281,41 +327,51 @@ def test_auth_variant_launch_env_keys_are_all_allowed(
     variant_name: str,
     overrides: dict[str, str | None],
 ) -> None:
-    monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
-    monkeypatch.setenv("OPENSCIENTIST_HARNESS", "auto")
-    monkeypatch.setenv("OPENSCIENTIST_MODEL", _MODEL_IDS.get(provider_id, "filled-model"))
-    for field, value in overrides.items():
-        alias = _env_name(field)
-        if value is None:
-            monkeypatch.delenv(alias, raising=False)
-        elif value == _VAULT:
-            vault = tmp_path / f"vault-{variant_name}"
-            make_vault(vault, {_VAULT_PROVIDER[provider_id]: _vault_credential(provider_id)})
-            monkeypatch.setenv(alias, str(vault))
-        else:
-            monkeypatch.setenv(alias, value)
-    clear_settings_cache()
-    try:
-        refusal = get_provider().prelaunch_routing_error()
-        assert refusal is None, f"{provider_id} {variant_name} is refused at launch: {refusal}"
-        settings = get_settings()
-        credentials = RunCredentials(
-            job_id=JOB_ID,
-            kind="discovery",
-            llm_placeholder=f"{JOB_ID}.placeholder",
-            exec_token=f"{JOB_ID}.exec",
-        )
-        env = JobContainerRunner._build_container_environment(
-            settings,
-            job_id=JOB_ID,
-            job_mount=f"/app/jobs/{JOB_ID}",
-            provider_env=JobContainerRunner._provider_environment(settings, credentials),
-            database_url="postgresql://agent@db/openscientist",
-            exec_token=credentials.exec_token,
-            airgapped=False,
-            run_mode="discovery",
-        )
-    finally:
-        clear_settings_cache()
-    extra = sorted(set(env) - AGENT_ENV_ALLOWLIST)
+    result = _launch_env(
+        monkeypatch,
+        tmp_path,
+        provider_id=provider_id,
+        overrides=overrides,
+        variant_name=variant_name,
+    )
+    assert isinstance(result, dict), f"{provider_id} {variant_name} is refused at launch: {result}"
+    extra = sorted(set(result) - AGENT_ENV_ALLOWLIST)
     assert extra == [], f"{provider_id} {variant_name}: env keys the launcher refuses: {extra}"
+
+
+def test_allowlist_keeps_only_keys_the_web_sends(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The reverse of the launch tests. A key no combination this file builds
+    puts into an agent launch env must not stay on the launcher's allow-list,
+    since the web cannot route it through the launcher at all."""
+    sent: set[str] = set()
+    for provider_id in provider_ids():
+        for harness in _VALID_HARNESSES:
+            for host_logins in (True, False):
+                for run_mode in ("discovery", "report_only", "chat"):
+                    for airgapped in (False, True):
+                        result = _launch_env(
+                            monkeypatch,
+                            tmp_path,
+                            provider_id=provider_id,
+                            harness=harness,
+                            host_logins=host_logins,
+                            run_mode=run_mode,
+                            airgapped=airgapped,
+                        )
+                        if isinstance(result, dict):
+                            sent |= set(result)
+        for variant_name, overrides in _VARIANTS[provider_id]:
+            result = _launch_env(
+                monkeypatch,
+                tmp_path,
+                provider_id=provider_id,
+                overrides=overrides,
+                variant_name=variant_name,
+            )
+            if isinstance(result, dict):
+                sent |= set(result)
+    missing = sorted(AGENT_ENV_ALLOWLIST - sent)
+    assert missing == [], f"allow-list keys the web never sends: {missing}"
