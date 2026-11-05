@@ -222,6 +222,36 @@ def _forget_abandoned(check: asyncio.Task[dict[str, Any] | None]) -> None:
         logger.debug("A session check abandoned at its deadline ended with %r", error)
 
 
+async def session_still_valid_for(user_id: str) -> bool:
+    """Whether the page's session is still valid and still that user's.
+
+    Periodic ticks call it before touching data. It re-reads the
+    ``session_token`` cookie the page was built with against the sessions
+    table, in one primary-key lookup, and is true while the row is
+    unexpired and belongs to ``user_id``, the user the page was built for.
+    A database it cannot reach cannot prove the session is gone, so it
+    reads as still valid and the tick's own data load reports the outage,
+    the way a page build does.
+    """
+    token = get_session_token()
+    if token is None:
+        return False
+    try:
+        user_info = await validate_session(token)
+    except Exception as e:
+        if not is_connection_error(e):
+            raise
+        logger.debug("Database unreachable while re-checking a session: %s", e)
+        return True
+    return user_info is not None and user_info.get("user_id") == user_id
+
+
+def go_to_login() -> None:
+    """Send the current client to the login page, carrying the page it
+    leaves as ``next`` the way ``require_auth`` builds it."""
+    ui.navigate.to(_login_url())
+
+
 def get_current_user_id() -> str | None:
     """Get the current authenticated user's ID."""
     return app.storage.user.get("user_id")

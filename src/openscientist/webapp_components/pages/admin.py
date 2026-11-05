@@ -34,7 +34,7 @@ from openscientist.webapp_components.components.job_table import render_job_id_s
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
-from openscientist.webapp_components.utils import guard_client
+from openscientist.webapp_components.utils import session_checked_timer
 from openscientist.webapp_components.utils.permissions import (
     refuse_stale_admin_session,
     revalidate_admin_session,
@@ -755,6 +755,9 @@ async def render_containers_panel() -> None:
         collect_dashboard_data,
     )
 
+    page_user_id = _get_admin_current_user_id()
+    assert page_user_id is not None
+
     @ui.refreshable
     def render_dashboard(data: DashboardData) -> None:
         _render_dashboard_content(data)
@@ -762,7 +765,6 @@ async def render_containers_panel() -> None:
     data = await collect_dashboard_data()
     render_dashboard(data)
 
-    @guard_client
     async def guarded_refresh() -> None:
         nonlocal data
         new_data = await collect_dashboard_data()
@@ -771,7 +773,7 @@ async def render_containers_panel() -> None:
         data = new_data
         render_dashboard.refresh(new_data)
 
-    ui.timer(3.0, guarded_refresh)
+    session_checked_timer(3.0, guarded_refresh, page_user_id)
 
 
 def _job_status_color(status: str) -> str:

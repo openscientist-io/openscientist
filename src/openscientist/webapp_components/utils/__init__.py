@@ -6,6 +6,7 @@ from openscientist.webapp_components.utils.client_guard import (
     guard_client,
     is_client_connected,
     safe_run_javascript,
+    session_checked_timer,
 )
 from openscientist.webapp_components.utils.events import get_event_value
 from openscientist.webapp_components.utils.session import (
@@ -24,4 +25,5 @@ __all__ = [
     "is_client_connected",
     "is_dev_mode",
     "safe_run_javascript",
+    "session_checked_timer",
 ]

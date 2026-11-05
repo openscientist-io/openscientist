@@ -29,8 +29,8 @@ from openscientist.webapp_components.pages.job_detail.iterations import (
     _show_no_timeline_activity,
 )
 from openscientist.webapp_components.utils import (
-    guard_client,
     is_client_connected,
+    session_checked_timer,
 )
 
 
@@ -328,9 +328,8 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
 
     stats_timer_holder: dict[str, Any] = {"timer": None}
 
-    @guard_client
     async def check_and_refresh() -> None:
         await _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_holder)
 
     if context.job_info.status in _polling_statuses():
-        stats_timer_holder["timer"] = ui.timer(2.0, check_and_refresh)
+        stats_timer_holder["timer"] = session_checked_timer(2.0, check_and_refresh, context.user_id)
