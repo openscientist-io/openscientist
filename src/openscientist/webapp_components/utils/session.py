@@ -52,7 +52,6 @@ def clear_uploaded_files(session_id: str) -> None:
         try:
             uploaded_file["path"].unlink(missing_ok=True)
             uploaded_file["path"].parent.rmdir()
-        except Exception:
-            pass
-    if session_id in _uploaded_files:
-        _uploaded_files[session_id] = []
+        except OSError:
+            logger.debug("Could not remove the temp file for session %s", session_id, exc_info=True)
+    _uploaded_files.pop(session_id, None)
