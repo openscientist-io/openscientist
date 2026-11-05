@@ -1,16 +1,16 @@
 """Chat tab: the research assistant conversation UI."""
 
 import logging
-from typing import Any
 from uuid import UUID
 
 from nicegui import ui
 
+from openscientist.database.models import JobChatMessage
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
 from openscientist.exceptions import BudgetExceededError
 from openscientist.job.types import JobStatus
-from openscientist.job_chat import get_chat_history, send_chat_message
+from openscientist.job_chat import get_chat_history, has_older_chat_message, send_chat_message
 from openscientist.webapp_components.components.common import render_thinking_status
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.utils import (
@@ -20,6 +20,8 @@ from openscientist.webapp_components.utils import (
 from openscientist.webapp_components.utils.permissions import current_job_access
 
 logger = logging.getLogger(__name__)
+
+_PAGE_SIZE = 50
 
 _CHAT_STYLES = """
 <style>
@@ -186,10 +188,12 @@ class _ChatTabController:
     def __init__(self, context: _JobDetailContext) -> None:
         self.context = context
         self.job_uuid = UUID(context.job_id)
-        self.chat_scroll: Any = None
-        self.status_container: Any = None
-        self.chat_input: Any = None
-        self.send_btn: Any = None
+        self.chat_scroll: ui.scroll_area | None = None
+        self.status_container: ui.element | None = None
+        self.chat_input: ui.textarea | None = None
+        self.send_btn: ui.button | None = None
+        self.load_earlier_btn: ui.button | None = None
+        self._oldest_shown: JobChatMessage | None = None
 
     async def render(self) -> None:
         """Build the chat tab, loading the committed history before the page is sent."""
@@ -221,6 +225,11 @@ class _ChatTabController:
                 ui.label("Research Assistant").classes("font-semibold text-gray-700")
                 ui.label("Discuss your findings").classes("text-sm text-gray-500 ml-auto")
 
+            self.load_earlier_btn = (
+                ui.button("Load earlier messages", on_click=self._load_earlier)
+                .props("flat dense")
+                .classes("text-indigo-600 normal-case self-center hidden")
+            )
             self.chat_scroll = (
                 ui.scroll_area()
                 .classes("w-full flex-grow px-2 chat-messages-scroll")
@@ -281,10 +290,23 @@ class _ChatTabController:
             ui.label("No messages yet").classes("text-lg font-medium text-gray-600")
             ui.label("You have view-only access to this job.").classes("text-sm text-gray-400")
 
-    async def _load_chat_messages(self) -> list[Any]:
+    async def _load_chat_messages(
+        self,
+        limit: int | None,
+        before: JobChatMessage | None = None,
+        since: JobChatMessage | None = None,
+    ) -> tuple[list[JobChatMessage], bool]:
+        """The newest ``limit`` messages within the window ``before`` and
+        ``since`` mark, and whether anything older than the oldest result exists."""
         async with get_session_ctx() as session:
             await set_current_user(session, UUID(self.context.user_id))
-            return await get_chat_history(session, self.job_uuid)
+            messages = await get_chat_history(
+                session, self.job_uuid, limit=limit, before=before, since=since
+            )
+            has_older = bool(messages) and await has_older_chat_message(
+                session, self.job_uuid, messages[0]
+            )
+            return messages, has_older
 
     async def _render_messages(self) -> None:
         guard = ClientGuard()
@@ -292,7 +314,12 @@ class _ChatTabController:
             return
 
         try:
-            messages = await self._load_chat_messages()
+            # Once messages are shown, the reload keeps every one of them
+            # and adds whatever is newer.
+            if self._oldest_shown is None:
+                messages, has_older = await self._load_chat_messages(_PAGE_SIZE)
+            else:
+                messages, has_older = await self._load_chat_messages(None, since=self._oldest_shown)
             if not guard.is_connected:
                 return
 
@@ -303,9 +330,49 @@ class _ChatTabController:
                 else:
                     for message in messages:
                         self._render_message_bubble(message.role, message.content)
+            self._oldest_shown = messages[0] if messages else None
+            self._set_load_earlier_visible(has_older)
             self._scroll_to_bottom()
         except Exception as exc:
             logger.error("Failed to load chat history: %s", exc)
+
+    async def _load_earlier(self) -> None:
+        """Load the page of messages older than the oldest one shown."""
+        if self.load_earlier_btn is None or not self.load_earlier_btn.enabled:
+            return
+        self.load_earlier_btn.disable()
+        guard = ClientGuard()
+        try:
+            messages, has_older = await self._load_chat_messages(_PAGE_SIZE, self._oldest_shown)
+        finally:
+            self.load_earlier_btn.enable()
+        if not guard.is_connected or self.chat_scroll is None:
+            return
+        if not messages:
+            self._set_load_earlier_visible(False)
+            return
+        self._prepend_messages(messages)
+        self._oldest_shown = messages[0]
+        self._set_load_earlier_visible(has_older)
+
+    def _prepend_messages(self, messages: list[JobChatMessage]) -> None:
+        """Insert ``messages`` above the currently shown list, in order."""
+        if self.chat_scroll is None:
+            return
+        with ui.column() as batch:
+            for message in messages:
+                self._render_message_bubble(message.role, message.content)
+        for element in reversed(list(batch)):
+            element.move(self.chat_scroll, 0)
+        batch.delete()
+
+    def _set_load_earlier_visible(self, visible: bool) -> None:
+        if self.load_earlier_btn is None:
+            return
+        if visible:
+            self.load_earlier_btn.classes(remove="hidden")
+            return
+        self.load_earlier_btn.classes(add="hidden")
 
     def _toggle_typing_indicator(self, visible: bool) -> None:
         if self.status_container is None:
