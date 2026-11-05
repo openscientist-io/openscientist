@@ -22,6 +22,7 @@ from openscientist.job.types import JobStatus
 from openscientist.webapp_components.components.common import STATUS_COLORS
 from openscientist.webapp_components.pages.admin import (
     _build_admin_user_rows,
+    _dashboard_view,
     _filter_users_for_admin_table,
     _render_admin_users_table,
     _render_dashboard_job_groups,
@@ -855,7 +856,8 @@ def _dashboard_badge_color(status: str) -> str:
         max_iterations=3,
     )
     with patch("openscientist.webapp_components.pages.admin.ui") as mock_ui:
-        _render_dashboard_job_groups(DashboardData(docker_available=True, job_groups=[group]))
+        data = DashboardData(docker_available=True, job_groups=[group])
+        _render_dashboard_job_groups(_dashboard_view(data))
     (badge,) = [c for c in mock_ui.badge.call_args_list if c.args == (status,)]
     return str(badge.kwargs["color"])
 

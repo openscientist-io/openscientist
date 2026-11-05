@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from openscientist.webapp_components.utils.container_dashboard import (
         ContainerInfo,
         DashboardData,
+        DashboardTotals,
+        JobContainerGroup,
     )
 
 logger = logging.getLogger(__name__)
@@ -756,20 +759,20 @@ async def render_containers_panel() -> None:
     )
 
     @ui.refreshable
-    def render_dashboard(data: DashboardData) -> None:
-        _render_dashboard_content(data)
+    def render_dashboard(view: DashboardView) -> None:
+        _render_dashboard_content(view)
 
-    data = await collect_dashboard_data()
-    render_dashboard(data)
+    view = _dashboard_view(await collect_dashboard_data())
+    render_dashboard(view)
 
     @guard_client
     async def guarded_refresh() -> None:
-        nonlocal data
-        new_data = await collect_dashboard_data()
-        if new_data == data:
+        nonlocal view
+        new_view = _dashboard_view(await collect_dashboard_data())
+        if new_view == view:
             return
-        data = new_data
-        render_dashboard.refresh(new_data)
+        view = new_view
+        render_dashboard.refresh(new_view)
 
     ui.timer(3.0, guarded_refresh)
 
@@ -782,33 +785,32 @@ def _job_status_color(status: str) -> str:
         return "gray"
 
 
-def _render_dashboard_unavailable_state(data: DashboardData) -> bool:
-    if not data.docker_available:
+def _render_dashboard_unavailable_state(view: DashboardView) -> bool:
+    if not view.docker_available:
         render_alert_banner(
             title="Docker Unavailable",
-            message=data.error_message or "Docker daemon is not reachable.",
+            message=view.error_text or "Docker daemon is not reachable.",
             severity="warning",
         )
         return True
-    if data.error_message:
+    if view.error_text:
         render_alert_banner(
             title="Dashboard Error",
-            message=data.error_message,
+            message=view.error_text,
             severity="error",
         )
         return True
     return False
 
 
-def _render_dashboard_totals(data: DashboardData) -> None:
-    totals = data.totals
+def _render_dashboard_totals(totals: TotalsView) -> None:
     render_stat_badges(
         [
-            ("Jobs", totals.running_jobs, "blue"),
-            ("Agents", totals.agent_containers, "green"),
-            ("Executors", totals.executor_containers, "orange"),
-            ("Memory", f"{totals.total_memory_mb:.0f} MB", ""),
-            ("CPU", f"{totals.total_cpu_percent:.1f}%", ""),
+            ("Jobs", totals.jobs, "blue"),
+            ("Agents", totals.agents, "green"),
+            ("Executors", totals.executors, "orange"),
+            ("Memory", totals.memory_label, ""),
+            ("CPU", totals.cpu_label, ""),
         ],
         icon_map={
             "Jobs": "work",
@@ -820,80 +822,226 @@ def _render_dashboard_totals(data: DashboardData) -> None:
     )
 
 
-def _render_dashboard_job_groups(data: DashboardData) -> None:
-    for group in data.job_groups:
+def _render_dashboard_job_groups(view: DashboardView) -> None:
+    for card in view.job_cards:
         with ui.card().classes("w-full mb-3"):
             with ui.row().classes("w-full items-center gap-3 flex-wrap"):
-                render_job_id_badge(group.job_id)
-                ui.label(group.title[:60] + ("..." if len(group.title) > 60 else "")).classes(
-                    "font-medium text-sm flex-grow"
-                )
-                ui.badge(group.status, color=_job_status_color(group.status)).classes("px-2")
-                ui.label(f"Iteration {group.current_iteration}/{group.max_iterations}").classes(
-                    "text-xs text-gray-500"
-                )
-                ui.label(group.owner_email).classes("text-xs text-gray-400")
+                render_job_id_badge(card.job_id)
+                ui.label(card.title_label).classes("font-medium text-sm flex-grow")
+                ui.badge(card.status, color=_job_status_color(card.status)).classes("px-2")
+                ui.label(card.iteration).classes("text-xs text-gray-500")
+                ui.label(card.owner).classes("text-xs text-gray-400")
 
             ui.separator()
 
-            if group.agent_container:
-                _render_container_row(group.agent_container, icon="smart_toy")
-            for ec in group.executor_containers:
-                _render_container_row(ec, icon="code")
+            if card.agent_row:
+                _render_container_row(card.agent_row, icon="smart_toy")
+            for row in card.executor_rows:
+                _render_container_row(row, icon="code")
 
-            if not group.agent_container and not group.executor_containers:
+            if card.agent_row is None and not card.executor_rows:
                 ui.label("No containers").classes("text-gray-400 text-sm px-2 py-1")
 
 
-def _render_dashboard_orphan_containers(data: DashboardData) -> None:
-    if not data.orphan_containers:
+def _render_dashboard_orphan_containers(view: DashboardView) -> None:
+    if not view.orphan_rows:
         return
     key = "admin_orphan_containers_expanded"
     expanded = app.storage.client.get(key, False)
     exp = ui.expansion(
-        f"Orphan Containers ({len(data.orphan_containers)})",
+        f"Orphan Containers ({len(view.orphan_rows)})",
         icon="warning",
         value=expanded,
     ).classes("w-full mt-4 border border-orange-200 rounded")
     exp.on_value_change(lambda e: app.storage.client.update({key: e.value}))
     with exp:
-        for oc in data.orphan_containers:
-            _render_container_row(oc, icon="help_outline")
+        for row in view.orphan_rows:
+            _render_container_row(row, icon="help_outline")
 
 
-def _render_dashboard_content(data: DashboardData) -> None:
-    if _render_dashboard_unavailable_state(data):
+def _render_dashboard_content(view: DashboardView) -> None:
+    if _render_dashboard_unavailable_state(view):
         return
-    _render_dashboard_totals(data)
-    if not data.job_groups and not data.orphan_containers:
+    _render_dashboard_totals(view.totals)
+    if not view.job_cards and not view.orphan_rows:
         render_empty_state("No OpenScientist containers are currently running.")
         return
-    _render_dashboard_job_groups(data)
-    _render_dashboard_orphan_containers(data)
+    _render_dashboard_job_groups(view)
+    _render_dashboard_orphan_containers(view)
 
 
-def _render_container_row(ci: ContainerInfo, icon: str = "dns") -> None:
+def _group_title_label(title: str) -> str:
+    """The job title as the panel shows it, truncated with an ellipsis."""
+    return title[:60] + ("..." if len(title) > 60 else "")
+
+
+def _total_memory_label(total_memory_mb: float) -> str:
+    """The total memory figure as the summary row shows it."""
+    return f"{total_memory_mb:.0f} MB"
+
+
+def _total_cpu_label(total_cpu_percent: float) -> str:
+    """The total CPU figure as the summary row shows it."""
+    return f"{total_cpu_percent:.1f}%"
+
+
+def _cpu_percent_label(cpu_percent: float) -> str:
+    """The container CPU figure as the row shows it."""
+    return f"CPU {cpu_percent:.1f}%"
+
+
+def _memory_usage_label(memory_mb: float, memory_limit_mb: float) -> str:
+    """The memory usage figure as the row shows it."""
+    return f"{memory_mb:.0f}/{memory_limit_mb:.0f} MB"
+
+
+def _memory_bar_fill(usage_percent: float) -> float:
+    """The memory bar fill at the resolution the bar renders it."""
+    return round(usage_percent, 3)
+
+
+def _memory_bar_color(usage_percent: float) -> str:
+    """The memory bar colour as the row shows it."""
+    return "red" if usage_percent > 0.8 else "green"
+
+
+@dataclass(frozen=True)
+class MemoryUsageView:
+    """The memory bar of a running container with a limit, at display granularity."""
+
+    fill: float
+    colour: str
+    label: str
+
+
+@dataclass(frozen=True)
+class ContainerRowView:
+    """One container row as the panel displays it, at display granularity."""
+
+    name: str
+    status: str
+    uptime: str | None
+    memory: MemoryUsageView | None
+    cpu_label: str | None
+
+
+@dataclass(frozen=True)
+class JobCardView:
+    """One job card as the panel displays it, at display granularity."""
+
+    job_id: str
+    title_label: str
+    status: str
+    iteration: str
+    owner: str
+    agent_row: ContainerRowView | None
+    executor_rows: tuple[ContainerRowView, ...]
+
+
+@dataclass(frozen=True)
+class TotalsView:
+    """The summary row as the panel displays it, at display granularity."""
+
+    jobs: int
+    agents: int
+    executors: int
+    memory_label: str
+    cpu_label: str
+
+
+@dataclass(frozen=True)
+class DashboardView:
+    """The whole containers panel as the panel displays it, at display granularity."""
+
+    docker_available: bool
+    error_text: str | None
+    job_cards: tuple[JobCardView, ...]
+    orphan_rows: tuple[ContainerRowView, ...]
+    totals: TotalsView
+
+
+def _container_row_view(ci: ContainerInfo) -> ContainerRowView:
+    """The displayed values of one container row, formatted as the panel shows them."""
+    if ci.status != "running":
+        return ContainerRowView(
+            name=ci.name, status=ci.status, uptime=None, memory=None, cpu_label=None
+        )
+    memory: MemoryUsageView | None = None
+    if ci.memory_limit_mb > 0:
+        usage_percent = ci.memory_mb / ci.memory_limit_mb
+        memory = MemoryUsageView(
+            fill=_memory_bar_fill(usage_percent),
+            colour=_memory_bar_color(usage_percent),
+            label=_memory_usage_label(ci.memory_mb, ci.memory_limit_mb),
+        )
+    return ContainerRowView(
+        name=ci.name,
+        status=ci.status,
+        uptime=format_uptime(ci.uptime_seconds),
+        memory=memory,
+        cpu_label=_cpu_percent_label(ci.cpu_percent),
+    )
+
+
+def _job_card_view(group: JobContainerGroup) -> JobCardView:
+    """The displayed values of one job card, formatted as the panel shows them."""
+    return JobCardView(
+        job_id=group.job_id,
+        title_label=_group_title_label(group.title),
+        status=group.status,
+        iteration=f"Iteration {group.current_iteration}/{group.max_iterations}",
+        owner=group.owner_email,
+        agent_row=_container_row_view(group.agent_container) if group.agent_container else None,
+        executor_rows=tuple(_container_row_view(ec) for ec in group.executor_containers),
+    )
+
+
+def _totals_view(totals: DashboardTotals) -> TotalsView:
+    """The displayed values of the summary row, formatted as the panel shows them."""
+    return TotalsView(
+        jobs=totals.running_jobs,
+        agents=totals.agent_containers,
+        executors=totals.executor_containers,
+        memory_label=_total_memory_label(totals.total_memory_mb),
+        cpu_label=_total_cpu_label(totals.total_cpu_percent),
+    )
+
+
+def _dashboard_view(data: DashboardData) -> DashboardView:
+    """The displayed values of the whole panel, formatted as the panel shows them."""
+    error_text: str | None
+    if not data.docker_available:
+        error_text = data.error_message or "Docker daemon is not reachable."
+    else:
+        error_text = data.error_message
+    return DashboardView(
+        docker_available=data.docker_available,
+        error_text=error_text,
+        job_cards=tuple(_job_card_view(group) for group in data.job_groups),
+        orphan_rows=tuple(_container_row_view(ci) for ci in data.orphan_containers),
+        totals=_totals_view(data.totals),
+    )
+
+
+def _render_container_row(row: ContainerRowView, icon: str = "dns") -> None:
     """Render a single container as a compact row."""
     with ui.row().classes("w-full items-center gap-3 px-2 py-1"):
         ui.icon(icon, size="sm").classes("text-gray-500")
-        ui.label(ci.name).classes("text-xs font-mono text-gray-700").style("min-width: 180px")
-        render_container_status_badge(ci.status)
+        ui.label(row.name).classes("text-xs font-mono text-gray-700").style("min-width: 180px")
+        render_container_status_badge(row.status)
 
-        if ci.status == "running":
-            ui.label(format_uptime(ci.uptime_seconds)).classes("text-xs text-gray-500")
+        if row.uptime is not None:
+            ui.label(row.uptime).classes("text-xs text-gray-500")
 
-            # Memory bar
-            if ci.memory_limit_mb > 0:
-                pct = ci.memory_mb / ci.memory_limit_mb
+            if row.memory is not None:
                 with ui.column().classes("gap-0").style("min-width: 100px"):
-                    ui.linear_progress(value=pct, size="8px").props(
-                        f"color={'red' if pct > 0.8 else 'green'}"
+                    ui.linear_progress(value=row.memory.fill, size="8px").props(
+                        f"color={row.memory.colour}"
                     )
-                    ui.label(f"{ci.memory_mb:.0f}/{ci.memory_limit_mb:.0f} MB").classes(
-                        "text-xs text-gray-400"
-                    )
+                    ui.label(row.memory.label).classes("text-xs text-gray-400")
 
-            ui.label(f"CPU {ci.cpu_percent:.1f}%").classes("text-xs text-gray-500")
+            if row.cpu_label is not None:
+                ui.label(row.cpu_label).classes("text-xs text-gray-500")
 
 
 # =============================================================================
