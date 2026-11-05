@@ -847,6 +847,9 @@ def main(
     logger.info("Starting NiceGUI server on %s:%s (reload=%s)", host, port, reload)
 
     if reload:
+        # uvicorn resolves exclude directories once at startup, and refuses an
+        # absolute exclude that does not exist yet.
+        jobs_dir.mkdir(parents=True, exist_ok=True)
         # Reload mode requires an import string application target.
         uvicorn.run(
             "openscientist.web_app:create_app",

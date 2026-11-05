@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import uvicorn
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
@@ -83,6 +84,34 @@ def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> 
     assert kwargs["factory"] is True
     assert kwargs["reload"] is True
     assert Path(web_app.os.environ[web_app.JOBS_DIR_ENV]) == tmp_path / "jobs"
+
+
+def test_main_reload_starts_and_excludes_a_jobs_dir_not_yet_created(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The reloader never watches the jobs tree, also on a first start."""
+    monkeypatch.setattr(web_app, "_settings_error", None)
+    monkeypatch.setattr(
+        "openscientist.settings.get_settings",
+        lambda: SimpleNamespace(
+            dev=SimpleNamespace(dev_mode=True),
+            database=SimpleNamespace(database_url="unused"),
+            auth=SimpleNamespace(app_url="http://localhost:8080"),
+            bind_address="127.0.0.1",
+        ),
+    )
+    monkeypatch.setattr(web_app, "_refuse_unsafe_database_login", lambda _url: None)
+    configs: list[uvicorn.Config] = []
+    monkeypatch.setattr(
+        web_app.uvicorn,
+        "run",
+        lambda *args, **kwargs: configs.append(uvicorn.Config(*args, **kwargs)),
+    )
+    jobs_dir = tmp_path / "jobs"
+
+    web_app.main(host="127.0.0.1", port=9999, jobs_dir=jobs_dir)
+
+    assert jobs_dir.resolve() in configs[0].reload_dirs_excludes
 
 
 def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> None:
