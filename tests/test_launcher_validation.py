@@ -161,7 +161,6 @@ class TestAgentRequestValidation:
             "JOB_ID",
             "DATABASE_URL",
             "OPENSCIENTIST_SECRET_KEY",
-            "OPENSCIENTIST_CHAT_TURN",
             # The backend-agnostic provider identity keys every container env
             # carries; the agent image needs them to pick its agent class.
             "OPENSCIENTIST_PROVIDER",
@@ -170,6 +169,27 @@ class TestAgentRequestValidation:
     )
     def test_core_env_keys_allowed(self, tmp_path: Path, key: str) -> None:
         assert key in AGENT_ENV_ALLOWLIST
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            # The provider credentials the web keeps behind its LLM proxy,
+            # the chat turn the launcher injects itself, and the harness env
+            # key the container's own agent builds.
+            "OPENSCIENTIST_CHAT_TURN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_PROFILE",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "CODEX_AUTH_HOST_PATH",
+            "ANTHROPIC_FOUNDRY_RESOURCE",
+            "OPENAI_BASE_URL",
+        ],
+    )
+    def test_web_held_env_keys_refused(self, tmp_path: Path, key: str) -> None:
+        cfg = _config(_jobs(tmp_path))
+        with pytest.raises(ValidationError, match=r"env key .+ is not allowed"):
+            validate_agent_request(_agent_request(env={key: "x"}), cfg)
 
     @pytest.mark.parametrize("memory", [8193, 0, -1])
     def test_memory_mib_out_of_bounds_refused(self, tmp_path: Path, memory: int) -> None:
