@@ -3,6 +3,7 @@
 import inspect
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -10,15 +11,16 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from nicegui import ui
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.database.models import Session, User
+from openscientist.database.models import Job, Session, User
+from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
 from openscientist.webapp_components.utils.session import clear_uploaded_files, get_uploaded_files
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import OpenPage
+from tests.webapp.conftest import OpenPage, fire_click_twice
 
 
 @pytest_asyncio.fixture
@@ -33,6 +35,7 @@ async def signed_in_job_user(test_engine: AsyncEngine) -> AsyncIterator[tuple[Us
         await db.commit()
     yield user, str(login.id)
     async with AsyncSession(test_engine) as db:
+        await db.execute(delete(Job).where(Job.owner_id == user.id))
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
 
@@ -132,6 +135,46 @@ async def test_submit_job_creates_the_job_and_opens_its_page(
     assert call["owner_id"] == str(user.id)
     opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
     assert opened == [{"path": f"/job/{call['job_id']}", "new_tab": False}]
+
+
+@pytest.mark.asyncio
+async def test_a_double_click_submits_exactly_one_job(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    signed_in_job_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two clicks racing on the event loop create exactly one job, the way
+    a double-clicked Start Discovery button would in a browser."""
+    from openscientist import web_app
+    from openscientist.job_manager import JobManager
+    from openscientist.webapp_components.pages import new_job
+
+    user, token = signed_in_job_user
+    manager = JobManager(jobs_dir=tmp_path)
+    monkeypatch.setattr(manager, "_run_job", lambda job_id, run_mode="discovery": None)
+    monkeypatch.setattr(web_app, "get_job_manager", lambda: manager)
+    monkeypatch.setattr(new_job, "check_provider_config", lambda: (True, "Mock", None))
+
+    client = await signed_in_page(token, new_job.new_job_page)
+    question = next(e for e in client.layout.descendants() if isinstance(e, ui.textarea))
+    question.value = "Why do corals bleach when the water warms?"
+    button = next(
+        e
+        for e in client.layout.descendants()
+        if isinstance(e, ui.button) and e.text == "Start Discovery"
+    )
+
+    await fire_click_twice(button, client, monkeypatch)
+
+    async with AsyncSession(test_engine) as db:
+        rows = (await db.execute(select(Job).where(Job.owner_id == user.id))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == JobStatus.PENDING.value
+    opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
+    assert opened == [{"path": f"/job/{rows[0].id}", "new_tab": False}]
 
 
 async def test_an_upload_over_the_rows_size_limit_is_rejected(

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, cast
@@ -12,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import app, core, storage
+from nicegui import app, background_tasks, core, storage, ui
 from nicegui.app.app import State
 from nicegui.client import Client
 from nicegui.page import page
@@ -222,3 +223,26 @@ async def drain_outbox(client: Client) -> None:
             break
         await asyncio.sleep(0.02)
     await asyncio.sleep(0.05)
+
+
+async def fire_click_twice(
+    button: ui.button, client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fire the button's click twice the way NiceGUI's socket handler does,
+    so the two handler tasks race on the event loop."""
+    listener = next(iter(button._event_listeners.values()))
+    assert listener.handler is not None
+    handler = listener.handler
+    scheduled: list[Awaitable[None]] = []
+
+    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
+        scheduled.append(awaitable)
+
+    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
+    storage.request_contextvar.set(listener.request)
+    with client:
+        with button.parent_slot or nullcontext():
+            handler(None)
+            handler(None)
+    assert len(scheduled) == 2
+    await asyncio.gather(*scheduled)

@@ -1023,16 +1023,24 @@ async def render_review_tokens_panel() -> None:
                 expiry_input.props("outlined dense")
 
                 async def create_token() -> None:
-                    label = (label_input.value or "").strip()
-                    if not label:
-                        ui.notify("Reviewer label is required", type="negative")
+                    if not create_button.enabled:
                         return
-                    expiry_days = int(expiry_input.value or 30)
-                    await _create_review_token(label, expiry_days)
-                    label_input.value = ""
-                    await load_tokens()
+                    create_button.disable()
+                    try:
+                        label = (label_input.value or "").strip()
+                        if not label:
+                            ui.notify("Reviewer label is required", type="negative")
+                            return
+                        expiry_days = int(expiry_input.value or 30)
+                        await _create_review_token(label, expiry_days)
+                        label_input.value = ""
+                        await load_tokens()
+                    finally:
+                        create_button.enable()
 
-                ui.button("Create", icon="add", on_click=create_token).props("color=primary")
+                create_button = ui.button("Create", icon="add", on_click=create_token).props(
+                    "color=primary"
+                )
 
         # Tokens table
         tokens_container = ui.column().classes("w-full mt-4")
@@ -1087,7 +1095,7 @@ async def render_review_tokens_panel() -> None:
 
 async def _show_token_created_dialog(magic_link: str) -> None:
     """Show one-time dialog with the magic link (shown only once)."""
-    with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
+    with ui.dialog().props("persistent") as dialog, ui.card().classes("w-full max-w-lg"):
         ui.label("Review Token Created").classes("text-lg font-bold mb-2")
         with ui.row().classes("w-full bg-amber-100 border-l-4 border-amber-500 p-3 mb-4"):
             ui.icon("warning", color="amber-700").classes("mr-2")
