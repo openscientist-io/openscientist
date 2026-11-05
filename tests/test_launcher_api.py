@@ -279,7 +279,7 @@ class TestAgentCreate:
     @pytest.mark.parametrize(
         "overrides",
         [
-            {"run_home": {"path": "/tmp/outside-jobs", "name": ".codex"}},
+            {"run_home": {"path": "/tmp/outside-jobs"}},
             {"phenix": True},
         ],
         ids=["run-home-outside", "phenix-unconfigured"],
@@ -384,6 +384,56 @@ class TestAgentCreate:
         assert attrs["HostConfig"]["NanoCpus"] == 4_000_000_000
         with launcher.client() as client:
             client.post(f"/v1/containers/{response.json()['name']}/remove")
+
+
+class TestRunHome:
+    """The run home mounts outside the job mount, so the daemon's mountpoint
+    never lands in the host job directory."""
+
+    def test_the_run_home_mount_stays_out_of_the_job_directory(
+        self,
+        launcher: Launcher,
+        docker_client: docker.DockerClient,
+        jobs_root: Path,
+    ) -> None:
+        home = jobs_root / ".run-homes" / LOGIN_ROLE
+        home.mkdir(parents=True)
+        try:
+            os.chown(home, -1, 1001)
+        except PermissionError:
+            pytest.skip("cannot give the test run home the jobs group")
+        home.chmod(0o770)
+        (jobs_root / JOB_ID / "keep").write_text("keep", encoding="utf-8")
+        with launcher.client() as client:
+            response = client.post(
+                "/v1/containers/agent", json=_agent_body(run_home={"path": str(home)})
+            )
+        assert response.status_code == 200, response.text
+        name = response.json()["name"]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if _inspect(docker_client, name)["State"]["Status"] == "running":
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("agent container never reached running")
+        try:
+            job_dir = jobs_root / JOB_ID
+            assert sorted(os.listdir(job_dir)) == ["keep"], sorted(os.listdir(job_dir))
+            attrs = _inspect(docker_client, name)
+            binds = _host_binds(attrs["HostConfig"])
+            assert (str(home), "/agent/run-home", False) in binds
+            assert not any(target.startswith(f"/agent/jobs/{JOB_ID}/") for _, target, _ in binds)
+            env = dict(item.split("=", 1) for item in attrs["Config"]["Env"] if "=" in item)
+            assert env["OPENSCIENTIST_RUN_HOME"] == "/agent/run-home"
+            result = docker_client.containers.get(name).exec_run(
+                ["touch", "/agent/run-home/probe"], user="1001:1001"
+            )
+            assert result.exit_code == 0, result.output
+            assert (home / "probe").stat().st_gid == 1001
+        finally:
+            with launcher.client() as client:
+                client.post(f"/v1/containers/{name}/remove")
 
 
 class TestImageRefusals:

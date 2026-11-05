@@ -196,27 +196,25 @@ class TestAgentRequestValidation:
         (outside / "home").mkdir()
         cfg = _config(jobs)
         with pytest.raises(ValidationError):
-            validate_agent_request(
-                _agent_request(run_home={"path": str(outside / "home"), "name": ".codex"}), cfg
-            )
+            validate_agent_request(_agent_request(run_home={"path": str(outside / "home")}), cfg)
 
-    def test_run_home_name_with_slash_refused(self, tmp_path: Path) -> None:
+    def test_run_home_unknown_field_refused(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)
         home = jobs / ".run-homes" / LOGIN_ROLE
         home.mkdir(parents=True)
         cfg = _config(jobs)
         with pytest.raises(ValidationError):
-            validate_agent_request(_agent_request(run_home={"path": str(home), "name": "a/b"}), cfg)
+            validate_agent_request(
+                _agent_request(run_home={"path": str(home), "name": ".codex"}), cfg
+            )
 
     def test_run_home_valid(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)
         home = jobs / ".run-homes" / LOGIN_ROLE
         home.mkdir(parents=True)
         cfg = _config(jobs)
-        launch = validate_agent_request(
-            _agent_request(run_home={"path": str(home), "name": ".codex"}), cfg
-        )
-        assert launch.run_home == (home, ".codex")
+        launch = validate_agent_request(_agent_request(run_home={"path": str(home)}), cfg)
+        assert launch.run_home == home
 
     def test_phenix_flag_without_configured_path_refused(self, tmp_path: Path) -> None:
         cfg = _config(_jobs(tmp_path))
@@ -480,15 +478,22 @@ class TestAgentTemplate:
         launch = validate_agent_request(
             _agent_request(
                 phenix=True,
-                run_home={"path": str(home), "name": ".codex"},
+                run_home={"path": str(home)},
             ),
             cfg,
         )
         kwargs = agent_run_kwargs(cfg, launch, network="bridge")
         binds = _binds(kwargs)
         assert binds["/srv/phenix"] == ("/opt/phenix", True)
-        assert binds[str(home)] == (f"/agent/jobs/{JOB_ID}/.codex", False)
+        assert binds[str(home)] == ("/agent/run-home", False)
+        assert kwargs["environment"]["OPENSCIENTIST_RUN_HOME"] == "/agent/run-home"
         assert kwargs["labels"]["openscientist.run_home"] == str(home)
+
+    def test_the_run_home_env_is_absent_without_a_home(self, tmp_path: Path) -> None:
+        cfg = _config(_jobs(tmp_path))
+        launch = validate_agent_request(_agent_request(), cfg)
+        kwargs = agent_run_kwargs(cfg, launch, network="bridge")
+        assert "OPENSCIENTIST_RUN_HOME" not in kwargs["environment"]
 
 
 def _executor_body(jobs: Path) -> dict[str, object]:

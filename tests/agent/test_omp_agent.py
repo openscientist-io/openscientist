@@ -665,7 +665,7 @@ class TestAuthProvisioning:
 
         monkeypatch.setenv("OMP_AUTH_HOST_PATH", str(src))
         job_dir = tmp_path / "job"
-        # Inside the container the run's home is mounted at the job's .omp-home.
+        # Without a launcher the run's home keeps its name inside the job dir.
         home = job_dir / ".omp-home"
         home.mkdir(parents=True)
         env = {}
@@ -686,6 +686,21 @@ class TestAuthProvisioning:
     def test_no_provisioning_leaves_agent_dir_unset(self, tmp_path: Path) -> None:
         agent = _agent(tmp_path)
         assert "PI_CODING_AGENT_DIR" not in agent._build_subprocess_env()
+
+    def test_the_run_home_env_names_the_launcher_mount(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The launcher mounts the run home outside the job directory and names
+        the mount in this env, so omp's home never lands in the job directory."""
+        home = tmp_path / "run-home"
+        home.mkdir()
+        monkeypatch.setenv("OPENSCIENTIST_RUN_HOME", str(home))
+        job_dir = tmp_path / "job"
+        job_dir.mkdir()
+        (job_dir / ".omp-home").mkdir()
+        env = _agent(job_dir)._build_subprocess_env()
+        assert env["PI_CODING_AGENT_DIR"] == str(home)
+        assert not (job_dir / ".omp-home" / "models.yml").exists()
 
 
 class TestRoutingPrecedence:

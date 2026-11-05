@@ -254,9 +254,7 @@ class JobContainerRunner:
                 database_url=login.database_url,
                 login_role=login.role,
                 credentials=credentials,
-                run_home=(run_home, agent_class.RUN_HOME)
-                if run_home and agent_class.RUN_HOME
-                else None,
+                run_home=run_home,
             )
             return handle, labels
         except BaseException:
@@ -277,7 +275,7 @@ class JobContainerRunner:
         database_url: str,
         login_role: str,
         credentials: RunCredentials,
-        run_home: tuple[Path, str] | None,
+        run_home: Path | None,
     ) -> tuple[CreateAgentResponse, dict[str, str]]:
         """Build the agent request the launcher validates, and create the
         container from its template. The name, mounts, network and firewall
@@ -315,10 +313,9 @@ class JobContainerRunner:
         if chat_turn is not None:
             request["chat_turn"] = chat_turn
         if run_home is not None:
-            home, name_in_job = run_home
-            host_home = to_host_path(home, cs)
+            host_home = to_host_path(run_home, cs)
             labels[RUN_HOME_LABEL] = str(host_home)
-            request["run_home"] = {"path": str(host_home), "name": name_in_job}
+            request["run_home"] = {"path": str(host_home)}
         try:
             self._remove_stale_agent(job_id, cs)
             return self.client.create_agent(request), labels

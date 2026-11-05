@@ -108,7 +108,7 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     RUN_HOME: ClassVar[str | None] = ".codex"
 
     def _codex_home(self) -> Path:
-        return self._job_dir() / str(self.RUN_HOME)
+        return self._run_home()
 
     def _mcp_env(self) -> dict[str, str]:
         """Full environment for the tools MCP server, written into the config.toml

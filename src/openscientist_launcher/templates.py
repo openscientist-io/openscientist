@@ -14,6 +14,11 @@ from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.validation import AgentLaunch, ExecRequest
 
 AGENT_APP_DIR = "/agent"
+#: The run home's mount target, outside the job mount so the daemon's
+#: mountpoint never lands in the host job directory.
+RUN_HOME_MOUNT = "/agent/run-home"
+#: The env that names the run home's mount to the harness.
+RUN_HOME_ENV = "OPENSCIENTIST_RUN_HOME"
 PHENIX_PATH = "/opt/phenix"
 MARKER_LABEL = "openscientist.launcher"
 FIREWALL_ENTRYPOINT = ["/agent-firewall-entrypoint.sh"]
@@ -67,14 +72,16 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
         phenix = Path(cfg.phenix_host_path).expanduser().resolve()
         mounts.append(_bind(str(phenix), PHENIX_PATH, read_only=True))
     if launch.run_home is not None:
-        home, name_in_job = launch.run_home
-        mounts.append(_bind(str(home), f"{job_mount}/{name_in_job}", read_only=False))
+        # Outside the job mount, so the daemon's mountpoint never lands in the
+        # host job directory, and the env names the mount to the harness.
+        mounts.append(_bind(str(launch.run_home), RUN_HOME_MOUNT, read_only=False))
+        env[RUN_HOME_ENV] = RUN_HOME_MOUNT
 
     labels = _labels(cfg, launch.job_id, container_type)
     if launch.db_login:
         labels["openscientist.db_login"] = launch.db_login
     if launch.run_home is not None:
-        labels["openscientist.run_home"] = str(launch.run_home[0])
+        labels["openscientist.run_home"] = str(launch.run_home)
 
     kwargs: dict[str, Any] = {
         "image": cfg.agent_image,

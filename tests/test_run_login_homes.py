@@ -198,19 +198,17 @@ def launches(harness: tuple[type, Any, str, str], tmp_path: Path) -> Iterator[_L
         yield _Launches(tmp_path / "jobs", client, JobContainerRunner(), closed, roles, runs)
 
 
-def _home_of(run: _Run, home_name: str) -> Path:
+def _home_of(run: _Run) -> Path:
     """The host directory the launcher mounts as the harness's home in ``run``."""
-    run_home = run.request["run_home"]
-    assert run_home["name"] == home_name, run.request
-    return Path(str(run_home["path"]))
+    return Path(str(run.request["run_home"]["path"]))
 
 
 def test_a_runs_login_is_mounted_from_its_own_home_not_the_job_directory(
     launches: _Launches, harness: tuple[type, Any, str, str | None]
 ) -> None:
-    _, _, home_name, login_file = harness
+    _, _, _, login_file = harness
     run = launches.launch("job-1")
-    home = _home_of(run, home_name)
+    home = _home_of(run)
     if login_file is not None:
         assert (home / login_file).read_text() == _MARKER
     else:
@@ -226,10 +224,10 @@ def test_a_runs_login_is_mounted_from_its_own_home_not_the_job_directory(
 def test_overlapping_runs_have_separate_homes_and_end_separately(
     launches: _Launches, harness: tuple[type, Any, str, str | None]
 ) -> None:
-    _, _, home_name, login_file = harness
+    _, _, _, login_file = harness
     first = launches.launch("job-1")
     second = launches.launch("job-1")
-    first_home, second_home = _home_of(first, home_name), _home_of(second, home_name)
+    first_home, second_home = _home_of(first), _home_of(second)
     assert first_home != second_home
     launches.client.list_containers.return_value = [first.entry]
     launches.runner.cleanup("job-1")
@@ -245,9 +243,9 @@ def test_a_cleanup_by_a_fresh_runner_removes_the_runs_home(
     launches: _Launches, harness: tuple[type, Any, str, str]
 ) -> None:
     """Startup cleanup after a restart finds the home from the container alone."""
-    _, _, home_name, _ = harness
+    _, _, _, _ = harness
     run = launches.launch("job-1")
-    home = _home_of(run, home_name)
+    home = _home_of(run)
     launches.client.list_containers.return_value = [run.entry]
     JobContainerRunner().cleanup("job-1")
     assert not home.exists()
