@@ -20,7 +20,7 @@ from openscientist.webapp_components.components.common import (
     render_empty_state,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
-from openscientist.webapp_components.utils import get_event_value, setup_timer_cleanup
+from openscientist.webapp_components.utils import get_event_value
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +140,10 @@ def _apply_table_visibility(
     """Show table rows or empty state depending on query output."""
     skills_table.rows = rows
     skills_table.update()
+    skills_table.set_visibility(bool(rows))
+    empty_container.set_visibility(not rows)
     if rows:
-        skills_table.classes(remove="hidden")
-        empty_container.classes(add="hidden")
         return
-    skills_table.classes(add="hidden")
-    empty_container.classes(remove="hidden")
     _render_no_results(
         empty_container=empty_container,
         has_search=has_search,
@@ -158,7 +156,6 @@ def _apply_table_visibility(
 async def skills_page() -> None:
     """Skills list page."""
     ui.page_title("Skills - OpenScientist")
-    _active_timers = setup_timer_cleanup()
     render_navigator(active_page="skills")
 
     state: dict[str, Any] = {"search": "", "category": None, "categories": []}
@@ -178,6 +175,8 @@ async def skills_page() -> None:
             ).classes("min-w-48")
             category_select.props("clearable outlined dense")
 
+        load_error = ui.label().classes("w-full text-negative").mark("skills-load-error")
+        load_error.set_visibility(False)
         skills_table = ui.table(
             columns=_SKILL_COLUMNS,
             rows=[],
@@ -199,7 +198,8 @@ async def skills_page() -> None:
             "view-skill",
             lambda e: ui.navigate.to(f"/skill/{e.args['category']}/{e.args['slug']}"),
         )
-        empty_container = ui.column().classes("w-full hidden")
+        empty_container = ui.column().classes("w-full")
+        empty_container.set_visibility(False)
 
     def clear_search() -> None:
         """Clear search and trigger async reload."""
@@ -221,16 +221,21 @@ async def skills_page() -> None:
         """Load skills from database with active filters."""
         try:
             rows = await _load_skills(state["search"], state["category"])
-            _apply_table_visibility(
-                skills_table=skills_table,
-                empty_container=empty_container,
-                rows=rows,
-                has_search=bool(state["search"]),
-                clear_search=clear_search,
-            )
         except Exception as exc:
             logger.error("Failed to load skills: %s", exc, exc_info=True)
-            ui.notify("Failed to load skills. Please try again.", type="negative")
+            load_error.set_text("Couldn't load the skills. Try again in a moment.")
+            load_error.set_visibility(True)
+            skills_table.set_visibility(bool(skills_table.rows))
+            empty_container.set_visibility(False)
+            return
+        load_error.set_visibility(False)
+        _apply_table_visibility(
+            skills_table=skills_table,
+            empty_container=empty_container,
+            rows=rows,
+            has_search=bool(state["search"]),
+            clear_search=clear_search,
+        )
 
     async def on_search_change(e: Any) -> None:
         state["search"] = get_event_value(e) or ""
@@ -243,8 +248,7 @@ async def skills_page() -> None:
     search_input.on("update:model-value", on_search_change)
     category_select.on("update:model-value", on_category_change)
 
-    async def initial_load() -> None:
-        await load_categories()
-        await load_skills()
-
-    _active_timers.append(ui.timer(0.1, initial_load, once=True))
+    # NiceGUI sends an async page once it returns, so loading here puts the
+    # skills and categories into the first HTML.
+    await load_categories()
+    await load_skills()

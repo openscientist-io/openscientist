@@ -20,7 +20,7 @@ from openscientist.webapp_components.components.common import (
     render_empty_state,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
-from openscientist.webapp_components.utils import get_event_value, setup_timer_cleanup
+from openscientist.webapp_components.utils import get_event_value
 
 logger = logging.getLogger(__name__)
 
@@ -411,7 +411,6 @@ def _make_load_keys_handler(
 async def api_keys_page() -> None:
     """API Keys management page."""
     ui.page_title("API Keys - OpenScientist")
-    _active_timers = setup_timer_cleanup()
     is_admin = is_current_user_admin()
     render_navigator(active_page="api-keys")
 
@@ -469,4 +468,6 @@ async def api_keys_page() -> None:
             await load_keys()
 
         search_input.on("update:model-value", on_search_change)
-        _active_timers.append(ui.timer(0.1, load_keys, once=True))
+        # NiceGUI sends an async page once it returns, so loading here puts
+        # the keys into the first HTML.
+        await load_keys()

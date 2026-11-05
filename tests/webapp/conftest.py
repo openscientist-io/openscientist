@@ -1,15 +1,17 @@
 """Pytest fixtures for webapp tests."""
 
+import asyncio
 import os
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from nicegui import app, core, storage
+from nicegui.app.app import State
 from nicegui.client import Client
 from nicegui.page import page
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -121,3 +123,47 @@ def signed_in_page(browser_client: OpenBrowser) -> Iterator[OpenPage]:
         return client
 
     yield open_page
+
+
+ServedPage = Callable[
+    [str, Callable[[], Awaitable[Any]], Callable[[Client], Any]], Awaitable[tuple[Client, Any]]
+]
+
+
+@pytest_asyncio.fixture
+async def served_page(
+    browser_client: OpenBrowser, monkeypatch: pytest.MonkeyPatch
+) -> AsyncIterator[ServedPage]:
+    """Build a page the way NiceGUI serves it, returning the client and what
+    ``read`` saw in it at the moment NiceGUI sends the first HTML.
+
+    NiceGUI sends an async page once it returns or once anything on it awaits
+    the browser's connection, as every ``ui.timer`` does, whichever comes
+    first. Its background tasks run on the test's loop as in a started app,
+    since timers neither start on a missing loop nor run in a stopped app.
+    The client never connects, so no timer fires, and the build then runs to
+    its end."""
+    monkeypatch.setattr(core, "loop", asyncio.get_running_loop())
+    monkeypatch.setattr(core.app, "_state", State.STARTED)
+
+    async def open_served(
+        token: str, build_page: Callable[[], Awaitable[Any]], read: Callable[[Client], Any]
+    ) -> tuple[Client, Any]:
+        client = await browser_client(token)
+
+        async def build() -> None:
+            with client:
+                await build_page()
+
+        built = asyncio.create_task(build())
+        waiting = asyncio.create_task(client._waiting_for_connection.wait())
+        done, _ = await asyncio.wait(
+            {built, waiting}, timeout=10, return_when=asyncio.FIRST_COMPLETED
+        )
+        assert done, "the page was neither built nor sent within 10 s"
+        sent = read(client)
+        waiting.cancel()
+        await built
+        return client, sent
+
+    yield open_served

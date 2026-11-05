@@ -212,14 +212,6 @@ def render_error_state(
             ).props("color=primary")
 
 
-def render_loading_spinner(message: str = "Loading...") -> ui.element:
-    """Render a centered loading spinner with message. Returns the row container."""
-    with ui.row().classes("w-full justify-center py-16") as container:
-        ui.spinner(size="lg")
-        ui.label(message).classes("ml-4 text-gray-500")
-    return container
-
-
 def render_dialog_actions(
     on_confirm: Callable[[], None | Awaitable[None]],
     on_cancel: Callable[[], None | Awaitable[None]],

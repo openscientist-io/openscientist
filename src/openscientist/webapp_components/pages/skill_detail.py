@@ -14,11 +14,9 @@ from openscientist.webapp_components.components.common import (
     format_relative_time,
     get_category_color,
     render_error_state,
-    render_loading_spinner,
     render_not_found_state,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
-from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +25,8 @@ logger = logging.getLogger(__name__)
 @require_auth
 async def skill_detail_page(category: str, slug: str) -> None:
     """Skill detail page."""
-    # Track active timers for cleanup on disconnect
-    _active_timers = setup_timer_cleanup()
-
-    # Page header with navigation
     render_navigator(active_page="skills")
 
-    # Container for page content (populated async)
     content_container = ui.column().classes("w-full")
 
     async def load_skill() -> None:
@@ -163,10 +156,6 @@ async def skill_detail_page(category: str, slug: str) -> None:
                     back_url="/skills",
                 )
 
-    # Show loading state initially
-    with content_container:
-        render_loading_spinner("Loading skill...")
-
-    # Load skill data
-    init_timer = ui.timer(0.1, load_skill, once=True)
-    _active_timers.append(init_timer)
+    # NiceGUI sends an async page once it returns, so loading here puts the
+    # skill, or its not-found or error state, into the first HTML.
+    await load_skill()

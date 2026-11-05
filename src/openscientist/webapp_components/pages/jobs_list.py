@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -171,31 +172,62 @@ def _shared_rows(
     return rows
 
 
+@dataclass
+class _JobList:
+    """A tab's jobs table, with the empty state and the load error that take its place."""
+
+    table: ui.table
+    empty: ui.element
+    error: ui.label
+    noun: str
+
+    def show(self, rows: list[dict[str, Any]]) -> None:
+        """Show ``rows``, or the empty state when there are none."""
+        self.table.rows = rows
+        self.table.update()
+        self.table.set_visibility(bool(rows))
+        self.empty.set_visibility(not rows)
+        self.error.set_visibility(False)
+
+    def show_load_error(self) -> None:
+        """Say the list could not be loaded, keeping the rows a previous load showed."""
+        if self.table.rows:
+            self.error.set_text(
+                f"Couldn't refresh {self.noun}. Showing the last list loaded, retrying."
+            )
+        else:
+            self.error.set_text(f"Couldn't load {self.noun}. Retrying.")
+        self.error.set_visibility(True)
+        self.table.set_visibility(bool(self.table.rows))
+        self.empty.set_visibility(False)
+
+
 async def _refresh_owned_jobs(
     *,
     current_user_id: str,
     badges_container: ui.element,
-    table: ui.table,
+    view: _JobList,
 ) -> None:
     """Refresh owned jobs table and summary badges."""
     try:
         db_jobs = await _fetch_owned_jobs(current_user_id)
-        _render_badges(badges_container, db_jobs)
         async with get_session_ctx() as session:
             user_uuid = UUID(current_user_id)
             await set_current_user(session, user_uuid)
             findings_counts = await _batch_findings_counts(session, [j.id for j in db_jobs])
-        table.rows = _owned_rows(db_jobs, findings_counts)
-        table.update()
     except Exception as exc:
         logger.error("Failed to load jobs: %s", exc, exc_info=True)
+        view.show_load_error()
+        return
+    _render_badges(badges_container, db_jobs)
+    view.show(_owned_rows(db_jobs, findings_counts))
 
 
 async def _refresh_shared_jobs(
     *,
     current_user_id: str,
     current_user_is_admin: bool,
-    table: ui.table,
+    view: _JobList,
 ) -> None:
     """Refresh shared jobs table."""
     try:
@@ -203,10 +235,32 @@ async def _refresh_shared_jobs(
         job_ids = [job.id for job, _, _ in shared_jobs]
         async with get_admin_session() as session:
             findings_counts = await _batch_findings_counts(session, job_ids)
-        table.rows = _shared_rows(shared_jobs, findings_counts, current_user_is_admin)
-        table.update()
     except Exception as exc:
         logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
+        view.show_load_error()
+        return
+    view.show(_shared_rows(shared_jobs, findings_counts, current_user_is_admin))
+
+
+def _render_load_error(marker: str) -> ui.label:
+    """A hidden line where a failed load of a tab's list is reported."""
+    error = ui.label().classes("w-full text-negative").mark(marker)
+    error.set_visibility(False)
+    return error
+
+
+def _render_empty_state(
+    marker: str, title: str, hint: str, *, new_job: bool, icon: str
+) -> ui.element:
+    """A hidden placeholder shown in place of a tab's table while it has no rows."""
+    with ui.column().classes("w-full items-center gap-2 py-12").mark(marker) as empty:
+        ui.icon(icon, size="lg").classes("text-grey-5")
+        ui.label(title).classes("text-h6")
+        ui.label(hint).classes("text-grey-7")
+        if new_job:
+            ui.button("New job", icon="add", on_click=lambda: ui.navigate.to("/new"))
+    empty.set_visibility(False)
+    return empty
 
 
 async def _show_share_dialog(job_id: str) -> None:
@@ -256,12 +310,21 @@ async def jobs_page() -> None:
 
     with ui.tab_panels(tabs, value=my_jobs_tab).classes("w-full"):
         with ui.tab_panel(my_jobs_tab):
+            my_jobs_error = _render_load_error("owned-jobs-load-error")
+            my_jobs_empty = _render_empty_state(
+                "owned-jobs-empty",
+                "No jobs yet",
+                "Jobs you start show up here.",
+                new_job=is_configured and can_start_jobs,
+                icon="work_outline",
+            )
             my_jobs_table = ui.table(
                 columns=_OWNED_COLUMNS,
                 rows=[],
                 row_key="job_id",
                 pagination=10,
             ).classes("w-full")
+            my_jobs = _JobList(my_jobs_table, my_jobs_empty, my_jobs_error, "your jobs")
             my_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
             my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
@@ -272,7 +335,7 @@ async def jobs_page() -> None:
                 await _refresh_owned_jobs(
                     current_user_id=current_user_id,
                     badges_container=badges_container,
-                    table=my_jobs_table,
+                    view=my_jobs,
                 )
 
             my_jobs_table.on(
@@ -283,16 +346,25 @@ async def jobs_page() -> None:
                     on_deleted=refresh_my_jobs_table,
                 ),
             )
-            _active_timers.append(ui.timer(0.1, refresh_my_jobs_table, once=True))
-            _active_timers.append(ui.timer(5.0, refresh_my_jobs_table))
 
         with ui.tab_panel(shared_tab):
+            shared_jobs_error = _render_load_error("shared-jobs-load-error")
+            shared_jobs_empty = _render_empty_state(
+                "shared-jobs-empty",
+                "Nothing shared with you yet",
+                "Jobs other people share with you show up here.",
+                new_job=False,
+                icon="people_outline",
+            )
             shared_jobs_table = ui.table(
                 columns=_SHARED_COLUMNS,
                 rows=[],
                 row_key="job_id",
                 pagination=10,
             ).classes("w-full")
+            shared_jobs = _JobList(
+                shared_jobs_table, shared_jobs_empty, shared_jobs_error, "the shared jobs"
+            )
             shared_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
             shared_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
             shared_jobs_table.add_slot("body-cell-permission", render_permission_badge_slot())
@@ -303,7 +375,7 @@ async def jobs_page() -> None:
                 await _refresh_shared_jobs(
                     current_user_id=current_user_id,
                     current_user_is_admin=current_user_is_admin,
-                    table=shared_jobs_table,
+                    view=shared_jobs,
                 )
 
             shared_jobs_table.on(
@@ -314,5 +386,12 @@ async def jobs_page() -> None:
                     on_deleted=refresh_shared_jobs_table,
                 ),
             )
-            _active_timers.append(ui.timer(0.1, refresh_shared_jobs_table, once=True))
-            _active_timers.append(ui.timer(5.0, refresh_shared_jobs_table))
+
+    # NiceGUI sends an async page once it returns, or as soon as anything on it
+    # waits for the browser, which every ui.timer does. Loading before the
+    # timers exist puts the rows into the first HTML. require_auth bounds a
+    # hung database.
+    await refresh_my_jobs_table()
+    await refresh_shared_jobs_table()
+    _active_timers.append(ui.timer(5.0, refresh_my_jobs_table))
+    _active_timers.append(ui.timer(5.0, refresh_shared_jobs_table))
