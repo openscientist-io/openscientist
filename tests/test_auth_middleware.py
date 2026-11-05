@@ -145,19 +145,24 @@ async def test_a_cancelled_request_cancels_its_page_build(monkeypatch):
     await asyncio.wait_for(build_cancelled.wait(), timeout=5)
 
 
-async def test_a_build_failing_after_its_deadline_is_logged(monkeypatch, caplog):
-    """A build abandoned at its deadline whose cleanup then fails, as a driver
-    closing a hung connection can, still shows the outage page in time and
-    has its failure logged once it ends."""
+async def test_a_check_failing_after_its_deadline_is_logged(monkeypatch, caplog):
+    """A session check abandoned at its deadline whose cleanup then fails, as
+    a driver closing a hung connection can, still shows the outage page in
+    time and has its failure logged once it ends."""
     ui = _signed_in_ui(monkeypatch, response_timeout=0.6)
     release = asyncio.Event()
 
-    async def page():
+    async def _hung_check(_token: str):
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             await release.wait()
             raise RuntimeError("closing the hung connection failed") from None
+
+    monkeypatch.setattr(middleware, "validate_session", _hung_check)
+
+    async def page():
+        raise AssertionError("the page must not build once the check has failed")
 
     with caplog.at_level(logging.DEBUG, logger=middleware.__name__):
         assert await asyncio.wait_for(middleware.require_auth(page)(), timeout=5) is None
