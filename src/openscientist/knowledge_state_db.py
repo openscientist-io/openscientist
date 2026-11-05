@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any, TypeVar
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models.analysis_log import AnalysisLog
@@ -313,13 +313,20 @@ async def load_from_database(job_id: str, session: AsyncSession | None = None) -
 
 
 async def load_with_session(session: AsyncSession, job_id: str) -> KnowledgeState:
+    ks = await load_without_analysis_log(session, job_id)
+    await load_analysis_log(session, UUID(job_id), ks)
+    return ks
+
+
+async def load_without_analysis_log(session: AsyncSession, job_id: str) -> KnowledgeState:
+    """Load the knowledge state with an empty analysis log, whose rows carry
+    every code run's full output."""
     job_uuid = UUID(job_id)
     job = await load_job_or_raise(session, job_id, job_uuid)
     ks = new_from_job_record(job_id, job)
     await load_hypotheses(session, job_uuid, ks)
     await load_findings(session, job_uuid, ks)
     await load_literature(session, job_uuid, ks)
-    await load_analysis_log(session, job_uuid, ks)
     await load_iteration_summaries(session, job_uuid, ks)
     await load_feedback_history(session, job_uuid, ks)
     return ks
@@ -428,26 +435,108 @@ async def load_literature(session: AsyncSession, job_uuid: UUID, ks: KnowledgeSt
         )
 
 
+def _serialized_log_entry(
+    iteration: int,
+    action_type: str,
+    created_at: datetime,
+    description: str,
+    success: bool | None,
+    duration_seconds: float | None,
+    input_data: dict[str, Any] | None,
+    output_data: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """One analysis log row in knowledge state format."""
+    serialized: dict[str, Any] = {
+        "iteration": iteration,
+        "action": action_type,
+        "timestamp": created_at.isoformat(),
+        "description": description,
+        "success": bool(success),
+    }
+    if duration_seconds is not None:
+        serialized["execution_time"] = duration_seconds
+    if input_data:
+        serialized.update(input_data)
+    if output_data:
+        serialized.update(output_data)
+    return serialized
+
+
 async def load_analysis_log(session: AsyncSession, job_uuid: UUID, ks: KnowledgeState) -> None:
     """Load analysis log rows into knowledge state format."""
     result = await session.execute(
         select(AnalysisLog).where(AnalysisLog.job_id == job_uuid).order_by(AnalysisLog.created_at)
     )
     for log_entry in result.scalars().all():
-        serialized: dict[str, Any] = {
-            "iteration": log_entry.iteration,
-            "action": log_entry.action_type,
-            "timestamp": log_entry.created_at.isoformat(),
-            "description": log_entry.description,
-            "success": bool(log_entry.success),
-        }
-        if log_entry.duration_seconds is not None:
-            serialized["execution_time"] = log_entry.duration_seconds
-        if log_entry.input_data:
-            serialized.update(log_entry.input_data)
-        if log_entry.output_data:
-            serialized.update(log_entry.output_data)
-        ks.data["analysis_log"].append(serialized)
+        ks.data["analysis_log"].append(
+            _serialized_log_entry(
+                log_entry.iteration,
+                log_entry.action_type,
+                log_entry.created_at,
+                log_entry.description,
+                log_entry.success,
+                log_entry.duration_seconds,
+                log_entry.input_data,
+                log_entry.output_data,
+            )
+        )
+
+
+async def analysis_log_action_counts(
+    session: AsyncSession, job_uuid: UUID
+) -> dict[int, dict[str, int]]:
+    """How many log rows of each action type every iteration of the job holds."""
+    result = await session.execute(
+        select(AnalysisLog.iteration, AnalysisLog.action_type, func.count())
+        .where(AnalysisLog.job_id == job_uuid)
+        .group_by(AnalysisLog.iteration, AnalysisLog.action_type)
+    )
+    counts: dict[int, dict[str, int]] = {}
+    for iteration, action_type, count in result.all():
+        counts.setdefault(iteration, {})[action_type] = count
+    return counts
+
+
+async def load_iteration_analysis_log(
+    session: AsyncSession,
+    job_uuid: UUID,
+    iteration: int,
+    *,
+    output_chars: int,
+    action_type: str | None = None,
+    offset: int = 0,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """One iteration's log rows in knowledge state format, oldest first, each
+    output cut to ``output_chars`` plus one character, so a caller can tell a
+    cut output from a whole one."""
+    output = func.left(AnalysisLog.output_data["output"].astext, output_chars + 1).label("output")
+    query = select(
+        AnalysisLog.action_type,
+        AnalysisLog.created_at,
+        AnalysisLog.description,
+        AnalysisLog.success,
+        AnalysisLog.duration_seconds,
+        AnalysisLog.input_data,
+        output,
+    ).where(AnalysisLog.job_id == job_uuid, AnalysisLog.iteration == iteration)
+    if action_type is not None:
+        query = query.where(AnalysisLog.action_type == action_type)
+    query = query.order_by(AnalysisLog.created_at, AnalysisLog.id).offset(offset).limit(limit)
+    result = await session.execute(query)
+    return [
+        _serialized_log_entry(
+            iteration,
+            row.action_type,
+            row.created_at,
+            row.description,
+            row.success,
+            row.duration_seconds,
+            row.input_data,
+            {"output": row.output} if row.output is not None else None,
+        )
+        for row in result.all()
+    ]
 
 
 async def load_iteration_summaries(

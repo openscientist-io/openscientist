@@ -22,10 +22,12 @@ from openscientist.webapp_components.components.notifications import (
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.pages.job_detail.chat import _render_chat_tab
 from openscientist.webapp_components.pages.job_detail.common import (
+    ActionCounts,
     _chat_tab_tooltip,
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
+    _logged_actions,
     _report_tab_tooltip,
 )
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
@@ -90,13 +92,15 @@ def _job_page_title(job_info: Any) -> str:
     return page_title
 
 
-def _initial_job_state(job_info: Any, ks_data: dict[str, Any] | None) -> dict[str, Any]:
+def _initial_job_state(
+    job_info: Any, ks_data: dict[str, Any] | None, action_counts: ActionCounts
+) -> dict[str, Any]:
     return {
         "status": job_info.status,
         "iteration": ks_data.get("iteration", 0) if ks_data else 0,
         "findings_count": job_info.findings_count,
         "papers_count": len(ks_data.get("literature", [])) if ks_data else 0,
-        "log_entries": len(ks_data.get("analysis_log", [])) if ks_data else 0,
+        "log_entries": _logged_actions(action_counts),
         "agent_status": ks_data.get("agent_status") if ks_data else None,
     }
 
@@ -128,7 +132,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
     owner_name = await _owner_name(job_id, is_owner)
 
     job_dir = job_manager.jobs_dir / job_id
-    ks_data, ks_load_error = await _load_knowledge_state(job_id, user_id)
+    ks_data, action_counts, ks_load_error = await _load_knowledge_state(job_id, user_id)
 
     # Derive progress from already-loaded KS data instead of loading it again via get_job()
     iterations_completed, findings_count = _derive_progress_from_ks(
@@ -153,8 +157,9 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         owner_name=owner_name,
         job_dir=job_dir,
         ks_data=ks_data,
+        action_counts=action_counts,
         ks_load_error=ks_load_error,
-        state=_initial_job_state(job_info, ks_data),
+        state=_initial_job_state(job_info, ks_data, action_counts),
         share_dialog=share_dialog,
         delete_dialog=delete_dialog,
         notifications_dialog=notifications_dialog,

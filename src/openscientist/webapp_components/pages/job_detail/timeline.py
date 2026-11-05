@@ -16,9 +16,11 @@ from openscientist.webapp_components.components.common import (
 )
 from openscientist.webapp_components.components.job_table import render_job_action_buttons
 from openscientist.webapp_components.pages.job_detail.common import (
+    ActionCounts,
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
+    _logged_actions,
     _render_access_lost,
 )
 from openscientist.webapp_components.pages.job_detail.feedback import _refresh_feedback_panel
@@ -176,17 +178,22 @@ def _render_timeline_content_for_context(context: _JobDetailContext) -> None:
 
     _render_timeline_content(
         timeline_ks=timeline_ks,
+        action_counts=context.action_counts,
         latest_job=latest_job,
         job_dir=context.job_dir,
+        job_id=context.job_id,
+        user_id=context.user_id,
     )
 
 
-def _state_snapshot(latest_job: Any, latest_ks: dict[str, Any] | None) -> dict[str, Any]:
+def _state_snapshot(
+    latest_job: Any, latest_ks: dict[str, Any] | None, action_counts: ActionCounts
+) -> dict[str, Any]:
     return {
         "findings_count": latest_job.findings_count,
         "papers_count": len(latest_ks.get("literature", [])) if latest_ks else 0,
         "iteration": latest_ks.get("iteration", 0) if latest_ks else 0,
-        "log_entries": len(latest_ks.get("analysis_log", [])) if latest_ks else 0,
+        "log_entries": _logged_actions(action_counts),
         "agent_status": latest_ks.get("agent_status") if latest_ks else None,
     }
 
@@ -271,15 +278,16 @@ async def _check_and_refresh(
         _handle_access_lost_during_poll(context, stats_timer_holder)
         return
 
-    latest_ks, _ = await _load_knowledge_state(context.job_id, context.user_id)
+    latest_ks, action_counts, _ = await _load_knowledge_state(context.job_id, context.user_id)
 
     iters, findings = _derive_progress_from_ks(latest_ks, db_job.status, db_job.current_iteration)
     latest_job = JobInfo.from_db_model(db_job, iters, findings)
 
-    snapshot = _state_snapshot(latest_job, latest_ks)
+    snapshot = _state_snapshot(latest_job, latest_ks, action_counts)
 
     # Update context before calling .refresh() so refreshables read fresh data
     context.ks_data = latest_ks
+    context.action_counts = action_counts
     context.job_info = latest_job
 
     if _stats_changed(context.state, snapshot):
