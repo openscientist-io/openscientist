@@ -9,6 +9,8 @@ import threading
 import uuid
 from datetime import UTC, datetime
 from string import Template
+from typing import cast
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,7 +20,7 @@ from sqlalchemy import select
 from starlette.responses import Response
 
 from openscientist.admin_settings import current_admin_settings
-from openscientist.auth.middleware import pop_return_to
+from openscientist.auth.middleware import HOME_PATH, _is_local_path, return_to, safe_next
 from openscientist.auth.oauth import get_oauth_client
 from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider, OrcidProvider
 from openscientist.auth.routes import (
@@ -55,11 +57,48 @@ async def _set_session_cookie(response: RedirectResponse, session_id: str) -> No
     )
 
 
+#: The cookie a sign-in's page target rides the provider's round trip in
+_NEXT_COOKIE = "return_to"
+#: How long a page target may ride the provider's round trip, in seconds
+_NEXT_COOKIE_MAX_AGE = 15 * 60
+
+
+def _next_cookie_target(request: Request) -> str:
+    """The page a visitor asked for before the provider's round trip, or the
+    home page when the cookie is missing or off-site."""
+    return safe_next(request.cookies.get(_NEXT_COOKIE))
+
+
+def _carry_next(request: Request, response: RedirectResponse) -> None:
+    """Keep the page a visitor asked for across the provider's redirect,
+    which would otherwise drop the login's query string."""
+    next_path = request.query_params.get("next")
+    if isinstance(next_path, str) and _is_local_path(next_path):
+        settings = get_settings()
+        response.set_cookie(
+            key=_NEXT_COOKIE,
+            value=next_path,
+            max_age=_NEXT_COOKIE_MAX_AGE,
+            httponly=True,
+            secure=settings.auth.app_url.startswith("https"),
+            samesite="lax",
+        )
+    else:
+        response.delete_cookie(key=_NEXT_COOKIE)
+
+
+def _login_error_url(error: str, target: str) -> str:
+    """The login page with a failure and the page a visitor asked for."""
+    if target == HOME_PATH:
+        return f"/login?error={error}"
+    return f"/login?error={error}&next={quote(target)}"
+
+
 # Mock routes must be declared before the parameterized provider routes
 
 
 @router.get("/mock/login")
-async def mock_oauth_login() -> RedirectResponse:
+async def mock_oauth_login(request: Request) -> RedirectResponse:
     """Mock OAuth login (development only).
 
     Creates a user with random credentials and logs them in. Never enable in
@@ -96,7 +135,7 @@ async def mock_oauth_login() -> RedirectResponse:
         )
         session = await create_session(db, str(user.id))
 
-    response = RedirectResponse(url=pop_return_to(), status_code=303)
+    response = RedirectResponse(url=return_to(request), status_code=303)
     await _set_session_cookie(response, str(session.id))
 
     logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
@@ -104,7 +143,7 @@ async def mock_oauth_login() -> RedirectResponse:
 
 
 @router.get("/mock/admin-login")
-async def mock_admin_oauth_login() -> RedirectResponse:
+async def mock_admin_oauth_login(request: Request) -> RedirectResponse:
     """Mock OAuth login for the admin user (development only).
 
     Creates or updates a fixed admin@mock.local user and grants admin
@@ -161,7 +200,7 @@ async def mock_admin_oauth_login() -> RedirectResponse:
             await db.commit()
             logger.info("Created admin record for user %s", user_email)
 
-    response = RedirectResponse(url=pop_return_to(), status_code=303)
+    response = RedirectResponse(url=return_to(request), status_code=303)
     await _set_session_cookie(response, session_token)
 
     logger.info("Admin user %s logged in via mock auth (DEV MODE)", user_email)
@@ -206,7 +245,7 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
             )
             session = await create_session(db, str(user.id))
 
-        response = RedirectResponse(url=pop_return_to(), status_code=303)
+        response = RedirectResponse(url=return_to(request), status_code=303)
         await _set_session_cookie(response, str(session.id))
 
         logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
@@ -214,7 +253,9 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
 
     except Exception as e:
         logger.error("Mock OAuth callback error: %s", e, exc_info=True)
-        return RedirectResponse(url="/login?error=mock_auth_failed", status_code=303)
+        return RedirectResponse(
+            url=_login_error_url("mock_auth_failed", return_to(request)), status_code=303
+        )
 
 
 @router.get("/{provider}/login")
@@ -235,7 +276,9 @@ async def oauth_login(provider: str, request: Request) -> RedirectResponse:
         settings = get_settings()
         redirect_uri = f"{settings.auth.app_url}/auth/{provider}/callback"
 
-        return await client.authorize_redirect(request, redirect_uri)  # type: ignore[no-any-return]
+        response = cast(RedirectResponse, await client.authorize_redirect(request, redirect_uri))
+        _carry_next(request, response)
+        return response
 
     except HTTPException:
         raise
@@ -249,6 +292,8 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
     """Handle the OAuth callback."""
     if provider not in ["google", "github", "orcid"]:
         raise HTTPException(status_code=400, detail="Unknown OAuth provider")
+
+    target = _next_cookie_target(request)
 
     try:
         oauth = get_oauth_client()
@@ -285,7 +330,8 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
             )
             session = await create_session(db, str(user.id))
 
-        response = RedirectResponse(url=pop_return_to())
+        response = RedirectResponse(url=target)
+        response.delete_cookie(key=_NEXT_COOKIE)
         await _set_session_cookie(response, str(session.id))
 
         logger.info("User %s logged in via %s", user.email, provider)
@@ -296,12 +342,14 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
             "Refused %s sign-in because the provider did not verify the email",
             provider,
         )
-        return RedirectResponse(url="/login?error=email_verification_required")
+        return RedirectResponse(
+            url=_login_error_url("email_verification_required", target), status_code=303
+        )
     except HTTPException:
         raise
     except Exception as e:
         logger.error("OAuth callback error: %s", e, exc_info=True)
-        return RedirectResponse(url="/login?error=oauth_failed")
+        return RedirectResponse(url=_login_error_url("oauth_failed", target), status_code=303)
 
 
 async def _delete_session(open_session: SessionOpener, session_token: str) -> None:
@@ -429,7 +477,7 @@ button {
 </div>
 <script>
 document.getElementById("sign-in").addEventListener("click", async () => {
-    const response = await fetch(window.location.pathname, {
+    const response = await fetch(window.location.pathname + window.location.search, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: "{}",
@@ -473,7 +521,9 @@ async def review_confirmation_page(token: str) -> Response:
     return HTMLResponse(_REVIEW_CONFIRMATION_PAGE.substitute(label=html.escape(label)))
 
 
-async def redeem_review_token(token: str, _redeem: RedeemRequest) -> RedirectResponse:
+async def redeem_review_token(
+    token: str, _redeem: RedeemRequest, request: Request
+) -> RedirectResponse:
     """Redeem a review token to create or re-login an anonymous reviewer."""
     token_hash = _hash_token(token)
 
@@ -513,7 +563,7 @@ async def redeem_review_token(token: str, _redeem: RedeemRequest) -> RedirectRes
                 return RedirectResponse(url="/login?error=token_invalid", status_code=303)
 
             session = await create_session(db, str(user.id))
-            response = RedirectResponse(url=pop_return_to(), status_code=303)
+            response = RedirectResponse(url=return_to(request), status_code=303)
             response.headers["Referrer-Policy"] = "no-referrer"
             await _set_session_cookie(response, str(session.id))
             logger.info(
@@ -538,7 +588,7 @@ async def redeem_review_token(token: str, _redeem: RedeemRequest) -> RedirectRes
 
         session = await create_session(db, str(anon_user.id))
 
-        response = RedirectResponse(url=pop_return_to(), status_code=303)
+        response = RedirectResponse(url=return_to(request), status_code=303)
         response.headers["Referrer-Policy"] = "no-referrer"
         await _set_session_cookie(response, str(session.id))
 

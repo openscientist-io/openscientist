@@ -1,11 +1,13 @@
 """Pytest fixtures for webapp tests."""
 
 import asyncio
+import json
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -15,6 +17,7 @@ from nicegui import app, background_tasks, core, storage, ui
 from nicegui.app.app import State
 from nicegui.client import Client
 from nicegui.page import page
+from socketio import AsyncServer  # type: ignore[import-untyped]
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -62,9 +65,13 @@ async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session
 
 
 class OpenBrowser(Protocol):
-    """Open a NiceGUI client whose request asks for ``url`` with the login cookie ``token``."""
+    """Open a NiceGUI client whose request asks for ``url`` with the login
+    cookie ``token``, sharing the per-browser storage of ``browser_id`` when
+    one is given, as the tabs of one real browser do."""
 
-    def __call__(self, token: str | None, url: str = "/") -> Awaitable[Client]: ...
+    def __call__(
+        self, token: str | None, url: str = "/", browser_id: str | None = None
+    ) -> Awaitable[Client]: ...
 
 
 OpenPage = Callable[[str, Callable[[], Awaitable[None]]], Awaitable[Client]]
@@ -82,8 +89,11 @@ def browser_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[OpenBrowser]:
     monkeypatch.setattr(core, "script_mode", False)
     opened: list[tuple[Client, str]] = []
 
-    async def open_browser(token: str | None, url: str = "/") -> Client:
-        browser_id = str(uuid4())
+    async def open_browser(
+        token: str | None, url: str = "/", browser_id: str | None = None
+    ) -> Client:
+        if browser_id is None:
+            browser_id = str(uuid4())
         headers: list[tuple[bytes, bytes]] = []
         if token is not None:
             headers.append((b"cookie", f"session_token={token}".encode()))
@@ -108,7 +118,8 @@ def browser_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[OpenBrowser]:
 
     yield open_browser
     for client, browser_id in opened:
-        client.delete()
+        if not client.is_deleted:
+            client.delete()
         app.storage._users.pop(browser_id, None)
 
 
@@ -168,6 +179,50 @@ async def served_page(
         return client, sent
 
     yield open_served
+
+
+@dataclass(frozen=True)
+class WireMessage:
+    """One message the outbox would deliver to a connected browser."""
+
+    event: str
+    room: str | None
+    wire_bytes: int
+
+
+@pytest.fixture
+def wire_recorder(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[WireMessage]]:
+    """Record every message NiceGUI would deliver to a connected browser.
+
+    The client never connects during the test, so the outbox loop holds its
+    queue until the test gives the client a ``tab_id``. From then on it
+    delivers to the recorder in place of the socket layer, the way the probe
+    of the original finding measured the wire."""
+    records: list[WireMessage] = []
+
+    class _Eio:
+        ping_interval = 25
+        ping_timeout = 20
+
+    class _Stub:
+        eio = _Eio()
+
+        async def emit(
+            self, event: str, data: Mapping[str, object], room: str | None = None
+        ) -> None:
+            records.append(WireMessage(event, room, len(json.dumps(data).encode())))
+
+    monkeypatch.setattr(core, "sio", cast(AsyncServer, _Stub()), raising=False)
+    yield records
+
+
+async def drain_outbox(client: Client) -> None:
+    """Wait for the outbox to hand everything queued so far to the wire recorder."""
+    for _ in range(500):
+        if not client.outbox.updates and not client.outbox.messages:
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
 
 
 async def fire_click_twice(

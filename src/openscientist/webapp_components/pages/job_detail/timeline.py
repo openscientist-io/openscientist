@@ -315,7 +315,6 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
         user_id=context.user_id,
         can_edit=context.can_edit,
         job_dir=context.job_dir,
-        active_timers=context.active_timers,
         ks_data=context.ks_data,
     )
 
@@ -327,4 +326,3 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
 
     if context.job_info.status in _polling_statuses():
         stats_timer_holder["timer"] = ui.timer(2.0, check_and_refresh)
-        context.active_timers.append(stats_timer_holder["timer"])
