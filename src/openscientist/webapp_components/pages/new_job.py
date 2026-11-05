@@ -216,14 +216,21 @@ async def new_job_page() -> None:
                     ).classes("text-xs text-orange-700 ml-12")
 
         with ui.row().classes("w-full justify-end"):
-            ui.button(
-                "Start Discovery",
-                on_click=lambda: _submit_job(
-                    job_manager=job_manager,
-                    session_id=session_id,
-                    research_question=research_question,
-                    max_iterations=max_iterations,
-                    use_hypotheses=use_hypotheses,
-                    coinvestigate_mode=coinvestigate_mode,
-                ),
-            ).props("color=primary")
+
+            async def on_submit() -> None:
+                if not submit_button.enabled:
+                    return
+                submit_button.disable()
+                try:
+                    await _submit_job(
+                        job_manager=job_manager,
+                        session_id=session_id,
+                        research_question=research_question,
+                        max_iterations=max_iterations,
+                        use_hypotheses=use_hypotheses,
+                        coinvestigate_mode=coinvestigate_mode,
+                    )
+                finally:
+                    submit_button.enable()
+
+            submit_button = ui.button("Start Discovery", on_click=on_submit).props("color=primary")
