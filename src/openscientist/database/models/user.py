@@ -1,8 +1,9 @@
 """User model for authentication and authorization."""
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, String
+from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..base import Base, UUIDv7Mixin
@@ -46,6 +47,12 @@ class User(UUIDv7Mixin, Base):
         nullable=False,
         server_default="false",
         comment="Whether user is approved by an administrator to start jobs",
+    )
+
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="When an administrator approved this user (None if pending or never approved)",
     )
 
     is_priority: Mapped[bool] = mapped_column(
