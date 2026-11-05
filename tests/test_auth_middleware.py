@@ -54,7 +54,7 @@ async def test_require_auth_rejects_invalid_cookie_session(monkeypatch):
 
     assert called["value"] is False
     assert result.status_code == 303
-    assert result.headers["location"] == "/login"
+    assert result.headers["location"] == "/login?next=/new"
     assert storage == {}
 
 

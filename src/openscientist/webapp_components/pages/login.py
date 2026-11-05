@@ -1,14 +1,16 @@
 """Login page with OAuth authentication."""
 
 import logging
+from urllib.parse import quote
 
 from nicegui import ui
 from starlette.responses import RedirectResponse
 
 from openscientist.auth.middleware import (
+    HOME_PATH,
+    _is_local_path,
     _store_authenticated_user,
     get_session_token,
-    pop_return_to,
     redirect_to,
     validate_session,
 )
@@ -37,6 +39,24 @@ _TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
 }
 
 
+def _next_target() -> str | None:
+    """The page this login visit carries in its ``next`` parameter, when it
+    stays on this site."""
+    try:
+        next_path = ui.context.client.request.query_params.get("next")
+    except Exception:
+        logger.debug("Could not read the next parameter", exc_info=True)
+        return None
+    return next_path if _is_local_path(next_path) else None
+
+
+def _sign_in_url(route: str, next_target: str | None) -> str:
+    """A sign-in route's URL, carrying the page the visitor asked for."""
+    if next_target is None:
+        return route
+    return f"{route}?next={quote(next_target)}"
+
+
 @ui.page("/login")
 async def login_page(error: str | None = None) -> RedirectResponse | None:
     """Login page with OAuth support.
@@ -46,6 +66,7 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
     since it outlives an expired cookie.
     """
     session_token = get_session_token()
+    next_target = _next_target()
     if session_token:
         try:
             user_info = await validate_session(session_token)
@@ -56,7 +77,7 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
             user_info = None
         if user_info is not None:
             _store_authenticated_user(user_info)
-            return redirect_to(pop_return_to())
+            return redirect_to(next_target or HOME_PATH)
 
     # Check if OAuth is configured
     settings = get_settings()
@@ -118,7 +139,11 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
             # Google OAuth button
             if google_enabled:
                 with (
-                    ui.button(on_click=lambda: ui.navigate.to("/auth/google/login"))
+                    ui.button(
+                        on_click=lambda: ui.navigate.to(
+                            _sign_in_url("/auth/google/login", next_target)
+                        )
+                    )
                     .classes("w-full login-btn")
                     .style(
                         "background-color: #4285f4; color: white; "
@@ -140,7 +165,11 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
             # GitHub OAuth button
             if github_enabled:
                 with (
-                    ui.button(on_click=lambda: ui.navigate.to("/auth/github/login"))
+                    ui.button(
+                        on_click=lambda: ui.navigate.to(
+                            _sign_in_url("/auth/github/login", next_target)
+                        )
+                    )
                     .classes("w-full login-btn")
                     .style(
                         "background-color: #24292e; color: white; "
@@ -159,7 +188,11 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
             # ORCID OAuth button
             if orcid_enabled:
                 with (
-                    ui.button(on_click=lambda: ui.navigate.to("/auth/orcid/login"))
+                    ui.button(
+                        on_click=lambda: ui.navigate.to(
+                            _sign_in_url("/auth/orcid/login", next_target)
+                        )
+                    )
                     .classes("w-full login-btn")
                     .style(
                         "background-color: #A6CE39; color: white; "
@@ -180,7 +213,11 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
                 ui.separator().classes("my-2")
                 ui.label("Development Mode").classes("text-xs text-gray-500 text-center w-full")
                 with (
-                    ui.button(on_click=lambda: ui.navigate.to("/auth/mock/login"))
+                    ui.button(
+                        on_click=lambda: ui.navigate.to(
+                            _sign_in_url("/auth/mock/login", next_target)
+                        )
+                    )
                     .classes("w-full login-btn")
                     .style("justify-content: flex-start; padding-left: 12px;")
                     .props("color=orange"),
@@ -191,7 +228,11 @@ async def login_page(error: str | None = None) -> RedirectResponse | None:
                     ui.label("Mock Login (Dev Only)")
 
                 with (
-                    ui.button(on_click=lambda: ui.navigate.to("/auth/mock/admin-login"))
+                    ui.button(
+                        on_click=lambda: ui.navigate.to(
+                            _sign_in_url("/auth/mock/admin-login", next_target)
+                        )
+                    )
                     .classes("w-full login-btn")
                     .style("justify-content: flex-start; padding-left: 12px;")
                     .props("color=red"),

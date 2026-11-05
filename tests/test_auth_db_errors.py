@@ -175,7 +175,7 @@ async def test_a_visitor_with_a_garbage_token_is_sent_to_login(
     assert not ran
     assert storage == {}
     assert result.status_code == 303
-    assert result.headers["location"] == "/login"
+    assert result.headers["location"] == "/login?next=/jobs"
 
 
 async def test_an_unexpected_validation_error_is_not_treated_as_an_outage(

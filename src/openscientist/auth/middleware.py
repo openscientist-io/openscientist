@@ -7,13 +7,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from nicegui import app, ui
 from nicegui.slot import Slot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
 from openscientist.database.models import Session, User
@@ -101,28 +102,43 @@ def redirect_to(path: str) -> RedirectResponse:
 
 
 def _is_local_path(path: object) -> bool:
-    """Whether ``path`` stays on this site, for a redirect target read back from storage."""
+    """Whether ``path`` stays on this site, for a redirect target read back
+    from a request."""
     if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
         return False
     parts = urlsplit(path)
     return not parts.scheme and not parts.netloc and "\\" not in path
 
 
-def pop_return_to() -> str:
-    """The page a visitor asked for before signing in, removed from their
-    storage, or the home page when there is none or it would leave the site."""
-    try:
-        path = app.storage.user.pop("return_to", None)
-    except RuntimeError:
-        return HOME_PATH
-    return path if _is_local_path(path) else HOME_PATH
+def safe_next(path: object) -> str:
+    """The page a visitor asked for, or the home page when ``path`` is
+    missing or would leave the site."""
+    if isinstance(path, str) and _is_local_path(path):
+        return path
+    return HOME_PATH
+
+
+def return_to(request: Request) -> str:
+    """The page a visitor asked for, carried by the request's ``next``
+    parameter, or the home page when there is none or it would leave the site."""
+    return safe_next(request.query_params.get("next"))
+
+
+def _login_url() -> str:
+    """The login page's URL, carrying the page the visitor asked for as its
+    ``next`` parameter when that page stays on this site."""
+    url = ui.context.client.request.url
+    target = f"{url.path}?{url.query}" if url.query else url.path
+    if target != "/login" and _is_local_path(target):
+        return f"/login?next={quote(target)}"
+    return "/login"
 
 
 def _redirect_to_login(*, clear_storage: bool = False) -> RedirectResponse:
-    """Send the visitor to the login page."""
+    """Send the visitor to the login page, carrying the page they asked for."""
     if clear_storage:
         app.storage.user.clear()
-    return redirect_to("/login")
+    return redirect_to(_login_url())
 
 
 def _show_database_unavailable() -> None:
