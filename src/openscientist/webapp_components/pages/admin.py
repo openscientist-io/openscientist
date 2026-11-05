@@ -140,13 +140,17 @@ async def admin_page() -> None:
             settings_tab = ui.tab("Settings", icon="tune")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
-            # Orphaned Jobs Panel (deferred — not the default tab)
-            with ui.tab_panel(orphaned_tab):
-                ui.timer(0.1, render_orphaned_jobs_panel, once=True)
+            # Orphaned Jobs Panel (deferred, filled below)
+            orphaned_panel = ui.tab_panel(orphaned_tab)
 
-            # Users Panel (default tab — load eagerly)
+            # Users Panel (default tab, loaded before the page is sent). Any
+            # ui.timer created before this await would make NiceGUI send the
+            # page early, so the deferred panels' timers come after it.
             with ui.tab_panel(users_tab):
                 await render_users_panel()
+
+            with orphaned_panel:
+                ui.timer(0.1, render_orphaned_jobs_panel, once=True)
 
             # Review Tokens Panel (deferred)
             with ui.tab_panel(review_tokens_tab):
