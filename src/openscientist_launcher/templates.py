@@ -5,13 +5,13 @@ from __future__ import annotations
 import base64
 import json
 import secrets
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from docker.types import Mount
 
 from openscientist_launcher.config import LauncherConfig
-from openscientist_launcher.validation import AgentLaunch, ExecRequest, ValidationError
+from openscientist_launcher.validation import AgentLaunch, ExecRequest
 
 AGENT_APP_DIR = "/agent"
 PHENIX_PATH = "/opt/phenix"
@@ -29,6 +29,11 @@ def _bind(source: str, target: str, *, read_only: bool) -> Mount:
     """A bind mount the daemon refuses when ``source`` is missing on the host,
     where a ``volumes`` entry would have it create an empty root-owned directory."""
     return Mount(target=target, source=source, type="bind", read_only=read_only)
+
+
+def _job_mount(job_id: str) -> str:
+    """Where a container sees its job directory, the same path in the agent and the executor."""
+    return f"{AGENT_APP_DIR}/jobs/{job_id}"
 
 
 def _labels(cfg: LauncherConfig, job_id: str, container_type: str) -> dict[str, str]:
@@ -56,7 +61,7 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
     env[FIREWALL_ALLOW_ENV] = ",".join(launch.egress_allow)
     env[FIREWALL_MODE_ENV] = FIREWALL_MODE_AIRGAP if launch.airgapped else FIREWALL_MODE_RESTRICT
 
-    job_mount = f"{AGENT_APP_DIR}/jobs/{launch.job_id}"
+    job_mount = _job_mount(launch.job_id)
     mounts = [_bind(str(cfg.jobs_root / launch.job_id), job_mount, read_only=False)]
     if launch.phenix and cfg.phenix_host_path:
         phenix = Path(cfg.phenix_host_path).expanduser().resolve()
@@ -98,30 +103,28 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
     """The docker run kwargs of one executor container, and its remapped payload."""
     name = f"openscientist-exec-{req.job_id}-{secrets.token_hex(4)}"
 
-    mounts = [_bind(str(req.output_dir), "/output", read_only=False)]
-    host_to_container: dict[str, str] = {}
-    for index, entry in enumerate(req.data_files):
-        parent = str(Path(str(entry["path"])).resolve().parent)
-        if parent not in host_to_container:
-            host_to_container[parent] = "/data" if index == 0 else f"/data/{index}"
-            mounts.append(_bind(parent, host_to_container[parent], read_only=True))
+    # The job directory is the one path here the agent cannot replace, since
+    # it is the root of the agent's own mount, so it is the only bind source.
+    # The output and data paths are reached inside it, where a symlink the
+    # agent plants resolves within the executor's filesystem, never the host.
+    job_dir = cfg.jobs_root / req.job_id
+    job_mount = PurePosixPath(_job_mount(req.job_id))
+    mounts = [_bind(str(job_dir), str(job_mount), read_only=False)]
 
-    def remap(path_str: str) -> str:
-        resolved = Path(path_str).resolve()
-        container_dir = host_to_container.get(str(resolved.parent))
-        if container_dir is None:
-            raise ValidationError("a data path is not under any mounted data directory")
-        return str(Path(container_dir) / resolved.name)
+    def in_container(path: Path) -> str:
+        return str(job_mount / path.relative_to(job_dir))
 
     payload = {
         "code": req.code,
         "language": req.language,
-        "data_path": remap(str(req.data_path)) if req.data_path else None,
-        "output_dir": "/output",
+        "data_path": in_container(req.data_path) if req.data_path else None,
+        "output_dir": in_container(req.output_dir),
         "timeout": req.payload_timeout,
         "description": req.description,
         "iteration": req.iteration,
-        "data_files": [{**entry, "path": remap(str(entry["path"]))} for entry in req.data_files],
+        "data_files": [
+            {**entry, "path": in_container(Path(str(entry["path"])))} for entry in req.data_files
+        ],
     }
     encoded = base64.b64encode(json.dumps(payload).encode()).decode()
 

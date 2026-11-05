@@ -57,9 +57,6 @@ RUN uv export --locked --no-dev --extra executor --no-emit-project --format requ
     && uv pip install --system -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-# Create directories for data and output
-RUN mkdir -p /data /output && chown executor:jobs /data /output
-
 # Copy executor module
 COPY src/openscientist_executor /app/openscientist_executor
 COPY src/openscientist /app/openscientist

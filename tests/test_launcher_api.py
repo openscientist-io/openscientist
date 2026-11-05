@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import shutil
 import subprocess
 import tarfile
 import time
@@ -25,6 +26,9 @@ import pytest
 from docker.models.containers import Container
 
 import docker
+from openscientist_launcher.config import LauncherConfig
+from openscientist_launcher.templates import executor_run_kwargs
+from openscientist_launcher.validation import validate_exec_request
 from tests.launcher import (
     EXECUTOR_IMAGE,
     LAUNCHER_INSTANCE_ID,
@@ -664,10 +668,8 @@ class TestExecutor:
         assert host["Memory"] == 1024 * 1024**2
         assert host["NanoCpus"] == 500_000_000
         assert host.get("Binds") is None
-        assert _host_binds(host) == [
-            (str(out_dir), "/output", False),
-            (str(job_dir), "/data", True),
-        ]
+        job_mount = f"/agent/jobs/{JOB_ID}"
+        assert _host_binds(host) == [(str(job_dir), job_mount, False)]
         env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
         assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
         assert env["OPENSCIENTIST_FIREWALL_RUN_AS"] == "executor"
@@ -677,12 +679,12 @@ class TestExecutor:
         payload = {
             "code": code,
             "language": "python",
-            "data_path": "/data/data.csv",
-            "output_dir": "/output",
+            "data_path": f"{job_mount}/data.csv",
+            "output_dir": f"{job_mount}/out",
             "timeout": 60,
             "description": "test",
             "iteration": 0,
-            "data_files": [{"path": "/data/data.csv", "name": "data.csv"}],
+            "data_files": [{"path": f"{job_mount}/data.csv", "name": "data.csv"}],
         }
         b64 = base64.b64encode(json.dumps(payload).encode()).decode()
         assert config["Cmd"] == [
@@ -690,7 +692,6 @@ class TestExecutor:
             "-c",
             f"echo {b64} | base64 -d | python -m openscientist_executor",
         ]
-
         with launcher.client() as client:
             listing = client.get(
                 "/v1/containers", params={"label": f"openscientist.job_id={JOB_ID}"}
@@ -698,6 +699,63 @@ class TestExecutor:
         assert not [
             entry for entry in listing if entry["labels"].get("openscientist.type") == "executor"
         ]
+
+    @pytest.mark.parametrize("swapped", ["output", "data"])
+    def test_a_path_swapped_for_a_symlink_after_validation_stays_inside_the_job(
+        self,
+        launcher: Launcher,
+        docker_client: docker.DockerClient,
+        jobs_root: Path,
+        tmp_path: Path,
+        swapped: str,
+    ) -> None:
+        """The agent owns its job directory, so between the launcher's check
+        and the executor's mount it can replace a checked directory with a
+        symlink to somewhere else on the host. The executor must still see
+        only the job's own files."""
+        outside = tmp_path / "another-job"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("another job's data", encoding="utf-8")
+        (outside / "rows.csv").write_text("a\n1\n", encoding="utf-8")
+        job_dir = jobs_root / JOB_ID
+        (job_dir / "out").mkdir()
+        (job_dir / "inputs").mkdir()
+        (job_dir / "inputs" / "rows.csv").write_text("a\n1\n", encoding="utf-8")
+        code = (
+            "import os\n"
+            "print('listing', sorted(os.listdir('.')))\n"
+            "print('listing', sorted(os.listdir(os.path.dirname(data_files[0]['path']))))\n"
+        )
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 120,
+            "memory_mib": 1024,
+            "cpu": 0.5,
+            "egress_allow": ["openscientist:8081", "openscientist:8082"],
+            "input": {
+                "code": code,
+                "language": "python",
+                "output_dir": str(job_dir / "out"),
+                "timeout": 60,
+                "description": "swap",
+                "iteration": 0,
+                "data_files": [{"path": str(job_dir / "inputs" / "rows.csv"), "name": "rows.csv"}],
+            },
+        }
+        cfg = LauncherConfig.from_env(launcher.env)
+        req = validate_exec_request(body, cfg)
+        # The agent's move, inside the window the launcher leaves open.
+        target = job_dir / ("out" if swapped == "output" else "inputs")
+        shutil.rmtree(target)
+        target.symlink_to(outside, target_is_directory=True)
+        container = docker_client.containers.run(**executor_run_kwargs(cfg, req, network="bridge"))
+        try:
+            container.wait(timeout=120)
+            logs = container.logs(stdout=True, stderr=True).decode("utf-8", "replace")
+        finally:
+            container.remove(force=True)
+        assert "secret.txt" not in logs
+        assert sorted(p.name for p in outside.iterdir()) == ["rows.csv", "secret.txt"]
 
     def test_executor_bounds_and_refusals(
         self,

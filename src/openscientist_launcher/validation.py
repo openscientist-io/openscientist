@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -211,12 +212,17 @@ def _job_id(body: dict[str, object], cfg: LauncherConfig) -> str:
 
 
 def _under_job_dir(path_str: str, job_dir: Path, *, what: str) -> Path:
-    resolved = Path(path_str).resolve()
-    try:
-        resolved.relative_to(job_dir.resolve())
-    except ValueError as exc:
-        raise ValidationError(f"{what} is outside the job directory") from exc
-    return resolved
+    """``path_str`` normalised without touching the filesystem, refused unless
+    it names a path inside ``job_dir``.
+
+    The executor reaches these paths through a mount of the job directory
+    itself, so a symlink the agent plants in it resolves inside the
+    executor's own filesystem. Resolving it here would only check a path the
+    agent can change before the mount."""
+    path = Path(os.path.normpath(path_str))
+    if not path.is_absolute() or not path.is_relative_to(job_dir):
+        raise ValidationError(f"{what} is outside the job directory")
+    return path
 
 
 def _under_jobs_root(path_str: str, cfg: LauncherConfig, *, what: str) -> Path:
@@ -401,13 +407,10 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
         path = entry.get("path")
         if not isinstance(path, str):
             raise ValidationError("each data_files entry needs a path")
-        if not _under_job_dir(path, job_dir, what="a data file path").is_file():
+        file_path = _under_job_dir(path, job_dir, what="a data file path")
+        if not file_path.is_file():
             raise ValidationError("a data file is missing")
-        data_files.append(dict(entry))
-    if data_path is not None:
-        parents = {Path(str(file["path"])).resolve().parent for file in data_files}
-        if data_path.resolve().parent not in parents:
-            raise ValidationError("data_path is not under any mounted data directory")
+        data_files.append({**entry, "path": str(file_path)})
 
     return ExecRequest(
         job_id=job_id,
