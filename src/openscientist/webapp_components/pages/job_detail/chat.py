@@ -191,7 +191,8 @@ class _ChatTabController:
         self.chat_input: Any = None
         self.send_btn: Any = None
 
-    def render(self) -> None:
+    async def render(self) -> None:
+        """Build the chat tab, loading the committed history before the page is sent."""
         if self.context.job_info.status != JobStatus.COMPLETED:
             ui.label("Chat will be available when the job completes.").classes(
                 "text-gray-500 italic"
@@ -200,7 +201,7 @@ class _ChatTabController:
 
         ui.add_head_html(_CHAT_STYLES)
         self._render_shell()
-        ui.timer(0.1, self._render_messages, once=True)
+        await self._render_messages()
 
         if self.context.can_edit:
             self._render_input_area()
@@ -414,5 +415,6 @@ class _ChatTabController:
         )
 
 
-def _render_chat_tab(context: _JobDetailContext) -> None:
-    _ChatTabController(context).render()
+async def _render_chat_tab(context: _JobDetailContext) -> None:
+    """Build the chat tab so the first HTML already carries the committed messages."""
+    await _ChatTabController(context).render()
