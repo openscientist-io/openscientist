@@ -10,7 +10,16 @@ from nicegui import ui
 
 from openscientist.database.session import thread_safe_user_session
 from openscientist.job.types import JobStatus, completed_iterations
-from openscientist.knowledge_state import KnowledgeState
+from openscientist.knowledge_state_db import analysis_log_action_counts, load_without_analysis_log
+
+#: How many analysis log rows of each action type each iteration holds.
+ActionCounts = dict[int, dict[str, int]]
+
+
+def _logged_actions(counts: ActionCounts) -> int:
+    """How many analysis log rows the whole job holds."""
+    return sum(sum(by_action.values()) for by_action in counts.values())
+
 
 logger = logging.getLogger(__name__)
 
@@ -52,15 +61,17 @@ def _derive_progress_from_ks(
 
 async def _load_knowledge_state(
     job_id: str, user_id: str
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Load knowledge state from database, returning (data, error_message)."""
+) -> tuple[dict[str, Any] | None, ActionCounts, str | None]:
+    """Load the knowledge state without its analysis log rows, and the log's
+    action counts, returning (data, counts, error_message)."""
     try:
         async with thread_safe_user_session(UUID(user_id)) as session:
-            ks = await KnowledgeState.load_from_database(job_id, session)
-        return ks.to_dict(), None
+            ks = await load_without_analysis_log(session, job_id)
+            counts = await analysis_log_action_counts(session, UUID(job_id))
+        return ks.to_dict(), counts, None
     except Exception as e:
         logger.warning("Failed to load knowledge state from database for %s: %s", job_id, e)
-        return None, "Knowledge state is unavailable. Please refresh the page."
+        return None, {}, "Knowledge state is unavailable. Please refresh the page."
 
 
 def _render_access_lost() -> None:
@@ -82,6 +93,7 @@ class _JobDetailContext:
     owner_name: str | None
     job_dir: Path
     ks_data: dict[str, Any] | None
+    action_counts: ActionCounts
     ks_load_error: str | None
     state: dict[str, Any]
     share_dialog: Any

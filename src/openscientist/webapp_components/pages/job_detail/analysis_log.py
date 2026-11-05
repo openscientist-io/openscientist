@@ -2,8 +2,45 @@
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from nicegui import ui
+
+from openscientist.database.session import thread_safe_user_session
+from openscientist.knowledge_state_db import load_iteration_analysis_log
+
+#: How much of an action's result the page shows.
+RESULT_PREVIEW_CHARS = 2000
+
+#: How many action cards an opened iteration shows at a time.
+ACTIONS_PER_BATCH = 50
+
+
+@dataclass(frozen=True)
+class _IterationLog:
+    """One iteration's analysis log, read as the page's viewer."""
+
+    job_id: str
+    user_id: str
+    iteration: int
+
+    async def actions(self, offset: int) -> list[dict[str, Any]]:
+        """The batch of actions that starts at ``offset``, oldest first."""
+        return await self._read(offset=offset, limit=ACTIONS_PER_BATCH)
+
+    async def searches(self) -> list[dict[str, Any]]:
+        """Every literature search of the iteration."""
+        return await self._read(action_type="search_pubmed")
+
+    async def _read(self, **selection: Any) -> list[dict[str, Any]]:
+        async with thread_safe_user_session(UUID(self.user_id)) as session:
+            return await load_iteration_analysis_log(
+                session,
+                UUID(self.job_id),
+                self.iteration,
+                output_chars=RESULT_PREVIEW_CHARS,
+                **selection,
+            )
 
 
 def _action_card_class(tool_name: str) -> str:
@@ -72,7 +109,8 @@ def _render_analysis_log_details(entry: dict[str, Any], success: bool) -> None:
     if len(output_str) > 200:
         with ui.expansion("Result", icon="output").classes("w-full mt-1"):
             ui.code(
-                output_str[:2000] + ("..." if len(output_str) > 2000 else ""),
+                output_str[:RESULT_PREVIEW_CHARS]
+                + ("..." if len(output_str) > RESULT_PREVIEW_CHARS else ""),
                 language="text",
             ).classes("text-xs")
     elif not success:
@@ -81,21 +119,51 @@ def _render_analysis_log_details(entry: dict[str, Any], success: bool) -> None:
         ui.label(output_str).classes(meta)
 
 
-def _render_analysis_log_actions(entries: list[Any]) -> None:
-    if not entries:
-        return
-    with ui.expansion(
-        f"Actions ({len(entries)})",
-        icon="build",
-    ).classes("w-full mt-2"):
-        for entry in entries:
-            success = entry.get("success", True)
-            action_type = entry.get("action", "")
-            description = entry.get("description", action_type or "Unknown")
-            status_icon = "\u2705" if success else "\u274c"
+def _render_action_card(entry: dict[str, Any]) -> None:
+    success = entry.get("success", True)
+    action_type = entry.get("action", "")
+    description = entry.get("description", action_type or "Unknown")
+    status_icon = "\u2705" if success else "\u274c"
 
-            with ui.card().classes(_action_card_class(action_type)):
-                with ui.row().classes("items-center gap-2"):
-                    ui.label(f"{status_icon} {description}").classes("font-medium text-sm")
-                    ui.badge(action_type, color="gray").props("outline").classes("text-xs")
-                _render_analysis_log_details(entry, success)
+    with ui.card().classes(_action_card_class(action_type)):
+        with ui.row().classes("items-center gap-2"):
+            ui.label(f"{status_icon} {description}").classes("font-medium text-sm")
+            ui.badge(action_type, color="gray").props("outline").classes("text-xs")
+        _render_analysis_log_details(entry, success)
+
+
+def _render_show_more(cards: ui.column, shown: int, total: int, log: _IterationLog) -> None:
+    """A button under ``cards`` that appends the next batch of actions."""
+    state = {"shown": shown}
+
+    async def show_more() -> None:
+        button.disable()
+        try:
+            batch = await log.actions(state["shown"])
+        finally:
+            button.enable()
+        if cards.is_deleted:
+            return
+        with cards:
+            for entry in batch:
+                _render_action_card(entry)
+        state["shown"] += len(batch)
+        if not batch or state["shown"] >= total:
+            button.delete()
+
+    button = ui.button("Show more", on_click=show_more).props("flat dense")
+
+
+def _render_analysis_log_actions(
+    total: int, first: list[dict[str, Any]], log: _IterationLog
+) -> None:
+    """The iteration's ``total`` actions, ``first`` shown and the rest a
+    button press away."""
+    if not total:
+        return
+    with ui.expansion(f"Actions ({total})", icon="build").classes("w-full mt-2"):
+        with ui.column().classes("w-full gap-0") as cards:
+            for entry in first:
+                _render_action_card(entry)
+        if len(first) < total:
+            _render_show_more(cards, len(first), total, log)

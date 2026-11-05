@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import func, select
+
 from openscientist.admin_settings import (
     AdminSettingsMissingError,
     current_admin_settings,
@@ -23,6 +25,7 @@ from openscientist.admin_settings import (
 from openscientist.async_tasks import run_sync, thread_loop
 from openscientist.budget import check_budget
 from openscientist.container_manager import get_container_manager
+from openscientist.database.models.finding import Finding
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.retry import (
     BACKGROUND_BACKOFF_CAP_SECONDS,
@@ -51,7 +54,6 @@ from openscientist.job.types import (
     JobStatusUpdateResult,
     completed_iterations,
 )
-from openscientist.knowledge_state import KnowledgeState
 from openscientist.ntfy import (
     ensure_user_has_topic,
     notify_job_budget_hold,
@@ -88,14 +90,21 @@ async def _load_progress(
     default_findings: int,
 ) -> tuple[int, int]:
     """Load progress as the admin login, since job lists and polls read it for no user."""
+    findings = (
+        select(func.count())
+        .select_from(Finding)
+        .where(Finding.job_id == JobModel.id)
+        .scalar_subquery()
+    )
     try:
         async with thread_safe_admin_session() as session:
-            ks = (await KnowledgeState.load_from_database(job_id, session)).data
-        findings_count = len(ks.get("findings", []))
-        ks_iteration = int(ks.get("iteration", 1))
-        return completed_iterations(status, ks_iteration), findings_count
+            result = await session.execute(
+                select(JobModel.current_iteration, findings).where(JobModel.id == UUID(job_id))
+            )
+            iteration, findings_count = result.one()
+        return completed_iterations(status, iteration), findings_count
     except Exception as e:
-        logger.warning("Failed to load KS for job %s: %s", job_id, e)
+        logger.warning("Failed to load progress for job %s: %s", job_id, e)
         return default_iterations, default_findings
 
 

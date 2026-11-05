@@ -185,11 +185,11 @@ async def test_a_strangers_feedback_changes_nothing(
 async def test_the_job_page_shows_the_knowledge_state_to_its_owner_only(
     alices_job: _Fixture,
 ) -> None:
-    data, error = await common._load_knowledge_state(alices_job.job_id, str(alices_job.owner))
+    data, _, error = await common._load_knowledge_state(alices_job.job_id, str(alices_job.owner))
     assert error is None
     assert data is not None
     assert [f["title"] for f in data["findings"]] == ["Alice's finding"]
-    data, error = await common._load_knowledge_state(alices_job.job_id, str(alices_job.stranger))
+    data, _, error = await common._load_knowledge_state(alices_job.job_id, str(alices_job.stranger))
     assert data is None
     assert error
 
