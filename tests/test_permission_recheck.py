@@ -443,7 +443,6 @@ def _chat_context(job_actors: dict, actor: dict) -> SimpleNamespace:
         user_id=str(actor["user_id"]),
         job_info=SimpleNamespace(status=JobStatus.COMPLETED),
         job_dir=None,
-        active_timers=[],
         can_edit=True,
         is_owner=False,
         owner_name=None,
