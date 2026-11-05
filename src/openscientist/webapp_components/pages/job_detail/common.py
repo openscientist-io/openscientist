@@ -10,7 +10,8 @@ from nicegui import ui
 
 from openscientist.database.session import thread_safe_user_session
 from openscientist.job.types import JobStatus, completed_iterations
-from openscientist.knowledge_state_db import analysis_log_action_counts, load_without_analysis_log
+from openscientist.knowledge_state import KnowledgeState
+from openscientist.knowledge_state_db import analysis_log_action_counts
 
 #: How many analysis log rows of each action type each iteration holds.
 ActionCounts = dict[int, dict[str, int]]
@@ -62,11 +63,11 @@ def _derive_progress_from_ks(
 async def _load_knowledge_state(
     job_id: str, user_id: str
 ) -> tuple[dict[str, Any] | None, ActionCounts, str | None]:
-    """Load the knowledge state without its analysis log rows, and the log's
-    action counts, returning (data, counts, error_message)."""
+    """Load the knowledge state and the analysis log's action counts,
+    returning (data, counts, error_message)."""
     try:
         async with thread_safe_user_session(UUID(user_id)) as session:
-            ks = await load_without_analysis_log(session, job_id)
+            ks = await KnowledgeState.load_from_database(job_id, session)
             counts = await analysis_log_action_counts(session, UUID(job_id))
         return ks.to_dict(), counts, None
     except Exception as e:

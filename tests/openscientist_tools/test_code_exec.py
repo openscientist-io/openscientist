@@ -35,6 +35,7 @@ from openscientist_tools import code_exec as code_exec_module
 from openscientist_tools.code_exec import execute_code
 from openscientist_tools.state import STATE
 from tests.launcher import EXECUTOR_IMAGE, Launcher, image_digest
+from tests.stored_log import last_logged_entry
 
 
 def _docker_available() -> bool:
@@ -446,8 +447,7 @@ async def test_execute_python_via_subprocess(
         text = _text(response)
         assert "hello world" in text
 
-        reloaded = await KnowledgeState.load_from_database(str(job_id))
-        last_log = reloaded.data["analysis_log"][-1]
+        last_log = await last_logged_entry(job_id)
         assert last_log["action"] == "execute_code"
         assert last_log["success"] is True
         assert last_log["description"] == "smoke test description"
@@ -483,8 +483,7 @@ async def test_execute_rust_via_subprocess(
         text = _text(response)
         assert "hi from rust" in text
 
-        reloaded = await KnowledgeState.load_from_database(str(job_id))
-        last_log = reloaded.data["analysis_log"][-1]
+        last_log = await last_logged_entry(job_id)
         assert last_log["action"] == "execute_code"
         assert last_log["success"] is True
 
@@ -528,8 +527,7 @@ async def test_execute_python_with_plot_via_subprocess(
         plots = sorted((job_dir / "provenance").glob("plot_*.png"))
         assert plots, "no plot files were written by the executor"
 
-        reloaded = await KnowledgeState.load_from_database(str(job_id))
-        last_log = reloaded.data["analysis_log"][-1]
+        last_log = await last_logged_entry(job_id)
         assert last_log["success"] is True
         assert len(last_log["plots"]) >= 1
 
@@ -577,8 +575,7 @@ async def test_execute_python_with_data_file_via_subprocess(
         assert "rows: 2" in text
         assert "first: sentinel-42" in text
 
-        reloaded = await KnowledgeState.load_from_database(str(job_id))
-        last_log = reloaded.data["analysis_log"][-1]
+        last_log = await last_logged_entry(job_id)
         assert last_log["success"] is True
 
 
@@ -665,7 +662,6 @@ async def test_execute_python_failure_via_subprocess(
         text = _text(response)
         assert "ZeroDivisionError" in text or "division by zero" in text
 
-        reloaded = await KnowledgeState.load_from_database(str(job_id))
-        last_log = reloaded.data["analysis_log"][-1]
+        last_log = await last_logged_entry(job_id)
         assert last_log["action"] == "execute_code"
         assert last_log["success"] is False
