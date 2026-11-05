@@ -68,7 +68,8 @@ def _page_visitor(cookies: dict[str, str]) -> SimpleNamespace:
     """The NiceGUI context of a page request carrying ``cookies``."""
     ui = MagicMock()
     ui.context.client.request.cookies = cookies
-    ui.context.client.page.path = "/jobs"
+    ui.context.client.request.url.path = "/jobs"
+    ui.context.client.request.url.query = ""
     ui.context.client.page.response_timeout = 5.0
     return ui
 
@@ -123,10 +124,11 @@ async def test_a_page_without_the_login_cookie_stays_signed_out_even_with_a_stor
         nonlocal ran
         ran = True
 
-    await middleware.require_auth(page)()
+    result = await middleware.require_auth(page)()
 
     assert not ran
-    middleware.ui.navigate.to.assert_called_once_with("/login")  # type: ignore[attr-defined]
+    assert result.status_code == 303
+    assert result.headers["location"] == "/login"
 
 
 @pytest.mark.asyncio

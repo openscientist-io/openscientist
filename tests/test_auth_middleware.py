@@ -21,7 +21,9 @@ def _make_fake_context(session_token: str | None = None):
     fake_ui = SimpleNamespace(
         context=SimpleNamespace(
             client=SimpleNamespace(
-                request=SimpleNamespace(cookies=cookies),
+                request=SimpleNamespace(
+                    cookies=cookies, url=SimpleNamespace(path="/new", query="")
+                ),
                 page=SimpleNamespace(path="/new", response_timeout=3.0),
             ),
             slot=MagicMock(),
@@ -48,10 +50,11 @@ async def test_require_auth_rejects_invalid_cookie_session(monkeypatch):
         called["value"] = True
 
     wrapped = middleware.require_auth(protected_page)
-    await wrapped()
+    result = await wrapped()
 
     assert called["value"] is False
-    fake_ui.navigate.to.assert_called_once_with("/login")
+    assert result.status_code == 303
+    assert result.headers["location"] == "/login"
     assert storage.get("return_to") == "/new"
 
 

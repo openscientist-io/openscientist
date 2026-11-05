@@ -7,12 +7,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
+from urllib.parse import urlsplit
 
 from nicegui import app, ui
 from nicegui.slot import Slot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.responses import RedirectResponse
 
 from openscientist.database.models import Session, User
 from openscientist.database.retry import is_connection_error
@@ -22,6 +24,9 @@ logger = logging.getLogger(__name__)
 
 #: Fraction of a page's ``response_timeout`` kept for sending the outage page
 _OUTAGE_PAGE_SECONDS = 0.5
+
+#: Where a signed-in visitor lands when no page asked them to sign in.
+HOME_PATH = "/jobs"
 
 #: Builds cancelled at their deadline, held until their database driver
 #: finishes cleaning up, which on a hung connection outlasts the deadline.
@@ -89,20 +94,45 @@ def _store_authenticated_user(user_info: dict[str, Any]) -> None:
     app.storage.user["authenticated"] = True
 
 
-def _save_return_to_path() -> None:
-    """Save the current path to return to after login."""
+def redirect_to(path: str) -> RedirectResponse:
+    """A 303 to ``path``, which a page returns so the server answers the
+    redirect and the browser never paints the page it leaves."""
+    return RedirectResponse(url=path, status_code=303)
+
+
+def _is_local_path(path: object) -> bool:
+    """Whether ``path`` stays on this site, for a redirect target read back from storage."""
+    if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+        return False
+    parts = urlsplit(path)
+    return not parts.scheme and not parts.netloc and "\\" not in path
+
+
+def pop_return_to() -> str:
+    """The page a visitor asked for before signing in, removed from their
+    storage, or the home page when there is none or it would leave the site."""
     try:
-        app.storage.user["return_to"] = str(ui.context.client.page.path)
+        path = app.storage.user.pop("return_to", None)
+    except RuntimeError:
+        return HOME_PATH
+    return path if _is_local_path(path) else HOME_PATH
+
+
+def _save_return_to_path() -> None:
+    """Remember the URL the visitor asked for, to return to after signing in."""
+    try:
+        url = ui.context.client.request.url
+        app.storage.user["return_to"] = f"{url.path}?{url.query}" if url.query else url.path
     except Exception:
         logger.debug("Could not save return_to path", exc_info=True)
 
 
-def _redirect_to_login(*, clear_storage: bool = False) -> None:
-    """Persist return path and navigate to login."""
+def _redirect_to_login(*, clear_storage: bool = False) -> RedirectResponse:
+    """Remember the requested URL and send the visitor to the login page."""
     if clear_storage:
         app.storage.user.clear()
     _save_return_to_path()
-    ui.navigate.to("/login")
+    return redirect_to("/login")
 
 
 def _show_database_unavailable() -> None:
@@ -133,8 +163,7 @@ def require_auth(func: Callable[..., Any]) -> Callable[..., Any]:
         session_token = get_session_token()
         if not session_token:
             logger.debug("No session token, redirecting to login")
-            _redirect_to_login()
-            return None
+            return _redirect_to_login()
 
         page = ui.context.client.page
         deadline = page.response_timeout - _OUTAGE_PAGE_SECONDS
@@ -191,8 +220,7 @@ async def _build_signed_in(
             return None
         if not user_info:
             logger.debug("Invalid session token, redirecting to login")
-            _redirect_to_login(clear_storage=True)
-            return None
+            return _redirect_to_login(clear_storage=True)
 
         _store_authenticated_user(user_info)
         return await func(*args, **kwargs)
@@ -223,32 +251,26 @@ def can_current_user_start_jobs() -> bool:
 def require_admin(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to require admin privileges for a page.
 
-    Use after ``@require_auth`` so the user is authenticated first.
+    Use after ``@require_auth`` so the user is authenticated first. A
+    non-admin is sent to the home page by the server.
     """
+
+    def refused() -> RedirectResponse | None:
+        if app.storage.user.get("is_admin", False):
+            return None
+        logger.warning(
+            "Non-admin user %s attempted to access admin page",
+            app.storage.user.get("email", "unknown"),
+        )
+        return redirect_to(HOME_PATH)
 
     @wraps(func)
     async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-        if not app.storage.user.get("is_admin", False):
-            logger.warning(
-                "Non-admin user %s attempted to access admin page",
-                app.storage.user.get("email", "unknown"),
-            )
-            ui.notify("Admin access required", type="warning")
-            ui.navigate.to("/")
-            return None
-        return await func(*args, **kwargs)
+        return refused() or await func(*args, **kwargs)
 
     @wraps(func)
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-        if not app.storage.user.get("is_admin", False):
-            logger.warning(
-                "Non-admin user %s attempted to access admin page",
-                app.storage.user.get("email", "unknown"),
-            )
-            ui.notify("Admin access required", type="warning")
-            ui.navigate.to("/")
-            return None
-        return func(*args, **kwargs)
+        return refused() or func(*args, **kwargs)
 
     if inspect.iscoroutinefunction(func):
         return async_wrapper

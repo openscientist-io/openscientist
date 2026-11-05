@@ -2,11 +2,14 @@
 
 import logging
 
-from nicegui import app, ui
+from nicegui import ui
+from starlette.responses import RedirectResponse
 
 from openscientist.auth.middleware import (
     _store_authenticated_user,
     get_session_token,
+    pop_return_to,
+    redirect_to,
     validate_session,
 )
 from openscientist.auth.oauth import is_mock_auth_enabled, is_oauth_configured
@@ -35,17 +38,13 @@ _TOKEN_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
 
 
 @ui.page("/login")
-async def login_page(error: str | None = None) -> None:
-    """Login page with OAuth support."""
+async def login_page(error: str | None = None) -> RedirectResponse | None:
+    """Login page with OAuth support.
 
-    # Check if already authenticated (from return redirect)
-    if app.storage.user.get("authenticated"):
-        return_to = app.storage.user.pop("return_to", "/")
-        ui.navigate.to(return_to)
-        return
-
-    # A web restart wipes the per-browser storage but not the login cookie,
-    # so the cookie alone proves the visitor is still signed in.
+    A visitor whose login cookie is still valid is sent on by the server to
+    the page they asked for. The per-browser storage alone signs nobody in,
+    since it outlives an expired cookie.
+    """
     session_token = get_session_token()
     if session_token:
         try:
@@ -57,9 +56,7 @@ async def login_page(error: str | None = None) -> None:
             user_info = None
         if user_info is not None:
             _store_authenticated_user(user_info)
-            return_to = app.storage.user.pop("return_to", "/")
-            ui.navigate.to(return_to)
-            return
+            return redirect_to(pop_return_to())
 
     # Check if OAuth is configured
     settings = get_settings()
@@ -221,3 +218,4 @@ async def login_page(error: str | None = None) -> None:
 
         ui.separator().classes("w-full my-1")
         render_project_resource_links()
+    return None

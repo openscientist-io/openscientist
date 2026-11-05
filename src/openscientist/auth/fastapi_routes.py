@@ -18,6 +18,7 @@ from sqlalchemy import select
 from starlette.responses import Response
 
 from openscientist.admin_settings import current_admin_settings
+from openscientist.auth.middleware import pop_return_to
 from openscientist.auth.oauth import get_oauth_client
 from openscientist.auth.providers import GitHubProvider, GoogleProvider, MockProvider, OrcidProvider
 from openscientist.auth.routes import (
@@ -95,7 +96,7 @@ async def mock_oauth_login() -> RedirectResponse:
         )
         session = await create_session(db, str(user.id))
 
-    response = RedirectResponse(url="/", status_code=303)
+    response = RedirectResponse(url=pop_return_to(), status_code=303)
     await _set_session_cookie(response, str(session.id))
 
     logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
@@ -160,7 +161,7 @@ async def mock_admin_oauth_login() -> RedirectResponse:
             await db.commit()
             logger.info("Created admin record for user %s", user_email)
 
-    response = RedirectResponse(url="/", status_code=303)
+    response = RedirectResponse(url=pop_return_to(), status_code=303)
     await _set_session_cookie(response, session_token)
 
     logger.info("Admin user %s logged in via mock auth (DEV MODE)", user_email)
@@ -205,7 +206,7 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
             )
             session = await create_session(db, str(user.id))
 
-        response = RedirectResponse(url="/", status_code=303)
+        response = RedirectResponse(url=pop_return_to(), status_code=303)
         await _set_session_cookie(response, str(session.id))
 
         logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
@@ -284,7 +285,7 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
             )
             session = await create_session(db, str(user.id))
 
-        response = RedirectResponse(url="/")
+        response = RedirectResponse(url=pop_return_to())
         await _set_session_cookie(response, str(session.id))
 
         logger.info("User %s logged in via %s", user.email, provider)
@@ -512,7 +513,7 @@ async def redeem_review_token(token: str, _redeem: RedeemRequest) -> RedirectRes
                 return RedirectResponse(url="/login?error=token_invalid", status_code=303)
 
             session = await create_session(db, str(user.id))
-            response = RedirectResponse(url="/", status_code=303)
+            response = RedirectResponse(url=pop_return_to(), status_code=303)
             response.headers["Referrer-Policy"] = "no-referrer"
             await _set_session_cookie(response, str(session.id))
             logger.info(
@@ -537,7 +538,7 @@ async def redeem_review_token(token: str, _redeem: RedeemRequest) -> RedirectRes
 
         session = await create_session(db, str(anon_user.id))
 
-        response = RedirectResponse(url="/", status_code=303)
+        response = RedirectResponse(url=pop_return_to(), status_code=303)
         response.headers["Referrer-Policy"] = "no-referrer"
         await _set_session_cookie(response, str(session.id))
 

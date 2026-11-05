@@ -3,6 +3,7 @@
 import os
 from collections.abc import Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -57,33 +58,39 @@ async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session
     return session
 
 
-OpenBrowser = Callable[[str | None], Awaitable[Client]]
+class OpenBrowser(Protocol):
+    """Open a NiceGUI client whose request asks for ``url`` with the login cookie ``token``."""
+
+    def __call__(self, token: str | None, url: str = "/") -> Awaitable[Client]: ...
+
+
 OpenPage = Callable[[str, Callable[[], Awaitable[None]]], Awaitable[Client]]
 
 
 @pytest.fixture
 def browser_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[OpenBrowser]:
-    """A NiceGUI client of its own whose request carries only the login
-    cookie, or none when the token is None. Each client gets the user
-    storage a deployed browser would have, removed with the client when the
-    test ends.
+    """A NiceGUI client of its own whose request asks for ``url`` and carries
+    only the login cookie, or none when the token is None. Each client gets
+    the user storage a deployed browser would have, removed with the client
+    when the test ends.
 
     A deployed page never runs in NiceGUI's script mode, which an earlier test
     may have left on and which swaps the user storage for a blank one."""
     monkeypatch.setattr(core, "script_mode", False)
     opened: list[tuple[Client, str]] = []
 
-    async def open_browser(token: str | None) -> Client:
+    async def open_browser(token: str | None, url: str = "/") -> Client:
         browser_id = str(uuid4())
         headers: list[tuple[bytes, bytes]] = []
         if token is not None:
             headers.append((b"cookie", f"session_token={token}".encode()))
+        path, _, query = url.partition("?")
         request = Request(
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/",
-                "query_string": b"",
+                "path": path,
+                "query_string": query.encode(),
                 "headers": headers,
                 "session": {"id": browser_id},
                 "client": ("127.0.0.1", 50000),

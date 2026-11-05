@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -40,11 +41,12 @@ async def signed_in_visitor(test_engine: AsyncEngine) -> AsyncIterator[tuple[Use
         await db.commit()
 
 
-async def _build_login_page() -> None:
-    """Build the login page, awaiting its builder when it is async."""
+async def _build_login_page() -> Any:
+    """Build the login page, awaiting its builder when it is async, and return its result."""
     result = login_page()
     if inspect.isawaitable(result):
-        await result
+        return await result
+    return result
 
 
 @pytest.mark.asyncio
@@ -62,15 +64,15 @@ async def test_the_login_page_repopulates_storage_from_a_valid_cookie(
         # The container's recreate wiped the per-browser storage.
         app.storage.user.clear()
         app.storage.user["return_to"] = "/jobs"
-        await _build_login_page()
+        result = await _build_login_page()
 
-    # The cookie alone repopulated the storage and steered the visitor on.
+    # The cookie alone repopulated the storage and the server steered the visitor on.
     assert app.storage.user["authenticated"] is True
     assert app.storage.user["user_id"] == str(user.id)
     assert app.storage.user["can_start_jobs"] is True
     assert "return_to" not in app.storage.user
-    opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
-    assert opened == [{"path": "/jobs", "new_tab": False}]
+    assert result.status_code == 303
+    assert result.headers["location"] == "/jobs"
     assert not [e for e in client.layout.descendants() if isinstance(e, ui.card)]
 
 
