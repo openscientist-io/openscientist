@@ -150,8 +150,43 @@ def _restrict_socket_io_origins() -> None:
     core.sio.eio.cors_allowed_origins = lambda requested, _environ: requested == allowed
 
 
+def _render_config_error_page() -> None:
+    """The generic configuration-error page, answered with status 500.
+
+    Only a generic error is shown, and the details go to the server log."""
+    ui.context.client.status_code = 500
+
+    with ui.column().classes("absolute-center items-center gap-6 max-w-lg p-8"):
+        # Error icon
+        ui.icon("error", size="80px", color="red")
+
+        # Title
+        ui.markdown("# Server Error").classes("text-red-600")
+
+        # Generic message - no internal details exposed
+        ui.markdown(
+            "_The server encountered a configuration error and cannot process requests._"
+        ).classes("text-gray-600 text-center")
+
+        ui.separator().classes("w-full")
+
+        # Instructions card
+        with ui.card().classes("w-full bg-blue-50 border-l-4 border-blue-500"):
+            ui.label("What to do").classes("font-bold text-blue-800 mb-2")
+            ui.markdown(
+                """
+Please contact your **system administrator** to resolve this issue.
+
+Administrators can find detailed error information in the server logs.
+                """
+            ).classes("text-blue-700")
+
+        # HTTP 500 indicator
+        ui.label("HTTP 500 - Internal Server Error").classes("text-gray-400 text-sm mt-4")
+
+
 def _create_config_error_page(error_message: str) -> None:
-    """Create an error page for configuration errors.
+    """Serve the configuration-error page on every route.
 
     This page is shown when required configuration keys are missing.
     For security, only a generic error is shown to users - full details
@@ -160,41 +195,7 @@ def _create_config_error_page(error_message: str) -> None:
     # Log full error details server-side for administrators
     logger.error("Server configuration error (details hidden from UI): %s", error_message)
 
-    @ui.page("/")
-    @ui.page("/{path:path}")
-    def config_error_page(_path: str = "") -> None:
-        """Display generic server error with 500 status."""
-        app.storage.user["_error_shown"] = True
-
-        with ui.column().classes("absolute-center items-center gap-6 max-w-lg p-8"):
-            # Error icon
-            ui.icon("error", size="80px", color="red")
-
-            # Title
-            ui.markdown("# Server Error").classes("text-red-600")
-
-            # Generic message - no internal details exposed
-            ui.markdown(
-                "_The server encountered a configuration error and cannot process requests._"
-            ).classes("text-gray-600 text-center")
-
-            ui.separator().classes("w-full")
-
-            # Instructions card
-            with ui.card().classes("w-full bg-blue-50 border-l-4 border-blue-500"):
-                ui.label("What to do").classes("font-bold text-blue-800 mb-2")
-                ui.markdown(
-                    """
-Please contact your **system administrator** to resolve this issue.
-
-Administrators can find detailed error information in the server logs.
-                    """
-                ).classes("text-blue-700")
-
-            # HTTP 500 indicator
-            ui.label("HTTP 500 - Internal Server Error").classes("text-gray-400 text-sm mt-4")
-
-    # Also add a health check endpoint that returns 500
+    # Registered before the catch-all page, which would otherwise answer /health.
     @app.get("/health")
     def health_check() -> Response:
         return Response(
@@ -202,6 +203,12 @@ Administrators can find detailed error information in the server logs.
             status_code=500,
             media_type="application/json",
         )
+
+    @ui.page("/")
+    @ui.page("/{path:path}")
+    def config_error_page(_path: str = "") -> None:
+        """Display generic server error with 500 status."""
+        _render_config_error_page()
 
 
 class _AppState:
