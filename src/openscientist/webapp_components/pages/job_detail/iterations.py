@@ -315,11 +315,15 @@ async def _load_iteration_content(
 ) -> None:
     if not is_client_connected() or loaded_flag["value"]:
         return
-    first_actions = await log.actions(0)
-    searches = await log.searches()
+    loaded_flag["value"] = True
+    try:
+        first_actions = await log.actions(0)
+        searches = await log.searches()
+    except BaseException:
+        loaded_flag["value"] = False
+        raise
     if container.is_deleted:
         return
-    loaded_flag["value"] = True
     container.clear()
 
     with container:
@@ -332,7 +336,9 @@ async def _load_iteration_content(
 
         _render_iteration_hypotheses(iter_ks_data, iter_num)
         _render_iteration_findings(iter_ks_data, iter_num)
-        _render_analysis_log_actions(action_total, first_actions, log)
+        await _render_analysis_log_actions(action_total, first_actions, log)
+        if container.is_deleted:
+            return
         _render_iteration_plots(iter_provenance_dir, iter_num)
         _render_iteration_literature(searches, iter_ks_data, iter_num)
 

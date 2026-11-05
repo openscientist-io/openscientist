@@ -12,11 +12,12 @@ from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import ui
+from nicegui import background_tasks, ui
 from nicegui.client import Client
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -27,7 +28,7 @@ from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.job_detail.analysis_log import _IterationLog
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import ServedPage
+from tests.webapp.conftest import ServedPage, fire_click_twice
 
 CODE_RUNS = 110
 SEARCHES = 10
@@ -162,9 +163,15 @@ async def _until(condition, what: str) -> None:
 
 
 async def _open_iteration(client: Client, number: int) -> None:
+    """Open the iteration and wait for its content load to finish."""
     with client:
-        _expansion_named(client, f"Iteration {number}:").value = True
-    await _until(lambda: _actions_shown(client), f"iteration {number} opened")
+        expansion = _expansion_named(client, f"Iteration {number}:")
+        before = set(background_tasks.running_tasks)
+        expansion.value = True
+    opened = background_tasks.running_tasks - before
+    assert opened, f"opening iteration {number} must schedule its load"
+    for task in opened:
+        await asyncio.wait_for(task, 10)
 
 
 def _actions_shown(client: Client) -> bool:
@@ -220,6 +227,69 @@ async def test_an_opened_iteration_shows_its_actions_fifty_at_a_time(
     assert titles[-SEARCHES:] == [f"\u2705 Search {n}" for n in range(SEARCHES)]
     assert titles[:CODE_RUNS] == [f"\u2705 Run {n}" for n in range(CODE_RUNS)]
     assert _show_more(client) is None
+
+
+@pytest.mark.asyncio
+async def test_two_racing_show_more_clicks_each_append_one_batch(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+) -> None:
+    """Two Show more clicks dispatched in one burst must not append the
+    batch twice, so the actions left over stay reachable."""
+    client = await _served(served_page, long_log_job)
+    await _open_iteration(client, 1)
+    total = CODE_RUNS + SEARCHES
+    button = _show_more(client)
+    assert button is not None
+    burst = pytest.MonkeyPatch()
+    await fire_click_twice(button, client, burst)
+    burst.undo()
+    await _until(lambda: len(_action_titles(client)) >= 100, "the second batch")
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(100)]
+    remaining = _show_more(client)
+    assert remaining is not None, "20 actions remain, the button must stay offered"
+
+    _click(client, remaining)
+    await _until(lambda: len(_action_titles(client)) >= total, "every action")
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(CODE_RUNS)] + [
+        f"\u2705 Search {n}" for n in range(SEARCHES)
+    ]
+    assert _show_more(client) is None
+
+
+@pytest.mark.asyncio
+async def test_reopening_an_iteration_while_its_load_is_pending_loads_it_once(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open, close and open while the first load is still pending must
+    load the iteration's content once, not twice."""
+    gate = asyncio.Event()
+    loads = 0
+    real_actions = _IterationLog.actions
+
+    async def gated_actions(self: _IterationLog, offset: int) -> list[dict[str, Any]]:
+        nonlocal loads
+        loads += 1
+        await gate.wait()
+        return await real_actions(self, offset)
+
+    monkeypatch.setattr(_IterationLog, "actions", gated_actions)
+    client = await _served(served_page, long_log_job)
+    expansion = _expansion_named(client, "Iteration 1:")
+    with client:
+        expansion.value = True
+        expansion.value = False
+        expansion.value = True
+    await asyncio.sleep(0.05)
+    gate.set()
+    await _until(lambda: _actions_shown(client) and len(_action_titles(client)) == 50, "the load")
+    assert loads == 1
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _show_more(client) is not None
 
 
 @pytest.mark.asyncio

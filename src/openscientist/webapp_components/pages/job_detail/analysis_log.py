@@ -1,5 +1,6 @@
 """Analysis log rendering for the job detail timeline."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -14,6 +15,9 @@ RESULT_PREVIEW_CHARS = 2000
 
 #: How many action cards an opened iteration shows at a time.
 ACTIONS_PER_BATCH = 50
+
+#: How many action cards one render chunk creates before yielding to the loop.
+CARDS_PER_CHUNK = 10
 
 
 @dataclass(frozen=True)
@@ -132,29 +136,44 @@ def _render_action_card(entry: dict[str, Any]) -> None:
         _render_analysis_log_details(entry, success)
 
 
+async def _render_action_cards(cards: ui.column, entries: list[dict[str, Any]]) -> None:
+    """Render ``entries`` under ``cards`` a few cards at a time, yielding to
+    the event loop between chunks so a batch does not hold the loop."""
+    for start in range(0, len(entries), CARDS_PER_CHUNK):
+        if cards.is_deleted:
+            return
+        with cards:
+            for entry in entries[start : start + CARDS_PER_CHUNK]:
+                _render_action_card(entry)
+        await asyncio.sleep(0)
+
+
 def _render_show_more(cards: ui.column, shown: int, total: int, log: _IterationLog) -> None:
     """A button under ``cards`` that appends the next batch of actions."""
     state = {"shown": shown}
 
     async def show_more() -> None:
+        if not button.enabled:
+            return
         button.disable()
         try:
             batch = await log.actions(state["shown"])
+            if cards.is_deleted:
+                return
+            state["shown"] += len(batch)
+            await _render_action_cards(cards, batch)
         finally:
-            button.enable()
+            if not button.is_deleted:
+                button.enable()
         if cards.is_deleted:
             return
-        with cards:
-            for entry in batch:
-                _render_action_card(entry)
-        state["shown"] += len(batch)
         if not batch or state["shown"] >= total:
             button.delete()
 
     button = ui.button("Show more", on_click=show_more).props("flat dense")
 
 
-def _render_analysis_log_actions(
+async def _render_analysis_log_actions(
     total: int, first: list[dict[str, Any]], log: _IterationLog
 ) -> None:
     """The iteration's ``total`` actions, ``first`` shown and the rest a
@@ -163,7 +182,6 @@ def _render_analysis_log_actions(
         return
     with ui.expansion(f"Actions ({total})", icon="build").classes("w-full mt-2"):
         with ui.column().classes("w-full gap-0") as cards:
-            for entry in first:
-                _render_action_card(entry)
-        if len(first) < total:
+            await _render_action_cards(cards, first)
+        if len(first) < total and not cards.is_deleted:
             _render_show_more(cards, len(first), total, log)
