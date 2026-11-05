@@ -31,7 +31,7 @@ def main():
         code = input_data.get("code", "")
         language = input_data.get("language", "python")
         data_path = input_data.get("data_path")
-        output_dir = Path(input_data.get("output_dir", "/output"))
+        output_dir = Path(input_data["output_dir"])
         timeout = input_data.get("timeout", 60)
         description = input_data.get("description", "")
         iteration = input_data.get("iteration", 0)

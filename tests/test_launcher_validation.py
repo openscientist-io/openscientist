@@ -315,15 +315,14 @@ class TestExecutorRequestValidation:
                 _config(jobs),
             )
 
-    def test_data_path_without_mounted_parent_refused(self, tmp_path: Path) -> None:
+    def test_a_path_climbing_out_of_the_job_dir_is_refused(self, tmp_path: Path) -> None:
+        """The check is on the path as written, since the executor resolves
+        symlinks inside its own mount of the job directory."""
         jobs = self._jobs_with_data(tmp_path)
-        (jobs / JOB_ID / "other").mkdir()
-        (jobs / JOB_ID / "other" / "y.csv").write_text("y", encoding="utf-8")
+        (tmp_path / "other").mkdir()
+        climbing = str(jobs / JOB_ID / "out" / ".." / ".." / ".." / "other")
         with pytest.raises(ValidationError):
-            validate_exec_request(
-                self._request(jobs, data_path=str(jobs / JOB_ID / "other" / "y.csv")),
-                _config(jobs),
-            )
+            validate_exec_request(self._request(jobs, output_dir=climbing), _config(jobs))
 
     @pytest.mark.parametrize("field", ["privileged", "cap_add", "image", "volumes"])
     def test_unknown_top_level_field_refused(self, tmp_path: Path, field: str) -> None:
@@ -537,18 +536,17 @@ class TestExecutorTemplate:
         assert kwargs["mem_limit"] == "1024m"
         assert kwargs["nano_cpus"] == 500_000_000
         assert kwargs["labels"]["openscientist.type"] == "executor"
-        assert _binds(kwargs) == {
-            str(jobs / JOB_ID / "out"): ("/output", False),
-            str(jobs / JOB_ID): ("/data", True),
-        }
+        # The job directory is the only bind source, at the path the agent sees it.
+        job_mount = f"/agent/jobs/{JOB_ID}"
+        assert _binds(kwargs) == {str(jobs / JOB_ID): (job_mount, False)}
         command = kwargs["command"]
         assert command[:2] == ["sh", "-c"]
         assert command[2].startswith("echo ")
         b64 = command[2].split("echo ", 1)[1].split(" | base64 -d |", 1)[0]
         payload = json.loads(base64.b64decode(b64).decode())
-        assert payload["output_dir"] == "/output"
-        assert payload["data_path"] == "/data/data.csv"
-        assert payload["data_files"] == [{"path": "/data/data.csv", "name": "data.csv"}]
+        assert payload["output_dir"] == f"{job_mount}/out"
+        assert payload["data_path"] == f"{job_mount}/data.csv"
+        assert payload["data_files"] == [{"path": f"{job_mount}/data.csv", "name": "data.csv"}]
         assert payload["code"] == "print(1)"
 
     def test_airgapped_executor_uses_no_network(self, tmp_path: Path) -> None:
