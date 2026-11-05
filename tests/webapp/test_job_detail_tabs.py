@@ -67,7 +67,8 @@ def test_a_job_without_a_live_status_has_no_line(status: JobStatus) -> None:
     assert timeline._status_line_for(job, {"agent_status": "leftover"}) is None
 
 
-def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) -> None:
     """While generating, the generation status lives in the log tab only."""
     context = SimpleNamespace(
         job_info=SimpleNamespace(status=JobStatus.GENERATING_REPORT),
@@ -77,7 +78,7 @@ def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) ->
         patch.object(report, "ui", MagicMock()),
         patch.object(report, "render_thinking_status", create=True) as thinking,
     ):
-        report._render_report_tab(context)  # type: ignore[arg-type]
+        await report._render_report_tab(context)  # type: ignore[arg-type]
 
     thinking.assert_not_called()
 

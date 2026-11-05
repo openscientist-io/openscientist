@@ -801,14 +801,15 @@ class TestUiReportPage:
         ui.download.assert_not_called()
         ui.notify.assert_called()
 
-    def test_the_markdown_view_refuses_a_symlinked_report(self, tmp_path: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_the_markdown_view_refuses_a_symlinked_report(self, tmp_path: Path) -> None:
         job_dir = tmp_path / "jobs" / "job-1"
         job_dir.mkdir(parents=True)
         secret = _plant_secret(tmp_path)
         (job_dir / "final_report.md").symlink_to(secret)
 
         with patch.object(report, "ui") as ui:
-            report._render_report_markdown(job_dir / "final_report.md")
+            await report._render_report_markdown(job_dir / "final_report.md")
 
         ui.markdown.assert_not_called()
 

@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from nicegui import ui
+from nicegui.elements.markdown import prepare_content
 
 from openscientist.auth import is_current_user_admin
 from openscientist.job.types import JobStatus
@@ -168,11 +169,28 @@ def _render_report_html_iframe(job_dir: Path) -> None:
     )
 
 
-def _render_report_markdown(report_path: Path) -> None:
+def _transformed_report_markdown(report_path: Path) -> str | None:
+    """The report's markdown with PMID links transformed, its HTML conversion
+    already computed.
+
+    The conversion is the one NiceGUI's markdown element performs at creation,
+    so precomputing it warms the content cache that the element call then
+    consults, and a large report keeps the event loop free.
+    """
     report_content = read_job_file_text(report_path.parent, report_path.name)
     if report_content is None:
+        return None
+    content = transform_pmid_references(report_content)
+    prepare_content(content, extras=" ".join(ui.markdown.default_extras))
+    return content
+
+
+async def _render_report_markdown(report_path: Path) -> None:
+    """Render the markdown report, running its conversion off the event loop."""
+    content = await asyncio.to_thread(_transformed_report_markdown, report_path)
+    if content is None:
         return
-    ui.markdown(transform_pmid_references(report_content)).classes("w-full")
+    ui.markdown(content).classes("w-full")
 
 
 def _render_missing_report_state(context: _JobDetailContext) -> None:
@@ -185,7 +203,7 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
 
-def _render_report_tab(context: _JobDetailContext) -> None:
+async def _render_report_tab(context: _JobDetailContext) -> None:
     report_path = context.job_dir / "final_report.md"
     html_path = context.job_dir / "final_report.html"
     pdf_path = context.job_dir / "final_report.pdf"
@@ -203,7 +221,7 @@ def _render_report_tab(context: _JobDetailContext) -> None:
         if job_file_exists(context.job_dir, html_path.name):
             _render_report_html_iframe(context.job_dir)
         else:
-            _render_report_markdown(report_path)
+            await _render_report_markdown(report_path)
         return
 
     _render_missing_report_state(context)
