@@ -1,10 +1,12 @@
 """Pytest fixtures for webapp tests."""
 
 import asyncio
+import json
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -14,6 +16,7 @@ from nicegui import app, core, storage
 from nicegui.app.app import State
 from nicegui.client import Client
 from nicegui.page import page
+from socketio import AsyncServer  # type: ignore[import-untyped]
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
@@ -167,3 +170,47 @@ async def served_page(
         return client, sent
 
     yield open_served
+
+
+@dataclass(frozen=True)
+class WireMessage:
+    """One message the outbox would deliver to a connected browser."""
+
+    event: str
+    room: str | None
+    wire_bytes: int
+
+
+@pytest.fixture
+def wire_recorder(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[WireMessage]]:
+    """Record every message NiceGUI would deliver to a connected browser.
+
+    The client never connects during the test, so the outbox loop holds its
+    queue until the test gives the client a ``tab_id``. From then on it
+    delivers to the recorder in place of the socket layer, the way the probe
+    of the original finding measured the wire."""
+    records: list[WireMessage] = []
+
+    class _Eio:
+        ping_interval = 25
+        ping_timeout = 20
+
+    class _Stub:
+        eio = _Eio()
+
+        async def emit(
+            self, event: str, data: Mapping[str, object], room: str | None = None
+        ) -> None:
+            records.append(WireMessage(event, room, len(json.dumps(data).encode())))
+
+    monkeypatch.setattr(core, "sio", cast(AsyncServer, _Stub()), raising=False)
+    yield records
+
+
+async def drain_outbox(client: Client) -> None:
+    """Wait for the outbox to hand everything queued so far to the wire recorder."""
+    for _ in range(500):
+        if not client.outbox.updates and not client.outbox.messages:
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
