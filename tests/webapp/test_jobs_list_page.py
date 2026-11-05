@@ -1,12 +1,8 @@
-"""The /jobs page built in a real signed-in NiceGUI client.
-
-NiceGUI's loop is the test's own, so page timers start the way they do on a
-running server. The client never connects, so none of them fires.
-"""
+"""The /jobs page built in a real signed-in NiceGUI client, read at the
+moment NiceGUI sends it (see ``served_page``)."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,8 +10,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import ElementFilter, core, ui
-from nicegui.app.app import State
+from nicegui import ElementFilter, ui
 from nicegui.client import Client
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -25,7 +20,7 @@ from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.settings import clear_settings_cache
 from openscientist.webapp_components.pages.jobs_list import jobs_page
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import OpenBrowser
+from tests.webapp.conftest import ServedPage
 
 
 @pytest_asyncio.fixture
@@ -68,14 +63,6 @@ def _job_manager(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(web_app._state, "job_manager", object())
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def _served_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run NiceGUI's background tasks on the test's loop as a started app does,
-    since timers neither start on a missing loop nor run in a stopped app."""
-    monkeypatch.setattr(core, "loop", asyncio.get_running_loop())
-    monkeypatch.setattr(core.app, "_state", State.STARTED)
-
-
 @pytest.fixture
 def configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """An Anthropic key, so the page offers starting a job."""
@@ -86,26 +73,11 @@ def configured_provider(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     clear_settings_cache()
 
 
-async def _open_jobs_page(browser_client: OpenBrowser, token: str) -> tuple[Client, set[str]]:
-    """Build /jobs the way NiceGUI serves it, returning the client and the
-    owned job ids the first HTML carried.
-
-    NiceGUI sends an async page once it returns or once anything on it awaits
-    the browser's connection, whichever comes first. The ids are read at that
-    moment, and the build then runs to its end."""
-    client = await browser_client(token)
-
-    async def build() -> None:
-        with client:
-            await jobs_page()
-
-    built = asyncio.create_task(build())
-    waiting = asyncio.create_task(client._waiting_for_connection.wait())
-    done, _ = await asyncio.wait({built, waiting}, timeout=10, return_when=asyncio.FIRST_COMPLETED)
-    assert done, "the page was neither built nor sent within 10 s"
-    sent_ids = _row_ids(_table(client, shared=False))
-    waiting.cancel()
-    await built
+async def _open_jobs_page(served_page: ServedPage, token: str) -> tuple[Client, set[str]]:
+    """Build /jobs, returning the client and the owned job ids the first HTML carried."""
+    client, sent_ids = await served_page(
+        token, jobs_page, lambda client: _row_ids(_table(client, shared=False))
+    )
     return client, sent_ids
 
 
@@ -127,10 +99,10 @@ def _row_ids(table: ui.table) -> set[str]:
 async def test_the_first_html_already_holds_the_users_jobs(
     database: Forwarder,
     jobs_owner: dict[str, Any],
-    browser_client: OpenBrowser,
+    served_page: ServedPage,
 ) -> None:
     """Both tables are filled before NiceGUI sends the page."""
-    client, sent_ids = await _open_jobs_page(browser_client, jobs_owner["owner_token"])
+    client, sent_ids = await _open_jobs_page(served_page, jobs_owner["owner_token"])
     assert sent_ids == jobs_owner["owned"]
     assert _row_ids(_table(client, shared=True)) == jobs_owner["shared"]
     assert not _marked(client, "owned-jobs-empty").visible
@@ -141,10 +113,10 @@ async def test_the_first_html_already_holds_the_users_jobs(
 async def test_a_user_without_jobs_gets_the_empty_state_instead_of_an_empty_table(
     database: Forwarder,
     jobs_owner: dict[str, Any],
-    browser_client: OpenBrowser,
+    served_page: ServedPage,
 ) -> None:
     """An approved user with no jobs sees the empty state and its way to start one."""
-    client, _ = await _open_jobs_page(browser_client, jobs_owner["newcomer_token"])
+    client, _ = await _open_jobs_page(served_page, jobs_owner["newcomer_token"])
     owned_empty = _marked(client, "owned-jobs-empty")
     assert owned_empty.visible
     assert not _table(client, shared=False).visible
@@ -157,9 +129,9 @@ async def test_a_user_without_jobs_gets_the_empty_state_instead_of_an_empty_tabl
 async def test_a_failed_refresh_keeps_the_rows_and_says_so_until_the_next_success(
     database: Forwarder,
     jobs_owner: dict[str, Any],
-    browser_client: OpenBrowser,
+    served_page: ServedPage,
 ) -> None:
-    client, _ = await _open_jobs_page(browser_client, jobs_owner["owner_token"])
+    client, _ = await _open_jobs_page(served_page, jobs_owner["owner_token"])
     table = _table(client, shared=False)
     error = _marked(client, "owned-jobs-load-error")
     refreshes: list[Callable[[], Awaitable[None]]] = []
