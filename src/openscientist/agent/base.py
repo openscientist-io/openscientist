@@ -321,6 +321,19 @@ class AbstractAgent[P: Provider](abc.ABC):
         resolved against the harness's own working dir and doubled."""
         return self._config.job_dir.resolve()
 
+    def _run_home(self) -> Path:
+        """The home of this container run, from the launcher's env when the
+        launcher mounted a home outside the job directory, else the home
+        inside the job directory."""
+        # Imported at call time, since the job_container package reaches this
+        # module through its own imports and a top-level one would cycle.
+        from openscientist.job_container.run_home import RUN_HOME_ENV
+
+        override = os.environ.get(RUN_HOME_ENV)
+        if override:
+            return Path(override)
+        return self._job_dir() / str(self.RUN_HOME)
+
     def _subprocess_env(
         self, job_dir: Path, container_env: Mapping[str, str] | None = None
     ) -> dict[str, str]:
@@ -372,8 +385,8 @@ class AbstractAgent[P: Provider](abc.ABC):
         """Per-run model override for in-page chat. Default: no override."""
         return None
 
-    #: The directory inside the job directory where the harness keeps its home,
-    #: or None. Each container run mounts a home of its own there.
+    #: The name of the harness home inside the job directory, or None. A
+    #: launcher run mounts a home of its own outside the job directory.
     RUN_HOME: ClassVar[str | None] = None
 
     @classmethod

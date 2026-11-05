@@ -108,7 +108,7 @@ class AgentLaunch:
     lifetime_seconds: int
     env: dict[str, str]
     db_login: str | None
-    run_home: tuple[Path, str] | None
+    run_home: Path | None
     phenix: bool
     memory_mib: int
     cpu: float
@@ -230,19 +230,16 @@ def _under_jobs_root(path_str: str, cfg: LauncherConfig, *, what: str) -> Path:
     return resolved
 
 
-def _run_home(body: dict[str, object], cfg: LauncherConfig) -> tuple[Path, str] | None:
+def _run_home(body: dict[str, object], cfg: LauncherConfig) -> Path | None:
     raw = body.get("run_home")
     if raw is None:
         return None
-    if not isinstance(raw, dict) or set(raw) != {"path", "name"}:
-        raise ValidationError("run_home must carry path and name")
+    if not isinstance(raw, dict) or set(raw) != {"path"}:
+        raise ValidationError("run_home must carry path")
     path_str = raw["path"]
-    name = raw["name"]
-    if not isinstance(path_str, str) or not isinstance(name, str):
-        raise ValidationError("run_home path and name must be strings")
-    if not name or name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:
-        raise ValidationError("run_home name must be a single path component")
-    return _under_jobs_root(path_str, cfg, what="run_home"), name
+    if not isinstance(path_str, str):
+        raise ValidationError("run_home path must be a string")
+    return _under_jobs_root(path_str, cfg, what="run_home")
 
 
 def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:

@@ -274,6 +274,25 @@ async def test_run_iteration_writes_config_and_agents_md(
     assert config_arg.cwd == str(tmp_path)
 
 
+async def test_the_run_home_env_names_the_launcher_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launcher mounts the run home outside the job directory and names
+    the mount in this env, so codex's home never lands in the job directory."""
+    home = tmp_path / "run-home"
+    monkeypatch.setenv("OPENSCIENTIST_RUN_HOME", str(home))
+    agent = _agent(tmp_path)
+    mock_codex_cls, _ = _patch_codex(_turn(usage=None))
+
+    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+        await agent.run_iteration("go")
+
+    config_arg = mock_codex_cls.call_args.args[0]
+    assert config_arg.env["CODEX_HOME"] == str(home)
+    assert (home / "config.toml").exists()
+    assert not (tmp_path / ".codex").exists()
+
+
 async def test_relative_job_dir_resolved_to_absolute(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

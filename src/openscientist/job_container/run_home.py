@@ -30,6 +30,10 @@ RUN_HOMES_DIR = ".run-homes"
 #: Container label that carries the run's home on the web's side.
 RUN_HOME_LABEL = "openscientist.run_home"
 
+#: Env the launcher names the run home's mount to the harness, outside the
+#: job mount so the daemon's mountpoint never lands in the job directory.
+RUN_HOME_ENV = "OPENSCIENTIST_RUN_HOME"
+
 # Where harnesses kept their homes inside the job directory before each run
 # had its own. Copies of the operator's login may still sit there.
 _LEGACY_JOB_HOMES = (".codex", ".omp-home")
