@@ -205,7 +205,7 @@ async def _render_job_tabs(context: _JobDetailContext) -> None:
         with ui.tab_panel(timeline_tab):
             await _render_timeline_tab(context)
         with ui.tab_panel(report_tab):
-            _render_report_tab(context)
+            await _render_report_tab(context)
         with ui.tab_panel(chat_tab):
             _render_chat_tab(context)
 
