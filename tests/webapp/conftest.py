@@ -64,9 +64,13 @@ async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session
 
 
 class OpenBrowser(Protocol):
-    """Open a NiceGUI client whose request asks for ``url`` with the login cookie ``token``."""
+    """Open a NiceGUI client whose request asks for ``url`` with the login
+    cookie ``token``, sharing the per-browser storage of ``browser_id`` when
+    one is given, as the tabs of one real browser do."""
 
-    def __call__(self, token: str | None, url: str = "/") -> Awaitable[Client]: ...
+    def __call__(
+        self, token: str | None, url: str = "/", browser_id: str | None = None
+    ) -> Awaitable[Client]: ...
 
 
 OpenPage = Callable[[str, Callable[[], Awaitable[None]]], Awaitable[Client]]
@@ -84,8 +88,11 @@ def browser_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[OpenBrowser]:
     monkeypatch.setattr(core, "script_mode", False)
     opened: list[tuple[Client, str]] = []
 
-    async def open_browser(token: str | None, url: str = "/") -> Client:
-        browser_id = str(uuid4())
+    async def open_browser(
+        token: str | None, url: str = "/", browser_id: str | None = None
+    ) -> Client:
+        if browser_id is None:
+            browser_id = str(uuid4())
         headers: list[tuple[bytes, bytes]] = []
         if token is not None:
             headers.append((b"cookie", f"session_token={token}".encode()))
