@@ -206,11 +206,11 @@ async def _render_job_tabs(context: _JobDetailContext) -> None:
             with chat_tab:
                 ui.tooltip(chat_tooltip)
 
-    with ui.tab_panels(tabs, value=timeline_tab).classes("w-full"):
+    with ui.tab_panels(tabs, value=timeline_tab).classes("w-full") as panels:
         with ui.tab_panel(timeline_tab):
             await _render_timeline_tab(context)
         with ui.tab_panel(report_tab):
-            await _render_report_tab(context)
+            _render_report_tab(context, panels, report_tab)
         with ui.tab_panel(chat_tab):
             await _render_chat_tab(context)
 
