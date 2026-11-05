@@ -1,6 +1,7 @@
 """Database persistence for KnowledgeState."""
 
 import math
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, TypeVar
 from uuid import UUID
@@ -55,6 +56,17 @@ async def first_scalar(session: AsyncSession, statement: Select[tuple[T]]) -> T 
     return result.scalars().first()
 
 
+async def rows_by_key(
+    session: AsyncSession, statement: Select[tuple[T]], key: Callable[[T], Any]
+) -> dict[Any, T]:
+    """The rows ``statement`` selects, each under its ``key``, the first row
+    winning when several share one."""
+    rows: dict[Any, T] = {}
+    for row in (await session.execute(statement)).scalars():
+        rows.setdefault(key(row), row)
+    return rows
+
+
 async def update_job_record(state: KnowledgeState, session: AsyncSession, job_uuid: UUID) -> None:
     """Update job-level metadata persisted in the jobs table."""
     job = await first_scalar(session, select(JobModel).where(JobModel.id == job_uuid))
@@ -77,14 +89,11 @@ async def update_job_record(state: KnowledgeState, session: AsyncSession, job_uu
 
 async def upsert_hypotheses(state: KnowledgeState, session: AsyncSession, job_uuid: UUID) -> None:
     """Create or update hypotheses rows from knowledge state."""
+    stored = await rows_by_key(
+        session, select(Hypothesis).where(Hypothesis.job_id == job_uuid), lambda row: row.text
+    )
     for hypothesis_data in state.data["hypotheses"]:
-        existing = await first_scalar(
-            session,
-            select(Hypothesis).where(
-                Hypothesis.job_id == job_uuid,
-                Hypothesis.text == hypothesis_data["statement"],
-            ),
-        )
+        existing = stored.get(hypothesis_data["statement"])
         if not existing:
             session.add(
                 Hypothesis(
@@ -121,14 +130,11 @@ def finding_payload(finding_data: dict[str, Any]) -> dict[str, Any]:
 
 async def upsert_findings(state: KnowledgeState, session: AsyncSession, job_uuid: UUID) -> None:
     """Create or update findings rows from knowledge state."""
+    stored = await rows_by_key(
+        session, select(Finding).where(Finding.job_id == job_uuid), lambda row: row.text
+    )
     for finding_data in state.data["findings"]:
-        existing = await first_scalar(
-            session,
-            select(Finding).where(
-                Finding.job_id == job_uuid,
-                Finding.text == finding_data["title"],
-            ),
-        )
+        existing = stored.get(finding_data["title"])
         if not existing:
             session.add(
                 Finding(
@@ -155,14 +161,11 @@ def literature_extra_metadata(literature_data: dict[str, Any]) -> dict[str, Any]
 
 async def upsert_literature(state: KnowledgeState, session: AsyncSession, job_uuid: UUID) -> None:
     """Create or update literature rows from knowledge state."""
+    stored = await rows_by_key(
+        session, select(Literature).where(Literature.job_id == job_uuid), lambda row: row.title
+    )
     for literature_data in state.data["literature"]:
-        existing = await first_scalar(
-            session,
-            select(Literature).where(
-                Literature.job_id == job_uuid,
-                Literature.title == literature_data["title"],
-            ),
-        )
+        existing = stored.get(literature_data["title"])
         if not existing:
             session.add(
                 Literature(
@@ -183,10 +186,31 @@ async def upsert_literature(state: KnowledgeState, session: AsyncSession, job_uu
 
 
 async def upsert_analysis_log(state: KnowledgeState, session: AsyncSession, job_uuid: UUID) -> None:
-    """Insert analysis log rows that are not already persisted."""
-    for log_entry in state.data["analysis_log"]:
-        timestamp = datetime.fromisoformat(log_entry["timestamp"])
-        description = str(log_entry.get("description") or log_entry.get("action", ""))
+    """Insert the logged entries that are not already persisted.
+
+    An entry is stored once per (iteration, description, timestamp), so saving
+    the same state twice stores its entries once.
+    """
+    entries = [
+        (
+            log_entry,
+            datetime.fromisoformat(log_entry["timestamp"]),
+            str(log_entry.get("description") or log_entry.get("action", "")),
+        )
+        for log_entry in state.data["analysis_log"]
+    ]
+    if not entries:
+        return
+    stored = await session.execute(
+        select(AnalysisLog.iteration, AnalysisLog.description, AnalysisLog.created_at).where(
+            AnalysisLog.job_id == job_uuid,
+            AnalysisLog.created_at.in_({timestamp for _, timestamp, _ in entries}),
+        )
+    )
+    persisted = {tuple(row) for row in stored.all()}
+    for log_entry, timestamp, description in entries:
+        if (log_entry["iteration"], description, timestamp) in persisted:
+            continue
         input_data = {
             key: value
             for key, value in log_entry.items()
@@ -201,17 +225,6 @@ async def upsert_analysis_log(state: KnowledgeState, session: AsyncSession, job_
             }
         }
         output_data = {"output": log_entry.get("output")} if log_entry.get("output") else None
-        existing = await first_scalar(
-            session,
-            select(AnalysisLog).where(
-                AnalysisLog.job_id == job_uuid,
-                AnalysisLog.iteration == log_entry["iteration"],
-                AnalysisLog.description == description,
-                AnalysisLog.created_at == timestamp,
-            ),
-        )
-        if existing:
-            continue
         session.add(
             AnalysisLog(
                 job_id=job_uuid,
@@ -236,14 +249,13 @@ async def upsert_iteration_summaries(
     state: KnowledgeState, session: AsyncSession, job_uuid: UUID
 ) -> None:
     """Create or update iteration summary rows."""
+    stored = await rows_by_key(
+        session,
+        select(IterationSummary).where(IterationSummary.job_id == job_uuid),
+        lambda row: row.iteration,
+    )
     for summary_data in state.data.get("iteration_summaries", []):
-        existing = await first_scalar(
-            session,
-            select(IterationSummary).where(
-                IterationSummary.job_id == job_uuid,
-                IterationSummary.iteration == summary_data["iteration"],
-            ),
-        )
+        existing = stored.get(summary_data["iteration"])
         if not existing:
             session.add(
                 IterationSummary(
@@ -262,14 +274,13 @@ async def upsert_feedback_history(
     state: KnowledgeState, session: AsyncSession, job_uuid: UUID
 ) -> None:
     """Insert feedback history rows when missing."""
+    stored = await rows_by_key(
+        session,
+        select(FeedbackHistory).where(FeedbackHistory.job_id == job_uuid),
+        lambda row: row.iteration,
+    )
     for feedback_data in state.data.get("feedback_history", []):
-        existing = await first_scalar(
-            session,
-            select(FeedbackHistory).where(
-                FeedbackHistory.job_id == job_uuid,
-                FeedbackHistory.iteration == feedback_data["after_iteration"],
-            ),
-        )
+        existing = stored.get(feedback_data["after_iteration"])
         if existing:
             continue
         session.add(
@@ -313,14 +324,9 @@ async def load_from_database(job_id: str, session: AsyncSession | None = None) -
 
 
 async def load_with_session(session: AsyncSession, job_id: str) -> KnowledgeState:
-    ks = await load_without_analysis_log(session, job_id)
-    await load_analysis_log(session, UUID(job_id), ks)
-    return ks
-
-
-async def load_without_analysis_log(session: AsyncSession, job_id: str) -> KnowledgeState:
-    """Load the knowledge state with an empty analysis log, whose rows carry
-    every code run's full output."""
+    """Load the knowledge state, with an analysis log that holds only what is
+    logged after the load. The stored log rows carry every code run's full
+    output, so they are read through the queries that need them."""
     job_uuid = UUID(job_id)
     job = await load_job_or_raise(session, job_id, job_uuid)
     ks = new_from_job_record(job_id, job)
@@ -460,26 +466,6 @@ def _serialized_log_entry(
     if output_data:
         serialized.update(output_data)
     return serialized
-
-
-async def load_analysis_log(session: AsyncSession, job_uuid: UUID, ks: KnowledgeState) -> None:
-    """Load analysis log rows into knowledge state format."""
-    result = await session.execute(
-        select(AnalysisLog).where(AnalysisLog.job_id == job_uuid).order_by(AnalysisLog.created_at)
-    )
-    for log_entry in result.scalars().all():
-        ks.data["analysis_log"].append(
-            _serialized_log_entry(
-                log_entry.iteration,
-                log_entry.action_type,
-                log_entry.created_at,
-                log_entry.description,
-                log_entry.success,
-                log_entry.duration_seconds,
-                log_entry.input_data,
-                log_entry.output_data,
-            )
-        )
 
 
 async def analysis_log_action_counts(

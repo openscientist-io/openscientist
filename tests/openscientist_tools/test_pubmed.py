@@ -22,6 +22,7 @@ from openscientist.knowledge_state import KnowledgeState
 from openscientist.settings import get_settings
 from openscientist_tools.pubmed import search_pubmed
 from openscientist_tools.state import STATE
+from tests.stored_log import last_logged_entry
 
 _ESEARCH_TWO_HITS: dict[str, Any] = {"esearchresult": {"idlist": ["12345678", "87654321"]}}
 _ESEARCH_EMPTY: dict[str, Any] = {"esearchresult": {"idlist": []}}
@@ -227,7 +228,7 @@ async def test_subprocess_smoke_real_ncbi(
 
         reloaded = await KnowledgeState.load_from_database(str(job_id))
         assert len(reloaded.data["literature"]) >= 1
-        last_log = reloaded.data["analysis_log"][-1]
+        last_log = await last_logged_entry(job_id)
         assert last_log["action"] == "search_pubmed"
         assert last_log["query"] == "CRISPR Cas9"
     finally:

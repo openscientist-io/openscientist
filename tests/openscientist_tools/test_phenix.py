@@ -27,6 +27,7 @@ from openscientist_tools.phenix import (
     run_phenix_tool,
 )
 from openscientist_tools.state import STATE
+from tests.stored_log import last_logged_entry
 
 
 def _phenix_available_in_test_env() -> bool:
@@ -415,9 +416,9 @@ async def test_run_phenix_tool_via_subprocess(
         assert "❌" not in text
         assert "Command: phenix.clashscore" in text
 
-        reloaded = await KnowledgeState.load_from_database(str(job_id))
-        assert reloaded.data["analysis_log"][-1]["action"] == "run_phenix_tool"
-        assert reloaded.data["analysis_log"][-1]["tool_name"] == "phenix.clashscore"
+        last_log = await last_logged_entry(job_id)
+        assert last_log["action"] == "run_phenix_tool"
+        assert last_log["tool_name"] == "phenix.clashscore"
 
 
 @PHENIX_REQUIRED
