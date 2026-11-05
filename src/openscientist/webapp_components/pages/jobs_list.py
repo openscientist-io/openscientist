@@ -40,7 +40,6 @@ from openscientist.webapp_components.components.job_table import (
     render_status_cell_slot,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
-from openscientist.webapp_components.utils import setup_timer_cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +85,18 @@ async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID
     return dict(result.all())
 
 
-def _render_badges(badges_container: ui.element, jobs: list[Job]) -> None:
-    """Render aggregate job counters from raw DB models."""
+def _render_badges(
+    badges_container: ui.element, jobs: list[Job], badge_counts: dict[str, int]
+) -> None:
+    """Render aggregate job counters, skipping the rebuild when the counts a
+    previous render showed stay unchanged."""
     status_counts = {
         status.value: sum(1 for job in jobs if job.status == status.value) for status in JobStatus
     }
+    if status_counts == badge_counts:
+        return
+    badge_counts.clear()
+    badge_counts.update(status_counts)
     badges_container.clear()
     with badges_container:
         render_stat_badges(
@@ -182,9 +188,11 @@ class _JobList:
     noun: str
 
     def show(self, rows: list[dict[str, Any]]) -> None:
-        """Show ``rows``, or the empty state when there are none."""
-        self.table.rows = rows
-        self.table.update()
+        """Show ``rows`` or the empty state when there are none, keeping the wire
+        quiet while the rows a previous load showed stay unchanged."""
+        if rows != self.table.rows:
+            self.table.rows = rows
+            self.table.update()
         self.table.set_visibility(bool(rows))
         self.empty.set_visibility(not rows)
         self.error.set_visibility(False)
@@ -206,6 +214,7 @@ async def _refresh_owned_jobs(
     *,
     current_user_id: str,
     badges_container: ui.element,
+    badge_counts: dict[str, int],
     view: _JobList,
 ) -> None:
     """Refresh owned jobs table and summary badges."""
@@ -219,7 +228,7 @@ async def _refresh_owned_jobs(
         logger.error("Failed to load jobs: %s", exc, exc_info=True)
         view.show_load_error()
         return
-    _render_badges(badges_container, db_jobs)
+    _render_badges(badges_container, db_jobs, badge_counts)
     view.show(_owned_rows(db_jobs, findings_counts))
 
 
@@ -290,7 +299,6 @@ async def jobs_page() -> None:
 
     job_manager = web_app.get_job_manager()
     is_configured, provider_name, config_errors = check_provider_config()
-    _active_timers = setup_timer_cleanup()
     current_user_is_admin = is_current_user_admin()
     current_user_id = get_current_user_id()
     assert current_user_id is not None
@@ -303,6 +311,7 @@ async def jobs_page() -> None:
         render_pending_approval_notice()
 
     badges_container = ui.row().classes("w-full")
+    owned_badge_counts: dict[str, int] = {}
 
     with ui.tabs().classes("w-full") as tabs:
         my_jobs_tab = ui.tab("My Jobs", icon="work")
@@ -335,6 +344,7 @@ async def jobs_page() -> None:
                 await _refresh_owned_jobs(
                     current_user_id=current_user_id,
                     badges_container=badges_container,
+                    badge_counts=owned_badge_counts,
                     view=my_jobs,
                 )
 
@@ -393,5 +403,5 @@ async def jobs_page() -> None:
     # hung database.
     await refresh_my_jobs_table()
     await refresh_shared_jobs_table()
-    _active_timers.append(ui.timer(5.0, refresh_my_jobs_table))
-    _active_timers.append(ui.timer(5.0, refresh_shared_jobs_table))
+    ui.timer(5.0, refresh_my_jobs_table)
+    ui.timer(5.0, refresh_shared_jobs_table)

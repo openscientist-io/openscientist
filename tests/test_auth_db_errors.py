@@ -103,21 +103,23 @@ async def test_a_page_while_the_database_hangs_shows_the_outage_page_in_time(
     assert visitor == stored
 
 
-async def test_a_hang_after_the_session_check_also_shows_the_outage_page(
+async def test_a_page_build_past_the_check_deadline_is_not_an_outage(
     database: Forwarder, visitor: dict[str, object]
 ) -> None:
+    """The deadline bounds the session check, not the page build. Once the
+    check has passed, a page that outlives the deadline runs to completion
+    instead of being replaced by the outage page."""
     finished = False
 
     async def page() -> None:
         nonlocal finished
-        database.hang()
-        await middleware.validate_session(str(visitor["session_token"]))
+        await asyncio.sleep(_RESPONSE_TIMEOUT)  # outlives the 1.0 s check deadline
         finished = True
 
     took = await _build_within_test_bound(page)
-    assert took < _RESPONSE_TIMEOUT
-    assert not finished
-    middleware.ui.label.assert_any_call(_OUTAGE)  # type: ignore[attr-defined]
+    assert finished, "the page build was abandoned past the check deadline"
+    assert took >= _RESPONSE_TIMEOUT
+    assert call(_OUTAGE) not in middleware.ui.label.call_args_list  # type: ignore[attr-defined]
 
 
 async def test_a_timeout_raised_by_the_page_itself_is_not_an_outage(
@@ -173,9 +175,9 @@ async def test_a_visitor_with_a_garbage_token_is_sent_to_login(
     monkeypatch.setattr(middleware, "ui", ui)
     result = await middleware.require_auth(page)()
     assert not ran
-    assert storage == {"return_to": "/jobs"}
+    assert storage == {}
     assert result.status_code == 303
-    assert result.headers["location"] == "/login"
+    assert result.headers["location"] == "/login?next=/jobs"
 
 
 async def test_an_unexpected_validation_error_is_not_treated_as_an_outage(

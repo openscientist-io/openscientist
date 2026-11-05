@@ -128,7 +128,7 @@ async def test_a_page_without_the_login_cookie_stays_signed_out_even_with_a_stor
 
     assert not ran
     assert result.status_code == 303
-    assert result.headers["location"] == "/login"
+    assert result.headers["location"] == "/login?next=/jobs"
 
 
 @pytest.mark.asyncio

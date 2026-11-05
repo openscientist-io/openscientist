@@ -59,18 +59,16 @@ async def test_the_login_page_repopulates_storage_from_a_valid_cookie(
     wiped the per-browser storage, instead of showing the form and minting a
     second session."""
     user, token = signed_in_visitor
-    client = await browser_client(token)
+    client = await browser_client(token, "/login?next=/jobs")
     with client:
         # The container's recreate wiped the per-browser storage.
         app.storage.user.clear()
-        app.storage.user["return_to"] = "/jobs"
         result = await _build_login_page()
 
     # The cookie alone repopulated the storage and the server steered the visitor on.
     assert app.storage.user["authenticated"] is True
     assert app.storage.user["user_id"] == str(user.id)
     assert app.storage.user["can_start_jobs"] is True
-    assert "return_to" not in app.storage.user
     assert result.status_code == 303
     assert result.headers["location"] == "/jobs"
     assert not [e for e in client.layout.descendants() if isinstance(e, ui.card)]

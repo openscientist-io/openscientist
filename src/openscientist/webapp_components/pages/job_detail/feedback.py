@@ -73,7 +73,7 @@ def _parse_awaiting_started_at(awaiting_since: str | None) -> datetime | None:
     return started
 
 
-def _render_feedback_countdown(awaiting_since: str | None, active_timers: list[Any]) -> None:
+def _render_feedback_countdown(awaiting_since: str | None) -> None:
     started = _parse_awaiting_started_at(awaiting_since)
     if started is None:
         ui.label("Auto-continues after 15 minutes if no response.").classes(
@@ -101,7 +101,6 @@ def _render_feedback_countdown(awaiting_since: str | None, active_timers: list[A
 
     update_countdown()
     timer_ref[0] = ui.timer(1.0, update_countdown)
-    active_timers.append(timer_ref[0])
 
 
 def _render_feedback_panel(
@@ -111,7 +110,6 @@ def _render_feedback_panel(
     job_dir: Path,
     job_id: str,
     user_id: str,
-    active_timers: list[Any],
     ks_data: dict[str, Any] | None = None,
 ) -> None:
     if latest_job.status != JobStatus.AWAITING_FEEDBACK:
@@ -156,7 +154,7 @@ def _render_feedback_panel(
         ui.label("You have view-only access to this job.").classes(
             "text-sm text-gray-500 italic mb-4"
         )
-        _render_feedback_countdown(awaiting_since, active_timers)
+        _render_feedback_countdown(awaiting_since)
 
 
 async def _refresh_feedback_panel(
@@ -166,7 +164,6 @@ async def _refresh_feedback_panel(
     user_id: str,
     can_edit: bool,
     job_dir: Path,
-    active_timers: list[Any],
     ks_data: dict[str, Any] | None = None,
 ) -> None:
     feedback_container.clear()
@@ -180,6 +177,5 @@ async def _refresh_feedback_panel(
         job_dir=job_dir,
         job_id=job_id,
         user_id=user_id,
-        active_timers=active_timers,
         ks_data=ks_data,
     )

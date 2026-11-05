@@ -20,7 +20,7 @@ from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.settings import clear_settings_cache
 from openscientist.webapp_components.pages.jobs_list import jobs_page
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import ServedPage
+from tests.webapp.conftest import ServedPage, WireMessage, drain_outbox
 
 
 @pytest_asyncio.fixture
@@ -155,3 +155,33 @@ async def test_a_failed_refresh_keeps_the_rows_and_says_so_until_the_next_succes
         for refresh in refreshes:
             await refresh()
     assert not error.visible
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_tick_sends_no_update_messages(
+    database: Forwarder,
+    jobs_owner: dict[str, Any],
+    served_page: ServedPage,
+    wire_recorder: list[WireMessage],
+) -> None:
+    """A 5 s tick whose rows did not change puts no update message on the wire."""
+    client, _ = await _open_jobs_page(served_page, jobs_owner["owner_token"])
+    refreshes: list[Callable[[], Awaitable[None]]] = []
+    for element in client.elements.values():
+        if isinstance(element, ui.timer) and element.interval == 5.0:
+            assert element.callback is not None
+            refreshes.append(element.callback)
+    assert len(refreshes) == 2
+
+    client.tab_id = "wire-test-socket"
+    await drain_outbox(client)
+    first = [m for m in wire_recorder if m.event == "update" and m.room == client.id]
+    assert first, "the build's elements never reached the wire"
+
+    wire_recorder.clear()
+    with client:
+        for refresh in refreshes:
+            await refresh()
+    await drain_outbox(client)
+    sent = [m for m in wire_recorder if m.event == "update" and m.room == client.id]
+    assert not sent, f"an unchanged tick sent {sum(m.wire_bytes for m in sent)} wire bytes"
