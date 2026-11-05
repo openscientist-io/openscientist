@@ -7,7 +7,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from nicegui import app, ui
 from sqlalchemy import select
@@ -107,7 +107,23 @@ def _is_local_path(path: object) -> bool:
     if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
         return False
     parts = urlsplit(path)
-    return not parts.scheme and not parts.netloc and "\\" not in path
+    if parts.scheme or parts.netloc or "\\" in path:
+        return False
+    if _contains_control_character(path):
+        return False
+    return not _is_sign_in_or_sign_out_route(unquote(parts.path))
+
+
+def _contains_control_character(path: str) -> bool:
+    """Whether ``path`` holds a C0 control character or DEL, which a redirect
+    target must never carry into a header or a cookie."""
+    return any(ord(ch) < 32 or ord(ch) == 127 for ch in path)
+
+
+def _is_sign_in_or_sign_out_route(path: str) -> bool:
+    """Whether the decoded ``path`` is one of the site's own sign-in or
+    sign-out routes, which a visitor-chosen target must never become."""
+    return path in ("/auth", "/logout") or path.startswith("/auth/") or path.startswith("/logout/")
 
 
 def safe_next(path: object) -> str:
