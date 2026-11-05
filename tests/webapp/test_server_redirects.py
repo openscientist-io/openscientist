@@ -91,23 +91,36 @@ async def test_the_home_route_redirects_to_the_jobs_list(
 
 
 @pytest.mark.asyncio
-async def test_a_signed_out_visit_is_sent_to_login_remembering_the_url(
+async def test_a_signed_out_visit_is_sent_to_login(
     database: Forwarder, logins: dict[str, str], browser_client: OpenBrowser
 ) -> None:
     result, ran = await _protected_page_result(browser_client, None)
     assert not ran
     assert _location(result) == "/login"
-    assert app.storage.user["return_to"] == _ASKED_FOR
+    assert dict(app.storage.user) == {}
 
 
 @pytest.mark.asyncio
-async def test_an_expired_session_is_sent_to_login_remembering_only_the_url(
+async def test_an_expired_session_is_sent_to_login(
     database: Forwarder, logins: dict[str, str], browser_client: OpenBrowser
 ) -> None:
     result, ran = await _protected_page_result(browser_client, logins["expired"])
     assert not ran
     assert _location(result) == "/login"
-    assert dict(app.storage.user) == {"return_to": _ASKED_FOR}
+    assert dict(app.storage.user) == {}
+
+
+@pytest.mark.asyncio
+async def test_an_anonymous_visit_writes_no_user_storage(
+    database: Forwarder, logins: dict[str, str], browser_client: OpenBrowser
+) -> None:
+    """A visitor who never signs in never signs out either, so an anonymous
+    visit must not create the per-browser storage file, which only a
+    sign-out would ever remove."""
+    result, ran = await _protected_page_result(browser_client, None)
+    assert not ran
+    assert _location(result) == "/login"
+    assert dict(app.storage.user) == {}
 
 
 @pytest.mark.asyncio

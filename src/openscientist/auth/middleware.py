@@ -118,20 +118,10 @@ def pop_return_to() -> str:
     return path if _is_local_path(path) else HOME_PATH
 
 
-def _save_return_to_path() -> None:
-    """Remember the URL the visitor asked for, to return to after signing in."""
-    try:
-        url = ui.context.client.request.url
-        app.storage.user["return_to"] = f"{url.path}?{url.query}" if url.query else url.path
-    except Exception:
-        logger.debug("Could not save return_to path", exc_info=True)
-
-
 def _redirect_to_login(*, clear_storage: bool = False) -> RedirectResponse:
-    """Remember the requested URL and send the visitor to the login page."""
+    """Send the visitor to the login page."""
     if clear_storage:
         app.storage.user.clear()
-    _save_return_to_path()
     return redirect_to("/login")
 
 
