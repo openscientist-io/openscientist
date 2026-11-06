@@ -10,6 +10,7 @@ from nicegui.elements.markdown import prepare_content
 from nicegui.elements.tabs import Tab, TabPanel
 from nicegui.events import ValueChangeEventArguments
 
+from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.auth import is_current_user_admin
 from openscientist.job.types import JobStatus
 from openscientist.job_files import (
@@ -17,6 +18,7 @@ from openscientist.job_files import (
     job_file_exists,
     read_job_file_bytes,
     read_job_file_text,
+    try_open_job_file,
 )
 from openscientist.pdf_generator import markdown_to_pdf
 from openscientist.run_environment import run_environment_text
@@ -38,15 +40,21 @@ async def _download_pdf_report(
     # The job directory is agent-writable, so the report files are read and
     # installed through the symlink-safe walk, and the PDF renders outside
     # the job directory before it is moved into place.
-    existing = read_job_file_bytes(job_dir, pdf_path.name)
+    existing = read_job_file_bytes(job_dir, pdf_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
     if existing is not None:
         # Serve existing PDF if available (avoids overwriting WeasyPrint PDF
         # with fpdf2)
         ui.download(existing, filename=f"{job_id}_report.pdf")
         return
+    if job_file_exists(job_dir, pdf_path.name):
+        ui.notify("The report is too large to download.", type="warning")
+        return
     # Fallback: generate via fpdf2
-    raw_md = read_job_file_text(job_dir, report_path.name)
+    raw_md = read_job_file_text(job_dir, report_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
     if raw_md is None:
+        if job_file_exists(job_dir, report_path.name):
+            ui.notify("The report is too large to download.", type="warning")
+            return
         logger.error("PDF generation failed: %s", "no readable final_report.md")
         ui.notify("Failed to generate PDF. Please try again.", type="negative")
         return
@@ -62,7 +70,9 @@ async def _download_pdf_report(
                 markdown_to_pdf, stripped_path, generated_pdf, run_environment=run_environment
             )
             install_file(job_dir, pdf_path.name, generated_pdf)
-        generated = read_job_file_bytes(job_dir, pdf_path.name)
+        generated = read_job_file_bytes(
+            job_dir, pdf_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+        )
         if generated is None:
             raise OSError("final_report.pdf is not a readable regular file")
         ui.download(generated, filename=f"{job_id}_report.pdf")
@@ -162,9 +172,22 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
                 ui.tooltip("Admin: re-run the report step using existing findings")
 
 
+def _report_html_available(job_dir: Path) -> bool:
+    """Whether the report route can serve the job's HTML report, which it
+    refuses when the file exceeds the size cap, so a too large file falls
+    back to the markdown view rather than a frame that 404s."""
+    job_file = try_open_job_file(
+        job_dir, "final_report.html", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+    )
+    if job_file is None:
+        return False
+    job_file.close()
+    return True
+
+
 def _render_report_html_iframe(job_dir: Path) -> None:
     """Render HTML report in an iframe to avoid CSS leakage."""
-    if not job_file_exists(job_dir, "final_report.html"):
+    if not _report_html_available(job_dir):
         return
     ui.element("iframe").props(f'src="/web/jobs/{job_dir.name}/report.html" frameborder="0"').style(
         "width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px;"
@@ -179,7 +202,9 @@ def _transformed_report_markdown(report_path: Path) -> str | None:
     so precomputing it warms the content cache that the element call then
     consults, and a large report keeps the event loop free.
     """
-    report_content = read_job_file_text(report_path.parent, report_path.name)
+    report_content = read_job_file_text(
+        report_path.parent, report_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+    )
     if report_content is None:
         return None
     content = transform_pmid_references(report_content)
@@ -199,6 +224,9 @@ async def _render_report_markdown(container: ui.column, report_path: Path) -> No
         return
     container.clear()
     if content is None:
+        if job_file_exists(report_path.parent, report_path.name):
+            with container:
+                ui.label("The report is too large to show.").classes("text-gray-500 italic")
         return
     with container:
         ui.markdown(content).classes("w-full")
@@ -247,7 +275,6 @@ def _render_report_tab(
     context: _JobDetailContext, panels: ui.tab_panels, report_tab: ui.tab
 ) -> None:
     report_path = context.job_dir / "final_report.md"
-    html_path = context.job_dir / "final_report.html"
     pdf_path = context.job_dir / "final_report.pdf"
 
     # Only show the report when the job has finished. The agent may write
@@ -259,8 +286,9 @@ def _render_report_tab(
 
     if job_file_exists(context.job_dir, report_path.name):
         _render_report_actions(context, report_path, pdf_path)
-        # Prefer HTML report (with embedded figures) over raw markdown
-        if job_file_exists(context.job_dir, html_path.name):
+        # Prefer HTML report (with embedded figures) over raw markdown, when
+        # the report route can serve it.
+        if _report_html_available(context.job_dir):
             _render_report_html_iframe(context.job_dir)
         else:
             _render_lazy_markdown_report(panels, report_tab, report_path)

@@ -14,6 +14,7 @@ from pathlib import Path
 import jinja2
 import markdown as md  # type: ignore[import-untyped]
 
+from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.job_files import read_job_file_text
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
@@ -60,8 +61,13 @@ def render_report_html(
         Complete HTML document as a string.
     """
     # The job directory is agent-writable, so the markdown is read through the
-    # symlink-safe walk; a planted link is a missing report.
-    raw_markdown = read_job_file_text(job_dir, markdown_path.relative_to(job_dir).as_posix())
+    # symlink-safe walk; a planted link is a missing report. The size cap keeps
+    # a sparse file the agent plants from reaching the web's memory.
+    raw_markdown = read_job_file_text(
+        job_dir,
+        markdown_path.relative_to(job_dir).as_posix(),
+        max_size=MAX_ARTIFACT_FILE_SIZE_BYTES,
+    )
     if raw_markdown is None:
         raise FileNotFoundError(f"Markdown report not found: {markdown_path}")
     provenance_dir = job_dir / "provenance"
