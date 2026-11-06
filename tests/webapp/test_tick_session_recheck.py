@@ -33,10 +33,7 @@ from openscientist.database.models import (
     User,
 )
 from openscientist.job.types import JobStatus
-from openscientist.webapp_components.pages.admin import (
-    admin_page,
-    render_containers_panel,
-)
+from openscientist.webapp_components.pages.admin import render_containers_panel
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.jobs_list import jobs_page
 from openscientist.webapp_components.utils import container_dashboard
@@ -164,28 +161,13 @@ def _timer_by_callback_name(client: Client, interval: float, name: str) -> ui.ti
     raise AssertionError(f"no {interval} s timer with a callback named {name!r}")
 
 
-async def _tick_unless_stopped(client: Client, timer: ui.timer) -> None:
-    """Fire ``timer`` once, unless its own schedule already fired it and it
-    stopped, which a slow run reaches before the test does."""
-    callback = timer.callback
-    assert callback is not None
-    if timer.active:
-        with client:
-            await callback()
+async def _deliver(client: Client) -> None:
+    """Give the client its socket, then deliver what the ticks queued.
 
-
-def _hold_deferred_containers_panel(client: Client) -> None:
-    """Keep the admin page's own deferred Containers render from running, so
-    the panel the test renders is the only one."""
-    for element in client.elements.values():
-        callback = getattr(element, "callback", None)
-        if (
-            isinstance(element, ui.timer)
-            and getattr(callback, "func", None) is render_containers_panel
-        ):
-            element.deactivate()
-            return
-    raise AssertionError("the admin page scheduled no timer for the Containers panel")
+    A timer starts its own schedule only once its client has a socket, so
+    the timers stay idle while the test fires their ticks by hand."""
+    client.tab_id = "wire-test-socket"
+    await drain_outbox(client)
 
 
 def _owned_jobs_table(client: Client) -> ui.table:
@@ -231,11 +213,11 @@ async def test_the_jobs_tick_sends_the_page_to_login_once_the_session_is_gone(
     assert owned_callback is not None
 
     await _drop_session_row(test_engine, tick_user["token"])
-    client.tab_id = "wire-test-socket"
 
-    await _tick_unless_stopped(client, owned_tick)
+    with client:
+        await owned_callback()
     assert owned_tick.active is False
-    await drain_outbox(client)
+    await _deliver(client)
     assert targets == [LOGIN_TARGET]
     assert [m for m in wire_recorder if m.event == "open" and m.room == client.id]
 
@@ -290,16 +272,16 @@ async def test_the_job_page_poll_sends_the_page_to_login_once_the_session_is_gon
     poll_callback = poll.callback
     assert poll_callback is not None
 
-    client.tab_id = "wire-test-socket"
     with client:
         await poll_callback()
     assert poll.active is True
     assert targets == []
 
     await _drop_session_row(test_engine, tick_user["token"])
-    await _tick_unless_stopped(client, poll)
+    with client:
+        await poll_callback()
     assert poll.active is False
-    await drain_outbox(client)
+    await _deliver(client)
     assert targets == [LOGIN_TARGET]
     assert [m for m in wire_recorder if m.event == "open" and m.room == client.id]
 
@@ -323,26 +305,29 @@ async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
 
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
     targets = _navigation_spy(monkeypatch)
-    client, _ = await served_page(tick_admin["token"], admin_page, lambda c: None)
-    _hold_deferred_containers_panel(client)
-    with client:
-        await render_containers_panel(tick_admin["user_id"])
+    # Only the containers panel is served. The admin page's other deferred
+    # panels start once the client has a socket and would race the ticks.
+    client, _ = await served_page(
+        tick_admin["token"],
+        lambda: render_containers_panel(tick_admin["user_id"]),
+        lambda c: None,
+    )
     ticks = _timer_with_interval(client, 3.0)
     assert len(ticks) == 1
     tick = ticks[0]
     tick_callback = tick.callback
     assert tick_callback is not None
 
-    client.tab_id = "wire-test-socket"
     with client:
         await tick_callback()
     assert tick.active is True
     assert targets == []
 
     await _drop_session_row(test_engine, tick_admin["token"])
-    await _tick_unless_stopped(client, tick)
+    with client:
+        await tick_callback()
     assert tick.active is False
-    await drain_outbox(client)
+    await _deliver(client)
     assert targets == [LOGIN_TARGET]
     assert [m for m in wire_recorder if m.event == "open" and m.room == client.id]
 
@@ -372,15 +357,15 @@ async def test_the_job_page_poll_sends_a_view_only_viewer_to_login_once_their_se
     poll_callback = poll.callback
     assert poll_callback is not None
 
-    client.tab_id = "wire-test-socket"
     with client:
         await poll_callback()
     assert poll.active is True
     assert targets == []
 
     await _drop_session_row(test_engine, feedback_viewer["token"])
-    await _tick_unless_stopped(client, poll)
+    with client:
+        await poll_callback()
     assert poll.active is False
-    await drain_outbox(client)
+    await _deliver(client)
     assert targets == [LOGIN_TARGET]
     assert [m for m in wire_recorder if m.event == "open" and m.room == client.id]
