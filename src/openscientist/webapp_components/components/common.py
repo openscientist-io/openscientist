@@ -141,6 +141,7 @@ def render_stat_badges(
         "Agent": "smart_toy",
         "Provider": "cloud",
         "Spend": "payments",
+        "Total Cost": "payments",
     }
     icons = {**default_icons, **(icon_map or {})}
 

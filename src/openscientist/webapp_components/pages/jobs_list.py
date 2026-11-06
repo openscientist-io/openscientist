@@ -91,17 +91,22 @@ async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID
 
 
 def _render_badges(
-    badges_container: ui.element, jobs: list[Job], badge_counts: dict[str, int]
+    badges_container: ui.element,
+    jobs: list[Job],
+    spends: dict[UUID, float],
+    badge_counts: dict[str, object],
 ) -> None:
-    """Render aggregate job counters, skipping the rebuild when the counts a
-    previous render showed stay unchanged."""
+    """Render aggregate job counters and the user's total spend, skipping the
+    rebuild when what a previous render showed stays unchanged."""
     status_counts = {
         status.value: sum(1 for job in jobs if job.status == status.value) for status in JobStatus
     }
-    if status_counts == badge_counts:
+    total_cost = format_spend(sum(spends.get(job.id, 0.0) for job in jobs))
+    shown: dict[str, object] = {**status_counts, "total_cost": total_cost}
+    if shown == badge_counts:
         return
     badge_counts.clear()
-    badge_counts.update(status_counts)
+    badge_counts.update(shown)
     badges_container.clear()
     with badges_container:
         render_stat_badges(
@@ -109,6 +114,7 @@ def _render_badges(
                 ("Total Jobs", len(jobs), ""),
                 ("Running", status_counts.get("running", 0), "blue"),
                 ("Completed", status_counts.get("completed", 0), "green"),
+                ("Total Cost", total_cost, "green"),
             ]
         )
 
@@ -224,7 +230,7 @@ async def _refresh_owned_jobs(
     *,
     current_user_id: str,
     badges_container: ui.element,
-    badge_counts: dict[str, int],
+    badge_counts: dict[str, object],
     view: _JobList,
 ) -> None:
     """Refresh owned jobs table and summary badges."""
@@ -240,7 +246,7 @@ async def _refresh_owned_jobs(
         logger.error("Failed to load jobs: %s", exc, exc_info=True)
         view.show_load_error()
         return
-    _render_badges(badges_container, db_jobs, badge_counts)
+    _render_badges(badges_container, db_jobs, spends, badge_counts)
     view.show(_owned_rows(db_jobs, findings_counts, spends))
 
 
@@ -328,7 +334,7 @@ async def jobs_page() -> None:
         render_pending_approval_notice()
 
     badges_container = ui.row().classes("w-full")
-    owned_badge_counts: dict[str, int] = {}
+    owned_badge_counts: dict[str, object] = {}
 
     with ui.tabs().classes("w-full") as tabs:
         my_jobs_tab = ui.tab("My Jobs", icon="work")

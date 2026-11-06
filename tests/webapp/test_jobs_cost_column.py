@@ -149,3 +149,44 @@ async def test_a_new_cost_row_reaches_the_next_tick(
             await refresh()
 
     assert _cost_by_job_id(client, shared=False)[cost_owner["costed"]] == "$2.00"
+
+
+def _summary_labels(client: Client) -> list[str]:
+    """The texts of the counters above the tables, such as 'Total Jobs: 2'."""
+    with client:
+        return [
+            element.text
+            for element in client.elements.values()
+            if isinstance(element, ui.label) and ": " in element.text and not element.is_deleted
+        ]
+
+
+@pytest.mark.asyncio
+async def test_the_counters_show_the_total_cost_of_the_users_own_jobs(
+    database: Forwarder, cost_owner: dict[str, Any], served_page: ServedPage
+) -> None:
+    """Next to the job counters, the total spend of the jobs the user owns,
+    without the shared job the sharer pays for."""
+    client = await _open(served_page, cost_owner["owner_token"])
+    assert "Total Cost: $1.23" in _summary_labels(client)
+
+
+@pytest.mark.asyncio
+async def test_the_total_cost_follows_a_new_cost_row_on_the_next_tick(
+    database: Forwarder,
+    cost_owner: dict[str, Any],
+    served_page: ServedPage,
+    test_engine: AsyncEngine,
+) -> None:
+    client = await _open(served_page, cost_owner["owner_token"])
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        db.add(_cost(UUID(cost_owner["plain"]), 0.77))
+        await db.commit()
+
+    with client:
+        for refresh in _refresh_callbacks(client):
+            await refresh()
+
+    labels = _summary_labels(client)
+    assert "Total Cost: $2.00" in labels
+    assert "Total Cost: $1.23" not in labels
