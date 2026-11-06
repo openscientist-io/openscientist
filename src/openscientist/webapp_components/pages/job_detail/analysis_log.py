@@ -148,40 +148,65 @@ async def _render_action_cards(cards: ui.column, entries: list[dict[str, Any]]) 
         await asyncio.sleep(0)
 
 
-def _render_show_more(cards: ui.column, shown: int, total: int, log: _IterationLog) -> None:
-    """A button under ``cards`` that appends the next batch of actions."""
-    state = {"shown": shown}
+@dataclass
+class _ActionsState:
+    """How many of the iteration's actions the page shows, and the elements
+    that offer the rest, so the poll can move the total in place."""
+
+    shown: int = 0
+    total: int = 0
+    expansion: ui.expansion | None = None
+    cards: ui.column | None = None
+    button: ui.button | None = None
+
+
+def _ensure_show_more(state: _ActionsState, log: _IterationLog) -> None:
+    """The button that appends the next batch of actions, offered while fewer
+    than ``state.total`` are shown."""
+    if state.button is not None or state.cards is None or state.expansion is None:
+        return
+    if state.cards.is_deleted or state.expansion.is_deleted or state.shown >= state.total:
+        return
 
     async def show_more() -> None:
-        if not button.enabled:
+        if state.button is None or not state.button.enabled:
             return
-        button.disable()
+        state.button.disable()
         try:
-            batch = await log.actions(state["shown"])
-            if cards.is_deleted:
-                return
-            state["shown"] += len(batch)
-            await _render_action_cards(cards, batch)
+            batch = await log.actions(state.shown)
         finally:
-            if not button.is_deleted:
-                button.enable()
-        if cards.is_deleted:
+            if state.button is not None and not state.button.is_deleted:
+                state.button.enable()
+        if state.cards is None or state.cards.is_deleted:
             return
-        if not batch or state["shown"] >= total:
-            button.delete()
+        state.shown += len(batch)
+        await _render_action_cards(state.cards, batch)
+        if not batch or state.shown >= state.total:
+            state.button.delete()
+            state.button = None
 
-    button = ui.button("Show more", on_click=show_more).props("flat dense")
+    with state.expansion:
+        state.button = ui.button("Show more", on_click=show_more).props("flat dense")
 
 
 async def _render_analysis_log_actions(
-    total: int, first: list[dict[str, Any]], log: _IterationLog
+    box: ui.column,
+    total: int,
+    first: list[dict[str, Any]],
+    log: _IterationLog,
+    state: _ActionsState,
 ) -> None:
     """The iteration's ``total`` actions, ``first`` shown and the rest a
-    button press away."""
+    button press away, with ``state`` tracking both so the poll can move the
+    total without rebuilding the shown cards."""
     if not total:
         return
-    with ui.expansion(f"Actions ({total})", icon="build").classes("w-full mt-2"):
-        with ui.column().classes("w-full gap-0") as cards:
-            await _render_action_cards(cards, first)
-        if len(first) < total and not cards.is_deleted:
-            _render_show_more(cards, len(first), total, log)
+    with box:
+        with ui.expansion(f"Actions ({total})", icon="build").classes("w-full mt-2") as expansion:
+            with ui.column().classes("w-full gap-0") as cards:
+                await _render_action_cards(cards, first)
+    state.expansion = expansion
+    state.cards = cards
+    state.total = total
+    state.shown = len(first)
+    _ensure_show_more(state, log)

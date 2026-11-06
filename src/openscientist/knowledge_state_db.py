@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, TypeVar
 from uuid import UUID
@@ -481,6 +482,68 @@ async def analysis_log_action_counts(
     for iteration, action_type, count in result.all():
         counts.setdefault(iteration, {})[action_type] = count
     return counts
+
+
+@dataclass(frozen=True)
+class JobPageSnapshot:
+    """What the job page's poll reads to tell a changed tick from an idle one:
+    the job row's live fields, the analysis log's per-iteration action counts
+    and each table's row count with its newest update."""
+
+    status: str
+    current_iteration: int
+    agent_status: str | None
+    action_counts: dict[int, dict[str, int]]
+    hypotheses: tuple[int, datetime | None]
+    findings: tuple[int, datetime | None]
+    literature: tuple[int, datetime | None]
+    summaries: tuple[int, datetime | None]
+
+
+async def job_page_snapshot(
+    session: AsyncSession, job_uuid: UUID
+) -> tuple[JobModel, JobPageSnapshot] | None:
+    """The job row and the page's per-tick change probe for it, or None once
+    the caller may no longer see the job."""
+    job = await first_scalar(session, select(JobModel).where(JobModel.id == job_uuid))
+    if job is None:
+        return None
+    hypotheses = (
+        await session.execute(
+            select(func.count(), func.max(Hypothesis.updated_at)).where(
+                Hypothesis.job_id == job_uuid
+            )
+        )
+    ).one()
+    findings = (
+        await session.execute(
+            select(func.count(), func.max(Finding.updated_at)).where(Finding.job_id == job_uuid)
+        )
+    ).one()
+    literature = (
+        await session.execute(
+            select(func.count(), func.max(Literature.updated_at)).where(
+                Literature.job_id == job_uuid
+            )
+        )
+    ).one()
+    summaries = (
+        await session.execute(
+            select(func.count(), func.max(IterationSummary.updated_at)).where(
+                IterationSummary.job_id == job_uuid
+            )
+        )
+    ).one()
+    return job, JobPageSnapshot(
+        status=job.status,
+        current_iteration=job.current_iteration,
+        agent_status=job.agent_status,
+        action_counts=await analysis_log_action_counts(session, job_uuid),
+        hypotheses=(hypotheses[0], hypotheses[1]),
+        findings=(findings[0], findings[1]),
+        literature=(literature[0], literature[1]),
+        summaries=(summaries[0], summaries[1]),
+    )
 
 
 async def load_iteration_analysis_log(

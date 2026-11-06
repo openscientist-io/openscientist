@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -38,6 +39,7 @@ from openscientist.webapp_components.pages import settings_panel
 from openscientist.webapp_components.pages.job_detail import chat as chat_module
 from openscientist.webapp_components.pages.job_detail import common as job_detail_common
 from openscientist.webapp_components.pages.job_detail import feedback as feedback_module
+from openscientist.webapp_components.pages.job_detail import iterations as iterations_module
 from openscientist.webapp_components.pages.job_detail import report as report_module
 from openscientist.webapp_components.pages.job_detail import timeline as timeline_module
 from openscientist.webapp_components.utils import client_guard, permissions
@@ -589,34 +591,45 @@ async def test_editor_with_edit_share_can_submit_feedback(
         assert [f.feedback_text for f in feedback_rows] == ["Focus on metabolic pathways"]
 
 
-def _poll_context(job_actors: dict, viewer: dict) -> SimpleNamespace:
+def _poll_context(
+    job_actors: dict, viewer: dict, job_dir: Path, baseline: job_detail_common._PageSnapshot
+) -> SimpleNamespace:
     return SimpleNamespace(
         job_id=str(job_actors["job_id"]),
         user_id=str(viewer["user_id"]),
+        job_dir=job_dir,
+        job_info=None,
+        job_manager=None,
         ks_data=None,
+        action_counts={},
         state={
-            "status": JobStatus.AWAITING_FEEDBACK.value,
-            "findings_count": 0,
-            "papers_count": 0,
-            "iteration": 0,
-            "log_entries": 0,
-            "agent_status": None,
+            "status": JobStatus.AWAITING_FEEDBACK,
+            "stats_model": None,
+            "snapshot": baseline,
         },
     )
 
 
 async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
-    test_engine: AsyncEngine, job_actors: dict, monkeypatch: pytest.MonkeyPatch
+    test_engine: AsyncEngine,
+    job_actors: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     viewer = job_actors["viewer"]
     _page_cookie(monkeypatch, viewer["session_id"])
-    context = _poll_context(job_actors, viewer)
+    job_dir = tmp_path / str(job_actors["job_id"])
+    probe = await job_detail_common._page_snapshot(
+        str(job_actors["job_id"]), str(viewer["user_id"]), job_dir
+    )
+    assert probe is not None, "the viewer's share must still make the job visible"
+    context = _poll_context(job_actors, viewer, job_dir, probe[1])
     timer = MagicMock()
     holder: dict[str, object] = {"timer": timer}
     render_job_stats = MagicMock()
-    render_timeline = MagicMock()
+    timeline = iterations_module._Timeline(context)  # type: ignore[arg-type]
 
-    await timeline_module._check_and_refresh(context, render_job_stats, render_timeline, holder)  # type: ignore[arg-type]
+    await timeline_module._check_and_refresh(context, render_job_stats, timeline, holder)  # type: ignore[arg-type]
     timer.deactivate.assert_not_called()
 
     async with _session(test_engine) as db:
@@ -634,7 +647,7 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
     common_ui = MagicMock()
     monkeypatch.setattr(job_detail_common, "ui", common_ui)
 
-    await timeline_module._check_and_refresh(context, render_job_stats, render_timeline, holder)  # type: ignore[arg-type]
+    await timeline_module._check_and_refresh(context, render_job_stats, timeline, holder)  # type: ignore[arg-type]
 
     timer.deactivate.assert_called_once()
     mock_ui.context.client.content.clear.assert_called_once()
