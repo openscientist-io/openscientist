@@ -130,6 +130,33 @@ def warning_limit_reached(spend_24h: float, warn: float | None, hard: float | No
     return warn is not None and spend_24h >= warn and (hard is None or spend_24h < hard)
 
 
+async def unpriced_model_violation(*, provider_id: str, model: str | None) -> BudgetVerdict | None:
+    """The refusal of a model the price table does not know, or None when the
+    call may go through. Applied while any spend limit is set, so the job-start
+    and chat checks and the LLM proxy share it, and self-hosted providers stay
+    exempt because their spend is the deployment's own hardware."""
+    if model is None:
+        return None
+    # The price table and the provider are checked first, so a priced call
+    # never reads the admin row.
+    if provider_id.lower() in SELF_HOSTED_PROVIDER_IDS or has_price(model):
+        return None
+    admin = await current_admin_settings()
+    any_limit = (
+        admin.max_job_cost_usd is not None
+        or admin.max_project_spend_total_usd is not None
+        or admin.max_project_spend_24h_usd is not None
+        or admin.warn_project_spend_24h_usd is not None
+    )
+    if not any_limit:
+        return None
+    return BudgetVerdict(
+        False,
+        "unpriced_model",
+        f"Model {model} has no known price, so the budget cannot be enforced.",
+    )
+
+
 async def check_budget(
     *,
     job_id: UUID | None = None,
@@ -143,26 +170,12 @@ async def check_budget(
     Checks in order: an unpriced cloud model while any limit is set, the
     job's own cap, the project's total spend, then its 24-hour spend.
     """
-    admin = await current_admin_settings()
-
     if include_unpriced:
-        any_limit = (
-            admin.max_job_cost_usd is not None
-            or admin.max_project_spend_total_usd is not None
-            or admin.max_project_spend_24h_usd is not None
-            or admin.warn_project_spend_24h_usd is not None
-        )
-        if (
-            any_limit
-            and model is not None
-            and provider_id.lower() not in SELF_HOSTED_PROVIDER_IDS
-            and not has_price(model)
-        ):
-            return BudgetVerdict(
-                False,
-                "unpriced_model",
-                f"Model {model} has no known price, so the budget cannot be enforced.",
-            )
+        violation = await unpriced_model_violation(provider_id=provider_id, model=model)
+        if violation is not None:
+            return violation
+
+    admin = await current_admin_settings()
 
     job_total, total, recent = await _ledger_totals(job_id)
 

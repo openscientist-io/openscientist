@@ -1038,7 +1038,8 @@ class TestVertexWire:
 class TestResponsesWebsocket:
     """Row F, the codex Responses websocket, one row per completed response in
     a turn, the frames forwarded unchanged, and no row for a turn that ends
-    without a completion."""
+    without a completion. The pinned codex wire carries one raw JSON event per
+    frame, and the SSE ``data:`` framing is only the REST form."""
 
     @pytest.fixture
     async def stub_upstream(self):
@@ -1160,6 +1161,56 @@ class TestResponsesWebsocket:
             with contextlib.suppress(ConnectionClosed):
                 await connection.recv()
         assert await _rows(test_engine, job) == []
+
+    @pytest.mark.asyncio
+    async def test_raw_json_frames_meter_each_completed_response(
+        self, test_engine: AsyncEngine, job: UUID, run_for, stub_upstream, live_proxy
+    ) -> None:
+        # The pinned codex wire: one raw JSON event per frame, no SSE
+        # ``data:`` framing, and the last frame ends on a bare newline.
+        frames = [
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "r1",
+                        "model": _PRICED_MODEL,
+                        "usage": {"input_tokens": 100, "output_tokens": 20},
+                    },
+                }
+            ).encode(),
+            (
+                json.dumps(
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "r2",
+                            "model": _PRICED_MODEL,
+                            "usage": {"input_tokens": 50, "output_tokens": 10},
+                        },
+                    }
+                )
+                + "\n"
+            ).encode(),
+        ]
+        # A copy, since the stub pops its list as it streams the frames out.
+        stub_upstream.replies = list(frames)
+        stub_upstream.close_after = 2
+        placeholder = run_for(str(job), "chat").llm_placeholder
+        async with ws_connect(
+            f"ws://127.0.0.1:{live_proxy}/responses",
+            additional_headers={"authorization": f"Bearer {placeholder}"},
+            proxy=None,
+        ) as connection:
+            await connection.send(json.dumps({"type": "response.create", "model": _PRICED_MODEL}))
+            received = [await connection.recv() for _ in range(2)]
+            with contextlib.suppress(ConnectionClosed):
+                await connection.recv()
+        assert received == frames
+        assert await _rows(test_engine, job) == [
+            ("chat", None, _PROVIDER, _PRICED_MODEL, 100, 20, 0, 0, 0, _cost(100, 20)),
+            ("chat", None, _PROVIDER, _PRICED_MODEL, 50, 10, 0, 0, 0, _cost(50, 10)),
+        ]
 
 
 class TestAttribution:
