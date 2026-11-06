@@ -185,7 +185,8 @@ async def reap_agent_logins(live_roles: set[str] | None) -> list[str]:
 
 
 async def reap_leftover_agent_logins(jobs_dir: Path) -> list[str]:
-    """One reaper run, with the live set taken from Docker. It also removes the
+    """One reaper run, with the live set taken from Docker. It first tears down
+    the containers whose run this process no longer holds, then removes the
     run homes no container needs and the harness homes past runs left inside
     job directories."""
     # Imported here because the runner imports this module.
@@ -194,6 +195,7 @@ async def reap_leftover_agent_logins(jobs_dir: Path) -> list[str]:
     def live() -> tuple[set[str] | None, set[str] | None]:
         try:
             runner = JobContainerRunner()
+            runner.remove_unheld_containers()
             return runner.live_login_roles(), runner.live_job_ids()
         except Exception as error:
             logger.warning("Docker unavailable to the login reaper: %s", error)

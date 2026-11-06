@@ -61,7 +61,8 @@ async def tick_user(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
     yield {"user_id": str(user.id), "job_id": str(job.id), "token": str(login.id)}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Session).where(Session.user_id == user.id))
-        await db.execute(delete(Job).where(Job.id == job.id))
+        # Every job the user owns, including those a test inserts.
+        await db.execute(delete(Job).where(Job.owner_id == user.id))
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
 

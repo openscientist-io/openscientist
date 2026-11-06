@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import hmac
+import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from openscientist.exceptions import MissingImageError
 from openscientist.exec_broker_client import EXEC_TOKEN_ENV
+from openscientist.job_container import runner as runner_module
 from openscientist.job_container.db_login import AGENT_LOGIN_LABEL, AgentLogin
 from openscientist.job_container.launcher_client import (
     LauncherClient,
@@ -32,6 +34,7 @@ from openscientist.job_container.runner import (
 from openscientist.job_container.secrets import (
     broker_accepts,
     derive_job_secret,
+    issue_run_credentials,
     proxy_accepts,
     revoke_run_credentials,
 )
@@ -319,6 +322,76 @@ class TestContainerDatabaseLogin:
             "unavailable", "the launcher could not be reached"
         )
         assert runner.live_login_roles() is None
+
+
+_UNREACHABLE = LauncherUnavailableError("unavailable", "the launcher did not answer within 30s")
+
+
+@pytest.fixture
+def no_retry_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner_module, "_LOOKUP_RETRY_DELAYS", (0.0, 0.0), raising=False)
+
+
+class TestTeardownWhenTheLauncherFails:
+    """A failed launcher call is never taken for a job without a container."""
+
+    @pytest.fixture
+    def held_runs(self):
+        """A discovery and a chat run of job-123, both still accepted."""
+        roles = {"discovery": "agent_" + "1" * 32, "chat": "agent_" + "2" * 32}
+        issue_run_credentials("job-123", roles["discovery"], "discovery")
+        issue_run_credentials("job-123", roles["chat"], "chat")
+        try:
+            yield roles
+        finally:
+            for role in roles.values():
+                revoke_run_credentials(role)
+
+    def test_cleanup_retries_a_failed_lookup_and_takes_the_container_down(
+        self, agent_login, no_retry_wait
+    ) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = [
+            _UNREACHABLE,
+            [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})],
+        ]
+        runner.cleanup("job-123")
+        client.stop.assert_called_once_with("d" * 64, timeout_seconds=_STOP_GRACE_SECONDS)
+        client.remove.assert_called_once_with("d" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_cleanup_drops_the_jobs_agent_logins_when_the_launcher_stays_down(
+        self, agent_login, no_retry_wait, held_runs, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The chat run of the same job keeps its login, since its own
+        teardown ends it."""
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = _UNREACHABLE
+        with caplog.at_level(logging.ERROR, logger="openscientist.job_container.runner"):
+            runner.cleanup("job-123")
+        client.remove.assert_not_called()
+        agent_login.closed.assert_called_once_with(held_runs["discovery"])
+        assert [r.levelno for r in caplog.records if "job-123" in r.getMessage()] == [logging.ERROR]
+
+    def test_cancelling_reports_a_failed_lookup(self) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = _UNREACHABLE
+        with pytest.raises(LauncherUnavailableError):
+            runner.stop("job-123")
+
+    def test_the_reaper_takes_down_containers_whose_run_is_no_longer_held(
+        self, agent_login, held_runs
+    ) -> None:
+        runner, client = _runner_with_client()
+        unheld = "agent_" + "3" * 32
+        client.list_containers.return_value = [
+            _listed_entry({AGENT_LOGIN_LABEL: held_runs["discovery"]}, container_id="h" * 64),
+            _listed_entry({AGENT_LOGIN_LABEL: unheld}, container_id="u" * 64),
+        ]
+        runner.remove_unheld_containers()
+        client.stop.assert_called_once_with("u" * 64, timeout_seconds=_STOP_GRACE_SECONDS)
+        client.remove.assert_called_once_with("u" * 64)
+        agent_login.closed.assert_called_once_with(unheld)
 
 
 class TestJobContainerRunner:
