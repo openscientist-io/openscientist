@@ -5,6 +5,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from uvicorn.supervisors.watchfilesreload import FileFilter
 
 from openscientist import web_app
 from openscientist.security import ScannerBlockMiddleware, SecurityHeadersMiddleware
@@ -86,10 +87,14 @@ def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> 
     assert Path(web_app.os.environ[web_app.JOBS_DIR_ENV]) == tmp_path / "jobs"
 
 
-def test_main_reload_starts_and_excludes_a_jobs_dir_not_yet_created(
-    monkeypatch, tmp_path: Path
-) -> None:
-    """The reloader never watches the jobs tree, also on a first start."""
+def _restarts(config: uvicorn.Config, path: Path) -> bool:
+    """Whether uvicorn's reloader restarts the server when ``path`` changes."""
+    watched = any(directory in path.parents for directory in config.reload_dirs)
+    return watched and FileFilter(config)(path)
+
+
+def test_main_reload_restarts_on_source_changes_only(monkeypatch, tmp_path: Path) -> None:
+    """The dev server reloads on edits to its own source, wherever it is started from."""
     monkeypatch.setattr(web_app, "_settings_error", None)
     monkeypatch.setattr(
         "openscientist.settings.get_settings",
@@ -107,11 +112,18 @@ def test_main_reload_starts_and_excludes_a_jobs_dir_not_yet_created(
         "run",
         lambda *args, **kwargs: configs.append(uvicorn.Config(*args, **kwargs)),
     )
+    monkeypatch.chdir(tmp_path)
     jobs_dir = tmp_path / "jobs"
 
     web_app.main(host="127.0.0.1", port=9999, jobs_dir=jobs_dir)
 
-    assert jobs_dir.resolve() in configs[0].reload_dirs_excludes
+    config = configs[0]
+    source = Path(web_app.__file__).resolve()
+    assert _restarts(config, source)
+    assert _restarts(config, source.parent.parent / "openscientist_tools" / "code_exec.py")
+    assert not _restarts(config, tmp_path / "unrelated.py")
+    assert not _restarts(config, jobs_dir / "0193" / "provenance" / "plot.py")
+    assert not _restarts(config, tmp_path / ".nicegui" / "storage-user-0193.json")
 
 
 def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> None:
