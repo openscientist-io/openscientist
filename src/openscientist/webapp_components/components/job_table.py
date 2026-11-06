@@ -29,7 +29,7 @@ def render_status_cell_slot() -> str:
     """Quasar slot template for a status column with failed-job error tooltip."""
     return r"""
         <q-td :props="props">
-            <div class="row items-center gap-1 flex-wrap">
+            <div class="row items-center justify-center gap-1 flex-wrap">
                 <!-- Failed status: Red badge with white text and error tooltip -->
                 <q-badge
                     v-if="props.row.status === 'failed'"
