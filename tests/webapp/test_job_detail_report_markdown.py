@@ -359,3 +359,30 @@ async def test_an_oversized_report_is_shown_as_too_large(
             await asyncio.sleep(0.01)
     assert _too_large_label_present(client), "the too large message did not land within 5 s"
     assert _markdown_elements(client) == []
+
+
+def _report_frames(client: Client) -> list[ui.element]:
+    return [
+        element
+        for element in client.elements.values()
+        if element.tag == "iframe" and "report.html" in str(element.props.get("src", ""))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_saved_html_report_is_shown_in_its_frame(
+    database: Forwarder,
+    report_job: ReportJob,
+    report_job_manager: JobManager,
+    served_page: ServedPage,
+) -> None:
+    """A job that saved its HTML report shows it framed, not the markdown view."""
+    job_dir = report_job["jobs_root"] / report_job["job_id"]
+    (job_dir / "final_report.html").write_text("<html><body>Saved</body></html>", "utf-8")
+    _, (frames, placeholder) = await served_page(
+        report_job["token"],
+        _build_report_page(report_job),
+        lambda client: (_report_frames(client), _placeholder_present(client)),
+    )
+    assert len(frames) == 1
+    assert not placeholder

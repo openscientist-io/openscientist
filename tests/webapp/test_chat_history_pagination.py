@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist import web_app
 from openscientist.database.models import Job, JobChatMessage, Session, User
 from openscientist.job.types import JobStatus
+from openscientist.job_chat import ChatResponseTooLargeError
 from openscientist.job_chat import get_chat_history as real_get_chat_history
 from openscientist.webapp_components.pages.job_detail import chat as chat_tab
 from openscientist.webapp_components.pages.job_detail import job_detail_page
@@ -388,3 +389,34 @@ async def test_a_send_from_an_empty_chat_replaces_the_placeholder(
 
     assert _bubble_texts(client) == ["Hello?", "Reply to Hello?"]
     assert not _empty_state_visible(client)
+
+
+@pytest.mark.asyncio
+async def test_a_too_large_chat_response_is_reported_to_the_user(
+    database: Forwarder,
+    empty_chat_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The user sees why the reply is missing, and the chat stays usable."""
+
+    async def too_large(*_args: object, **_kwargs: object) -> str:
+        raise ChatResponseTooLargeError("The chat response is too large to show.")
+
+    notified: list[str] = []
+    monkeypatch.setattr(chat_tab, "send_chat_message", too_large)
+    monkeypatch.setattr(chat_tab.ui, "notify", lambda message, **_kw: notified.append(message))
+    client, _ = await _served(database, empty_chat_job, served_page)
+
+    textarea = next(e for e in client.elements.values() if isinstance(e, ui.textarea))
+    send_btn = next(
+        e
+        for e in client.elements.values()
+        if isinstance(e, ui.button) and e.props.get("icon") == "send"
+    )
+    textarea.value = "Hello?"
+    _click(client, send_btn)
+    await _until(lambda: bool(notified), "the refusal to be shown")
+
+    assert notified == ["The chat response is too large to show."]
+    await _until(lambda: textarea.enabled, "the input to be usable again")

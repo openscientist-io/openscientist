@@ -474,14 +474,9 @@ class _ChatTabController:
             self._toggle_typing_indicator(False)
             self._play_sound("sound-receive")
             await self._append_new_messages()
-        except BudgetExceededError as exc:
-            logger.warning("Chat turn refused by a budget limit: %s", exc)
-            if guard.is_connected:
-                self._toggle_typing_indicator(False)
-                self._play_sound("sound-error")
-                ui.notify(str(exc), type="negative")
-        except ChatResponseTooLargeError as exc:
-            logger.warning("Chat response exceeds the size the web reads: %s", exc)
+        except (BudgetExceededError, ChatResponseTooLargeError) as exc:
+            # Both carry a message meant for the user.
+            logger.warning("Chat turn refused: %s", exc)
             if guard.is_connected:
                 self._toggle_typing_indicator(False)
                 self._play_sound("sound-error")
