@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import secrets
 import threading
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Literal
 
@@ -65,6 +66,19 @@ def revoke_run_credentials(role: str) -> None:
     """End the credentials of the run whose database login is ``role``."""
     with _runs_lock:
         _runs.pop(role, None)
+
+
+def held_run_roles() -> set[str]:
+    """The database logins of every run whose credentials are still accepted."""
+    with _runs_lock:
+        return set(_runs)
+
+
+def held_run_roles_of(job_id: str, kinds: Collection[RunKind]) -> list[str]:
+    """The database logins of the runs of ``job_id`` whose kind is in ``kinds``
+    and whose credentials are still accepted."""
+    with _runs_lock:
+        return [role for role, run in _runs.items() if run.job_id == job_id and run.kind in kinds]
 
 
 def _live_runs() -> list[RunCredentials]:

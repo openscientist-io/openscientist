@@ -60,6 +60,13 @@ _STATUS_TO_ERROR: dict[int, type[LauncherError]] = {
 }
 
 
+def _failure(exc: httpx.HTTPError, timeout: float) -> str:
+    """What went wrong with a request that got no answer, for the error message."""
+    if isinstance(exc, httpx.TimeoutException):
+        return f"did not answer within {timeout:g}s"
+    return "could not be reached"
+
+
 class HealthResponse(TypedDict):
     docker: bool
     images: dict[str, bool]
@@ -124,7 +131,7 @@ class LauncherClient:
             response = self._http.request(method, path, json=body, params=params, timeout=timeout)
         except httpx.HTTPError as exc:
             raise LauncherUnavailableError(
-                "unavailable", f"the launcher at {self._socket_path} could not be reached"
+                "unavailable", f"the launcher at {self._socket_path} {_failure(exc, timeout)}"
             ) from exc
         if response.status_code >= 400:
             try:

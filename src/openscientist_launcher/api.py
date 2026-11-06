@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import TypeVar, cast
 
+import anyio
+import anyio.to_thread
 import requests
 from docker.models.containers import Container
 from starlette.applications import Starlette
@@ -38,6 +41,13 @@ _T = TypeVar("_T")
 _NOT_FOUND_MESSAGE = "container not found"
 _STOP_TIMEOUT_CAP_SECONDS = 60
 _STOP_TIMEOUT_DEFAULT_SECONDS = 10
+#: Threads for the calls that block until a container exits, executor runs
+#: and waits. Every other call runs on anyio's default limiter, so a burst of
+#: long calls never leaves health, list or stop without a thread.
+_LONG_CALL_THREADS = 64
+#: Connections the shared Docker client keeps, one for every thread that can
+#: hold a call at once.
+_DOCKER_POOL_SIZE = _LONG_CALL_THREADS + 40
 
 
 class ApiError(Exception):
@@ -99,11 +109,15 @@ def _resolve_network(client: docker.DockerClient, configured: str | None) -> str
 
 
 class Server:
-    """The state every route handler needs: config, docker client, marker."""
+    """The state every route handler needs: config, docker client, marker.
+
+    Its methods block on the Docker daemon and run in worker threads. The one
+    client is shared by them, since each docker-py call builds its own request
+    and the unix socket adapter hands out pooled connections under a lock."""
 
     def __init__(self, cfg: LauncherConfig) -> None:
         self.cfg = cfg
-        self.client = docker.from_env()
+        self.client = docker.from_env(max_pool_size=_DOCKER_POOL_SIZE)
 
     def _resolve(self, ref: str) -> Container:
         """The container behind an id or name, or a uniform 404."""
@@ -174,9 +188,9 @@ class Server:
         exit_code = None if state.get("Running") else state.get("ExitCode")
         return {"status": container.status, "exit_code": exit_code}
 
-    async def stop(self, ref: str, request: Request) -> dict[str, object]:
+    def stop(self, ref: str, raw_body: bytes) -> dict[str, object]:
         container = self._resolve(ref)
-        body = await _json_body(request)
+        body = _parse_json(raw_body)
         timeout = _wait_timeout(
             body, default=_STOP_TIMEOUT_DEFAULT_SECONDS, cap=_STOP_TIMEOUT_CAP_SECONDS
         )
@@ -193,9 +207,9 @@ class Server:
         raw = cast("bytes", _guard(container.logs)(stdout=True, stderr=True, stream=False))
         return {"logs": raw.decode("utf-8", "replace")}
 
-    async def wait(self, ref: str, request: Request) -> dict[str, object]:
+    def wait(self, ref: str, raw_body: bytes) -> dict[str, object]:
         container = self._resolve(ref)
-        body = await _json_body(request)
+        body = _parse_json(raw_body)
         timeout = _wait_timeout(body, default=None, cap=None)
         try:
             outcome: object = _guard(container.wait)(timeout=timeout)
@@ -292,14 +306,17 @@ def _remove_forced(client: docker.DockerClient, container: Container) -> None:
         pass
 
 
-async def _json_body(request: Request) -> object:
-    text = await request.body()
-    if not text:
+def _parse_json(raw: bytes) -> object:
+    if not raw:
         return {}
     try:
-        return json.loads(text)
+        return json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise _bad_request("the request body is not valid JSON") from exc
+
+
+async def _json_body(request: Request) -> object:
+    return _parse_json(await request.body())
 
 
 async def _api_error(request: Request, exc: Exception) -> JSONResponse:
@@ -324,36 +341,48 @@ async def _internal(request: Request, exc: Exception) -> JSONResponse:
 
 def create_app(cfg: LauncherConfig) -> Starlette:
     server = Server(cfg)
+    long_calls = anyio.CapacityLimiter(_LONG_CALL_THREADS)
+
+    async def blocking(fn: Callable[..., _T], *args: object) -> _T:
+        return await anyio.to_thread.run_sync(partial(fn, *args))
+
+    async def long_blocking(fn: Callable[..., _T], *args: object) -> _T:
+        return await anyio.to_thread.run_sync(partial(fn, *args), limiter=long_calls)
 
     async def agent_create(request: Request) -> JSONResponse:
-        return JSONResponse(server.create_agent(await _json_body(request)))
+        body = await _json_body(request)
+        return JSONResponse(await blocking(server.create_agent, body))
 
     async def exec_run(request: Request) -> JSONResponse:
-        return JSONResponse(server.run_exec(await _json_body(request)))
+        body = await _json_body(request)
+        return JSONResponse(await long_blocking(server.run_exec, body))
 
     async def list_containers(request: Request) -> JSONResponse:
-        return JSONResponse(server.list(request.query_params.getlist("label")))
+        labels = request.query_params.getlist("label")
+        return JSONResponse(await blocking(server.list, labels))
 
     async def health(request: Request) -> JSONResponse:
-        return JSONResponse(server.health())
+        return JSONResponse(await blocking(server.health))
 
     async def inspect_container(request: Request) -> JSONResponse:
-        return JSONResponse(server.inspect(request.path_params["ref"]))
+        return JSONResponse(await blocking(server.inspect, request.path_params["ref"]))
 
     async def stop_container(request: Request) -> JSONResponse:
-        return JSONResponse(await server.stop(request.path_params["ref"], request))
+        raw = await request.body()
+        return JSONResponse(await blocking(server.stop, request.path_params["ref"], raw))
 
     async def remove_container(request: Request) -> JSONResponse:
-        return JSONResponse(server.remove(request.path_params["ref"]))
+        return JSONResponse(await blocking(server.remove, request.path_params["ref"]))
 
     async def wait_container(request: Request) -> JSONResponse:
-        return JSONResponse(await server.wait(request.path_params["ref"], request))
+        raw = await request.body()
+        return JSONResponse(await long_blocking(server.wait, request.path_params["ref"], raw))
 
     async def logs_container(request: Request) -> JSONResponse:
-        return JSONResponse(server.logs(request.path_params["ref"]))
+        return JSONResponse(await blocking(server.logs, request.path_params["ref"]))
 
     async def stats_container(request: Request) -> JSONResponse:
-        return JSONResponse(server.stats(request.path_params["ref"]))
+        return JSONResponse(await blocking(server.stats, request.path_params["ref"]))
 
     app = Starlette(
         routes=[

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -60,6 +61,8 @@ from openscientist.job_container.secrets import (
     RunCredentials,
     RunKind,
     derive_job_secret,
+    held_run_roles,
+    held_run_roles_of,
     issue_run_credentials,
 )
 from openscientist.job_container.utils import HostPathSettings, to_container_path, to_host_path
@@ -72,6 +75,13 @@ logger = logging.getLogger(__name__)
 #: Seconds a stopped agent gets, after SIGTERM, to write the cost of the
 #: iteration in progress before the launcher's stop turns into a kill.
 _STOP_GRACE_SECONDS = 10
+
+#: Seconds between the tries of a teardown's container lookup while the
+#: launcher call fails, about three seconds in all.
+_LOOKUP_RETRY_DELAYS = (1.0, 2.0)
+
+#: The kinds of run an agent container does, the ones a job's teardown ends.
+_AGENT_RUN_KINDS: tuple[RunKind, ...] = ("discovery", "report")
 
 AGENT_APP_DIR = "/agent"
 
@@ -388,7 +398,13 @@ class JobContainerRunner:
         The login and run home named in the container's labels are given back
         with it. A running container is left alone, and the launcher lists only
         the containers of its own instance."""
-        entry = self._find_container(job_id)
+        try:
+            entry = self._find_container(job_id)
+        except LauncherError as error:
+            # The relaunch goes ahead, and its create call answers for the
+            # launcher: a stale container holding the name makes it a conflict.
+            logger.warning("Could not look up a stale agent container of job %s: %s", job_id, error)
+            return
         if entry is None or entry["status"] not in ("exited", "dead"):
             return
         try:
@@ -404,7 +420,9 @@ class JobContainerRunner:
         self._end_run_of(entry["labels"], cs)
 
     def stop(self, job_id: str, timeout: int = _STOP_GRACE_SECONDS) -> None:
-        """Stop the container for a job (graceful, then a kill)."""
+        """Stop the container for a job (graceful, then a kill).
+
+        Raises the launcher's error when the container could not be looked up."""
         entry = self._find_container(job_id)
         if entry:
             try:
@@ -417,39 +435,76 @@ class JobContainerRunner:
 
     def cleanup(self, job_id: str, log_dir: Path | None = None) -> None:
         """Stop the container for a job, giving it the same grace as :meth:`stop`,
-        then save its logs if asked, remove it and drop its database login."""
-        entry = self._find_container(job_id)
+        then save its logs if asked, remove it and drop its database login.
+
+        When the launcher cannot be asked even after a few tries, the logins of
+        the job's agent runs this process holds are dropped all the same, and
+        the login reaper removes the container once the launcher answers."""
+        try:
+            entry = self._find_container_retrying(job_id)
+        except LauncherError as error:
+            logger.error(
+                "Could not look up the agent container of job %s, so it is left to "
+                "the login reaper: %s",
+                job_id,
+                error,
+            )
+            for role in held_run_roles_of(job_id, _AGENT_RUN_KINDS):
+                close_agent_login(role)
+            return
         if entry:
+            self._tear_down(entry, log_dir)
+
+    def _tear_down(self, entry: ContainerEntry, log_dir: Path | None = None) -> None:
+        """Stop one agent or chat container with grace, save its logs if asked,
+        remove it and end its run."""
+        job_id = entry["labels"].get("openscientist.job_id")
+        try:
+            # The agent writes the cost of the iteration in progress when it
+            # is stopped, so a forced removal would lose it.
             try:
-                # The agent writes the cost of the iteration in progress when it
-                # is stopped, so a forced removal would lose it.
-                try:
-                    self.client.stop(entry["id"], timeout_seconds=_STOP_GRACE_SECONDS)
-                except LauncherNotFoundError:
-                    pass
-                except LauncherError as error:
-                    logger.warning("Failed to stop container for job %s: %s", job_id, error)
-                if log_dir is not None:
-                    log_path = log_dir / "agent-container.log"
-                    try:
-                        logs = self.client.logs(entry["id"])
-                        log_path.write_text(logs)
-                    except (LauncherError, OSError) as error:
-                        if not isinstance(error, LauncherNotFoundError):
-                            logger.warning(
-                                "Failed to save container logs for job %s: %s",
-                                job_id,
-                                error,
-                            )
-                self.client.remove(entry["id"])
-                logger.info("Removed container for job %s", job_id)
+                self.client.stop(entry["id"], timeout_seconds=_STOP_GRACE_SECONDS)
             except LauncherNotFoundError:
                 pass
             except LauncherError as error:
-                logger.warning("Failed to remove container for job %s: %s", job_id, error)
-            # Done even when removal failed, so a container that lingers loses
-            # its database access and its copy of the operator's login.
-            self._end_run_of(entry["labels"], get_settings().container)
+                logger.warning("Failed to stop container for job %s: %s", job_id, error)
+            if log_dir is not None:
+                log_path = log_dir / "agent-container.log"
+                try:
+                    logs = self.client.logs(entry["id"])
+                    log_path.write_text(logs)
+                except (LauncherError, OSError) as error:
+                    if not isinstance(error, LauncherNotFoundError):
+                        logger.warning(
+                            "Failed to save container logs for job %s: %s", job_id, error
+                        )
+            self.client.remove(entry["id"])
+            logger.info("Removed container for job %s", job_id)
+        except LauncherNotFoundError:
+            pass
+        except LauncherError as error:
+            logger.warning("Failed to remove container for job %s: %s", job_id, error)
+        # Done even when removal failed, so a container that lingers loses its
+        # database access and its copy of the operator's login, and the login
+        # reaper removes it.
+        self._end_run_of(entry["labels"], get_settings().container)
+
+    def remove_unheld_containers(self) -> None:
+        """Tear down every listed agent and chat container whose run this
+        process no longer holds.
+
+        A run's credentials are issued before its container is created and
+        revoked only after it is removed, so such a container belongs to a run
+        whose teardown could not finish, or to a run a web restart ended."""
+        try:
+            entries = self.client.list_containers([AGENT_LOGIN_LABEL])
+        except LauncherError as error:
+            logger.warning("Failed to list agent containers: %s", error)
+            return
+        held = held_run_roles()
+        for entry in entries:
+            if entry["labels"].get(AGENT_LOGIN_LABEL) not in held:
+                self._tear_down(entry)
 
     def get_exit_code(self, job_id: str) -> int | None:
         """
@@ -457,7 +512,11 @@ class JobContainerRunner:
 
         Returns None if the container is still running or cannot be found.
         """
-        entry = self._find_container(job_id)
+        try:
+            entry = self._find_container(job_id)
+        except LauncherError as error:
+            logger.warning("Failed to find container for job %s: %s", job_id, error)
+            return None
         if entry is None:
             return None
         try:
@@ -509,12 +568,25 @@ class JobContainerRunner:
         return {job for labels in listed if (job := labels.get("openscientist.job_id"))}
 
     def _find_container(self, job_id: str) -> ContainerEntry | None:
-        """The launcher's entry of the agent container for a job, or None."""
-        try:
-            entries = self.client.list_containers(
-                [f"openscientist.job_id={job_id}", "openscientist.type=agent"]
-            )
-            return entries[0] if entries else None
-        except LauncherError as error:
-            logger.warning("Failed to find container for job %s: %s", job_id, error)
-            return None
+        """The launcher's entry of the agent container for a job, or None when
+        the launcher lists none. A failed call raises the launcher's error."""
+        entries = self.client.list_containers(
+            [f"openscientist.job_id={job_id}", "openscientist.type=agent"]
+        )
+        return entries[0] if entries else None
+
+    def _find_container_retrying(self, job_id: str) -> ContainerEntry | None:
+        """:meth:`_find_container`, tried again after each delay in
+        ``_LOOKUP_RETRY_DELAYS`` while the launcher call fails."""
+        for delay in _LOOKUP_RETRY_DELAYS:
+            try:
+                return self._find_container(job_id)
+            except LauncherError as error:
+                logger.warning(
+                    "Looking up the agent container of job %s failed, retrying in %gs: %s",
+                    job_id,
+                    delay,
+                    error,
+                )
+            time.sleep(delay)
+        return self._find_container(job_id)
