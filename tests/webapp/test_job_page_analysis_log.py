@@ -9,25 +9,30 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import ui
+from nicegui import background_tasks, ui
 from nicegui.client import Client
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+import openscientist.webapp_components.pages.job_detail.analysis_log as analysis_log
 from openscientist import web_app
 from openscientist.database.models import AnalysisLog, Job, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.job_detail import job_detail_page
-from openscientist.webapp_components.pages.job_detail.analysis_log import _IterationLog
+from openscientist.webapp_components.pages.job_detail.analysis_log import (
+    CARDS_PER_CHUNK,
+    _IterationLog,
+)
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import ServedPage
+from tests.webapp.conftest import ServedPage, fire_click_twice
 
 CODE_RUNS = 110
 SEARCHES = 10
@@ -162,9 +167,15 @@ async def _until(condition, what: str) -> None:
 
 
 async def _open_iteration(client: Client, number: int) -> None:
+    """Open the iteration and wait for its content load to finish."""
     with client:
-        _expansion_named(client, f"Iteration {number}:").value = True
-    await _until(lambda: _actions_shown(client), f"iteration {number} opened")
+        expansion = _expansion_named(client, f"Iteration {number}:")
+        before = set(background_tasks.running_tasks)
+        expansion.value = True
+    opened = background_tasks.running_tasks - before
+    assert opened, f"opening iteration {number} must schedule its load"
+    for task in opened:
+        await asyncio.wait_for(task, 10)
 
 
 def _actions_shown(client: Client) -> bool:
@@ -173,6 +184,15 @@ def _actions_shown(client: Client) -> bool:
     except AssertionError:
         return False
     return True
+
+
+def _placeholder_visible(client: Client, expansion: ui.expansion) -> bool:
+    """Whether the card still shows its load hint instead of its content."""
+    with client:
+        return any(
+            isinstance(desc, ui.label) and desc.text == "Click to load details..."
+            for desc in expansion.descendants()
+        )
 
 
 def _click(client: Client, button: ui.button) -> None:
@@ -219,6 +239,218 @@ async def test_an_opened_iteration_shows_its_actions_fifty_at_a_time(
     titles = _action_titles(client)
     assert titles[-SEARCHES:] == [f"\u2705 Search {n}" for n in range(SEARCHES)]
     assert titles[:CODE_RUNS] == [f"\u2705 Run {n}" for n in range(CODE_RUNS)]
+    assert _show_more(client) is None
+
+
+@pytest.mark.asyncio
+async def test_two_racing_show_more_clicks_each_append_one_batch(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+) -> None:
+    """Two Show more clicks dispatched in one burst must not append the
+    batch twice, so the actions left over stay reachable."""
+    client = await _served(served_page, long_log_job)
+    await _open_iteration(client, 1)
+    total = CODE_RUNS + SEARCHES
+    button = _show_more(client)
+    assert button is not None
+    burst = pytest.MonkeyPatch()
+    await fire_click_twice(button, client, burst)
+    burst.undo()
+    await _until(lambda: len(_action_titles(client)) >= 100, "the second batch")
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(100)]
+    remaining = _show_more(client)
+    assert remaining is not None, "20 actions remain, the button must stay offered"
+
+    _click(client, remaining)
+    await _until(lambda: len(_action_titles(client)) >= total, "every action")
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(CODE_RUNS)] + [
+        f"\u2705 Search {n}" for n in range(SEARCHES)
+    ]
+    assert _show_more(client) is None
+
+
+@pytest.mark.asyncio
+async def test_reopening_an_iteration_while_its_load_is_pending_loads_it_once(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An open, close and open while the first load is still pending must
+    load the iteration's content once, not twice."""
+    gate = asyncio.Event()
+    loads = 0
+    real_actions = _IterationLog.actions
+
+    async def gated_actions(self: _IterationLog, offset: int) -> list[dict[str, Any]]:
+        nonlocal loads
+        loads += 1
+        await gate.wait()
+        return await real_actions(self, offset)
+
+    monkeypatch.setattr(_IterationLog, "actions", gated_actions)
+    client = await _served(served_page, long_log_job)
+    expansion = _expansion_named(client, "Iteration 1:")
+    with client:
+        before = set(background_tasks.running_tasks)
+        expansion.value = True
+        expansion.value = False
+        expansion.value = True
+    scheduled = background_tasks.running_tasks - before
+    await asyncio.sleep(0.05)
+    gate.set()
+    for task in scheduled:
+        await asyncio.wait_for(task, 10)
+    assert loads == 1
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _show_more(client) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_first_load_keeps_the_placeholder_until_the_next_open(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed first load of an iteration's content must leave the card's
+    placeholder in place, and closing and opening the card again must load
+    its actions."""
+    calls = 0
+    real_actions = _IterationLog.actions
+
+    async def failing_first_load(self: _IterationLog, offset: int) -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("the analysis log read failed")
+        return await real_actions(self, offset)
+
+    monkeypatch.setattr(_IterationLog, "actions", failing_first_load)
+    client = await _served(served_page, long_log_job)
+    expansion = _expansion_named(client, "Iteration 1:")
+    with client:
+        before = set(background_tasks.running_tasks)
+        expansion.value = True
+    opened = background_tasks.running_tasks - before
+    assert opened, "opening iteration 1 must schedule its load"
+    for task in opened:
+        with suppress(Exception):
+            await asyncio.wait_for(task, 10)
+    assert calls == 1
+    assert _actions_shown(client) is False
+    assert _placeholder_visible(client, expansion)
+
+    with client:
+        expansion.value = False
+        before = set(background_tasks.running_tasks)
+        expansion.value = True
+    reopened = background_tasks.running_tasks - before
+    assert reopened, "reopening iteration 1 must schedule a new load"
+    for task in reopened:
+        await asyncio.wait_for(task, 10)
+    assert calls == 2
+    assert not _placeholder_visible(client, expansion)
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _show_more(client) is not None
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_content_while_its_batch_renders_stops_the_render(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting the iteration's content while its first batch is still
+    rendering must stop the render, add nothing more and leave the card's
+    header intact."""
+    client = await _served(served_page, long_log_job)
+    expansion = _expansion_named(client, "Iteration 1:")
+    placeholder = next(
+        desc
+        for desc in expansion.descendants()
+        if isinstance(desc, ui.label) and desc.text == "Click to load details..."
+    )
+    placeholder_slot = placeholder.parent_slot
+    assert placeholder_slot is not None
+    container = placeholder_slot.parent
+    real_card = analysis_log._render_action_card
+    rendered = 0
+
+    def card_then_delete(entry: dict[str, Any]) -> None:
+        nonlocal rendered
+        rendered += 1
+        real_card(entry)
+        if rendered == 2 * CARDS_PER_CHUNK:
+            with client:
+                container.delete()
+
+    monkeypatch.setattr(analysis_log, "_render_action_card", card_then_delete)
+    with client:
+        before = set(background_tasks.running_tasks)
+        expansion.value = True
+    opened = background_tasks.running_tasks - before
+    assert opened, "opening iteration 1 must schedule its load"
+    for task in opened:
+        await asyncio.wait_for(task, 10)
+    assert rendered == 2 * CARDS_PER_CHUNK
+    assert [
+        label.text for label in _of_type(client, ui.label) if label.text.startswith("\u2705 ")
+    ] == []
+    assert _show_more(client) is None
+    with pytest.raises(AssertionError):
+        _expansion_named(client, "Literature searched")
+    assert {
+        f"{CODE_RUNS} analyses",
+        f"{SEARCHES} searches",
+        f"{FINDINGS} findings",
+    } <= {badge.text for badge in _of_type(client, ui.badge)}
+
+
+@pytest.mark.asyncio
+async def test_show_more_after_the_actions_list_was_deleted_appends_nothing(
+    database: Forwarder,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deleting the actions list while a Show more batch is still loading must
+    make the click append nothing and raise nothing."""
+    client = await _served(served_page, long_log_job)
+    await _open_iteration(client, 1)
+    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    button = _show_more(client)
+    assert button is not None
+
+    gate = asyncio.Event()
+    offsets: list[int] = []
+    real_actions = _IterationLog.actions
+
+    async def gated_actions(self: _IterationLog, offset: int) -> list[dict[str, Any]]:
+        offsets.append(offset)
+        if offset:
+            await gate.wait()
+        return await real_actions(self, offset)
+
+    monkeypatch.setattr(_IterationLog, "actions", gated_actions)
+    before = set(background_tasks.running_tasks)
+    _click(client, button)
+    clicked = {
+        task for task in background_tasks.running_tasks - before if "show_more" in task.get_name()
+    }
+    assert len(clicked) == 1, "the click must schedule the batch load"
+    with client:
+        _expansion_named(client, "Actions").delete()
+    gate.set()
+    for task in clicked:
+        await asyncio.wait_for(task, 10)
+    assert offsets == [50]
+    assert [
+        label.text for label in _of_type(client, ui.label) if label.text.startswith("\u2705 ")
+    ] == []
     assert _show_more(client) is None
 
 
