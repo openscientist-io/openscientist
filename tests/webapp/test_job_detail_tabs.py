@@ -85,7 +85,9 @@ def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) ->
 def _rendered_labels(job: JobInfo, ks_data: dict[str, object] | None) -> list[str]:
     """The label texts the Research Log stats block renders for ``job``."""
     recorder = MagicMock()
-    context = SimpleNamespace(job_info=job, ks_data=ks_data, owner_name=None)
+    context = SimpleNamespace(
+        job_info=job, ks_data=ks_data, owner_name=None, spend=0.0, spend_visible=False
+    )
     with (
         patch.object(timeline, "ui", recorder),
         patch.object(components_common, "ui", recorder),

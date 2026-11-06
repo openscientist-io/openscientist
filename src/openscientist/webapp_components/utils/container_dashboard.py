@@ -12,7 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
+from openscientist.budget import job_spends
 from openscientist.job_container.launcher_client import (
     ContainerEntry,
     LauncherClient,
@@ -52,6 +54,7 @@ class JobContainerGroup:
     max_iterations: int
     agent_container: ContainerInfo | None = None
     executor_containers: list[ContainerInfo] = field(default_factory=list)
+    spend_usd: float = 0.0
 
 
 @dataclass
@@ -272,6 +275,7 @@ def _build_group(job_id: str, job_info: dict[str, Any]) -> JobContainerGroup:
         owner_email=job_info["owner_email"],
         current_iteration=job_info["current_iteration"],
         max_iterations=job_info["max_iterations"],
+        spend_usd=float(job_info.get("spend_usd", 0.0)),
     )
 
 
@@ -354,6 +358,10 @@ async def _get_active_jobs_map() -> dict[str, dict[str, Any]]:
                     "current_iteration": job.current_iteration,
                     "max_iterations": job.max_iterations,
                 }
+            if result_map:
+                spends = await job_spends(session, [UUID(job_id) for job_id in result_map])
+                for job_id, spend in spends.items():
+                    result_map[str(job_id)]["spend_usd"] = spend
     except Exception as exc:
         logger.error("Failed to query active jobs: %s", exc, exc_info=True)
 

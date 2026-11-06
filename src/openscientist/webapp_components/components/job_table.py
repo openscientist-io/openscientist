@@ -127,6 +127,17 @@ def render_status_cell_slot() -> str:
     """
 
 
+def render_cost_slot() -> str:
+    """Quasar slot template for the Cost column, one badge per row."""
+    return r"""
+        <q-td :props="props">
+            <q-badge color="green" text-color="white" class="px-1.5 py-0.5">
+                {{ props.row.cost }}
+            </q-badge>
+        </q-td>
+    """
+
+
 def render_actions_slot_with_delete() -> str:
     """Quasar slot template for the actions column with share and delete buttons.
 

@@ -16,7 +16,14 @@ from nicegui.functions.refreshable import RefreshableContainer
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.database.models import Administrator, Job, ReviewToken, Session, User
+from openscientist.database.models import (
+    Administrator,
+    CostRecord,
+    Job,
+    ReviewToken,
+    Session,
+    User,
+)
 from openscientist.job_container.launcher_client import ContainerEntry
 from openscientist.webapp_components.pages.admin import admin_page, render_containers_panel
 from openscientist.webapp_components.utils import container_dashboard
@@ -91,6 +98,35 @@ def _agent_container() -> ContainerInfo:
         status="exited",
         created_at=None,
     )
+
+
+def _spend_payload(spend_usd: float = 1.23) -> DashboardData:
+    """A launcher payload whose one job group carries a spend."""
+    return DashboardData(
+        docker_available=True,
+        job_groups=[
+            JobContainerGroup(
+                job_id="job-1",
+                title="First question",
+                status="completed",
+                owner_email="owner@example.com",
+                current_iteration=1,
+                max_iterations=5,
+                spend_usd=spend_usd,
+                agent_container=_agent_container(),
+            )
+        ],
+    )
+
+
+def _spend_badges(client: Client) -> set[str]:
+    """The dollar figures the panel renders as badges, for a spend check."""
+    with client:
+        return {
+            e.text
+            for e in client.elements.values()
+            if isinstance(e, ui.badge) and isinstance(e.text, str) and e.text.startswith("$")
+        }
 
 
 def _dashboard_payload(*, extra_group: bool = False) -> DashboardData:
@@ -429,3 +465,100 @@ async def test_a_double_click_creates_exactly_one_review_token(
     dialogs = [e for e in client.layout.descendants() if isinstance(e, ui.dialog)]
     assert len(dialogs) == 1
     assert dialogs[0]._props.get("persistent") is True
+
+
+@pytest.mark.asyncio
+async def test_the_job_card_header_shows_the_spend_and_updates_on_a_tick(
+    database: Forwarder,
+    admin_with_a_pending_user: dict[str, str],
+    served_page: ServedPage,
+    wire_recorder: list[WireMessage],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Containers tab's job card header shows the job's spend, and a
+    spend change the panel renders reaches the browser on the next tick."""
+    payloads: list[DashboardData] = [_spend_payload()]
+
+    async def collect(include_stats: bool = True) -> DashboardData:
+        return payloads[0]
+
+    monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
+
+    client, _ = await served_page(
+        admin_with_a_pending_user["token"], admin_page, lambda client: None
+    )
+    with client:
+        await render_containers_panel(admin_with_a_pending_user["admin_id"])
+    assert "$1.23" in _spend_badges(client)
+
+    client.tab_id = "wire-test-socket"
+    await drain_outbox(client)
+    timer = next(
+        element
+        for element in client.elements.values()
+        if isinstance(element, ui.timer) and element.interval == 3.0
+    )
+    assert timer.callback is not None
+
+    wire_recorder.clear()
+    payloads[0] = _spend_payload(spend_usd=2.5)
+    with client:
+        await timer.callback()
+    await drain_outbox(client)
+    sent = [m for m in wire_recorder if m.event == "update" and m.room == client.id]
+    assert sent, "a spend change never reached the wire"
+    assert "$2.50" in _spend_badges(client)
+
+
+@pytest.mark.asyncio
+async def test_the_container_card_reads_the_spend_from_the_cost_ledger(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    admin_with_a_pending_user: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A job's committed cost rows reach the card header through the real
+    dashboard collection, on the admin session."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        job = Job(owner_id=None, research_question="Costed container", status="running")
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        job_id = str(job.id)
+        db.add(
+            CostRecord(
+                job_id=job.id,
+                operation_type="analysis",
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                input_tokens=1000,
+                output_tokens=500,
+                cost_usd=0.42,
+            )
+        )
+        await db.commit()
+
+    try:
+        entry: ContainerEntry = {
+            "id": "spend-container-1",
+            "name": "openscientist-agent-job-spend",
+            "status": "running",
+            "created": "2026-11-05T09:00:00+00:00",
+            "labels": {"openscientist.type": "agent", "openscientist.job_id": job_id},
+        }
+        fake = _FakeLauncher(entry)
+        monkeypatch.setattr(container_dashboard, "_get_launcher_client", lambda: fake)
+        _FakeNow.value = datetime(2026, 11, 5, 9, 5, 1, tzinfo=UTC)
+        monkeypatch.setattr(container_dashboard, "datetime", _FakeNow)
+
+        client, _ = await served_page(
+            admin_with_a_pending_user["token"], admin_page, lambda client: None
+        )
+        with client:
+            await render_containers_panel(admin_with_a_pending_user["admin_id"])
+        assert "$0.42" in _spend_badges(client)
+    finally:
+        async with AsyncSession(test_engine) as db:
+            await db.execute(delete(Job).where(Job.id == job.id))
+            await db.commit()

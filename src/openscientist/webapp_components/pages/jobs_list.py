@@ -15,6 +15,7 @@ from openscientist.auth import (
     is_current_user_admin,
     require_auth,
 )
+from openscientist.budget import format_spend, job_spends
 from openscientist.database.models import Job, JobShare, User
 from openscientist.database.models.finding import Finding
 from openscientist.database.rls import set_current_user
@@ -36,6 +37,7 @@ from openscientist.webapp_components.components.dialogs import (
 )
 from openscientist.webapp_components.components.job_table import (
     render_actions_slot_with_delete,
+    render_cost_slot,
     render_job_id_slot,
     render_status_cell_slot,
 )
@@ -50,6 +52,7 @@ _OWNED_COLUMNS = [
     {"name": "status", "label": "Status", "field": "status", "align": "center"},
     {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
     {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
+    {"name": "cost", "label": "Cost", "field": "cost", "align": "center"},
     {"name": "created", "label": "Created", "field": "created", "align": "left"},
     {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
 ]
@@ -62,6 +65,7 @@ _SHARED_COLUMNS = [
     {"name": "status", "label": "Status", "field": "status", "align": "center"},
     {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
     {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
+    {"name": "cost", "label": "Cost", "field": "cost", "align": "center"},
     {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
 ]
 
@@ -133,7 +137,9 @@ async def _fetch_shared_jobs(current_user_id: str) -> list[tuple[Job, User, JobS
         return list(result.tuples().all())
 
 
-def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[dict[str, Any]]:
+def _owned_rows(
+    db_jobs: list[Job], findings_counts: dict[UUID, int], spends: dict[UUID, float]
+) -> list[dict[str, Any]]:
     """Build owned-jobs table rows."""
     return [
         {
@@ -143,6 +149,7 @@ def _owned_rows(db_jobs: list[Job], findings_counts: dict[UUID, int]) -> list[di
             "error": job.error_message or "",
             "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
             "findings": findings_counts.get(job.id, 0),
+            "cost": format_spend(spends.get(job.id, 0.0)),
             "created": job.created_at.isoformat()[:19],
             "is_public": job.is_public,
             "can_share": True,
@@ -156,6 +163,7 @@ def _shared_rows(
     shared_jobs: list[tuple[Job, User, JobShare]],
     findings_counts: dict[UUID, int],
     current_user_is_admin: bool,
+    spends: dict[UUID, float],
 ) -> list[dict[str, Any]]:
     """Build shared-jobs table rows."""
     rows: list[dict[str, Any]] = []
@@ -170,6 +178,7 @@ def _shared_rows(
                 "error": job.error_message or "",
                 "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
                 "findings": findings_counts.get(job.id, 0),
+                "cost": format_spend(spends.get(job.id, 0.0)),
                 "created": job.created_at.isoformat()[:19],
                 "is_public": job.is_public,
                 "can_share": False,
@@ -224,13 +233,15 @@ async def _refresh_owned_jobs(
         async with get_session_ctx() as session:
             user_uuid = UUID(current_user_id)
             await set_current_user(session, user_uuid)
-            findings_counts = await _batch_findings_counts(session, [j.id for j in db_jobs])
+            job_ids = [j.id for j in db_jobs]
+            findings_counts = await _batch_findings_counts(session, job_ids)
+            spends = await job_spends(session, job_ids)
     except Exception as exc:
         logger.error("Failed to load jobs: %s", exc, exc_info=True)
         view.show_load_error()
         return
     _render_badges(badges_container, db_jobs, badge_counts)
-    view.show(_owned_rows(db_jobs, findings_counts))
+    view.show(_owned_rows(db_jobs, findings_counts, spends))
 
 
 async def _refresh_shared_jobs(
@@ -245,11 +256,16 @@ async def _refresh_shared_jobs(
         job_ids = [job.id for job, _, _ in shared_jobs]
         async with get_admin_session() as session:
             findings_counts = await _batch_findings_counts(session, job_ids)
+        # The spend is the recipient's view of the ledger, so it reads on the
+        # recipient's own RLS session.
+        async with get_session_ctx() as session:
+            await set_current_user(session, UUID(current_user_id))
+            spends = await job_spends(session, job_ids)
     except Exception as exc:
         logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
         view.show_load_error()
         return
-    view.show(_shared_rows(shared_jobs, findings_counts, current_user_is_admin))
+    view.show(_shared_rows(shared_jobs, findings_counts, current_user_is_admin, spends))
 
 
 def _render_load_error(marker: str) -> ui.label:
@@ -337,6 +353,7 @@ async def jobs_page() -> None:
             my_jobs = _JobList(my_jobs_table, my_jobs_empty, my_jobs_error, "your jobs")
             my_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
+            my_jobs_table.add_slot("body-cell-cost", render_cost_slot())
             my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
             my_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
             my_jobs_table.on("share-job", lambda e: _show_share_dialog(e.args))
@@ -379,6 +396,7 @@ async def jobs_page() -> None:
             shared_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
             shared_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
             shared_jobs_table.add_slot("body-cell-permission", render_permission_badge_slot())
+            shared_jobs_table.add_slot("body-cell-cost", render_cost_slot())
             shared_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
             shared_jobs_table.on("view-job", lambda e: ui.navigate.to(f"/job/{e.args}"))
 

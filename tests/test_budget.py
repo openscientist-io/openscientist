@@ -372,3 +372,12 @@ class TestBillingFreshness:
                 assert verdict.ok is True
                 verdict = await budget.check_budget(provider_id="bedrock")
                 assert fetches == [24, None, None]
+
+
+async def test_the_spend_formatter_shows_cents_and_marks_sub_cent_spend() -> None:
+    """The badge formatter shows cents, and a spend below one cent reads as
+    less than a cent."""
+    assert budget.format_spend(0.0) == "$0.00"
+    assert budget.format_spend(0.004) == "<$0.01"
+    assert budget.format_spend(0.01) == "$0.01"
+    assert budget.format_spend(1.2345) == "$1.23"
